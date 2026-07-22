@@ -4,7 +4,7 @@ using Shumway.Compiler.Ast;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 238 — built-in T ↔ <see cref="Term"/> converters used by
+/// built-in T ↔ <see cref="Term"/> converters used by
 /// <see cref="PrologEngine.ToTerm{T}"/>,
 /// <see cref="PrologEngine.FromTerm{T}"/> and
 /// <see cref="Solution.Get{T}"/> when no user-registered converter is

@@ -38,7 +38,7 @@ public readonly record struct QualifiedPredicateRef(string Module, string Name, 
     public override string ToString() => $"{Module}:{Name}/{Arity}";
 }
 
-/// <summary>Chunk 441 — one call-graph edge: the unqualified target plus
+/// <summary>one call-graph edge: the unqualified target plus
 /// the DIRECT-vs-META marker.
 ///
 /// <para><see cref="IsMeta"/> is <c>true</c> when every reference this
@@ -50,7 +50,7 @@ public readonly record struct QualifiedPredicateRef(string Module, string Name, 
 /// (or the target only appears in synthesised helper bodies the
 /// transform pipeline produced). The bit is computed module-wide per
 /// TARGET (not per call site): the MetaTransform pipeline erases the
-/// meta wrappers before the call-graph walk (chunk-205 rewrites
+/// meta wrappers before the call-graph walk (rewrites
 /// <c>call(g(X))</c> to a direct <c>g(X)</c>; findall goals are inlined
 /// into <c>$disj</c> helper bodies), so a per-site bit measured on the
 /// transformed bodies would mis-mark exactly the sites that matter. A
@@ -68,7 +68,7 @@ public readonly record struct ShmoCallEdge(PredicateRef Target, bool IsMeta)
 }
 
 /// <summary>One <c>:- op/3</c> definition a module's source executed at
-/// compile time (Phase 33, PrologToC corpus). Carried through
+/// compile time. Carried through
 /// <c>.shmo</c> → <c>.shum</c> so <c>LoadBundle</c> can replay it into the
 /// runtime engine's operator table — a SOURCE-STRIPPED bundle otherwise
 /// loses the ops, and any runtime <c>read/1</c> / <c>string_term/2</c> of
@@ -117,7 +117,7 @@ public sealed class ShmoDefinedPredicate
 /// is not dead-code-eliminated.</item>
 /// <item><see cref="CallGraph"/> — for each defined predicate, the set
 /// of unqualified call targets the linker should follow, each marked
-/// DIRECT or META (<see cref="ShmoCallEdge"/>, chunk 441).</item>
+/// DIRECT or META (<see cref="ShmoCallEdge"/>).</item>
 /// <item><see cref="QualifiedRefs"/> — explicit <c>Module:Goal</c> call
 /// sites. Rare; resolved against the named module's public set rather
 /// than the flat global namespace.</item>
@@ -139,7 +139,7 @@ public sealed class ShmoObject
     /// objects that didn't carry the flag.</summary>
     public ShmoBuildMode BuildMode { get; }
 
-    /// <summary>Chunk 441 — <c>true</c> when the module was compiled in
+    /// <summary><c>true</c> when the module was compiled in
     /// Arity compatibility mode (<c>shumway-compile --arity</c>, or an
     /// in-file <c>:- set_prolog_flag(arity_compat, true)</c> at any
     /// point during the compile). The linker uses it to apply Arity
@@ -149,7 +149,7 @@ public sealed class ShmoObject
     /// empty dynamic predicate instead of erroring.</summary>
     public bool ArityCompat { get; }
 
-    /// <summary>Chunk 209 — clauses for <c>:- dynamic foo/N.</c>
+    /// <summary>clauses for <c>:- dynamic foo/N.</c>
     /// predicates carried as <see cref="TermCodec"/>-encoded terms
     /// rather than baked into <see cref="Bytecode"/>. The bytecode
     /// can't hold them because the engine has to mutate them at
@@ -162,14 +162,14 @@ public sealed class ShmoObject
     /// store. Empty for V1/V2 objects.</summary>
     public IReadOnlyList<ShmoDynamicSeed> DynamicSeeds { get; }
 
-    /// <summary>Chunk 411 — the module's STATIC clauses as
+    /// <summary>the module's STATIC clauses as
     /// <see cref="TermCodec"/>-encoded terms, RAW (post-parse, pre-DCG /
     /// pre-MetaTransform / pre-unfold; dynamic-head clauses excluded — those
     /// travel in <see cref="DynamicSeeds"/>). The LTO channel (user decision,
     /// mirroring fat object files): always present, Release included — the
     /// <c>.shmo</c> is an intermediate build artifact; IP stripping applies to
     /// the shipped <c>.shum</c>/exe, not here. The linker uses it for
-    /// cross-module link-time optimization (the chunk-407 meta-wrapper unfold's
+    /// cross-module link-time optimization (the meta-wrapper unfold's
     /// cross-module driver recompiles affected callers from these clauses), and
     /// it is the substrate for any future LTO pass.</summary>
     public IReadOnlyList<byte[]> ClauseTerms { get; }
@@ -239,7 +239,7 @@ public sealed class ShmoObject
     /// the module has no <c>:- c</c> region.</summary>
     public string? NativeDecls { get; }
 
-    /// <summary>Phase 33 (PrologToC) — every <c>:- op/3</c> this module's source
+    /// <summary>Every <c>:- op/3</c> this module's source
     /// executed at compile time, in source order (list-name forms expanded).
     /// Replayed into the engine's operator table by <c>LoadBundle</c> so
     /// runtime term reading in a source-stripped bundle parses with the same

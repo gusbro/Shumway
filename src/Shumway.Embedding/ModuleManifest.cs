@@ -35,7 +35,7 @@ public sealed class ModuleManifest
     public HashSet<int> DynamicFunctors { get; }
 
     /// <summary>Functors the module declares <c>:- discontiguous</c>. The
-    /// metadata is stored verbatim; Phase 1 doesn't yet warn about
+    /// metadata is stored verbatim; there is no warning yet about
     /// non-contiguous clauses, so this is a placeholder for tooling.</summary>
     public HashSet<int> DiscontiguousFunctors { get; }
 
@@ -47,9 +47,9 @@ public sealed class ModuleManifest
     /// <summary>Per-functor mode declarations from <c>:- mode foo(+,-).</c>
     /// and <c>:- mode foo(+,-) is det.</c>. Keys are functor ids;
     /// values are the list of declarations for that functor — a
-    /// predicate may declare several callable modes (chunk 73).
-    /// Phase 3 consumes these via <see cref="PrologEngine.Modes"/>;
-    /// chunk 73 is the foundation (parse + store + validate) and
+    /// predicate may declare several callable modes.
+    /// Mode inference consumes these via <see cref="PrologEngine.Modes"/>;
+    /// this is the foundation (parse + store + validate) and
     /// later chunks add the specialised code generation.</summary>
     public Dictionary<int, List<ModeDeclaration>> ModeDeclarations { get; }
 

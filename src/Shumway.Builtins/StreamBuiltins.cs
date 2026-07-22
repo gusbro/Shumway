@@ -5,7 +5,7 @@ namespace Shumway.Builtins;
 
 /// <summary>
 /// File and terminal text streams, backed by the per-engine
-/// <see cref="StreamRegistry"/> (chunk 140). Foreign cells holding a
+/// <see cref="StreamRegistry"/>. Foreign cells holding a
 /// <see cref="StreamHandle"/> are the canonical stream-arg form; the
 /// conventional atom <c>user_input</c> / <c>user_output</c> and any
 /// user-defined alias also resolve to a registered handle.
@@ -115,13 +115,13 @@ public static class StreamBuiltins
     }
 
     /// <summary><c>open(+File, +Mode, -Stream, +Options)</c> — ISO §8.11.5.
-    /// The four-argument form takes an options list; chunk 140c
-    /// recognises <c>alias(Name)</c> (registers the stream under a
-    /// user-chosen atom), <c>type(text|binary)</c> (text is the only
-    /// mode actually supported; binary is accepted and ignored) and
-    /// <c>eof_action(error|eof_code|reset)</c> (stored but currently
-    /// honoured only via the default end_of_file handling). Any
-    /// other option raises <c>domain_error(stream_option, _)</c>.
+    /// The four-argument form takes an options list, recognising
+    /// <c>alias(Name)</c> (registers the stream under a user-chosen
+    /// atom), <c>type(text|binary)</c> (binary opens a raw byte
+    /// stream for the §8.13 byte I/O builtins) and
+    /// <c>eof_action(error|eof_code|reset)</c> (accepted; reads at EOF
+    /// follow the default end_of_file handling). Any other option
+    /// raises <c>domain_error(stream_option, _)</c>.
     /// </summary>
     public static bool OpenWithOptions(Activation engine)
     {
@@ -211,9 +211,9 @@ public static class StreamBuiltins
         {
             if (binary)
             {
-                // Chunk 142: binary streams open the file as a raw
-                // FileStream; ISO §8.13's byte I/O builtins read /
-                // write through StreamHandle.BinaryStream.
+                // Binary streams open the file as a raw FileStream;
+                // ISO §8.13's byte I/O builtins read / write through
+                // StreamHandle.BinaryStream.
                 FileMode fm = mode switch
                 {
                     "write"  => FileMode.Create,
@@ -333,7 +333,7 @@ public static class StreamBuiltins
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
         if (h.IsBinary)
-            // Chunk 142: text write on a binary stream is
+            // Text write on a binary stream is
             // permission_error(output, binary_stream, _) (ISO §8.14.2.3.g).
             throw new PrologRuntimeException("permission_error", "output,binary_stream");
         TermRenderer.Render(engine, engine.GetRegister(1), h.Writer!,
@@ -566,7 +566,7 @@ public static class StreamBuiltins
             // permission_error(input, binary_stream, _).
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
         int c = h.Reader!.Read();
-        // Chunk 166: same single-char-atom cache as PeekCharInto.
+        // Same single-char-atom cache as PeekCharInto.
         int atomId = c < 0
             ? _eofAtomId
             : AtomTable.GetSingleCharAtomId(c);
@@ -582,11 +582,11 @@ public static class StreamBuiltins
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
         int c = h.Reader!.Peek();
-        // Chunk 166: hot path. The cached single-char atom id is a pure
-        // array index — saves the lock + dictionary probe + 1-char
-        // string allocation that AtomTable.Intern would have done. EOF
-        // is a 10-char atom that doesn't fit the cache; intern it the
-        // first time and re-use via the permanent cache.
+        // Hot path: the cached single-char atom id is a pure array
+        // index — saves the lock + dictionary probe + 1-char string
+        // allocation that AtomTable.Intern would have done. EOF is a
+        // 10-char atom that doesn't fit the cache; interned once as
+        // permanent.
         int atomId = c < 0
             ? _eofAtomId
             : AtomTable.GetSingleCharAtomId(c);

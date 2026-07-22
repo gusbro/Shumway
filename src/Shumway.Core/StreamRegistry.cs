@@ -45,7 +45,7 @@ public sealed class StreamRegistry
     public StreamHandle UserOutput { get; }
 
     /// <summary>The handle representing <c>user_error</c> — the ISO
-    /// standard-error writer (Phase 33, PrologToC corpus: `write(user_error,
+    /// standard-error writer (`write(user_error,
     /// …)` / `display(user_error, …)` are the conventional diagnostics
     /// channel). Always registered; writes to
     /// <see cref="System.Console.Error"/>.</summary>

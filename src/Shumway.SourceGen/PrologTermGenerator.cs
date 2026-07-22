@@ -6,7 +6,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Shumway.SourceGen;
 
 /// <summary>
-/// Chunk 241 — Roslyn incremental source generator for
+/// Roslyn incremental source generator for
 /// <c>[Shumway.Embedding.PrologTerm]</c>. For every type declared
 /// with the attribute, emits a <c>partial</c> extension with:
 ///
@@ -77,7 +77,7 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
         // constructor parameters as auto-properties, which show up
         // here; that's the intended common case.
         //
-        // Chunk 243: a member marked [PrologTermIgnore] is skipped —
+        // A member marked [PrologTermIgnore] is skipped —
         // it doesn't contribute to the term's arity and is left at
         // its default value when decoding.
         var members = type.GetMembers()
@@ -182,7 +182,7 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
         string i3 = i + "            ";
 
         // -------- ToPrologTerm --------
-        sb.Append(i).AppendLine("/// <summary>Chunk 241 generated — encodes this instance as a Prolog");
+        sb.Append(i).AppendLine("/// <summary>Generated — encodes this instance as a Prolog");
         sb.Append(i).AppendLine("/// compound term whose functor is the [PrologTerm] attribute value");
         sb.Append(i).AppendLine("/// (default: the C# type name as declared).</summary>");
         sb.Append(i).AppendLine("public global::Shumway.Compiler.Ast.Term ToPrologTerm(global::Shumway.Embedding.PrologEngine engine)");
@@ -209,7 +209,7 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
         sb.AppendLine();
 
         // -------- FromPrologTerm(Term) --------
-        sb.Append(i).AppendLine("/// <summary>Chunk 241 generated — decodes a matching Prolog compound");
+        sb.Append(i).AppendLine("/// <summary>Generated — decodes a matching Prolog compound");
         sb.Append(i).AppendLine("/// term back into a fresh instance. The Term-only overload is for");
         sb.Append(i).AppendLine("/// engine-free nullary types; the 2-arg overload below carries the");
         sb.Append(i).AppendLine("/// engine for member recursion.</summary>");

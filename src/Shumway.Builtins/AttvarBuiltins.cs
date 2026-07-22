@@ -3,7 +3,7 @@ using Shumway.Core;
 namespace Shumway.Builtins;
 
 /// <summary>
-/// The attributed-variable access predicates (chunk 77, Phase 4). An
+/// The attributed-variable access predicates. An
 /// attributed variable is an unbound variable that additionally carries
 /// a set of (module, value) attribute pairs. <c>put_attr/3</c>,
 /// <c>get_attr/3</c> and <c>del_attr/2</c> are the surface for
@@ -15,7 +15,7 @@ namespace Shumway.Builtins;
 /// attribute term. Every mutation is trailed, so attributes attached or
 /// removed inside a choice point revert on backtracking. Unifying an
 /// attributed variable with a value runs the module's
-/// <c>verify_attributes/4</c> hook (chunk 79).</para>
+/// <c>verify_attributes/4</c> hook.</para>
 /// </summary>
 public static class AttvarBuiltins
 {

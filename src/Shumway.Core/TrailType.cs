@@ -17,12 +17,12 @@ public enum TrailType : byte
     /// side-table slot instead of leaving it dangling.</summary>
     BigIntAlloc = 2,
 
-    // 16..31 reserved for attributed-variable operations (Phase 4).
+    // 16..31 reserved for attributed-variable operations.
     AttrAdd = 16,
     AttrModify = 17,
     AttrRemove = 18,
 
-    // 32..63 reserved for mutable globals (b_setval/2 etc., optional Phase 2+).
+    // 32..63 reserved for mutable globals (b_setval/2 etc.).
     MutableSet = 32,
 
     // 64..79 reserved for control / exception state.

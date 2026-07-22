@@ -3,11 +3,11 @@ using Shumway.Core;
 namespace Shumway.Builtins;
 
 /// <summary>
-/// Native domain operations for CLP(FD) (Phase 28). A domain lives in the
-/// engine's foreign-object table as a <see cref="ClpfdDomain"/> and is named by
-/// a <c>Foreign</c> cell; these builtins read/produce those cells. They replace
-/// the interpreted-Prolog interval-list walking that profiling showed dominated
-/// finite-domain solving. Bounds (min/max/cut points) round-trip as integers or
+/// Native domain operations for CLP(FD). A domain lives in the engine's
+/// foreign-object table as a <see cref="ClpfdDomain"/> and is named by a
+/// <c>Foreign</c> cell; these builtins read/produce those cells, keeping
+/// interval walking (the dominant cost of finite-domain solving) out of
+/// interpreted Prolog. Bounds (min/max/cut points) round-trip as integers or
 /// the atoms <c>inf</c>/<c>sup</c>; values are integers.
 /// </summary>
 public static class ClpfdDomainBuiltins

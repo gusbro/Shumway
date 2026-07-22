@@ -4,9 +4,9 @@ namespace Shumway.Link;
 
 /// <summary>
 /// <c>shumway-link</c> CLI. Takes one or more <c>.shmo</c>
-/// compiled-object files (produced by <c>shumway-compile</c>, chunk
-/// 161) plus a set of entry-point predicates and produces a deployable
-/// <c>.shum</c> bundle. Surface for the chunk-163 linker.
+/// compiled-object files (produced by <c>shumway-compile</c>) plus a
+/// set of entry-point predicates and produces a deployable
+/// <c>.shum</c> bundle. Surface for the linker.
 ///
 /// <para>Usage:</para>
 /// <code>
@@ -286,7 +286,7 @@ internal static class LinkCli
         public bool IncludeCompiledIl { get; set; }
         public bool StripWam { get; set; }
         public bool RegionPruneReport { get; set; }
-        public bool RegionPrune { get; set; } = true;   // default since chunk 418
+        public bool RegionPrune { get; set; } = true;
         public bool BakePrelude { get; set; }
         public bool PrunePrelude { get; set; }
         public string? DumpWamPath { get; set; }
@@ -302,14 +302,14 @@ internal static class LinkCli
         public bool Debug { get; set; }
         public bool DebugWait { get; set; }
         public int? DapPort { get; set; }
-        // Phase 31 — --dll: emit a .NET class library embedding the bundle, with a
+        // --dll: emit a .NET class library embedding the bundle, with a
         // generated factory (Namespace.Class.CreateEngine()) a host app calls. No
         // Prolog goal entry point. Namespace defaults to the inferred DLL file name,
         // class to "Bundle".
         public string DllPath { get; set; } = "";
         public string? DllNamespace { get; set; }
         public string? DllClass { get; set; }
-        // Chunk 247: foreign-DLL paths (each carrying
+        // Foreign-DLL paths (each carrying
         // [PrologPredicate]-decorated static methods). The linker
         // reflects each, registers the discovered name/arity
         // indicators as resolved during reachability, and records
@@ -380,7 +380,7 @@ internal static class LinkCli
                     opts.BakePrelude = true;
                     break;
 
-                // Phase 33 T1 — bake only the REACHED prelude predicates
+                // Bake only the REACHED prelude predicates
                 // (closure over the prelude call graph). Opt-in: runtime-
                 // constructed goals naming unreached prelude predicates raise
                 // existence_error (declare them :- ensure_linked to keep them).
@@ -501,9 +501,9 @@ internal static class LinkCli
                         Console.Error.WriteLine($"shumway-link: unknown option '{arg}'.");
                         return null;
                     }
-                    // Chunk 435 — wildcard inputs (`shumway-link ... *.shmo`),
+                    // Wildcard inputs (`shumway-link ... *.shmo`),
                     // expanded here since the Windows shell passes globs
-                    // verbatim (the chunk-434 shumway-compile counterpart).
+                    // verbatim (the shumway-compile counterpart).
                     if (arg.IndexOfAny(WildcardChars) >= 0)
                     {
                         if (!TryExpandWildcard(arg, opts.InputPaths)) return null;
@@ -588,11 +588,11 @@ internal static class LinkCli
 
     private static readonly char[] WildcardChars = { '*', '?' };
 
-    /// <summary>Chunk 435 — expands a wildcard input argument against the
+    /// <summary>Expands a wildcard input argument against the
     /// file system (directory part + pattern part), appending matches in
     /// case-insensitive sorted order. Returns false (after printing the
     /// error) when nothing matches or the directory is unusable. Mirrors
-    /// shumway-compile's chunk-434 expansion.</summary>
+    /// shumway-compile's expansion.</summary>
     private static bool TryExpandWildcard(string arg, List<string> into)
     {
         string dir = System.IO.Path.GetDirectoryName(arg) is { Length: > 0 } d ? d : ".";

@@ -8,7 +8,7 @@ namespace Shumway.Embedding;
 /// <summary>
 /// Compiles one Prolog source file (or in-memory source) into an in-
 /// memory <see cref="ShmoObject"/>. Used by the <c>shumway-compile</c>
-/// CLI (chunk 161) and by the linker's tests; the in-process embedder
+/// CLI and by the linker's tests; the in-process embedder
 /// can also call it to produce <c>.shmo</c> artifacts on the fly.
 ///
 /// <para>Pipeline:</para>
@@ -17,7 +17,7 @@ namespace Shumway.Embedding;
 /// <item>Apply <see cref="DcgTransform"/> (DCG rules become normal rules
 /// with the diff-list pair appended to head &amp; goals).</item>
 /// <item>Walk directives for <c>:- module/1</c>, <c>:- public/1</c>,
-/// <c>:- dynamic/1</c>, <c>:- ensure_linked/1</c> (the last is chunk 162).</item>
+/// <c>:- dynamic/1</c>, <c>:- ensure_linked/1</c>.</item>
 /// <item>For every non-directive clause, classify the head's
 /// <c>Name/Arity</c>, attach the right visibility, and walk the body
 /// emitting call edges into the per-predicate call graph.</item>
@@ -26,14 +26,14 @@ namespace Shumway.Embedding;
 /// <see cref="CompiledModuleCodec"/>.</item>
 /// </list>
 ///
-/// <para>The linker (chunk 163) filters out builtins from the call
+/// <para>The linker filters out builtins from the call
 /// graph and resolves the remainder against the union of every loaded
 /// <c>.shmo</c>'s <c>:- public</c>/<c>:- dynamic</c> set. Anything still
 /// unresolved is the missing-predicate report.</para>
 /// </summary>
 public static class ShmoCompiler
 {
-    /// <summary>Chunk 436 — every directive name some stage of the
+    /// <summary>every directive name some stage of the
     /// toolchain actually handles: the ShmoCompiler itself (module /
     /// public / dynamic / visible / ensure_linked), the ClauseReader's
     /// in-place pre-pass (op / set_prolog_flag / char_conversion, plus
@@ -52,16 +52,16 @@ public static class ShmoCompiler
         // ISO include/1 (expanded before this pass) + initialization/1
         // (collected by the consult path; carried as an entry goal here).
         "include", "initialization",
-        // Phase 30 (ADR-022) step 1 — the synthetic directive the ClauseReader
+        // ADR-022 — the synthetic directive the ClauseReader
         // emits to carry a captured `:- c` region's raw declaration text. An
         // ignored directive until the C-subset parser consumes it (step 2).
         "$native_decls",
     };
 
-    /// <summary>Chunk 436 — unknown directives whose arity_compat
+    /// <summary>unknown directives whose arity_compat
     /// warning is suppressed entirely. Callers (or embedders) add names
     /// of directives they know are harmless noise in their corpus.
-    /// Chunk 437 seeds <c>extrn</c> — Arity's external-predicate
+    /// Seeds <c>extrn</c> — Arity's external-predicate
     /// declaration is ubiquitous in real sources and has no Shumway
     /// meaning (the linker resolves cross-module calls itself), so it
     /// is ignored without even a warning. The engine consult path
@@ -95,7 +95,7 @@ public static class ShmoCompiler
 
     /// <summary>Compiles <paramref name="source"/> in memory.
     /// <paramref name="moduleNameFallback"/> is the module name when the
-    /// source has no <c>:- module/1</c> directive (chunk 440 — it is no
+    /// source has no <c>:- module/1</c> directive (it is no
     /// longer collapsed to "user"; per-file module identity is what keeps
     /// two module-less files' locals from aliasing). Pass the empty
     /// string for "<c>user</c>" — Shumway's default.</summary>
@@ -123,7 +123,7 @@ public static class ShmoCompiler
     /// captured. The result carries every error AND — only when zero
     /// errors fired — the resulting <see cref="ShmoObject"/>. Stops
     /// after <paramref name="maxErrors"/> errors (default 100).</summary>
-    /// <param name="clauseFilter">Phase 33 T1 (prelude pruning) — when non-null,
+    /// <param name="clauseFilter">Prelude pruning — when non-null,
     /// only clauses whose HEAD indicator satisfies the filter are compiled;
     /// directives are unaffected. Used by the linker to bake a reachability-
     /// reduced prelude.</param>
@@ -150,12 +150,12 @@ public static class ShmoCompiler
         var errors = new List<ShmoCompileError>();
         var warnings = new List<ShmoCompileError>();
         var allClauses = new List<Clause>();
-        // Phase 30: `shumway-compile --arity` pre-enables the Arity
+        // `shumway-compile --arity` pre-enables the Arity
         // compatibility mode for the whole file (the in-file
         // set_prolog_flag(arity_compat, _) directive can still flip it).
         var readerFlags = new Shumway.Compiler.Parsing.PrologFlags
         { ArityCompat = arityCompat };
-        // Chunk 441 — record whether Arity mode was EVER on during the
+        // record whether Arity mode was EVER on during the
         // compile (the --arity pre-enable, or an in-file
         // set_prolog_flag(arity_compat, true) flip at any point). The
         // resulting ShmoObject carries it so the linker can apply Arity
@@ -203,7 +203,7 @@ public static class ShmoCompiler
         // collect the raw bodies. We need the raw bodies for two
         // reasons:
         //
-        //   1. Chunk 209: a `:- dynamic foo/N.` clause must be
+        //   1. a `:- dynamic foo/N.` clause must be
         //      serialised RAW to DynamicSeeds, because the engine's
         //      SetupQueryFromTerm runs DcgTransform / MetaTransform /
         //      PhraseTransform on _dynamicClauses AGAIN — mirroring
@@ -212,16 +212,16 @@ public static class ShmoCompiler
         //
         //   2. Local-pred call-graph edges from inside catch / findall /
         //      etc. need to be visible — CollectCalls descends into
-        //      meta-builtin goal args (chunk 209) so the raw body still
+        //      meta-builtin goal args so the raw body still
         //      enumerates everything reachable.
-        // Chunk 440 — the fallback (the file's base name when compiling a
+        // the fallback (the file's base name when compiling a
         // file, "user" for bare in-memory sources) IS the module name when
-        // no `:- module/1` directive is present. The chunk-209 forcing of
+        // no `:- module/1` directive is present. The forcing of
         // PrologEngine.DefaultModuleName here made every module-less file
         // compile as module "user": two such files could never be linked
         // together (duplicate_module), and their locals would have aliased
         // (`user$helper`) even if the linker had allowed it. The consumers
-        // chunk 209 was protecting — dynamic-seed rehydration's
+        // this was protecting — dynamic-seed rehydration's
         // ModuleRewrite context and the bundle-local-fid feed — are now
         // per-entry-module-aware (see PrologEngine.LoadEntryFromBytecode +
         // SetupQueryFromTerm's _dynamicSeedModule attribution).
@@ -239,7 +239,7 @@ public static class ShmoCompiler
         // synthetic `'$native_decls'(Text)` directive) so CompileFromParts can
         // build the C symbol table for native-block type inference.
         var nativeDecls = new System.Text.StringBuilder();
-        // Phase 33 (PrologToC) — collect the `:- op/3` definitions this
+        // Collect the `:- op/3` definitions this
         // source executed (ClauseReader already applied them to the parse
         // table in-place; here we RECORD them, in source order and with
         // list-name forms expanded) so they travel .shmo → .shum and
@@ -290,7 +290,7 @@ public static class ShmoCompiler
                     errors.Add(new ShmoCompileError(ex.Message,
                         clause.Position.Line, clause.Position.Column));
                 }
-                // Chunk 436 (arity_compat only): an unrecognised
+                // arity_compat only: an unrecognised
                 // directive is a WARNING, not an error — Arity sources
                 // carry directives (`:- extrn ...`, `:- disable_*`)
                 // with no Shumway meaning; compilation continues.
@@ -312,7 +312,7 @@ public static class ShmoCompiler
                 }
                 continue;
             }
-            // Phase 33 T1 — prelude pruning: drop clauses whose head the
+            // prelude pruning: drop clauses whose head the
             // filter rejects (directives were handled above and always run).
             if (clauseFilter is not null
                 && TryExtractHead(clause) is { } head
@@ -331,13 +331,13 @@ public static class ShmoCompiler
             operatorDefs);
     }
 
-    /// <summary>Chunk 411 — the compile back-half, shared by
+    /// <summary>the compile back-half, shared by
     /// <see cref="TryCompileSource"/> (after its parse + directive pass) and the
     /// linker's cross-module unfold recompile (which reconstructs the inputs
     /// from a V4 <c>.shmo</c>'s metadata + <c>ClauseTerms</c>/<c>DynamicSeeds</c>
     /// and re-enters here with rewritten clauses). <paramref name="moduleName"/>
     /// is the RESOLVED runtime module name (the `:- module/1` directive's
-    /// argument, else the per-file fallback — chunk 440).
+    /// argument, else the per-file fallback).
     /// <paramref name="qualifiedRefs"/> is appended to by the call-graph
     /// walk.</summary>
     internal static ShmoCompileResult CompileFromParts(
@@ -441,7 +441,7 @@ public static class ShmoCompiler
             }
         }
 
-        // Tabling (chunk 104 transform, moved to COMPILE time). A
+        // Tabling (the consult-time transform, moved to COMPILE time). A
         // `:- table p/N` predicate's static clauses are re-headed to the
         // semi-naive '$tbase$p'/'$trec$p' split and a driver clause
         // 'p(..) :- $tbl_dispatch(p(..), $tbase$p(..), $trec$p(..))' is added,
@@ -510,13 +510,13 @@ public static class ShmoCompiler
         // Now apply the static-pipeline transforms. These may add
         // synthetic helper clauses (MetaTransform extracts catch's
         // protected goal, ; / -> branches, etc. into helper preds).
-        // Chunk 407 — module-local meta-wrapper unfold first (see
+        // module-local meta-wrapper unfold first (see
         // MetaWrapperUnfold): staticInput excludes dynamic-head clauses,
         // so any detected wrapper is immutable.
-        // Chunk 441 — the pipeline is split at the MetaTransform
+        // the pipeline is split at the MetaTransform
         // boundary: preMeta (post-unfold, post-DCG, pre-MetaTransform)
         // is the LAST stage where meta-call structure is still visible
-        // (MetaTransform's chunk-205 rewrite turns `call(g(X))` into a
+        // (MetaTransform's rewrite turns `call(g(X))` into a
         // direct `g(X)` and inlines findall/bagof/... goals into
         // helper bodies). The DIRECT-vs-META edge marking walks
         // preMeta; the call-graph EDGES still walk the fully
@@ -524,7 +524,7 @@ public static class ShmoCompiler
         var preMeta = DcgTransform.Apply(MetaWrapperUnfold.Apply(staticInput));
         var clauses = PhraseTransform.Apply(MetaTransform.Apply(preMeta));
 
-        // Chunk 441 — module-wide DIRECT / META reference sets. A
+        // module-wide DIRECT / META reference sets. A
         // target lands in metaRefs when referenced from inside a
         // meta-call argument, in directRefs when referenced as a plain
         // body goal; an edge's IsMeta = metaRefs ∧ ¬directRefs (see
@@ -577,7 +577,7 @@ public static class ShmoCompiler
         // MetaTransform will produce the same helper-call edges then,
         // but the linker can't see across that boundary yet so we
         // walk the user-visible callees only. CollectCalls already
-        // descends into catch / findall / etc. (chunk 209), so this
+        // descends into catch / findall / etc., so this
         // surfaces blint_version, blint_exit, etc. from a body like
         // `main :- catch((blint_version(V), ...), E, ...).`.
         foreach (var (head, encodedList) in dynamicSeedAccum)
@@ -620,7 +620,7 @@ public static class ShmoCompiler
             defined.Add(new ShmoDefinedPredicate(p, vis));
         }
 
-        // Chunk 176: apply ModuleRewrite so the .shmo's bytecode is
+        // apply ModuleRewrite so the .shmo's bytecode is
         // runtime-ready — every local-functor head and call site
         // carries the same `module$name` mangling SetupQueryFromTerm
         // would apply at consult time. Without this the bytecode
@@ -647,7 +647,7 @@ public static class ShmoCompiler
             if (!publicFids.Contains(fid)) localFids.Add(fid);
         }
         // The mangling context uses the RESOLVED runtime module name (the
-        // directive's argument, else the per-file fallback — chunk 440),
+        // directive's argument, else the per-file fallback),
         // matching what the engine applies when it loads the entry: the
         // source-bearing LoadBundle path consults under the entry's module
         // name, and the source-less path's dynamic-seed rehydration rewrites
@@ -657,7 +657,7 @@ public static class ShmoCompiler
         foreach (var clause in staticClauses)
             rewritten.Add(ModuleRewrite.Rewrite(clause, rewriteCtx));
 
-        // Chunk 177: Release drops the per-clause Meta/DbgInfo markers
+        // Release drops the per-clause Meta/DbgInfo markers
         // from the emitted bytecode. Combined with the Source-string
         // strip below, a Release .shmo carries no debug information at
         // all — that's what `-r` promises and IP-protection workflows
@@ -705,16 +705,16 @@ public static class ShmoCompiler
                 CompiledModuleCodec.Encode(moduleCompiler.Compile(snapRewritten));
         }
 
-        // Chunk 177: Release also drops the Source string from the
+        // Release also drops the Source string from the
         // .shmo. Combined with the bytecode-side DbgInfo strip above,
         // the Release artifact contains no recoverable Prolog source —
-        // and chunk 178's source-less LoadBundle path means the engine
+        // and the source-less LoadBundle path means the engine
         // can still dispatch it. Debug keeps Source so the linker's
         // map output, the IL warmup's source-position helpers, and
         // standard "consult from source" tooling stay intact.
         string persistedSource = buildMode == ShmoBuildMode.Release ? "" : source;
 
-        // Chunk 441 — stamp each edge with the module-wide
+        // stamp each edge with the module-wide
         // DIRECT-vs-META marker (meta-only targets get IsMeta=true).
         var callGraphRO = new Dictionary<PredicateRef, IReadOnlyList<ShmoCallEdge>>();
         foreach (var (k, v) in callGraph)
@@ -731,7 +731,7 @@ public static class ShmoCompiler
         foreach (var (ind, encodedList) in dynamicSeedAccum)
             dynamicSeeds.Add(new ShmoDynamicSeed(ind, encodedList));
 
-        // Chunk 411 — the LTO channel: persist the RAW static clauses
+        // the LTO channel: persist the RAW static clauses
         // (pre-unfold, pre-pipeline) so the linker can re-run the full
         // transform stack (cross-module unfold included) and recompile this
         // module without its source. Release included by design — the .shmo
@@ -781,7 +781,7 @@ public static class ShmoCompiler
 
     /// <summary>Returns true iff the directive was a <c>:- module/1</c>;
     /// a module directive overwrites <paramref name="moduleName"/> (which
-    /// arrives pre-seeded with the per-file fallback — chunk 440).</summary>
+    /// arrives pre-seeded with the per-file fallback).</summary>
     private static bool ProcessDirective(Term body, ref string moduleName,
         HashSet<PredicateRef> publicSet,
         HashSet<PredicateRef> dynamicSet,
@@ -824,7 +824,7 @@ public static class ShmoCompiler
         // :- ensure_linked(Indicator) — GNU-Prolog-style hint that the
         // named predicate is reachable even though the static call
         // graph doesn't show it (typically because it's the target of a
-        // runtime meta-call). The linker (chunk 163) treats every
+        // runtime meta-call). The linker treats every
         // ensure_linked indicator as an additional reachability root,
         // so the predicate's defining module survives dead-code
         // elimination and its own callees get walked.
@@ -905,7 +905,7 @@ public static class ShmoCompiler
             && slash.Args[0] is AtomTerm name)
         {
             Term arityTerm = slash.Args[1];
-            // Phase 30 (arity_compat) — strip an Arity directive annotation
+            // arity_compat — strip an Arity directive annotation
             // (`foo/8:far`, `f/2:system(...)`); see PrologEngine's twin.
             if (arityTerm is CompoundTerm colon && colon.Functor == ":"
                 && colon.Args.Length == 2)
@@ -1056,7 +1056,7 @@ public static class ShmoCompiler
     }
 
     // ------------------------------------------------------------------------
-    // Chunk 441 — DIRECT-vs-META reference marking
+    // DIRECT-vs-META reference marking
     // ------------------------------------------------------------------------
 
     /// <summary>Walks a PRE-MetaTransform body recording every unqualified
@@ -1106,7 +1106,7 @@ public static class ShmoCompiler
                 }
                 // call/N closure: the effective runtime target is the
                 // closure's functor with the extra args appended —
-                // exactly what the chunk-205 static rewrite turns it
+                // exactly what the static rewrite turns it
                 // into, so the recorded indicator matches that edge.
                 // Control-construct closures (call((a,b), X) etc.) stay
                 // on the runtime CallBuiltin path and produce no edge;
@@ -1173,7 +1173,7 @@ public static class ShmoCompiler
         }
     }
 
-    /// <summary>The control constructs the chunk-205 static
+    /// <summary>The control constructs the static
     /// <c>call/N</c> rewrite refuses to extend (they stay on the runtime
     /// dispatcher and never produce a call-graph edge). Mirrors
     /// <c>MetaTransform.IsStaticallyExtendable</c>'s exclude set.</summary>

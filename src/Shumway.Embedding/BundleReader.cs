@@ -37,7 +37,7 @@ public static class BundleReader
                 + $"(requires {BundleFormat.CurrentVersion}; pre-release formats are "
                 + "not backward compatible — rebuild the bundle).");
 
-        // Phase 33 T2 — the byte after the version selects the body encoding
+        // the byte after the version selects the body encoding
         // (raw / Brotli); everything below reads from the decoded body.
         byte compression = headerReader.ReadByte();
         using var br = BundleFormat.OpenBody(compression, ms);
@@ -80,7 +80,7 @@ public static class BundleReader
                     new PredicateRef(predName, (int)arity),
                     (PredicateVisibility)vis));
             }
-            // IL patch table + per-method entries table (Phase 17).
+            // IL patch table + per-method entries table.
             byte[]? compiledIlPatches = null;
             byte[]? compiledIlEntries = null;
             uint patchLength = br.ReadUInt32();
@@ -101,7 +101,7 @@ public static class BundleReader
                         $"Bundle: truncated IL entries table (expected "
                         + $"{entriesLength} bytes, got {compiledIlEntries.Length}).");
             }
-            // Dynamic seeds trailer (chunk 209).
+            // Dynamic seeds trailer.
             uint seedCount = br.ReadUInt32();
             var dynamicSeeds = new List<ShmoDynamicSeed>((int)seedCount);
             for (uint j = 0; j < seedCount; j++)
@@ -136,7 +136,7 @@ public static class BundleReader
             }
             string nd = ReadLengthPrefixedUtf8(br);
             string? nativeDecls = nd.Length == 0 ? null : nd;
-            // Operator trailer (Phase 33, PrologToC).
+            // Operator trailer.
             uint opCount = br.ReadUInt32();
             var operators = new List<ShmoOperatorDef>((int)opCount);
             for (uint j = 0; j < opCount; j++)
@@ -150,7 +150,7 @@ public static class BundleReader
                 compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks,
                 nativeFunctions, nativeDecls, operators);
         }
-        // Foreign-assemblies trailer (chunk 247).
+        // Foreign-assemblies trailer.
         uint asmCount = br.ReadUInt32();
         var foreignAssemblies = new List<string>((int)asmCount);
         for (uint i = 0; i < asmCount; i++)
@@ -160,7 +160,7 @@ public static class BundleReader
         var nativeLibraries = new List<string>((int)nativeCount);
         for (uint i = 0; i < nativeCount; i++)
             nativeLibraries.Add(ReadLengthPrefixedUtf8(br));
-        // Save-state snapshot trailer (chunk 264): one presence byte, then the
+        // Save-state snapshot trailer: one presence byte, then the
         // payload when a PrologEngine.SaveState bundle carries a snapshot.
         BundleSnapshot? snapshot = null;
         {

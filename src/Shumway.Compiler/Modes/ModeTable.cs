@@ -1,7 +1,7 @@
 namespace Shumway.Compiler.Modes;
 
 /// <summary>
-/// Chunk 73 — aggregates every <c>:- mode</c> declaration the engine
+/// Aggregates every <c>:- mode</c> declaration the engine
 /// has seen into one queryable table, keyed by functor id. A predicate
 /// may have multiple declarations (one per callable mode), so each
 /// key maps to a list.
@@ -63,7 +63,7 @@ public sealed class ModeTable
     /// <summary>True iff <paramref name="functorId"/> has at least one
     /// mode declaration <em>and every</em> declared mode is
     /// deterministic (det / semidet). This is the safe condition for
-    /// the chunk-74 cut-append specialisation: when every declared
+    /// the cut-append specialisation: when every declared
     /// usage yields at most one solution, an implicit trailing cut on
     /// each clause never truncates a solution the caller wanted —
     /// regardless of which mode the call site picks. A predicate that

@@ -4,7 +4,7 @@ namespace Shumway.Core;
 /// WAM bytecode opcodes. The encoding framework (fixed-size instructions, operand
 /// layout) is defined by docs/design/wam-instruction-set.md and ADR-006.
 ///
-/// <para>Chunk 429: values are assigned CONTIGUOUSLY (0x00..0x65, no gaps) so the
+/// <para>values are assigned CONTIGUOUSLY (0x00..0x65, no gaps) so the
 /// interpreter's dispatch <c>switch</c> compiles to ONE dense jump table. The old
 /// per-category reserved ranges (get 0x01.., put 0x20.., unify 0x40.., …) left the
 /// ~90 cases scattered across 11 disjoint clusters, which made Roslyn emit a chain
@@ -89,14 +89,14 @@ public enum Opcode : byte
     Execute = 0x2B,
     Proceed = 0x2C,
     Halt = 0x2D,
-    // ADR-015 chunk C step 4: a 1-byte no-op. Used as padding when
+    // ADR-015: a 1-byte no-op. Used as padding when
     // asserta converts the chain's old head from try_me_else (9 bytes)
     // to retry_me_else (5 bytes) — the trailing 4 arity-operand bytes
     // are overwritten with 4 nops so the in-place patch keeps the
     // rest of the clause layout unchanged.
     Nop = 0x2E,
 
-    // Chunk 225 Stage B.1 — fast-path Call for predicates with bundle-IL
+    // Fast-path Call for predicates with bundle-IL
     // already registered at link time. Same byte width (9) and operand
     // layout as Call ([functorId:4][numLivePerms:4]) so PrologEngine's
     // post-link rewrite is an in-place byte swap of the opcode + a
@@ -106,8 +106,8 @@ public enum Opcode : byte
     // directly in its IlByFunctorId array.
     CallIl = 0x2F,
 
-    // Chunk 226 Stage B.2 — fast-path Call for predicates known to be
-    // permanently bytecode-only (dynamic predicates per chunk 159,
+    // Fast-path Call for predicates known to be
+    // permanently bytecode-only (dynamic predicates,
     // layout-excluded statics, OR any callee when the engine's IL
     // promotion is disabled — Threshold==0 — so no functor will ever
     // earn an IL delegate). Same byte width (9) and operand layout as
@@ -118,7 +118,7 @@ public enum Opcode : byte
     // SetPc(target) directly.
     CallBytecode = 0x30,
 
-    // Chunk 227 Stage B.3 — tail-call counterparts of CallIl /
+    // Tail-call counterparts of CallIl /
     // CallBytecode. Same 5-byte width as Execute ([op:1][operand:4]);
     // the linker rewrites each Execute site to the right variant the
     // same way it rewrites Call sites. ExecuteIl's operand is the
@@ -128,7 +128,7 @@ public enum Opcode : byte
     ExecuteIl = 0x31,
     ExecuteBytecode = 0x32,
 
-    // Chunk 248 — tail-call counterpart of CallBuiltin. Same 5-byte
+    // tail-call counterpart of CallBuiltin. Same 5-byte
     // width as Execute / ExecuteIl ([op:1][builtinId:4]); the
     // linker rewrites an Execute site to ExecuteBuiltin when its
     // resolved callee is a builtin (foreign predicate from
@@ -149,7 +149,7 @@ public enum Opcode : byte
     Retry = 0x38,
     Trust = 0x39,
 
-    // ADR-015 chunk C, bytecode-level dispatch — generation-filtered
+    // ADR-015 bytecode-level dispatch — generation-filtered
     // dynamic predicates (logical update view at the bytecode level, no
     // builtin indirection).
     EnterDynamic = 0x3A,    // sample DbGeneration -> CurrentViewGen
@@ -160,7 +160,7 @@ public enum Opcode : byte
     SwitchOnAtom = 0x3D,
     SwitchOnInteger = 0x3E,
     SwitchOnStructure = 0x3F,
-    // Multi-arg indexing (Phase 2): same semantics as the four above, but
+    // Multi-arg indexing: same semantics as the four above, but
     // dispatch on an arbitrary argument register A[k] (encoded as the first
     // operand) instead of A1 (X[0]).
     SwitchOnArg = 0x40,
@@ -176,7 +176,7 @@ public enum Opcode : byte
     // Builtin call (the reserved specialised-builtin opcodes — never
     // emitted, no interpreter dispatch case — live at the END of the
     // enum, after ReservedExtension, so they don't punch holes in the
-    // chunk-429 dense jump-table block).
+    // dense jump-table block).
     CallBuiltin = 0x47,
 
     // Consolidated patterns
@@ -187,7 +187,7 @@ public enum Opcode : byte
     GetListA1 = 0x4C,
     GetListA2 = 0x4D,
 
-    // Chunk 220 — opcode fusion. Profiled pairs in Blint workload:
+    // opcode fusion. Profiled pairs in Blint workload:
     //   Allocate (5) + GetLevel (5)  : 14.0M pairs / run — clause prologue with deep cut.
     //   Deallocate (1) + Proceed (1) :  6.7M pairs / run — clause epilogue.
     // Fused opcodes use the SAME total byte width as the two they replace,
@@ -229,8 +229,8 @@ public enum Opcode : byte
     //           — T is A op B; tKind ∈ {3 unify-reg,4 unify-Y,5 set-reg,6 set-Y}.
     //   AIntCmp <rel:4> <aKind:4><aVal:4> <bKind:4><bVal:4>
     //           — A cmp B; fail = backtrack.
-    AIntBin = 0x58,     // 17 bytes (compact encoding, chunk 311)
-    AIntCmp = 0x59,     // 13 bytes (compact encoding, chunk 311)
+    AIntBin = 0x58,     // 17 bytes (compact encoding)
+    AIntCmp = 0x59,     // 13 bytes (compact encoding)
 
     // ADR-025 — unconditional intra-predicate branch: Pc = <target>. Emitted by
     // the inline if-then-else / disjunction lowering (jump over the else branch
@@ -331,7 +331,7 @@ public enum Opcode : byte
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
-    // block stays hole-free (chunk 429).
+    // block stays hole-free.
     UnifyEq = 0x67,
     IsOp = 0x68,
     LessThan = 0x69,

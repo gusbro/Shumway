@@ -140,7 +140,7 @@ public static class CompiledModuleCodec
         for (int i = 0; i < pred.SwitchTables.Count; i++)
             WriteSwitchTable(bw, pred.SwitchTables[i], switchKinds[i]);
 
-        // Predicate-level source position + per-clause positions (chunk 55).
+        // Predicate-level source position + per-clause positions.
         bw.Write(pred.SourcePosition.Line);
         bw.Write(pred.SourcePosition.Column);
         bw.Write(pred.SourcePosition.Offset);
@@ -242,7 +242,7 @@ public static class CompiledModuleCodec
         var switchTables = new SwitchTable[switchTableCount];
         for (int i = 0; i < switchTableCount; i++) switchTables[i] = ReadSwitchTable(br);
 
-        // v2: predicate-level source position + per-clause positions (chunk 55).
+        // v2: predicate-level source position + per-clause positions.
         int predLine = br.ReadInt32();
         int predColumn = br.ReadInt32();
         int predOffset = br.ReadInt32();

@@ -8,7 +8,7 @@ namespace Shumway.Compiler.Il;
 public enum IlPatchKind : byte
 {
     /// <summary>Atom id — emitted by <c>PutAtom</c>, <c>GetAtom</c>,
-    /// <c>UnifyAtom</c>, and the chunk-189 indexed-atom dispatch
+    /// <c>UnifyAtom</c>, and the indexed-atom dispatch
     /// comparand. Resolved as <c>AtomTable.Intern(Name).Id</c>.</summary>
     Atom = 1,
 
@@ -17,7 +17,7 @@ public enum IlPatchKind : byte
     /// helpers. Resolved as <c>FunctorTable.Intern(AtomTable.Intern(Name).Id, Arity)</c>.</summary>
     Functor = 2,
 
-    /// <summary>Phase-16 resume marker — the int the IL caller writes
+    /// <summary>Resume marker — the int the IL caller writes
     /// into <c>engine.Cp</c> before tail-calling a non-tail callee. The
     /// marker encodes <c>(owner-functor-id, cursor)</c>; only the functor
     /// id needs runtime remapping, the cursor is owner-local.</summary>
@@ -70,8 +70,8 @@ public sealed class IlPatchSite
 /// reads this list, interns each <c>(Name, Arity)</c> in the current
 /// process, and registers the resolved delegate under the
 /// <em>runtime</em> functor id. Without this the delegate would be
-/// keyed off the build-time functor id baked into the method name —
-/// the cross-process functor-id drift Phase 17 set out to fix.
+/// keyed off the build-time functor id baked into the method name,
+/// which drifts across processes.
 /// </summary>
 public sealed class IlPersistedEntry
 {
@@ -86,7 +86,7 @@ public sealed class IlPersistedEntry
     /// predicate dispatches without a WAM body.</summary>
     public byte[]? IndexGraph { get; init; }
 
-    /// <summary>Chunk 402 — for a REGION method, the non-root members' external-entry
+    /// <summary>For a REGION method, the non-root members' external-entry
     /// cursor table: <c>(memberFunctorName, arity, entryCursor)</c> per absorbed member
     /// (the <c>RegionCursorKind.MemberEntry</c> cursors in the method's dispatch
     /// switch). Name-relative like <see cref="Name"/>. LoadBundle uses it to alias a
@@ -120,7 +120,7 @@ public static class IlPersistedEntryCodec
             byte[] graph = e.IndexGraph ?? System.Array.Empty<byte>();
             bw.Write((uint)graph.Length);
             bw.Write(graph);
-            // Chunk 402: region member-entry cursor table (0 for non-region methods).
+            // Region member-entry cursor table (0 for non-region methods).
             var members = e.RegionMembers;
             bw.Write((uint)(members?.Count ?? 0));
             if (members is not null)

@@ -23,9 +23,8 @@ public static class SortBuiltins
     /// <summary><c>keysort(+Pairs, -Sorted)</c> — stable-sort a
     /// list of <c>Key-Value</c> pairs by <c>Key</c> in the standard
     /// order of terms. Relative order is preserved for equal keys
-    /// (stability matters: many real-world programs that group
-    /// by key — Blint.pl's <c>blint_file_body/3</c> is the
-    /// surfacing example — rely on it). Each element must be a
+    /// (stability matters: real-world programs that group by key
+    /// rely on it). Each element must be a
     /// compound <c>'-'/2</c>; a non-pair element raises
     /// <c>type_error(pair, Element)</c>. ISO §8.4.4.</summary>
     public static bool Keysort(Activation engine)
@@ -93,7 +92,7 @@ public static class SortBuiltins
             cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
         if (cursor.Tag == Tag.Ref)
-            // Chunk 131c: a partial list — ISO instantiation_error.
+            // A partial list — ISO instantiation_error.
             throw new PrologRuntimeException("instantiation_error");
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
             return false;   // improper / non-list — fail rather than throw

@@ -6,7 +6,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- chunk 433: the IL compiler memoizes its shape analyses on
+    <!-- The IL compiler memoizes its shape analyses on
          CompiledPredicate's internal cache slots. -->
     <InternalsVisibleTo Include="Shumway.Compiler.Il" />
   </ItemGroup>

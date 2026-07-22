@@ -1,9 +1,9 @@
 namespace Shumway.Compiler.Modes;
 
 /// <summary>
-/// Chunk 73 — the mode-analysis data model. ADR-012 defined the
-/// <c>:- mode/1</c> directive in Phase 1 (parsed and stored, not
-/// exploited). Phase 3 starts consuming it: this type set is the
+/// The mode-analysis data model. ADR-012 defined the
+/// <c>:- mode/1</c> directive (originally parsed and stored, not
+/// exploited); this type set is the
 /// shared vocabulary the embedding-layer parser produces and the
 /// compiler's specialised code generation will consume.
 ///

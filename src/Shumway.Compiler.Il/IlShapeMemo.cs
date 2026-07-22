@@ -3,11 +3,11 @@ using Shumway.Compiler.Wam;
 namespace Shumway.Compiler.Il;
 
 /// <summary>
-/// Chunk 433 — memoized result of one Tier-1 IL shape analysis
+/// Memoized result of one Tier-1 IL shape analysis
 /// (<c>TryDescribeIndexed</c> / <c>TryDescribeTryMeElseChain</c> /
 /// <c>TryDescribeSwitchedChain</c> / <c>TryDescribeIndexedAtomPredicate</c>)
 /// for one immutable <see cref="CompiledPredicate"/>, stored on the
-/// predicate's cache slots (the chunk-430 <c>PoolFreeMemo</c> precedent).
+/// predicate's cache slots (same pattern as <c>PoolFreeMemo</c>).
 ///
 /// <para>The describers were recomputed up to ~8× per predicate across
 /// promotion (CanCompile then Compile), the region pipeline

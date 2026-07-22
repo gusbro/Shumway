@@ -24,7 +24,7 @@ public sealed class NativeBlockEntry
     internal Func<Activation, bool>? Compiled;
     internal bool CompileTried;
 
-    // Phase 33 A1 — the block-invariant lookup maps the interpreter fallback used
+    // the block-invariant lookup maps the interpreter fallback used
     // to rebuild on EVERY call (three dictionaries + fill loops per dispatch).
     // Built once, lazily, on first interpreted run.
     internal Dictionary<string, int>? IndexMap;
@@ -90,7 +90,7 @@ public static class NativeBlockRunner
         return RunBlockCore(engine, vars, stmts, scalarGlobals, regOffset, index, kindOf, scalarFloat);
     }
 
-    /// <summary>Phase 33 A1 — the '$native_run' dispatch entry: reuses the entry's
+    /// <summary>the '$native_run' dispatch entry: reuses the entry's
     /// lazily-built block-invariant maps instead of rebuilding three dictionaries
     /// per call.</summary>
     internal static bool RunBlock(Activation engine, NativeBlockEntry entry, int regOffset)
@@ -151,7 +151,7 @@ public static class NativeBlockRunner
 
     private static object? ReadInput(PrologEngine host, Activation engine, int reg, NativeKind kind)
     {
-        // ADR-024 — a reftype input is a slot handle (a Foreign cell). Phase 33
+        // ADR-024 — a reftype input is a slot handle (a Foreign cell).
         // A3: unwrap it straight from the dereferenced cell — no Term walk.
         if (kind == NativeKind.Reftype)
         {
@@ -362,7 +362,7 @@ public static class NativeBlockRunner
         System.Collections.Generic.List<(string Local, IntPtr Ptr, Type Elem)>? outScalars = null;
         // OutString: a `char**` cell the native function writes a (borrowed) char* into.
         System.Collections.Generic.List<(string Local, IntPtr Cell)>? outStrings = null;
-        // Phase 33 D4 → D1 — EVERY call-scoped native buffer (out cells, char*
+        // EVERY call-scoped native buffer (out cells, char*
         // inputs, and the whole t_reftype graph) bump-allocates from the
         // engine's chunked native arena; the finally releases them all with
         // one mark restore. No AllocHGlobal, no graph-walking free — measured
@@ -458,7 +458,7 @@ public static class NativeBlockRunner
             if (reftypes is not null && alloc is not null)
                 foreach (var (_, handle) in reftypes)
                     alloc.Free(handle);
-            // Phase 33 D1 — one mark restore releases every call-scoped arena
+            // one mark restore releases every call-scoped arena
             // buffer: reftype graphs, pars arrays, char* inputs, out cells.
             host.NativeScratchRelease(scratchMark);
         }
@@ -497,7 +497,7 @@ public static class NativeBlockRunner
         System.Collections.Generic.List<(int Index, IntPtr Ptr, Type Elem)>? outs = null;
         // OutString: (param index, char** cell) — decode into outScalars[index].
         System.Collections.Generic.List<(int Index, IntPtr Cell)>? outStrs = null;
-        // Phase 33 D4 → D1 — all call-scoped native buffers from the engine's
+        // All call-scoped native buffers from the engine's
         // chunked arena; released wholesale by the mark restore (see PInvokeCall).
         long scratchMark = host.NativeScratchMark;
         // All native memory is released in the finally — no leak on an exception
@@ -584,7 +584,7 @@ public static class NativeBlockRunner
             if (reftypes is not null && alloc is not null)
                 foreach (var (_, handle) in reftypes)
                     alloc.Free(handle);
-            // Phase 33 D1 — one mark restore releases every call-scoped arena
+            // one mark restore releases every call-scoped arena
             // buffer (reftype graphs, char* inputs, out cells).
             host.NativeScratchRelease(scratchMark);
         }

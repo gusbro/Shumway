@@ -6,7 +6,7 @@ using Shumway.Embedding;
 namespace Shumway.Repl;
 
 /// <summary>
-/// A minimal interactive top-level (REPL) for Shumway — Phase 5. It
+/// A minimal interactive top-level (REPL) for Shumway. It
 /// consults any files named on the command line, then reads queries from
 /// standard input, runs each, and prints its solutions; pressing ';'
 /// after a solution searches for the next. The session ends at
@@ -108,7 +108,7 @@ internal static class ReplTopLevel
             .ToArray();
 
         var engine = new PrologEngine();
-        // Chunk 250: stash the engine reference so the line editor's
+        // Stash the engine reference so the line editor's
         // Tab completer (constructed lazily on first ReadLine) can
         // query for predicate names.
         _replEngine = engine;
@@ -308,7 +308,7 @@ internal static class ReplTopLevel
         return 0;
     }
 
-    /// <summary>Chunk 251 — REPL-side error renderer. Distinguishes
+    /// <summary>REPL-side error renderer. Distinguishes
     /// the three exception families a query can surface:
     ///
     /// <list type="bullet">
@@ -324,7 +324,7 @@ internal static class ReplTopLevel
     ///
     /// <para>Both Prolog families surface the engine's captured
     /// stack trace with source positions when the bytecode carried
-    /// debug info (chunks 144+). <c>SHUMWAY_DEBUG_TRACE=1</c>
+    /// debug info. <c>SHUMWAY_DEBUG_TRACE=1</c>
     /// adds the .NET stack on top — useful when an engine bug
     /// surfaces as an InvalidOperationException somewhere in the
     /// interpreter.</para></summary>
@@ -366,7 +366,7 @@ internal static class ReplTopLevel
         }
     }
 
-    /// <summary>Phase 20: prints the execution profile to stderr after a
+    /// <summary>Prints the execution profile to stderr after a
     /// query, in a profiling build. A normal build's
     /// <see cref="Shumway.Core.Profiler.Enabled"/> is a compile-time
     /// <c>false</c>, so this is a no-op (and the report is never built).</summary>
@@ -457,10 +457,10 @@ internal static class ReplTopLevel
         }
     }
 
-    /// <summary>Chunk 249 — shared line editor, lazily created on
+    /// <summary>Shared line editor, lazily created on
     /// first use so the SHUMWAY_GOAL / scripted entry paths that
     /// never read interactive lines don't even touch disk to load
-    /// history. Chunk 250 — the engine reference is captured so the
+    /// history. The engine reference is captured so the
     /// editor's Tab handler can query for completion candidates.</summary>
     private static LineEditor? _lineEditor;
     private static PrologEngine? _replEngine;
@@ -472,7 +472,7 @@ internal static class ReplTopLevel
     private static Func<string, IReadOnlyList<string>> BuildCompleter() =>
         prefix => CompletePredicateName(_replEngine, prefix);
 
-    /// <summary>Chunk 250 — returns the sorted, deduplicated set of
+    /// <summary>Returns the sorted, deduplicated set of
     /// predicate names that start with <paramref name="prefix"/>.
     /// Sources: every registered builtin (process-wide
     /// <see cref="Shumway.Builtins.BuiltinsRegistry"/>), every user

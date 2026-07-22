@@ -53,7 +53,7 @@ public static class Disassembler
                 continue;
             }
 
-            // a_int_bin / a_int_cmp use a packed kind/op word (Phase 26 compact
+            // a_int_bin / a_int_cmp use a packed kind/op word (compact
             // encoding); unpack it so the operands read [op, aKind, aVal, ...].
             if (opByte == (byte)Opcode.AIntBin)
             {

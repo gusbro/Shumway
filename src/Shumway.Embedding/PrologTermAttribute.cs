@@ -1,7 +1,7 @@
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 241 — marks a partial type as a Prolog-term schema so the
+/// marks a partial type as a Prolog-term schema so the
 /// <c>Shumway.SourceGen.PrologTermGenerator</c> emits matching
 /// <c>ToPrologTerm</c> / <c>FromPrologTerm</c> methods, and so the
 /// <see cref="PrologEngine.ToTerm{T}"/> / <see cref="PrologEngine.FromTerm{T}"/>

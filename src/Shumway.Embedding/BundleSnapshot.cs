@@ -1,7 +1,7 @@
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Save-state chunk 264 — a snapshot of a live <see cref="PrologEngine"/>'s
+/// Save-state a snapshot of a live <see cref="PrologEngine"/>'s
 /// user-visible state, optionally attached to a <see cref="Bundle"/> as a
 /// V6 trailer. A bundle with a non-null <c>Snapshot</c> can be loaded by
 /// <see cref="PrologEngine.RestoreState"/> to reconstitute the engine's

@@ -6,7 +6,7 @@ namespace Shumway.Embedding;
 /// Serialises a <see cref="ShmoObject"/> to the on-disk
 /// <c>.shmo</c> binary format (see <see cref="ShmoFormat"/>). Pure
 /// I/O — does not consult, compile, or run any Prolog source. The
-/// object is built upstream by <c>shumway-compile</c> (chunk 161).
+/// object is built upstream by <c>shumway-compile</c>.
 /// </summary>
 public static class ShmoWriter
 {
@@ -23,7 +23,7 @@ public static class ShmoWriter
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
 
-        // Phase 33 T6 — the body after magic+version is finalized through the
+        // the body after magic+version is finalized through the
         // same raw-or-Brotli framing as the .shum (BundleFormat.FinalizeImage;
         // one flag byte at offset 8). The big .shmo sections — bytecode and
         // the ClauseTerms LTO trailer (measured 43.7% + 37.7% of real-corpus
@@ -36,7 +36,7 @@ public static class ShmoWriter
         bw.Write((uint)obj.Bytecode.Length);
         bw.Write(obj.Bytecode);
         bw.Write((byte)obj.BuildMode);   // V2+
-        bw.Write((byte)(obj.ArityCompat ? 1 : 0));   // chunk 441
+        bw.Write((byte)(obj.ArityCompat ? 1 : 0));
 
         bw.Write((uint)obj.Defined.Count);
         foreach (var d in obj.Defined)
@@ -63,7 +63,7 @@ public static class ShmoWriter
             {
                 WriteLengthPrefixedUtf8(bw, edge.Target.Name);
                 bw.Write((uint)edge.Target.Arity);
-                bw.Write((byte)(edge.IsMeta ? 1 : 0));   // chunk 441
+                bw.Write((byte)(edge.IsMeta ? 1 : 0));
             }
         }
 
@@ -128,7 +128,7 @@ public static class ShmoWriter
         }
         WriteLengthPrefixedUtf8(bw, obj.NativeDecls ?? string.Empty);
 
-        // Phase 33 (PrologToC) — operator trailer: the `:- op/3` definitions
+        // Operator trailer: the `:- op/3` definitions
         // this module's source executed, replayed at LoadBundle so stripped
         // bundles keep their runtime operator table.
         bw.Write((uint)obj.Operators.Count);
@@ -140,7 +140,7 @@ public static class ShmoWriter
         }
 
         bw.Flush();
-        return BundleFormat.FinalizeImage(ms.ToArray());   // Phase 33 T6
+        return BundleFormat.FinalizeImage(ms.ToArray());
     }
 
     private static void WriteLengthPrefixedUtf8(BinaryWriter bw, string s)

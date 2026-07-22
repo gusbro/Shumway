@@ -33,8 +33,8 @@ public static class ArithmeticEvaluator
             Tag.Ref => throw new PrologRuntimeException("instantiation_error"),
             Tag.Atom => EvaluateAtomConstant(engine, cell),
             // Anything else in arithmetic position is non-evaluable.
-            // ISO §7.1.2: type_error(evaluable, _). Chunk 144 carries
-            // the offending cell so the value slot binds to it.
+            // ISO §7.1.2: type_error(evaluable, _); the offending cell
+            // travels in the exception so the value slot binds to it.
             _ => throw new PrologRuntimeException("type_error", "evaluable", engine, cell),
         };
     }
@@ -61,11 +61,9 @@ public static class ArithmeticEvaluator
             // smallest positive denormal).
             case "epsilon": return new Number(Math.Pow(2, -52));
         }
-        // ISO §7.1.2 / §7.8.7: any other atom in arithmetic position
-        // raises type_error(evaluable, Name/0).
-        //
-        // Chunk 144 carries the offending atom cell as the
-        // exception's Value, so a catcher matching
+        // ISO §7.1.2 / §7.8.7: any other atom in arithmetic position raises
+        // type_error(evaluable, Name/0). The offending atom cell travels as
+        // the exception's Value, so a catcher matching
         // `error(type_error(evaluable, V), _)` binds V to the atom.
         throw new PrologRuntimeException("type_error", "evaluable", engine, atomCell);
     }
@@ -130,7 +128,7 @@ public static class ArithmeticEvaluator
     {
         Add, Sub, Mul, Div, IntDiv, Mod, Rem, Min, Max, Pow,
         BitAnd, BitOr, Xor, Shl, Shr, Gcd, Atan2,
-        // Phase 33 ISO audit — appended so existing encodings stay stable.
+        // Only append here — the numeric values are baked into bytecode.
         IntDivFloor,   // (div)/2 — integer division rounding toward -inf
         PowFloat,      // (**)/2 — ISO: result is ALWAYS a float (^ keeps IF)
     }

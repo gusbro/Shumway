@@ -9,7 +9,7 @@ namespace Shumway.Builtins;
 /// </summary>
 public static class UnifyBuiltins
 {
-    /// <summary><c>?=(X, Y)</c> — succeeds iff X and Y can be unified, with any
+    /// <summary><c>=(X, Y)</c> — succeeds iff X and Y can be unified, with any
     /// resulting bindings kept. Just delegates to the existing unify code.</summary>
     public static bool Unify(Activation engine) =>
         engine.UnifyRegisters(0, 1);

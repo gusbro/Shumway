@@ -157,6 +157,24 @@ dotnet publish src/Shumway.Repl/ -r win-x64 -c Release
 - **Avoid `async` in the interpreter core.** The interpreter runs synchronously within a thread. Async APIs at the embedding layer use safe-point cancellation, not async/await internally.
 - **No `[ThreadStatic]` for engine state.** Engines must remain thread-agile.
 
+### Comment policy (2026-07 cleanup — binding for all new code)
+
+A comment exists to state something the code cannot show: an **invariant**, a
+**constraint**, a **non-obvious trick**, or a **trap** ("don't simplify this to
+X — it breaks Y because Z"). One to three lines. Everything else is noise:
+
+- **No chunk numbers.** They reference a work log, not the code. History lives
+  in git (every chunk was a commit), the phase closure docs, and the ADRs.
+- **No historical narrative** ("this used to be a Dictionary until we measured
+  …"). If the old design is a trap someone might reintroduce, state the trap in
+  one line ("not a Dictionary: probe cost dominated dispatch"); drop the story.
+- **No restating the code**, no measurement archaeology (profile percentages,
+  dates, who found it), no war stories in doc-comments.
+- **ADR references are fine** (`// ADR-031: …`) — ADRs are living repo docs.
+  Prefer them over prose when the rationale has an ADR.
+- XML doc-comments on public API: what it does and its contract, brief. The
+  design essay belongs in an ADR or docs/design, not the doc-comment.
+
 ---
 
 ## Testing Discipline

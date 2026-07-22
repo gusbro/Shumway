@@ -66,7 +66,7 @@ public sealed class StreamHandle
     public StreamHandle(int id, TextReader reader, string mode, string? filename = null, string? alias = null)
     {
         Id = id;
-        // Phase 33 ISO audit — every text read handle tracks its logical
+        // Every text read handle tracks its logical
         // character position (see PositionTrackingReader below).
         Reader = reader as PositionTrackingReader ?? new PositionTrackingReader(reader);
         Mode = mode;
@@ -97,7 +97,7 @@ public sealed class StreamHandle
     }
 }
 
-/// <summary>Phase 33 ISO audit — a <see cref="TextReader"/> decorator that
+/// <summary>A <see cref="TextReader"/> decorator that
 /// counts the characters consumed, giving text read streams a logical
 /// position the <c>StreamReader</c>'s internal read-ahead buffering cannot
 /// spoil (a <c>Peek()</c> — e.g. for <c>stream_property/2</c>'s

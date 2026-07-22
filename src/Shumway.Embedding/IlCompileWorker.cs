@@ -2,11 +2,11 @@ using System.Collections.Concurrent;
 
 namespace Shumway.Embedding;
 
-/// <summary>Phase 33 L2 — ONE persistent large-stack IL-compile worker for the
+/// <summary>ONE persistent large-stack IL-compile worker for the
 /// whole process, replacing the previous thread-create + <c>Join</c> per compile
 /// (a fresh 16 MB-stack thread per promotion, spawned on the query thread).
 /// Sigil's recursive validation needs the big stack (see
-/// <c>IlPromotionStore.IlCompileStackBytes</c>); the worker pays that stack once.
+/// <see cref="StackBytes"/>); the worker pays that stack once.
 ///
 /// <para>Two entry points: <see cref="RunSync{T}"/> keeps the caller's
 /// synchronous contract (the promoting call waits for the delegate — the default

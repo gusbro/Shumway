@@ -15,7 +15,7 @@ namespace Shumway.Embedding;
 /// <code>
 ///   [0..3]    Magic 'S','H','U','M'
 ///   [4..7]    Format version (uint32, = CurrentVersion)
-///   [8]       Compression flag (Phase 33 T2): 0 = raw body, 1 = the whole
+///   [8]       Compression flag: 0 = raw body, 1 = the whole
 ///             body below is ONE Brotli stream (bodies ≥ 4 KB compress;
 ///             typical ratio ~4-6× on real corpora)
 ///   [9..]     Body (raw or decompressed):
@@ -29,24 +29,24 @@ namespace Shumway.Embedding;
 ///                 compiledBytes    : encoded CompiledModuleCodec output
 ///                 compiledIlLength : uint32   (0 = no compiled IL .dll)
 ///                 compiledIlBytes  : PersistedAssemblyBuilder output
-///                 definedCount     : uint32   (chunk 178 — enables the
+///                 definedCount     : uint32   (enables the
 ///                       source-less LoadBundle path)
 ///                   definedEntries : { name:string, arity:uint32, vis:byte }*
-///                 ilPatchLength    : uint32   (Phase 17 — sentinel patch
+///                 ilPatchLength    : uint32   (sentinel patch
 ///                       table for the persisted IL; 0 when no IL)
 ///                 ilPatchBytes     : bytes
 ///                 ilEntriesLength  : uint32   (per-method name/arity/slot)
 ///                 ilEntriesBytes   : bytes
-///                 dynamicSeedCount : uint32   (chunk 209 — TermCodec-encoded
+///                 dynamicSeedCount : uint32   (TermCodec-encoded
 ///                       clauses of `:- dynamic foo/N.` predicates)
 ///                   each seed      : { name:string, arity:uint32,
 ///                                      clauseCount:uint32,
 ///                                      each clause: byteCount:uint32 + bytes }
 ///   then the bundle-level trailers:
-///                 foreignAsmCount  : uint32   (chunk 247 — filename-only;
+///                 foreignAsmCount  : uint32   (filename-only;
 ///                       LoadBundle resolves next to the .shum / the exe)
 ///                   each entry     : { nameLen:uint32, nameBytes:utf-8 }
-///                 snapshotPresent  : byte     (chunk 264 — 0 from the
+///                 snapshotPresent  : byte     (0 from the
 ///                       linker/compiler; 1 from PrologEngine.SaveState)
 ///                 if 1:
 ///                     dynamicOnly  : byte
@@ -76,7 +76,7 @@ public static class BundleFormat
     /// exactly this value.</summary>
     public const int CurrentVersion = 6;
 
-    // ---- Phase 33 T2 — whole-body compression ------------------------------
+    // ---- whole-body compression ------------------------------
     // Layout addition: ONE flag byte follows the version; the REST of the
     // stream (the "body": module count + entries + trailers) is stored raw
     // (flag 0) or as one Brotli stream (flag 1). Whole-body rather than
@@ -93,7 +93,7 @@ public static class BundleFormat
     /// isn't worth it and tiny bundles stay trivially inspectable.</summary>
     public const int CompressionThresholdBytes = 4096;
 
-    /// <summary>Phase 33 T2 — turns a writer's RAW image
+    /// <summary>turns a writer's RAW image
     /// (<c>[magic 4][version 4][body…]</c>) into the on-disk form:
     /// <c>[magic][version][flag][raw-or-brotli body]</c>. Shared by
     /// <see cref="BundleWriter"/> and the linker's in-line serialiser so both
@@ -119,7 +119,7 @@ public static class BundleFormat
         return ms.ToArray();
     }
 
-    /// <summary>Phase 33 T2 — reader counterpart: given the flag byte and the
+    /// <summary>reader counterpart: given the flag byte and the
     /// stream positioned right after it, returns a <see cref="BinaryReader"/>
     /// over the (decompressed when needed) body.</summary>
     internal static BinaryReader OpenBody(byte flag, MemoryStream stream)

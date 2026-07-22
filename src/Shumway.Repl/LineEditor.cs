@@ -26,7 +26,7 @@ namespace Shumway.Repl;
 /// <see cref="Console.ReadLine"/> so the REPL stays scriptable
 /// — keystroke handling depends on a real terminal.</para>
 ///
-/// <para>Line wrap (Phase 31): input wider than the terminal wraps
+/// <para>Line wrap: input wider than the terminal wraps
 /// onto further rows like a normal shell. <see cref="LineView"/>
 /// repaints the whole <c>prompt + buffer</c> from a captured origin
 /// row on every edit, letting the console wrap naturally, then
@@ -34,7 +34,7 @@ namespace Shumway.Repl;
 /// across rows. It detects terminal scroll (when the painted line
 /// reaches the bottom of the window and pushes the origin up) and
 /// shifts the origin so cursor placement stays aligned. This
-/// replaces the chunk-253 horizontal-scroll window, which kept the
+/// replaces the old horizontal-scroll window, which kept the
 /// line on a single row and hid its start while editing the end.</para>
 /// </summary>
 public sealed class LineEditor
@@ -195,7 +195,7 @@ public sealed class LineEditor
                     break;
 
                 case ConsoleKey.Tab:
-                    // Chunk 250 — completion. Identify the
+                    // Completion. Identify the
                     // identifier-word at the cursor, ask the
                     // completer for matching atoms. Skip when no
                     // completer is wired or no word is at hand.
@@ -426,7 +426,7 @@ public sealed class LineEditor
         catch { return 80; }
     }
 
-    /// <summary>Chunk 250 — walks back from <paramref name="cursor"/>
+    /// <summary>Walks back from <paramref name="cursor"/>
     /// while the character is identifier-class (alnum / underscore),
     /// returning the start position of the word. Identifier-class
     /// matches Prolog's atom-token shape; everything else (paren,

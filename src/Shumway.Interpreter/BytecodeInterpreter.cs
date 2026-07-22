@@ -26,7 +26,7 @@ public sealed class BytecodeInterpreter
     private static readonly bool _dispatchTrace =
         System.Environment.GetEnvironmentVariable("ITE_TRACE") == "1";
 #endif
-    // Not readonly: ADR-015 chunk C recompiles a dynamic predicate
+    // Not readonly: ADR-015 recompiles a dynamic predicate
     // mid-query, which may intern new literals into the persistent pools;
     // RefreshLiteralPools swaps in the grown snapshots.
     private IReadOnlyList<string> _stringLiterals;
@@ -38,10 +38,10 @@ public sealed class BytecodeInterpreter
     /// below this stack index belong to an outer computation and must
     /// not be unwound. <c>-1</c> (no floor) during normal execution;
     /// <see cref="RunGoalInEngine"/> raises it so an in-engine sub-goal's
-    /// backtracking stays contained at its entry level (chunk 80).</summary>
+    /// backtracking stays contained at its entry level.</summary>
     private int _backtrackFloor = -1;
 
-    // Functor ids the chunk-80 attributed-variable wakeup driver needs,
+    // Functor ids the attributed-variable wakeup driver needs,
     // interned once: the verify_attributes/4 user hook (its presence in
     // the linked program is what enables wakeups at all) and the few
     // control-construct functors the in-engine meta-call recognises.
@@ -57,7 +57,7 @@ public sealed class BytecodeInterpreter
         FunctorTable.Intern(AtomTable.Intern("!", permanent: true).Id, 0);
     // Control-construct functors and their plainly-named prelude helpers:
     // a runtime call/1 goal that is a control construct is routed to the
-    // helper (chunk 86), since the operator atoms are awkward to compile.
+    // helper, since the operator atoms are awkward to compile.
     private static readonly int DisjFunctorId =
         FunctorTable.Intern(AtomTable.Intern(";", permanent: true).Id, 2);
     private static readonly int ArrowFunctorId =
@@ -72,7 +72,7 @@ public sealed class BytecodeInterpreter
         FunctorTable.Intern(AtomTable.Intern("not", permanent: true).Id, 1);
     // conj/disj/arrow take a third argument — the cut barrier K — so a
     // `!` inside a runtime compound goal commits to the enclosing call
-    // (chunk 88). $call_neg is opaque to cut and stays arity 1.
+    //. $call_neg is opaque to cut and stays arity 1.
     private static readonly int CallConjFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$call_conj", permanent: true).Id, 3);
     private static readonly int CallDisjFunctorId =
@@ -89,7 +89,7 @@ public sealed class BytecodeInterpreter
     /// embedder has wired in a promotion store.</summary>
     public ITier1Dispatcher? Tier1Dispatcher { get; set; }
 
-    /// <summary>Chunk 225 Stage B.1 — direct IL-delegate table indexed
+    /// <summary>direct IL-delegate table indexed
     /// by functor id. Populated by <see cref="Shumway.Embedding"/> at
     /// link time after every IL registration. The
     /// <see cref="Opcode.CallIl"/> handler reads this directly,
@@ -155,9 +155,9 @@ public sealed class BytecodeInterpreter
         _bigIntLiterals = bigIntLiterals;
         // Let Tier-1 IL code (which holds only an Activation) run pending
         // attribute wakeups before an IL-emitted cut commits — the IL
-        // counterpart of the chunk-335 flush-before-cut. Wakeups run through
+        // counterpart of the flush-before-cut. Wakeups run through
         // the interpreter's goal machinery; `code` is fetched live so the
-        // wakeup goals see the current linked program. (Phase 28)
+        // wakeup goals see the current linked program.
         _engine.Tier1WakeupFlusher = () => FlushPendingWakeups(_engine.GetProgramView());
     }
 
@@ -166,7 +166,7 @@ public sealed class BytecodeInterpreter
     public IReadOnlyList<double> FloatLiterals => _floatLiterals;
     public IReadOnlyList<System.Numerics.BigInteger> BigIntLiterals => _bigIntLiterals;
 
-    /// <summary>ADR-015 chunk C: swaps in the grown literal pools after a
+    /// <summary>ADR-015: swaps in the grown literal pools after a
     /// mid-query dynamic-predicate recompile interned new literals.</summary>
     public void RefreshLiteralPools(
         IReadOnlyList<string> strings,
@@ -202,12 +202,12 @@ public sealed class BytecodeInterpreter
         catch (TopLevelFailure) { return InterpreterResult.Failed; }
     }
 
-    // Phase 16 chunk 183: chunk-50 RunSubroutine + chunk-174 floor-pin
-    // additions are gone. The IL non-tail Call site is now threaded
+    // The old recursive RunSubroutine + floor-pin machinery is gone. The
+    // IL non-tail Call site is threaded
     // (set Cp = resume marker, set Pc = callee, IlTailCallPending = true,
     // return) so no recursive sub-Dispatch invocation is needed. The
     // SubroutineSentinelCp constant survives because RunGoalInEngine
-    // (chunk 80's in-engine sub-goal driver for findall/3 etc.) still
+    // (the in-engine sub-goal driver for findall/3 etc.) still
     // uses the same Pc-negative trick to exit its dispatch loop.
 
     /// <summary>Cp sentinel used by in-engine sub-goal dispatch
@@ -237,14 +237,14 @@ public sealed class BytecodeInterpreter
 
     private InterpreterResult Dispatch(ProgramView code)
     {
-        // Chunk 169: cache the ProgramView across dispatch iterations.
+        // cache the ProgramView across dispatch iterations.
         // Refresh only when the engine's program generation has
         // changed (AppendCode reallocation, per-query rewire of
         // overlay/split).
         //
-        // Chunk 170: peel off a direct byte[] reference when the view
+        // peel off a direct byte[] reference when the view
         // is single-buffer (the steady state — Overflow only appears
-        // mid-query during chunk-151b's persistent + per-query
+        // mid-query during persistent + per-query
         // split, and even then the per-query overlay is small). The
         // per-iteration `code[pc]` indexer otherwise compiles to a
         // branch on Split per dispatch tick.
@@ -257,7 +257,7 @@ public sealed class BytecodeInterpreter
         while (true)
         {
             int pc = _engine.P;
-            // I1 (Phase 33): a straight-line opcode advances pc by a fixed amount
+            // I1: a straight-line opcode advances pc by a fixed amount
             // within the current clause — it cannot change the program, land on a
             // resume marker, or exceed the code bounds, so it sets inClause to
             // skip these three per-iteration checks. Every control transfer
@@ -279,14 +279,14 @@ public sealed class BytecodeInterpreter
             }
             // Negative PC indicates "returned past the top" — the same
             // semantics as proceed's Cp<0 early-return. Used by
-            // RunSubroutine (chunk 63): when an IL subroutine call
+            // RunSubroutine: when an IL subroutine call
             // returns success but the caller's Cp is the
             // SubroutineSentinelCp, the IL dispatch path sets
             // Pc=Cp=sentinel; the next dispatch iteration sees it and
             // halts cleanly here instead of indexing into code[].
             if (pc < 0) return InterpreterResult.Halted;
 
-            // Phase 16 — threaded Tier-1: a resume-marker PC means an
+            // threaded Tier-1: a resume-marker PC means an
             // IL non-tail Call site set Cp to this address before
             // dispatching the callee; the callee Proceeded, setting
             // Pc=Cp=marker. Decode the marker, look up the IL
@@ -337,7 +337,7 @@ public sealed class BytecodeInterpreter
                             _engine.SetPc(lateAddr);
                             continue;
                         }
-                        // Chunk 417: honour the `unknown` flag (throws on error).
+                        // honour the `unknown` flag (throws on error).
                         if (Shumway.Core.UnknownProcedure.Fails(_engine, functorId))
                         {
                             if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -377,7 +377,7 @@ public sealed class BytecodeInterpreter
             }
             inClause = false;
 
-            // Chunk 170: when the view is split (Overflow != null) we
+            // when the view is split (Overflow != null) we
             // fall back to the indexer for both the opcode byte and
             // every operand read inside the case bodies (those still
             // go through BytecodeIO's ProgramView overloads, which
@@ -404,11 +404,11 @@ public sealed class BytecodeInterpreter
                     return InterpreterResult.Halted;
 
                 case Opcode.Nop:
-                    // ADR-015 chunk C step 4: padding bytes for asserta's
+                    // ADR-015: padding bytes for asserta's
                     // in-place demotion of try_me_else (9 bytes) to
                     // retry_me_else (5 bytes); the trailing 4 arity-
                     // operand bytes become nops.
-                    _engine.SetPc(pc + 1); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 1); inClause = true;
                     break;
 
                 case Opcode.Proceed:
@@ -439,16 +439,16 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int target = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int target = ReadI32(code, codeArr, pc + 1);
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
                     target = ResolveTargetMaybeAutoPromoted(target);
-                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    if (target == UnknownFailTarget)   // unknown=fail
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
                     Shumway.Core.Profiler.Call(target);
-                    // Env trimming (chunk 57): shrink the current frame to
+                    // Env trimming: shrink the current frame to
                     // num_live_perms Y slots before dispatching, so the callee's
                     // pushes (CP, allocate) sit just above the live region of
                     // the parent frame.
@@ -508,7 +508,7 @@ public sealed class BytecodeInterpreter
                     }
                     int target = ReadI32(code, codeArr, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
-                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    if (target == UnknownFailTarget)   // unknown=fail
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
@@ -544,9 +544,9 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int target = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int target = ReadI32(code, codeArr, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
-                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    if (target == UnknownFailTarget)   // unknown=fail
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
@@ -557,7 +557,7 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
-                // Chunk 225 Stage B.1 — Call to a bundle-IL-promoted
+                // Call to a bundle-IL-promoted
                 // predicate. Operand is the callee's functor id (not an
                 // address); the IL delegate is looked up in the
                 // interpreter's IlByFunctorId table — direct array
@@ -574,7 +574,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int functorId = ReadI32(code, codeArr, pc + 1);
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
                     Shumway.Core.Profiler.Call(functorId);
                     _engine.Debug?.OnCallFunctor(_engine, functorId, false);   // ADR-035
@@ -616,7 +616,7 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
-                // Chunk 226 Stage B.2 — Call to a predicate the linker
+                // Call to a predicate the linker
                 // knows will never have an IL delegate (dynamic / layout-
                 // excluded, or any callee under an IL-disabled engine).
                 // Operand is the absolute target address, unchanged from
@@ -632,10 +632,10 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int target = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int target = ReadI32(code, codeArr, pc + 1);
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
                     target = ResolveTargetMaybeAutoPromoted(target);
-                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    if (target == UnknownFailTarget)   // unknown=fail
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
@@ -658,7 +658,7 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
-                // Chunk 227 Stage B.3 — tail-call to a bundle-IL
+                // tail-call to a bundle-IL
                 // predicate. 5-byte opcode (same as Execute); operand
                 // is the callee functor id. Direct delegate invoke from
                 // IlByFunctorId — no OnDispatch.
@@ -670,7 +670,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int functorId = ReadI32(code, codeArr, pc + 1);
                     Shumway.Core.Profiler.Call(functorId);
                     _engine.Debug?.OnCallFunctor(_engine, functorId, true);   // ADR-035
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
@@ -699,7 +699,7 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
-                // Chunk 227 Stage B.3 — tail-call to a bytecode-only
+                // tail-call to a bytecode-only
                 // predicate. 5-byte opcode (same as Execute); operand is
                 // the absolute target address. Skips OnDispatch entirely.
                 case Opcode.ExecuteBytecode:
@@ -710,9 +710,9 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int target = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int target = ReadI32(code, codeArr, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
-                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    if (target == UnknownFailTarget)   // unknown=fail
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
@@ -731,7 +731,7 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
-                // Chunk 248 — tail-call to a builtin. 5-byte opcode
+                // tail-call to a builtin. 5-byte opcode
                 // (same width as Execute / ExecuteIl / ExecuteBytecode);
                 // operand is the builtin id. The linker emits this in
                 // place of Execute when an Execute site's target is a
@@ -749,7 +749,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int builtinId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int builtinId = ReadI32(code, codeArr, pc + 1);
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
                     _engine.CurrentBuiltinName = entry.Name;
                     _engine.CurrentBuiltinArity = entry.Arity;
@@ -796,27 +796,27 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.Allocate:
                 {
-                    int n = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int n = ReadI32(code, codeArr, pc + 1);
                     _engine.Allocate(n);
-                    RunGetVariableYRun(code, codeArr, codeLen, pc + 5);   // chunk 415
+                    RunGetVariableYRun(code, codeArr, codeLen, pc + 5);
                     break;
                 }
 
                 case Opcode.Deallocate:
                     _engine.Deallocate();
-                    _engine.SetPc(pc + 1); inClause = true;   // deallocate is 1 byte (chunk 429)
+                    _engine.SetPc(pc + 1); inClause = true;   // deallocate is 1 byte
                     break;
 
-                // ---------- Chunk 220 — fused opcodes (peephole) ----------
+                // ---------- fused opcodes (peephole) ----------
 
                 case Opcode.AllocateGetLevel:
                 {
                     // 10-byte layout: [op:1] [count:4] [slot:4] [Nop:1]
-                    int n = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int n = ReadI32(code, codeArr, pc + 1);
                     int slot = ReadI32(code, codeArr, pc + 5);
                     _engine.Allocate(n);
                     _engine.GetLevel(slot);
-                    RunGetVariableYRun(code, codeArr, codeLen, pc + 10);   // chunk 415
+                    RunGetVariableYRun(code, codeArr, codeLen, pc + 10);
                     break;
                 }
 
@@ -854,7 +854,7 @@ public sealed class BytecodeInterpreter
                     }
                     int target = ReadI32(code, codeArr, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
-                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    if (target == UnknownFailTarget)   // unknown=fail
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
@@ -910,14 +910,14 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.TryMeElse:
                 {
-                    int nextClause = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int nextClause = ReadI32(code, codeArr, pc + 1);
                     int arity = ReadI32(code, codeArr, pc + 5);
                     // ADR-025 — a body try_me_else (inline ITE/disjunction)
                     // carries the InlineIteCpArity sentinel; its CP saves no
                     // argument registers (branch state lives in Y slots).
                     if (arity < 0) arity = 0;
                     _engine.PushChoicePoint(arity, nextClause);
-                    // Chunk 221 peephole fusion: in dynamic chains the
+                    // Peephole fusion: in dynamic chains the
                     // very next opcode is CheckVisible. Inline its
                     // dispatch to skip a switch trip + opcode-table
                     // lookup + profiler bump per chain step. Profiled
@@ -934,7 +934,7 @@ public sealed class BytecodeInterpreter
                 case Opcode.RetryMeElse:
                 {
                     Shumway.Core.Profiler.RetryAt(pc);
-                    int nextClause = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int nextClause = ReadI32(code, codeArr, pc + 1);
                     // Corruption guard — a retry_me_else whose <next> is its
                     // own address would re-enter itself on every backtrack:
                     // an unbreakable dispatch loop (a mid-chain self-splice
@@ -960,7 +960,7 @@ public sealed class BytecodeInterpreter
                         && (code.Overflow is null ? codeArr[padPc] : code[padPc])
                            == (byte)Opcode.Nop;
                     int afterPc = pc + (demoted ? 9 : 5);
-                    // Chunk 221 peephole fusion (see TryMeElse).
+                    // Peephole fusion (see TryMeElse).
                     if (!TryInlineCheckVisible(code, codeArr, codeLen, afterPc,
                             deadSkipTo: nextClause))
                     {
@@ -972,7 +972,7 @@ public sealed class BytecodeInterpreter
                 case Opcode.TrustMe:
                 {
                     _engine.TrustMe();
-                    // Chunk 221 peephole fusion (see TryMeElse).
+                    // Peephole fusion (see TryMeElse).
                     if (!TryInlineCheckVisible(code, codeArr, codeLen, pc + 1))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -990,13 +990,13 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
-                // ADR-015 chunk C — generation-filtered dynamic dispatch.
+                // ADR-015 — generation-filtered dynamic dispatch.
                 // Sample the dynamic-database generation into CurrentViewGen
                 // so the surrounding try_me_else captures it into the CP and
                 // every clause's CheckVisible reads the call's stable view.
                 case Opcode.EnterDynamic:
                 {
-                    // chunk 432: sample through the shared GenerationBox (one
+                    // sample through the shared GenerationBox (one
                     // field read) instead of invoking the Func<long> provider
                     // per dynamic-predicate call. The provider remains as the
                     // fallback for bare-Activation tests that wire it directly.
@@ -1010,7 +1010,7 @@ public sealed class BytecodeInterpreter
                         var provider = _engine.DbGenerationProvider;
                         _engine.CurrentViewGen = provider is null ? 0L : provider();
                     }
-                    _engine.SetPc(pc + 1); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 1); inClause = true;
                     break;
                 }
 
@@ -1020,7 +1020,7 @@ public sealed class BytecodeInterpreter
                 // outside [born, died) — the ISO logical update view.
                 case Opcode.CheckVisible:
                 {
-                    long born = ReadI64(code, codeArr, pc + 1);   // chunk 429
+                    long born = ReadI64(code, codeArr, pc + 1);
                     long died = ReadI64(code, codeArr, pc + 9);
                     long g = _engine.CurrentViewGen;
                     if (born > g || died <= g)
@@ -1028,7 +1028,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 17); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 17); inClause = true;
                     break;
                 }
 
@@ -1143,7 +1143,7 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
-                // ---------- Multi-arg indexing (chunk 67) ----------
+                // ---------- Multi-arg indexing ----------
 
                 case Opcode.SwitchOnArg:
                 {
@@ -1289,21 +1289,21 @@ public sealed class BytecodeInterpreter
                     // backtrack into. Without this, a constraint that fails
                     // after the cut commits has no surviving CP to retry —
                     // surfacing as an unsound whole-goal failure inside an
-                    // if-then-else condition. (Phase 28)
+                    // if-then-else condition.
                     if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
                     _engine.NeckCut();
-                    _engine.SetPc(pc + 1); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 1); inClause = true;
                     break;
 
                 case Opcode.GetLevel:
                 {
-                    int slot = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int slot = ReadI32(code, codeArr, pc + 1);
                     _engine.GetLevel(slot);
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
@@ -1326,10 +1326,10 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int slot = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int slot = ReadI32(code, codeArr, pc + 1);
                     int barrier = (int)_engine.GetY(slot).Data;
                     _engine.Cut(barrier);
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
@@ -1337,14 +1337,14 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.GetStructure:
                 {
-                    int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int functorId = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     if (!_engine.GetStructure(functorId, arg))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 9))   // chunk 415
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 9))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1353,39 +1353,39 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.PutStructure:
                 {
-                    int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int functorId = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.PutStructure(functorId, arg);
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.PutStructureR:   // ADR-020 reserve-upfront root
                 {
-                    int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int functorId = ReadI32(code, codeArr, pc + 1);
                     int packed = ReadI32(code, codeArr, pc + 5);
                     _engine.PutStructureReserved(functorId, packed & 0xFFFFFF, packed >> 24);
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.PutListR:   // ADR-020 reserve-upfront cons root
                 {
-                    int arg = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int arg = ReadI32(code, codeArr, pc + 1);
                     _engine.PutListReserved(arg);
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
                 case Opcode.GetList:
                 {
-                    int arg = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int arg = ReadI32(code, codeArr, pc + 1);
                     if (!_engine.GetList(arg))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    // Chunk 415 — consume the following unify-family run inline.
+                    // consume the following unify-family run inline.
                     if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -1395,9 +1395,9 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.PutList:
                 {
-                    int arg = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int arg = ReadI32(code, codeArr, pc + 1);
                     _engine.PutList(arg);
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
@@ -1407,7 +1407,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))   // chunk 415
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1419,7 +1419,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))   // chunk 415
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1429,11 +1429,11 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.UnifyVariableX:
                 {
-                    int target = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int target = ReadI32(code, codeArr, pc + 1);
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyVariableX(target);
-                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                         {
                             if (!TryBacktrack()) return InterpreterResult.Failed;
                         }
@@ -1447,7 +1447,7 @@ public sealed class BytecodeInterpreter
                     }
                     else
                     {
-                        // A bare ATTVAR (chunk 77) at the unify pointer
+                        // A bare ATTVAR at the unify pointer
                         // is a variable at its home — capture it as a
                         // REF to that home, never a copied ATTVAR cell.
                         Cell src = _engine.GetHeap(ptr);
@@ -1455,7 +1455,7 @@ public sealed class BytecodeInterpreter
                             src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1464,11 +1464,11 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.UnifyVariableY:
                 {
-                    int target = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int target = ReadI32(code, codeArr, pc + 1);
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyVariableY(target);
-                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 429
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                         {
                             if (!TryBacktrack()) return InterpreterResult.Failed;
                         }
@@ -1483,13 +1483,13 @@ public sealed class BytecodeInterpreter
                     else
                     {
                         // See UnifyVariableX: a bare ATTVAR is captured
-                        // as a REF to its home. (chunk 77)
+                        // as a REF to its home.
                         Cell src = _engine.GetHeap(ptr);
                         _engine.SetY(target,
                             src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 429
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1498,11 +1498,11 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.UnifyValueX:
                 {
-                    int src = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int src = ReadI32(code, codeArr, pc + 1);
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyValueX(src);
-                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                         {
                             if (!TryBacktrack()) return InterpreterResult.Failed;
                         }
@@ -1523,7 +1523,7 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1532,11 +1532,11 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.UnifyValueY:
                 {
-                    int src = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int src = ReadI32(code, codeArr, pc + 1);
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyValueY(src);
-                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 429
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                         {
                             if (!TryBacktrack()) return InterpreterResult.Failed;
                         }
@@ -1557,7 +1557,7 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 429
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1567,12 +1567,12 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyConstant:
                 case Opcode.UnifyAtom:
                 {
-                    int atomId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int atomId = ReadI32(code, codeArr, pc + 1);
                     Cell value = Cell.Atom(atomId);
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyArgCell(value);
-                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                         {
                             if (!TryBacktrack()) return InterpreterResult.Failed;
                         }
@@ -1593,7 +1593,7 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1602,12 +1602,12 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.UnifyInteger:
                 {
-                    int intValue = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int intValue = ReadI32(code, codeArr, pc + 1);
                     Cell value = Cell.Int(intValue);
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyArgCell(value);
-                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                         {
                             if (!TryBacktrack()) return InterpreterResult.Failed;
                         }
@@ -1628,7 +1628,7 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1641,7 +1641,7 @@ public sealed class BytecodeInterpreter
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyArgCell(value);
-                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))   // chunk 415
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))
                         {
                             if (!TryBacktrack()) return InterpreterResult.Failed;
                         }
@@ -1662,7 +1662,7 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))   // chunk 415
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1671,13 +1671,13 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.UnifyStructure:
                 {
-                    int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int functorId = ReadI32(code, codeArr, pc + 1);
                     if (!_engine.UnifyStructure(functorId))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 429
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1691,7 +1691,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))   // chunk 415
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1700,11 +1700,11 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.UnifyVoid:
                 {
-                    int count = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int count = ReadI32(code, codeArr, pc + 1);
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyVoid(count);
-                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                         {
                             if (!TryBacktrack()) return InterpreterResult.Failed;
                         }
@@ -1717,7 +1717,7 @@ public sealed class BytecodeInterpreter
                             _engine.AllocateHeapUnbound();
                     }
                     _engine.SetUnifyPointer(ptr + count);
-                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -1728,84 +1728,84 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.GetVariableX:
                 {
-                    int dest = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int dest = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.SetRegister(dest, _engine.GetRegister(arg));
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.GetVariableY:
                 {
-                    int dest = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int dest = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.SetY(dest, _engine.GetRegister(arg));
-                    RunGetVariableYRun(code, codeArr, codeLen, pc + 9);   // chunk 415
+                    RunGetVariableYRun(code, codeArr, codeLen, pc + 9);
                     break;
                 }
 
                 case Opcode.GetValueX:
                 {
-                    int src = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int src = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     if (!_engine.UnifyRegisters(src, arg))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.GetValueY:
                 {
-                    int src = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int src = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     if (!_engine.UnifyPermanentWithRegister(src, arg))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.GetConstant:
                 case Opcode.GetAtom:
                 {
-                    int atomId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int atomId = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     if (!_engine.UnifyRegisterWithCell(arg, Cell.Atom(atomId)))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.GetInteger:
                 {
-                    int value = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int value = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     if (!_engine.UnifyRegisterWithCell(arg, Cell.Int(value)))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.GetNil:
                 {
-                    int arg = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int arg = ReadI32(code, codeArr, pc + 1);
                     if (!_engine.UnifyRegisterWithCell(arg, Cell.Atom(AtomTable.EmptyListId)))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
@@ -1813,70 +1813,70 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.PutVariableX:
                 {
-                    int dest = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int dest = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     int heapIdx = _engine.AllocateHeapUnbound();
                     Cell refCell = Cell.Ref(heapIdx);
                     _engine.SetRegister(dest, refCell);
                     _engine.SetRegister(arg, refCell);
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.PutVariableY:
                 {
-                    int dest = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int dest = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     int heapIdx = _engine.AllocateHeapUnbound();
                     Cell refCell = Cell.Ref(heapIdx);
                     _engine.SetY(dest, refCell);
                     _engine.SetRegister(arg, refCell);
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.PutValueX:
                 {
-                    int src = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int src = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.SetRegister(arg, _engine.GetRegister(src));
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.PutValueY:
                 {
-                    int src = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int src = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.SetRegister(arg, _engine.GetY(src));
-                    RunPutValueYRun(code, codeArr, codeLen, pc + 9);   // chunk 415
+                    RunPutValueYRun(code, codeArr, codeLen, pc + 9);
                     break;
                 }
 
                 case Opcode.PutConstant:
                 case Opcode.PutAtom:
                 {
-                    int atomId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int atomId = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.SetRegister(arg, Cell.Atom(atomId));
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.PutInteger:
                 {
-                    int value = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int value = ReadI32(code, codeArr, pc + 1);
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.SetRegister(arg, Cell.Int(value));
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.PutNil:
                 {
-                    int arg = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int arg = ReadI32(code, codeArr, pc + 1);
                     _engine.SetRegister(arg, Cell.Atom(AtomTable.EmptyListId));
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
@@ -1884,41 +1884,41 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.GetConstantA1:
                 {
-                    int atomId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int atomId = ReadI32(code, codeArr, pc + 1);
                     if (!_engine.UnifyRegisterWithCell(0, Cell.Atom(atomId)))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
                 case Opcode.GetConstantA2:
                 {
-                    int atomId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int atomId = ReadI32(code, codeArr, pc + 1);
                     if (!_engine.UnifyRegisterWithCell(1, Cell.Atom(atomId)))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
                 case Opcode.PutConstantA1:
                 {
-                    int atomId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int atomId = ReadI32(code, codeArr, pc + 1);
                     _engine.SetRegister(0, Cell.Atom(atomId));
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
                 case Opcode.PutConstantA2:
                 {
-                    int atomId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int atomId = ReadI32(code, codeArr, pc + 1);
                     _engine.SetRegister(1, Cell.Atom(atomId));
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
@@ -1932,10 +1932,10 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int builtinId = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int builtinId = ReadI32(code, codeArr, pc + 1);
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-                    // Env trimming (chunk 57): shrink the current frame BEFORE
+                    // Env trimming: shrink the current frame BEFORE
                     // the builtin runs, so any choice point the builtin pushes
                     // (e.g. multi-solution call/N, non-deterministic
                     // append/atom_concat splits) lands at the trimmed _stackTop
@@ -1946,11 +1946,11 @@ public sealed class BytecodeInterpreter
                     // precede this call_builtin in source order.
                     _engine.TrimEnv(numLivePerms);
                     // call/1..7 — dispatch the runtime goal as a real goal
-                    // in the live engine, with full backtracking (chunk 86),
+                    // in the live engine, with full backtracking,
                     // rather than running the sub-engine builtin.
                     if (entry.IsCall)
                     {
-                        // Phase 33 ISO audit — a backtrackable (cursor)
+                        // A backtrackable (cursor)
                         // builtin reached THROUGH the meta-call captures
                         // BuiltinReturnPc for its resume; without this it
                         // kept the PREVIOUS call_builtin's continuation and
@@ -1967,16 +1967,16 @@ public sealed class BytecodeInterpreter
                     }
                     if (entry.IsDollarCall)
                     {
-                        _engine.BuiltinReturnPc = pc + 9;   // Phase 33 — see IsCall above
+                        _engine.BuiltinReturnPc = pc + 9;   // see IsCall above
                         // Cut-barrier-carrying meta-call from a $call_*
-                        // control helper (chunk 88): X1 carries the barrier
+                        // control helper: X1 carries the barrier
                         // the enclosing call established for a `!` in X0.
                         int barrier = (int)DerefCell(_engine.GetRegister(1)).AsInt;
                         if (!DispatchCall(code, 1, barrier))
                             return InterpreterResult.Failed;
                         break;
                     }
-                    // Chunk 130: thread the offending builtin's identity
+                    // thread the offending builtin's identity
                     // so a thrown error term reports the right culprit.
                     //   * engine.CurrentBuiltinName for direct
                     //     ShumwayPrologException(IsoError.X(..., engine))
@@ -1989,7 +1989,7 @@ public sealed class BytecodeInterpreter
                     //     overwrite the innermost throw's identity.
                     _engine.CurrentBuiltinName = entry.Name;
                     _engine.CurrentBuiltinArity = entry.Arity;
-                    // Chunk 218: the post-call_builtin address — backtrackable
+                    // the post-call_builtin address — backtrackable
                     // builtins (between, append, atom_concat, repeat, retract,
                     // …) capture this on first invocation and pass it to
                     // ResumeAtReturnPc on each retry success. Was previously
@@ -2027,7 +2027,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    // Chunk 429: deliberately AdvancePc, NOT SetPc(pc + 9) —
+                    // deliberately AdvancePc, NOT SetPc(pc + 9) —
                     // entry.Impl ran arbitrary builtin code between the pc
                     // capture and here, so the mechanical substitution's
                     // "P still equals pc" precondition can't be verified
@@ -2048,7 +2048,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
@@ -2058,7 +2058,7 @@ public sealed class BytecodeInterpreter
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     int headerIdx = _engine.MakePstr(ResolveLiteral(literalId));
                     _engine.SetRegister(arg, Cell.Ref(headerIdx));
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
@@ -2074,7 +2074,7 @@ public sealed class BytecodeInterpreter
                     // The cursor stays put: heap[UnifyPointer] now holds either the
                     // advanced PSTR header (still iterable) or the PSTR's tail value
                     // (so subsequent unify_nil / unify_value can match against it).
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
@@ -2090,7 +2090,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
@@ -2100,7 +2100,7 @@ public sealed class BytecodeInterpreter
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     int headerIdx = _engine.MakeFloat(ResolveFloatLiteral(literalId));
                     _engine.SetRegister(arg, Cell.Ref(headerIdx));
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
@@ -2128,7 +2128,7 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
@@ -2144,7 +2144,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
@@ -2153,7 +2153,7 @@ public sealed class BytecodeInterpreter
                     int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     _engine.SetRegister(arg, _engine.MakeBigInt(ResolveBigIntLiteral(literalId)));
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
@@ -2161,7 +2161,7 @@ public sealed class BytecodeInterpreter
                 {
                     int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                     Cell value = _engine.MakeBigInt(ResolveBigIntLiteral(literalId));
-                    // ADR-020 (Phase 33 fix): inside a reserve-upfront inline
+                    // ADR-020: inside a reserve-upfront inline
                     // build the value must land in the RESERVED arg slot, not
                     // at the heap top — a bigint cell is a single cell (the
                     // payload is the aux-table id / an immediate), so it slots
@@ -2190,7 +2190,7 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
@@ -2215,18 +2215,18 @@ public sealed class BytecodeInterpreter
                         case 4: Shumway.Builtins.ArithEvalStack.PushY(_engine, operand); break;
                         default: throw new InvalidOperationException($"Bad a_eval_push kind {kind}.");
                     }
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
                 case Opcode.AEvalBin:
                     Shumway.Builtins.ArithEvalStack.Bin(BytecodeIO.ReadInt32(code, pc + 1));
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
 
                 case Opcode.AEvalUn:
                     Shumway.Builtins.ArithEvalStack.Un(BytecodeIO.ReadInt32(code, pc + 1));
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
 
                 case Opcode.AEvalIs:
@@ -2245,7 +2245,7 @@ public sealed class BytecodeInterpreter
                         default: ok = Shumway.Builtins.ArithEvalStack.IsReg(_engine, target); break;
                     }
                     if (!ok) { if (!TryBacktrack()) return InterpreterResult.Failed; break; }
-                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;
                     break;
                 }
 
@@ -2255,7 +2255,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
 
                 case Opcode.AIntBin:
@@ -2271,7 +2271,7 @@ public sealed class BytecodeInterpreter
                         (packed >> 16) & 0xFF,                  // tKind
                         BytecodeIO.ReadInt32(code, pc + 13));   // tVal
                     if (!ok) { if (!TryBacktrack()) return InterpreterResult.Failed; break; }
-                    _engine.SetPc(pc + 17); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 17); inClause = true;
                     break;
                 }
 
@@ -2289,7 +2289,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 13); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + 13); inClause = true;
                     break;
                 }
 
@@ -2306,7 +2306,7 @@ public sealed class BytecodeInterpreter
                         _ => throw new InvalidOperationException(
                             $"Unknown meta sub-opcode 0x{(byte)sub:X2} at PC=0x{pc:X4}."),
                     };
-                    _engine.SetPc(pc + metaSize); inClause = true;   // chunk 429
+                    _engine.SetPc(pc + metaSize); inClause = true;
                     break;
                 }
 
@@ -2333,7 +2333,7 @@ public sealed class BytecodeInterpreter
     /// an IL delegate returns with <c>IlTailCallPending</c>, the helper
     /// repeats the dispatch on the new target — so a chain of IL
     /// predicates that each tail-call another stays entirely in IL
-    /// without bouncing through bytecode (chunk 47).</summary>
+    /// without bouncing through bytecode.</summary>
     private void DispatchToTier1OrBytecode(int target, bool tailCall)
     {
         _engine.Inferences++;   // time/1 goal-dispatch counter (Call + Execute)
@@ -2405,7 +2405,7 @@ public sealed class BytecodeInterpreter
     /// switch.</summary>
     private sealed class TopLevelFailure : Exception { }
 
-    /// <summary>Chunk 429 — peeled operand read. The hot handlers read their
+    /// <summary>peeled operand read. The hot handlers read their
     /// operands through the same single-buffer <c>codeArr</c> the dispatch loop
     /// already peeled for the opcode byte, instead of
     /// <see cref="BytecodeIO.ReadInt32(in ProgramView, int)"/>, which re-tests
@@ -2413,7 +2413,7 @@ public sealed class BytecodeInterpreter
     /// <c>in</c>-struct indirection. The JIT inlines this and can CSE the
     /// <c>Overflow is null</c> branch with the handler's surrounding peeled
     /// reads. The split-view case (Overflow non-null — only mid-query during
-    /// chunk-151b's persistent + per-query split) falls back to the routing
+    /// persistent + per-query split) falls back to the routing
     /// overload unchanged.</summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
@@ -2422,7 +2422,7 @@ public sealed class BytecodeInterpreter
             ? BytecodeIO.ReadInt32(codeArr, offset)
             : BytecodeIO.ReadInt32(code, offset);
 
-    /// <summary>Chunk 429 — peeled 8-byte operand read; see
+    /// <summary>peeled 8-byte operand read; see
     /// <see cref="ReadI32"/>. Worst pre-peel offender was
     /// <see cref="TryInlineCheckVisible"/>'s two ReadInt64s — 23.5M chain
     /// steps per Blint run.</summary>
@@ -2434,7 +2434,7 @@ public sealed class BytecodeInterpreter
             : BytecodeIO.ReadInt64(code, offset);
 
     /// <summary>Runs any <c>verify_attributes</c> wakeups queued by a
-    /// just-completed unification (chunk 80). Checked at every goal
+    /// just-completed unification. Checked at every goal
     /// boundary — Call / Execute / CallBuiltin / Proceed. The
     /// <c>'$wakeup_attributes'/1</c> driver runs in the *live* engine
     /// (via <see cref="RunGoalInEngine"/>) so the hooks observe the real
@@ -2443,7 +2443,7 @@ public sealed class BytecodeInterpreter
     /// triggering unification fails. A no-op (returns true) when nothing
     /// is queued, the overwhelmingly common case.
     ///
-    /// <para>Chunk 429: split into an aggressively-inlined guard over a
+    /// <para>split into an aggressively-inlined guard over a
     /// NoInlining slow body (the <see cref="Activation.FlushWakeupsForIlCut"/>
     /// precedent), so the 12 goal-boundary call sites pay only the inline
     /// queue-count check when nothing is queued instead of a call into a
@@ -2454,7 +2454,7 @@ public sealed class BytecodeInterpreter
         => !_engine.HasPendingWakeups || FlushPendingWakeupsSlow(code);
 
     /// <summary>Cold body of <see cref="FlushPendingWakeups"/> — only reached
-    /// when wakeups are actually queued (chunk 429).</summary>
+    /// when wakeups are actually queued.</summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private bool FlushPendingWakeupsSlow(ProgramView code)
@@ -2463,7 +2463,7 @@ public sealed class BytecodeInterpreter
         if (addrs is null || !addrs.ContainsKey(VerifyAttributesFunctorId))
         {
             // No verify_attributes/4 linked into this program — attributed
-            // variables stay hookless (the chunk-77 foundation).
+            // variables stay hookless (the foundation).
             _engine.ClearPendingWakeups();
             return true;
         }
@@ -2483,7 +2483,7 @@ public sealed class BytecodeInterpreter
         return ok;
     }
 
-    /// <summary>Drains the wakeup queue (chunk 80): for each batch, runs
+    /// <summary>Drains the wakeup queue: for each batch, runs
     /// every module's <c>verify_attributes/4</c> hook, then every goal
     /// the hooks returned — all in the live engine. A hook's goal can
     /// unify further attributed variables and queue more wakeups, so the
@@ -2544,7 +2544,7 @@ public sealed class BytecodeInterpreter
             || (cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId);
     }
 
-    /// <summary>Runs one goal term in the live engine (chunk 80). Handles
+    /// <summary>Runs one goal term in the live engine. Handles
     /// the <c>,/2</c> conjunction and the <c>true</c> / <c>fail</c>
     /// constants; any other goal is dispatched as a plain call — a
     /// builtin runs directly, a user/prelude predicate runs via
@@ -2589,7 +2589,7 @@ public sealed class BytecodeInterpreter
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
         {
             var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-            _engine.CurrentBuiltinName = entry.Name;        // chunk 130
+            _engine.CurrentBuiltinName = entry.Name;
             _engine.CurrentBuiltinArity = entry.Arity;
             try { return entry.Impl(_engine); }
             catch (PrologRuntimeException re)
@@ -2604,12 +2604,12 @@ public sealed class BytecodeInterpreter
         int lateAddr = _engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
         if (lateAddr >= 0) return RunGoalInEngine(code, lateAddr);
 
-        // Chunk 417: honour the `unknown` flag (throws on error).
+        // honour the `unknown` flag (throws on error).
         return !Shumway.Core.UnknownProcedure.Fails(_engine, functorId);
     }
 
-    /// <summary>Backtrackable runtime dispatch for <c>call/1..7</c> (chunk
-    /// 86). The goal in <c>X0</c> — with <c>call/N</c>'s extra arguments
+    /// <summary>Backtrackable runtime dispatch for <c>call/1..7</c>.
+    /// The goal in <c>X0</c> — with <c>call/N</c>'s extra arguments
     /// <c>X1..X[callArity-1]</c> appended — is decoded and run as a real
     /// goal in the live engine: a user or prelude predicate is entered with
     /// a tail jump so it keeps its choice points and the call's
@@ -2618,7 +2618,7 @@ public sealed class BytecodeInterpreter
     /// <c>$call_disj</c>, <c>$call_arrow</c>, <c>$call_neg</c> helpers.
     ///
     /// <para><paramref name="barrier"/> is the choice-point level a
-    /// <c>!</c> reached as the goal cuts back to (chunk 88). For a
+    /// <c>!</c> reached as the goal cuts back to. For a
     /// top-level <c>call/N</c> it is B at entry, so a bare <c>call(!)</c>
     /// is a no-op; the conj/disj/arrow helpers thread it on through
     /// <c>'$call'/2</c> so a <c>!</c> inside a runtime compound goal
@@ -2628,7 +2628,7 @@ public sealed class BytecodeInterpreter
     /// point remains).</para></summary>
     private bool DispatchCall(ProgramView code, int callArity, int barrier)
     {
-        // Chunk 406 sizing (profile builds only): how many goals are dispatched by
+        // Sizing diagnostic (profile builds only): how many goals are dispatched by
         // runtime term inspection — the cost class the link-time meta-wrapper
         // unfold (ADR-021 candidate #2) removes.
         Shumway.Core.Profiler.Note("meta_dispatch (DispatchCall)");
@@ -2676,7 +2676,7 @@ public sealed class BytecodeInterpreter
         for (int i = 0; i < extraCount; i++)
             _engine.SetRegister(goalArity + i, extra[i]);
 
-        // Chunk 416 — route cache. A repeat goal functor skips the intern,
+        // route cache. A repeat goal functor skips the intern,
         // the control-construct compares and the registry/address probes.
         // See MetaRoute.cs for the lifetime/soundness argument.
         var addresses = _engine.CurrentFunctorAddresses;
@@ -2722,7 +2722,7 @@ public sealed class BytecodeInterpreter
         // A control construct in a runtime goal routes to its prelude
         // helper. conj/disj/arrow are cut-transparent, so they take the
         // barrier as a third argument (X2): a `!` threaded down through
-        // them commits to the enclosing call (chunk 88). \+ is opaque to
+        // them commits to the enclosing call. \+ is opaque to
         // cut, so $call_neg needs no barrier.
         var userKind = Shumway.Core.MetaRouteKind.Jump;
         if (functorId == ConjFunctorId)
@@ -2753,7 +2753,7 @@ public sealed class BytecodeInterpreter
         }
 
         // ! as the whole goal: commit to the barrier the enclosing call
-        // established (chunk 88). For a top-level call(!) the barrier is B
+        // established. For a top-level call(!) the barrier is B
         // at call entry, so Cut() removes nothing; for a `!` threaded in
         // from a $call_* helper it cuts the runtime goal's choice points,
         // and no further — the parent's CPs sit at or below the barrier.
@@ -2813,20 +2813,20 @@ public sealed class BytecodeInterpreter
         if (lateHelper >= 0) return JumpToUserGoal(code, pc, lateHelper);
 
         // No negative caching: an unresolved functor can become resolvable
-        // later in the same query (chunk-207 auto-promotion).
-        // Chunk 417: honour the `unknown` flag (throws on error).
+        // later in the same query (auto-promotion).
+        // honour the `unknown` flag (throws on error).
         if (Shumway.Core.UnknownProcedure.Fails(_engine, functorId))
             return TryBacktrack();
         throw PrologRuntimeException.UndefinedProcedure(functorId);   // unreachable
     }
 
     /// <summary>Invokes a builtin reached as a runtime meta-call goal
-    /// (chunk 416 — shared by DispatchCall's slow path and its cached
+    /// (shared by DispatchCall's slow path and its cached
     /// Builtin/DollarCall routes).</summary>
     private bool InvokeBuiltinGoal(int builtinId)
     {
         var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-        _engine.CurrentBuiltinName = builtin.Name;      // chunk 130
+        _engine.CurrentBuiltinName = builtin.Name;
         _engine.CurrentBuiltinArity = builtin.Arity;
         bool ok;
         try { ok = builtin.Impl(_engine); }
@@ -2839,7 +2839,7 @@ public sealed class BytecodeInterpreter
     }
 
     /// <summary>Transfers control to a user predicate reached as a runtime
-    /// meta-call goal (chunk 416 — shared by DispatchCall's slow path and
+    /// meta-call goal (shared by DispatchCall's slow path and
     /// its cached Jump/BarrierHelperJump routes).</summary>
     private bool JumpToUserGoal(ProgramView code, int pc, int address)
     {
@@ -2865,7 +2865,7 @@ public sealed class BytecodeInterpreter
     private Cell DerefCell(Cell c) =>
         c.Tag == Tag.Ref ? _engine.GetHeap(_engine.Deref(c.AsHeapIndex)) : c;
 
-    /// <summary>Phase 19+ — when a Call/Execute target is an
+    /// <summary>When a Call/Execute target is an
     /// unresolved-procedure sentinel baked into the bytecode at link
     /// time, check whether the predicate has been auto-promoted
     /// mid-query (the <c>implicit_dynamic</c> flag's runtime path
@@ -2896,7 +2896,7 @@ public sealed class BytecodeInterpreter
                 && latest < prog.Length
                 && (Opcode)prog[latest] == Opcode.EnterDynamic)
                 return latest;
-            // Phase 33 — a mid-query consult (consult/1 from a live query)
+            // a mid-query consult (consult/1 from a live query)
             // live-links STATIC predicates into the running query's code
             // space; a call site compiled at THIS query's setup (before the
             // consult) baked the undefined sentinel for them. The consult
@@ -2908,7 +2908,7 @@ public sealed class BytecodeInterpreter
             if (_engine.LiveConsultVisibleFids is { } visible
                 && visible.Contains(fid))
                 return latest;
-            // Chunk 402: a --strip-wam predicate has no WAM address; its map entry is
+            // a --strip-wam predicate has no WAM address; its map entry is
             // a resume MARKER (a standalone delegate's (fid, 0), or a region member's
             // (rootFid, memberEntryCursor) alias). Accept it — the Call/Execute handler
             // SetPc's it and the dispatch loop's marker route invokes the IL. Module
@@ -2922,14 +2922,14 @@ public sealed class BytecodeInterpreter
         // DIFFERENT activation — materialize it into this one on demand.
         int late = _engine.ResolveLateHelper?.Invoke(fid) ?? -1;
         if (late >= 0) return late;
-        // Chunk 417: honour the `unknown` flag — error throws here,
+        // honour the `unknown` flag — error throws here,
         // fail/warning hand the caller the fail sentinel.
         if (Shumway.Core.UnknownProcedure.Fails(_engine, fid))
             return UnknownFailTarget;
         throw PrologRuntimeException.UndefinedProcedure(fid);   // unreachable
     }
 
-    /// <summary>Chunk 417 — sentinel returned by
+    /// <summary>sentinel returned by
     /// <see cref="ResolveTargetMaybeAutoPromoted"/> when the target is an
     /// undefined procedure and the <c>unknown</c> flag says fail: the
     /// Call/Execute handlers backtrack instead of dispatching.</summary>
@@ -2942,7 +2942,7 @@ public sealed class BytecodeInterpreter
     /// choice points or fails: a backtrack floor pins inner backtracking
     /// at the entry choice-point level, and on success any choice points
     /// the goal left are cut away (once semantics). Returns true iff the
-    /// goal succeeded. The caller saves/restores X registers (chunk 80).</summary>
+    /// goal succeeded. The caller saves/restores X registers.</summary>
     private bool RunGoalInEngine(ProgramView code, int target)
     {
         int savedPc    = _engine.P;
@@ -2977,7 +2977,7 @@ public sealed class BytecodeInterpreter
     }
 
     /// <summary>
-    /// Chunk 221 peephole fusion. Called by the {Try,Retry,Trust}MeElse
+    /// Peephole fusion. Called by the {Try,Retry,Trust}MeElse
     /// handlers after they've done their choice-point work and computed
     /// the cursor of the byte that follows the dispatch opcode.
     ///
@@ -2995,7 +2995,7 @@ public sealed class BytecodeInterpreter
     /// chain step adds up on dynamic-predicate-heavy workloads
     /// (Blint saw 23.5M direct dispatch→CheckVisible pairs / run).</para>
     /// </summary>
-    /// <param name="deadSkipTo">Chunk 403 — the dispatch opcode's own <c>next</c>
+    /// <param name="deadSkipTo">the dispatch opcode's own <c>next</c>
     /// operand (the following chain entry), or -1 (trust_me, no next). When the
     /// visibility check fails and this is >= 0, jump STRAIGHT to the next entry
     /// instead of failing into a full backtrack: the check is the FIRST thing after
@@ -3018,22 +3018,20 @@ public sealed class BytecodeInterpreter
             _engine.SetPc(afterPc);
             return true;
         }
-        long born = ReadI64(code, codeArr, afterPc + 1);   // chunk 429 — peeled
+        long born = ReadI64(code, codeArr, afterPc + 1);   // peeled
         long died = ReadI64(code, codeArr, afterPc + 9);
         long g = _engine.CurrentViewGen;
         if (born > g || died <= g)
         {
             if (deadSkipTo < 0) return false;        // trust_me: genuine fail
-            // (Chunk 404's in-place tombstone unlink that used to run here was
-            // REVERTED in chunk 410: it corrupted Blint's dynamic unget-buffer
-            // tokenization — found via the mini.pl repro + a worktree bisect that
-            // pinned the regression to 404 exactly; its measured wall-clock win
-            // was neutral, so the complexity wasn't paying for the risk. The
-            // chunk-403 direct dead-entry jump below is kept — bisected clean.)
+            // (An in-place tombstone unlink used to run here; it was
+            // REVERTED — it corrupted dynamic unget-buffer tokenization
+            // and its wall-clock win was neutral. The direct dead-entry
+            // jump below is kept — bisected clean.)
             _engine.SetPc(deadSkipTo);
             return true;
         }
-        // Phase 33 — the last clause of a dynamic chain terminates at the
+        // the last clause of a dynamic chain terminates at the
         // fail-stub, so its chain instruction is `retry_me_else <fail-stub>`
         // (never `trust_me`). A bare push/retry therefore leaves a choice
         // point whose only alternative is `call_builtin fail/0` — harmless on
@@ -3058,15 +3056,15 @@ public sealed class BytecodeInterpreter
         return true;
     }
 
-    /// <summary>Chunk 415 — unify-run fusion. After a unify-family opcode
+    /// <summary>unify-run fusion. After a unify-family opcode
     /// succeeds, the head/argument-matching code is almost always a RUN of more
     /// unify-family opcodes (Blint pairs: unify_list→unify_atom 945K,
     /// unify_atom→unify_list 782K, get_list→unify_value_x 666K, …): consume the
     /// whole run here in a tight loop with a small switch instead of going back
     /// around the main dispatch loop (marker check + bounds check + split-view
     /// branch + the big switch) once per opcode. Bodies are EXACT MIRRORS of the
-    /// main-loop cases — keep them in sync when touching either (the chunk-221
-    /// precedent). Chunk 429 closes the fusion gaps: <c>unify_variable_y</c>,
+    /// main-loop cases — keep them in sync when touching either.
+    /// <c>unify_variable_y</c>,
     /// <c>unify_value_y</c> and <c>unify_structure</c> are in the run switch too
     /// (mirrored from the main loop, including the ReservedWrite / ADR-020
     /// branches and UnifyVariableY's AttVar capture), and their main-loop cases
@@ -3085,7 +3083,7 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyVariableX:
                 {
                     Shumway.Core.Profiler.Opcode(op);
-                    int target = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int target = ReadI32(code, codeArr, pc + 1);
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyVariableX(target);
@@ -3108,7 +3106,7 @@ public sealed class BytecodeInterpreter
                     pc += 5;
                     continue;
                 }
-                case Opcode.UnifyVariableY:   // chunk 429 — mirror of the main-loop case
+                case Opcode.UnifyVariableY:   // mirror of the main-loop case
                 {
                     Shumway.Core.Profiler.Opcode(op);
                     int target = ReadI32(code, codeArr, pc + 1);
@@ -3127,7 +3125,7 @@ public sealed class BytecodeInterpreter
                     else
                     {
                         // See UnifyVariableX: a bare ATTVAR is captured
-                        // as a REF to its home. (chunk 77)
+                        // as a REF to its home.
                         Cell src = _engine.GetHeap(ptr);
                         _engine.SetY(target,
                             src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
@@ -3139,7 +3137,7 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyValueX:
                 {
                     Shumway.Core.Profiler.Opcode(op);
-                    int src = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int src = ReadI32(code, codeArr, pc + 1);
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyValueX(src);
@@ -3160,7 +3158,7 @@ public sealed class BytecodeInterpreter
                     pc += 5;
                     continue;
                 }
-                case Opcode.UnifyValueY:   // chunk 429 — mirror of the main-loop case
+                case Opcode.UnifyValueY:   // mirror of the main-loop case
                 {
                     Shumway.Core.Profiler.Opcode(op);
                     int src = ReadI32(code, codeArr, pc + 1);
@@ -3188,7 +3186,7 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyAtom:
                 {
                     Shumway.Core.Profiler.Opcode(op);
-                    Cell value = Cell.Atom(ReadI32(code, codeArr, pc + 1));   // chunk 429
+                    Cell value = Cell.Atom(ReadI32(code, codeArr, pc + 1));
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyArgCell(value);
@@ -3212,7 +3210,7 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyInteger:
                 {
                     Shumway.Core.Profiler.Opcode(op);
-                    Cell value = Cell.Int(ReadI32(code, codeArr, pc + 1));   // chunk 429
+                    Cell value = Cell.Int(ReadI32(code, codeArr, pc + 1));
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyArgCell(value);
@@ -3264,7 +3262,7 @@ public sealed class BytecodeInterpreter
                     pc += 1;
                     continue;
                 }
-                case Opcode.UnifyStructure:   // chunk 429 — mirror of the main-loop case
+                case Opcode.UnifyStructure:   // mirror of the main-loop case
                 {
                     Shumway.Core.Profiler.Opcode(op);
                     int functorId = ReadI32(code, codeArr, pc + 1);
@@ -3275,7 +3273,7 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyVoid:
                 {
                     Shumway.Core.Profiler.Opcode(op);
-                    int count = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    int count = ReadI32(code, codeArr, pc + 1);
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyVoid(count);
@@ -3301,7 +3299,7 @@ public sealed class BytecodeInterpreter
         return true;
     }
 
-    /// <summary>Chunk 415 — clause-prologue / call-setup move runs. Consecutive
+    /// <summary>clause-prologue / call-setup move runs. Consecutive
     /// <c>get_variable_y</c> (save args to permanents at clause entry: Blint
     /// pairs 862K+578K+294K) and consecutive <c>put_value_y</c> (load call args
     /// from permanents: 677K) never fail — fuse each run into one dispatch.
@@ -3312,7 +3310,7 @@ public sealed class BytecodeInterpreter
                && (code.Overflow is null ? codeArr[pc] : code[pc]) == (byte)Opcode.GetVariableY)
         {
             Shumway.Core.Profiler.Opcode((byte)Opcode.GetVariableY);
-            int slot = ReadI32(code, codeArr, pc + 1);   // chunk 429
+            int slot = ReadI32(code, codeArr, pc + 1);
             int arg = ReadI32(code, codeArr, pc + 5);
             _engine.SetY(slot, _engine.GetRegister(arg));
             pc += 9;
@@ -3326,7 +3324,7 @@ public sealed class BytecodeInterpreter
                && (code.Overflow is null ? codeArr[pc] : code[pc]) == (byte)Opcode.PutValueY)
         {
             Shumway.Core.Profiler.Opcode((byte)Opcode.PutValueY);
-            int slot = ReadI32(code, codeArr, pc + 1);   // chunk 429
+            int slot = ReadI32(code, codeArr, pc + 1);
             int arg = ReadI32(code, codeArr, pc + 5);
             _engine.SetRegister(arg, _engine.GetY(slot));
             pc += 9;
@@ -3338,11 +3336,11 @@ public sealed class BytecodeInterpreter
     {
         Shumway.Core.Profiler.Backtrack();
         // Wakeups belong to the computation being abandoned — drop any
-        // that a failed clause queued but never ran (chunk 78).
+        // that a failed clause queued but never ran.
         _engine.ClearPendingWakeups();
         // Loop so that an IL retry that itself fails immediately falls
         // through to the next choice point without burning stack. The
-        // floor (chunk 80) keeps an in-engine sub-goal's backtracking
+        // floor keeps an in-engine sub-goal's backtracking
         // from unwinding choice points the outer computation owns.
         while (_engine.B > _backtrackFloor)
         {
@@ -3367,7 +3365,7 @@ public sealed class BytecodeInterpreter
                 var (del, cursor) = _engine.PopIlChoicePointAndRestore();
                 if (del(_engine, cursor))
                 {
-                    // Success: if the IL signalled a tail-call (chunk 47),
+                    // Success: if the IL signalled a tail-call,
                     // leave Pc alone so the next dispatch picks up at the
                     // tail-call target. Otherwise resume at the caller's
                     // continuation, just like bytecode proceed would.
@@ -3402,7 +3400,7 @@ public sealed class BytecodeInterpreter
     private Cell DerefA1() => DerefArg(0);
 
     /// <summary>Generalised <see cref="DerefA1"/>: returns the deref'd cell at
-    /// <c>X[argIdx]</c>. The multi-arg indexing opcodes (chunk 67) read
+    /// <c>X[argIdx]</c>. The multi-arg indexing opcodes read
     /// arbitrary <c>A[k]</c> rather than just A1.</summary>
     private Cell DerefArg(int argIdx)
     {

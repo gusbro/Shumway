@@ -1,7 +1,7 @@
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 243 — opts a single field or property <em>out</em> of the
+/// opts a single field or property <em>out</em> of the
 /// <see cref="PrologTermAttribute"/> mapping. Useful when a
 /// <c>[PrologTerm]</c> class carries .NET-side state that the
 /// Prolog representation shouldn't include — auditing fields,

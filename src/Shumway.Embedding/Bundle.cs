@@ -10,7 +10,7 @@ public sealed class Bundle
 {
     public IReadOnlyList<BundleEntry> Entries { get; }
 
-    /// <summary>Chunk 247 — names of .NET assemblies (file names,
+    /// <summary>names of .NET assemblies (file names,
     /// no path) shipped alongside the bundle that contain
     /// <c>[PrologPredicate]</c>-decorated static methods. The
     /// linker records these so the runtime
@@ -29,7 +29,7 @@ public sealed class Bundle
     /// bundles linked without <c>--native-dll</c>.</summary>
     public IReadOnlyList<string> NativeLibraries { get; }
 
-    /// <summary>Save-state chunk 264 — non-null when this bundle was
+    /// <summary>Save-state non-null when this bundle was
     /// produced by <see cref="PrologEngine.SaveState"/> rather than
     /// the regular shumway-link path. Carries consult history +
     /// dynamic clauses; <see cref="PrologEngine.RestoreState"/>
@@ -110,7 +110,7 @@ public sealed class BundleArchiveMember
 /// present, future runtime paths can use it to skip parser / compiler work
 /// at consult time.
 ///
-/// <para><see cref="CompiledIl"/> (chunk 71) optionally holds a persisted
+/// <para><see cref="CompiledIl"/> optionally holds a persisted
 /// .NET assembly (.dll bytes) emitted by
 /// <c>Shumway.Compiler.Il.PersistedIlBuilder</c>. When present, the load
 /// path resolves each emitted predicate's <c>MethodInfo</c> and binds it
@@ -124,7 +124,7 @@ public sealed class BundleEntry
     public byte[]? CompiledBytecode { get; }
     public byte[]? CompiledIl { get; }
 
-    /// <summary>Phase 17 — patch table for <see cref="CompiledIl"/>.
+    /// <summary>patch table for <see cref="CompiledIl"/>.
     /// Encoded via <see cref="IlPatchSiteCodec.Encode"/>. The persisted
     /// .dll bakes every atom-id / functor-id / resume-marker constant
     /// as a unique sentinel int (drawn from a reserved range); the
@@ -133,11 +133,11 @@ public sealed class BundleEntry
     /// <see cref="PrologEngine.LoadBundle"/> reads the table, interns
     /// each name in the current process to get the runtime id, and
     /// overwrites the four bytes at the recorded offset before
-    /// <c>Assembly.Load</c>. Empty for bundles built before Phase 17
+    /// <c>Assembly.Load</c>. Empty for bundles built without persisted IL
     /// or without IL.</summary>
     public byte[]? CompiledIlPatches { get; }
 
-    /// <summary>Phase 17 — per-method (slot, name, arity, method-name)
+    /// <summary>per-method (slot, name, arity, method-name)
     /// table for the persisted IL. <see cref="PrologEngine.LoadBundle"/>
     /// uses this to register each delegate under the
     /// <em>runtime</em>-process functor id (intern name+arity in the
@@ -146,7 +146,7 @@ public sealed class BundleEntry
     /// <see cref="IlPersistedEntryCodec.Encode"/>.</summary>
     public byte[]? CompiledIlEntries { get; }
 
-    /// <summary>Chunk 178: per-predicate visibility list. Carries
+    /// <summary>per-predicate visibility list. Carries
     /// over the <see cref="ShmoObject.Defined"/> from each contributing
     /// .shmo. Used by <see cref="PrologEngine.LoadBundle(Bundle)"/>
     /// when the source is stripped: the engine has no source to
@@ -159,7 +159,7 @@ public sealed class BundleEntry
     /// empty.</summary>
     public IReadOnlyList<ShmoDefinedPredicate> Defined { get; }
 
-    /// <summary>Chunk 209 — clauses for <c>:- dynamic foo/N.</c>
+    /// <summary>clauses for <c>:- dynamic foo/N.</c>
     /// predicates carried as <see cref="TermCodec"/>-encoded blobs.
     /// See <see cref="ShmoObject.DynamicSeeds"/> for rationale.
     /// <see cref="PrologEngine.LoadBundle(Bundle)"/> deserialises each
@@ -211,7 +211,7 @@ public sealed class BundleEntry
     /// <see cref="ShmoObject.NativeDecls"/>).</summary>
     public string? NativeDecls { get; }
 
-    /// <summary>Phase 33 (PrologToC) — the module's <c>:- op/3</c> definitions
+    /// <summary>The module's <c>:- op/3</c> definitions
     /// (see <see cref="ShmoObject.Operators"/>), replayed into the engine's
     /// operator table at <c>LoadBundle</c>.</summary>
     public IReadOnlyList<ShmoOperatorDef> Operators { get; }

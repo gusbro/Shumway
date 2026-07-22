@@ -6,8 +6,8 @@ using Shumway.Core;
 namespace Shumway.Compiler.Il;
 
 /// <summary>
-/// A REGION for flat local code-space compilation (Phase 29,
-/// <c>docs/design/il-region-compilation.md</c>): a root predicate plus its
+/// A REGION for flat local code-space compilation
+/// (<c>docs/design/il-region-compilation.md</c>): a root predicate plus its
 /// transitively-reachable LOCAL callees, up to an IL-size budget. A later stage
 /// compiles the whole region into ONE IL method where each member is a labeled
 /// block emitted ONCE and an intra-region call is a <c>br</c> (a cheap
@@ -118,7 +118,7 @@ internal static class IlRegionBuilder
 
     /// <summary>A region member must be a static IL body: non-empty and NOT a
     /// dynamic predicate (whose bytecode opens with <c>enter_dynamic</c> —
-    /// mutation-driven dispatch must stay Tier 0, chunk 159). Public-vs-local and
+    /// mutation-driven dispatch must stay Tier 0). Public-vs-local and
     /// full IL-eligibility are the caller's <c>extraEligible</c> filter (it needs
     /// the linker's visibility map / the compiler instance).</summary>
     private static bool IsStructurallyEligible(CompiledPredicate p)
@@ -134,7 +134,7 @@ internal enum RegionCursorKind
     /// <summary>The continuation after an INTRA-region call (the callee's block
     /// runs via a <c>br</c>; its proceed returns here through the dispatch switch).</summary>
     IntraCallReturn,
-    /// <summary>The forward-resume point after a CROSS-region call (the Phase-16
+    /// <summary>The forward-resume point after a CROSS-region call (the
     /// trampoline returns to the loop, which re-enters here).</summary>
     CrossCallResume,
     /// <summary>A non-first clause of a MULTI-clause member (Stage 4). The member's
@@ -147,7 +147,7 @@ internal enum RegionCursorKind
     /// that node. One cursor per <see cref="IlIndexedDispatchInfo"/> node; the node
     /// index rides in <see cref="RegionCursorSite.ClauseIndex"/>.</summary>
     IndexNode,
-    /// <summary>A non-root member's ENTRY (chunk 402). Lets an EXTERNAL by-fid call
+    /// <summary>A non-root member's ENTRY. Lets an EXTERNAL by-fid call
     /// dispatch INTO the region at that member — the load path maps a stripped
     /// member's functor to <c>EncodeResumeMarker(rootFid, thisCursor)</c> in
     /// <c>CurrentFunctorAddresses</c>, and the dispatch loop's marker route invokes
@@ -155,14 +155,13 @@ internal enum RegionCursorKind
     /// label (no separate block); assigned AFTER all other cursors so the existing
     /// site-consumption order is untouched.</summary>
     MemberEntry,
-    /// <summary>Chunk 424 — the post-site resume point of a backtrackable builtin
+    /// <summary>The post-site resume point of a backtrackable builtin
     /// (<c>between/3</c>, <c>retract/1</c>, …) or a runtime meta-call
     /// (<c>call/N</c>, <c>'$call'/2</c>) inside a member's body. A backtrackable
     /// builtin's choice-point closure calls <c>ResumeAtReturnPc</c> with
-    /// <c>EncodeResumeMarker(rootFid, thisCursor)</c> (the chunk-218 mechanism, with
-    /// the REGION's fid+cursor instead of a standalone predicate's); a non-tail
-    /// meta-call threads its dispatch with <c>Cp</c> set to the same marker
-    /// (chunk-182). Either way the dispatch loop re-enters the region method here.
+    /// <c>EncodeResumeMarker(rootFid, thisCursor)</c> (the REGION's fid+cursor
+    /// instead of a standalone predicate's); a non-tail meta-call threads its
+    /// dispatch with <c>Cp</c> set to the same marker. Either way the dispatch loop re-enters the region method here.
     /// Keyed by (member, pc) like the call cursors.</summary>
     BuiltinResume,
 }
@@ -203,7 +202,7 @@ internal sealed class IlRegionPlan
 /// each the next cursor (intra-region → a return continuation; cross-region → a
 /// trampoline resume). Tail <c>Execute</c> sites take no cursor (intra-region is a
 /// <c>br</c>; cross-region is a tail trampoline) — so the region model needs no
-/// chunk-368-style un-tailing.</summary>
+/// un-tailing.</summary>
 internal static class IlRegionPlanner
 {
     /// <param name="indexNodeCount">For an INDEXED member, the number of dispatch
@@ -211,7 +210,7 @@ internal static class IlRegionPlanner
     /// <see cref="RegionCursorKind.IndexNode"/> cursor instead of the try_me_else
     /// chain's clause-alt cursors. Returns 0 for a non-indexed member. Null (the
     /// default) means no member is indexed — the pre-Stage-6c behaviour.</param>
-    /// <param name="builtinResumePcs">Chunk 424 — per member, the (sorted) byte
+    /// <param name="builtinResumePcs">Per member, the (sorted) byte
     /// offsets of <c>CallBuiltin</c> sites that need a
     /// <see cref="RegionCursorKind.BuiltinResume"/> cursor: backtrackable builtins
     /// and runtime meta-calls. Null means none (the pre-424 behaviour). The
@@ -248,7 +247,7 @@ internal static class IlRegionPlanner
                 sites.Add(new RegionCursorSite(cursor++, RegionCursorKind.ClauseAlt, mi, -1, -1, c));
             // Body-site cursors in pc order — the emit walks bytecode forward, so
             // cursor numbers must follow the byte offsets. Two site kinds merge here:
-            // non-tail Call sites (intra return / cross resume) and chunk-424
+            // non-tail Call sites (intra return / cross resume) and
             // builtin-resume sites (backtrackable / meta CallBuiltin).
             var ordered = new List<CallSite>(member.CallSites);
             ordered.Sort((x, y) => x.OpcodeOffset.CompareTo(y.OpcodeOffset));
@@ -270,7 +269,7 @@ internal static class IlRegionPlanner
                 sites.Add(new RegionCursorSite(cursor++,
                     RegionCursorKind.BuiltinResume, mi, bpcs[bi++], -1));
         }
-        // Chunk 402: one MemberEntry cursor per NON-root member (the root is cursor 0),
+        // One MemberEntry cursor per NON-root member (the root is cursor 0),
         // assigned after every other cursor so the emit's existing consumption order is
         // untouched. The cursor's switch slot points at the member's entry label, making
         // the member externally callable by fid via a resume-marker alias — the

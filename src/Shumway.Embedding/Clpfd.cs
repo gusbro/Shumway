@@ -16,19 +16,19 @@ namespace Shumway.Embedding;
 /// variable to an integer fires the <c>verify_attributes/4</c> hook,
 /// which checks domain membership and re-runs the propagators.</para>
 ///
-/// <para>Chunk 89 delivers the core plus the six arithmetic constraints
+/// <para>The library delivers the core plus the six arithmetic constraints
 /// <c>#=</c>, <c>#\=</c>, <c>#&lt;</c>, <c>#&gt;</c>, <c>#=&lt;</c>,
 /// <c>#&gt;=</c> over additive expressions (<c>+</c>, <c>-</c>, unary
-/// <c>-</c>). Chunk 90 adds multiplication (<c>*</c>) with bounds
+/// <c>-</c>); multiplication (<c>*</c>) with bounds
 /// consistency and the labeling predicates <c>label/1</c>,
 /// <c>labeling/2</c> (options <c>leftmost</c>/<c>ff</c> and
-/// <c>up</c>/<c>down</c>) and <c>indomain/1</c>. Chunk 91 adds the
+/// <c>up</c>/<c>down</c>) and <c>indomain/1</c>; the
 /// <c>all_different/1</c> / <c>all_distinct/1</c> global constraint and
 /// reification: <c>#&lt;==&gt;</c>, <c>#==&gt;</c>, <c>#&lt;==</c> and
-/// the boolean connectives <c>#/\</c>, <c>#\/</c>, <c>#\</c>. Chunk 92
-/// adds the remaining arithmetic expression functions <c>min</c>,
+/// the boolean connectives <c>#/\</c>, <c>#\/</c>, <c>#\</c>;
+/// the remaining arithmetic expression functions <c>min</c>,
 /// <c>max</c>, <c>abs</c> and <c>//</c>, and the <c>sum/3</c>
-/// constraint. Chunk 93 completes CLP(FD): <c>all_distinct/1</c> gains
+/// constraint; and <c>all_distinct/1</c> with
 /// Hall-interval pruning, <c>scalar_product/4</c> is added, and
 /// <c>//</c> accepts a variable divisor.</para>
 /// </summary>
@@ -97,7 +97,7 @@ internal static class Clpfd
         :- public '#\\/'/2.
         :- public '#\\'/1.
 
-        % GNU-Prolog FD compatibility shim (Phase 28): the ExamplesFD corpus
+        % GNU-Prolog FD compatibility shim: the ExamplesFD corpus
         % uses GProlog's fd_* primitives, which map onto the SWI/SICStus-style
         % clpfd above. Aliases so those programs run unchanged.
         :- public fd_domain/3.
@@ -122,7 +122,7 @@ internal static class Clpfd
         % ===== bound order: inf < every integer < sup =====
         % clpfd_ble/blt/bmin/bmax, clpfd_add_lo/hi, clpfd_sub_lo/hi, clpfd_bneg,
         % clpfd_bmul, clpfd_bfloordiv, clpfd_bceildiv are now native builtins
-        % (FdBoundBuiltins, Phase 28): a bound is a plain long with inf/sup as
+        % (FdBoundBuiltins): a bound is a plain long with inf/sup as
         % the long sentinels, so the chain of `A == inf` / `B == sup` tests that
         % dominated FD solving (≈1.36M ==/2 calls on alpha) becomes one native
         % comparison. Removing the Prolog clauses lets the module-local calls
@@ -135,14 +135,14 @@ internal static class Clpfd
             ; R is C // K
             ).
 
-        % ===== domains: opaque C# interval objects (Phase 28) =====
+        % ===== domains: opaque C# interval objects =====
         % A domain is now a single immutable C# object (a Foreign cell), not a
         % Prolog interval list. The dom_* helpers are thin wrappers over the
         % native $dom_* builtins, so every propagator that calls them is
         % unchanged; only the few predicates that destructured the interval list
         % (narrow, $fd_set, labeling enumeration, reification, projection) are
         % rewritten below. Profiling showed the interpreted interval walking
-        % dominated FD solving (chunk 342).
+        % dominated FD solving.
         clpfd_universal(D)        :- '$dom_universal'(D).
         clpfd_iv(L, H, IV)        :- '$dom_new'(L, H, IV).
         clpfd_dom_min(D, L)       :- '$dom_min'(D, L).
@@ -370,7 +370,7 @@ internal static class Clpfd
         % (e.g. donald's D appears three times) and prunes each variable against
         % every other at once. clpfd_norm FAILS on a non-linear expression
         % (var*var, //, min/max/abs, **), so the fallback clause keeps the
-        % chunk-89..93 decomposition for those.
+        % decomposition for those.
         '#='(L, R)  :- clpfd_norm(L, R, Terms, Const), clpfd_worth_linear(Terms), !, RHS is -Const, clpfd_post_lin(Terms, =, RHS).
         '#='(L, R)  :- clpfd_expr(L, X), clpfd_expr(R, Y), X = Y.
         '#\\='(L, R) :- clpfd_expr(L, X), clpfd_expr(R, Y), clpfd_post('$fd_neq'(X, Y), [X, Y]).
@@ -825,7 +825,7 @@ internal static class Clpfd
         clpfd_makevars([X|Xs]) :- clpfd_makevar(X), clpfd_makevars(Xs).
 
         % all_distinct's Hall-interval pruning. The O(n^3) interval search runs
-        % natively ($fd_hall, chunk 345): it reads the variables' current domains
+        % natively ($fd_hall): it reads the variables' current domains
         % and returns the shrunk domain for every variable a saturated Hall
         % interval pruned (or fails on a pigeonhole violation). Narrowing — and
         % the re-propagation it drives — stays in the engine: clpfd_narrow each
@@ -961,7 +961,7 @@ internal static class Clpfd
             ; E = unknown
             ).
 
-        % ===== GNU-Prolog FD compatibility shim (Phase 28) =====
+        % ===== GNU-Prolog FD compatibility shim =====
         % Aliases mapping GProlog's fd_* primitives onto the clpfd above, so the
         % ExamplesFD corpus runs unchanged. fd_domain/labeling/all_different are
         % direct renames; fd_atmost/exactly/only_one/at_most_one are reified
@@ -973,7 +973,7 @@ internal static class Clpfd
         fd_labelingff(Vars) :-
             ( is_list(Vars) -> labeling([ff], Vars) ; labeling([ff], [Vars]) ).
         % GProlog's fd_all_different maps to pairwise all_different, not the
-        % stronger all_distinct (native Hall, chunk 345). Even with native Hall,
+        % stronger all_distinct (native Hall). Even with native Hall,
         % its O(n^3) re-fire on every domain change costs more than pairwise's
         % fire-on-grounding on the crypt-arithmetic corpus (alpha ff ~3s vs ~7s),
         % and the extra pruning does NOT make alpha's leftmost labelling feasible

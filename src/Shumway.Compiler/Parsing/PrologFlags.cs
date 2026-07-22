@@ -24,18 +24,18 @@ public enum DoubleQuotesMode
 }
 
 /// <summary>
-/// Mutable, parser-visible flag state (chunk 58). The host engine owns
+/// Mutable, parser-visible flag state. The host engine owns
 /// one of these and threads a reference through to every
 /// <see cref="Parser"/> it constructs so query-time / consult-time
 /// <c>set_prolog_flag</c> calls take effect on subsequent parses.
-/// Only <c>double_quotes</c> is parser-relevant in Phase 1; future
+/// Only <c>double_quotes</c> is parser-relevant today; future
 /// flags (e.g. <c>occurs_check</c>) can land on this same object.
 /// </summary>
 public sealed class PrologFlags
 {
     public DoubleQuotesMode DoubleQuotes { get; set; } = DoubleQuotesMode.String;
 
-    /// <summary>Chunk 152 — ISO §6.4.2 character-conversion flag. When
+    /// <summary>ISO §6.4.2 character-conversion flag. When
     /// <c>true</c>, the lexer maps every character it reads outside
     /// of quoted contexts (quoted atoms, strings, character-code
     /// literals, comments) through <see cref="CharConversion"/>
@@ -44,7 +44,7 @@ public sealed class PrologFlags
     /// that don't set it sees no surprise transformations.</summary>
     public bool CharConversionEnabled { get; set; }
 
-    /// <summary>Phase 30 — Arity/Prolog32 compatibility mode (the
+    /// <summary>Arity/Prolog32 compatibility mode (the
     /// <c>arity_compat</c> prolog flag; also <c>shumway-compile
     /// --arity</c>). Off by default. Enables, and will keep
     /// accumulating, Arity dialect features: <c>$...$</c> quoted
@@ -77,7 +77,7 @@ public sealed class PrologFlags
     /// reaction to a call to an undefined predicate: <c>error</c>
     /// (raise <c>existence_error/2</c>, the default), <c>fail</c>
     /// (silently fail), or <c>warning</c> (emit a warning then
-    /// fail). Wired through dispatch since chunk 417: every
+    /// fail). Wired through dispatch: every
     /// undefined-procedure point (static Call/Execute sentinels, the
     /// resume-marker fallback, both meta-call dispatchers, the
     /// in-engine hook goal runner) honours it via

@@ -19,7 +19,7 @@ namespace Shumway.Compiler.Wam;
 /// </summary>
 public sealed class ModuleCompiler
 {
-    /// <summary>Chunk 177: propagated to
+    /// <summary>propagated to
     /// <see cref="PredicateCompiler.EmitDebugInfo"/>. <c>false</c> drops
     /// the per-clause Meta/DbgInfo markers from the emitted bytecode —
     /// Release mode in <c>shumway-compile</c> sets this so a stripped
@@ -56,7 +56,7 @@ public sealed class ModuleCompiler
     public CompiledModule Compile(IEnumerable<Clause> clauses)
         => Compile(clauses, cache: null);
 
-    /// <summary>Overload accepting the chunk-75 JIT-indexing
+    /// <summary>Overload accepting the JIT-indexing
     /// <paramref name="unindexedFunctors"/> set without a skip-compile
     /// cache.</summary>
     public CompiledModule Compile(
@@ -70,7 +70,7 @@ public sealed class ModuleCompiler
     /// literal-pool indices reuses the cached bytecode verbatim instead of
     /// running <see cref="PredicateCompiler"/> over the source clauses.
     /// This is the Tier-0 half of the bundle pipeline's skip-compile path
-    /// (chunk 55) — a loaded bundle's <c>CompiledPredicate</c>s can be
+    /// — a loaded bundle's <c>CompiledPredicate</c>s can be
     /// re-served at query setup without the consulted-source round trip.
     /// Cache misses (functor not in the cache, or the cached predicate
     /// uses literals whose indices wouldn't survive a fresh pool) fall
@@ -80,7 +80,7 @@ public sealed class ModuleCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? cache)
         => Compile(clauses, cache, unindexedFunctors: null);
 
-    /// <summary><paramref name="unindexedFunctors"/> (chunk 75) is the
+    /// <summary><paramref name="unindexedFunctors"/> is the
     /// set of functor ids the engine wants compiled without indexing —
     /// dynamic predicates that haven't proven hot at runtime. Each such
     /// functor's group goes to <see cref="PredicateCompiler.Compile"/>
@@ -214,13 +214,13 @@ public sealed class ModuleCompiler
     /// re-keyed to the new pools. Atom ids, functor ids, and builtin
     /// ids are all globally interned so they don't need this guard.
     ///
-    /// <para>Exposed (chunk 68) so the embedding layer can decide which
+    /// <para>Exposed so the embedding layer can decide which
     /// dynamic predicates are eligible for cross-query caching: a freshly
     /// compiled dynamic predicate is safe to reuse next query only if
     /// none of its operands carry pool-specific literal ids.</para></summary>
     public static bool IsCachedPredicateReusable(CompiledPredicate pred)
     {
-        // Chunk 430 — the scan below is a pure function of the immutable
+        // the scan below is a pure function of the immutable
         // bytecode; memoize it on the predicate so the three per-query
         // call sites (cache reuse here, plus the static / dynamic cache
         // populate loops at query setup) stop re-walking every cached
@@ -243,15 +243,15 @@ public sealed class ModuleCompiler
             if (!info.IsDefined || info.Size == 0) return false;
             if (info.OperandKinds is not null)
             {
-                // Phase 33 W7 — every literal pool (float, bigint, string/PSTR)
+                // every literal pool (float, bigint, string/PSTR)
                 // is a per-engine LiteralPool<T>: append-only and deduplicating,
                 // so the value at a given id NEVER moves, and the only flow that
                 // consults the cross-query caches (query setup) always compiles
                 // against the engine's persistent `_literalPools` instances.
                 // A literal id is therefore as stable as an atom/functor id
                 // within its engine, and predicates carrying float, bigint or
-                // string literals are all cache-reusable. (Floats were exempted
-                // first — Phase 30; bigint + PSTR audited and exempted here.)
+                // string literals are all cache-reusable (floats, bigint and
+                // PSTR each audited before being exempted).
                 // The guard remains for any FUTURE LiteralId carrier outside
                 // this audited set.
                 bool stableLiteralOp = opByte is (byte)Opcode.GetFloat

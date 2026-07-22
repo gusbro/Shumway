@@ -4,14 +4,11 @@ using System.Runtime.InteropServices;
 
 namespace Shumway.Embedding.Debugging;
 
-// DebugCommandKind lives in DebugWire.cs — the debugger compiles that file too, and it
-// is the side that decides what a command is.
+// DebugCommandKind lives in DebugWire.cs, which the debugger side compiles too.
 
-/// <summary>ADR-035 — one command from the debugger. <see cref="File"/> /
-/// <see cref="Line"/> carry a breakpoint; <see cref="Flag"/> carries a switch;
-/// <see cref="Condition"/> carries a conditional breakpoint's goal (empty =
-/// unconditional); <see cref="TargetFrame"/> carries a Set Next Statement's display
-/// frame (0 = top; a lower frame rewinds the frames above it first).</summary>
+/// <summary>ADR-035 — one command from the debugger. <see cref="File"/>/<see cref="Line"/>
+/// carry a breakpoint; <see cref="Condition"/> its goal (empty = unconditional);
+/// <see cref="TargetFrame"/> a Set Next Statement's display frame (0 = top).</summary>
 public readonly record struct DebugCommand(
     DebugCommandKind Kind, string File = "", int Line = 0, bool Flag = false,
     string Condition = "", int TargetFrame = 0);
@@ -19,27 +16,16 @@ public readonly record struct DebugCommand(
 /// <summary>
 /// ADR-035 — the pinned-memory channel between the engine and the debugger.
 ///
-/// <para><b>Why memory and not a func-eval.</b> A debugger that is stopped can ask the
-/// debuggee to run a method (a "func-eval"), and that is the obvious way to ask the
-/// engine what its stack looks like. It is also the way to hang: evaluating a function
-/// inside breakpoint-notification context is documented to deadlock
-/// (ConcordExtensibilitySamples #61), and the D0 spike confirmed the hazard is real.
-/// So the engine does the work FIRST — it serialises the whole stop into a buffer whose
-/// address never moves — and only then trips the breakpoint. The debugger reads that
-/// memory (<c>DkmProcess.ReadMemory</c>), which needs nothing from the debuggee at all,
-/// and writes its answer back into the command region (<c>WriteMemory</c>). The engine
-/// drains it before resuming. No code runs in the debuggee while it is stopped.</para>
-///
-/// <para>The buffers are pinned for the life of the session: the addresses are handed
-/// to the debugger once, at attach, and a moving GC would otherwise leave it reading
-/// somewhere else. The format lives in <see cref="DebugWire"/>, which the debugger
-/// compiles too — one definition, so the two cannot disagree.</para>
+/// The engine serialises each stop into the snapshot buffer BEFORE tripping the notify
+/// breakpoint; the debugger reads it with <c>DkmProcess.ReadMemory</c> and writes
+/// commands back with <c>WriteMemory</c>, drained before resume. No code runs in the
+/// debuggee while stopped — a func-eval in breakpoint-notification context deadlocks
+/// (ConcordExtensibilitySamples #61). Buffers are pinned for the session's lifetime:
+/// their addresses are handed out once, at attach.
 /// </summary>
 public sealed class DebugChannel : IDisposable
 {
-    // Big enough for a deep stack with variables; a snapshot that would overflow is
-    // truncated rather than reallocated, because the address must not move. The size lives in
-    // DebugWire, with the format: the debugger reads the region whole, so both sides need it.
+    // An overflowing snapshot is truncated, never reallocated — the address must not move.
     public const int SnapshotCapacity = DebugWire.SnapshotCapacity;
     public const int CommandCapacity = 16 * 1024;
 
@@ -57,44 +43,34 @@ public sealed class DebugChannel : IDisposable
         _snapshotPin = GCHandle.Alloc(_snapshot, GCHandleType.Pinned);
         _commandsPin = GCHandle.Alloc(_commands, GCHandleType.Pinned);
 
-        // A channel is born READABLE and RUNNING, before anything has ever stopped. A
-        // debugger that attaches to a program already in flight has to be able to read the
-        // heartbeat — that is how it learns Prolog is moving, and therefore that a pause can
-        // be answered at a port. An all-zero buffer decodes as nothing at all, and it would
-        // conclude the engine was dead. (The rest of the fields stay zero: an empty stop, and
-        // `running` says it is not a stop at all.)
+        // Born readable and `running`: a debugger attaching mid-flight must be able to
+        // read the heartbeat; an all-zero buffer would decode as a dead engine.
         int at = 0;
         DebugWire.WriteInt(_snapshot, ref at, DebugWire.FormatVersion);
-        DebugWire.WriteInt(_snapshot, ref at, 0);   // no stop has happened yet
-        DebugWire.WriteInt(_snapshot, ref at, 1);   // running: there is no stack to show
+        DebugWire.WriteInt(_snapshot, ref at, 0);   // sequence: no stop yet
+        DebugWire.WriteInt(_snapshot, ref at, 1);   // running: no stack to show
     }
 
-    /// <summary>Where the debugger reads the current stop from. Stable for the life of
-    /// the session.</summary>
+    /// <summary>Where the debugger reads the current stop from. Stable for the session.</summary>
     public IntPtr SnapshotAddress => _snapshotPin.AddrOfPinnedObject();
 
-    /// <summary>Where the debugger writes its commands. Stable for the life of the
-    /// session.</summary>
+    /// <summary>Where the debugger writes its commands. Stable for the session.</summary>
     public IntPtr CommandAddress => _commandsPin.AddrOfPinnedObject();
 
-    /// <summary>Rises by one on every stop written. A debugger reads it first and last:
-    /// if it changed underneath, the snapshot it just read was torn and it reads
-    /// again.</summary>
+    /// <summary>Rises on every stop written. A reader compares it before and after to
+    /// detect a torn read.</summary>
     public int Sequence { get; private set; }
 
     // ----- snapshot: engine writes, debugger reads -----
 
-    /// <summary>Serialises a stop into the pinned buffer. Called BEFORE the notify
-    /// breakpoint is tripped, so that by the time the debugger is looking, everything it
-    /// needs is already there and nothing has to run to produce it. Field order is the
-    /// one <see cref="DebugWire.ReadSnapshot"/> expects.</summary>
+    /// <summary>Serialises a stop into the pinned buffer, before the notify breakpoint
+    /// is tripped. Field order is what <see cref="DebugWire.ReadSnapshot"/> expects.</summary>
     public void WriteSnapshot(DebugStopEvent stop) => WriteSnapshot(stop, running: false, interopDepth: 0);
 
-    /// <summary>The general form. <paramref name="running"/> and
-    /// <paramref name="interopDepth"/> are what a reader consults BEFORE the stack, to know
-    /// whether it is the stack the program is standing in: a stop (running false), or a
-    /// foreign call the engine is blocked inside and published on its way into (running true,
-    /// depth above zero). See <see cref="DebugSnapshot.InteropDepth"/>.</summary>
+    /// <summary><paramref name="running"/>/<paramref name="interopDepth"/> tell the reader
+    /// whether the stack is current: a stop (running false), or a foreign call the engine
+    /// published on its way in (running true, depth &gt; 0). See
+    /// <see cref="DebugSnapshot.InteropDepth"/>.</summary>
     public void WriteSnapshot(DebugStopEvent stop, bool running, int interopDepth)
     {
         ArgumentNullException.ThrowIfNull(stop);
@@ -113,33 +89,21 @@ public sealed class DebugChannel : IDisposable
         DebugWire.WriteInt(_snapshot, ref at, stop.BreakLine);
         DebugWire.WriteString(_snapshot, ref at, stop.ConditionError);
 
-        // ADR-035 D5+ — the Set Next Statement valid lines (small: a clause's statements).
         var setNext = stop.SetNextLines;
         DebugWire.WriteInt(_snapshot, ref at, setNext.Count);
         for (int i = 0; i < setNext.Count; i++)
             DebugWire.WriteInt(_snapshot, ref at, setNext[i]);
 
-        // EVERY STRING ONCE. A stack's frames mostly repeat each other: the same file on
-        // every frame, the same predicate down a recursion, the same variable names level
-        // after level — and, above all, the same VALUES, because a call stack is mostly the
-        // same bindings seen from different clauses (the engine's per-capture bag hands the
-        // same string instance to every frame that shares a term). So the snapshot carries a
-        // string TABLE, and the frames carry indices into it. A 2 700-frame recursion whose
-        // frames share their data serialises the data once, not 2 700 times.
-        //
-        // A STACK THAT DOES NOT FIT IS STILL TRUNCATED, AND STILL SAYS SO. Each frame is
-        // priced before a byte of it is written — its fixed fields plus the strings the table
-        // does not already hold — and the counts written are the counts actually in the
-        // buffer. (Writing the real count and then running out of room was the bug that hung
-        // Break All on Blint: the reader walked missing frames through the tail of an OLDER
-        // stop, read old bytes as a length, and died of an OutOfMemoryException inside the
-        // one event that could have completed the pause.)
+        // Strings are deduplicated into a table (frames of a recursion share almost all
+        // of them); frames carry indices. Each frame is PRICED before any byte of it is
+        // written and the counts written are the counts actually present — writing the
+        // real count and then running out of room lets the reader walk into the tail of
+        // an older, longer stop and read stale bytes as lengths.
         var table = new List<string>();
         var index = new Dictionary<string, int>();
         var accepted = new List<PrologEngine.DebugFrame>();
 
-        // The header is already written; everything after `at` must fit in what remains,
-        // including both counts and the terminating zero word.
+        // Budget = what remains after the header, minus both counts + terminating zero.
         int budget = SnapshotCapacity - at - 12;
         foreach (var f in stop.Frames)
         {
@@ -179,20 +143,20 @@ public sealed class DebugChannel : IDisposable
             }
         }
 
-        // Zero the next word, so a reader that walks off the end of what was just
-        // written finds an empty count rather than the tail of an older, longer stop.
+        // Zero terminator: a reader walking past the end finds an empty count, not the
+        // tail of an older stop.
         DebugWire.WriteInt(_snapshot, ref at, 0);
     }
 
-    /// <summary>What adding this frame costs: its fixed fields, plus the strings the table
-    /// does not hold yet — returned so the caller can commit them only if the frame is
-    /// accepted. A frame rejected for size must leave no strings behind.</summary>
+    /// <summary>Cost of adding this frame: fixed fields plus the strings the table does
+    /// not hold yet. The new strings are returned un-committed so a rejected frame
+    /// leaves none behind.</summary>
     private static int FrameCost(
         PrologEngine.DebugFrame frame, Dictionary<string, int> index, out List<string> newStrings)
     {
         var fresh = new List<string>();
         // nameId arity fileId line pc headArgsId clauseNumber setNextCount varCount
-        // + per-set-next-line ints + per-var ids.
+        // + per-set-next-line ints + per-var id pairs.
         int cost = 9 * 4 + frame.SetNextLines.Count * 4 + frame.Variables.Count * 8;
 
         int StringCost(string? s)
@@ -215,26 +179,20 @@ public sealed class DebugChannel : IDisposable
         return cost;
     }
 
-    /// <summary>Says that the program is running again, so that what the buffer holds is
-    /// the record of a stop that is OVER.
-    ///
-    /// <para>A debugger that freezes the process from outside — the CLR's own Break All, or
-    /// any stop in C# or native code — reads this buffer and would otherwise dress the
-    /// screen with the Prolog stack of the last breakpoint, which the program is no longer
-    /// anywhere near. One word, poked in place at every resume: the alternative (keeping a
-    /// fresh stack lying around at all times) means rendering the entire environment chain
-    /// on a timer, which is what made a real program under the debugger never finish.</para>
-    /// </summary>
+    /// <summary>Marks the buffer as the record of a FINISHED stop. Without it, a
+    /// process frozen from outside (Break All, a stop in C#) would be shown the Prolog
+    /// stack of the last breakpoint as if current. One word, poked at every resume —
+    /// keeping a continuously fresh stack instead means rendering the whole environment
+    /// chain on a timer, which is prohibitively slow on real programs.</summary>
     public void SetRunning()
     {
         int at = DebugWire.RunningOffset;
         DebugWire.WriteInt(_snapshot, ref at, 1);
     }
 
-    /// <summary>"The engine is inside this many foreign calls." Zero puts the buffer back to
-    /// being the record of a past stop; above zero says the stack in it is the one under the
-    /// C# the debugger is about to be looking at. One word, in place — this is crossed at
-    /// every foreign call.</summary>
+    /// <summary>How many foreign calls the engine is inside. Above zero, the stack in
+    /// the buffer is the one UNDER the C# the debugger sees (the mixed-stack case);
+    /// zero returns the buffer to being a past stop's record.</summary>
     public void SetInteropDepth(int depth)
     {
         int at = DebugWire.InteropDepthOffset;
@@ -243,27 +201,20 @@ public sealed class DebugChannel : IDisposable
 
     private int _heartbeat;
 
-    /// <summary>"Prolog is still moving." Bumped as the engine passes goals — one word, in
-    /// place. A debugger asked to pause reads it twice: if it is rising, the engine will
-    /// reach a port in microseconds and the pause can be honoured there, with a real stack;
-    /// if it is still, no port is ever coming (a blocked read, a finished query, a long
-    /// spell in C#) and the debugger is right to freeze the process instead.</summary>
+    /// <summary>Bumped as the engine passes goals. A debugger asked to pause reads it
+    /// twice: rising means a port (a real stop with a real stack) is microseconds away;
+    /// still means no port is coming and freezing the process is the right answer.</summary>
     public void Heartbeat()
     {
         int at = DebugWire.HeartbeatOffset;
         DebugWire.WriteInt(_snapshot, ref at, ++_heartbeat);
     }
 
-    /// <summary>The heartbeat as it stands. The engine's own idle watcher reads it for the
-    /// same reason the debugger does: to tell a machine that is passing goals from one that
-    /// is standing still.</summary>
     public int HeartbeatValue => _heartbeat;
 
-    /// <summary>ADR-035 — the snapshot region, byte for byte, so an Immediate-window
-    /// evaluation can put back the stop it interrupted. The eval's own stops overwrite
-    /// the buffer; when it finishes, Visual Studio returns the user to the ORIGINAL break
-    /// state, whose Locals still read from this buffer — and they must find the frames
-    /// they were reading, not the evaluated goal's.</summary>
+    /// <summary>Byte copy of the snapshot region, so an Immediate-window evaluation can
+    /// restore the stop it interrupted — the returned-to break state's Locals must find
+    /// the original frames, not the evaluated goal's.</summary>
     public byte[] SaveSnapshotBytes()
     {
         var saved = new byte[SnapshotCapacity];
@@ -277,18 +228,13 @@ public sealed class DebugChannel : IDisposable
         Buffer.BlockCopy(saved, 0, _snapshot, 0, Math.Min(saved.Length, SnapshotCapacity));
     }
 
-    /// <summary>The snapshot as it stands in the pinned buffer, decoded with the very
-    /// code the debugger uses.</summary>
+    /// <summary>Decodes the snapshot with the same code the debugger side uses.</summary>
     public DebugSnapshot? ReadSnapshot() => DebugWire.ReadSnapshot(_snapshot);
 
-    /// <summary>Decodes bytes read from the pinned buffer — the debugger's path, and
-    /// what the tests use to prove the two agree.</summary>
     public static DebugSnapshot? ReadSnapshot(byte[] buffer) => DebugWire.ReadSnapshot(buffer);
 
     // ----- commands: debugger writes, engine reads -----
 
-    /// <summary>Writes commands into the pinned region. The debugger does this with
-    /// WriteMemory; the tests do it directly, over the same bytes.</summary>
     public void WriteCommands(params DebugCommand[] commands)
     {
         ArgumentNullException.ThrowIfNull(commands);
@@ -306,17 +252,16 @@ public sealed class DebugChannel : IDisposable
         }
     }
 
-    /// <summary>ADR-036 — whether the engine has drained what was last written (the drain
-    /// zeroes the region's header). The DAP server writes its FULL state on every change,
-    /// and this is how it knows a one-shot command it included (a step, a resume) was
-    /// consumed and must not ride the next rewrite.</summary>
+    /// <summary>ADR-036 — whether the engine has drained the last write (the drain zeroes
+    /// the header). The DAP server rewrites its full state on every change and uses this
+    /// to retire one-shot commands (a step, a resume) that were already consumed.</summary>
     public bool CommandsConsumed
     {
         get { int at = 0; return DebugWire.ReadInt(_commands, ref at) == 0; }
     }
 
-    /// <summary>Takes everything the debugger left, and empties the region — a command
-    /// is obeyed once. The engine does this before it resumes.</summary>
+    /// <summary>Takes everything the debugger left and empties the region — a command is
+    /// obeyed once. The engine calls this before resuming.</summary>
     public IReadOnlyList<DebugCommand> DrainCommands()
     {
         int at = 0;
@@ -335,7 +280,7 @@ public sealed class DebugChannel : IDisposable
             int targetFrame = DebugWire.ReadInt(_commands, ref at);
             commands.Add(new DebugCommand(kind, file, line, flag, condition, targetFrame));
         }
-        Array.Clear(_commands, 0, 8);   // consumed: a step asked for once is taken once
+        Array.Clear(_commands, 0, 8);   // zero the header: consumed
         return commands;
     }
 

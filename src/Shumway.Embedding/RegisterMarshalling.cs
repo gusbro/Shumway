@@ -4,7 +4,7 @@ using Shumway.Core;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 242 — helpers the source-generated <c>[PrologPredicate]</c>
+/// helpers the source-generated <c>[PrologPredicate]</c>
 /// bridges call to shuttle values between Prolog registers and
 /// .NET-side <see cref="Term"/>s.
 ///
@@ -15,7 +15,7 @@ namespace Shumway.Embedding;
 public static class RegisterMarshalling
 {
     /// <summary>Reads register <paramref name="regIdx"/> as a Prolog
-    /// <see cref="Term"/>. Phase 33 A2 — the hot interop read: a REF register
+    /// <see cref="Term"/>. the hot interop read: a REF register
     /// materializes from its heap home directly (no throwaway cell), and an
     /// immediate integer / atom becomes its Term with zero heap traffic. Only an
     /// immediate NON-scalar in the register (an ADR-017 inline Str/Lis, a Float /
@@ -33,7 +33,7 @@ public static class RegisterMarshalling
             case Tag.Int:
                 return new IntTerm(c.AsInt);
             case Tag.Atom:
-                // Seed the chunk-431 atom-id cache — we have the id in hand.
+                // Seed the atom-id cache — we have the id in hand.
                 return new AtomTerm(AtomTable.GetById(c.AsAtomId)?.Name ?? "", c.AsAtomId);
         }
         int slot = engine.AllocateHeap(1);
@@ -41,7 +41,7 @@ public static class RegisterMarshalling
         return TermReader.Materialize(engine, slot);
     }
 
-    /// <summary>Phase 33 A2/A3 — the dereferenced cell a register holds, without
+    /// <summary>The dereferenced cell a register holds, without
     /// materializing a Term: an unbound register comes back as its self-REF cell.
     /// The zero-allocation primitive for interop call sites that only need a
     /// scalar / Foreign payload.</summary>
@@ -53,7 +53,7 @@ public static class RegisterMarshalling
         return c;
     }
 
-    /// <summary>Phase 33 C3 — cell-direct scalar read for a generated
+    /// <summary>cell-direct scalar read for a generated
     /// [PrologPredicate] bridge's <c>+</c> parameter: an Int cell yields its
     /// payload with ZERO allocation (the Term path allocated one IntTerm per
     /// scalar argument per call — measured 120 B/call on a 3-arg foreign).

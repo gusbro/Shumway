@@ -31,7 +31,7 @@ public sealed class Parser
     private readonly PrologFlags _flags;
     private readonly List<Token> _lookahead = new();
 
-    /// <summary>Phase 30 chunk 438 (arity_compat) — true once the
+    /// <summary>arity_compat — true once the
     /// current clause has consumed a <c>--&gt;</c> atom token. Embedded
     /// native goals (<c>{ raw C }</c> substituted by <c>true</c>) apply
     /// only to NON-DCG clauses: inside a DCG rule braces keep their
@@ -67,7 +67,7 @@ public sealed class Parser
     /// precedence ceiling.</summary>
     public Term ReadTerm()
     {
-        _sawDcgArrow = false;   // chunk 438 — new top-level term read
+        _sawDcgArrow = false;   // new top-level term read
         return ReadTermInternal(1200, out _);
     }
 
@@ -75,7 +75,7 @@ public sealed class Parser
     /// dot is missing.</summary>
     public Term ReadClauseTerm()
     {
-        _sawDcgArrow = false;   // chunk 438 — new clause starts here
+        _sawDcgArrow = false;   // new clause starts here
         Term t = ReadTermInternal(1200, out _);
         Token tok = NextToken();
         if (tok.Kind != TokenKind.Dot)
@@ -95,7 +95,7 @@ public sealed class Parser
     /// clause can still be parsed — error-recovery in C-compiler
     /// style. The terminator dot itself is consumed; the next call
     /// to <see cref="ReadClauseTerm"/> starts on a clean clause.
-    /// <para>Chunk 436: the resync itself must never throw — a
+    /// <para>The resync itself must never throw — a
     /// character the lexer can't tokenize (the very thing that may
     /// have caused the error being recovered from) is stepped over
     /// raw via <see cref="Lexer.Lexer.SkipInvalidCharacter"/>, so any
@@ -119,7 +119,7 @@ public sealed class Parser
         }
     }
 
-    /// <summary>Chunk 436 — drops any buffered lookahead tokens.
+    /// <summary>Drops any buffered lookahead tokens.
     /// Called by the ClauseReader before handing the raw character
     /// stream to <see cref="Lexer.Lexer.SkipNativeCodeSection"/>
     /// (Arity <c>:- c.</c> sections): a stale peeked token would
@@ -164,7 +164,7 @@ public sealed class Parser
                     knownOp = true;
                     applied = TryApplyPostfix(tok.Text, pPrec, pType, maxPrec, ref left, ref builtPrec);
                 }
-                // Chunk 146: the lexer reads a maximal run of graphic
+                // The lexer reads a maximal run of graphic
                 // chars, so '1+-2' tokenises as Int(1), Atom('+-'),
                 // Int(2). If '+-' isn't a registered infix, try
                 // splitting it into a known infix prefix + a known
@@ -299,7 +299,7 @@ public sealed class Parser
             // token that can itself start a term, AND that token is not the
             // open-paren that would turn the atom into a compound term.
             //
-            // Chunk 149: ISO §6.4.7 — a '(' immediately after the atom (no
+            // ISO §6.4.7 — a '(' immediately after the atom (no
             // intervening whitespace) is the function-call '(', binding the
             // atom as the compound head. A '(' with whitespace before it is
             // a grouping paren and the atom acts as a prefix op. So
@@ -376,7 +376,7 @@ public sealed class Parser
                 // is parsed (we consume the atom as the head of a compound).
                 // 'foo (a, b)' with a space is the atom 'foo' followed by a
                 // grouping paren — handled by the caller's operator-position
-                // loop. Chunk 149.
+                // loop.
                 if (PeekToken().Kind == TokenKind.LParen
                     && IsAdjacent(tok, PeekToken()))
                 {
@@ -407,7 +407,7 @@ public sealed class Parser
                 // back to before the `[!` rather than re-entering the snip.
                 // Trade-off: a list whose first element is the cut atom now
                 // needs to be written `[(!), ...]` instead of `[!, ...]`.
-                // A QUOTED '!' is never a snip opener (chunk 439): the
+                // A QUOTED '!' is never a snip opener: the
                 // Arity corpus writes lists like ['!', Token], which must
                 // parse as ordinary two-element lists.
                 if (PeekToken().Kind == TokenKind.Atom && PeekToken().Text == "!"
@@ -426,7 +426,7 @@ public sealed class Parser
                 return ReadList(pos);
 
             case TokenKind.LBrace:
-                // Phase 30 chunk 438 (arity_compat only) — Arity embedded
+                // arity_compat only — Arity embedded
                 // native goal: in a NON-DCG clause a body goal can be raw
                 // native code between braces (`p :- g, { C code; }, h.`).
                 // The brace content is not Prolog-lexable, so it is
@@ -460,7 +460,7 @@ public sealed class Parser
                             "internal: token lookahead extends past a native '{' goal "
                             + "(arity_compat); raw skip would start at the wrong position.",
                             pos);
-                    // Phase 30 (ADR-022) step 1 — capture the raw C statement
+                    // ADR-022 — capture the raw C statement
                     // text and carry it in a `'$native_goal'(RawText)` term (the
                     // raw text as a non-interned StringTerm). Until the native
                     // codegen lands (step 4), '$native_goal'/1 is a no-op builtin
@@ -504,8 +504,8 @@ public sealed class Parser
     }
 
     /// <summary>Materialises a <c>"..."</c> literal according to the
-    /// <see cref="PrologFlags.DoubleQuotes"/> setting at parse time
-    /// (chunk 58). The default <see cref="DoubleQuotesMode.String"/>
+    /// <see cref="PrologFlags.DoubleQuotes"/> setting at parse
+    /// time. The default <see cref="DoubleQuotesMode.String"/>
     /// preserves Shumway's native PSTR representation; <c>codes</c>
     /// and <c>chars</c> expand into proper cons lists at parse time
     /// so the rest of the pipeline sees plain Prolog terms.</summary>
@@ -552,7 +552,7 @@ public sealed class Parser
         {
             NextToken();
             // Arity tolerates a dangling comma at the end of an argument
-            // list (chunk 439; subviews.pl: `ifthenelse(..., save_old_mod,
+            // list (e.g. `ifthenelse(..., save_old_mod,
             // % comment \n )`) — under the flag a comma immediately
             // followed by the closing `)` is treated as if absent. The
             // narrowest tolerance the corpus needs: arg lists only
@@ -633,7 +633,7 @@ public sealed class Parser
 
     /// <summary>True iff <paramref name="next"/> immediately follows
     /// <paramref name="prev"/> in the source — no whitespace, no
-    /// comment, no line break between them. Used by the chunk-149
+    /// comment, no line break between them. Used by the
     /// function-call-vs-prefix-op disambiguation: <c>foo(a)</c> is
     /// a compound, <c>foo (a)</c> is an atom followed by a
     /// parenthesised term. Reads the lexer's leading-whitespace
@@ -655,7 +655,7 @@ public sealed class Parser
         {
             t = _lexer.NextToken();
         }
-        // Chunk 438 — DCG detection for Arity native goals: record that
+        // DCG detection for Arity native goals: record that
         // the current clause consumed the --> arrow. (A quoted '-->'
         // atom is indistinguishable from the operator token here —
         // harmless: it only widens braces back to their ISO meaning.)

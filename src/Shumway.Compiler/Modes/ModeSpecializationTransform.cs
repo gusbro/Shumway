@@ -4,7 +4,7 @@ using Shumway.Core;
 namespace Shumway.Compiler.Modes;
 
 /// <summary>
-/// Chunk 74 — the first mode-aware code-generation pass. ADR-012's
+/// The first mode-aware code-generation pass. ADR-012's
 /// Phase-3 plan calls for specialised code paths for deterministic
 /// modes that drop the choice-point machinery. This transform is the
 /// AST-level realisation of that for the safe, contained case:

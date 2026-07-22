@@ -14,13 +14,10 @@ public static class ArithmeticBuiltins
     /// result with <c>X</c>. The result is either an Int cell (integer
     /// result) or a heap-allocated Float (when promotion was needed).
     ///
-    /// <para>Fast path (chunk 284): a 2-arg compound whose functor is
-    /// +, -, *, // or mod and both args (after deref) are <see cref="Tag.Int"/>
-    /// is evaluated directly in a long without going through the
-    /// <see cref="Number"/> boxing path or the string-keyed dispatch.
-    /// Overflow falls back to the slow evaluator (which promotes to
-    /// BigInt). Targets tight-loop arithmetic in tak / queens / crypt
-    /// where each iteration does e.g. `N1 is N - 1`.</para></summary>
+    /// <para>Fast path: a 2-arg compound whose functor is +, -, *, // or mod
+    /// with both args (after deref) <see cref="Tag.Int"/> is evaluated directly
+    /// in a long, skipping <see cref="Number"/> boxing. Overflow falls back to
+    /// the slow evaluator (which promotes to BigInt).</para></summary>
     public static bool Is(Activation engine)
     {
         Cell rhs = engine.GetRegister(1);
@@ -80,12 +77,10 @@ public static class ArithmeticBuiltins
         _fidsInit  = true;
     }
 
-    // ADR-018 retired the goal-rewriting `$arith2` / `$arith1` builtins: an
-    // `X is A op B` goal now compiles directly to the a_eval_* instruction set
-    // (RPN over the Number eval stack), with no synthetic variable and no
-    // expression term on the heap. The TryFastIntBinary fast path below still
-    // serves the `is/2` *builtin* — reached when arithmetic is not compiled to
-    // a_eval_* (a runtime meta-call such as `call(X is Y)`, or a variable goal).
+    // Compiled arithmetic uses the a_eval_* instruction set (ADR-018); this
+    // builtin path is only reached when arithmetic is NOT compiled — a runtime
+    // meta-call such as `call(X is Y)`, or a variable goal — hence the fast
+    // path below still matters.
 
     // Checked integer arithmetic for the hot ops on already-deref'd Int
     // operands; returns false on overflow / out-of-60-bit-range / div-by-zero
@@ -160,9 +155,9 @@ public static class ArithmeticBuiltins
     /// <summary><c>between(Low, High, X)</c> — integer range. <c>Low</c>
     /// and <c>High</c> must be ground integers. With <c>X</c> ground the
     /// builtin verifies <c>Low ≤ X ≤ High</c>. With <c>X</c> unbound it
-    /// binds <c>X</c> to <c>Low</c> and pushes a runtime choice point
-    /// for the next integer (chunk 59) — each backtrack advances to
-    /// <c>Low + 1</c>, <c>Low + 2</c>, etc., until <c>High</c> is reached.</summary>
+    /// binds <c>X</c> to <c>Low</c> and pushes a runtime choice point —
+    /// each backtrack advances to <c>Low + 1</c>, <c>Low + 2</c>, etc.,
+    /// until <c>High</c> is reached.</summary>
     public static bool Between(Activation engine)
     {
         Cell lo = Resolve(engine, engine.GetRegister(0));
@@ -184,12 +179,9 @@ public static class ArithmeticBuiltins
         if (x.Tag == Tag.Ref)
         {
             // Enumerate loVal..hiVal. The resume state lives in ONE per-CALL
-            // cursor object + a cached delegate (allocated once, here) that is
-            // re-pushed unchanged on every backtrack — so a long range costs
-            // O(1) managed allocation, not one closure + display-class per
-            // value. The old per-step closure made the failure-driven idiom
-            // (e.g. between(1, 100000000, X), X =:= N) churn gigabytes of Gen0
-            // garbage — the dominant cost versus a C builtin's tight loop.
+            // cursor object + a cached delegate re-pushed unchanged on every
+            // backtrack — a long range costs O(1) managed allocation, not one
+            // closure per value (which made failure-driven loops churn Gen0).
             if (loVal < hiVal)
             {
                 var cursor = new BetweenCursor(loVal, hiVal, engine.BuiltinReturnPc);
@@ -206,11 +198,9 @@ public static class ArithmeticBuiltins
     }
 
     /// <summary>Resume state for a non-deterministic <c>between/3</c>
-    /// enumeration: the running position plus a cached resume delegate.
-    /// One instance per <c>between</c> call; the delegate is re-pushed
-    /// unchanged on each backtrack, so advancing the range allocates nothing
-    /// per step (the previous per-step closure was the bottleneck on long
-    /// ranges).</summary>
+    /// enumeration: the running position plus a cached resume delegate,
+    /// re-pushed unchanged on each backtrack so advancing allocates nothing
+    /// per step.</summary>
     private sealed class BetweenCursor
     {
         private long _current;
@@ -276,7 +266,7 @@ public static class ArithmeticBuiltins
     /// <summary><c>plus(X, Y, Z)</c> — integer addition relation with
     /// any one of the three arguments allowed to be free. With X+Y
     /// bound it computes Z; with X+Z bound it computes Y = Z-X; with
-    /// Y+Z bound it computes X = Z-Y. (Chunk 54.)</summary>
+    /// Y+Z bound it computes X = Z-Y.</summary>
     public static bool Plus(Activation engine)
     {
         Cell xc = Resolve(engine, engine.GetRegister(0));

@@ -1,6 +1,6 @@
 namespace Shumway.Core;
 
-/// <summary>Chunk 416 — the dispatch decision for a runtime meta-call goal,
+/// <summary>the dispatch decision for a runtime meta-call goal,
 /// cached per (goal atom id, total arity) in <see cref="Activation.MetaRouteCache"/>.
 ///
 /// <para>A runtime meta-call (<c>call/N</c>, <c>'$call'/2</c>) classifies its
@@ -16,8 +16,8 @@ namespace Shumway.Core;
 /// <see cref="Activation.CurrentFunctorAddresses"/> instance it was built
 /// against and is discarded when that reference changes (a new query links
 /// a new map). Within one query the map is add-only — mid-query auto
-/// promotion (chunk 207) adds entries, and in-place assertz/asserta/retract
-/// (chunks 127/155) patch bytecode without moving a predicate's trampoline
+/// promotion adds entries, and in-place assertz/asserta/retract
+/// patch bytecode without moving a predicate's trampoline
 /// address — so a cached resolution never goes stale. Failed resolutions
 /// (existence_error) are deliberately NOT cached: the same functor can
 /// become resolvable later in the query via auto-promotion.</para>
@@ -30,7 +30,7 @@ public enum MetaRouteKind : byte
     /// <summary>Goal is a cut-transparent control construct
     /// (<c>,/2</c>, <c>;/2</c>, <c>-&gt;/2</c>): store the cut barrier in
     /// X2, then jump to <see cref="MetaRoute.Arg"/> — the resolved address
-    /// of the <c>$call_conj/disj/arrow</c> prelude helper (chunk 88).</summary>
+    /// of the <c>$call_conj/disj/arrow</c> prelude helper.</summary>
     BarrierHelperJump = 1,
 
     /// <summary>Jump to <see cref="MetaRoute.Arg"/> — a user predicate's

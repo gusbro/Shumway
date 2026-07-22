@@ -1,6 +1,6 @@
 namespace Shumway.Core;
 
-/// <summary>Chunk 417 — the ISO <c>unknown</c> prolog flag's runtime action,
+/// <summary>The ISO <c>unknown</c> prolog flag's runtime action,
 /// mirrored onto <see cref="Activation.OnUnknown"/> by the embedding layer (at
 /// query setup from the engine flags, and live when
 /// <c>set_prolog_flag(unknown, _)</c> runs mid-query).</summary>
@@ -16,7 +16,7 @@ public enum UnknownAction : byte
     Warning = 2,
 }
 
-/// <summary>Chunk 417 — the single decision point for a call to an undefined
+/// <summary>The single decision point for a call to an undefined
 /// procedure. Every dispatch path that used to throw
 /// <see cref="PrologRuntimeException.UndefinedProcedure"/> unconditionally
 /// now asks <see cref="Fails"/>: under <c>unknown=error</c> it throws exactly

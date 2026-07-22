@@ -70,7 +70,7 @@ public static class NativeBlockCompiler
 
     /// <summary>ADR-024 — the <see cref="TermSlot"/> a register holds (a Foreign
     /// cell), or null. Shared by the Expression-compiled blocks (called from
-    /// emitted IL). Phase 33 A3 — reads the dereferenced cell directly instead of
+    /// emitted IL). reads the dereferenced cell directly instead of
     /// materializing a '$foreign'(Id) term per call.</summary>
     public static TermSlot? ReadReftypeSlot(Activation engine, int reg)
     {

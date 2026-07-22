@@ -30,13 +30,13 @@ public static class MetaBuiltins
 
         BuiltinsRegistry.Register("findall", 3, Findall,
             FindAgg, "findall(?Template, :Goal, -List)", "Collects an instance of Template for every solution of Goal into a list.");
-        // In-engine findall plumbing (chunk 83) — MetaTransform rewrites
+        // In-engine findall plumbing — MetaTransform rewrites
         // findall/3 with a callable goal into a goal sequence using these.
         BuiltinsRegistry.Register("$findall_push",    0, FindallPush);
         BuiltinsRegistry.Register("$findall_record",  1, FindallRecord);
         BuiltinsRegistry.Register("$findall_record_s", 1, FindallRecordSnapshot);
         BuiltinsRegistry.Register("$findall_collect", 1, FindallCollect);
-        // In-engine bagof/setof plumbing (chunk 84) — reuse the findall
+        // In-engine bagof/setof plumbing — reuse the findall
         // frame stack ('$findall_push' / '$findall_record'); only the
         // collect step differs (it groups the solutions by witness).
         BuiltinsRegistry.Register("$bagof_collect",   1, BagofCollect);
@@ -68,7 +68,7 @@ public static class MetaBuiltins
             Control, "call(:Goal, +Extra1, ..., +Extra6)", "Calls a goal extended with six extra arguments.");
         BuiltinsRegistry.Register("call", 8, Call8,
             Control, "call(:Goal, +Extra1, ..., +Extra7)", "Calls a goal extended with seven extra arguments (ISO requires call/2..8).");
-        // '$call'/2 (chunk 88): a cut-barrier-carrying meta-call. The
+        // '$call'/2: a cut-barrier-carrying meta-call. The
         // $call_* control helpers re-enter call dispatch through it so a
         // `!` in a runtime compound goal cuts to the enclosing call's
         // barrier. Like call/N it is intercepted by the interpreter.
@@ -121,11 +121,11 @@ public static class MetaBuiltins
             Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.");
         BuiltinsRegistry.Register("asserta", 1, Asserta,
             Database, "asserta(+Clause)", "Adds a clause to the front of its dynamic predicate.");
-        // Chunk 145: 'assert/1' is the historical name; ISO and SWI
+        // 'assert/1' is the historical name; ISO and SWI
         // both accept it as a synonym for assertz/1.
         BuiltinsRegistry.Register("assert",  1, Assertz,
             Database, "assert(+Clause)", "Synonym for assertz/1 (historical SWI/GProlog name).");
-        // Chunk 150: chain GC for retracted clauses (ADR-015 follow-up).
+        // chain GC for retracted clauses (ADR-015 follow-up).
         BuiltinsRegistry.Register("garbage_collect_clauses", 0, GarbageCollectClauses0,
             Database, "garbage_collect_clauses",
             "Re-threads every dynamic predicate's chain to skip retracted clauses (ADR-015).");
@@ -176,7 +176,7 @@ public static class MetaBuiltins
 
         BuiltinsRegistry.Register("throw", 1, Throw,
             Control, "throw(+Exception)", "Throws an exception term, unwinding to the nearest catch/3.");
-        // catch/3 is a prelude predicate built on the chunk-85 catch-frame
+        // catch/3 is a prelude predicate built on the catch-frame
         // plumbing ($catch_begin/$catch_end), not a builtin — the old isolated-
         // sub-engine builtin hid the guarded goal's side effects. MetaTransform
         // rewrites a statically-callable catch/3 inline to the same shape; the
@@ -185,7 +185,7 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("$catch_end",   0, CatchEnd);
 
         // clause/2 and current_predicate/1 are now Prolog-level predicates
-        // defined in the prelude (chunk 40). They call these helpers to
+        // defined in the prelude. They call these helpers to
         // bridge into the engine's clause and functor stores, then iterate
         // via the prelude's member/2.
         BuiltinsRegistry.Register("$all_clauses_of",            2, AllClausesOf);
@@ -193,13 +193,13 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
         BuiltinsRegistry.Register("$current_predicate_enum",    1, CurrentPredicateEnum);
         BuiltinsRegistry.Register("$listable_predicates", 1, ListablePredicates);
-        // Chunk 254 — listing path bypasses clause/2 + write/1 to
+        // listing path bypasses clause/2 + write/1 to
         // preserve the original VarTerm names parser captured. The
         // clause/2 path materialises through the heap, where every
         // unbound var picks up a synthetic _G<addr> name and the
         // user's "X" or "Acc" is lost.
         BuiltinsRegistry.Register("$listing_pred_source", 2, ListingPredSource);
-        // Chunk 257 — SWI / SICStus / GNU-style clause pretty-printer.
+        // SWI / SICStus / GNU-style clause pretty-printer.
         BuiltinsRegistry.Register("portray_clause", 1, PortrayClause1,
             Io, "portray_clause(+Clause)",
             "Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, "
@@ -207,10 +207,10 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("portray_clause", 2, PortrayClause2,
             Io, "portray_clause(+Stream, +Clause)",
             "Like portray_clause/1 but writes to the given stream.");
-        // Tabling (chunk 106) — a per-engine string set giving the
+        // Tabling — a per-engine string set giving the
         // semi-naive driver an O(1) "is this answer new?" test.
         BuiltinsRegistry.Register("$tbl_seen", 1, TableSeen);
-        // Tabling (chunk 107) — table invalidation and tabled negation.
+        // Tabling — table invalidation and tabled negation.
         BuiltinsRegistry.Register("$tbl_seen_clear", 0, TableSeenClear);
         BuiltinsRegistry.Register("$tbl_solve_complete", 1, TableSolveComplete);
         BuiltinsRegistry.Register("abolish",                    1, Abolish,
@@ -233,19 +233,19 @@ public static class MetaBuiltins
 
         BuiltinsRegistry.Register("read_term_from_atom", 2, ReadTermFromAtom,
             Term, "read_term_from_atom(+Atom, -Term)", "Parses an atom into a term.");
-        // Chunk 145: SWI/GProlog compat — /3 takes an options list
+        // SWI/GProlog compat — /3 takes an options list
         // that we currently accept but ignore (no options affect the
         // parser yet).
         BuiltinsRegistry.Register("read_term_from_atom", 3, ReadTermFromAtom3,
             Term, "read_term_from_atom(+Atom, -Term, +Options)",
             "Parses an atom into a term; Options accepted for SWI/GProlog compat (currently ignored).");
 
-        // Chunk 145: GProlog name/2 — atom/number ↔ list of codes.
+        // GProlog name/2 — atom/number ↔ list of codes.
         BuiltinsRegistry.Register("name", 2, NameBuiltin,
             Term, "name(?AtomOrNumber, ?Codes)",
             "Bidirectional conversion between an atom/number and its character-code list.");
 
-        // Chunk 145: SWI global variables.
+        // SWI global variables.
         const string Globals = "Global variables";
         BuiltinsRegistry.Register("nb_setval", 2, Shumway.Builtins.GlobalVarsBuiltins.NbSetval,
             Globals, "nb_setval(+Key, +Value)",
@@ -263,7 +263,7 @@ public static class MetaBuiltins
             Globals, "b_getval(+Key, -Value)",
             "Reads a backtrackable global variable; existence_error if unset.");
 
-        // Chunk 145: SWI time builtins (minimal — get_time as float
+        // SWI time builtins (minimal — get_time as float
         // epoch seconds, stamp_date_time as a single date_time
         // compound with the local-time components).
         const string Time = "Time";
@@ -309,7 +309,7 @@ public static class MetaBuiltins
             Io, "set_stream_position(+Stream, +Position)",
             "Seeks the stream to the given byte position (ISO §8.11.10).");
         // ISO read_term/2 — accepts a stream handle in arg 1 and unifies
-        // the parsed term with arg 2. Chunk 59: delegate to the existing
+        // the parsed term with arg 2. delegate to the existing
         // stream-aware reader so the builtin set covers both names.
         BuiltinsRegistry.Register("read_term", 2, ReadTermFromStream,
             Io, "read_term(+Stream, -Term)", "Reads one term from a read-mode stream.");
@@ -346,7 +346,7 @@ public static class MetaBuiltins
             Term, "is_digit(+Char)",
             "True when Char is a one-character atom representing an ASCII digit.");
 
-        // Chunk 235: consult/1 and reconsult/1. Both route through
+        // consult/1 and reconsult/1. Both route through
         // PrologEngine.ConsultFile: .shum extension goes through
         // LoadBundle, everything else is read as Prolog source and
         // handed to ConsultString. SWI treats reconsult/1 as a synonym
@@ -404,7 +404,7 @@ public static class MetaBuiltins
             "restore/0 semantics with the snapshot read from File (written "
             + "by save/1). Raises existence_error if File does not exist. "
             + "Arity-Prolog compatible builtin.");
-        // Phase 24 chunk 266: recorded database (Arity-Prolog).
+        // recorded database (Arity-Prolog).
         BuiltinsRegistry.Register("recorda", 3, Recorda3,
             Database, "recorda(+Key, ?Term, -Ref)",
             "Adds Term at the start of the chain stored under Key in the "
@@ -459,7 +459,7 @@ public static class MetaBuiltins
             "Inserts Term immediately before the entry with reference Ref in "
             + "the same key's chain.");
 
-        // Phase 24 chunk 267 — Edinburgh-style I/O (Arity-Prolog
+        // Edinburgh-style I/O (Arity-Prolog
         // compatible). Layer over the ISO stream registry: see/tell
         // open + set-as-current, seen/told close + revert to user
         // defaults; seeing/telling report the current handle's
@@ -523,7 +523,7 @@ public static class MetaBuiltins
             Io, "tab(+Stream, +N)",
             "Stream variant of tab/1 — writes N spaces to Stream.");
 
-        // Phase 24 chunk 268 (partial) — Arity-Prolog string<->term
+        // Arity-Prolog string<->term
         // conversion. In Arity, "string" means atom; these are write-
         // and writeq-style counterparts of term_to_atom/2.
         BuiltinsRegistry.Register("string_term", 2, StringTerm2,
@@ -547,7 +547,7 @@ public static class MetaBuiltins
             "Arity string_search/4: like string_search/3 with a leading case "
             + "flag — 0 searches case-sensitively, 1 case-insensitively.");
 
-        // Phase 24 chunk 271 — Arity-Prolog file-system operations on
+        // Arity-Prolog file-system operations on
         // top of System.IO. chdir/1 is a 1-arg alias of
         // working_directory/2 living in the prelude; everything else
         // is a C# builtin.
@@ -585,7 +585,7 @@ public static class MetaBuiltins
             Io, "exists_directory(+Path)",
             "Succeeds when Path exists and is a directory.");
 
-        // Phase 33 (Logtalk os library backend) — process / file-metadata
+        // process / file-metadata
         // primitives backing the shumway dialect section of Logtalk's
         // os.lgt (and generally useful for scripting).
         BuiltinsRegistry.Register("shell", 1, Shell1,
@@ -616,7 +616,7 @@ public static class MetaBuiltins
             "Unifies Files with the list of entry names (atoms) in "
             + "Directory, including '.' and '..' — SWI-compatible.");
 
-        // Phase 24 chunk 272 — pseudo-random generation. Per-engine
+        // pseudo-random generation. Per-engine
         // System.Random seedable via randomize/1.
         BuiltinsRegistry.Register("randomize", 1, Randomize1,
             Term, "randomize(+Seed)",
@@ -628,7 +628,7 @@ public static class MetaBuiltins
             Term, "random_between(+Low, +High, -X)",
             "Unifies X with a fresh pseudo-random integer in [Low, High] "
             + "(inclusive on both ends, matching SWI semantics).");
-        // Phase 33 (Logtalk backend_random) — seed introspection pair.
+        // seed introspection pair.
         BuiltinsRegistry.Register("get_seed", 1, GetSeed1,
             Term, "get_seed(-Seed)",
             "Unifies Seed with a value that set_seed/1 can later use to "
@@ -638,14 +638,14 @@ public static class MetaBuiltins
             Term, "set_seed(+Seed)",
             "Reseeds the engine's random generator; alias of randomize/1.");
 
-        // Phase 24 chunk 273 — DCG / macro expansion hook exposed.
+        // DCG / macro expansion hook exposed.
         BuiltinsRegistry.Register("expand_term", 2, ExpandTerm2,
             Term, "expand_term(+Term, -Expanded)",
             "If Term has the form Head --> Body, expands it via the DCG "
             + "transformation Shumway applies internally on consult. "
             + "Non-DCG terms pass through unchanged.");
 
-        // Phase 24 chunk 274 — file_list/1,2 (Arity-Prolog). Persists
+        // file_list/1,2 (Arity-Prolog). Persists
         // user predicates as plain Prolog text re-consultable by
         // consult/1.
         BuiltinsRegistry.Register("file_list", 1, FileList1,
@@ -678,7 +678,7 @@ public static class MetaBuiltins
     /// backtracking. Filename and Mode arguments unify against each
     /// handle's metadata; the stream arg is bound to a Foreign cell
     /// wrapping the underlying <see cref="Shumway.Core.StreamHandle"/>.
-    /// (Chunk 140b.)</summary>
+    ///</summary>
     public static bool CurrentStream(Activation engine)
     {
         var registry = engine.Streams
@@ -686,7 +686,7 @@ public static class MetaBuiltins
         var handles = registry.All().ToArray();
         int returnPc = engine.BuiltinReturnPc;
         // arity 3 (current_stream/3): save the arg registers so a wrapping
-        // findall can't clobber them between solutions (chunk-293/294 fix,
+        // findall can't clobber them between solutions (
         // missed for these enumerators).
         return IndexEnumCursor.Start(engine, handles.Length, 3, returnPc,
             (e, i) => CurrentStreamUnify(e, handles, i));
@@ -711,7 +711,7 @@ public static class MetaBuiltins
     /// Enumerates (Stream, Property) pairs for every registered stream.
     /// Properties: <c>file_name(F)</c>, <c>mode(M)</c>,
     /// <c>alias(A)</c>, <c>input</c>, <c>output</c>,
-    /// <c>end_of_stream(at|not)</c>. (Chunk 140b.)</summary>
+    /// <c>end_of_stream(at|not)</c>.</summary>
     public static bool StreamProperty(Activation engine)
     {
         var registry = engine.Streams
@@ -733,7 +733,7 @@ public static class MetaBuiltins
                 pairs.Add((h, new CompoundTerm("end_of_stream",
                     new Term[] { new AtomTerm(state) })));
             }
-            // Chunk 140d: position/1 — present when the underlying
+            // position/1 — present when the underlying
             // .NET stream is seekable. user_input / user_output
             // (console-backed) aren't.
             long? pos = TryGetStreamPosition(h);
@@ -770,7 +770,7 @@ public static class MetaBuiltins
     /// and write streams it is the byte position. Used both for the
     /// <c>position(N)</c> property of <c>stream_property/2</c> and as
     /// the seekable-stream check for <c>set_stream_position/2</c>.
-    /// (Chunk 140d; Phase 33 ISO audit.)</summary>
+    ///</summary>
     private static long? TryGetStreamPosition(Shumway.Core.StreamHandle h)
     {
         try
@@ -802,7 +802,7 @@ public static class MetaBuiltins
     /// write streams. A text read stream repositions by rewinding the
     /// base stream, discarding the StreamReader's read-ahead buffer,
     /// and re-consuming N characters — O(N), but exact for any
-    /// encoding. (Chunk 140d; Phase 33 ISO audit.)</summary>
+    /// encoding.</summary>
     public static bool SetStreamPosition(Activation engine)
     {
         var h = Shumway.Builtins.StreamBuiltins.ResolveStream(
@@ -857,7 +857,7 @@ public static class MetaBuiltins
             ResolveTextReader(engine, engine.GetRegister(0)), regOut: 1);
 
     /// <summary><c>read/1</c> — ISO §8.14.2. Reads one term from the
-    /// current input stream. (Chunk 143.)</summary>
+    /// current input stream.</summary>
     public static bool Read1(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
@@ -876,7 +876,7 @@ public static class MetaBuiltins
         return ResolveTextReaderFromHandle(h);
     }
 
-    /// <summary>Chunk 257 — mirror of <see cref="ResolveTextReader"/>
+    /// <summary>mirror of <see cref="ResolveTextReader"/>
     /// for write-mode streams. Used by <c>portray_clause/2</c>.</summary>
     private static System.IO.TextWriter ResolveTextWriter(Activation engine, Cell streamArg)
     {
@@ -923,7 +923,7 @@ public static class MetaBuiltins
     /// <c>end_of_file</c> case).</summary>
     private static Term? ParseOneTerm(Activation engine, System.IO.TextReader reader)
     {
-        // Phase 33 (PrologToC corpus) — the old accumulation rule was "stop
+        // the old accumulation rule was "stop
         // at any '.' followed by whitespace", which sliced `?X =.. ?Y` in
         // half at univ's second dot (and would equally mis-split a dot
         // inside a quoted atom, a string, or a comment). The end-of-clause
@@ -1027,7 +1027,7 @@ public static class MetaBuiltins
         }
         done: ;
 
-        // Phase 33 (PrologToC corpus) — parse with the engine's LIVE operator
+        // parse with the engine's LIVE operator
         // table, not the static default: a runtime `op/3` (e.g. the classic
         // `op(200, fy, ['#', '?'])` before reading a spec file) must be in
         // force for read/1,2, exactly as it already is for consult and
@@ -1233,7 +1233,7 @@ public static class MetaBuiltins
     }
 
     /// <summary><c>with_output_to(Sink, Goal)</c> — runs <c>Goal</c> with
-    /// the engine's output sink temporarily redirected. Phase 1
+    /// the engine's output sink temporarily redirected. It
     /// recognises <c>atom(A)</c> and <c>string(S)</c> sinks: both capture
     /// everything <c>Goal</c> writes (via <c>write/1</c>, <c>format/2</c>,
     /// etc.) and unify the result with their inner variable. The sub-
@@ -1374,7 +1374,7 @@ public static class MetaBuiltins
     }
 
     /// <summary><c>set_prolog_flag(Flag, Value)</c> — updates a parser-
-    /// visible flag (chunk 58). Phase 1 recognises only
+    /// visible flag. The parser-visible set is
     /// <c>double_quotes</c> with values <c>codes</c>, <c>chars</c>,
     /// <c>atom</c>, or <c>string</c>; other flags raise a domain error.
     /// Setting <c>double_quotes</c> takes effect for the next parse —
@@ -1419,7 +1419,7 @@ public static class MetaBuiltins
                 throw new ShumwayPrologException(
                     IsoError.DomainError("flag_value", new AtomTerm(valueName)));
             host.Flags.Unknown = valueName;
-            // Chunk 417 — take effect mid-query: dispatch reads the
+            // take effect mid-query: dispatch reads the
             // live engine's OnUnknown, not the host flags.
             engine.OnUnknown = valueName switch
             {
@@ -1431,7 +1431,7 @@ public static class MetaBuiltins
         }
         if (flagName == "arity_compat")
         {
-            // Phase 30 — Arity/Prolog32 compatibility mode. The parse-time
+            // Arity/Prolog32 compatibility mode. The parse-time
             // features ($...$ atoms, #line, directive annotations) apply to
             // SUBSEQUENT consults; the ClauseReader's directive pre-pass
             // handles a mid-file flip.
@@ -1481,7 +1481,7 @@ public static class MetaBuiltins
         if (flagName == "char_conversion")
         {
             // ISO §7.11.2.1 — whether read-time character conversion
-            // (the chunk-152 table) is applied.
+            // (the table) is applied.
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
                     IsoError.DomainError("flag_value", new AtomTerm(valueName)));
@@ -1499,7 +1499,7 @@ public static class MetaBuiltins
             return true;
         }
 
-        // Phase 33 ISO audit — a flag that exists but is not user-
+        // a flag that exists but is not user-
         // settable raises permission_error(modify, flag, F) (ISO
         // §8.17.1.3 c); only a flag that does not exist at all raises
         // domain_error(prolog_flag, F).
@@ -1535,7 +1535,7 @@ public static class MetaBuiltins
     /// <item><c>max_arity</c> — large integer constant.</item>
     /// </list>
     /// With Flag unbound, every flag is enumerated on backtracking
-    /// (ISO §8.17.2; Phase 33 ISO audit).</summary>
+    /// (ISO §8.17.2).</summary>
     public static bool CurrentPrologFlag(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -1896,7 +1896,7 @@ public static class MetaBuiltins
     /// Enumerates every defined operator on backtracking, with any of
     /// the three args optionally constraining the search. Uses the
     /// standard PushBuiltinChoicePoint pattern for the multi-solution
-    /// dispatch (chunk 138).</summary>
+    /// dispatch.</summary>
     public static bool CurrentOp(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -1973,7 +1973,7 @@ public static class MetaBuiltins
     /// <summary><c>current_char_conversion(?InChar, ?OutChar)</c> —
     /// ISO §8.14.10. Enumerates the active char-conversion table on
     /// backtracking. The Phase-9 PushBuiltinChoicePoint pattern drives
-    /// the multi-solution dispatch (chunk 152).</summary>
+    /// the multi-solution dispatch.</summary>
     public static bool CurrentCharConversion(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -2002,7 +2002,7 @@ public static class MetaBuiltins
     /// <summary><c>read_term_from_atom(Atom, Term)</c> — parses the text
     /// stored in <c>Atom</c> as a Prolog term and unifies the result with
     /// <c>Term</c>. The full ISO <c>read_term/2</c> reads from an
-    /// arbitrary stream — Phase 1 only handles the in-memory atom case,
+    /// arbitrary stream — this handles only the in-memory atom case,
     /// which is the use the embedding API actually needs.</summary>
     public static bool ReadTermFromAtom(Activation engine)
     {
@@ -2020,7 +2020,7 @@ public static class MetaBuiltins
     /// <summary><c>read_term_from_atom(+Atom, -Term, +Options)</c> —
     /// SWI / GProlog compat. The options list is accepted but
     /// currently ignored (no read-time options affect the parser
-    /// yet). Chunk 145.</summary>
+    /// yet).</summary>
     public static bool ReadTermFromAtom3(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
@@ -2038,7 +2038,7 @@ public static class MetaBuiltins
     /// bidirectional conversion. With first arg bound, builds the
     /// list of character codes for its print form. With second arg
     /// bound, tries to parse the codes as a number first; on
-    /// parse-failure interns as an atom. Chunk 145.</summary>
+    /// parse-failure interns as an atom.</summary>
     public static bool NameBuiltin(Activation engine)
     {
         Cell firstCell = ResolveLocal(engine, engine.GetRegister(0));
@@ -2112,7 +2112,7 @@ public static class MetaBuiltins
     }
 
     /// <summary><c>get_time(-Time)</c> — current wall-clock time in
-    /// seconds since the Unix epoch, as a float. SWI-compat. Chunk 145.</summary>
+    /// seconds since the Unix epoch, as a float. SWI-compat.</summary>
     public static bool GetTime(Activation engine)
     {
         double now = (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc))
@@ -2127,7 +2127,7 @@ public static class MetaBuiltins
     /// TimeZone arg is honoured for the atoms <c>'UTC'</c> and
     /// <c>local</c>; any other atom is treated as the local zone
     /// (full IANA-name lookup isn't worth the System.TimeZoneInfo
-    /// wiring for the typical caller). Chunk 145.</summary>
+    /// wiring for the typical caller).</summary>
     public static bool StampDateTime(Activation engine)
     {
         Cell stampCell = ResolveLocal(engine, engine.GetRegister(0));
@@ -2488,7 +2488,7 @@ public static class MetaBuiltins
         Cell startDeref = startC.Tag == Tag.Ref
             ? engine.GetHeap(engine.Deref(startC.AsHeapIndex))
             : startC;
-        // Chunk 131e: ISO precedence — var second arg →
+        // ISO precedence — var second arg →
         // instantiation_error; bound non-int → type_error(integer, _).
         if (startDeref.Tag == Tag.Ref)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
@@ -2791,7 +2791,7 @@ public static class MetaBuiltins
         {
             var (atomId, arity) = FunctorTable.Lookup(fid);
             string mangled = AtomTable.GetById(atomId)?.Name ?? "?";
-            // Chunk 256: present the user-facing name. Local
+            // present the user-facing name. Local
             // predicates carry a "user$" (or other module) prefix
             // from ModuleRewrite; surface the unprefixed name so
             // `listing(foo)` finds the predicate the user wrote
@@ -2812,7 +2812,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, listCell);
     }
 
-    /// <summary>Chunk 254 — <c>$listing_pred_source(+Name, +Arity)</c>.
+    /// <summary><c>$listing_pred_source(+Name, +Arity)</c>.
     /// Prints every AST clause whose head functor matches
     /// <c>Name/Arity</c>, using <see cref="AstTermRenderer"/> so the
     /// original <see cref="Shumway.Compiler.Ast.VarTerm.Name"/> from
@@ -2843,7 +2843,7 @@ public static class MetaBuiltins
         string displayName = AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "";
         int arity = (int)arityCell.AsInt;
 
-        // Chunk 256: ModuleRewrite mangles local predicates as
+        // ModuleRewrite mangles local predicates as
         // <module>$<name>. The user's `listing(helper)` arrives
         // here with the unmangled name; find every fid whose
         // demangled name matches (the predicate may be stored
@@ -2869,7 +2869,7 @@ public static class MetaBuiltins
                 PrintAstClause(output, clause);
                 printed++;
             }
-            // Chunk 255: no AST clauses but the predicate may still
+            // no AST clauses but the predicate may still
             // exist as a precompiled record loaded from a source-
             // stripped bundle. Surface a comment so the user sees the
             // predicate is real — bare `true.` would lie by implying
@@ -2890,7 +2890,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary>Chunk 257 — delegates to the shared
+    /// <summary>delegates to the shared
     /// <see cref="ClausePortrayer"/>. The Clause's wrapping
     /// (Fact's bare head vs Rule's <c>:-(H,B)</c> compound) is
     /// detected by the portrayer from the Term's own shape — no
@@ -2902,7 +2902,7 @@ public static class MetaBuiltins
         ClausePortrayer.Print(output, clause.Term);
     }
 
-    /// <summary>Chunk 257 — <c>portray_clause(+Clause)</c>: prints
+    /// <summary><c>portray_clause(+Clause)</c>: prints
     /// Clause to the engine's current output using the standard
     /// portray layout (head + indented body goals, synthetic
     /// variables renumbered to A, B, C, …).</summary>
@@ -2913,7 +2913,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary>Chunk 257 — <c>portray_clause(+Stream, +Clause)</c>:
+    /// <summary><c>portray_clause(+Stream, +Clause)</c>:
     /// like <see cref="PortrayClause1"/> but writes to the given
     /// output stream. The stream must be a Foreign cell bound to
     /// a write-mode handle (the same shape current_output / open
@@ -2952,7 +2952,7 @@ public static class MetaBuiltins
             IsoError.TypeError("predicate_indicator", spec));
     }
 
-    /// <summary><c>garbage_collect_clauses/0</c> — chunk 150. Walks
+    /// <summary><c>garbage_collect_clauses/0</c>. Walks
     /// every dynamic predicate's chain and re-threads it through only
     /// the live entries, bypassing the retracted ones still sitting
     /// in the bytecode. The dispatch cost of subsequent calls then
@@ -2968,7 +2968,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>garbage_collect_clauses(+Name/Arity)</c> — chunk 150.
+    /// <summary><c>garbage_collect_clauses(+Name/Arity)</c>.
     /// Same as the 0-arg form but restricted to a single predicate.</summary>
     public static bool GarbageCollectClauses1(Activation engine)
     {
@@ -2990,7 +2990,7 @@ public static class MetaBuiltins
             IsoError.TypeError("predicate_indicator", spec));
     }
 
-    /// <summary><c>compact_dynamic_buffer/0</c> — Phase-11 chunk 157.
+    /// <summary><c>compact_dynamic_buffer/0</c>.
     /// Invalidates the persistent dynamic-code buffer so the next
     /// query rebuilds it from current <c>_dynamicClauses</c>.
     /// Reclaims memory consumed by chain entries and clause bodies
@@ -3011,7 +3011,7 @@ public static class MetaBuiltins
     }
 
     /// <summary><c>compact_dynamic_buffer(+Name/Arity)</c> — Phase-12
-    /// chunk 158 per-predicate variant. Validates the predicate
+    /// Per-predicate variant. Validates the predicate
     /// indicator, errors on bad inputs (instantiation /
     /// type_error / domain_error / permission_error for non-
     /// dynamic), then falls through to the same full rebuild as
@@ -3100,7 +3100,7 @@ public static class MetaBuiltins
     }
 
     /// <summary>Builds the ISO Context indicator <c>Name/Arity</c> from
-    /// the exception's stamped builtin identity (chunk 130), or returns
+    /// the exception's stamped builtin identity, or returns
     /// <c>null</c> when no builtin stamped it — meaning the throw arose
     /// outside builtin dispatch (e.g. from the bytecode interpreter's
     /// undefined-procedure resolver) and the Context should fall back
@@ -3125,7 +3125,7 @@ public static class MetaBuiltins
             new CompoundTerm("evaluation_error", new Term[] { new AtomTerm(re.Detail) }), re),
         "instantiation_error" => WrapWithStampedContext(
             new AtomTerm("instantiation_error"), re),
-        // Chunk 144: type_error / domain_error now report the
+        // type_error / domain_error now report the
         // offending value in the second slot when the throw site
         // captured it.
         "type_error" => WrapWithStampedContext(
@@ -3143,10 +3143,10 @@ public static class MetaBuiltins
             new CompoundTerm("syntax_error", new Term[] { new AtomTerm(re.Detail) }), re),
         "resource_error" => WrapWithStampedContext(
             new CompoundTerm("resource_error", new Term[] { new AtomTerm(re.Detail) }), re),
-        // Chunk 131e: ISO permission_error has three args. The Detail
+        // ISO permission_error has three args. The Detail
         // string encodes "Operation,ObjectType" (e.g. "modify,static_procedure");
         // we split on the comma and put a fresh var in the Obj slot
-        // (chunk 144 carries the offending object too when present).
+        // (the exception carries the offending object too when present).
         "permission_error" => WrapWithStampedContext(
             BuildPermissionError(re), re),
         "system_error" => WrapWithStampedContext(
@@ -3160,7 +3160,7 @@ public static class MetaBuiltins
 
     /// <summary>Returns the captured offending term (from
     /// <see cref="PrologRuntimeException.Value"/>) when the throw site
-    /// snapshotted one, or a fresh anonymous var otherwise. (Chunk 144.)
+    /// snapshotted one, or a fresh anonymous var otherwise.
     /// </summary>
     private static Term ValueTermOrVar(PrologRuntimeException re) =>
         re.Value as Term ?? new VarTerm("_");
@@ -3210,7 +3210,7 @@ public static class MetaBuiltins
     public static bool Throw(Activation engine)
     {
         Term error = MaterializeRegister(engine, 0);
-        // Chunk 136: ISO §7.8.10.3.a — an unbound ball is
+        // ISO §7.8.10.3.a — an unbound ball is
         // instantiation_error. (Other shapes are user-defined and
         // pass through verbatim.)
         if (error is VarTerm)
@@ -3218,7 +3218,7 @@ public static class MetaBuiltins
         throw new ShumwayPrologException(error);
     }
 
-    // catch/3 is now a prelude predicate built on the chunk-85 catch-frame
+    // catch/3 is now a prelude predicate built on the catch-frame
     // plumbing ($catch_begin/$catch_end), running the guarded goal in the LIVE
     // engine. The old isolated-sub-engine builtin (which ran Goal in a peer
     // sub-engine and bound back only the first solution) was removed — it hid
@@ -3227,7 +3227,7 @@ public static class MetaBuiltins
     // statically-callable catch/3 is rewritten inline by MetaTransform). See
     // Prelude catch/3.
 
-    /// <summary><c>'$catch_begin'(Catcher, RecoveryGoal)</c> (chunk 85) —
+    /// <summary><c>'$catch_begin'(Catcher, RecoveryGoal)</c> —
     /// opens a catch/3 scope. Copies the catcher and the recovery-goal call
     /// onto the heap (so they survive a caught throw's heap truncation) and
     /// pushes a catch frame snapshotting the live machine. Emitted by the
@@ -3244,7 +3244,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>'$catch_end'/0</c> (chunk 85) — closes a catch/3 scope:
+    /// <summary><c>'$catch_end'/0</c> — closes a catch/3 scope:
     /// the guarded goal has produced a solution, so the catch frame is
     /// deactivated and a throw from the continuation will no longer be
     /// caught here. Backtracking into the guarded goal re-activates it.</summary>
@@ -3287,7 +3287,7 @@ public static class MetaBuiltins
     public static bool Call8(Activation engine) => CallN(engine, totalArity: 8);
 
     /// <summary><c>'$call'(Goal, Barrier)</c> — the cut-barrier-carrying
-    /// meta-call (chunk 88). It is intercepted by the bytecode interpreter
+    /// meta-call. It is intercepted by the bytecode interpreter
     /// exactly like <c>call/N</c> and never reaches this body; the entry
     /// exists only so the compiler emits a <c>call_builtin</c> for it.</summary>
     public static bool CallWithBarrier(Activation engine) =>
@@ -3306,7 +3306,7 @@ public static class MetaBuiltins
     /// <c>_GN</c>, and we use the embedded address to find the caller's
     /// variable cell and unify it with the materialised bound term.</para>
     ///
-    /// <para><b>Multi-solution support (chunk 56)</b>: when the goal has
+    /// <para><b>Multi-solution support</b>: when the goal has
     /// alternatives the builtin pushes a runtime IL-style choice point
     /// before binding the first solution. On backtrack the CP's resume
     /// delegate advances the sub-engine's enumerator, undoing the current
@@ -3321,7 +3321,7 @@ public static class MetaBuiltins
         // routes to BytecodeInterpreter.DispatchCall (Tier-0) — and the Tier-1
         // IL emit routes through IlMetaCallHelper.Dispatch — both of which run
         // the goal directly in this engine (so assert/retract from the called
-        // goal are visible to the caller, per Phase 4 + chunks 86/88/205). This
+        // goal are visible to the caller). This
         // builtin body (the historical isolated-sub-engine fallback) is never
         // reached. The sub-engine deep-copies the dynamic store, so if it DID
         // run, side effects from the called goal would silently not bleed back —
@@ -3424,7 +3424,7 @@ public static class MetaBuiltins
     {
         if (engine.Host is not PrologEngine host)
             throw new System.InvalidOperationException("'$native_run' requires a PrologEngine host.");
-        // Phase 33 A4 — read the block name as a raw atom cell and resolve through
+        // read the block name as a raw atom cell and resolve through
         // the host's atom-id cache: no Term materialization, no string hashing on
         // the per-dispatch path.
         Cell nameCell = RegisterMarshalling.DerefRegisterCell(engine, 0);
@@ -3446,7 +3446,7 @@ public static class MetaBuiltins
         }
         return block.Compiled is not null
             ? block.Compiled(engine)
-            // Phase 33 A1 — the entry-based overload reuses the block's cached
+            // the entry-based overload reuses the block's cached
             // invariant maps instead of rebuilding them per dispatch.
             : NativeBlockRunner.RunBlock(engine, block, regOffset: 1);
     }
@@ -3454,7 +3454,7 @@ public static class MetaBuiltins
     // ----- ADR-024 generic-term interop (reftype tier) -----------------------
 
     /// <summary>Extracts the <see cref="TermSlot"/> a register holds (a Foreign
-    /// cell), or null. Phase 33 A3 — reads the dereferenced cell directly; the old
+    /// cell), or null. reads the dereferenced cell directly; the old
     /// path materialized a <c>'$foreign'(Id)</c> CompoundTerm+IntTerm per call just
     /// to extract the id, on the hottest cursor builtins (fill_par/reftype_term/
     /// make_c_string/make_prolog_string).</summary>
@@ -3622,7 +3622,7 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
-    // consult / reconsult  (chunk 235)
+    // consult / reconsult
     // ============================================================================
 
     /// <summary><c>consult(+File)</c> — loads a Prolog source or compiled
@@ -3888,7 +3888,7 @@ public static class MetaBuiltins
 
         Term clauseTerm = MaterializeRegister(engine, 0);
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
-        // Chunk 427: Asserta/Assertz extract the head functor id anyway —
+        // Asserta/Assertz extract the head functor id anyway —
         // take it from the return instead of re-extracting (a second
         // string intern per assert).
         int fid = prepend ? host.Asserta(clause) : host.Assertz(clause);
@@ -3936,7 +3936,7 @@ public static class MetaBuiltins
             throw new InvalidOperationException(
                 "retract: PrologEngine host required.");
 
-        // Chunk 168: read the pattern's head functor id straight from
+        // read the pattern's head functor id straight from
         // the heap, without materialising the whole pattern as a
         // Term AST first. ExtractHeadFunctorIdFromClause walked the
         // freshly-built AST and re-interned the head's name —
@@ -3946,7 +3946,7 @@ public static class MetaBuiltins
         int patternHeap = engine.MaterializeRegisterForTrace(0);
         int patternFid = ReadPatternHeadFunctorId(engine, patternHeap);
 
-        // Chunk 131e: ISO §7.12.2.h — retracting from a static
+        // ISO §7.12.2.h — retracting from a static
         // predicate is permission_error(modify, static_procedure, _),
         // not a silent failure. The check fires after the head's type
         // check (above) so type errors win precedence.
@@ -3954,7 +3954,7 @@ public static class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException(
                 "permission_error", "modify,static_procedure");
 
-        // Chunk 421: scan the LIVE clause list directly — no snapshot copy.
+        // scan the LIVE clause list directly — no snapshot copy.
         // This is sound for the first step: the scan runs to completion
         // before anything can mutate the list (no goal executes between
         // here and the match). The logical-update-view snapshot is taken
@@ -3982,7 +3982,7 @@ public static class MetaBuiltins
     }
 
     /// <summary>Reads the pattern's head functor id straight from the
-    /// heap (chunk 168). Mirrors the ISO callability check in
+    /// heap. Mirrors the ISO callability check in
     /// <see cref="ExtractHeadFunctorIdFromClause"/> but avoids the
     /// Term AST allocation — for retract's hot path the heap shape
     /// is sufficient.</summary>
@@ -4031,8 +4031,8 @@ public static class MetaBuiltins
         AtomTable.Intern(":-", permanent: true).Id;
 
     /// <summary>Removes the first clause that unifies with the retract
-    /// pattern — the entry step, scanning the LIVE clause list (chunk 421:
-    /// no snapshot copy; nothing can mutate the list before this scan
+    /// pattern — the entry step, scanning the LIVE clause list
+    /// (no snapshot copy; nothing can mutate the list before this scan
     /// completes). When later candidates remain it leaves a choice point
     /// whose resume retracts the following match — that is what makes
     /// <c>retract/1</c> enumerate every matching clause on backtracking.</summary>
@@ -4055,13 +4055,13 @@ public static class MetaBuiltins
         // bindings before the resume retracts the next match.
         if (matchIndex + 1 < candidates.Count)
         {
-            // Chunk 421: snapshot ONLY the remaining candidates into the
+            // snapshot ONLY the remaining candidates into the
             // resume closure, here at push time (still call time, so the
             // ISO logical-update view is the same one a full up-front copy
             // captured). The live list mutates the moment the retract
             // returns; the resume must not read it.
             //
-            // chunk 431: the copy lands in a pooled per-engine buffer
+            // the copy lands in a pooled per-engine buffer
             // instead of a fresh array, and the whole enumeration shares
             // this ONE snapshot — each resume advances a start index
             // rather than re-copying its own tail-of-tail (the old code's
@@ -4097,7 +4097,7 @@ public static class MetaBuiltins
         bool unifyResult = engine.Unify(patternHeap, candSlot);
         RetractTrace.HeapStateAfterUnify(engine, patternHeap, candSlot, unifyResult);
 
-        // Chunk 423: the first step's candidates ARE the live list, so
+        // the first step's candidates ARE the live list, so
         // matchIndex is the live index — pass it through to skip the
         // O(N) IndexOf.
         host.RemoveDynamicByReference(engine, patternFid, candidate,
@@ -4106,7 +4106,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary>chunk 431 — resume state for a backtrackable <c>retract/1</c>
+    /// <summary>resume state for a backtrackable <c>retract/1</c>
     /// enumeration: the call-time snapshot of remaining candidates, the
     /// running start index, and cached <c>Resume</c> + <c>OnPrune</c>
     /// delegates (allocated once per enumeration, re-pushed unchanged on each
@@ -4208,7 +4208,7 @@ public static class MetaBuiltins
     /// caller re-does it for the chosen candidate after its choice point
     /// is in place.
     ///
-    /// <para>Chunk 421: each trial used to materialise the WHOLE candidate
+    /// <para>each trial used to materialise the WHOLE candidate
     /// clause onto the engine heap before unifying — for a keyed retract
     /// over a long predicate (Blint's <c>retract(saved_cur_line_i(Line,_))</c>
     /// over ~125 clauses) that is ~K clause materialisations per call, all
@@ -4220,7 +4220,7 @@ public static class MetaBuiltins
         Activation engine, IReadOnlyList<Clause> candidates, int startIndex,
         int endExclusive, int patternHeap)
     {
-        // chunk 431: endExclusive bounds the scan explicitly — a resume's
+        // endExclusive bounds the scan explicitly — a resume's
         // candidates live in a pooled buffer that may be longer than the
         // snapshot it holds, so candidates.Count is not the right bound.
         for (int i = startIndex; i < endExclusive; i++)
@@ -4247,7 +4247,7 @@ public static class MetaBuiltins
         return -1;
     }
 
-    /// <summary>Chunk 421 — true only when the pattern at
+    /// <summary>true only when the pattern at
     /// <paramref name="heapIdx"/> PROVABLY cannot unify with the candidate
     /// AST <paramref name="ast"/>: distinct atoms, distinct inline ints,
     /// distinct principal functors, or an atomic vs a compound. Anything
@@ -4265,7 +4265,7 @@ public static class MetaBuiltins
             case Tag.Atom:
                 return ast switch
                 {
-                    // chunk 431: cached id — this used to re-intern the
+                    // cached id — this used to re-intern the
                     // candidate's atom by name on EVERY retract trial.
                     AtomTerm a => a.ResolveAtomId() != c.AsAtomId,
                     IntTerm or FloatTerm or CompoundTerm or BigIntTerm => true,
@@ -4286,7 +4286,7 @@ public static class MetaBuiltins
                 {
                     case CompoundTerm ct:
                     {
-                        // chunk 431: functor ids are canonical (one id per
+                        // functor ids are canonical (one id per
                         // (atom, arity) pair — FunctorTable.Intern converges
                         // losers of its publish race onto the winner), so a
                         // single cached-id comparison replaces the per-trial
@@ -4331,14 +4331,14 @@ public static class MetaBuiltins
             : clause.Term;
         return head switch
         {
-            // chunk 431: read-through the node's cached ids. The atom is
+            // read-through the node's cached ids. The atom is
             // interned transient here, but every asserted clause is also
             // compiled by ClauseCompiler, whose InternAtom pins predicate
             // and literal names permanent — promotion keeps the id, so the
             // cache stays valid.
             AtomTerm a => FunctorTable.Intern(a.ResolveAtomId(), 0),
             CompoundTerm c => c.ResolveFunctorId(),
-            // Chunk 131e: ISO §8.9.3 — an unbound head raises
+            // ISO §8.9.3 — an unbound head raises
             // instantiation_error; anything else non-callable raises
             // type_error(callable, _).
             VarTerm => throw new Shumway.Core.PrologRuntimeException("instantiation_error"),
@@ -4360,14 +4360,14 @@ public static class MetaBuiltins
     /// unbound — and shared occurrences in the AST keep sharing.</para></summary>
     public static bool CopyTerm(Activation engine)
     {
-        // Phase 33 I2: heap-to-heap copy — no intermediate managed AST tree
+        // heap-to-heap copy — no intermediate managed AST tree
         // (was MaterializeRegister + MaterializeAsCell, ~1.3 KB garbage/call).
         Cell copyCell = HeapTermCopy.CopyRegister(engine, 0);
         return engine.UnifyRegisterWithCell(1, copyCell);
     }
 
     /// <summary><c>'$copy_term_3_prep'(Term, Copy, AttrInfo)</c> — the C#
-    /// half of <c>copy_term/3</c> (chunk 81). Copies <c>Term</c> into
+    /// half of <c>copy_term/3</c>. Copies <c>Term</c> into
     /// <c>Copy</c> with fresh plain variables and produces
     /// <c>AttrInfo</c>: a list of <c>ag(Module, AttrValue, Var)</c>
     /// triples, one per (attributed variable, module) pair found in
@@ -4474,7 +4474,7 @@ public static class MetaBuiltins
         return BindList(engine, results);
     }
 
-    /// <summary><c>'$findall_push'/0</c> (chunk 83) — opens a fresh
+    /// <summary><c>'$findall_push'/0</c> — opens a fresh
     /// solution buffer on the engine's findall stack. Emitted by the
     /// MetaTransform rewrite of <c>findall/3</c> as the first goal of the
     /// collect loop.</summary>
@@ -4484,7 +4484,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>'$findall_record'(Template)</c> (chunk 83) — copies the
+    /// <summary><c>'$findall_record'(Template)</c> — copies the
     /// current value of <c>Template</c> (a snapshot AST term, off the WAM
     /// heap so backtracking can't unwind it) into the open findall
     /// buffer, then succeeds so the trailing <c>fail</c> drives
@@ -4495,7 +4495,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>'$findall_record_s'(Template)</c> (Phase 33 I2b) — the
+    /// <summary><c>'$findall_record_s'(Template)</c> — the
     /// findall/3 record path. Snapshots the solution straight into a
     /// backtrack-safe <see cref="Cell"/> image (no per-node managed AST). A
     /// value-leaf template (float / bigint / string / pstr / foreign) can't be
@@ -4513,7 +4513,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>'$findall_collect'(List)</c> (chunk 83) — closes the
+    /// <summary><c>'$findall_collect'(List)</c> — closes the
     /// open findall buffer and unifies <c>List</c> with its collected
     /// solutions. Each solution is materialised with its own variable map
     /// so distinct solutions never accidentally share a variable.</summary>
@@ -4523,7 +4523,7 @@ public static class MetaBuiltins
         Cell list = Cell.Atom(AtomTable.EmptyListId);
         for (int i = frame.Count - 1; i >= 0; i--)
         {
-            // Each entry is a cell image (Phase 33 I2b fast path) or an AST term
+            // Each entry is a cell image or an AST term
             // (value-leaf fallback); re-emit it onto the heap either way.
             Cell elem = frame[i] is Cell[] snap
                 ? FindallSnapshot.EmitSnapshot(engine, snap)
@@ -4541,7 +4541,7 @@ public static class MetaBuiltins
         ?? throw new InvalidOperationException(
             "The in-engine findall builtins require a PrologEngine host.");
 
-    /// <summary><c>'$bagof_collect'(Groups)</c> (chunk 84) — closes the open
+    /// <summary><c>'$bagof_collect'(Groups)</c> — closes the open
     /// solution buffer (the bagof/3 rewrite shares findall's '$findall_push'
     /// and '$findall_record') and unifies its argument with the list of
     /// <c>Witness-Bag</c> pairs that bagof/3 backtracks over: one pair per
@@ -4555,7 +4555,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, groups);
     }
 
-    /// <summary><c>'$setof_collect'(Groups)</c> (chunk 84) — as
+    /// <summary><c>'$setof_collect'(Groups)</c> — as
     /// <see cref="BagofCollect"/>, but each bag is sorted into standard order
     /// and stripped of duplicates — the only difference between bagof/3 and
     /// setof/3.</summary>
@@ -4759,8 +4759,8 @@ public static class MetaBuiltins
     /// <summary><c>bagof(Template, Goal, Bag)</c> — the variable-goal fallback
     /// for bagof/3. When <c>Goal</c> is callable at compile time the
     /// MetaTransform rewrite handles bagof/3 in the live engine with full
-    /// witness grouping (chunk 84); this builtin only runs when <c>Goal</c> is
-    /// a variable bound at run time, and keeps the pre-chunk-84 behaviour —
+    /// witness grouping; this builtin only runs when <c>Goal</c> is
+    /// a variable bound at run time, and keeps the pre-behaviour —
     /// "findall + fail-on-empty", no witness grouping. <c>Var^Goal</c>
     /// existential wrappers are stripped.</summary>
     public static bool Bagof(Activation engine)
@@ -4773,7 +4773,7 @@ public static class MetaBuiltins
     /// <summary><c>setof(Template, Goal, Set)</c> — the variable-goal fallback
     /// for setof/3 (see <see cref="Bagof"/> for the bagof/setof split). Sorts
     /// the bag into standard order and removes duplicates, but keeps the
-    /// pre-chunk-84 no-grouping behaviour; the compile-time path with full
+    /// pre-no-grouping behaviour; the compile-time path with full
     /// witness grouping is the MetaTransform rewrite. The sort runs at the AST
     /// level via <see cref="TermStandardOrder.Compare"/>.</summary>
     public static bool Setof(Activation engine)
@@ -4814,7 +4814,7 @@ public static class MetaBuiltins
 
         Term template = MaterializeRegister(engine, 0);
         Term goal = MaterializeRegister(engine, 1);
-        // Chunk 135: ISO §8.10.1.3 / §8.10.2.3 / §8.10.3.3 — Goal must
+        // ISO §8.10.1.3 / §8.10.2.3 / §8.10.3.3 — Goal must
         // be callable. A var (after materialisation) is instantiation_error;
         // anything else non-callable is type_error(callable, _).
         if (goal is VarTerm)
@@ -4866,7 +4866,7 @@ public static class MetaBuiltins
         return TermReader.Materialize(engine, slot);
     }
 
-    /// <summary><c>'$tbl_seen'/1</c> (chunk 106) — succeeds, recording the
+    /// <summary><c>'$tbl_seen'/1</c> — succeeds, recording the
     /// argument, the first time it is called with a given (structurally
     /// canonicalised) ground term; fails on every later call with an
     /// equal term. The tabling driver uses it as an O(1) duplicate-answer
@@ -4883,7 +4883,7 @@ public static class MetaBuiltins
         return host.RegisterTablingKey(sb.ToString());
     }
 
-    /// <summary><c>'$tbl_seen_clear'/0</c> (chunk 107) — empties the
+    /// <summary><c>'$tbl_seen_clear'/0</c> — empties the
     /// engine's tabling key set, so a later re-derivation of a subgoal is
     /// not deduplicated against answers from before a table invalidation.</summary>
     public static bool TableSeenClear(Activation engine)
@@ -4895,7 +4895,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>'$tbl_solve_complete'(+Goal)</c> (chunk 107) — succeeds
+    /// <summary><c>'$tbl_solve_complete'(+Goal)</c> — succeeds
     /// iff <paramref name="Goal"/> has at least one solution when run to a
     /// <em>complete</em> tabled evaluation. It runs in a sub-engine whose
     /// table is first abolished, so the negated subgoal's fixpoint is
@@ -4980,7 +4980,7 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
-    // Phase 24 chunk 266 — Arity-Prolog recorded database.
+    // Arity-Prolog recorded database.
     // See RecordedDatabase.cs for the storage layer.
     // ============================================================================
 
@@ -5001,8 +5001,8 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(2, Cell.Int(@ref));
     }
 
-    // Phase 33 (PrologToC) — recorded/3 rewritten around the two chunk-421
-    // retract lessons. The old shape ToList-copied the key's WHOLE chain into
+    // recorded/3 is written around the retract lessons: the naive
+    // shape ToList-copied the key's WHOLE chain into
     // (Ref, Term) tuples per call and materialised + unified EVERY candidate
     // through a full CP cycle. The classic Edinburgh drain
     // (`recorded(K, V, R), erase(R), …, !` once per item — the PrologToC
@@ -5334,8 +5334,8 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
-    // Phase 24 chunk 267 — Edinburgh-style I/O (Arity-Prolog compatible).
-    // Thin layer over the chunk-140 StreamRegistry: see/tell open a file and
+    // Edinburgh-style I/O (Arity-Prolog compatible).
+    // Thin layer over the StreamRegistry: see/tell open a file and
     // make it the current input/output; seen/told close it and revert to
     // user_input/user_output. get/get0/put/skip operate on character codes.
     // ============================================================================
@@ -5345,7 +5345,7 @@ public static class MetaBuiltins
         PrologEngine host = RequireHost(engine, "see/1");
         string path = RequireAtomPath(engine, register: 0, builtin: "see/1");
         var streams = engine.Streams!;
-        // Phase 33 (PrologToC corpus) — real Edinburgh see/1 semantics:
+        // real Edinburgh see/1 semantics:
         // several input files may be open at once, and see/1 on a file that
         // is ALREADY open makes it current again, RESUMING at its position
         // (only seen/0 closes). The previous behaviour (close the old file,
@@ -5407,7 +5407,7 @@ public static class MetaBuiltins
         PrologEngine host = RequireHost(engine, "tell/1");
         string path = RequireAtomPath(engine, register: 0, builtin: "tell/1");
         var streams = engine.Streams!;
-        // Phase 33 — Edinburgh tell/1 mirrors see/1 (see See1's note): several
+        // Edinburgh tell/1 mirrors see/1 (see See1's note): several
         // output files may be open at once; tell/1 on an already-open file
         // makes it current again, APPENDING where it left off. Only told/0
         // closes. The classic multi-output juggle depends on this:
@@ -5588,7 +5588,7 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
-    // Phase 24 chunk 268 (partial) — Arity-Prolog string<->term + search.
+    // Arity-Prolog string<->term + search.
     // "string" in Arity means atom; these are write-/writeq-style variants of
     // term_to_atom/2, plus a backtrackable substring search.
     // ============================================================================
@@ -5696,7 +5696,7 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
-    // Phase 24 chunk 271 — Arity-Prolog file-system operations.
+    // Arity-Prolog file-system operations.
     // Thin wrappers over System.IO. ISO error shapes for instantiation /
     // existence / permission failures so catch/3 can match them.
     // ============================================================================
@@ -5788,7 +5788,7 @@ public static class MetaBuiltins
         return System.IO.File.Exists(path);
     }
 
-    // Phase 33 (PrologToC corpus) — SWI-compatible getenv/2: unify Value with
+    // SWI-compatible getenv/2: unify Value with
     // the environment variable's contents, or FAIL (not error) when unset —
     // callers rely on the failure branch for defaults:
     // `(getenv('X', V) ; V = default)`.
@@ -5808,7 +5808,7 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
-    // Phase 33 — process / file-metadata primitives (Logtalk os backend).
+    // process / file-metadata primitives (Logtalk os backend).
     // ============================================================================
 
     /// <summary>Runs <paramref name="command"/> through the platform shell
@@ -5918,7 +5918,7 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
-    // Phase 24 chunk 272 — pseudo-random generation.
+    // pseudo-random generation.
     // ============================================================================
 
     public static bool Randomize1(Activation engine)
@@ -5934,7 +5934,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary>Phase 33 (Logtalk backend_random) — <c>get_seed(-Seed)</c>.
+    /// <summary><c>get_seed(-Seed)</c>.
     /// The engine's <see cref="System.Random"/> doesn't expose its internal
     /// state, so we use the standard reseed trick: draw a fresh seed value,
     /// reseed the generator with it, and return it — a later
@@ -5995,7 +5995,7 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
-    // Phase 24 chunk 273 — expand_term/2 (DCG expansion exposed).
+    // expand_term/2 (DCG expansion exposed).
     // ============================================================================
 
     public static bool ExpandTerm2(Activation engine)
@@ -6022,7 +6022,7 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
-    // Phase 24 chunk 274 — file_list/1,2 (Arity-Prolog database dump).
+    // file_list/1,2 (Arity-Prolog database dump).
     // ============================================================================
 
     public static bool FileList1(Activation engine)

@@ -32,8 +32,8 @@ namespace Shumway.Compiler.Parsing;
 /// starts with <c>$</c> when unquoted).</para>
 ///
 /// <para><b>All-solutions and control predicates.</b> The same pass also
-/// rewrites <c>findall/3</c> (chunk 83); <c>bagof/3</c>, <c>setof/3</c>,
-/// <c>forall/2</c> (chunk 84); and <c>catch/3</c> (chunk 85) when their goal
+/// rewrites <c>findall/3</c>; <c>bagof/3</c>, <c>setof/3</c>,
+/// <c>forall/2</c>; and <c>catch/3</c> when their goal
 /// argument is callable at compile time, so they run in the live engine
 /// instead of an isolated sub-engine. <c>forall(C, A)</c> becomes
 /// <c>\+ (C, \+ A)</c>; the all-solutions predicates become a fail-driven
@@ -64,7 +64,7 @@ public static class MetaTransform
             {
                 Term head = ruleTerm.Args[0];
                 Term body = ruleTerm.Args[1];
-                // Chunk 408 — ISO 7.8.8 cut transparency. A `!` inside a
+                // ISO 7.8.8 cut transparency. A `!` inside a
                 // `;` / `->` then/else BRANCH must commit the HOST clause, but
                 // the branch lowers to a synthesised helper whose own clause
                 // dispatch the `!` would otherwise cut instead (the bug: d(X)
@@ -73,7 +73,7 @@ public static class MetaTransform
                 // a fresh variable as the FIRST body goal (CallBuiltin doesn't
                 // touch B0, so it still holds the caller's Call-site value =
                 // the neck barrier) and thread it into the helpers, where the
-                // branch `!` becomes '$call'(!, K) — the chunk-88 barrier cut.
+                // branch `!` becomes '$call'(!, K) — the barrier cut.
                 Term newBody;
                 if (HasTransparentBranchCut(body))
                 {
@@ -105,13 +105,13 @@ public static class MetaTransform
         return result;
     }
 
-    /// <param name="cutK">Chunk 408 — the host clause's captured cut-barrier
+    /// <param name="cutK">The host clause's captured cut-barrier
     /// variable, threaded through cut-TRANSPARENT positions only (conjunction,
     /// disjunction branches, if-then-else then/else). Null when the host body
     /// has no branch cut, or in cut-OPAQUE positions (an if-then-else
     /// condition, \+, call/N, findall/bagof/setof/forall/catch goals) — there
     /// a branch `!` keeps today's helper-local scope.</param>
-    /// <summary>Chunk 414 — diag-build-only (<c>-p:ShumwayDiag=true</c> +
+    /// <summary>Diag-build-only (<c>-p:ShumwayDiag=true</c> +
     /// <c>SHUMWAY_CUTFIX_DIAG=1</c>): names each clause the branch-cut
     /// transparency capture fires on. Stripped from normal builds.</summary>
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
@@ -170,7 +170,7 @@ public static class MetaTransform
         // \+ G  or  not(G)  with a syntactically-callable inner goal —
         // synthesise the helper and emit a call to it. A non-callable
         // inner goal (var, integer, …) falls through to a runtime
-        // call/1 which raises the proper ISO error (chunk 136).
+        // call/1 which raises the proper ISO error.
         if (goal is CompoundTerm ct
             && ct.Args.Length == 1
             && (ct.Functor == "\\+" || ct.Functor == "not")
@@ -200,8 +200,8 @@ public static class MetaTransform
             return TransformGoal(rewritten, ref counter, helpers);
         }
 
-        // Phase 33 W1 — once(G) / ignore(G) with a syntactically-callable G.
-        // Snips `[! G !]` desugar to once/1 (chunk 263), so this is the hot
+        // once(G) / ignore(G) with a syntactically-callable G.
+        // Snips `[! G !]` desugar to once/1, so this is the hot
         // Arity construct: without the rewrite every snip built G as a heap
         // term and meta-dispatched through the prelude's once/1 + call/1 at
         // runtime. Rewrite to the negation-helper shape instead:
@@ -224,7 +224,7 @@ public static class MetaTransform
         }
 
         // findall(Template, Goal, List) with a syntactically-callable
-        // Goal — rewrite to an in-engine collect loop (chunk 83):
+        // Goal — rewrite to an in-engine collect loop:
         //   ( '$findall_push', Goal, '$findall_record'(Template), fail
         //   ; '$findall_collect'(List) )
         // Goal is spliced in as a body goal, so it compiles inline with
@@ -235,7 +235,7 @@ public static class MetaTransform
         // syntactically callable (a var, an integer, a string, …) is
         // left alone — it falls through to the runtime findall/3
         // builtin, which raises the appropriate ISO
-        // instantiation_error / type_error(callable, _) (chunk 135).
+        // instantiation_error / type_error(callable, _).
         if (goal is CompoundTerm fa
             && fa.Functor == "findall"
             && fa.Args.Length == 3
@@ -268,7 +268,7 @@ public static class MetaTransform
 
         // bagof/3 and setof/3 with a callable (non-variable) Goal — rewrite
         // to an in-engine collect loop that groups solutions by the goal's
-        // witness variables (chunk 84). See RewriteBagof and the class
+        // witness variables. See RewriteBagof and the class
         // remarks. A bare-variable Goal falls through to the runtime builtin.
         if (goal is CompoundTerm bs
             && (bs.Functor == "bagof" || bs.Functor == "setof")
@@ -309,7 +309,7 @@ public static class MetaTransform
         }
 
         // catch(Goal, Catcher, Recovery) with a callable Goal and Recovery —
-        // rewrite to an in-engine guarded call (chunk 85). See RewriteCatch.
+        // rewrite to an in-engine guarded call. See RewriteCatch.
         // A variable Goal or Recovery falls through to the runtime builtin.
         if (goal is CompoundTerm ca
             && ca.Functor == "catch"
@@ -322,19 +322,19 @@ public static class MetaTransform
                 goal.Position);
         }
 
-        // Phase 19 chunk 205 — static call/N rewrite. `call(Goal, X1, ..., Xn)`
+        // Static call/N rewrite. `call(Goal, X1, ..., Xn)`
         // where Goal is an atom or a non-control-construct compound rewrites
         // to a direct goal with the extra args appended. The compiler then
         // emits a Call / Execute to the resolved functor instead of
         // `CallBuiltin call/N`, dropping the dispatcher overhead AND making
-        // the predicate Tier-1 IL eligible (the chunk-201 call/$call gate
+        // the predicate Tier-1 IL eligible (the call/$call gate
         // skips it).
         //
         // Skipped when:
         //   - Goal is a variable — genuine runtime meta-call, needs the
         //     dispatcher.
         //   - Goal is a control construct (`,`/`;`/`->`/`*->`/`\+`/`not`/
-        //     `!`/`catch`/`throw`) — the bytecode interpreter's chunk-88
+        //     `!`/`catch`/`throw`) — the bytecode interpreter's
         //     cut-barrier threading routes these through `$call_*` helpers
         //     with a distinct semantics for `!` (commits to the call's
         //     barrier, not the enclosing predicate's). The rewrite would
@@ -398,14 +398,14 @@ public static class MetaTransform
         return goal;
     }
 
-    /// <summary>Phase 33 — synthesized-helper NAMING context. The old per-Apply
+    /// <summary>Synthesized-helper NAMING context. The old per-Apply
     /// counter restarted at zero on every transform run, so a QUERY stub's
     /// synthesized <c>$disj_1</c> (e.g. a findall collect loop) could collide —
     /// same module mangling, same arity — with a CONSULTED clause's
     /// <c>$disj_1</c>: the query-region definition shadowed the consulted helper
     /// and the caller executed the WRONG body (surfaced as an
     /// instantiation_error inside <c>findall</c> over an if-then-else predicate;
-    /// latent at least since phase-32).
+    /// latent for a long time).
     ///
     /// <para>The fix is SCOPED naming, not a process-global sequence (that was
     /// tried first and mints unbounded fresh atoms — one per helper per query —
@@ -482,7 +482,7 @@ public static class MetaTransform
         set => _inlineIteEnabled = value;
     }
 
-    /// <summary>Chunk 408 — does <paramref name="body"/> contain a <c>!</c> in a
+    /// <summary>Does <paramref name="body"/> contain a <c>!</c> in a
     /// cut-TRANSPARENT branch position (inside a <c>;</c> branch or an
     /// if-then-else then/else, possibly nested)? Such a body needs the host
     /// barrier captured and threaded. A top-level <c>!</c> (plain conjunction)
@@ -522,9 +522,9 @@ public static class MetaTransform
         };
     }
 
-    /// <summary>Chunk 408 — rewrites every cut-transparent <c>!</c> at the
+    /// <summary>Rewrites every cut-transparent <c>!</c> at the
     /// conjunction level of a branch term into <c>'$call'(!, K)</c> (the
-    /// chunk-88 barrier cut). Nested <c>;</c>/<c>-&gt;</c> inside the branch
+    /// barrier cut). Nested <c>;</c>/<c>-&gt;</c> inside the branch
     /// are left for the recursive transform (their own helper synthesis
     /// replaces THEIR branch cuts with the same K); cut-opaque subterms are
     /// untouched.</summary>
@@ -552,9 +552,9 @@ public static class MetaTransform
     }
 
     /// <summary>True iff <paramref name="goal"/> is an atom / compound that
-    /// the chunk-205 static call/N rewrite is allowed to extend. Excludes
+    /// the static call/N rewrite is allowed to extend. Excludes
     /// the control constructs whose <c>$call_*</c> routing in the bytecode
-    /// interpreter (chunk 88) gives a distinct cut-barrier semantics from
+    /// interpreter gives a distinct cut-barrier semantics from
     /// the bare equivalent — rewriting <c>call(!)</c> to <c>!</c> would
     /// silently change the cut scope. The exclude set is the same one
     /// <c>DispatchCall</c> intercepts after functor lookup.</summary>
@@ -597,7 +597,7 @@ public static class MetaTransform
     {
         string helperName = HelperName("disj", ref counter);
 
-        // Chunk 408 — branch cuts become '$call'(!, K) BEFORE free-variable
+        // Branch cuts become '$call'(!, K) BEFORE free-variable
         // collection, so the captured-barrier variable K rides into the
         // helper's head like any other free variable. Branch positions only;
         // an if-then-else condition stays opaque (its cuts keep helper scope).
@@ -668,7 +668,7 @@ public static class MetaTransform
         return BuildHelperHead();
     }
 
-    /// <summary>Phase 33 W1 — synthesizes the once/ignore helper (see the
+    /// <summary>Synthesizes the once/ignore helper (see the
     /// TransformGoal case): <c>'$once_N'(V..) :- G, !.</c>, plus a bare-fact
     /// second clause for ignore. Mirrors <see cref="SynthesizeNegationHelper"/>:
     /// the free named variables flow through the helper head, so bindings G
@@ -750,7 +750,7 @@ public static class MetaTransform
     }
 
     /// <summary>Rewrites <c>bagof(T, Goal, B)</c> / <c>setof(T, Goal, B)</c>
-    /// into the chunk-84 in-engine form
+    /// into the in-engine form
     /// <code>
     ///   ( '$findall_push', Goal', '$findall_record'(Wt-T), fail
     ///   ; '$bagof_collect'(Groups) ),
@@ -865,7 +865,7 @@ public static class MetaTransform
     }
 
     /// <summary>Rewrites <c>catch(Goal, Catcher, Recovery)</c> into the
-    /// chunk-85 in-engine form: a call to a synthesised goal helper
+    /// in-engine form: a call to a synthesised goal helper
     /// <code>
     ///   '$catchgoal_N'(AllVars) :-
     ///       '$catch_begin'(Catcher, '$catchrec_N'(RecVars)),

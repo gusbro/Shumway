@@ -8,7 +8,7 @@ namespace Shumway.Core;
 /// survives. Called at engine safe points (see the watermark hook and
 /// <c>garbage_collect/0</c>).
 ///
-/// <para>First cut (chunk 211): attributed variables are out of scope —
+/// <para>First cut: attributed variables are out of scope —
 /// the collector bails (no-op) when any attvar state is present, which
 /// is always safe. Attvar relocation (the attr table keyed by home
 /// index, the attr-modify side log, pending wakeups) is a follow-up.</para>
@@ -19,7 +19,7 @@ public sealed partial class Activation
     private bool[]? _gcMarked;
     private int[]? _gcForward;
     private int[]? _gcWork;
-    // chunk 432: mark-phase state for the de-closured GcMarkCell /
+    // mark-phase state for the de-closured GcMarkCell /
     // GcMarkReferents (they were closure-capturing locals invoked through
     // Action<int> / Action<Cell> — a delegate call per register / stack
     // slot / trail entry per collection). Valid only inside CollectHeap.
@@ -63,7 +63,7 @@ public sealed partial class Activation
         set { _gcStressMode = value; UpdateGcDiagActive(); }
     }
 
-    // Chunk 428 — single "any diag knob set" flag, maintained at the
+    // single "any diag knob set" flag, maintained at the
     // places _gcStressMode / _gcOnlyAt / _gcUpTo are written (this setter
     // + DiagReadGcOverrides), so the steady-state MaybeCollectHeap check
     // is one volatile read + one fused compare instead of five sequential
@@ -142,7 +142,7 @@ public sealed partial class Activation
         if (_cancelRequested) ThrowQueryCancelled();
     }
 
-    // Chunk 428 — hot/cold split. The guard is AggressiveInlining so each
+    // hot/cold split. The guard is AggressiveInlining so each
     // safe-point call site inlines to: a volatile _cancelRequested read +
     // one compare (the diag flag and the watermark, fused into a single
     // early return on the steady-state path). Everything that can actually
@@ -256,18 +256,18 @@ public sealed partial class Activation
         // terms are roots reachable only via the attr table (keyed by
         // the attvar's home heap index, which itself must be relocated),
         // plus an attr-modify side log and a transient wakeup queue that
-        // also carry heap indices. Relocating all of that correctly is a
-        // separate chunk; until then a no-op is the safe choice.
+        // also carry heap indices. Relocating all of that correctly is
+        // future work; until then a no-op is the safe choice.
         if (_attrTable.Count > 0 || _pendingWakeups.Count > 0) return 0;
 
         int oldTop = _heapTop;
         if (oldTop == 0) return 0;
 
-        // ---- Phase 1: mark every cell reachable from the roots. ----
+        // ---- mark every cell reachable from the roots. ----
         bool[] marked = _gcMarked is { } m && m.Length >= oldTop ? m : (_gcMarked = new bool[oldTop]);
         System.Array.Clear(marked, 0, oldTop);
         if (_gcWork is null || _gcWork.Length < 1024) _gcWork = new int[1024];
-        // chunk 432: the mark primitives are private methods over these
+        // the mark primitives are private methods over these
         // fields (direct calls from MarkRoots / the trace loop); delegates
         // remain only for the external OnGcMark hook.
         _gcWorkTop = 0;
@@ -281,7 +281,7 @@ public sealed partial class Activation
         while (_gcWorkTop > 0)
             GcMarkReferents(_heap[_gcWork[--_gcWorkTop]]);
 
-        // ---- Phase 2: forwarding addresses (order-preserving slide). ----
+        // ---- forwarding addresses (order-preserving slide). ----
         // forward[i] = number of marked cells in [0, i). New address of a
         // live cell at i is forward[i]; a heap-top boundary p maps to
         // forward[p]; the new heap top is forward[oldTop].
@@ -300,18 +300,18 @@ public sealed partial class Activation
                                         // which is why HeapGcCount bumps only below)
         HeapGcCount++;
 
-        // ---- Phase 3: rewrite payloads in place (still at old positions). ----
+        // ---- rewrite payloads in place (still at old positions). ----
         for (int i = 0; i < oldTop; i++)
             if (marked[i])
                 _heap[i] = RelocateCell(_heap[i], forward);
 
-        // ---- Phase 4: slide live cells left. forward[i] <= i and i is
+        // ---- slide live cells left. forward[i] <= i and i is
         // increasing, so the destination is always already vacated. ----
         for (int i = 0; i < oldTop; i++)
             if (marked[i])
                 _heap[forward[i]] = _heap[i];
 
-        // ---- Phase 5: relocate every external holder of a heap index. ----
+        // ---- relocate every external holder of a heap index. ----
         RelocateRoots(forward, oldTop);
         OnGcRelocate?.Invoke(
             idx => RelocIndex(idx, forward),
@@ -359,7 +359,7 @@ public sealed partial class Activation
 
     private static bool InBounds(int idx, int oldTop) => (uint)idx < (uint)oldTop;
 
-    // chunk 432 — de-closured mark/enqueue (was a closure local invoked
+    // de-closured mark/enqueue (was a closure local invoked
     // through Action<int>). Guards bounds defensively — a root should
     // never reference outside [0, _gcOldTop), but a stray value must not
     // crash the collector.
@@ -377,7 +377,7 @@ public sealed partial class Activation
         work[_gcWorkTop++] = addr;
     }
 
-    // chunk 432 — de-closured referent enqueue (was a closure local invoked
+    // de-closured referent enqueue (was a closure local invoked
     // through Action<Cell>). Enqueues the cells a value cell references
     // (without marking the value cell itself — used both for heap cells
     // during the trace and for root cells that live off-heap in registers /
@@ -461,7 +461,7 @@ public sealed partial class Activation
     /// bounds + Str-functor guards in GcMarkReferents. This avoids the
     /// fragile precise frame-liveness walk, which under-counted roots in
     /// the tabling fixpoint's reused stack. Trails and catch frames carry
-    /// bare heap indices, so they are marked explicitly. chunk 432: calls
+    /// bare heap indices, so they are marked explicitly. calls
     /// the de-closured <see cref="GcMarkReferents"/> /
     /// <see cref="GcMarkCell"/> directly — no per-slot delegate invoke.</summary>
     private void MarkRoots(int oldTop)

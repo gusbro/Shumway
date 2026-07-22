@@ -3,7 +3,7 @@ using Shumway.Compiler.Ast;
 namespace Shumway.Compiler.Parsing;
 
 /// <summary>
-/// Chunk 407 (Phase 29, ADR-021 candidate #2) — conservative unfolding of
+/// Conservative unfolding of
 /// user-defined META-WRAPPER predicates at their call sites.
 ///
 /// <para>Arity-compat programs define control wrappers like
@@ -11,8 +11,8 @@ namespace Shumway.Compiler.Parsing;
 /// statically-known goals: <c>ifthen(not(flag), (writeln(A), writeln(B)))</c>.
 /// Each such call costs the goal-TERM construction on the heap at the call
 /// site, the wrapper's frame + its lowered <c>$disj</c> helper call, and a
-/// runtime meta-dispatch per goal argument (Blint: 90 K dispatches + ~1.6 M
-/// sandwich opcodes per self-lint). Unfolding the wrapper at the call site —
+/// runtime meta-dispatch per goal argument. Unfolding the wrapper at the call
+/// site —
 /// <c>( not(flag) -&gt; writeln(A), writeln(B) ; true )</c> — turns all of it
 /// into compile-time-lowered control flow with direct calls.</para>
 ///
@@ -43,13 +43,13 @@ namespace Shumway.Compiler.Parsing;
 /// <c>type_error(callable)</c> lazily at run time inside the wrapper —
 /// unfolding would move that error to a different place, so we leave it.
 /// Cut opacity is preserved: a <c>!</c> INSIDE a passed goal is opaque both
-/// ways (meta-called goal: cut barrier at the call — chunk 88; unfolded: the
+/// ways (meta-called goal: cut barrier at the call; unfolded: the
 /// if-then-else condition is opaque to cut per ISO).</para>
 ///
 /// <para>The wrapper's own clauses are LEFT INTACT and compiled normally — a
 /// runtime-constructed goal (<c>call(ifthen(A,B))</c>, <c>=..</c>) must keep
 /// dispatching to the standalone predicate (fid-reachability is not statically
-/// decidable; the chunk-401 lesson). Only STATIC predicates can match (the
+/// decidable). Only STATIC predicates can match (the
 /// drivers run this over the static clause set; dynamic-head clauses are
 /// routed elsewhere before the pipeline), so the unfolded semantics can never
 /// go stale (static predicates are immutable).</para>
@@ -57,14 +57,13 @@ namespace Shumway.Compiler.Parsing;
 /// <para>Runs BEFORE <see cref="ClausePipeline"/> (the unfold inserts
 /// <c>-&gt;</c>/<c>;</c>/<c>\+</c> that <see cref="MetaTransform"/> then
 /// lowers), driven by whoever holds a whole module's clause list
-/// (ConsultString, ShmoCompiler; the linker for cross-module in a later
-/// chunk).</para>
+/// (ConsultString, ShmoCompiler; the linker for the cross-module closure).</para>
 /// </summary>
 public static class MetaWrapperUnfold
 {
     private const int MaxUnfoldDepth = 32;
 
-    /// <summary>Chunk 414 — diag-build-only (<c>-p:ShumwayDiag=true</c> +
+    /// <summary>Diag-build-only (<c>-p:ShumwayDiag=true</c> +
     /// <c>SHUMWAY_UNFOLD_DIAG=1</c>): lists the wrappers a registry holds.
     /// Stripped from normal builds.</summary>
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]

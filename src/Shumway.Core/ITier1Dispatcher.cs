@@ -21,7 +21,7 @@ public interface ITier1Dispatcher
     /// implementation may compile lazily on this call.</summary>
     Func<Activation, bool>? OnDispatch(int targetAddress);
 
-    /// <summary>Phase 16 threaded dispatch: returns the IL delegate
+    /// <summary>Threaded dispatch: returns the IL delegate
     /// already bound to the given functor id, or <c>null</c> if none
     /// is. The bytecode interpreter consults this when it lands on a
     /// resume-marker Pc (set by an IL non-tail Call site as the

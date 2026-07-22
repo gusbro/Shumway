@@ -31,7 +31,7 @@ public sealed class Solution
     /// failed query.</summary>
     public bool IsLast { get; }
 
-    /// <summary>Chunk 238 — engine that produced this solution. Used
+    /// <summary>engine that produced this solution. Used
     /// by <see cref="Get{T}"/> / <see cref="TryGet{T}"/> to resolve
     /// the host's registered term converters (the built-in scalar
     /// converters work without it, but a user converter for a custom
@@ -53,7 +53,7 @@ public sealed class Solution
     public Term? this[string variableName] =>
         Bindings.TryGetValue(variableName, out var t) ? t : null;
 
-    /// <summary>Chunk 238 — typed accessor: returns the binding for
+    /// <summary>typed accessor: returns the binding for
     /// <paramref name="variableName"/> converted to
     /// <typeparamref name="T"/> via the engine's converters (built-in
     /// or user-registered through
@@ -74,7 +74,7 @@ public sealed class Solution
         return Activation.FromTerm<T>(t);
     }
 
-    /// <summary>Chunk 238 — non-throwing variant of <see cref="Get{T}"/>:
+    /// <summary>non-throwing variant of <see cref="Get{T}"/>:
     /// returns <c>false</c> when the variable isn't bound; surfaces
     /// type-conversion exceptions as-is (they signal a programmer
     /// error, not the absence of data).</summary>
@@ -104,7 +104,7 @@ public sealed class Solution
             $"{kv.Key} = {Render(kv.Value, 1200)}"));
     }
 
-    /// <summary>Chunk 252 — pretty-print variant. Each binding fits
+    /// <summary>pretty-print variant. Each binding fits
     /// on its own line; a term whose compact rendering would exceed
     /// <paramref name="width"/> columns breaks across lines with
     /// indented arguments. Compact terms render as the default
@@ -133,7 +133,7 @@ public sealed class Solution
         return sb.ToString();
     }
 
-    /// <summary>Chunk 252 — pretty-printer. Tries the compact
+    /// <summary>pretty-printer. Tries the compact
     /// <see cref="Render"/> first; if it fits in
     /// <c>width - indent</c> columns, uses it as-is. Otherwise
     /// breaks the term across lines with each argument indented
@@ -226,7 +226,7 @@ public sealed class Solution
     /// bindings with the same table round-trips.</summary>
     private static readonly OperatorTable Ops = OperatorTable.Default();
 
-    /// <summary>Chunk 254 — delegates to the extracted public
+    /// <summary>delegates to the extracted public
     /// <see cref="AstTermRenderer"/> so the listing builtin and any
     /// future AST consumer share the same rendering rules.</summary>
     private static string Render(Term term, int maxPrec)

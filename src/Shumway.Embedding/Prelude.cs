@@ -131,7 +131,7 @@ internal static class Prelude
         % gets here — the MetaTransform rewrites it at compile time; the
         % interpreter's call dispatch routes ,/2 ;/2 ->/2 \+/1 to these
         % plainly-named helpers (operator atoms are awkward to declare).
-        % K is the cut barrier of the enclosing call (chunk 88): '$call'/2
+        % K is the cut barrier of the enclosing call: '$call'/2
         % re-enters call dispatch carrying it, so a `!` inside a runtime
         % compound goal commits exactly as far as the call — no further.
         % ,/2 ;/2 and the then/else of ->/2 are cut-transparent (they pass
@@ -153,7 +153,7 @@ internal static class Prelude
         forall(Cond, Action) :- \+ ( call(Cond), \+ call(Action) ).
 
         %! catch(:Goal, ?Catcher, :Recovery) | Control | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead.
-        % Runs in the LIVE engine using the chunk-85 catch-frame machinery
+        % Runs in the LIVE engine using the catch-frame machinery
         % ('$catch_begin' pushes a frame carrying Catcher + a recovery goal;
         % the engine's throw handler unwinds to it and dispatches the recovery).
         % A statically-callable catch/3 is rewritten inline by MetaTransform to
@@ -281,7 +281,7 @@ internal static class Prelude
             Acc1 is Acc + H,
             '$sum_list'(T, Acc1, Out).
 
-        % Residual-constraint projection (chunk 81). copy_term/3 copies a
+        % Residual-constraint projection. copy_term/3 copies a
         % term and, for every attributed variable in it, collects the
         % goals each module's attribute_goals/4 hook produces — already
         % re-expressed over the copy's variables. '$copy_term_3_prep'/3
@@ -299,7 +299,7 @@ internal static class Prelude
             '$attr_goals_of'(Rest, RestGoals),
             append(G, RestGoals, Goals).
 
-        % ===== common list-library predicates (chunk 96) =====
+        % ===== common list-library predicates =====
 
         %! select(?Elem, ?List, ?Rest) | Lists | Rest is List with one occurrence of Elem removed; backtracks over occurrences.
         select(X, [X|T], T).
@@ -431,7 +431,7 @@ internal static class Prelude
             ; R = [k(K2, I2, E2)|R1], '$sort4_skip'(T, K2, R1)
             ).
 
-        % ===== atom / number conversion (chunk 97) =====
+        % ===== atom / number conversion =====
         % atom_number/2 and number_string/2 are C# builtins (parse-or-fail
         % via TryParse); atomic_list_concat/2,3 and char_type/2 are below.
 
@@ -509,7 +509,7 @@ internal static class Prelude
         '$ascii_space'(32) :- !.
         '$ascii_space'(C) :- C >= 9, C =< 13.
 
-        % ===== control, database & inspection (chunk 98) =====
+        % ===== control, database & inspection =====
 
         %! false | Control | Always fails — ISO synonym of fail/0.
         false :- fail.
@@ -606,7 +606,7 @@ internal static class Prelude
             '$listing_all'(All).
 
         %! listing(+Spec) | Database | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity).
-        % Chunk 256: when no predicate matches, print a comment so
+        % when no predicate matches, print a comment so
         % the user sees feedback instead of a silent `true.`
         listing(Name/Arity) :-
             !,
@@ -642,7 +642,7 @@ internal static class Prelude
 
         % print one predicate: a `:- dynamic` header for a dynamic
         % predicate, then a clause per line, then a blank separator
-        % line. Chunk 254 — the actual clause printing routes through
+        % line. the actual clause printing routes through
         % the engine's '$listing_pred_source'/2 which walks the AST
         % directly so variable names from the source survive
         % (clause/2 + write/1 lost them through the heap round-trip).
@@ -662,7 +662,7 @@ internal static class Prelude
         format_to_atom(Atom, Format, Args) :-
             with_output_to(atom(Atom), format(Format, Args)).
 
-        % ===== tabling (chunks 104-106) =====
+        % ===== tabling =====
         % A `:- table p/N` predicate is transformed at consult time. Its
         % clauses are split: base clauses (no tabled body call) become
         % '$tbase$p'/N, recursive clauses become '$trec$p'/N with the
@@ -753,7 +753,7 @@ internal static class Prelude
         % every delta is empty; the loop ends when a round adds no answer
         % and discovers no new subgoal. The loop recurses once per round,
         % so a fixpoint deeper than the control stack (very long recursive
-        % chains) overflows — see the chunk-106 notes.
+        % chains) overflows — see the notes.
         '$table_seminaive' :-
             '$table_count'(Before),
             '$table_commit',

@@ -4,26 +4,25 @@ namespace Shumway.Builtins;
 
 /// <summary>
 /// Per-engine name → cell store backing SWI's <c>nb_setval</c> /
-/// <c>nb_getval</c> family (chunk 145). Two kinds of binding:
+/// <c>nb_getval</c> family. Two kinds of binding:
 ///
 /// <list type="bullet">
 /// <item><b>Non-backtrackable</b> (<c>nb_setval/2</c>): the write
 ///   persists across backtracking. The store just records the
 ///   latest cell value.</item>
-/// <item><b>Backtrackable</b> (<c>b_setval/2</c>): the write is
-///   reverted on backtrack — Phase 9.5 stub records it
-///   non-backtrackably until the ExtraTrail integration lands.
-///   (Most programs use <c>nb_setval/2</c>; documented inline.)</item>
+/// <item><b>Backtrackable</b> (<c>b_setval/2</c>): should revert on
+///   backtrack, but is currently recorded non-backtrackably (the
+///   ExtraTrail integration is pending; most programs use
+///   <c>nb_setval/2</c>).</item>
 /// </list>
 ///
 /// <para>Cells stored here are snapshots taken at write time —
 /// see <c>Activation.SnapshotIntoHeap</c>. The store survives across
 /// queries on the hosting engine.</para>
 ///
-/// <para>Chunk 423 — keyed by ATOM ID, not name string. The id is what
-/// the builtin already has in hand; keying by string paid a name lookup
-/// plus a string hash per access, ~100K times per Blint lint
-/// (<c>nb_getval(nln, _)</c> in the line tracker). Atom ids are stable
+/// <para>Keyed by ATOM ID, not name string — the id is what the builtin
+/// already has in hand, and keying by string paid a name lookup plus a
+/// string hash per access on hot nb_getval loops. Atom ids are stable
 /// for the lifetime of the atom (ADR-003); the lifetime itself is
 /// guaranteed by <see cref="_retained"/>, which holds a strong reference
 /// to each key's <see cref="AtomTable"/> entry so a transient-tier name
@@ -37,10 +36,9 @@ public sealed class GlobalVarStore
 
     public void Set(int atomId, Cell value, bool backtrackable)
     {
-        // Backtrackable storage is treated as non-backtrackable in
-        // this first cut — see the class remarks. A future chunk
-        // can plumb the previous value through the engine's
-        // ExtraTrail so the binding reverts on backtrack.
+        // Backtrackable storage is treated as non-backtrackable for now —
+        // see the class remarks. Reverting on backtrack would need the
+        // previous value plumbed through the engine's ExtraTrail.
         _ = backtrackable;
         if (!_retained.ContainsKey(atomId))
         {

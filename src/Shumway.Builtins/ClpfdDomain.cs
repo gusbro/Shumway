@@ -7,14 +7,13 @@ namespace Shumway.Builtins;
 /// closed intervals <c>[lo, hi]</c> over the integers, with <c>long.MinValue</c>
 /// standing for −∞ (<c>inf</c>) and <c>long.MaxValue</c> for +∞ (<c>sup</c>).
 ///
-/// <para>Phase 28: the clpfd library used to carry the domain as a Prolog heap
-/// list of <c>L-H</c> terms and manipulate it with interpreted Prolog. Profiling
-/// showed that interval walking dominated finite-domain solving. Here a domain
-/// is a single C# object (stored in the engine's foreign-object table, referenced
-/// by a <c>Foreign</c> cell from the <c>fd(Dom, Props)</c> attribute), and every
-/// operation is native. Domains are immutable, so backtracking — which restores
-/// the trailed attribute and thus the old domain reference — needs no per-domain
-/// trailing; the foreign table simply grows.</para>
+/// <para>A domain is a single C# object (stored in the engine's foreign-object
+/// table, referenced by a <c>Foreign</c> cell from the <c>fd(Dom, Props)</c>
+/// attribute), so every operation is native — interval walking dominates
+/// finite-domain solving, and a Prolog-heap list representation was far
+/// slower. Domains are immutable, so backtracking — which restores the trailed
+/// attribute and thus the old domain reference — needs no per-domain trailing;
+/// the foreign table simply grows.</para>
 /// </summary>
 public sealed class ClpfdDomain
 {

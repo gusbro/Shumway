@@ -2,8 +2,8 @@ namespace Shumway.Core;
 
 /// <summary>
 /// A virtual view of one or two physically-distinct bytecode buffers,
-/// laid out contiguously in a single address space. Used by chunk 151
-/// (Phase 10) to give the interpreter a uniform <c>code[pc]</c>
+/// laid out contiguously in a single address space. Gives the
+/// interpreter a uniform <c>code[pc]</c>
 /// interface while letting the embedding layer split the bytecode
 /// across a persistent program region (prefix + static + dynamic)
 /// and a per-query overlay (the synthetic query clause and its
@@ -14,7 +14,7 @@ namespace Shumway.Core;
 /// <see cref="Primary"/> when <c>pc &lt; Split</c>, from
 /// <see cref="Overflow"/> at offset <c>pc - Split</c> otherwise. With
 /// <c>Overflow == null</c> the view is just a thin wrapper over
-/// <c>Primary</c> — the chunk-151a starting state, behaviour-
+/// <c>Primary</c> — the starting state, behaviour-
 /// preserving so the per-query rebuild keeps working while we land
 /// the interpreter / Activation rewiring.</para>
 ///
@@ -30,8 +30,8 @@ public readonly struct ProgramView
     public readonly byte[]? Overflow;
     public readonly int Split;
 
-    /// <summary>Single-buffer view — the common case during chunk 151a
-    /// rollout, before the persistent / per-query split is in place.</summary>
+    /// <summary>Single-buffer view — used when no persistent / per-query
+    /// split is in place.</summary>
     public ProgramView(byte[] primary)
     {
         Primary = primary;
@@ -64,7 +64,7 @@ public readonly struct ProgramView
     public bool IsSingleBuffer => Overflow is null;
 
     /// <summary>Implicit conversion from a bare <c>byte[]</c> — keeps
-    /// the chunk-151a transition trivial: any caller still passing a
+    /// the transition trivial: any caller still passing a
     /// raw program array just works.</summary>
     public static implicit operator ProgramView(byte[] primary) =>
         new ProgramView(primary);

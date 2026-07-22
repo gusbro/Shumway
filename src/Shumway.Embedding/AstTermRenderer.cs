@@ -6,7 +6,7 @@ using Shumway.Compiler.Parsing;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 254 — operator-aware renderer for AST <see cref="Term"/>
+/// operator-aware renderer for AST <see cref="Term"/>
 /// trees. Replaces ad-hoc <see cref="object.ToString"/> calls that
 /// produce canonical-form output (<c>=(X, hello(Y))</c>) with the
 /// reader-friendly operator form (<c>X = hello(Y)</c>), list syntax
@@ -15,7 +15,7 @@ namespace Shumway.Embedding;
 ///
 /// <para>Originally inlined inside <see cref="Solution"/>'s
 /// <c>Render</c> for binding display; lifted out so the
-/// <c>listing</c> path (chunk 254) and any future AST consumer
+/// <c>listing</c> path and any future AST consumer
 /// can reuse the same logic. The renderer operates on the AST
 /// <em>without</em> involving the engine heap, so variable names
 /// the parser captured (<see cref="VarTerm.Name"/>) survive
@@ -78,7 +78,7 @@ public static class AstTermRenderer
         {
             int leftMax = iType == OperatorType.Yfx ? iPrec : iPrec - 1;
             int rightMax = iType == OperatorType.Xfy ? iPrec : iPrec - 1;
-            // Chunk 258 — comma and semicolon (sequence / disjunction
+            // comma and semicolon (sequence / disjunction
             // operators) render with no leading space: `a, b` and
             // `a ; b`. Symbolic operators (`+`, `/`, `=`) stay tight.
             // Alphabetic operators (`is`, `mod`) keep spaces both

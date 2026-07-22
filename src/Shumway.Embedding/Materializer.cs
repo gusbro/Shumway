@@ -29,7 +29,7 @@ public static class Materializer
     /// or <c>Lis</c> cells pointing at freshly-allocated heap regions.</summary>
     public static Cell MaterializeAsCell(Activation engine, Term term)
     {
-        // chunk 432: the per-call variable-map Dictionary is pooled on the
+        // the per-call variable-map Dictionary is pooled on the
         // engine (clear-on-use). Variable identity must NOT leak across
         // calls — the clear before each use preserves the "share within a
         // single call" contract exactly as a fresh dictionary did. The
@@ -74,7 +74,7 @@ public static class Materializer
         switch (term)
         {
             case AtomTerm a:
-                // chunk 431: read the node's lazily-cached id (seeded by
+                // read the node's lazily-cached id (seeded by
                 // TermReader when the AST came off a heap) instead of a
                 // by-name re-intern per visit. The intern, when it does
                 // happen, is TRANSIENT — the old `permanent: true` pinned
@@ -153,7 +153,7 @@ public static class Materializer
             // (TermReader renders Tag.Foreign that way). Re-materialise it back
             // to the same Foreign cell so copy_term/3 over an attributed
             // variable whose attribute holds a foreign value — e.g. a clpfd
-            // domain object (Phase 28) — preserves it instead of leaving a bare
+            // domain object — preserves it instead of leaving a bare
             // `'$foreign'(N)` compound. Same engine, so the id is still valid.
             case CompoundTerm c when c.Functor == "$foreign" && c.Args.Length == 1
                                      && c.Args[0] is IntTerm fid:
@@ -161,7 +161,7 @@ public static class Materializer
 
             case CompoundTerm c:
             {
-                // chunk 431: cached functor id (transient intern on first
+                // cached functor id (transient intern on first
                 // use) — see the AtomTerm case above for the tier-safety
                 // argument; the two string-keyed table probes per compound
                 // visit collapse to a field read once the node is warm.

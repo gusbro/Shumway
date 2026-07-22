@@ -105,24 +105,24 @@ public static class OpcodeTable
         Set(Opcode.Execute, 5, "execute", OperandKind.Address);
         Set(Opcode.Proceed, 1, "proceed");
         Set(Opcode.Halt, 1, "halt");
-        // Chunk 225 Stage B.1 — Call → CallIl rewrite (in-place at
+        // Call → CallIl rewrite (in-place at
         // link time). Same width and operand layout as Call so the
         // patch is a single opcode-byte swap + 4-byte operand
         // overwrite (target address → callee functor id).
         Set(Opcode.CallIl, 9, "call_il", OperandKind.Functor, OperandKind.Count);
-        // Chunk 226 Stage B.2 — Call → CallBytecode rewrite for
+        // Call → CallBytecode rewrite for
         // bytecode-only targets. Same width / operand layout as Call;
         // the rewrite is a single opcode-byte swap with the target
         // operand left alone.
         Set(Opcode.CallBytecode, 9, "call_bytecode",
             OperandKind.Address, OperandKind.Count);
-        // Chunk 227 Stage B.3 — Execute → ExecuteIl / ExecuteBytecode
+        // Execute → ExecuteIl / ExecuteBytecode
         // rewrites at link time. Same 5-byte width as Execute; rewrite
         // is an opcode-byte swap (+4-byte operand patch for ExecuteIl
         // where address becomes functor id).
         Set(Opcode.ExecuteIl, 5, "execute_il", OperandKind.Functor);
         Set(Opcode.ExecuteBytecode, 5, "execute_bytecode", OperandKind.Address);
-        // Chunk 248 — ExecuteBuiltin: tail-call to a builtin. Same
+        // ExecuteBuiltin: tail-call to a builtin. Same
         // 5-byte width as Execute so the linker can do an opcode-byte
         // swap (plus a 4-byte operand patch from address to
         // BuiltinId) when a tail Execute resolves to a builtin —
@@ -142,7 +142,7 @@ public static class OpcodeTable
         // barrier (get_level's B0 is reset by any pre-ITE body call, which
         // made the ITE cut prune a preceding generator's choice points).
         Set(Opcode.GetLevelB, 5, "get_level_b", OperandKind.Perm);
-        // ADR-015 chunk C — generation-filtered dynamic dispatch.
+        // ADR-015 — generation-filtered dynamic dispatch.
         Set(Opcode.EnterDynamic, 1, "enter_dynamic");
         Set(Opcode.CheckVisible, 17, "check_visible",
             OperandKind.LongValue, OperandKind.LongValue);
@@ -206,7 +206,7 @@ public static class OpcodeTable
         Set(Opcode.GetListA1, 1, "get_list_a1");
         Set(Opcode.GetListA2, 1, "get_list_a2");
 
-        // Chunk 220 — fused opcodes (same total size as the two they
+        // fused opcodes (same total size as the two they
         // replace; the second opcode's byte slot is overwritten with Nop
         // so addresses don't shift).
         // Layout: [op:1] [count:4] [Nop:1] [slot:4] — count + slot are
@@ -233,7 +233,7 @@ public static class OpcodeTable
         Set(Opcode.AEvalUn, 5, "a_eval_un", OperandKind.Count);
         Set(Opcode.AEvalIs, 9, "a_eval_is", OperandKind.Count, OperandKind.Reg);
         Set(Opcode.AEvalCmp, 5, "a_eval_cmp", OperandKind.Count);
-        // Compact encoding (Phase 26): a packed kind/op word + the three values.
+        // Compact encoding: a packed kind/op word + the three values.
         // a_int_bin = 1 + 4*4 = 17; a_int_cmp = 1 + 3*4 = 13. The disassembler
         // special-cases both (DecodeAIntBin / DecodeAIntCmp) to unpack the word
         // into readable [op, aKind, aVal, bKind, bVal, tKind, tVal] operands.

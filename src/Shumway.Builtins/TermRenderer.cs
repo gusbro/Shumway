@@ -9,13 +9,13 @@ namespace Shumway.Builtins;
 /// <see cref="TextWriter"/>. Used by <see cref="IOBuiltins"/> for
 /// <c>write/1</c> and friends; also handy for debugging from C#.
 ///
-/// <para>Rendering is the canonical form: atoms unquoted (no escaping for
-/// special characters yet), integers in base 10, floats in <c>"R"</c> format,
-/// compound terms as <c>functor(arg, arg)</c>, and cons-chains as bracketed
-/// lists <c>[a, b, c]</c> (or <c>[a, b | T]</c> for partial / improper
-/// lists). Unbound variables are rendered as <c>_Gn</c> with their heap
-/// index — matching the convention used by <c>TermReader</c> in the
-/// embedding layer.</para>
+/// <para>Integers render in base 10, floats in round-trippable Prolog form,
+/// compound terms in operator form when an operator table is supplied (else
+/// <c>functor(arg, arg)</c>), cons-chains as bracketed lists <c>[a, b, c]</c>
+/// (or <c>[a, b | T]</c> for partial / improper lists), and atoms quoted per
+/// <see cref="TermRenderOptions.Quoted"/>. Unbound variables render as
+/// <c>_Gn</c> with their heap index — matching the convention used by
+/// <c>TermReader</c> in the embedding layer.</para>
 /// </summary>
 public static class TermRenderer
 {
@@ -40,7 +40,7 @@ public static class TermRenderer
             case Tag.AttVar:
                 // An attributed variable is still an unbound variable —
                 // it renders exactly like a plain one. Its attributes
-                // are not part of its written form. (chunk 77)
+                // are not part of its written form.
                 if (options.VariableNames is not null
                     && options.VariableNames.TryGetValue(derefAddr, out string? vName))
                 {
@@ -86,9 +86,9 @@ public static class TermRenderer
 
     private static int Resolve(Activation engine, ref Cell cell)
     {
-        // A bare ATTVAR cell (chunk 77) carries its own home index as
-        // payload — surface that as the deref address and leave the
-        // AttVar-tagged cell for the caller's switch.
+        // A bare ATTVAR cell carries its own home index as payload —
+        // surface that as the deref address and leave the AttVar-tagged
+        // cell for the caller's switch.
         if (cell.Tag == Tag.AttVar) return cell.AsHeapIndex;
         if (cell.Tag != Tag.Ref) return -1;
         int addr = engine.Deref(cell.AsHeapIndex);
@@ -185,7 +185,7 @@ public static class TermRenderer
         output.Write('(');
         for (int i = 0; i < arity; i++)
         {
-            if (i > 0) output.Write(',');   // ISO: no layout between args (Phase 33 audit)
+            if (i > 0) output.Write(',');   // ISO: no layout between args
             // Inside argument lists, comma is precedence 1000 in standard
             // Prolog so each arg can carry up to 999 priority without parens.
             Render(engine, engine.GetHeap(functorIdx + 1 + i), output, options, 999);
@@ -202,7 +202,7 @@ public static class TermRenderer
         {
             Resolve(engine, ref cursor);
             if (cursor.Tag != Tag.Lis) break;
-            if (!first) output.Write(',');   // ISO: no layout between elements (Phase 33 audit)
+            if (!first) output.Write(',');   // ISO: no layout between elements
             int headIdx = cursor.AsHeapIndex;
             Render(engine, engine.GetHeap(headIdx), output, options);
             cursor = engine.GetHeap(headIdx + 1);
@@ -216,7 +216,7 @@ public static class TermRenderer
         }
         else
         {
-            output.Write('|');   // ISO: compact improper-list tail (Phase 33 audit)
+            output.Write('|');   // ISO: compact improper-list tail
             Render(engine, cursor, output, options);
         }
         output.Write(']');
@@ -244,11 +244,11 @@ public static class TermRenderer
         output.Write('\'');
     }
 
-    /// <summary>ADR-035 — the writeq-style form of an atom name: single-quoted (with
+    /// <summary>The writeq-style form of an atom name: single-quoted (with
     /// <c>'</c> and <c>\</c> escaped) unless it needs no quoting. Shared with the
-    /// debugger's AST renderer, whose Locals display must round-trip through the
-    /// Watch-window EDIT: showing the atom <c>'1234'</c> as bare <c>1234</c> made the
-    /// user's re-typed value an INTEGER.</summary>
+    /// debugger's AST renderer (ADR-035), whose Locals display must round-trip
+    /// through the Watch-window EDIT: showing the atom <c>'1234'</c> as bare
+    /// <c>1234</c> would make the user's re-typed value an INTEGER.</summary>
     public static string QuotedAtomName(string name)
     {
         if (NeedsNoQuoting(name)) return name;
@@ -278,10 +278,8 @@ public static class TermRenderer
         if (name.Length == 0) return false;
         // ',' and '.' as solo atoms MUST be quoted by writeq / write_canonical:
         // a bare ',' is the argument/list separator and a bare '.' is the
-        // end-of-clause token, so neither round-trips unquoted. (SWI / GProlog:
-        // writeq(',') => ','  and  writeq('.') => '.'.) Missing this made
-        // Logtalk's generated scratch files — e.g. is_punctuation(',') — write
-        // an unreadable bare ',' and fail to re-consult.
+        // end-of-clause token, so neither round-trips unquoted (SWI / GProlog:
+        // writeq(',') => ','  and  writeq('.') => '.').
         if (name == "," || name == ".") return false;
         if (name == "[]" || name == "{}" || name == "!"
             || name == ";") return true;

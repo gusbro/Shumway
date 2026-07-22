@@ -3,17 +3,13 @@ using Shumway.Core;
 namespace Shumway.Builtins;
 
 /// <summary>
-/// Native bound-arithmetic primitives for the CLP(FD) library (Phase 28).
+/// Native bound-arithmetic primitives for the CLP(FD) library.
 /// A "bound" is an integer or one of the atoms <c>inf</c> (−∞) / <c>sup</c>
-/// (+∞). The clpfd library used to implement these in Prolog — a long chain of
-/// <c>A == inf</c> / <c>B == sup</c> tests per operation — which profiling
-/// showed dominated finite-domain solving (≈1.36M <c>==/2</c> calls, the single
-/// biggest cost on the alpha benchmark). Here a bound is a plain <c>long</c>
-/// with <see cref="long.MinValue"/> = inf and <see cref="long.MaxValue"/> = sup,
-/// so the comparisons and arithmetic are native. The semantics match the
-/// retired Prolog definitions exactly (in particular <c>clpfd_ble</c> collapses
-/// to a single <c>&lt;=</c> because the sentinels order correctly against every
-/// integer).
+/// (+∞), represented as a plain <c>long</c> with <see cref="long.MinValue"/> =
+/// inf and <see cref="long.MaxValue"/> = sup, so comparisons and arithmetic are
+/// native rather than chains of interpreted <c>==/2</c> tests (which dominated
+/// finite-domain solving). In particular <c>clpfd_ble</c> collapses to a single
+/// <c>&lt;=</c> because the sentinels order correctly against every integer.
 ///
 /// <para>These are registered under the same names the clpfd module calls, so
 /// removing the Prolog clauses makes the module-local calls fall through to

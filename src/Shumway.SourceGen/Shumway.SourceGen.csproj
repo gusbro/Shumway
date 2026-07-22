@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Chunk 241 — Roslyn source generator project.
+    Roslyn source generator project.
 
     Roslyn loads analyzers / generators from a fixed netstandard2.0
     ALC, so this project MUST target netstandard2.0 (the rest of the

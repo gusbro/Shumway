@@ -5,45 +5,30 @@ using Shumway.Core;
 namespace Shumway.Builtins;
 
 /// <summary>
-/// ADR-018 — the runtime evaluation stack for the arithmetic instruction set
-/// (<c>a_eval_push</c> / <c>a_eval_bin</c> / <c>a_eval_un</c> / <c>a_eval_is</c>
-/// / <c>a_eval_cmp</c>). A postfix arithmetic sequence pushes operands and
-/// applies operators against this stack, leaving the WAM heap untouched — no
-/// synthetic variables, no expression term.
+/// Runtime evaluation stack for the arithmetic instruction set (ADR-018:
+/// <c>a_eval_push</c> / <c>a_eval_bin</c> / <c>a_eval_un</c> / <c>a_eval_is</c>
+/// / <c>a_eval_cmp</c>). A postfix sequence pushes operands and applies
+/// operators here, leaving the WAM heap untouched.
 ///
-/// <para><b>Integer fast lane with lazy escalation.</b> Prolog arithmetic is
-/// dynamically typed (a value may be a 60-bit <c>int</c>, a <see cref="BigInteger"/>
-/// after overflow, or a <c>double</c>), so the universal carrier is the fat
-/// <see cref="Number"/> struct. But the overwhelmingly common case — small
-/// integers (counters, indices, <c>X-1</c>) — never needs it. Each stack slot
-/// therefore carries either a <i>raw <c>long</c></i> (the fast int lane, slot
-/// flagged <c>!_boxed</c>) or a <see cref="Number"/> (the slow lane, for
-/// float / bigint). An all-integer evaluation runs entirely on raw longs and
-/// allocates / copies no <see cref="Number"/>. A slot <i>escalates</i> to a
-/// <see cref="Number"/> only when it meets a float / bigint operand or a fast
-/// op overflows the 60-bit range — per-value, never a global "mode". This is
-/// the same raw-long shortcut the retired <c>$arith2</c> builtin used, now
-/// inside the RPN machine so it covers nested integer expressions too. Float /
-/// bigint arithmetic stays on the <see cref="Number"/> path (genuinely heavier
-/// values — unavoidable, and rare in practice).</para>
+/// <para><b>Integer fast lane with lazy escalation.</b> Each slot carries
+/// either a raw <c>long</c> (<c>!_boxed</c>) or a <see cref="Number"/> (float /
+/// bigint). An all-integer evaluation runs entirely on raw longs; a slot
+/// escalates to <see cref="Number"/> only when it meets a float / bigint
+/// operand or a fast op overflows the 60-bit range — per-value, never a global
+/// mode.</para>
 ///
-/// <para>Both execution tiers route through these static methods: the Tier-0
-/// interpreter dispatches the <c>a_eval_*</c> opcodes here, and the Tier-1 IL
-/// emit (<c>IlPredicateCompiler</c>) emits direct calls to them. The Tier-1
-/// path is why the stack lives here (reachable from an IL delegate that only
-/// carries the <see cref="Activation"/>) rather than as an interpreter field.</para>
+/// <para>Both tiers route through these static methods: the Tier-0 interpreter
+/// dispatches the <c>a_eval_*</c> opcodes here, and the Tier-1 IL emit calls
+/// them directly — which is why the stack lives here (reachable from an IL
+/// delegate that only carries the <see cref="Activation"/>) rather than as an
+/// interpreter field.</para>
 ///
-/// <para><b>Thread-safety / engine-agility.</b> The backing arrays are
-/// <c>[ThreadStatic]</c>, but they are <i>not</i> engine state — they carry no
-/// engine identity and are always fully drained within a single arithmetic
-/// evaluation. Arithmetic is leaf: no Prolog goal executes between the first
-/// <c>a_eval_push</c> and the terminating <c>a_eval_is</c>/<c>a_eval_cmp</c>,
-/// so evaluations never nest or interleave on one thread, and the stack is
-/// empty between goals. The engine therefore stays thread-agile (none of
-/// <i>its</i> state is thread-static) — this is transient per-thread scratch,
-/// which the invariant's "no [ThreadStatic] for engine state" rule is not
-/// about. A plain <c>static</c> would race two engines arithmeticking on two
-/// threads at once.</para>
+/// <para><b>Thread-safety.</b> The backing arrays are <c>[ThreadStatic]</c> but
+/// are not engine state: arithmetic is leaf (no Prolog goal runs between the
+/// first push and the terminating is/cmp), so evaluations never nest or
+/// interleave on one thread and the stack is empty between goals. The engine
+/// stays thread-agile; a plain <c>static</c> would race two engines on two
+/// threads.</para>
 /// </summary>
 public static class ArithEvalStack
 {
@@ -71,15 +56,11 @@ public static class ArithEvalStack
         System.Array.Resize(ref _b, cap);
     }
 
-    // Phase 33 IL round 2 — the L7 lesson again, one leaf deeper: PushReg /
-    // PushY / Bin are AggressiveInlining, but the PushIntLane they delegate to
-    // was NOT, and the profiler showed it surviving as a real CALL from the
-    // Tier-1 delegates (~3% exclusive on the mixed vanroy probe — one call per
-    // integer operand pushed). Inlining it also lets the JIT CSE the
-    // [ThreadStatic] base address across the caller's inlined fast lane
-    // instead of re-resolving TLS inside a callee. The init/grow check
-    // collapses to one predicted-not-taken branch (EnsureInit is subsumed:
-    // a null _i can't equal _top unless uninitialised — see PushSlow).
+    // Must be AggressiveInlining: this runs once per integer operand from the
+    // Tier-1 delegates, and inlining lets the JIT CSE the [ThreadStatic] base
+    // address across the caller's fast lane. The init/grow check collapses to
+    // one predicted-not-taken branch (a null _i routes to PushIntSlow, which
+    // subsumes EnsureInit).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void PushIntLane(long v)
     {
@@ -123,12 +104,9 @@ public static class ArithEvalStack
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void PushInt(long value) => PushIntLane(value);
 
-    // Chunk 355: the integer fast lane (a register/Y slot holding an inline Int)
-    // raises no Prolog error, so it takes no try/catch — only the non-int
-    // Evaluate path can throw, and it lives in the cold PushEvalSlow.
-    // AggressiveInlining lets the JIT fold the fast lane into the Tier-1 IL
-    // delegate (mirrors chunk 354 for the eval-stack RPN path that crypt-style
-    // compound expressions — `C is A*B+Carry` — use).
+    // The int fast lane raises no Prolog error, so it takes no try/catch (which
+    // would block inlining) — only the non-int Evaluate path can throw, and it
+    // lives in the cold PushEvalSlow.
     /// <summary>Evaluates the X-register and pushes the result (a_eval_push kind 3).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void PushReg(Activation engine, int reg)
@@ -231,10 +209,9 @@ public static class ArithEvalStack
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void SetPerm(Activation engine, int slot) => engine.SetY(slot, PopCell(engine));
 
-    // Phase 33 IL round 2 — PopCell carried a try/catch, which makes a method
-    // UNINLINEABLE outright, and it runs once per a_eval_is (every compiled
-    // is/2). Chunk-354/355 pattern: the int-lane pop (no Prolog error possible)
-    // is the inlineable fast path; only the boxed Number.ToCell (bigint alloc /
+    // Runs once per a_eval_is (every compiled is/2). A try/catch makes a method
+    // uninlineable outright, so the int-lane pop (no Prolog error possible) is
+    // the inlineable fast path; only the boxed Number.ToCell (bigint alloc /
     // float pair — can raise) keeps the try/catch, in the cold NoInlining half.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Cell PopCell(Activation engine)
@@ -280,12 +257,10 @@ public static class ArithEvalStack
     // 4 unify-Y, 5 set-reg, 6 set-Y.
 
     /// <summary><c>T is A op B</c> over two simple leaf operands.</summary>
-    // Chunk 354: integer fast lane is try/catch-free and AggressiveInlining, so
-    // the JIT inlines it into the Tier-1 IL delegate. Both operands read as
-    // inline ints and the op staying in 60-bit long arithmetic cannot raise a
-    // Prolog error, so the try/catch (which blocks inlining of the whole method
-    // and limits optimisation) moves to the cold slow path. Integer-heavy code
-    // (cx, crypt) never leaves the fast lane.
+    // Two inline-int operands with the op staying in 60-bit long arithmetic
+    // cannot raise a Prolog error, so the fast lane is try/catch-free (a
+    // try/catch would block inlining of the whole method); the catch lives in
+    // the cold slow path.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool FusedBin(Activation engine, int op,
         int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
@@ -399,10 +374,9 @@ public static class ArithEvalStack
 
     // ---- raw-long fast paths (mirror ArithmeticEvaluator's int semantics) ----
 
-    // Phase 33 L7 — AggressiveInlining matters here: inside a big Tier-1
-    // delegate the JIT's inline budget is exhausted by the time it reaches
-    // this leaf, and the disasm showed it surviving as a CALL in the integer
-    // hot loop (deref → untag → dec → call Fits60). Two compares beat a call.
+    // AggressiveInlining matters: inside a big Tier-1 delegate the JIT's inline
+    // budget is exhausted by the time it reaches this leaf, and without it this
+    // survives as a real CALL in the integer hot loop. Two compares beat a call.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool Fits60(long v) => v >= Cell.MinInt60 && v <= Cell.MaxInt60;
 

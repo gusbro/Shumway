@@ -3,17 +3,15 @@ using Shumway.Core;
 namespace Shumway.Builtins;
 
 /// <summary>
-/// Additional list-manipulation built-ins: <c>member/2</c>,
-/// <c>nth0/3</c>, <c>nth1/3</c>, <c>reverse/2</c>, <c>last/2</c>,
-/// <c>list_to_set/2</c>. Together with the earlier
-/// <c>length/2</c> / <c>append/3</c> / <c>sort/2</c> family this is
+/// Additional list-manipulation built-ins: <c>nth0/3</c>, <c>nth1/3</c>,
+/// <c>reverse/2</c>, <c>last/2</c>, <c>list_to_set/2</c>. Together with
+/// the <c>length/2</c> / <c>append/3</c> / <c>sort/2</c> family this is
 /// the bread-and-butter list toolkit user code reaches for.
 ///
-/// <para>Phase-1 semantics: every operation returns the first
-/// solution. The fully non-deterministic <c>member/2</c> that
-/// enumerates every match lands once call/N gets choice-point
-/// integration; for now <c>member(X, [a, b, c])</c> binds <c>X</c>
-/// to <c>a</c> and stops.</para>
+/// <para><see cref="Member"/> is NOT registered — <c>member/2</c> lives
+/// in the Prolog prelude so it enumerates solutions via standard
+/// backtracking; the first-solution C# version here is unreachable from
+/// Prolog source.</para>
 /// </summary>
 public static class ListBuiltins
 {
@@ -80,12 +78,6 @@ public static class ListBuiltins
         return false;
     }
 
-    /// <summary>Variable-index <c>nth0</c>/<c>nth1</c>: yield the element at
-    /// position <paramref name="pos"/>, then push a choice point so a backtrack
-    /// retries position <paramref name="pos"/>+1 — mirroring the Prolog
-    /// <c>nth0(I,[E|_],E) ; nth0(I,[_|T],E)</c> enumeration. A failed unification
-    /// at this position (a bound Elem that doesn't match) falls straight through
-    /// into that choice point.</summary>
     /// <summary>Resume state for a variable-index <c>nth0</c>/<c>nth1</c>
     /// enumeration: the running position plus a cached resume delegate
     /// (allocated once per call, re-pushed unchanged on every backtrack —
@@ -143,8 +135,8 @@ public static class ListBuiltins
             cur = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
         if (cur.Tag == Tag.Ref)
-            // Chunk 131c: a partial list — the tail is unbound, so we
-            // can't determine the length. ISO instantiation_error.
+            // A partial list — the tail is unbound, so we can't
+            // determine the length. ISO instantiation_error.
             throw new PrologRuntimeException("instantiation_error");
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId) return false;
 

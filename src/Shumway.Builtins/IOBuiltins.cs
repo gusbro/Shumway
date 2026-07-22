@@ -21,7 +21,7 @@ public static class IOBuiltins
         return true;
     }
 
-    /// <summary>The current output writer. Prefers the chunk-140
+    /// <summary>The current output writer. Prefers the
     /// per-engine stream registry's current_output (so
     /// <c>set_output/1</c> redirects all the write-family builtins);
     /// falls back to <see cref="Activation.Out"/> for engines without a
@@ -40,9 +40,9 @@ public static class IOBuiltins
     }
 
     /// <summary><c>nl</c> — writes a single newline character to the
-    /// current output stream. With the per-engine stream registry
-    /// wired (chunk 140), <c>set_output/1</c> changes where this
-    /// writes; without one, falls back to <see cref="Activation.Out"/>.</summary>
+    /// current output stream. With a per-engine stream registry,
+    /// <c>set_output/1</c> changes where this writes; without one,
+    /// falls back to <see cref="Activation.Out"/>.</summary>
     public static bool Nl(Activation engine)
     {
         var w = engine.Streams?.CurrentOutput.Writer ?? engine.Out;
@@ -98,9 +98,8 @@ public static class IOBuiltins
     /// <summary><c>write_term(Term, Options)</c> — writes <c>Term</c>
     /// to the engine's output sink, honouring the boolean options
     /// <c>quoted/1</c>, <c>ignore_ops/1</c>, and <c>numbervars/1</c>.
-    /// Any other option name is silently ignored — Phase 1 doesn't yet
-    /// support the full ISO menu, and silent skipping matches what
-    /// SWI does for unknown options.</summary>
+    /// Any other option name is silently ignored (matching SWI's
+    /// behaviour for unknown options).</summary>
     public static bool WriteTerm(Activation engine)
     {
         var options = ReadWriteTermOptions(engine, optsReg: 1);
@@ -210,9 +209,8 @@ public static class IOBuiltins
         (AtomTable.GetById(c.AsAtomId)?.Name ?? "") == "true";
 
     /// <summary><c>write_canonical(X)</c> — writes <c>X</c> in canonical
-    /// form. Phase 1 aliases to <c>write/1</c>; the canonical-form switch
-    /// (quoting special characters, qualifying operators) will land with
-    /// <c>TermRenderer</c>'s option-aware rewrite.</summary>
+    /// form: quoted, operators ignored, so the output re-reads
+    /// unambiguously.</summary>
     public static bool WriteCanonical(Activation engine)
     {
         TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine),
@@ -242,8 +240,8 @@ public static class IOBuiltins
         };
 
     /// <summary><c>print(X)</c> — ISO defines this as a portray/1 hook
-    /// fallback to <c>write/1</c>. Phase 1 implements only the
-    /// <c>write/1</c> fallback path.</summary>
+    /// fallback to <c>write/1</c>. Shumway has no portray hook, so this
+    /// is the <c>write/1</c> path.</summary>
     public static bool Print(Activation engine)
     {
         TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine),
@@ -252,15 +250,11 @@ public static class IOBuiltins
     }
 
     /// <summary><c>format(FormatString, Args)</c> — printf-style formatted
-    /// output. The Phase-1 set of specifiers is:
-    /// <list type="bullet">
-    /// <item><c>~w</c> — writes the next arg via <see cref="TermRenderer"/>.</item>
-    /// <item><c>~a</c> — writes the next arg's atom name (must be an atom).</item>
-    /// <item><c>~d</c> — writes the next arg's integer value.</item>
-    /// <item><c>~s</c> — writes the next arg's code list as a string.</item>
-    /// <item><c>~n</c> — writes a newline (no arg consumed).</item>
-    /// <item><c>~~</c> — writes a literal <c>~</c>.</item>
-    /// </list>
+    /// output. Core specifiers: <c>~w</c> <c>~q</c> <c>~p</c> <c>~a</c>
+    /// <c>~d</c> <c>~D</c> <c>~s</c> <c>~c</c> <c>~e</c>/<c>~f</c>/<c>~g</c>
+    /// <c>~r</c>/<c>~R</c> <c>~i</c> <c>~n</c> <c>~~</c> (see
+    /// <see cref="FormatImpl"/> for the full dispatch, including numeric /
+    /// <c>*</c> / <c>`c</c> prefix arguments).
     /// <para>The format string may be an atom or a PSTR. The args list
     /// must be a proper list — pass <c>[]</c> when no args are needed.</para></summary>
     public static bool Format(Activation engine) =>
@@ -271,9 +265,9 @@ public static class IOBuiltins
     /// FOREIGN cell wrapping a <see cref="System.IO.StreamWriter"/>.</summary>
     public static bool Format3(Activation engine)
     {
-        // Chunk 140a refactor: streams are StreamHandle-wrapped via
-        // the per-engine StreamRegistry. Resolve through StreamBuiltins
-        // so atoms / aliases work too.
+        // Streams are StreamHandle-wrapped via the per-engine
+        // StreamRegistry. Resolve through StreamBuiltins so atoms /
+        // aliases work too.
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
         if (!h.IsWriter)
             throw new PrologRuntimeException("permission_error", "output,stream");
@@ -295,14 +289,14 @@ public static class IOBuiltins
                 continue;
             }
             if (++i >= fmt.Length)
-                // Chunk 131d: a lone '~' at the end is a malformed format
-                // string. SWI / SICStus surface this as a domain_error
-                // on the format spec.
+                // A lone '~' at the end is a malformed format string.
+                // SWI / SICStus surface this as a domain_error on the
+                // format spec.
                 throw new PrologRuntimeException("domain_error", "format_spec");
 
             // Optional column/count argument before the spec char: a literal
             // number (`~20|`, `~3c`), `*` (take it from the next argument), or
-            // `` `c `` (a fill character for ~t). (chunk 346)
+            // `` `c `` (a fill character for ~t).
             int? num = null;
             if (fmt[i] == '*')
             {
@@ -345,8 +339,8 @@ public static class IOBuiltins
                 {
                     Cell arg = ConsumeArg(args, ref argIdx, name);
                     Cell deref = Resolve(engine, arg);
-                    // Chunk 131d: ~a wants an atom — instantiation_error
-                    // for an unbound arg, type_error(atom) otherwise.
+                    // ~a wants an atom — instantiation_error for an
+                    // unbound arg, type_error(atom) otherwise.
                     if (deref.Tag == Tag.Ref)
                         throw new PrologRuntimeException("instantiation_error");
                     if (deref.Tag != Tag.Atom)
@@ -496,8 +490,8 @@ public static class IOBuiltins
                     // raising a domain_error. Output is unaligned, not wrong.
                     break;
                 default:
-                    // Chunk 131d: an unknown ~X spec is an ISO
-                    // domain_error on the format string.
+                    // An unknown ~X spec is an ISO domain_error on the
+                    // format string.
                     throw new PrologRuntimeException("domain_error", "format_spec");
             }
         }
@@ -527,9 +521,8 @@ public static class IOBuiltins
     private static Cell ConsumeArg(List<Cell> args, ref int idx, string builtinName)
     {
         if (idx >= args.Count)
-            // Chunk 131d: format string demanded more args than the
-            // caller supplied — SWI treats this as a domain_error on
-            // the argument count of the format directive.
+            // Format string demanded more args than the caller supplied —
+            // SWI treats this as a domain_error on the argument count.
             throw new PrologRuntimeException("domain_error", "format_argument_count");
         return args[idx++];
     }
@@ -541,8 +534,8 @@ public static class IOBuiltins
             return AtomTable.GetById(d.AsAtomId)?.Name ?? "";
         if (d.Tag == Tag.Pstr)
             return engine.AsPstrString(engine.Deref(c.AsHeapIndex));
-        // Chunk 131d: a missing format string is instantiation_error;
-        // a wrong-typed one is type_error(atom).
+        // A missing format string is instantiation_error; a wrong-typed
+        // one is type_error(atom).
         if (d.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         throw new PrologRuntimeException("type_error", "atom");
@@ -560,7 +553,7 @@ public static class IOBuiltins
         if (cur.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-            // Chunk 131d: argument list isn't a proper list — ISO type_error(list, _).
+            // Argument list isn't a proper list — ISO type_error(list, _).
             throw new PrologRuntimeException("type_error", "list");
         return result;
     }

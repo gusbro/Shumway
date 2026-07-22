@@ -68,7 +68,7 @@ public sealed class SwitchTable
         return new SwitchTable(_keys, newValues, DefaultAddress + offset);
     }
 
-    /// <summary>Chunk 155c — returns a new <see cref="SwitchTable"/>
+    /// <summary>Returns a new <see cref="SwitchTable"/>
     /// with an extra (key → value) entry appended. Used by the
     /// new-bucket-key assertz path on extensible-indexed dynamic
     /// predicates: an assertz of a clause whose arg-0 introduces a

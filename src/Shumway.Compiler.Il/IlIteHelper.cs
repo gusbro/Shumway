@@ -13,7 +13,7 @@ namespace Shumway.Compiler.Il;
 /// backtrack the engine invokes the callback, which parks the marker as the
 /// PC (<see cref="Activation.ResumeAtReturnPc"/>) so the dispatch loop decodes it
 /// and re-enters the owning predicate's delegate at the ELSE label — the same
-/// resume protocol chunk-218 backtrackable builtins use. Must be public: a
+/// resume protocol backtrackable builtins use. Must be public: a
 /// persisted-bundle .dll references the field from a fresh process.</para>
 /// </summary>
 public static class IlIteHelper

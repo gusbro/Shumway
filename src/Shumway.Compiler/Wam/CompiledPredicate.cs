@@ -88,11 +88,11 @@ public sealed class CompiledPredicate
     /// <see cref="SourcePosition.Start"/> when no position is available
     /// (e.g. synthetic predicates produced by the engine, or predicates
     /// reconstructed from a bundle blob). Used by the runtime stack
-    /// trace path (chunk 53) to point users back to the right source
+    /// trace path to point users back to the right source
     /// location.</summary>
     public SourcePosition SourcePosition { get; }
 
-    /// <summary>Chunk 430 — memoized result of
+    /// <summary>memoized result of
     /// <see cref="ModuleCompiler.IsCachedPredicateReusable"/>. The bytecode
     /// is immutable once constructed, so the literal-pool scan is a pure
     /// function of this instance; query setup used to re-walk the whole
@@ -102,10 +102,10 @@ public sealed class CompiledPredicate
     /// shared across engines via the global caches.</summary>
     internal int PoolFreeMemo;
 
-    /// <summary>Chunk 433 — memoized Tier-1 IL shape analyses (the
+    /// <summary>memoized Tier-1 IL shape analyses (the
     /// <see cref="PoolFreeMemo"/> precedent). Each slot holds the IL
     /// compiler's <c>IlShapeMemo</c> for one shape recogniser
-    /// (chunk-216 indexed dispatch, try_me_else chain, switched chain,
+    /// (indexed dispatch, try_me_else chain, switched chain,
     /// indexed-atom): the structural describe result — a pure function of
     /// the immutable bytecode / call sites / switch tables — plus the
     /// recorded <c>Call</c>-site callee fids whose calleeMap resolvability
@@ -115,11 +115,11 @@ public sealed class CompiledPredicate
     /// once-write is safe for predicates shared across engines (a benign
     /// race recomputes the same value).</summary>
     internal object? IlIndexedShapeMemo;
-    /// <summary>See <see cref="IlIndexedShapeMemo"/> (chunk 433).</summary>
+    /// <summary>See <see cref="IlIndexedShapeMemo"/>.</summary>
     internal object? IlTryMeElseShapeMemo;
-    /// <summary>See <see cref="IlIndexedShapeMemo"/> (chunk 433).</summary>
+    /// <summary>See <see cref="IlIndexedShapeMemo"/>.</summary>
     internal object? IlSwitchedChainShapeMemo;
-    /// <summary>See <see cref="IlIndexedShapeMemo"/> (chunk 433).</summary>
+    /// <summary>See <see cref="IlIndexedShapeMemo"/>.</summary>
     internal object? IlIndexedAtomShapeMemo;
 
     /// <summary>ADR-034 — this predicate is a STATIC-style SNAPSHOT of a
@@ -143,13 +143,13 @@ public sealed class CompiledPredicate
 
     /// <summary>One <see cref="SourcePosition"/> per clause, in source
     /// order. Aligned with the <c>Meta(DbgInfo, clauseIndex)</c> opcodes
-    /// the predicate compiler emits at each clause boundary (chunk 55):
+    /// the predicate compiler emits at each clause boundary:
     /// the entry id encoded in the Meta payload is the clause's index
     /// into this list. The stack-trace path scans backward from the
     /// error PC for the most recent Meta opcode and reads its
     /// payload to look up the precise clause position. Empty for
     /// predicates with no usable position data (e.g. ones rebuilt from
-    /// a bundle blob produced before chunk 55).</summary>
+    /// a bundle blob with no position table).</summary>
     public IReadOnlyList<SourcePosition> ClauseSourcePositions { get; }
 
     /// <summary>ADR-035 — the places a debugger may stop inside this predicate,

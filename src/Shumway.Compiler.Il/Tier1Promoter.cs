@@ -11,9 +11,9 @@ namespace Shumway.Compiler.Il;
 /// inside the IL compiler's supported subset, and <c>null</c> otherwise.
 ///
 /// <para>Auto-promotion (counter-driven background compilation and
-/// atomic delegate swap inside the interpreter's dispatch loop) is the
-/// next chunk in the ADR-011 roadmap. This class is the manual entry
-/// point that tests and ahead-of-time tools use today.</para>
+/// atomic delegate swap inside the interpreter's dispatch loop) lives
+/// in the embedding layer's promotion store; this class is the manual
+/// entry point that tests and ahead-of-time tools use.</para>
 /// </summary>
 public static class Tier1Promoter
 {

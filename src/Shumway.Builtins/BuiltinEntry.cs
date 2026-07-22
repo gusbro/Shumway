@@ -32,15 +32,15 @@ public sealed class BuiltinEntry
 
     /// <summary>True for the <c>call/1..7</c> family. Precomputed so the
     /// dispatch hot paths test a bool instead of comparing
-    /// <see cref="Name"/> against <c>"call"</c> per call (chunk 416).</summary>
+    /// <see cref="Name"/> against <c>"call"</c> per call.</summary>
     public bool IsCall { get; }
 
-    /// <summary>True for <c>'$call'/2</c>, the chunk-88 barrier-carrying
+    /// <summary>True for <c>'$call'/2</c>, the barrier-carrying
     /// meta-call. Precomputed like <see cref="IsCall"/>.</summary>
     public bool IsDollarCall { get; }
 
     /// <summary>True for builtins that push a choice point and resume via
-    /// <c>ResumeAtReturnPc</c> (the chunk-218 mechanism) — their Tier-1 IL
+    /// <c>ResumeAtReturnPc</c> — their Tier-1 IL
     /// <c>call_builtin</c> site needs a forward-resume cursor.
     ///
     /// <para>DERIVED, not declared: <see cref="BacktrackableDetector"/> walks the

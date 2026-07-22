@@ -97,7 +97,7 @@ public sealed class Linker
         // it is patched with a CallTarget sentinel so the interpreter
         // raises existence_error if (and only if) the call is reached.
         //
-        // Chunk 248 — if the callee resolves to a builtin (e.g.
+        // if the callee resolves to a builtin (e.g.
         // a foreign predicate the linker discovered through
         // --foreign-dll, registered into BuiltinsRegistry before
         // calling Link), rewrite the Call opcode at `off` to
@@ -142,7 +142,7 @@ public sealed class Linker
                 }
                 if (existing == (byte)Opcode.Execute)
                 {
-                    // Chunk 248 — tail-call rewrite. ExecuteBuiltin
+                    // tail-call rewrite. ExecuteBuiltin
                     // has the same 5-byte width as Execute, so the
                     // swap is opcode-byte + operand-patch with no
                     // following Nops needed. Drops Execute's address

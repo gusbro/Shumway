@@ -33,7 +33,7 @@ public sealed class ShmoCompileResult
     public ShmoObject? Object { get; }
     public IReadOnlyList<ShmoCompileError> Errors { get; }
 
-    /// <summary>Chunk 436 — non-fatal diagnostics (same shape as
+    /// <summary>non-fatal diagnostics (same shape as
     /// <see cref="Errors"/>). Currently produced for unknown directives
     /// under <c>arity_compat</c>; warnings never fail the compile and
     /// don't affect <see cref="Success"/>.</summary>

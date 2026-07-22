@@ -54,7 +54,7 @@ public sealed partial class Activation
     private readonly List<string> _stringTable = new();
     private readonly List<object?> _foreignTable = new();
 
-    // ----- Attributed-variable storage (chunk 77, Phase 4) -----
+    // ----- Attributed-variable storage -----
     // Maps the heap home index of an attributed variable to its
     // attribute record — itself a map from a module's atom id to the
     // heap index of that module's attribute value. An ATTVAR cell's
@@ -69,7 +69,7 @@ public sealed partial class Activation
     // module was absent). ExtraTrailEntry.HeapIdx indexes into this list.
     private readonly List<(int Home, int Module, int OldValue)> _attrTrailLog = new();
 
-    // ----- attributed-variable unify-hook wakeups (chunk 78, 79) -----
+    // ----- attributed-variable unify-hook wakeups -----
     // When an attributed variable is bound, one wakeup per attribute
     // module is queued here: (module atom id, heap index of that
     // module's attribute value, heap index of the term the variable
@@ -86,7 +86,7 @@ public sealed partial class Activation
     // handler walks it from the top to find a matching catcher.
     private readonly List<CatchFrame> _catchFrames = new();
 
-    // ----- chunk 432: pooled scratch for the embedding layer's term
+    // ----- pooled scratch for the embedding layer's term
     // walkers (Materializer — findall runs it once per solution). Cleared on
     // use rather than allocated per call. The depth counter guards
     // re-entrancy: only the OUTERMOST walk uses the pooled instance; a nested
@@ -94,20 +94,20 @@ public sealed partial class Activation
     // a fresh one. Engines are single-threaded internally, so no
     // synchronisation is needed.
     //
-    // Phase 33 I13: TermReader's own scratch (its work / result stacks and
+    // TermReader's own scratch (its work / result stacks and
     // cycle set) moved to a per-thread pool inside TermReader when its walk
     // was made fully iterative, so the former TermWalkScratchSet /
     // TermWalkDepth fields are gone.
     public Dictionary<string, int>? MaterializeScratchMap;
     public int MaterializeDepth;
-    // Phase 33 I2 — pooled scratch for the heap-to-heap copy_term/2
+    // pooled scratch for the heap-to-heap copy_term/2
     // (HeapTermCopy): the source-var→copy-var and source-struct→copy-cell
     // identity maps, cleared on use. Same clear-on-use + depth-guard discipline
     // as the walkers above.
     public Dictionary<int, Cell>? CopyVarScratch;
     public Dictionary<int, Cell>? CopyStructScratch;
     public int CopyTermDepth;
-    // Phase 33 I2b — pooled scratch for the findall solution snapshot
+    // Pooled scratch for the findall solution snapshot
     // (FindallSnapshot): the working cell image and the var / struct identity
     // maps, cleared on use. Snapshots never nest (a findall's records run
     // sequentially, and a snapshot never re-enters snapshotting), so no depth
@@ -115,7 +115,7 @@ public sealed partial class Activation
     public List<Cell>? FindallSnapCells;
     public Dictionary<int, int>? FindallSnapVarMap;
     public Dictionary<int, int>? FindallSnapStructMap;
-    // Phase 33 I9 — pooled scratch for the iterative structural-compare walk
+    // pooled scratch for the iterative structural-compare walk
     // (==/2, \==/2). The work-stack holds cell pairs still to compare; the
     // visited set holds (aAddr,bAddr) structure-pairs already in progress so a
     // cyclic term terminates co-inductively instead of overflowing the C# stack
@@ -123,7 +123,7 @@ public sealed partial class Activation
     // recurses back into AreStructurallyEqual) so no depth guard is needed.
     private List<Cell>? _structEqStack;
     private HashSet<long>? _structEqVisited;
-    // Phase 33 I11 — the same, for the ordered standard-order comparison
+    // the same, for the ordered standard-order comparison
     // (compare/3, @</2 …, sort/2, keysort/2). Public so the Builtins-assembly
     // StandardOrderComparator can pool them; a separate pair from the ==/2 one
     // so a comparator callback and an ==/2 can't alias, and the ordered walk
@@ -248,7 +248,7 @@ public sealed partial class Activation
         _bindingTrail = new int[config.InitialBindingTrailSize];
         _extraTrail = new ExtraTrailEntry[config.InitialExtraTrailSize];
         _gcThreshold = config.GcThreshold;
-        // Chunk 414 — the GC fuzz/bisect env overrides (SHUMWAY_GC_THRESHOLD /
+        // the GC fuzz/bisect env overrides (SHUMWAY_GC_THRESHOLD /
         // GC_STRESS / GC_AT / GC_UPTO) only exist in -p:ShumwayDiag=true
         // builds; a normal build never reads the environment here. The fuzz
         // FIELDS and their (branch-predicted) checks in MaybeCollectHeap stay,
@@ -257,7 +257,7 @@ public sealed partial class Activation
         DiagReadGcOverrides();
     }
 
-    /// <summary>Chunk 414 — diag-build-only env overrides for the ADR-016 GC:
+    /// <summary>diag-build-only env overrides for the ADR-016 GC:
     /// watermark replacement, every-safe-point stress mode (fuzz), and the
     /// collect-at-exactly-N / collect-up-to-N bisection knobs. Stripped from
     /// normal builds via <c>[Conditional("SHUMWAY_DIAG")]</c>.</summary>
@@ -271,7 +271,7 @@ public sealed partial class Activation
             _gcOnlyAt = gcAt;
         if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_UPTO"), out int gcUpTo))
             _gcUpTo = gcUpTo;
-        // Chunk 428 — fold the knobs into the single steady-state flag
+        // fold the knobs into the single steady-state flag
         // MaybeCollectHeap's inlined guard tests.
         UpdateGcDiagActive();
     }
@@ -399,7 +399,7 @@ public sealed partial class Activation
     /// <summary>Size in cells of an environment frame with <paramref name="numPermanents"/> Y slots.</summary>
     public static int EnvSize(int numPermanents) => 3 + numPermanents;
 
-    /// <summary>Env trimming (chunks 57 / 61 / 64). Shrinks the
+    /// <summary>Env trimming. Shrinks the
     /// current environment frame to keep only
     /// <paramref name="numLivePerms"/> Y slots, reclaiming the stack
     /// space the dead slots occupied so subsequent pushes pack
@@ -408,7 +408,7 @@ public sealed partial class Activation
     /// the right <c>num_live_perms</c> operand on every Call /
     /// CallBuiltin; the interpreter's handlers call here to apply it.
     ///
-    /// <para><b>CP-frame protection (chunk 64):</b> the trim must
+    /// <para><b>CP-frame protection:</b> the trim must
     /// never push <c>_stackTop</c> below the top of the most recent
     /// choice-point frame. Doing so would let the next stack push
     /// (a sub-call's CP, a sub-call's env, etc.) overwrite the
@@ -622,7 +622,7 @@ public sealed partial class Activation
     }
 
     /// <summary>Reads the <c>Y(k+1)</c> slot of the current environment frame.</summary>
-    // Chunk 428 — the inline throw blocked JIT inlining of these two,
+    // the inline throw blocked JIT inlining of these two,
     // which every Y-slot opcode in BOTH tiers calls. Hoisted to the cold
     // ThrowNoEnv helper (the ThrowBadAlloc pattern) + AggressiveInlining.
     [System.Runtime.CompilerServices.MethodImpl(
@@ -740,7 +740,7 @@ public sealed partial class Activation
     //          ExtraTrailTop | HeapTop | Hb | ViewGen | B0]
     // Total size = 11 + arity cells (CpSize).
     //
-    // ViewGen (ADR-015 chunk C, bytecode-level dispatch): the live
+    // ViewGen (ADR-015, bytecode-level dispatch): the live
     // CurrentViewGen register at push time — the "logical update view"
     // timestamp sampled by the innermost enter_dynamic. Restored on every
     // CP restore so a CheckVisible in a dynamic chain, re-entered by
@@ -804,7 +804,7 @@ public sealed partial class Activation
         for (int i = 0; i < arity; i++)
             _stack[newB + CpArg1Offset + i] = _registers[i];
 
-        // Chunk 234 — hoist a Span<Cell> over the contiguous control
+        // hoist a Span<Cell> over the contiguous control
         // word block so the 10 writes share a single bounds check.
         // EnsureStackCapacity just guaranteed _stack[newB..newB+size)
         // is in range; writing back through `_stack[newB + offset] = …`
@@ -872,7 +872,7 @@ public sealed partial class Activation
         for (int i = 0; i < arity; i++)
             _registers[i] = _stack[b + CpArg1Offset + i];
 
-        // Chunk 234 — single Span over the contiguous control-word
+        // single Span over the contiguous control-word
         // block so the JIT can elide per-field bounds checks. Mirrors
         // the PushChoicePoint layout.
         int ctlBase = b + 1 + arity;
@@ -913,7 +913,7 @@ public sealed partial class Activation
     {
         if (barrier < -1)
             throw new ArgumentOutOfRangeException(nameof(barrier));
-        // Chunk 146: a stale barrier (above current B) means the
+        // a stale barrier (above current B) means the
         // choice point the cut wanted to commit to has already been
         // popped — typically by a surrounding catch/3 unwinding past
         // the clause-entry snapshot. ISO semantics: cut commits to
@@ -924,17 +924,17 @@ public sealed partial class Activation
         if (_b == barrier)
             return;
 
-        // Chunk 164 / chunk 231: drop IL CP stack entries above the
+        // Drop IL CP stack entries above the
         // barrier BEFORE _b moves. Each entry's Key is its frame's
         // stack-B position; the entries are pushed in monotonic _b
         // order so any stale ones sit at the top of _ilCpStack —
         // pop them down to the first <= barrier. Replaces the
-        // chunk-164 foreach-over-dict-Keys loop (which was 5.31%
+        // foreach-over-dict-Keys loop (which was 5.31%
         // self-time on Activation.Cut in Blint with user IL active,
         // plus a List<int> allocation per cut that hit any IL CP).
         while (_ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key > barrier)
         {
-            // Chunk 245 — fire the optional cleanup hook before
+            // fire the optional cleanup hook before
             // dropping the entry. Non-det foreign predicates
             // register iter.Dispose here so a generator's
             // try / finally / using runs deterministically when
@@ -1004,7 +1004,7 @@ public sealed partial class Activation
     /// back tag-agnostically with <c>(int)Data</c> (the cast ignores the
     /// tag bits above bit 31). Mirrors the bytecode interpreter's
     /// <c>cut</c> opcode so Tier-1 IL can emit deep cut as a single engine
-    /// call (chunk 215).</summary>
+    /// call.</summary>
     public void CutToLevel(int slot) => Cut((int)GetY(slot).Data);
 
     /// <summary>
@@ -1026,7 +1026,7 @@ public sealed partial class Activation
         // Hb: the optimisation stands down while a debugger needs the past.
         if (_trailEverything) return;
 
-        // I5 (Phase 33) — fast no-op cut: when nothing was trailed since the
+        // I5 — fast no-op cut: when nothing was trailed since the
         // parent CP both tops already equal the parent's, so both compaction
         // walks are empty and — since the trail only grows between CPs — no
         // catch-frame snapshot can sit above the (unchanged) top. The whole
@@ -1109,7 +1109,7 @@ public sealed partial class Activation
         _bindingTrailTop = bindingWrite;
         _extraTrailTop = extraWrite;
 
-        // Chunk 147: catch frames captured snapshots of the trail
+        // catch frames captured snapshots of the trail
         // tops at push time. The compaction above just dropped some
         // entries from above each snapshot — those entries no longer
         // exist, so the snapshot's position is stale. Clip any
@@ -1182,7 +1182,7 @@ public sealed partial class Activation
     /// <see cref="Cell.Atom"/> or <see cref="Cell.Int"/>).</summary>
     public bool UnifyRegisterWithCell(int regIdx, Cell value)
     {
-        // Chunk 170: fast paths for the two common shapes — the
+        // fast paths for the two common shapes — the
         // register is unbound, or the register already holds the
         // exact same value. Both occur on every char_code /
         // peek_char dispatch (the output register is fresh; the
@@ -1219,7 +1219,7 @@ public sealed partial class Activation
 
     /// <summary>Unifies the cell held in <c>Y[<paramref name="permSlot"/>]</c> of the
     /// current environment frame with <c>X[<paramref name="regIdx"/>]</c>.</summary>
-    // Chunk 428 — guard throw hoisted to ThrowNoEnv (see GetY) on the
+    // guard throw hoisted to ThrowNoEnv (see GetY) on the
     // three UnifyPermanent* entry points so the guards inline.
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
@@ -1273,9 +1273,9 @@ public sealed partial class Activation
         // BigInt / String / Pstr (table-id ≠ value), Float (two cells), or a
         // compound — takes the general alloc-then-Unify path unchanged.
         //
-        // NOTE (Phase 25 --alloc finding): on the Van Roy suite this saves
+        // NOTE (--alloc finding): on the Van Roy suite this saves
         // zero allocations — head-level literal args go through the already-
-        // optimised UnifyRegisterWithCell (chunk 170, get_atom/get_nil/
+        // optimised UnifyRegisterWithCell (get_atom/get_nil/
         // get_integer), and these benchmarks have no literals nested inside
         // compound head args (the only shape that reaches here). Kept because
         // it is correct, harmless, and a real win for programs that DO match
@@ -1283,7 +1283,7 @@ public sealed partial class Activation
         //
         // The fast path applies ONLY when `value` is a genuine atomic literal
         // (Atom / inline Int). It must NOT trigger for a `value` that is a
-        // REF — unify_float passes Cell.Ref(pairIdx) here (chunk-287 bug):
+        // REF — unify_float passes Cell.Ref(pairIdx) here (bug):
         // a Ref value against an unbound target needs Unify's young-to-old
         // BindVarToVar discipline, and against a bound value needs the full
         // recursive unify; binding the target straight to the Ref breaks
@@ -1399,7 +1399,7 @@ public sealed partial class Activation
     /// variable to it) or read mode (when the dereferenced cell is a matching STR) or
     /// fails. The <see cref="UnifyPointer"/> is positioned at the first argument cell.
     /// </summary>
-    // Chunk 428: split like GetList (chunk 353) — an AggressiveInlining
+    // split like GetList — an AggressiveInlining
     // fast path for the read-mode case where the register directly holds
     // an inline STR cell (ADR-017: the Str tag rides in the referring
     // slot, so no deref, no allocation — the common case when matching an
@@ -1429,7 +1429,7 @@ public sealed partial class Activation
     {
         int finalAddr = -1;
         Cell finalCell = regCell;
-        // A register may hold a REF or — once chunk 77's attvars exist —
+        // A register may hold a REF or — with attvars —
         // a bare ATTVAR cell (its payload is its own home index, so
         // Deref of it is the identity). Both name a heap home.
         if (regCell.Tag is Tag.Ref or Tag.AttVar)
@@ -1444,7 +1444,7 @@ public sealed partial class Activation
             // BindAttVarToValue stores a Ref to a heap home for compound
             // values, and the attr machinery expects it (the heap GC bails
             // while any attvar is live, so the extra cell is immaterial).
-            // chunk 78 fires its unify hook from the queued wakeup.
+            // the attvar machinery fires its unify hook from the queued wakeup.
             int h = AllocateHeap(2);
             _heap[h] = Cell.Str(h + 1);
             _heap[h + 1] = Cell.Functor(functorId);
@@ -1477,7 +1477,7 @@ public sealed partial class Activation
         return false;
     }
 
-    // ----- Unify-mode-aware dispatch helpers (chunk 48) -----
+    // ----- Unify-mode-aware dispatch helpers -----
     //
     // Each of these matches the bytecode interpreter's <c>unify_*</c>
     // opcode behaviour: in write mode allocate one heap slot and write
@@ -1520,7 +1520,7 @@ public sealed partial class Activation
     /// variable inside a compound. In write mode allocate an unbound
     /// var on the heap and stash a REF to it in X[slot]; in read mode
     /// copy the cell at <c>UnifyPointer</c> into X[slot].</summary>
-    // Chunk 353: split into a small read-mode fast path (AggressiveInlining, so
+    // split into a small read-mode fast path (AggressiveInlining, so
     // the JIT inlines it into the Tier-1 IL delegate and the interpreter — the
     // common head-matching case: capture the cell at the unify pointer into a
     // temp register, no heap allocation, no register grow) and a cold slow path
@@ -1609,7 +1609,7 @@ public sealed partial class Activation
         else
         {
             // See UnifyVariableX: a bare ATTVAR is captured as a REF to
-            // its home so its identity survives the copy. (chunk 77)
+            // its home so its identity survives the copy.
             Cell src = _heap[ptr];
             SetY(slot, src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
         }
@@ -1675,7 +1675,7 @@ public sealed partial class Activation
 
     // ----- Fused cons helpers for the Tier-1 IL emit (2026-07) -----
     //
-    // The IL tier's twin of the chunk-415 interpreter superinstructions: the
+    // The IL tier's twin of the interpreter superinstructions: the
     // WAM window `get_list Ai; unify_* ; unify_*` — the complete match/build of
     // one cons cell — becomes ONE call instead of three. The generic trio pays
     // three call boundaries plus _writeMode/_unifyPointer field traffic between
@@ -1884,7 +1884,7 @@ public sealed partial class Activation
     /// mode against a LIS, or fails. The <see cref="UnifyPointer"/> is positioned at
     /// the head cell.
     /// </summary>
-    // Chunk 353: split into a small read-mode fast path (AggressiveInlining: the
+    // split into a small read-mode fast path (AggressiveInlining: the
     // register directly holds an inline LIS cell — ADR-017 — so no deref, no
     // allocation; the common case when consuming an existing list) and a cold
     // slow path (deref, var-binding write mode, attvar, fail). ~10% of a
@@ -1910,7 +1910,7 @@ public sealed partial class Activation
     {
         int finalAddr = -1;
         Cell finalCell = regCell;
-        // REF or a bare ATTVAR cell (chunk 77) — both name a heap home;
+        // REF or a bare ATTVAR cell — both name a heap home;
         // Deref of an ATTVAR is the identity since it isn't a REF.
         if (regCell.Tag is Tag.Ref or Tag.AttVar)
         {
@@ -2076,7 +2076,7 @@ public sealed partial class Activation
     private int MaterializeRegister(int regIdx)
     {
         Cell c = _registers[regIdx];
-        // REF and ATTVAR (chunk 77) both carry a heap home index in
+        // REF and ATTVAR both carry a heap home index in
         // their payload, so either already names a heap cell.
         if (c.Tag is Tag.Ref or Tag.AttVar) return c.AsHeapIndex;
         int slot = AllocateHeap(1);
@@ -2094,7 +2094,7 @@ public sealed partial class Activation
     public int MaterializeRegisterForTrace(int regIdx)
         => MaterializeRegister(regIdx);
 
-    // ----- Current-query functor address map (Tier-1, chunk 47) -----
+    // ----- Current-query functor address map (Tier-1) -----
     //
     // Set by the embedding-layer query setup once per query, this map
     // gives the bytecode address of every functor in the linked program.
@@ -2104,7 +2104,7 @@ public sealed partial class Activation
     // for one query's linked layout).
     public IReadOnlyDictionary<int, int>? CurrentFunctorAddresses { get; set; }
 
-    /// <summary>Phase 33 — functor ids that a mid-query <c>consult/1</c>
+    /// <summary>functor ids that a mid-query <c>consult/1</c>
     /// (from a live query, e.g. Logtalk's <c>'$lgt_load_prolog_code'</c>)
     /// live-linked into the running query's code space and made globally
     /// visible. A Call/Execute site compiled at THIS query's setup — before
@@ -2115,7 +2115,7 @@ public sealed partial class Activation
     /// live-consult query.</summary>
     public System.Collections.Generic.HashSet<int>? LiveConsultVisibleFids { get; set; }
 
-    /// <summary>Chunk 417 — runtime action for a call to an undefined
+    /// <summary>runtime action for a call to an undefined
     /// procedure (the ISO <c>unknown</c> prolog flag, wired through
     /// dispatch via <see cref="UnknownProcedure.Fails"/>). Set by the
     /// embedding layer at query setup and updated live by
@@ -2186,7 +2186,7 @@ public sealed partial class Activation
         return buffer;
     }
 
-    // ----- Meta-call route cache (chunk 416) -----
+    // ----- Meta-call route cache -----
     //
     // Shared by the bytecode interpreter's DispatchCall and Tier-1's
     // IlMetaCallHelper.Dispatch: maps a runtime goal's
@@ -2218,7 +2218,7 @@ public sealed partial class Activation
     /// <summary>True when the linked program defines a
     /// <c>verify_attributes/4</c> hook. When set, that hook owns the
     /// merge of a shared module's attribute values on an attvar+attvar
-    /// unification — the engine no longer applies the chunk-77 hookless
+    /// unification — the engine no longer applies the hookless
     /// "values must unify" rule, which would fail before the hook could
     /// run (fatal for constraint libraries like CLP(FD), whose two
     /// variables carry deliberately different domains).</summary>
@@ -2227,7 +2227,7 @@ public sealed partial class Activation
 
     /// <summary>Per-query string literal pool. Set by the embedding
     /// layer at query setup so IL-emitted <c>get_pstr</c> / <c>put_pstr</c>
-    /// opcodes (chunk 50) can resolve a literal id to its string at
+    /// opcodes can resolve a literal id to its string at
     /// runtime — same lookup the bytecode interpreter does, but
     /// accessible from the Activation surface so Tier-1 IL doesn't need
     /// to carry its own pool reference.</summary>
@@ -2235,15 +2235,15 @@ public sealed partial class Activation
 
     /// <summary>Per-query bytecode program, set alongside
     /// <see cref="CurrentFunctorAddresses"/>. IL-emitted <c>Call</c>
-    /// opcodes (chunk 50) re-enter the bytecode interpreter on this
-    /// program to run sub-predicates synchronously. ADR-015 chunk C: the
+    /// opcodes re-enter the bytecode interpreter on this
+    /// program to run sub-predicates synchronously. ADR-015: the
     /// program grows — a dynamic predicate modified mid-query is
     /// recompiled and appended via <see cref="AppendCode"/>.</summary>
     public byte[]? CurrentProgram { get; set; }
 
     private int _programLength = -1;
 
-    /// <summary>Logical length of the program (ADR-015 chunk E).
+    /// <summary>Logical length of the program (ADR-015).
     /// <see cref="CurrentProgram"/> is over-allocated — capacity grows by
     /// doubling — so <see cref="AppendCode"/> is amortised O(1) instead of
     /// copying the whole buffer each call. The slack tail is zero (the
@@ -2251,14 +2251,14 @@ public sealed partial class Activation
     public int ProgramLength =>
         _programLength >= 0 ? _programLength : (CurrentProgram?.Length ?? 0);
 
-    /// <summary>Chunk 151b — the persistent dynamic-code buffer is
+    /// <summary>the persistent dynamic-code buffer is
     /// over-allocated up front (so mid-query assertz extends without
     /// re-copy), so the engine needs to know its live length explicitly.
     /// Sets <see cref="ProgramLength"/> on a fresh engine before any
     /// <see cref="AppendCode"/> call. </summary>
     public void SetInitialProgramLength(int length) => _programLength = length;
 
-    /// <summary>Chunk 151b — the per-query overlay buffer holding the
+    /// <summary>the per-query overlay buffer holding the
     /// synthetic <c>__query__</c> clause and its auxiliaries. Lives at
     /// logical addresses ≥ <see cref="CurrentQuerySplit"/>; addresses
     /// below the split index into <see cref="CurrentProgram"/>. Null
@@ -2283,15 +2283,15 @@ public sealed partial class Activation
         return new Shumway.Core.ProgramView(prog, CurrentQueryOverlay, CurrentQuerySplit);
     }
 
-    /// <summary>Chunk 155b — per-query switch tables, wired by the
+    /// <summary>per-query switch tables, wired by the
     /// embedding layer at query setup as a mutable list so the
-    /// chunk-155c new-key assertz path can add bucket keys in place
+    /// new-key assertz path can add bucket keys in place
     /// by swapping the entry at a given table id.</summary>
     public System.Collections.Generic.List<Shumway.Core.SwitchTable>? SwitchTables { get; set; }
 
     /// <summary>Helper: returns the switch table at the given index
     /// or <c>null</c> when out of range / not wired. Used by
-    /// PrologEngine's chunk-155b/c in-place assertz path to look up
+    /// PrologEngine's in-place assertz path to look up
     /// the bucket chain head for a new clause's key.</summary>
     public Shumway.Core.SwitchTable? GetSwitchTable(int id)
     {
@@ -2300,7 +2300,7 @@ public sealed partial class Activation
         return tables[id];
     }
 
-    /// <summary>Chunk 155c — replaces the switch table at
+    /// <summary>replaces the switch table at
     /// <paramref name="id"/>, used by the new-key assertz path to
     /// extend a switch table with an additional <c>(key →
     /// bucket-chain-head)</c> entry. The interpreter reads through
@@ -2328,7 +2328,7 @@ public sealed partial class Activation
             var grown = new byte[Math.Max(needed, program.Length * 2)];
             Array.Copy(program, grown, offset);
             CurrentProgram = program = grown;
-            // Chunk 169: bumping the generation tells the interpreter's
+            // bumping the generation tells the interpreter's
             // dispatch loop to refresh its cached ProgramView. Plain
             // (in-place) byte writes don't change the array reference,
             // so they don't need a bump; only a reallocation does.
@@ -2347,19 +2347,19 @@ public sealed partial class Activation
     /// caches its <see cref="ProgramView"/> across dispatch iterations
     /// and only refreshes when this generation has changed — the
     /// per-iteration <c>GetProgramView()</c> call was measurable on
-    /// Blint.pl's hot loop (chunk 169).</summary>
+    /// Blint.pl's hot loop.</summary>
     public int ProgramGeneration => _programGeneration;
     private int _programGeneration;
 
     /// <summary>Bump after the embedding layer rewires program /
-    /// overlay / split fields directly (e.g., chunk 151b's per-
+    /// overlay / split fields directly (e.g. the per-
     /// query reset of <see cref="CurrentQueryOverlay"/>). The
     /// interpreter then picks up the new view on its next dispatch
     /// iteration.</summary>
     public void BumpProgramGeneration() => _programGeneration++;
 
     /// <summary>The dynamic-database generation the currently-running
-    /// goal saw when it entered (ADR-015 chunk C, bytecode-level
+    /// goal saw when it entered (ADR-015, bytecode-level
     /// dispatch). Sampled by the upcoming <c>EnterDynamic</c> opcode at
     /// every dynamic-predicate entry, captured into each choice point's
     /// <c>ViewGen</c> slot by <c>try_me_else</c>, restored on
@@ -2383,16 +2383,16 @@ public sealed partial class Activation
     /// <summary>Arity companion to <see cref="CurrentBuiltinName"/>.</summary>
     public int CurrentBuiltinArity { get; set; }
 
-    /// <summary>Per-engine stream registry (chunk 140). Wired by the
+    /// <summary>Per-engine stream registry. Wired by the
     /// embedding layer at query setup; <c>StreamBuiltins</c> uses it
     /// for every <c>open/close/read/write</c> dispatch so handles
     /// outlive any one query.</summary>
     public StreamRegistry? Streams { get; set; }
 
-    /// <summary>Chunk-150 free-list of dead-clause bytecode regions
+    /// <summary>Free-list of dead-clause bytecode regions
     /// available for reuse by within-query incremental
     /// <c>assertz</c> / <c>asserta</c>. Lives on <see cref="Activation"/>
-    /// purely as legacy ABI — chunk 151b migrated the live free-list
+    /// purely as legacy ABI — the live free-list moved
     /// to <c>PrologEngine</c>'s persistent buffer so chunks freed in
     /// one query are reusable by the next. Not consulted by any
     /// current code path; kept as a no-op holder for any external
@@ -2404,7 +2404,7 @@ public sealed partial class Activation
     /// type (held as an opaque <c>object</c> here because Core can't
     /// reference the AST namespace). Used by
     /// <see cref="PrologRuntimeException"/>'s value-carrying
-    /// constructor (chunk 144) so a throwing builtin can snapshot
+    /// constructor so a throwing builtin can snapshot
     /// the offending term into the error's value slot; eager
     /// materialisation lets the value survive sub-engine teardown.
     /// </summary>
@@ -2429,7 +2429,7 @@ public sealed partial class Activation
     public Func<int, int>? ResolveLateHelper { get; set; }
 
     /// <summary>Absolute byte position of the per-query fail-stub
-    /// (ADR-015 chunk C step 4) — a tiny <c>call_builtin fail/0</c>
+    /// (ADR-015) — a tiny <c>call_builtin fail/0</c>
     /// emitted in the prefix. Dynamic predicates' last-clause chain
     /// instructions point here as their "no more clauses" target; an
     /// empty dynamic predicate's trampoline jumps here directly. Set by
@@ -2440,19 +2440,19 @@ public sealed partial class Activation
     /// <summary>Reads the host's current dynamic-database generation.
     /// Wired by the embedding layer at query setup so the
     /// <c>enter_dynamic</c> opcode can sample it without the interpreter
-    /// having to depend on the embedding layer's types. chunk 432: kept as
+    /// having to depend on the embedding layer's types. kept as
     /// the fallback for bare-Activation tests; the production path is
     /// <see cref="DbGenerationBox"/>, which the interpreter checks first.</summary>
     public Func<long>? DbGenerationProvider { get; set; }
 
-    /// <summary>chunk 432 — the host's generation clock as a shared
+    /// <summary>the host's generation clock as a shared
     /// <see cref="GenerationBox"/>: <c>enter_dynamic</c> reads
     /// <c>Box.Value</c> directly (no delegate invoke per dynamic call).
     /// Null for bare engines, which fall back to
     /// <see cref="DbGenerationProvider"/>.</summary>
     public GenerationBox? DbGenerationBox { get; set; }
 
-    /// <summary>ADR-015 chunk C step 4: refreshes the interpreter's
+    /// <summary>ADR-015: refreshes the interpreter's
     /// literal pools after an <c>assertz</c> / <c>asserta</c> may have
     /// interned a new string / float / bigint literal. Wired at query
     /// setup; the incremental assert paths invoke it.</summary>
@@ -2465,11 +2465,10 @@ public sealed partial class Activation
     public long ViewGenOf(int cpBase, int arity) =>
         _stack[cpBase + CpViewGenOffset(arity)].Payload;   // strip RawInt tag
 
-    // Phase 16 chunk 183: chunk-50 IlSubroutineRunner, chunk-66
-    // BacktrackRunner and chunk-174 SetBacktrackFloor callbacks were
+    // IlSubroutineRunner / BacktrackRunner / SetBacktrackFloor callbacks were
     // deleted when IL non-tail Call dispatch switched to threaded
     // continuation. The threaded design uses resume markers
-    // (chunk 181) and the natural CP cascade — no recursive
+    // and the natural CP cascade — no recursive
     // sub-engine, no separate backtrack driver, no floor pin.
 
     /// <summary>Walks the environment-frame chain starting at the
@@ -2478,7 +2477,7 @@ public sealed partial class Activation
     /// when the current procedure proceeds. The embedding layer
     /// translates these to predicate names via the per-query address
     /// map to assemble a stack trace at error reporting time
-    /// (chunk 51).</summary>
+    ///.</summary>
     /// <summary>Walks the active choice-point chain from the current
     /// CP toward the root. Each yielded triple is
     /// <c>(stackB, savedBp, arity)</c> where <c>savedBp</c> is the
@@ -2486,7 +2485,7 @@ public sealed partial class Activation
     /// (<see cref="IlChoicePointSentinelBp"/> for IL-side CPs and
     /// builtin CPs that route through the IL pop path). Used by the
     /// opt-in <c>SHUMWAY_CP_TRACE</c> diagnostic to dump the live
-    /// CP stack at suspicious error sites (chunk 162).</summary>
+    /// CP stack at suspicious error sites.</summary>
     public IEnumerable<(int StackB, int SavedBp, int Arity)> EnumerateChoicePoints()
     {
         int b = _b;
@@ -2612,7 +2611,7 @@ public sealed partial class Activation
         }
     }
 
-    // ----- IL tail-call signal (Tier-1, chunk 47) -----
+    // ----- IL tail-call signal (Tier-1) -----
     //
     // When an IL delegate emits an Execute opcode, it sets _pc to the
     // tail-call target and raises this flag. The interpreter's Call /
@@ -2623,7 +2622,7 @@ public sealed partial class Activation
     // observes it.
     public bool IlTailCallPending { get; set; }
 
-    // ----- IL choice points (Tier-1, chunk 41) -----
+    // ----- IL choice points (Tier-1) -----
     //
     // A side table mapping a choice-point frame's stack index to the IL
     // delegate + cursor that should run when backtracking pops that frame.
@@ -2631,11 +2630,11 @@ public sealed partial class Activation
     // interpreter's standard PC-based backtrack path doesn't accidentally
     // jump into bytecode 0xFFFFFFFF.
     public const int IlChoicePointSentinelBp = -1;
-    // Chunk 231 removed the Dictionary form of _ilCpInfo in favour of
+    // _ilCpInfo is a stack-array (not a Dictionary) in favour of
     // the stack-array _ilCpStack/_ilCpTop declared just above (with
     // the IlChoicePointEntry struct).
 
-    /// <summary>Chunk 233 — per-engine slot for the IL indexed-dispatch
+    /// <summary>per-engine slot for the IL indexed-dispatch
     /// cache (the typed dictionary lives in Compiler.Il and Core can't
     /// name its type). Previously a
     /// <c>ConditionalWeakTable&lt;Activation, ConcurrentDictionary&gt;</c>
@@ -2649,7 +2648,7 @@ public sealed partial class Activation
     /// type-token compare (no Dictionary boxing / cast).</summary>
     public object? IlIndexedDispatchCache;
 
-    // Phase 16 — threaded Tier-1 dispatch. An IL non-tail Call site sets
+    // threaded Tier-1 dispatch. An IL non-tail Call site sets
     // engine.Cp to a *resume marker* address instead of recursing into
     // RunSubroutine. When the callee Proceeds (Pc = Cp), the bytecode
     // interpreter's main loop sees the marker, decodes it back to
@@ -2657,7 +2656,7 @@ public sealed partial class Activation
     // Tier1Dispatcher, and invokes it at the right cursor. A marker is an
     // opaque int, so saving / restoring Cp around frames just works.
     //
-    // Phase 33 B1 — encoding. The original arithmetic encoding
+    // encoding. The original arithmetic encoding
     // (Base + functorId * 4096 + cursor) capped the functor id at ~262 143
     // before markers overflowed int — a LIVE ceiling: the full test suite's
     // functor table crosses it (proven when a naming experiment minted fresh
@@ -2670,7 +2669,7 @@ public sealed partial class Activation
     // (one id per distinct pair) and never removed — capacity is
     // int.MaxValue - Base ≈ 1.07 B distinct pairs, effectively unbounded.
     // Same lock-free-read / locked-intern discipline as the atom/functor
-    // tables (chunk 428).
+    // tables.
     //
     // ResumeMarkerBase is set high enough that no plausible bytecode
     // address collides (the per-query overlay lives at
@@ -2723,7 +2722,7 @@ public sealed partial class Activation
     public static (int FunctorId, int Cursor) DecodeResumeMarker(int address)
         => System.Threading.Volatile.Read(ref _resumeMarkerPairs)[address - ResumeMarkerBase];
 
-    /// <summary>Phase 29 region compilation — at a region member's proceed, decode
+    /// <summary>Region compilation — at a region member's proceed, decode
     /// the continuation (<see cref="Cp"/>): if it is a resume marker INTO this
     /// region (functor id == <paramref name="regionRootFunctorId"/>) the member's
     /// proceed continues inside the region's IL method at the returned cursor (the
@@ -2742,7 +2741,7 @@ public sealed partial class Activation
     {
         public Func<Activation, int, bool> Del;
         public int Cursor;
-        // Chunk 231 — the _b value at PushIlChoicePoint time. Lets
+        // the _b value at PushIlChoicePoint time. Lets
         // Cut(barrier) compare against the IL CP stack without going
         // through the Dictionary's KeyCollection (which was the
         // PopIlChoicePointAndRestore + Activation.Cut hot path: ~5.31%
@@ -2750,7 +2749,7 @@ public sealed partial class Activation
         // ~1.55% from FindValue/MoveNext on dict ops in profiling
         // Blint with bundled user IL).
         public int Key;
-        // Chunk 245 — optional cleanup callback invoked when this
+        // optional cleanup callback invoked when this
         // CP is discarded without ever being backtracked into (cut
         // pruning, or — eventually — engine teardown). Non-det
         // foreign predicates supply iter.Dispose here so a
@@ -2761,7 +2760,7 @@ public sealed partial class Activation
         public Action? OnPrune;
     }
 
-    // Chunk 231 — stack-array replacement for the previous
+    // stack-array replacement for the previous
     // Dictionary<int, IlChoicePointEntry> _ilCpInfo. IL CPs are
     // always pushed in monotonic _b order (each CP push grows _b)
     // and popped (or cut) from the top — same shape as a plain
@@ -2779,7 +2778,7 @@ public sealed partial class Activation
     public void PushIlChoicePoint(Func<Activation, int, bool> del, int nextCursor, int arity)
         => PushIlChoicePoint(del, nextCursor, arity, onPrune: null);
 
-    /// <summary>Chunk 245 overload — additionally registers an
+    /// <summary>Overload that additionally registers an
     /// <paramref name="onPrune"/> callback invoked exactly once if
     /// this CP is discarded without ever being backtracked into
     /// (cut pruning). The callback fires before the entry's
@@ -2802,7 +2801,7 @@ public sealed partial class Activation
     }
 
     /// <summary>Wrapper around <see cref="PushIlChoicePoint"/> for
-    /// builtins that need runtime choice-point semantics (chunk 56's
+    /// builtins that need runtime choice-point semantics (the
     /// multi-solution <c>call/N</c>, the non-deterministic split modes
     /// of <c>append/3</c> and <c>atom_concat/3</c>). The push itself is
     /// identical to <see cref="PushIlChoicePoint"/>; the wrapper exists
@@ -2823,7 +2822,7 @@ public sealed partial class Activation
         PushIlChoicePoint(del, nextCursor: 0, arity: arity);
     }
 
-    /// <summary>Chunk 245 — builtin-CP overload that registers an
+    /// <summary>builtin-CP overload that registers an
     /// <paramref name="onPrune"/> cleanup callback. Used by the
     /// non-deterministic [PrologPredicate] bridge to Dispose the
     /// iterator when Prolog `!` cuts past the CP without the
@@ -2949,7 +2948,7 @@ public sealed partial class Activation
     /// flags an IL-style tail call so the interpreter, on this
     /// retry-success, leaves PC alone instead of overriding it with
     /// <see cref="Cp"/>. Used by builtin choice-point resume delegates
-    /// (chunk 56) to land execution on the instruction immediately
+    /// to land execution on the instruction immediately
     /// after the <c>call_builtin</c> that pushed the CP.</summary>
     public void ResumeAtReturnPc(int returnPc)
     {
@@ -2971,7 +2970,7 @@ public sealed partial class Activation
     /// delegate.</summary>
     /// <summary>Diagnostic flag — when on, PushChoicePoint and the
     /// IL CP pop log <c>_b</c> / <c>_e</c> / <c>_stackTop</c> for
-    /// every event. Used by the chunk 173 debug session to track
+    /// every event. Used by the IL debug session to track
     /// whether a meta-CP's saved <c>_e</c> still names a valid
     /// frame at pop time.</summary>
     public static bool TraceCpStack { get; set; }
@@ -2997,7 +2996,7 @@ public sealed partial class Activation
         if (TraceCpStack)
             System.Console.Error.WriteLine($"[cp-stack] pop-il-done _b={_b} _e={_e} _stackTop={_stackTop}");
         // Clear the delegate reference so the array doesn't pin it
-        // for GC after pop. The OnPrune (chunk 245) is NOT
+        // for GC after pop. The OnPrune is NOT
         // invoked here — backtracking *into* the CP means the
         // delegate runs and handles its own cleanup (the non-det
         // bridge's MoveNext-returns-false path Disposes the
@@ -3029,7 +3028,7 @@ public sealed partial class Activation
         _bigIntTable.Add(value);
         // Record the allocation on the extra trail so a later backtrack
         // truncates the table back to its pre-allocation size and frees
-        // the slot (chunk 41 — BigInt trail-aware allocation).
+        // the slot (BigInt trail-aware allocation).
         TrailBigIntAlloc(id);
         return Cell.BigInt(id);
     }
@@ -3145,7 +3144,7 @@ public sealed partial class Activation
 
     /// <summary>
     /// Reconstructs the .NET string represented by the PSTR header at <paramref name="headerIdx"/>.
-    /// Reads each segment's code units then follows the tail cell — chunk 70's lazy concat
+    /// Reads each segment's code units then follows the tail cell — the lazy concat
     /// chains multiple PSTR pieces together by storing a <see cref="Tag.Pstr"/> cell in the
     /// tail position, and this walker treats such tails as continuation segments.
     /// </summary>
@@ -3159,7 +3158,7 @@ public sealed partial class Activation
         return sb.ToString();
     }
 
-    /// <summary>Phase 33 ISO audit — reads a PSTR chain's text starting
+    /// <summary>Reads a PSTR chain's text starting
     /// at the given (already dereferenced) <see cref="Tag.Pstr"/> cell
     /// and returns the final non-PSTR tail cell (dereferenced), so
     /// list-walking builtins (<c>atom_codes/2</c>, <c>number_codes/2</c>,
@@ -3202,7 +3201,7 @@ public sealed partial class Activation
     }
 
     /// <summary>Total logical length of a PSTR chain in UTF-16 code units —
-    /// follows tail cells when they are <see cref="Tag.Pstr"/> (chunk 70's
+    /// follows tail cells when they are <see cref="Tag.Pstr"/> (the
     /// lazy concat representation). Returns the immediate segment's length
     /// when the tail is anything else.</summary>
     public int GetPstrChainLength(int headerIdx)
@@ -3224,7 +3223,7 @@ public sealed partial class Activation
         return total;
     }
 
-    /// <summary>Lazy <c>pstr_concat</c> (chunk 70): builds a new PSTR whose
+    /// <summary>Lazy <c>pstr_concat</c>: builds a new PSTR whose
     /// buffer holds <paramref name="aIdx"/>'s logical content (flattening
     /// any pre-existing tail chain) and whose tail cell stores a
     /// <see cref="Tag.Pstr"/> reference to <paramref name="bIdx"/>'s
@@ -3334,7 +3333,7 @@ public sealed partial class Activation
     /// the PSTR's own tail value (typically <c>Atom([])</c>); otherwise it's replaced
     /// with an advanced PSTR header sharing the original buffer.
     ///
-    /// <para>The extracted head is returned as <c>Int(code_unit)</c> — Phase 1 only
+    /// <para>The extracted head is returned as <c>Int(code_unit)</c> — only
     /// supports <c>codes</c> mode for <c>double_quotes</c>; the <c>chars</c> path is
     /// deferred until the flags subsystem lands.</para>
     /// </summary>
@@ -3451,7 +3450,7 @@ public sealed partial class Activation
             TrailBinding(varAddr);
     }
 
-    // Chunk 428 — AggressiveInlining: with the capacity compare now inline
+    // AggressiveInlining: with the capacity compare now inline
     // in EnsureBindingTrailCapacity this whole method flattens into the
     // Bind call sites as compare + store + increment.
     [System.Runtime.CompilerServices.MethodImpl(
@@ -3463,7 +3462,7 @@ public sealed partial class Activation
     }
 
     // ============================================================================
-    // Attributed variables (chunk 77, Phase 4)
+    // Attributed variables
     // ============================================================================
 
     /// <summary>True iff the deref'd cell at <paramref name="heapAddr"/>
@@ -3539,7 +3538,7 @@ public sealed partial class Activation
     /// <summary>The module ids that carry an attribute on the variable
     /// at <paramref name="varAddr"/> — empty when it isn't attributed.
     /// Used by the attvar-unification merge and by <c>copy_term/3</c>'s
-    /// residual-goal projection (chunk 81).</summary>
+    /// residual-goal projection.</summary>
     public IReadOnlyCollection<int> AttrModules(int varAddr)
     {
         int addr = Deref(varAddr);
@@ -3654,7 +3653,7 @@ public sealed partial class Activation
                     var record = _attrTable[home];
                     if (oldValue < 0) record.Remove(mod);
                     else record[mod] = oldValue;
-                    // chunk 432: truncate the side log. entry.HeapIdx is the
+                    // truncate the side log. entry.HeapIdx is the
                     // log index assigned at append time (TrailAttrChange),
                     // and extra-trail entries unwind strictly in reverse
                     // append order, so every log record at or above this
@@ -3708,7 +3707,7 @@ public sealed partial class Activation
         Cell aCell = _heap[aAddr];
         Cell bCell = _heap[bAddr];
 
-        // Attributed variables (chunk 77) participate in cross-tag
+        // Attributed variables participate in cross-tag
         // unification, so dispatch them before the plain-REF handling.
         if (aCell.Tag == Tag.AttVar || bCell.Tag == Tag.AttVar)
             return UnifyAttVar(aAddr, aCell, bAddr, bCell);
@@ -3875,7 +3874,7 @@ public sealed partial class Activation
     /// </summary>
     private bool UnifyLis(int hA, int hB)
     {
-        // Chunk 428: walk the list spine iteratively. The previous shape
+        // walk the list spine iteratively. The previous shape
         // (Unify head, then Unify tails re-entering UnifyLis) recursed one
         // C# frame per element, so a long list risked the stack overflow
         // acknowledged in UnifyStr's doc note. Heads still unify through
@@ -4181,7 +4180,7 @@ public sealed partial class Activation
     ///
     /// <para>Heads are emitted as 16-bit UTF-16 code units; supplementary codepoints
     /// (above U+FFFF) appear as two separate surrogate values rather than one combined
-    /// codepoint. This is enough for the BMP-only grammar workloads that motivate Phase 1;
+    /// codepoint. This is enough for BMP-only grammar workloads;
     /// surrogate-pair fusion is a future refinement.</para>
     /// </summary>
     private bool UnifyPstrLis(int pstrAddr, int lisAddr)
@@ -4226,7 +4225,7 @@ public sealed partial class Activation
     }
 
     /// <summary>Unifies when at least one side is an attributed
-    /// variable (chunk 77). Three cases:
+    /// variable. Three cases:
     /// <list type="bullet">
     /// <item>attvar + plain unbound REF — the plain variable binds to
     /// the attvar, which survives carrying its attributes.</item>
@@ -4235,7 +4234,7 @@ public sealed partial class Activation
     /// present on both must have unifiable values.</item>
     /// <item>attvar + bound value — the attvar binds to the value, and
     /// a wakeup is queued so the next goal boundary runs the module's
-    /// <c>verify_attributes/4</c> hook (chunk 79).</item>
+    /// <c>verify_attributes/4</c> hook.</item>
     /// </list></summary>
     private bool UnifyAttVar(int aAddr, Cell aCell, int bAddr, Cell bCell)
     {
@@ -4249,7 +4248,7 @@ public sealed partial class Activation
             if (!MergeAttributes(youngerAddr, olderAddr)) return false;
             // The younger variable is the one being bound (to the
             // older); queue its modules' hooks with the older variable
-            // as the "other" term. (chunk 78)
+            // as the "other" term.
             QueueAttrWakeups(youngerAddr, olderAddr);
             BindAttVarToValue(youngerAddr, olderAddr, Cell.Ref(olderAddr));
             return true;
@@ -4280,7 +4279,7 @@ public sealed partial class Activation
     /// carried by the attributed variable at
     /// <paramref name="attvarHome"/>, recording the term it was bound
     /// to (<paramref name="otherIdx"/>). A no-op when the variable
-    /// carries no attributes. (chunk 79)</summary>
+    /// carries no attributes.</summary>
     private void QueueAttrWakeups(int attvarHome, int otherIdx)
     {
         if (!_attrTable.TryGetValue(attvarHome, out var record)) return;
@@ -4299,11 +4298,11 @@ public sealed partial class Activation
     /// hook failed.</summary>
     internal Func<bool>? Tier1WakeupFlusher { get; set; }
 
-    /// <summary>Tier-1 IL cut support (Phase 28). A cut is a goal boundary:
+    /// <summary>Tier-1 IL cut support. A cut is a goal boundary:
     /// any wakeup queued by the IL clause body (e.g. binding a clpfd attvar
     /// in the head, then a neck cut) must run BEFORE the cut commits, or a
     /// failing constraint has no surviving choice point to backtrack into —
-    /// the same unsoundness fixed for the bytecode interpreter in chunk 335.
+    /// the same unsoundness the bytecode interpreter had to fix.
     /// The IL emit calls this immediately before <see cref="NeckCut"/> /
     /// <see cref="CutToLevel"/>; a false result means a wakeup failed and the
     /// caller must branch to its fail label instead of cutting. The
@@ -4335,7 +4334,7 @@ public sealed partial class Activation
     public void ClearPendingWakeups() => _pendingWakeups.Clear();
 
     /// <summary>Returns the queued wakeups and empties the queue. The
-    /// interpreter drains them at a goal boundary (chunk 80), building a
+    /// interpreter drains them at a goal boundary, building a
     /// <c>verify_attributes/4</c> goal per entry and meta-calling it in
     /// this (live) engine so the hooks see the real attributed
     /// variables.</summary>
@@ -4366,7 +4365,7 @@ public sealed partial class Activation
     /// carry is resolved differently depending on whether the program
     /// defines a <c>verify_attributes/4</c> hook:
     /// <list type="bullet">
-    /// <item>No hook — chunk 77's hookless merge rule: the two values
+    /// <item>No hook — the hookless merge rule: the two values
     /// must unify, or the whole unification fails.</item>
     /// <item>Hook present — the destination keeps its own value and the
     /// hook (run from the queued wakeup) owns the merge. Pre-unifying
@@ -4461,7 +4460,7 @@ public sealed partial class Activation
         return (count, floor);
     }
 
-    // Chunk 428 — each wrapper carries the fast capacity compare inline
+    // each wrapper carries the fast capacity compare inline
     // (the AllocateHeap pattern at the top of this file) so the per-push
     // cost at every TrailBinding / PushChoicePoint / Allocate / extra-trail
     // write is one compare + predicted-not-taken branch. GrowIfNeeded's
@@ -4577,7 +4576,7 @@ public sealed partial class Activation
                 return Cell.DecodeFloat(a, _heap[a.FloatPairedIndex])
                     == Cell.DecodeFloat(b, _heap[b.FloatPairedIndex]);
             case Tag.Functor: return a.AsFunctorId == b.AsFunctorId;
-            // Foreign cells (chunk 140): identity via the underlying .NET
+            // Foreign cells: identity via the underlying .NET
             // reference. Two foreign cells are == iff their boxed payloads are
             // reference-equal.
             case Tag.Foreign:
@@ -4591,7 +4590,7 @@ public sealed partial class Activation
             // stack, no per-element recursion) with a visited-pair set so a
             // cyclic / rational term (X=f(X), Y=f(Y), X==Y) terminates
             // co-inductively instead of overflowing the C# stack — an
-            // uncatchable crash (Phase 33 I9).
+            // uncatchable crash.
             case Tag.Str:
             case Tag.Lis:
             case Tag.Pstr:
@@ -4614,7 +4613,7 @@ public sealed partial class Activation
     /// Replaces the former mutually-recursive <c>AreStrStructurallyEqual</c> /
     /// <c>AreLisStructurallyEqual</c> descent, which used one C# frame per node
     /// and so overflowed the (guard-less) C# stack on a cyclic term — an
-    /// uncatchable process crash (Phase 33 I9). The explicit work-stack keeps
+    /// uncatchable process crash. The explicit work-stack keeps
     /// C# stack use O(1) regardless of term depth.
     ///
     /// <para>Cycle handling is <em>lazy</em>: for the first
@@ -4686,7 +4685,7 @@ public sealed partial class Activation
                 }
                 case Tag.Lis:
                 {
-                    // Walk the spine inline (chunk 428): compare each head-pair
+                    // Walk the spine inline: compare each head-pair
                     // in place (only a compound head is pushed for descent), so
                     // a proper list of primitives runs at spine-loop speed with
                     // no work-stack traffic. Past the budget, every visited cons
@@ -4763,7 +4762,7 @@ public sealed partial class Activation
 
     private Cell ResolveForStructuralCompare(Cell c)
     {
-        // An attributed variable (chunk 77) is still a variable: it
+        // An attributed variable is still a variable: it
         // normalizes to a REF at its home address — its payload already
         // *is* that address — so == compares it by identity, like any
         // unbound variable. This also handles a bare ATTVAR cell read
@@ -4778,7 +4777,7 @@ public sealed partial class Activation
     /// <summary>Compares the leading code units of two PSTRs (<see cref="Tag.Pstr"/>)
     /// — the packed (possibly partial) char-code sequence, NOT the tail. A PSTR is
     /// a code sequence with a tail; <see cref="AppendPstrChain"/> walks the full Pstr
-    /// chain (incl. chunk-70 lazy-concat continuation segments) and stops at the first
+    /// chain (incl. lazy-concat continuation segments) and stops at the first
     /// non-Pstr tail. Two PSTRs are equal iff their materialized leading code units
     /// are equal AND their final tails are structurally equal; the caller
     /// (<see cref="StructuralCompareIterative"/>) compares the tails as an ordinary
@@ -4813,13 +4812,13 @@ public sealed partial class Activation
 
     /// <summary>Sets <c>CP</c> directly. The interpreter uses this from the <c>call</c>
     /// instruction; tests use it to seed the engine state before running a fragment.
-    /// Chunk 192: public so chunk-71 persisted-IL assemblies (loaded into the
+    /// public so persisted-IL assemblies (loaded into the
     /// process without InternalsVisibleTo) can call it from emitted IL.</summary>
     public void SetCp(int cp) => _cp = cp;
 
     /// <summary>Sets <c>PC</c> directly. Used by the interpreter for jumps
     /// (<c>execute</c>, <c>proceed</c>) and by Run for the initial entry point.
-    /// Chunk 192: public so chunk-71 persisted-IL assemblies (loaded into the
+    /// public so persisted-IL assemblies (loaded into the
     /// process without InternalsVisibleTo) can call it from emitted IL.</summary>
     public void SetPc(int pc) => _p = pc;
 
@@ -4827,14 +4826,14 @@ public sealed partial class Activation
     /// interpreter to step past straight-line instructions.</summary>
     internal void AdvancePc(int delta) => _p += delta;
 
-    /// <summary>Chunk 218 — the address a backtrackable builtin's CP
+    /// <summary>the address a backtrackable builtin's CP
     /// resume should jump to after a successful retry. Set by the caller
     /// just before invoking <c>entry.Impl</c>:
     /// <list type="bullet">
     /// <item>Tier-0 sets it to the post-<c>call_builtin</c> address
     ///   (<c>pc + 9</c>) — the next bytecode instruction.</item>
     /// <item>Tier-1 IL sets it to a resume marker that the dispatcher
-    ///   decodes back to the IL caller (chunk 218).</item>
+    ///   decodes back to the IL caller.</item>
     /// </list>
     /// Builtins that call <see cref="ResumeAtReturnPc"/> from inside a
     /// CP-resume delegate must capture this value at push time (was
@@ -4847,7 +4846,7 @@ public sealed partial class Activation
 
     /// <summary>Sets <c>B0</c> directly. The interpreter writes <c>_b</c> into this
     /// before any <c>call</c> or <c>execute</c> so the callee's <c>neck_cut</c> sees
-    /// the right barrier. Chunk 192: public so chunk-71 persisted-IL assemblies
+    /// the right barrier. public so persisted-IL assemblies
     /// (loaded into the process without InternalsVisibleTo) can call it from
     /// emitted IL.</summary>
     public void SetB0(int b0) => _b0 = b0;
@@ -4915,7 +4914,7 @@ public sealed partial class Activation
     internal ReadOnlySpan<int> BindingTrailSpan => _bindingTrail.AsSpan(0, _bindingTrailTop);
 }
 
-/// <summary>chunk 432 — shared mutable holder for the host's dynamic-database
+/// <summary>shared mutable holder for the host's dynamic-database
 /// generation (the ADR-015 logical-update-view clock). The embedding layer
 /// keeps ONE box per <c>PrologEngine</c>, increments <c>Value</c> wherever it
 /// bumps the generation, and hands the same box to every <see cref="Activation"/>

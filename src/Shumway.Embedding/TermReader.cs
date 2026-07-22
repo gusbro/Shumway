@@ -15,19 +15,17 @@ namespace Shumway.Embedding;
 /// (e.g. <c>_G42</c>), which both keeps the binding inspectable and
 /// distinguishes different unbound variables from one another.</para>
 ///
-/// <para>Chunk 148: cyclic structures (built by plain <c>=/2</c>'s
+/// <para>cyclic structures (built by plain <c>=/2</c>'s
 /// occurs-check-off binding, e.g. <c>X = f(X)</c>) used to overflow the C#
 /// stack here. Cycle detection substitutes a synthetic
 /// <c>VarTerm("_C{addr}")</c> at the cycle-back point — preserving identity
 /// across the multiple back-edges in a single materialise pass without
 /// recursing into an infinite tree.</para>
 ///
-/// <para>Phase 33 I13: the whole walk is now iterative. Chunk 111 made the
-/// list <em>spine</em> iterative, but a deeply-nested <em>non-list</em> term —
-/// <c>s(s(…))</c> or a long left-associative <c>a+b+c+…</c> — still recursed
-/// one C# frame per compound level and overflowed the host uncatchably at
-/// materialise time (before the clause even reached the compiler, which the
-/// I12 walks had already hardened). The walk below is an explicit-stack
+/// <para>The whole walk is iterative — a per-compound-level C# recursion
+/// would overflow the host uncatchably at materialise time on a
+/// deeply-nested term (<c>s(s(…))</c>, a long left-associative
+/// <c>a+b+c+…</c>, or a long list). The walk below is an explicit-stack
 /// post-order tree traversal: children are expanded before their parent is
 /// assembled, so C# stack depth is O(1) regardless of term shape or depth.
 /// Cycle detection is unchanged in meaning — the active set holds exactly the
@@ -45,7 +43,7 @@ public static class TermReader
     // These are transient per-walk scratch — NOT engine state — so pooling
     // them per-thread keeps the engine thread-agile (a walk is synchronous and
     // single-threaded; the buffers simply follow the executing thread) while
-    // avoiding a fresh allocation per findall solution (the chunk-432 intent,
+    // avoiding a fresh allocation per findall solution (the intent,
     // now covering the work/result stacks too). A re-entrant walk on the same
     // thread — should one ever occur — takes the busy flag and allocates fresh,
     // so the pooled buffers are never aliased.
@@ -66,7 +64,7 @@ public static class TermReader
         public readonly int A;
         public readonly int Arity;       // Assemble-compound: argument count.
         public readonly string? Name;    // Assemble-compound: functor name.
-        public readonly int FunctorId;   // Assemble: cached functor id (chunk 431).
+        public readonly int FunctorId;   // Assemble: cached functor id.
 
         private Frame(int kind, int a, int arity, string? name, int functorId)
         {
@@ -169,13 +167,13 @@ public static class TermReader
         {
             // An attributed variable materializes as a plain unbound variable —
             // its attributes are engine-side metadata, not part of the AST
-            // shape. (chunk 77)
+            // shape.
             case Tag.Ref:
             case Tag.AttVar:
                 results.Add(new VarTerm($"_G{derefAddr}"));
                 break;
 
-            // chunk 431: seed the node's lazily-cached atom id — we have it in
+            // seed the node's lazily-cached atom id — we have it in
             // hand here, so downstream consumers (Materializer, retract's
             // DefiniteMismatch, assert's head-functor extraction) skip the
             // by-name re-intern entirely.
@@ -225,7 +223,7 @@ public static class TermReader
             case Tag.Functor:
             {
                 int functorIdx = cell.Tag == Tag.Str ? cell.AsHeapIndex : derefAddr;
-                // Chunk 148: if this exact compound address is already on the
+                // if this exact compound address is already on the
                 // active path, we've cycled — emit the marker instead of
                 // recursing forever.
                 if (!active.Add(functorIdx))
@@ -247,7 +245,7 @@ public static class TermReader
             // address joins the active set as it is expanded and is removed when
             // its BuildCons frame runs — so a cyclic list (X = [a | X]) yields
             // the cycle marker for its tail rather than looping. A long list no
-            // longer needs the chunk-111 bespoke spine loop: the tail is just
+            // longer needs the bespoke spine loop: the tail is just
             // another Expand frame on the (heap-allocated) work stack.
             case Tag.Lis:
             {

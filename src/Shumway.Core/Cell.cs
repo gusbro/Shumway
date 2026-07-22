@@ -61,7 +61,7 @@ public readonly struct Cell : IEquatable<Cell>
 
     // ---------- Factories ----------
 
-    // Chunk 234 — AggressiveInlining on the hot Cell factories. The
+    // AggressiveInlining on the hot Cell factories. The
     // bodies are 1-2 cycles of bit manipulation, but C# expression-
     // bodied static methods are not always inlined by the JIT
     // automatically. Cell.RawInt alone showed 0.73% exclusive on Blint
@@ -120,7 +120,7 @@ public readonly struct Cell : IEquatable<Cell>
     public static Cell Foreign(int tableId)
         => new(((long)Tag.Foreign << TagShift) | (uint)tableId);
 
-    /// <summary>An attributed variable (chunk 77): tag 0xA, payload =
+    /// <summary>An attributed variable: tag 0xA, payload =
     /// the heap index of the variable's own home cell — exactly like a
     /// self-referencing <see cref="Ref"/>, but tagged ATTVAR so
     /// <see cref="Deref"/> stops at it instead of following it. The

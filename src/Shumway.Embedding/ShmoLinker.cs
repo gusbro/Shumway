@@ -48,7 +48,7 @@ public sealed class LinkConfig
     /// fails fast on any missing reference.</summary>
     public bool AllowUndefined { get; init; }
 
-    /// <summary>Phase 14 chunk 172: when <c>true</c>, the linker
+    /// <summary>When <c>true</c>, the linker
     /// replaces each <see cref="BundleEntry.Source"/> with the empty
     /// string before serialising. The compiled bytecode in each
     /// entry is preserved. Defaults to <c>false</c> — source
@@ -57,7 +57,7 @@ public sealed class LinkConfig
     /// <para>Stripped bundles dispatch correctly: chunks 178/179 added
     /// the source-less <c>LoadEntryFromBytecode</c> path (the engine
     /// registers predicates straight from the precompiled bytecode +
-    /// <see cref="ShmoObject.Defined"/> metadata), and chunk 209 added
+    /// <see cref="ShmoObject.Defined"/> metadata), plus
     /// the <see cref="ShmoObject.DynamicSeeds"/> trailer so
     /// <c>:- dynamic foo/N.</c> predicates with source clauses keep
     /// their clauses too. Useful for size analysis and IP-protection
@@ -65,7 +65,7 @@ public sealed class LinkConfig
     /// their textual source.</para></summary>
     public bool StripSource { get; init; }
 
-    /// <summary>Chunk 192: when <c>true</c>, the linker compiles
+    /// <summary>when <c>true</c>, the linker compiles
     /// every IL-eligible predicate to .NET IL via
     /// <see cref="Shumway.Compiler.Il.PersistedIlBuilder"/> and
     /// embeds the resulting assembly bytes in each bundle entry's
@@ -109,7 +109,7 @@ public sealed class LinkConfig
     /// as a <c>br</c>-member, computed by <see cref="RegionReachability"/> from the
     /// externally-reachable seeds) gets NO standalone IL method — removing the
     /// all-as-roots duplication. The predicate keeps its Tier-0 WAM as a safety fallback.
-    /// ON by default since chunk 418 (regions validated correct + faster on call-bound
+    /// ON by default (regions validated correct + faster on call-bound
     /// code; an unpruned region bundle is 2.3× bigger for nothing); set false
     /// (CLI <c>--no-region-prune</c>) to build one standalone IL method per predicate.
     /// Ignored for WAM-only bundles.</summary>
@@ -135,7 +135,7 @@ public sealed class LinkConfig
     /// etc.) to this writer. Useful for CLI <c>--verbose</c> mode.</summary>
     public TextWriter? VerboseOut { get; init; }
 
-    /// <summary>Chunk 247 — paths to .NET assemblies that contain
+    /// <summary>paths to .NET assemblies that contain
     /// <c>[Shumway.Embedding.PrologPredicate]</c>-decorated static
     /// methods. At link time the assemblies are reflected; every
     /// discovered <c>(name, arity)</c> indicator is added to the
@@ -191,7 +191,7 @@ public sealed class LinkConfig
     /// anyway).</summary>
     public bool BakePrelude { get; init; }
 
-    /// <summary>Phase 33 T1 — with <see cref="BakePrelude"/>, bake only the
+    /// <summary>with <see cref="BakePrelude"/>, bake only the
     /// prelude predicates the linked program can REACH (the indicators the
     /// reachability walk resolved against the prelude, closed over the
     /// prelude's own call graph) instead of the whole ~780-line prelude.
@@ -283,7 +283,7 @@ public sealed class LinkResult
 /// (CLAUDE.md invariant: public predicates are globally unique).</item>
 /// <item>Walks the call graph from <see cref="LinkConfig.EntryPoints"/>
 /// plus every object's <c>:- ensure_linked</c> indicators
-/// (chunk 162). The unqualified edges resolve against the local module
+///. The unqualified edges resolve against the local module
 /// first, then the union public+dynamic namespace, then builtins, then
 /// the prelude.</item>
 /// <item>Reports every unresolved edge as a
@@ -298,7 +298,7 @@ public sealed class LinkResult
 /// </summary>
 public static class ShmoLinker
 {
-    // Phase 33 T7 — the prelude source is a process constant, so its compiled
+    // the prelude source is a process constant, so its compiled
     // ShmoObject is too (atom interning is process-global and the linker only
     // READS the object: publics, call graph, bytecode, dynamic seeds). It used
     // to be compiled twice per link (main walk + the library pull pre-pass),
@@ -333,7 +333,7 @@ public static class ShmoLinker
             }
         }
 
-        // ----- 0-foreign. Chunk 247/444 — reflect foreign DLLs up front -----
+        // ----- 0-foreign. Reflect foreign DLLs up front -----
         // Their [PrologPredicate] indicators are "already available" and must
         // be known BEFORE the library pull pre-pass, so a library member is
         // never pulled to satisfy a reference a foreign predicate provides.
@@ -354,7 +354,7 @@ public static class ShmoLinker
             : PullLibraryMembers(config.Objects, config.Libraries,
                 config.EntryPoints, foreignIndicators, Emit);
 
-        // ----- 0. Chunk 411 — cross-module meta-wrapper unfold (the LTO pass) -----
+        // ----- 0. cross-module meta-wrapper unfold (the LTO pass) -----
         // V4 .shmo objects carry their raw static clauses (ClauseTerms). Detect
         // every module's wrapper templates, export the PUBLIC ones globally, and
         // rewrite each module's call sites against (own locals ∪ global publics);
@@ -371,7 +371,7 @@ public static class ShmoLinker
         // determinism fixpoint here resolves a goal module-locally first, then
         // to the global PUBLIC definition — unblocking the last-clause cuts the
         // intra pass left as CrossModule-blocked. Modules that gained an elision
-        // are recompiled from their clause terms (the chunk-411 LTO channel).
+        // are recompiled from their clause terms (the LTO channel).
         objects = WholeProgramCutElision(objects, Emit);
 
         // ----- 1. Index objects, detect duplicate module names -----
@@ -380,7 +380,7 @@ public static class ShmoLinker
         {
             if (byModule.ContainsKey(obj.ModuleName))
             {
-                // Chunk 440 — a module-less file compiles under its file's
+                // a module-less file compiles under its file's
                 // base name, so this now fires only for a genuine clash:
                 // two files declaring the same `:- module/1`, or two
                 // module-less files with the same base name compiled from
@@ -446,7 +446,7 @@ public static class ShmoLinker
             preludeObj.Defined
                 .Where(d => d.Visibility == PredicateVisibility.Public)
                 .Select(d => d.Indicator));
-        // Phase 33 T1 — every prelude indicator the walk resolves against, for
+        // every prelude indicator the walk resolves against, for
         // --prune-prelude's reduced bake.
         var preludeUsed = new HashSet<PredicateRef>();
 
@@ -461,7 +461,7 @@ public static class ShmoLinker
         builtinPredicates.Add(new PredicateRef("fail", 0));
         builtinPredicates.Add(new PredicateRef("false", 0));
 
-        // ----- 4b. Chunk 247 / chunk 444: fold the foreign-DLL
+        // ----- 4b. Fold the foreign-DLL
         //          [PrologPredicate] indicators into the resolved builtin
         //          set. They are reflected ONCE up front (step 0-foreign)
         //          so the library pull pre-pass already treated them as
@@ -470,7 +470,7 @@ public static class ShmoLinker
         builtinPredicates.UnionWith(foreignIndicators);
 
         // ----- 5. Resolve roots -----
-        // Phase 18: relax the ":- public required" rule for entry points.
+        // relax the ":- public required" rule for entry points.
         // Other Prolog engines treat the runtime goal's predicate
         // references as if the user had typed them at the top level —
         // any defined predicate, local or public, is reachable. The
@@ -510,7 +510,7 @@ public static class ShmoLinker
                 {
                     if (preludePublics.Contains(el))
                     {
-                        // Phase 33 T1 — an ensure_linked naming a prelude
+                        // an ensure_linked naming a prelude
                         // predicate is exactly the escape hatch for
                         // runtime-constructed meta-calls under --prune-prelude.
                         preludeUsed.Add(el);
@@ -527,7 +527,7 @@ public static class ShmoLinker
                 roots.Add((mod, el, $"ensure_linked from '{obj.ModuleName}'"));
             }
         }
-        // Chunk 411 — public meta-wrappers stay linked even when the LTO unfold
+        // public meta-wrappers stay linked even when the LTO unfold
         // removed their last static call site: a runtime-built goal may still
         // dispatch to them, and the unfold must never shrink the linked set.
         foreach (var (mod, pred) in ltoPublicWrappers)
@@ -537,7 +537,7 @@ public static class ShmoLinker
         var reached = new HashSet<(string, PredicateRef)>();
         var reachedModules = new HashSet<string>();
         var missing = new HashSet<PredicateRef>();
-        // Chunk 441 — Arity call semantics for arity-compiled modules:
+        // Arity call semantics for arity-compiled modules:
         // META-CALLING an undeclared predicate is VALID in Arity (it
         // simply fails when nothing was asserted, and works once
         // something is). An unresolved edge whose referencing module was
@@ -630,10 +630,10 @@ public static class ShmoLinker
                 }
                 // 4) Builtin? Always resolves.
                 if (builtinPredicates.Contains(edge)) continue;
-                // 5) Prelude public? Always resolves. Phase 33 T1 — record the
+                // 5) Prelude public? Always resolves. record the
                 //    indicator so --prune-prelude can bake only the reached set.
                 if (preludePublics.Contains(edge)) { preludeUsed.Add(edge); continue; }
-                // 6) Chunk 441 — a META-marked edge from an Arity-
+                // 6) a META-marked edge from an Arity-
                 //    compiled module: defer the decision. If by the end
                 //    of the walk the target collected ONLY such
                 //    references (nothing put it in `missing`), it links
@@ -661,7 +661,7 @@ public static class ShmoLinker
             }
         }
 
-        // ----- 6a-arity. Chunk 441 — implicit empty dynamics -----
+        // ----- 6a-arity. implicit empty dynamics -----
         // Decide each deferred meta-only target now that every
         // unresolved reference has been seen. A target also referenced
         // DIRECTLY (or from a non-arity module) is in `missing` — its
@@ -808,7 +808,7 @@ public static class ShmoLinker
         byte[]? bytes = null;
         if (success || config.AllowUndefined)
         {
-            // Phase 18: gather per-module entry-point promotions. When
+            // gather per-module entry-point promotions. When
             // an --entry pred/N was satisfied by a LOCAL definition in
             // module M (no `:- public pred/N` in the source), prepend
             // `:- public pred/N.` to that module's bundled source so
@@ -852,7 +852,7 @@ public static class ShmoLinker
             foreach (var obj in objects)
             {
                 if (!reachedModules.Contains(obj.ModuleName)) continue;
-                // Chunk 179: when StripSource is requested, also strip
+                // when StripSource is requested, also strip
                 // the per-clause source positions AND the in-bytecode
                 // Meta/DbgInfo opcodes. If obj.Source is still present
                 // (Debug compile), recompile under Release through
@@ -879,7 +879,7 @@ public static class ShmoLinker
                     entryBytecode = obj.Bytecode.Length > 0 ? obj.Bytecode : null;
                 }
 
-                // Phase 18: apply entry-point promotions for this module.
+                // apply entry-point promotions for this module.
                 // Recompile via ShmoCompiler (which runs DCG / Meta /
                 // PhraseTransform) so the new bytecode matches the
                 // augmented source. The BundleWriter's own
@@ -919,7 +919,7 @@ public static class ShmoLinker
                 else if (promoted is not null && obj.ClauseTerms.Count > 0)
                 {
                     // Source-STRIPPED (release) object: no source to augment,
-                    // but the chunk-411 ClauseTerms carry the raw static
+                    // but the ClauseTerms carry the raw static
                     // clauses. Recompile from them with the local entry points
                     // added to the public set, so each promoted predicate gets
                     // a BARE (un-mangled) head — callable by its plain name (a
@@ -952,7 +952,7 @@ public static class ShmoLinker
                         new List<PredicateRef>(obj.EnsureLinked),
                         new List<QualifiedPredicateRef>(), ShmoBuildMode.Release, perrs,
                         arityCompat: obj.ArityCompat,
-                        operatorDefs: obj.Operators);   // Phase 33 — preserve op/3 defs
+                        operatorDefs: obj.Operators);   // preserve op/3 defs
                     if (recompiled.Success && recompiled.Object is { } robj
                         && robj.Bytecode.Length > 0)
                     {
@@ -968,7 +968,7 @@ public static class ShmoLinker
                     }
                 }
 
-                // Chunk 441 — fold the implicit empty dynamics this
+                // fold the implicit empty dynamics this
                 // (arity-compiled) module's unresolved references created
                 // into its Defined list, exactly as a source-level
                 // `:- dynamic Name/Arity.` with zero clauses would have:
@@ -1022,7 +1022,7 @@ public static class ShmoLinker
                     nativeBlocks: obj.NativeBlocks,
                     nativeFunctions: obj.NativeFunctions,
                     nativeDecls: obj.NativeDecls,
-                    operators: obj.Operators));   // Phase 33 (PrologToC)
+                    operators: obj.Operators));
             }
             // Bake the precompiled prelude so a bare-loaded engine
             // (PrologEngine.FromBundle / the generated --exe) gets it without
@@ -1035,7 +1035,7 @@ public static class ShmoLinker
                 var bakedPrelude = preludeObj;
                 if (config.PrunePrelude)
                 {
-                    // Phase 33 T1 — close the used set over the prelude's own
+                    // close the used set over the prelude's own
                     // call graph (helpers and prelude-internal callees are
                     // traversed; the clause filter naturally keeps only
                     // source-level heads — synthesized helpers regenerate in
@@ -1046,7 +1046,7 @@ public static class ShmoLinker
                         keep.Add(seed.Indicator);
                     // ENGINE-INFRASTRUCTURE prelude predicates are always kept:
                     // the engine dispatches them BY NAME at runtime with no
-                    // static reference the walk could see — the chunk-88
+                    // static reference the walk could see — the
                     // runtime meta-call helpers ('$call_conj'/'$call_disj'/
                     // '$call_arrow'/'$call_neg', conjured by DispatchCall and
                     // the IL meta-call helper for runtime compound goals) and
@@ -1099,14 +1099,14 @@ public static class ShmoLinker
                     "baked the precompiled prelude into the bundle "
                     + "(bare-load startup skips prelude compilation).");
             }
-            // Chunk 179: the chunk-172 "stripped_bundle" warning is gone —
-            // stripped bundles now dispatch correctly via chunk 178's
+            // the "stripped_bundle" warning is gone —
+            // stripped bundles dispatch correctly via the
             // source-less LoadBundle path.
             var nativeLibNames = config.NativeLibraries
                 .Select(p => System.IO.Path.GetFileName(p)).ToList();
             bundle = new Bundle(entries, foreignAssemblyNames, snapshot: null,
                 archiveMembers: null, nativeLibraries: nativeLibNames);
-            // Chunk 192: --with-compiled-il routes the bundle through
+            // --with-compiled-il routes the bundle through
             // BundleWriter.ToBytes, which (under includeCompiledIl=true)
             // runs PersistedIlBuilder per entry to materialise IL for
             // every eligible predicate. The resulting bytes carry the
@@ -1121,7 +1121,7 @@ public static class ShmoLinker
             {
                 // Stage 9b-3: region-prune region-compiles the bundle (so absorbed
                 // members live inside region methods) and skips emitting a standalone IL
-                // method for each absorbed-only predicate. Since chunk 418 the
+                // method for each absorbed-only predicate. The
                 // region-compile decision for the persisted build lives in
                 // BundleWriter.CompileEntryToIl (region iff pruning), so the linker no
                 // longer toggles RegionCompile here.
@@ -1216,7 +1216,7 @@ public static class ShmoLinker
     ///   <item>every reached DYNAMIC predicate — called by name + asserted/retracted, and
     ///     never region-compiled (<c>enter_dynamic</c>). This INCLUDES <c>:- visible</c>,
     ///     which the compiler records as <see cref="PredicateVisibility.Dynamic"/>
-    ///     (its Arity-Prolog alias, chunk 265).</item>
+    ///     (its Arity-Prolog alias).</item>
     /// </list>
     /// A soundness over-approximation (keep too much, never prune something needed). This
     /// is the set the linker passes as <c>RegionReachability.TrampolineReachable</c>'s
@@ -1237,14 +1237,14 @@ public static class ShmoLinker
         return seeds;
     }
 
-    /// <summary>Chunk 411 — the cross-module meta-wrapper unfold (LTO pass).
+    /// <summary>the cross-module meta-wrapper unfold (LTO pass).
     /// Decodes each V4 module's raw clause terms, detects wrapper templates
     /// (<see cref="Shumway.Compiler.Parsing.MetaWrapperUnfold"/>), exports the
     /// PUBLIC ones into a global registry, and rewrites every module against
     /// (own locals ∪ global publics) — locals shadow publics, matching call
     /// resolution. A module is recompiled (from its clause terms, via
     /// <see cref="ShmoCompiler.CompileFromParts"/>) only when the cross-module
-    /// part contributed a rewrite its compile-time LOCAL unfold (chunk 407)
+    /// part contributed a rewrite its compile-time LOCAL unfold
     /// didn't already produce — detected per clause: full-rewrite changed it
     /// while local-only left it alone. (A clause with BOTH a local and a cross
     /// site in it is conservatively skipped — the cross site keeps calling the
@@ -1256,7 +1256,7 @@ public static class ShmoLinker
     /// (definingModule, indicator). The caller adds these to the reachability
     /// ROOTS: unfolding can remove the last static call to a wrapper, but a
     /// runtime-built goal (<c>call/1</c>, <c>=..</c>) may still dispatch to it
-    /// (the chunk-401 lesson) — the unfold must optimize call sites, never
+    /// (the lesson) — the unfold must optimize call sites, never
     /// shrink the linked set. Over-keeps (wrappers whose every site stayed
     /// un-unfolded are roots too) — sound and tiny.</param>
     private static IReadOnlyList<ShmoObject> CrossModuleUnfold(
@@ -1330,7 +1330,7 @@ public static class ShmoLinker
                 definedHere.Add((d.Indicator.Name, d.Indicator.Arity));
             var visiblePublics = publicReg.Restrict((n, a) => !definedHere.Contains((n, a)));
             var full = own.MergeOver(visiblePublics);
-            // Phase 33 T8 — cross-contribution detection in ONE pass. `own` and
+            // cross-contribution detection in ONE pass. `own` and
             // `visiblePublics` have DISJOINT domains (the latter excludes every
             // indicator this module defines), so "the cross-module registry
             // contributed" ⟺ the publics-only rewrite changes something. The
@@ -1369,7 +1369,7 @@ public static class ShmoLinker
                 new List<PredicateRef>(obj.EnsureLinked),
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
                 arityCompat: obj.ArityCompat,
-                operatorDefs: obj.Operators);   // Phase 33 — preserve op/3 defs
+                operatorDefs: obj.Operators);   // preserve op/3 defs
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_unfold_recompile_failed",
@@ -1648,7 +1648,7 @@ public static class ShmoLinker
         return null;
     }
 
-    /// <summary>Phase 18 — entry-point resolution that doesn't require
+    /// <summary>entry-point resolution that doesn't require
     /// <c>:- public</c>. Falls back to scanning every module's local
     /// definitions when no public / dynamic match exists. Returns
     /// <c>null</c> + <paramref name="ambiguityMessage"/> = null for
@@ -1686,7 +1686,7 @@ public static class ShmoLinker
         return null;
     }
 
-    /// <summary>Chunk 247/444 — reflects every <c>--foreign-dll</c> assembly,
+    /// <summary>Reflects every <c>--foreign-dll</c> assembly,
     /// returning the set of <c>[PrologPredicate]</c> <c>(name, arity)</c>
     /// indicators it exposes and (via <paramref name="assemblyNames"/>) the
     /// file names of the assemblies that carried at least one, for the bundle
@@ -1966,7 +1966,7 @@ public static class ShmoLinker
             bw.Write((uint)compiledIl.Length);
             bw.Write(compiledIl);
             // V2+: per-predicate visibility metadata. The source-less
-            // LoadBundle path (chunk 178) reads this list to populate
+            // LoadBundle path reads this list to populate
             // a ModuleManifest without re-consulting source.
             bw.Write((uint)e.Defined.Count);
             foreach (var d in e.Defined)
@@ -1975,7 +1975,7 @@ public static class ShmoLinker
                 bw.Write((uint)d.Indicator.Arity);
                 bw.Write((byte)d.Visibility);
             }
-            // V3+ (Phase 17): per-entry IL patch + entries tables.
+            // V3+: per-entry IL patch + entries tables.
             // This direct linker path skips the BundleWriter.ToBytes
             // sub-engine validation pass, so it never emits IL — both
             // tables are empty here.
@@ -1985,7 +1985,7 @@ public static class ShmoLinker
             byte[] ilEntries = e.CompiledIlEntries ?? Array.Empty<byte>();
             bw.Write((uint)ilEntries.Length);
             bw.Write(ilEntries);
-            // Dynamic seeds trailer (chunk 209).
+            // Dynamic seeds trailer.
             bw.Write((uint)e.DynamicSeeds.Count);
             foreach (var seed in e.DynamicSeeds)
             {
@@ -2003,10 +2003,10 @@ public static class ShmoLinker
             BundleWriter.WriteNativeBlocks(bw, e.NativeBlocks);
             // Native interop trailer (ADR-024): :- native indicators + :- c decls.
             BundleWriter.WriteNativeInterop(bw, e.NativeFunctions, e.NativeDecls);
-            // Operator trailer (Phase 33, PrologToC).
+            // Operator trailer.
             BundleWriter.WriteOperators(bw, e.Operators);
         }
-        // Foreign-assemblies trailer (chunk 247). Must mirror
+        // Foreign-assemblies trailer. Must mirror
         // BundleWriter.ToBytes's section exactly so a bundle
         // round-trips through either writer identically.
         bw.Write((uint)bundle.ForeignAssemblies.Count);
@@ -2017,8 +2017,8 @@ public static class ShmoLinker
         bw.Write((uint)bundle.NativeLibraries.Count);
         foreach (var libName in bundle.NativeLibraries)
             WriteString(bw, libName);
-        // Snapshot presence byte (chunk 264) — part of the single supported
-        // layout (chunk 413 froze the format: every section unconditional).
+        // Snapshot presence byte — part of the single supported
+        // layout (the format is frozen: every section unconditional).
         // A linker-produced bundle never carries a save-state snapshot.
         bw.Write((byte)0);
         // Librarian archive trailer (shumway-lib) — always empty here: the
@@ -2033,7 +2033,7 @@ public static class ShmoLinker
             bw.Write(member.ShmoBytes);
         }
         bw.Flush();
-        // Phase 33 T2 — compress the body (everything after magic+version).
+        // compress the body (everything after magic+version).
         return BundleFormat.FinalizeImage(ms.ToArray());
     }
 
@@ -2044,7 +2044,7 @@ public static class ShmoLinker
         bw.Write(bytes);
     }
 
-    /// <summary>Chunk 247 — GetTypes that tolerates partial loader
+    /// <summary>GetTypes that tolerates partial loader
     /// failures. Defensive: a foreign DLL may reference types we
     /// don't have, so plain Assembly.GetTypes() can throw
     /// ReflectionTypeLoadException — recover the types that DID

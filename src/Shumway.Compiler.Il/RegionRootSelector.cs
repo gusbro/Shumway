@@ -54,7 +54,7 @@ public static class RegionRootSelector
         var promoted = new HashSet<int>();
         var regionOf = new Dictionary<int, IReadOnlyCollection<int>>(fids.Count);
         var sizeOf = new Dictionary<int, long>(fids.Count);
-        // Chunk 433 — incremental fixpoint. Rebuilding EVERY region per greedy
+        // Incremental fixpoint. Rebuilding EVERY region per greedy
         // iteration was O(fids × promotions) region BFS walks; but promoting X
         // can only change regions whose member set CONTAINED X. Proof: the
         // region BFS skips a non-absorbed callee via `continue` regardless of

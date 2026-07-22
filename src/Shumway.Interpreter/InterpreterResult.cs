@@ -11,7 +11,7 @@ public enum InterpreterResult
     Halted,
 
     /// <summary>Execution failed (e.g., a unification mismatched) and no choice point
-    /// existed to backtrack to. Reserved for future chunks once unify opcodes land —
+    /// existed to backtrack to. Reserved —
     /// nothing in the 5a opcode subset can produce this.</summary>
     Failed,
 }

@@ -42,14 +42,14 @@ public sealed class Lexer
     private int _offset;
     private int _line = 1;
     private int _column = 1;
-    // Chunk 152 — ISO §6.4.2 character conversion. Non-null + non-empty
+    // ISO §6.4.2 character conversion. Non-null + non-empty
     // means a `:- char_conversion(In, Out)` directive (or runtime
     // builtin) has populated the map; the lexer maps the start-of-token
     // character (and identifier continuations) through it before
     // tokenizing. Quoted contexts bypass the conversion.
     private readonly IReadOnlyDictionary<char, char>? _charConversion;
 
-    /// <summary>Phase 30 — Arity/Prolog32 compatibility (the
+    /// <summary>Arity/Prolog32 compatibility (the
     /// <c>arity_compat</c> flag). Mutable so a
     /// <c>:- set_prolog_flag(arity_compat, true)</c> directive can flip
     /// it mid-stream (the ClauseReader writes it when it applies the
@@ -58,12 +58,12 @@ public sealed class Lexer
     /// backslash, is literal), <c>#line N "file"</c> markers at the
     /// start of a line (consumed; the lexer adopts N as the next
     /// line's number so positions track the preprocessor's original
-    /// source), backquote char-code literals (<c>`x</c> — chunk 437,
+    /// source), backquote char-code literals (<c>`x</c>,
     /// same semantics as <c>0'x</c> including escapes), and literal
-    /// backslash inside <c>'...'</c> quoted atoms (chunk 437 — Arity
+    /// backslash inside <c>'...'</c> quoted atoms (Arity
     /// has no backslash escapes there; <c>''</c> doubling still
-    /// applies), and <c>$</c> terminating symbol-atom runs (chunk 438 —
-    /// <c>X=$texto$</c> is <c>=</c> + the atom <c>texto</c>, not the
+    /// applies), and <c>$</c> terminating symbol-atom runs
+    /// (<c>X=$texto$</c> is <c>=</c> + the atom <c>texto</c>, not the
     /// atom <c>=$</c>).</summary>
     public bool ArityCompat { get; set; }
 
@@ -73,7 +73,7 @@ public sealed class Lexer
         _source = source;
     }
 
-    /// <summary>Chunk 152 — constructs a lexer that honours the given
+    /// <summary>Constructs a lexer that honours the given
     /// character-conversion table (typically the one on
     /// <c>PrologFlags.CharConversion</c>). Pass <c>null</c> or an
     /// empty map to disable conversion.</summary>
@@ -84,7 +84,7 @@ public sealed class Lexer
             _charConversion = charConversion;
     }
 
-    /// <summary>Chunk 152 — maps <paramref name="c"/> through the
+    /// <summary>Maps <paramref name="c"/> through the
     /// char-conversion table when one is active and contains an
     /// entry; otherwise returns <paramref name="c"/> unchanged. Hot
     /// path: the common case is a null table, branch-predicted away.
@@ -112,7 +112,7 @@ public sealed class Lexer
         if (_offset >= _source.Length)
             return new Token(TokenKind.Eof, CurrentPosition(), "");
 
-        // Chunk 152: convert the start-of-token character before
+        // Convert the start-of-token character before
         // dispatch. Quoted contexts (' " 0') retain the raw char and
         // skip the conversion explicitly.
         char raw = _source[_offset];
@@ -160,7 +160,7 @@ public sealed class Lexer
             pos);
     }
 
-    /// <summary>Chunk 436 — error-recovery escape hatch. When
+    /// <summary>Error-recovery escape hatch. When
     /// <see cref="NextToken"/> throws a <see cref="LexerException"/>
     /// (e.g. a character the tokenizer has no lexeme for, like Arity's
     /// backquote char literals), the resync loop calls this to step
@@ -173,7 +173,7 @@ public sealed class Lexer
         if (_offset < _source.Length) Advance();
     }
 
-    /// <summary>Phase 30 chunk 436 — Arity <c>:- c.</c> native-code
+    /// <summary>Arity <c>:- c.</c> native-code
     /// sections. Called by the ClauseReader right after it consumed a
     /// <c>:- c.</c> directive (arity_compat only): the text that
     /// follows is C source, not Prolog, so it must be skipped RAW —
@@ -189,7 +189,7 @@ public sealed class Lexer
     /// the current numbering, which stays monotonic and sane.</summary>
     public string SkipNativeCodeSection()
     {
-        // Phase 30 (ADR-022) step 1 — return the RAW C declaration text of the
+        // ADR-022 — return the RAW C declaration text of the
         // region (everything between `:- c.` and the terminating `:- prolog.`,
         // including C on the `:- c.` line itself), so a later stage can hand it
         // to the C-subset parser instead of discarding it. The `:- prolog.`
@@ -210,7 +210,7 @@ public sealed class Lexer
         return _source.Substring(start, _offset - start);
     }
 
-    /// <summary>Phase 30 chunk 438 — Arity embedded native goals
+    /// <summary>Arity embedded native goals
     /// (arity_compat only). In Arity a body goal can be raw native code
     /// between braces: <c>p :- goal, { C statements; }, otra.</c> The
     /// parser calls this immediately after it consumed the opening
@@ -227,7 +227,7 @@ public sealed class Lexer
     /// maintained (every character goes through <see cref="Advance"/>).</summary>
     public string SkipNativeGoalBlock(SourcePosition openBracePos)
     {
-        // Phase 30 (ADR-022) step 1 — return the RAW C statement text BETWEEN the
+        // ADR-022 — return the RAW C statement text BETWEEN the
         // braces (the parser already consumed the opening `{`; the closing `}` is
         // excluded), so a later stage can hand it to the C-subset parser instead
         // of substituting a no-op.
@@ -368,7 +368,7 @@ public sealed class Lexer
             else if (ArityCompat && c == '#' && AtLineStart()
                      && string.CompareOrdinal(_source, _offset, "#line", 0, 5) == 0)
             {
-                // Phase 30 — C-preprocessor line marker: `#line N "file"`.
+                // C-preprocessor line marker: `#line N "file"`.
                 // Consume the whole line; adopt N as the NEXT line's number
                 // so token positions (and therefore parse-error positions)
                 // track the preprocessor's original source rather than the
@@ -441,7 +441,7 @@ public sealed class Lexer
     private Token ParseSymbolAtom(SourcePosition pos)
     {
         int start = _offset;
-        // Phase 30 chunk 438 (arity_compat): `$` terminates a symbol-atom
+        // arity_compat: `$` terminates a symbol-atom
         // run instead of joining it, so `X=$texto$` lexes as `=` followed
         // by the $-quoted atom `texto` rather than the maximal-munch atom
         // `=$`. A LEADING `$` never reaches here under the flag — the
@@ -458,7 +458,7 @@ public sealed class Lexer
         return new Token(TokenKind.Atom, pos, BuildText(start, _offset));
     }
 
-    /// <summary>Chunk 152 — extracts the substring of <c>_source</c>
+    /// <summary>Extracts the substring of <c>_source</c>
     /// between <paramref name="start"/> and <paramref name="end"/>,
     /// applying char conversion when active. Fast-paths the slice
     /// when no conversion is active.</summary>
@@ -571,13 +571,13 @@ public sealed class Lexer
         return new Token(TokenKind.Integer, pos, intSource) { BigValue = big, HasBigValue = true };
     }
 
-    /// <summary>Phase 30 chunks 437/439 — Arity backquote char-code
+    /// <summary>Arity backquote char-code
     /// literal (<c>`x</c>), arity_compat only. Arity writes character
     /// codes as a backquote followed by one character; the corpus uses
     /// them in list and argument positions (<c>[_, `x|_]</c>). Tokenizes
     /// to the same INTEGER token the ISO <c>0'x</c> form produces — but
     /// unlike <c>0'</c>, Arity does NOT process escape sequences after
-    /// the backquote (chunk 439, consistent with the chunk-437
+    /// the backquote (consistent with the
     /// literal-backslash rule for <c>'...'</c> under the flag): the NEXT
     /// character is taken literally, whatever it is — <c>`\</c> is 92,
     /// <c>`)</c> is 41, <c>`'</c> is 39, a backquote followed by a
@@ -585,7 +585,7 @@ public sealed class Lexer
     /// by a line break is an error diagnostic (a code-of-newline is not
     /// a shape the corpus writes; far more likely a stray backquote).
     /// Without the flag the backquote stays an unlexable character
-    /// (recovered as a diagnostic per chunk 436).</summary>
+    /// (recovered as a diagnostic).</summary>
     private Token ParseBackquoteCharLiteral(SourcePosition pos)
     {
         int start = _offset;
@@ -721,7 +721,7 @@ public sealed class Lexer
             }
             else if (c == '\\' && !ArityCompat)
             {
-                // Chunk 437: Arity does NOT interpret backslash escapes
+                // Arity does NOT interpret backslash escapes
                 // inside '...' quoted atoms — '\' is the one-character
                 // backslash atom (Arity-era sources put Windows paths in
                 // quoted atoms). Under arity_compat the backslash falls
@@ -738,7 +738,7 @@ public sealed class Lexer
         }
     }
 
-    /// <summary>Phase 30 — Arity <c>$...$</c> quoted atom. Mirrors
+    /// <summary>Arity <c>$...$</c> quoted atom. Mirrors
     /// <see cref="ParseQuotedAtom"/> with the delimiter swapped: a
     /// <c>$</c> inside is escaped by doubling (<c>$$</c>), so the
     /// standalone token <c>$$</c> is the empty atom (like <c>''</c>).

@@ -3,7 +3,7 @@ using Shumway.Core;
 namespace Shumway.Repl;
 
 /// <summary>
-/// Chunk 251 — pure helpers the REPL's
+/// Pure helpers the REPL's
 /// <c>ReplTopLevel.PrintError</c> calls into. Factored out so the
 /// formatting logic is unit-testable without spinning up a real
 /// REPL session.
@@ -13,7 +13,7 @@ public static class ErrorRendering
     /// <summary>Formats a <see cref="PrologRuntimeException"/> into the
     /// ISO-shaped <c>kind(detail)</c> string, plus the offending
     /// builtin's <c>Name/Arity</c> as the error context when the
-    /// interpreter stamped it (chunk 130).
+    /// interpreter stamped it.
     ///
     /// <para>Examples:</para>
     /// <list type="bullet">

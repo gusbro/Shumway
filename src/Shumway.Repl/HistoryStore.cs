@@ -3,7 +3,7 @@ using System.Text;
 namespace Shumway.Repl;
 
 /// <summary>
-/// Chunk 249 — persistent command history for the interactive
+/// Persistent command history for the interactive
 /// top-level. Loads previously-saved entries from a file on
 /// construction; appends each new entry both to the in-memory
 /// list and to the file (so an unexpected exit doesn't lose
@@ -67,7 +67,7 @@ public sealed class HistoryStore
             var lines = new List<string>(
                 File.ReadAllLines(path, Encoding.UTF8));
             // Trim to MaxEntries on load — if the file grew past it
-            // (some other process appending, or a previous chunk's
+            // (some other process appending, or an earlier session's
             // overflow that didn't rewrite), we don't carry the bloat
             // into memory.
             if (lines.Count > MaxEntries)

@@ -38,7 +38,7 @@ public static class ShmoReader
                 + $"(requires {ShmoFormat.CurrentVersion}; pre-release formats are "
                 + "not backward compatible — recompile the source).");
 
-        // Phase 33 T6 — the byte after the version selects the body encoding
+        // the byte after the version selects the body encoding
         // (raw / Brotli), sharing the .shum framing; see BundleFormat.
         byte compression = headerReader.ReadByte();
         using var br = BundleFormat.OpenBody(compression, ms);
@@ -58,7 +58,7 @@ public static class ShmoReader
                 $".shmo: unknown build-mode code {mode}.");
         ShmoBuildMode buildMode = (ShmoBuildMode)mode;
 
-        // Chunk 441 — Arity-compat compile mode (pre-release layout
+        // Arity-compat compile mode (pre-release layout
         // change, version frozen; see the ShmoFormat policy note).
         byte arityByte = br.ReadByte();
         if (arityByte > 1)
@@ -101,7 +101,7 @@ public static class ShmoReader
             {
                 string tName = ReadLengthPrefixedUtf8(br);
                 int tArity = (int)br.ReadUInt32();
-                byte metaByte = br.ReadByte();   // chunk 441
+                byte metaByte = br.ReadByte();
                 if (metaByte > 1)
                     throw new InvalidDataException(
                         $".shmo: unknown call-edge meta marker {metaByte} for "
@@ -198,7 +198,7 @@ public static class ShmoReader
         string nd = ReadLengthPrefixedUtf8(br);
         string? nativeDecls = nd.Length == 0 ? null : nd;
 
-        // Phase 33 (PrologToC) — operator trailer.
+        // Operator trailer.
         uint opCount = br.ReadUInt32();
         var operators = new ShmoOperatorDef[opCount];
         for (uint i = 0; i < opCount; i++)

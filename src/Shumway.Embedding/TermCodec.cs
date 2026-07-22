@@ -7,7 +7,7 @@ namespace Shumway.Embedding;
 
 /// <summary>
 /// Compact binary serialiser for <see cref="Term"/> / <see cref="Clause"/>
-/// trees. Used by the .shmo format (chunk 209) to carry the source clauses
+/// trees. Used by the .shmo format to carry the source clauses
 /// of <c>:- dynamic foo/N.</c> predicates across the compile / load
 /// boundary — they can't ride along as static bytecode (the engine has to
 /// be able to assertz / retract / clause/2 against them), and re-shipping

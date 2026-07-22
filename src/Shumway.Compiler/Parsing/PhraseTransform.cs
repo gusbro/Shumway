@@ -11,8 +11,7 @@ namespace Shumway.Compiler.Parsing;
 ///
 /// <para>The rewrite only fires when <c>Body</c> is a statically known goal
 /// (atom or compound). A variable <c>Body</c> would need a real runtime
-/// meta-call — that's deferred to the chunk that lands <c>call/N</c>.
-/// Until then, encountering a variable body throws
+/// meta-call; encountering one here throws
 /// <see cref="NotSupportedException"/> at compile time so the failure mode
 /// is loud rather than mysterious.</para>
 /// </summary>

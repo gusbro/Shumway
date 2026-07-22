@@ -5,7 +5,7 @@ using System.Text;
 namespace Shumway.Core;
 
 /// <summary>
-/// Phase 20 — opt-in execution profiler. Every recording method is
+/// opt-in execution profiler. Every recording method is
 /// <see cref="ConditionalAttribute"/>("SHUMWAY_PROFILE"): when the
 /// constant isn't defined (the default), the C# compiler removes the
 /// call sites entirely — arguments aren't even evaluated — so a normal
@@ -114,7 +114,7 @@ public static class Profiler
     private static readonly Dictionary<int, long> _retryByPc = new();
 
     /// <summary>Records one retry_me_else execution at <paramref name="pc"/>
-    /// (chunk 403 diagnosis aid). The report buckets these by the owning
+    /// (diagnosis aid). The report buckets these by the owning
     /// predicate (nearest predicate entry at-or-below the pc) — naming WHICH
     /// predicates burn time scanning linear clause chains on backtrack.</summary>
     [Conditional("SHUMWAY_PROFILE")]
@@ -261,7 +261,7 @@ public static class Profiler
 
         if (_retryByPc.Count > 0)
         {
-            // Chunk 403: attribute retry_me_else executions (linear clause-chain
+            // attribute retry_me_else executions (linear clause-chain
             // scanning on backtrack) to the OWNING predicate — group the per-pc
             // counters by the nearest predicate entry at-or-below each pc.
             var byPred = new Dictionary<string, long>();

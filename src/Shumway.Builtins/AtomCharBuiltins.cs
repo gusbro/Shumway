@@ -16,12 +16,10 @@ namespace Shumway.Builtins;
 ///   atoms.</item>
 /// </list>
 ///
-/// <para>Phase-9 chunk 131a: every contract-violation throw is now a
-/// catchable <see cref="PrologRuntimeException"/> with an ISO-shaped
-/// kind, replacing the uncatchable <see cref="InvalidOperationException"/>
-/// that earlier phases used. Argument checks honour the ISO precedence
-/// from §7.12.2 — instantiation_error before type_error before
-/// representation_error.</para>
+/// <para>Every contract-violation throw is a catchable
+/// <see cref="PrologRuntimeException"/> with an ISO-shaped kind. Argument
+/// checks honour the ISO precedence from §7.12.2 — instantiation_error
+/// before type_error before representation_error.</para>
 /// </summary>
 public static class AtomCharBuiltins
 {
@@ -126,9 +124,8 @@ public static class AtomCharBuiltins
             // character set is representation_error(character_code).
             if (code < 0 || code > char.MaxValue)
                 throw new PrologRuntimeException("representation_error", "character_code");
-            // Chunk 166: ASCII codes hit the cached permanent atom ids
-            // — no lock, no allocation. Higher BMP code points fall
-            // back to Intern.
+            // Cached single-char atom ids: no lock, no allocation for the
+            // common range; higher BMP code points fall back to Intern.
             int cached = AtomTable.GetSingleCharAtomId((int)code);
             int atomId = cached >= 0
                 ? cached
@@ -187,7 +184,6 @@ public static class AtomCharBuiltins
         }
         if (numCell.Tag == Tag.BigInt)
         {
-            // Phase 33 ISO audit — a big integer renders like any int.
             string s = engine.AsBigInt(numCell).ToString(CultureInfo.InvariantCulture);
             int listIdx = asCodes
                 ? BuildIntCodesList(engine, s)
@@ -206,9 +202,9 @@ public static class AtomCharBuiltins
             string s = asCodes
                 ? ReadCodesToString(engine, strCell, builtinName)
                 : ReadCharAtomsToString(engine, strCell);
-            // Phase 33 ISO audit — full Prolog number syntax (§6.4.4):
-            // radix (0x/0o/0b), char code (0'c), BigInteger-size
-            // decimals, and floats; not just what long.TryParse knows.
+            // Full Prolog number syntax (§6.4.4): radix (0x/0o/0b), char
+            // code (0'c), BigInteger-size decimals, and floats; not just
+            // what long.TryParse knows.
             if (TryBuildPrologNumber(engine, s, out Cell numResult, out int floatIdx))
                 return floatIdx >= 0
                     ? engine.UnifyRegisterWithHeapAt(0, floatIdx)
@@ -222,7 +218,7 @@ public static class AtomCharBuiltins
         throw new PrologRuntimeException("type_error", "number");
     }
 
-    /// <summary>Phase 33 ISO audit — parses ISO Prolog number syntax
+    /// <summary>Parses ISO Prolog number syntax
     /// (§6.4.4): optional leading layout, optional sign, then a decimal
     /// integer (any size — BigInteger past long), a radix literal
     /// (<c>0x</c>/<c>0o</c>/<c>0b</c>), a character-code literal
@@ -417,8 +413,8 @@ public static class AtomCharBuiltins
         if (atomCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
-            // Phase 33 ISO audit — full Prolog number syntax (radix,
-            // 0'c, BigInteger, floats), same parser as number_codes/2.
+            // Full Prolog number syntax (radix, 0'c, BigInteger, floats),
+            // same parser as number_codes/2.
             if (TryBuildPrologNumber(engine, name, out Cell numCell2, out int fIdx))
                 return fIdx >= 0
                     ? engine.UnifyRegisterWithHeapAt(1, fIdx)
@@ -490,7 +486,7 @@ public static class AtomCharBuiltins
     }
 
     /// <summary><c>sub_atom(Atom, Before, Length, After, SubAtom)</c> —
-    /// substring extraction. Phase-1 deterministic modes:
+    /// deterministic substring extraction. Supported modes:
     /// <list type="bullet">
     /// <item><c>(+, +, +, ?, ?)</c>: extract the substring at the given
     ///   offset and length.</item>
@@ -498,8 +494,9 @@ public static class AtomCharBuiltins
     ///   <c>SubAtom</c> in <c>Atom</c> and bind the three index
     ///   variables accordingly.</item>
     /// </list>
-    /// Non-deterministic enumeration of every match is deferred to the
-    /// chunk that wires call/N choice-points.</summary>
+    /// Not currently registered: <c>sub_atom/5</c> is provided by the
+    /// prelude over the backtrackable <c>$sub_atom_enum</c>; this
+    /// deterministic variant covers only the modes above.</summary>
     public static bool SubAtom(Activation engine)
     {
         Cell atomC = Resolve(engine, engine.GetRegister(0));
@@ -542,10 +539,9 @@ public static class AtomCharBuiltins
             return true;
         }
 
-        // Phase-1 limitation: the unsupported modes still bottom out
-        // here, but the ISO-appropriate diagnostic is instantiation_error
-        // (the missing args ARE the problem). A future chunk widens this
-        // builtin to enumerate every match.
+        // Unsupported modes bottom out here; the ISO-appropriate
+        // diagnostic is instantiation_error (the missing args ARE the
+        // problem).
         throw new PrologRuntimeException("instantiation_error");
     }
 
@@ -585,10 +581,9 @@ public static class AtomCharBuiltins
             int lisIdx = start + 2 * i;
             int headIdx = lisIdx + 1;
             engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            // Chunk 222: code points in the chunk-166 cache range
-            // (Latin-1) bypass Intern entirely — pure array index, no
-            // lock, no 1-char string allocation per character. Hot
-            // path: atom_chars / string_chars on a long token.
+            // Code points in the single-char cache range (Latin-1) bypass
+            // Intern entirely — pure array index, no lock, no 1-char string
+            // allocation per character. Hot on long tokens.
             int code = s[i];
             int atomId = AtomTable.GetSingleCharAtomId(code);
             if (atomId < 0)
@@ -607,9 +602,8 @@ public static class AtomCharBuiltins
         Cell cursor = Resolve(engine, codesCell);
         while (true)
         {
-            // Phase 33 ISO audit — a PSTR (double-quoted literal under
-            // the default flag) IS a code list; consume its text and
-            // continue at its tail.
+            // A PSTR (double-quoted literal under the default flag) IS a
+            // code list; consume its text and continue at its tail.
             if (cursor.Tag == Tag.Pstr)
             {
                 sb.Append(engine.ReadPstrChain(cursor, out cursor));
@@ -640,9 +634,9 @@ public static class AtomCharBuiltins
     {
         var sb = new StringBuilder();
         Cell cursor = Resolve(engine, charsCell);
-        // Phase 33 ISO audit — a PSTR is a CODE list, not a char list;
-        // its elements are integers, so the ISO element-type error
-        // applies (type_error(character)), not type_error(list).
+        // A PSTR is a CODE list, not a char list; its elements are
+        // integers, so the ISO element-type error applies
+        // (type_error(character)), not type_error(list).
         if (cursor.Tag == Tag.Pstr)
             throw new PrologRuntimeException("type_error", "character");
         while (cursor.Tag == Tag.Lis)

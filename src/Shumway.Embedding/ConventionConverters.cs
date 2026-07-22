@@ -6,7 +6,7 @@ using static System.Linq.Expressions.Expression;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 241 — convention-based dispatch tier. Discovers
+/// convention-based dispatch tier. Discovers
 /// generator-emitted (or hand-written) <c>ToPrologTerm</c> /
 /// <c>FromPrologTerm</c> methods on a type and routes through them.
 ///
@@ -51,7 +51,7 @@ internal static class ConventionConverters
 
     private static ConvertersEntry BuildEntry(Type type)
     {
-        // Phase 33 C2 — the resolved MethodInfos are COMPILED to delegates here,
+        // the resolved MethodInfos are COMPILED to delegates here,
         // once per type, instead of MethodInfo.Invoke (+ a fresh object[]) per
         // conversion (~100× a direct call). Expression.Compile falls back to its
         // interpreter under Native AOT, so this stays AOT-correct. A direct

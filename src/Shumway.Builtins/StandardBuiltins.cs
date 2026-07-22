@@ -7,11 +7,6 @@ namespace Shumway.Builtins;
 /// without worrying about double-registration. Builtins themselves are
 /// registered through <see cref="BuiltinsRegistry"/>, which deduplicates by
 /// functor.
-///
-/// <para>Phase 1 currently registers the four unification-comparison
-/// predicates (<c>=/2</c>, <c>\=/2</c>, <c>==/2</c>, <c>\==/2</c>). Future
-/// chunks will add arithmetic, type tests, I/O, and so on under the same
-/// bootstrap.</para>
 /// </summary>
 public static class StandardBuiltins
 {
@@ -24,8 +19,8 @@ public static class StandardBuiltins
         if (System.Threading.Interlocked.Exchange(ref _initialized, 1) != 0)
             return;
 
-        // CLP(FD) native bound + domain primitives (Phase 28) — the clpfd
-        // library calls these; they replace the retired Prolog helpers.
+        // CLP(FD) native bound + domain primitives — the clpfd library
+        // calls these.
         FdBoundBuiltins.Register();
         ClpfdDomainBuiltins.Register();
 
@@ -99,7 +94,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("attvar",  1, TypeBuiltins.IsAttVar,
             Types, "attvar(@Term)", "Succeeds if the argument is an attributed variable.");
 
-        // Attributed variables (chunk 77, Phase 4).
+        // Attributed variables.
         const string Attr = "Attributed variables";
         BuiltinsRegistry.Register("put_attr", 3, AttvarBuiltins.PutAttr,
             Attr, "put_attr(+Var, +Module, +Value)", "Attaches (or replaces) a module's attribute on a variable.");
@@ -205,11 +200,11 @@ public static class StandardBuiltins
             Io, "format(+Stream, +Format, +Arguments)", "Writes formatted output to the given stream.");
 
         // Atom / list manipulation.
-        // length/2 and sub_atom/5 moved to the prelude (chunk 43) so they
-        // get full multi-mode semantics — length(L, N) with both args
-        // free now enumerates 0, 1, 2, …, and sub_atom/5 backtracks
-        // through every (Before, Length, After, Sub) decomposition. The
-        // C# logic survives as the enumerating $-helpers below.
+        // length/2 and sub_atom/5 live in the prelude so they get full
+        // multi-mode semantics — length(L, N) with both args free
+        // enumerates 0, 1, 2, …, and sub_atom/5 backtracks through every
+        // (Before, Length, After, Sub) decomposition. The C# logic
+        // survives as the enumerating $-helpers below.
         const string Lists = "Lists";
         const string Strings = "Atoms & strings";
         BuiltinsRegistry.Register("append",       3, AtomListBuiltins.Append,
@@ -235,21 +230,20 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("number_string",2, AtomCharBuiltins.NumberString,
             Strings, "number_string(?Number, ?String)", "Converts between a number and its string representation; fails if the string is not numeric.");
 
-        // Multi-solution helpers (chunk 43) called from the prelude.
+        // Multi-solution helpers called from the prelude.
         BuiltinsRegistry.Register("$list_length",              2, MultiSolutionHelpers.ListLength);
         BuiltinsRegistry.Register("$make_var_list",            2, MultiSolutionHelpers.MakeVarList);
         BuiltinsRegistry.Register("$sub_atom_decompositions",  2, MultiSolutionHelpers.SubAtomDecompositions);
         BuiltinsRegistry.Register("$sub_atom_enum",            5, MultiSolutionHelpers.SubAtomEnum);
-        // Chunk 408 — branch-cut barrier capture (MetaTransform cut transparency).
+        // Branch-cut barrier capture (MetaTransform cut transparency).
         BuiltinsRegistry.Register("$get_cut_barrier",          1, MultiSolutionHelpers.GetCutBarrier);
-        // Phase 30 (ADR-022) — Arity embedded native goal placeholder. The parser
-        // emits '$native_goal'(RawCText) for a `{ ... }` block; consult-time
-        // NativeTransform rewrites every occurrence to a real '$native_run' call.
-        // A '$native_goal' that survives to run means the source was consulted
-        // through a path without native-block support (or {…} was constructed at
-        // runtime) — with codegen shipped, silently succeeding would swallow the
-        // block's entire effect, so it is a loud error (Phase 33 E10; it was a
-        // bootstrap-era no-op before the ADR-022 codegen landed).
+        // Arity embedded native goal placeholder (ADR-022). The parser emits
+        // '$native_goal'(RawCText) for a `{ ... }` block; consult-time
+        // NativeTransform rewrites every occurrence to a real '$native_run'
+        // call. A '$native_goal' that survives to run means the source was
+        // consulted through a path without native-block support (or {…} was
+        // constructed at runtime) — silently succeeding would swallow the
+        // block's entire effect, so it is a loud error.
         BuiltinsRegistry.Register("$native_goal",              1, static engine =>
             throw new Shumway.Core.PrologRuntimeException(
                 "system_error",
@@ -257,7 +251,7 @@ public static class StandardBuiltins
                 + "execution. The consult path did not run the native-block transform "
                 + "(or the {...} goal was constructed at runtime, which is not supported)."));
 
-        // String-oriented builtins (chunk 40).
+        // String-oriented builtins.
         BuiltinsRegistry.Register("string_length", 2, StringBuiltins.StringLength,
             Strings, "string_length(+String, ?Length)", "Relates a string to its length in characters.");
         BuiltinsRegistry.Register("string_concat", 3, StringBuiltins.StringConcat,
@@ -314,10 +308,9 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("$time_report", 1, ControlBuiltins.TimeReport);
 
         // List manipulation extras. member/2 is intentionally NOT here —
-        // chunk 40 moved it to the Prolog prelude so it can enumerate
-        // solutions via standard backtracking rather than being a one-shot
-        // first-solution builtin. ListBuiltins.Member is kept as a
-        // private helper for the moment but no longer reachable from
+        // it lives in the Prolog prelude so it enumerates solutions via
+        // standard backtracking rather than being a one-shot
+        // first-solution builtin; ListBuiltins.Member is unreachable from
         // Prolog source.
         BuiltinsRegistry.Register("nth0",         3, ListBuiltins.Nth0,
             Lists, "nth0(?Index, ?List, ?Elem)", "Relates a 0-based index to the list element at that position.");

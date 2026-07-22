@@ -25,7 +25,7 @@ public static class StandardOrderComparator
     /// path (pairs, small compounds) — stay on the fast recursive path and pay
     /// nothing; only a term deeper than this (a long list, deep nesting, or a
     /// cycle) escalates. Well below the C# stack-overflow point, so the switch
-    /// always happens before a crash could (Phase 33 I11).</summary>
+    /// always happens before a crash could.</summary>
     private const int RecursionLimit = 512;
 
     /// <summary>Beyond this many compound descents in the iterative walk it
@@ -142,8 +142,8 @@ public static class StandardOrderComparator
 
     private static int TypeOrder(Cell c) => c.Tag switch
     {
-        // An attributed variable orders as a variable (chunk 77) — by
-        // heap address, alongside plain unbound REFs.
+        // An attributed variable orders as a variable — by heap address,
+        // alongside plain unbound REFs.
         Tag.Ref or Tag.AttVar => 0,
         Tag.Int or Tag.Float or Tag.BigInt => 1,
         Tag.Atom => 2,
@@ -197,8 +197,8 @@ public static class StandardOrderComparator
 
     private static (Cell Cell, int Addr) Resolve(Activation engine, Cell c)
     {
-        // A bare ATTVAR cell (chunk 77) carries its home index as
-        // payload, so it compares by that address — like any variable.
+        // A bare ATTVAR cell carries its home index as payload, so it
+        // compares by that address — like any variable.
         if (c.Tag == Tag.AttVar) return (c, c.AsHeapIndex);
         if (c.Tag != Tag.Ref) return (c, -1);
         int addr = engine.Deref(c.AsHeapIndex);

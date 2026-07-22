@@ -25,7 +25,7 @@ public sealed class LibraryEmitResult
 }
 
 /// <summary>
-/// Phase 31: produces a .NET CLASS LIBRARY (<c>.dll</c>) that embeds a
+/// produces a .NET CLASS LIBRARY (<c>.dll</c>) that embeds a
 /// <see cref="Bundle"/> and exposes a small generated factory so a host .NET
 /// application can spin up a Shumway engine with the bundled program already
 /// loaded — no <c>MemoryStream</c> / reflection boilerplate on the consumer side:
@@ -127,7 +127,7 @@ public static class LibraryEmitter
                     File.Copy(dll, dst, overwrite: true);
             }
 
-            // Foreign DLLs (chunk 247): the bundle's LoadBundle probes
+            // Foreign DLLs: the bundle's LoadBundle probes
             // AppContext.BaseDirectory for these, so a sibling layout works.
             if (foreignDllPaths is not null)
                 foreach (var src in foreignDllPaths)

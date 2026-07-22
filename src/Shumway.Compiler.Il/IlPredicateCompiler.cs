@@ -11,7 +11,7 @@ namespace Shumway.Compiler.Il;
 /// loop. The Tier-0/1 promotion infrastructure (counter, store,
 /// dispatcher) lives in <see cref="Shumway.Embedding.IlPromotionStore"/>.
 ///
-/// <para>Supported shapes (Phase 1):</para>
+/// <para>Supported shapes:</para>
 /// <list type="bullet">
 /// <item><b>Single-clause facts</b> whose body uses only
 ///   <c>get_atom</c>, <c>get_integer</c>, <c>get_nil</c>,
@@ -31,7 +31,7 @@ namespace Shumway.Compiler.Il;
 /// </summary>
 public sealed class IlPredicateCompiler
 {
-    /// <summary>Chunk 173: when <c>true</c>, every WAM opcode the IL
+    /// <summary>when <c>true</c>, every WAM opcode the IL
     /// emitter handles gets an extra <see cref="IlDebugMarkers"/>
     /// call wired in immediately after its main emit. The marker
     /// re-checks the opcode's WAM-level post-condition against the
@@ -65,7 +65,7 @@ public sealed class IlPredicateCompiler
     /// allocate runs with verification enabled — Sigil's continuous
     /// stack-state tracking that catches malformed IL at emit time
     /// rather than at JIT time. Verification is O(N²) in the bytecode
-    /// size (chunk 171 measurements on a 13 KB predicate: ~13 s with
+    /// size (measured: a 13 KB predicate took ~13 s with
     /// verification on, ~250 ms with verification off), so for any
     /// large hot predicate we want it off — Sigil's
     /// <c>doVerify=false</c> mode emits the same IL but skips the
@@ -82,7 +82,7 @@ public sealed class IlPredicateCompiler
     /// particular is O(N²) because every short-form patch calls
     /// <c>InsertInstruction</c> which O(N)-scans the branches /
     /// marks / returns tables to shift their indices. On the
-    /// chunk-171 1280-clause benchmark <c>PatchBranches</c> +
+    /// 1280-clause benchmark <c>PatchBranches</c> +
     /// <c>InsertInstruction</c> was 35% of total compile time.
     /// Default to <see cref="OptimizationOptions.None"/> so we
     /// only emit the IL we asked for — the JIT can do its own
@@ -99,7 +99,7 @@ public sealed class IlPredicateCompiler
         System.Environment.GetEnvironmentVariable("SHUMWAY_IL_DUMP");
     private static readonly object IlDumpLock = new();
 
-    /// <summary>Chunk 414 — env-gated shape diagnostics, stripped from normal
+    /// <summary>env-gated shape diagnostics, stripped from normal
     /// builds (Release AND Debug) via <c>[Conditional("SHUMWAY_DIAG")]</c>;
     /// build with <c>-p:ShumwayDiag=true</c> to compile them in, then activate
     /// with <c>SHUMWAY_IL_SHAPE=&lt;level&gt;</c> at run time. The
@@ -112,7 +112,7 @@ public sealed class IlPredicateCompiler
             System.Console.Error.WriteLine(message());
     }
 
-    /// <summary>Chunk 402 — per-call output of <see cref="EmitPersistedMethod"/>: when
+    /// <summary>per-call output of <see cref="EmitPersistedMethod"/>: when
     /// the method compiled as a REGION, the (memberFunctorName, arity, entryCursor)
     /// table of its non-root members (the <see cref="RegionCursorKind.MemberEntry"/>
     /// cursors); null for a non-region method. <see cref="PersistedIlBuilder"/> persists
@@ -120,7 +120,7 @@ public sealed class IlPredicateCompiler
     /// <c>EncodeResumeMarker(rootFid, entryCursor)</c>.</summary>
     internal List<(string Name, int Arity, int Cursor)>? LastRegionMemberCursors;
 
-    // Phase 33 (corpus evidence) — Sigil label names must be unique per METHOD,
+    // Sigil label names must be unique per METHOD,
     // but a REGION method emits several member bodies with body-local pcs, so a
     // pc-keyed label name can collide across members (seen on the Arity corpus:
     // two members with a meta-call at the same body pc → "Label with name
@@ -189,7 +189,7 @@ public sealed class IlPredicateCompiler
         typeof(Activation).GetMethod(
             nameof(Activation.PushIlChoicePoint),
             new[] { typeof(Func<Activation, int, bool>), typeof(int), typeof(int) })!;
-    // Chunk 76 — PGO: instrumented IL calls this on each clause success.
+    // PGO: instrumented IL calls this on each clause success.
     private static readonly MethodInfo IlProfileCountersBump =
         typeof(IlProfileCounters).GetMethod(nameof(IlProfileCounters.Bump))!;
     private static readonly MethodInfo CellTagGetter =
@@ -272,7 +272,7 @@ public sealed class IlPredicateCompiler
     private static readonly MethodInfo EngineSetTopCpArgRegisterMethod =
         typeof(Activation).GetMethod(nameof(Activation.SetTopCpArgRegister),
             new[] { typeof(int), typeof(Cell) })!;
-    // Chunk 215 — deep cut (get_level + cut). GetLevel stashes the
+    // deep cut (get_level + cut). GetLevel stashes the
     // procedure-entry barrier (_b0) into a Y slot; CutToLevel reads it
     // back and commits. Both are plain engine calls — the CP / _b0
     // infrastructure is identical to Tier-0 (B0 set at entry by the
@@ -282,9 +282,9 @@ public sealed class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.GetLevel), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineCutToLevelMethod =
         typeof(Activation).GetMethod(nameof(Activation.CutToLevel), new[] { typeof(int) })!;
-    // Phase 28 — a cut is a goal boundary, so pending attribute wakeups must
+    // a cut is a goal boundary, so pending attribute wakeups must
     // run before the IL-emitted cut commits (the IL counterpart of the
-    // chunk-335 flush-before-cut). Returns false when a wakeup failed, which
+    // flush-before-cut). Returns false when a wakeup failed, which
     // the emit turns into a branch to the clause fail label. Fast-returns true
     // with a single field read when nothing is queued, so non-attvar programs
     // pay essentially nothing per cut.
@@ -325,18 +325,18 @@ public sealed class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.PopGuardContOk), Type.EmptyTypes)!;
     private static readonly MethodInfo EnginePopGuardContFailMethod =
         typeof(Activation).GetMethod(nameof(Activation.PopGuardContFail), Type.EmptyTypes)!;
-    // Chunk 216 — indexed-dispatch entry resolver (mirrors the WAM switch
+    // indexed-dispatch entry resolver (mirrors the WAM switch
     // cascade, returns the entry chain-node cursor). Keyed by functor id
     // so the same IL works under runtime promotion AND a persisted bundle
     // loaded in a fresh process — the functor id is name-relative via
-    // chunk-197 EmitFunctorId, and the resolver builds the dispatch model
+    // EmitFunctorId, and the resolver builds the dispatch model
     // lazily from the engine's linked code on first call.
     private static readonly MethodInfo IlIndexedDispatchResolveByFidMethod =
         typeof(IlIndexedDispatch).GetMethod(nameof(IlIndexedDispatch.ResolveEntryByFunctorId))!;
     // ADR-027 — inline sub-argument walk for the compiled index resolver.
     private static readonly MethodInfo IlWalkSubOrMissMethod =
         typeof(IlIndexedDispatch).GetMethod(nameof(IlIndexedDispatch.WalkSubOrMiss))!;
-    // Chunk 218 — setter for engine.BuiltinReturnPc. The IL emit pre-sets
+    // setter for engine.BuiltinReturnPc. The IL emit pre-sets
     // this to a resume marker before invoking a backtrackable builtin, so
     // the builtin's CP resume re-enters the IL caller correctly.
     private static readonly MethodInfo EngineBuiltinReturnPcSetter =
@@ -351,7 +351,7 @@ public sealed class IlPredicateCompiler
             nameof(Activation.SetB0),
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             null, new[] { typeof(int) }, null)!;
-    // Phase 16 chunk 182 — threaded IL non-tail Call. Setting Cp to a
+    // Threaded IL non-tail Call. Setting Cp to a
     // resume marker before transferring to the callee is how the IL
     // caller registers its forward continuation.
     private static readonly MethodInfo EngineSetCpMethod =
@@ -361,7 +361,7 @@ public sealed class IlPredicateCompiler
             null, new[] { typeof(int) }, null)!;
     private static readonly MethodInfo EngineBGetter =
         typeof(Activation).GetProperty(nameof(Activation.B))!.GetGetMethod()!;
-    // Phase 33 W6 — ExecuteBuiltin's tail-return contract reads the caller's
+    // ExecuteBuiltin's tail-return contract reads the caller's
     // continuation (Cp) for BuiltinReturnPc.
     private static readonly MethodInfo EngineCpGetter =
         typeof(Activation).GetProperty(nameof(Activation.Cp))!.GetGetMethod()!;
@@ -394,16 +394,16 @@ public sealed class IlPredicateCompiler
     // address otherwise — so an IL-only callee needs no WAM body/address.
     private static readonly MethodInfo EngineEncodeResumeMarkerMethod =
         typeof(Activation).GetMethod(nameof(Activation.EncodeResumeMarker))!;
-    // Phase 29 region compilation — a member's proceed decodes Cp via this to
+    // Region compilation — a member's proceed decodes Cp via this to
     // choose intra-region br (a return cursor) vs cross-region return-to-loop (-1).
     private static readonly MethodInfo EngineRegionReturnCursorMethod =
         typeof(Activation).GetMethod(nameof(Activation.RegionReturnCursor))!;
-    // Phase 19 — meta-call dispatch helper.
+    // meta-call dispatch helper.
     private static readonly MethodInfo IlMetaCallHelperDispatchMethod =
         typeof(IlMetaCallHelper).GetMethod(nameof(IlMetaCallHelper.Dispatch))!;
     private static readonly MethodInfo IlMetaCallHelperReadIntRegisterMethod =
         typeof(IlMetaCallHelper).GetMethod(nameof(IlMetaCallHelper.ReadIntRegister))!;
-    // ---------- get_structure / put_structure (chunk 48) ----------
+    // ---------- get_structure / put_structure ----------
     private static readonly MethodInfo EngineGetStructureMethod =
         typeof(Activation).GetMethod(nameof(Activation.GetStructure), new[] { typeof(int), typeof(int) })!;
     private static readonly MethodInfo EnginePutStructureMethod =
@@ -430,7 +430,7 @@ public sealed class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.UnifyValueY), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineUnifyVoidMethod =
         typeof(Activation).GetMethod(nameof(Activation.UnifyVoid), new[] { typeof(int) })!;
-    // ---------- get_list / put_list / pstr (chunk 49) ----------
+    // ---------- get_list / put_list / pstr ----------
     private static readonly MethodInfo EngineGetListMethod =
         typeof(Activation).GetMethod(nameof(Activation.GetList), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineGetListVarXVarXMethod =
@@ -458,7 +458,7 @@ public sealed class IlPredicateCompiler
     private static readonly MethodInfo IlPutPstrHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutPstr))!;
 #if DEBUG
-    // Chunk 173 debug-mode marker methods. Reflection lookups stripped
+    // Debug-mode marker methods. Reflection lookups stripped
     // from Release — no static init cost, no field, no IL site.
     private static readonly MethodInfo DbgCheckPutValueYMethod =
         typeof(IlDebugMarkers).GetMethod(nameof(IlDebugMarkers.Check_PutValueY))!;
@@ -482,11 +482,8 @@ public sealed class IlPredicateCompiler
         typeof(IlDebugMarkers).GetMethod(nameof(IlDebugMarkers.Check_Deallocate))!;
 #endif
 
-    // Phase 16 chunk 183: chunk-50 IL Call helper, chunk-66 meta-CP
-    // backtrack-driver and PreCallB reader, and chunk-174 floor-pinning
-    // variant are all gone — IL non-tail Call is now threaded
-    // (resume-marker dispatch in chunk 182), and the natural CP cascade
-    // handles backtracking across IL/bytecode boundaries without help.
+    // IL non-tail Call is threaded (resume-marker dispatch); the natural
+    // CP cascade handles backtracking across IL/bytecode boundaries.
     private static readonly MethodInfo EngineAllocateHeapUnboundMethod =
         typeof(Activation).GetMethod(nameof(Activation.AllocateHeapUnbound), Type.EmptyTypes)!;
     private static readonly MethodInfo CellRefMethod =
@@ -504,7 +501,7 @@ public sealed class IlPredicateCompiler
 
     /// <summary>Returns <c>true</c> iff <paramref name="predicate"/> is in
     /// the supported subset. See the class docstring for the catalog.
-    /// <paramref name="calleeMap"/> (chunk 50) lets the check inspect
+    /// <paramref name="calleeMap"/> lets the check inspect
     /// <c>Call</c> targets — an IL <c>Call</c> only compiles when the
     /// callee is itself a "leaf" predicate (single-clause, body-less,
     /// only head matching + proceed), so the synchronous sub-call can
@@ -516,7 +513,7 @@ public sealed class IlPredicateCompiler
         return CanCompileCore(predicate, calleeMap, allowIndexedDispatch: true);
     }
 
-    /// <summary>Eligibility check with control over the chunk-216 indexed-
+    /// <summary>Eligibility check with control over the indexed-
     /// dispatch shape. The runtime promotion path allows it (fast O(1)
     /// dispatch); the persisted-bundle path
     /// (<see cref="PersistedIlBuilder.CanPersist"/>) passes
@@ -529,7 +526,7 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool allowIndexedDispatch)
     {
         if (predicate.ClauseCount == 1) return CanCompileSingleClause(predicate, calleeMap);
-        // Chunk 216 — full indexed dispatch (O(1) switch + bucket chains).
+        // full indexed dispatch (O(1) switch + bucket chains).
         // Preferred over the linear IndexedAtom / SwitchedChain recognisers
         // for any switch-led shape; those remain as fallbacks for shapes it
         // doesn't model.
@@ -540,7 +537,7 @@ public sealed class IlPredicateCompiler
     }
 
     /// <summary>Wraps <see cref="IlIndexedDispatch.TryDescribe"/> with the
-    /// IL-subset body-opcode check. Chunk 433 — memoized per predicate (see
+    /// IL-subset body-opcode check. memoized per predicate (see
     /// <see cref="IlShapeMemo"/>): the structural walk runs once per
     /// immutable <see cref="CompiledPredicate"/>; the calleeMap-dependent
     /// Call-resolvability check is re-applied per call.</summary>
@@ -560,7 +557,7 @@ public sealed class IlPredicateCompiler
         return memo.Resolve(calleeMap, out info);
     }
 
-    /// <summary>Chunk 433 — structural variant of
+    /// <summary>structural variant of
     /// <see cref="IsClauseBodyOpcode"/> for the memoized describers: a
     /// <c>Call</c> site is always accepted and its callee fid RECORDED into
     /// <paramref name="callFids"/> (−1 when the site has no metadata), making
@@ -582,7 +579,7 @@ public sealed class IlPredicateCompiler
         return IsClauseBodyOpcode(op, predicate, pc, calleeMap: null);
     }
 
-    /// <summary>True iff this predicate compiles to the chunk-216/217 full
+    /// <summary>True iff this predicate compiles to the full
     /// indexed-dispatch IL, whose delegate rebuilds its switch model lazily by
     /// reading the predicate's WAM bytecode at first call
     /// (<see cref="IlIndexedDispatch"/>). Such a predicate's WAM body must NOT
@@ -595,7 +592,7 @@ public sealed class IlPredicateCompiler
         => TryDescribeIndexed(predicate, calleeMap, out _);
 
     /// <summary>Builds and serialises the WAM-independent dispatch graph for a
-    /// chunk-216 indexed predicate, so the bundle can persist it and strip the
+    /// indexed predicate, so the bundle can persist it and strip the
     /// predicate's WAM body (--strip-wam). Returns null when the predicate
     /// doesn't use that shape (its IL is already self-contained, no graph
     /// needed).</summary>
@@ -642,7 +639,7 @@ public sealed class IlPredicateCompiler
             }
             else if (op == Opcode.ExecuteBuiltin)
             {
-                // Phase 33 W6 — only a META tail builtin blocks.
+                // only a META tail builtin blocks.
                 var e = Shumway.Builtins.BuiltinsRegistry.GetById(
                     BytecodeIO.ReadInt32(code, pc + 1));
                 if (e.IsCall || e.IsDollarCall)
@@ -671,7 +668,7 @@ public sealed class IlPredicateCompiler
         Opcode.TryMeElse or Opcode.RetryMeElse or Opcode.TrustMe => true,
         Opcode.Try or Opcode.Retry or Opcode.Trust => true,
         Opcode.SwitchOnTerm or Opcode.SwitchOnArg => true,
-        // Phase 33 L10 — the typed switch tables are dispatch skeleton too.
+        // the typed switch tables are dispatch skeleton too.
         // Leaving them out made DescribeRejection list "SwitchOnAtomArg" etc.
         // for EVERY indexed predicate rejected for an unrelated reason (an
         // unresolved Call, a poolless float literal), which mis-drove a whole
@@ -697,7 +694,7 @@ public sealed class IlPredicateCompiler
         ArgumentNullException.ThrowIfNull(predicate);
         DiagnoseInlineCandidates(predicate, calleeMap);
         DiagnoseRegion(predicate, calleeMap);
-        // Phase 29 region compilation (Stage 3, gated): emit the root + its local
+        // Region compilation (Stage 3, gated): emit the root + its local
         // closure as ONE IL method when the region is in the minimal subset.
         if (RegionCompile && calleeMap is not null)
         {
@@ -740,7 +737,7 @@ public sealed class IlPredicateCompiler
     }
 
     // ============================================================================
-    // Chunk 76 — PGO: two-phase profile-guided IL compilation
+    // PGO: two-phase profile-guided IL compilation
     // ============================================================================
 
     /// <summary>Profile key counter — allocated per instrumented
@@ -843,12 +840,11 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.Call)
             {
-                // Non-tail Call: chunk 66 emits a meta-CP at every IL
-                // Call site that drives Activation.BacktrackRunner on
-                // resume to retry callee alternatives and rejoin the
-                // body at a post-call cursor. No leaf restriction
-                // needed — just confirm we have a calleeMap entry so
-                // the runtime can resolve the functor.
+                // Non-tail Call: threaded via resume markers — callee
+                // alternatives retry through the natural CP cascade and
+                // rejoin the body at a post-call cursor. No leaf
+                // restriction needed — just confirm we have a calleeMap
+                // entry so the runtime can resolve the functor.
                 if (calleeMap is null) return false;
                 int siteFid = FindCallSiteFunctorId(predicate.CallSites, pc);
                 if (siteFid < 0) return false;
@@ -858,10 +854,10 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.CallBuiltin)
             {
-                // Phase 19: call/1..7 and '$call'/2 are now IL-eligible via
+                // call/1..7 and '$call'/2 are now IL-eligible via
                 // IlMetaCallHelper.Dispatch. The CallBuiltin emit at
                 // EmitClauseBody treats them as threaded non-tail calls
-                // (chunk-182 forward-resume + cursor switch).
+                // (forward-resume + cursor switch).
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -873,7 +869,7 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.DeallocateProceed)
             {
-                // Fused deallocate+proceed (chunk 220) — a body terminator. A
+                // Fused deallocate+proceed — a body terminator. A
                 // single-clause body with a frame ending in a non-tail-call goal
                 // (a cut or a builtin) ends here; EmitClauseBody emits the
                 // deallocate then the proceed-return, so it IS compilable. Must be
@@ -886,7 +882,7 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.ExecuteBuiltin)
             {
-                // Phase 33 W6 — fused tail builtin (chunk 248): dispatch +
+                // fused tail builtin: dispatch +
                 // proceed in one opcode, a body terminator. Non-meta only
                 // (IsClauseBodyOpcode has the same gate for the multi-clause
                 // describers).
@@ -922,7 +918,7 @@ public sealed class IlPredicateCompiler
         return sawTerminator;
     }
 
-    /// <summary>Chunk 173: arity of the callee a Call / Execute
+    /// <summary>arity of the callee a Call / Execute
     /// site dispatches to, recovered from the functor table so
     /// debug markers know how many X registers to dump. The
     /// FunctorTable.Lookup result is the canonical
@@ -935,7 +931,7 @@ public sealed class IlPredicateCompiler
     }
 #endif
 
-    /// <summary>Chunk 433 — binary search. <see cref="CompiledPredicate.CallSites"/>
+    /// <summary>binary search. <see cref="CompiledPredicate.CallSites"/>
     /// is built in ascending <c>OpcodeOffset</c> order at every construction
     /// site (per-clause emission appends sites forward, predicate assembly
     /// concatenates clauses at increasing offsets, and the bundle codec
@@ -989,7 +985,7 @@ public sealed class IlPredicateCompiler
         return sawProceed;
     }
 
-    /// <summary>Phase 29 case 2 (detector) — a single-clause RULE that can be
+    /// <summary>Inline-rule case 2 (detector) — a single-clause RULE that can be
     /// inlined into a caller's IL method, generalising
     /// <see cref="IsInlinableLeafRule"/> to a body that also makes USER calls and
     /// uses an environment frame (permanents). Single clause; ends in
@@ -1018,7 +1014,7 @@ public sealed class IlPredicateCompiler
                 case Opcode.Proceed: endsTerminal = true; pc += 1; continue;
                 case Opcode.DeallocateProceed:
                     endsTerminal = true; pc += OpcodeTable.Get((byte)op).Size; continue;
-                // A trailing tail call to a USER predicate (chunk 368): the emit
+                // A trailing tail call to a USER predicate: the emit
                 // un-tails it into a threaded non-tail call at a non-tail inline
                 // site. In linked runtime bytecode `Execute` always targets a user
                 // predicate (a tail-position builtin is ExecuteBuiltin, rejected
@@ -1045,7 +1041,7 @@ public sealed class IlPredicateCompiler
                 {
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                         BytecodeIO.ReadInt32(code, pc + 1));
-                    // chunk 433 — precomputed flags instead of name compares.
+                    // precomputed flags instead of name compares.
                     if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
                         return false;
                     endsTerminal = false;
@@ -1065,14 +1061,14 @@ public sealed class IlPredicateCompiler
         return endsTerminal;
     }
 
-    /// <summary>Phase 29 case 1 — gates the extension of the chunk-69 leaf inline
+    /// <summary>Inline-rule case 1 — gates the extension of the leaf inline
     /// to single-clause RULES with a deterministic builtin/arith/unify body
     /// (<see cref="IsInlinableLeafRule"/>). Default OFF; <c>SHUMWAY_INLINE_RULES=1</c>
     /// enables it while it is validated, before the default flips.</summary>
     internal static readonly bool InlineLeafRules =
         System.Environment.GetEnvironmentVariable("SHUMWAY_INLINE_RULES") == "1";
 
-    /// <summary>Phase 29 case 2 — gates inlining a single-clause RULE that makes
+    /// <summary>Inline-rule case 2 — gates inlining a single-clause RULE that makes
     /// USER calls and/or cuts (<see cref="IsInlinableRule"/> with allowCut) into a
     /// metaCp caller. Default OFF; <c>SHUMWAY_INLINE_RULES2=1</c> while validated.
     /// Restricted to the metaCp caller path (where the forward-resume cursor count
@@ -1084,7 +1080,7 @@ public sealed class IlPredicateCompiler
     /// callee is a case-2 inlinable single-clause rule (has a body call and/or a
     /// cut — a pure leaf rule stays on the case-1 path). Maps the call-site
     /// <c>pc</c> to the callee. Empty unless <see cref="InlineRules2"/>.</summary>
-    /// <summary>Chunk 433 — shared empty result so the gated-off path (the
+    /// <summary>shared empty result so the gated-off path (the
     /// default: <see cref="InlineRules2"/> unset) allocates nothing per call.
     /// Callers only read the returned map.</summary>
     private static readonly Dictionary<int, CompiledPredicate> NoRuleInlineSites = new();
@@ -1123,7 +1119,7 @@ public sealed class IlPredicateCompiler
 
     /// <summary>Extra forward-resume cursors the inlined rule bodies need — each
     /// body's own non-tail <c>Call</c> sites thread through the CALLER's cursor
-    /// space, PLUS a trailing tail <c>Execute</c> (chunk 368), which the emit
+    /// space, PLUS a trailing tail <c>Execute</c>, which the emit
     /// un-tails into a threaded non-tail call and so also takes a cursor. The
     /// caller's resume-label array must be sized to include all of them.</summary>
     private static int CountRuleInlineExtraCursors(
@@ -1164,7 +1160,7 @@ public sealed class IlPredicateCompiler
     }
 
     // ========================================================================
-    // Phase 29 — IL REGION COMPILATION (flat local code space).
+    // IL REGION COMPILATION (flat local code space).
     // docs/design/il-region-compilation.md. A region (root + reachable local
     // callees, IlRegionBuilder) compiles to ONE IL method: each member a labeled
     // block emitted once, an intra-region call a `br`. Stage 3 = single-clause
@@ -1172,8 +1168,8 @@ public sealed class IlPredicateCompiler
     // no cut, no cross-region user calls — those are Stages 4-6).
     // ========================================================================
 
-    /// <summary>Region compilation toggle. DEFAULT ON since chunk 418: the
-    /// chunk-418 validation showed regions fix the if-then-else lowering tax
+    /// <summary>Region compilation toggle. DEFAULT ON since the
+    /// validation showed regions fix the if-then-else lowering tax
     /// (the <c>$disj</c> helper costs two trampoline round-trips per iteration
     /// and breaks self-loop detection — regions make both intra-method
     /// branches: ~2× on ITE-recursion shapes, qsort −22%, boyer −15%, corpus
@@ -1181,7 +1177,7 @@ public sealed class IlPredicateCompiler
     /// <c>SHUMWAY_REGION=0</c> to disable. The PERSISTED bundle path ignores
     /// this default — BundleWriter region-compiles a bundle only together
     /// with the dead-region prune (all-as-roots region bundles measured 2.3×
-    /// bigger, chunk 391). Settable (CLI dumps, tests); read once per
+    /// bigger). Settable (CLI dumps, tests); read once per
     /// <c>Compile</c>.</summary>
     public static bool RegionCompile { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_REGION") != "0";
@@ -1208,7 +1204,7 @@ public sealed class IlPredicateCompiler
     /// the bundle build (save/restore) before a pruned-IL build; null = none.</summary>
     public static IReadOnlySet<int>? RegionForcedRootFids { get; set; }
 
-    /// <summary>Phase 33 (bundle-wide calleeMap) — when non-null, region
+    /// <summary>When non-null, region
     /// membership is restricted to these functor ids (the bundle entry's own
     /// predicates). The persisted build sets it (save/restore) so an entry
     /// compiled against the whole bundle's predicate map never absorbs a
@@ -1304,7 +1300,7 @@ public sealed class IlPredicateCompiler
 
     /// <summary>Validates that a region member's body code (<paramref name="start"/>..
     /// <paramref name="end"/>) uses only opcodes the region emit handles: cut is
-    /// allowed (chunk-367 barrier scoping); a <c>Call</c>/<c>Execute</c> must have
+    /// allowed (barrier scoping); a <c>Call</c>/<c>Execute</c> must have
     /// call-site metadata (intra-region <c>br</c> / cross-region trampoline, Stage 6);
     /// a <c>CallBuiltin</c> must be deterministic (a backtrackable / meta builtin
     /// needs a resume cursor the region planner doesn't yet allocate).</summary>
@@ -1334,10 +1330,10 @@ public sealed class IlPredicateCompiler
                 // marks the label; Jump is a local forward branch. A
                 // dispatch-chain try_me_else (real arity >= 0) stays accepted
                 // as before — it is the member's own clause dispatch.
-                // Chunk 424: backtrackable / meta CallBuiltin sites are now
+                // backtrackable / meta CallBuiltin sites are now
                 // region-emittable — the planner allocates each a
-                // BuiltinResume cursor and the emit threads the chunk-218 /
-                // chunk-182 markers with the REGION's fid+cursor.
+                // BuiltinResume cursor and the emit threads the /
+                // markers with the REGION's fid+cursor.
             }
             int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
             if (size <= 0) { reason = $"undecodable opcode {op} @{pc}"; return false; }
@@ -1346,10 +1342,10 @@ public sealed class IlPredicateCompiler
         return true;
     }
 
-    /// <summary>Chunk 424 — the (sorted) byte offsets of <paramref name="m"/>'s
+    /// <summary>the (sorted) byte offsets of <paramref name="m"/>'s
     /// <c>CallBuiltin</c> sites that need a <see cref="RegionCursorKind.BuiltinResume"/>
-    /// cursor: backtrackable builtins (chunk 218's <c>BuiltinReturnPc</c> resume) and
-    /// runtime meta-calls (<c>call/N</c>, <c>'$call'/2</c> — chunk-182 threading).
+    /// cursor: backtrackable builtins (the <c>BuiltinReturnPc</c> resume) and
+    /// runtime meta-calls (<c>call/N</c>, <c>'$call'/2</c> — threading).
     /// Walks the same ranges <see cref="RegionMemberOk"/> validates: clause ranges for
     /// an indexed member (its dispatch tables aren't linearly decodable), the whole
     /// body otherwise.</summary>
@@ -1381,7 +1377,7 @@ public sealed class IlPredicateCompiler
             {
                 var e = Shumway.Builtins.BuiltinsRegistry.GetById(
                     BytecodeIO.ReadInt32(code, pc + 1));
-                // chunk 433 — precomputed flag instead of the name switch.
+                // precomputed flag instead of the name switch.
                 if (e.IsCall || e.IsDollarCall || e.IsBacktrackable)
                     pcs.Add(pc);
             }
@@ -1416,7 +1412,7 @@ public sealed class IlPredicateCompiler
     private bool IsRegionMemberEligible(CompiledPredicate p,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
-        // Phase 33 (bundle-wide calleeMap) — when the persisted build compiles
+        // When the persisted build compiles
         // an entry against the WHOLE bundle's predicate map, region membership
         // stays scoped to the entry's OWN predicates: absorbing a cross-module
         // callee would duplicate its body into this entry's region method
@@ -1428,7 +1424,7 @@ public sealed class IlPredicateCompiler
         // mutates the RegionForcedRootFids static between the root-selector
         // probe phase and the compile phase.
         if (RegionForcedRootFids?.Contains(p.FunctorId) == true) return false;
-        // Chunk 433 — the rest (CanCompileCore + RegionMemberOk) is a pure
+        // the rest (CanCompileCore + RegionMemberOk) is a pure
         // function of (predicate, calleeMap), recomputed thousands of times by
         // the RegionRootSelector fixpoint (once per call-site edge per region
         // build per iteration). Cache per fid for the current calleeMap
@@ -1447,7 +1443,7 @@ public sealed class IlPredicateCompiler
         return ok;
     }
 
-    /// <summary>Chunk 433 — see <see cref="IsRegionMemberEligible"/>.</summary>
+    /// <summary>see <see cref="IsRegionMemberEligible"/>.</summary>
     private Dictionary<int, bool>? _regionMemberPureCache;
     private IReadOnlyDictionary<int, CompiledPredicate>? _regionMemberPureCacheMap;
 
@@ -1526,7 +1522,7 @@ public sealed class IlPredicateCompiler
     /// dead-region prune). The two differ only in how the method is created and how
     /// <paramref name="emitSelf"/> resolves the self-delegate (holder vs delegates-array
     /// field); the region layout — dispatch switch, member blocks, ret / fail handlers —
-    /// and its functor-id / resume-marker uses (all through the chunk-194 patchable
+    /// and its functor-id / resume-marker uses (all through the patchable
     /// helpers) are identical, so persisted region methods patch correctly cross-process.</summary>
     private void EmitRegionInto(
         Sigil.Emit<PredicateDelegate> emit, SelfDelegateEmitter emitSelf,
@@ -1550,7 +1546,7 @@ public sealed class IlPredicateCompiler
         //     ConcurrentDictionary lookup at RUNTIME on the CP-push (backtracking) path.
         //     Replacing that per-push dict probe with a hoisted local load is a runtime
         //     win at ≥2 (worth the +1 IL op the size math costs at P=2) — the same call
-        //     the chunk-426 inline-fact hoist already makes for its holder-only pushes.
+        //     the inline-fact hoist already makes for its holder-only pushes.
         // So gate by the loader kind: selfDelType is PredicateDelegate on the persisted
         // (array-field) path, Func<Activation,int,bool> on the runtime (holder) path.
         SelfDelegateEmitter effectiveSelf = emitSelf;
@@ -1585,7 +1581,7 @@ public sealed class IlPredicateCompiler
         {
             if (s.Kind == RegionCursorKind.MemberEntry)
             {
-                // Chunk 402: an external-entry cursor — its switch slot IS the member's
+                // an external-entry cursor — its switch slot IS the member's
                 // entry label (already defined above); no separate block, no site map.
                 cursorLabels[s.Cursor] =
                     memberEntry[region.Members[s.MemberIndex].FunctorId];
@@ -1636,7 +1632,7 @@ public sealed class IlPredicateCompiler
 
         emit.MarkLabel(retLabel);
         emit.LoadArgument(0);
-        // Phase 33 — MUST go through EmitFunctorId, not a raw LoadConstant:
+        // MUST go through EmitFunctorId, not a raw LoadConstant:
         // in persist mode a build-process fid means nothing at runtime. With
         // the raw constant baked, a persisted region whose BUILD-time fid
         // happened to equal the RUNTIME fid of a caller's region claimed the
@@ -1685,7 +1681,7 @@ public sealed class IlPredicateCompiler
             // label (directly, or via the restore stub); the entry CP push is
             // skipped (lazily materialised at the commit only under pending
             // wakeups). The GUARD slice is emitted with regionCtx null +
-            // forceLeafRuleInline so a tier-G guard Call takes the chunk-69
+            // forceLeafRuleInline so a tier-G guard Call takes the leaf
             // INLINE path (failure = a direct branch to the guard's fail label)
             // instead of the region br (whose failure would go to the region
             // fail label — past this clause). The post-commit body slice keeps
@@ -1999,7 +1995,7 @@ public sealed class IlPredicateCompiler
     /// on control passing through the dispatch loop between trampoline calls to get
     /// those flushes — but an intra-region call/return is a `br` that bypasses the
     /// loop, so the region must flush at its OWN boundaries (same class as the
-    /// chunk-339 IL-cut flush). Cheap: a `_pendingWakeups.Count==0` fast path.</summary>
+    /// IL-cut flush). Cheap: a `_pendingWakeups.Count==0` fast path.</summary>
     private static void EmitRegionWakeupFlush(
         Sigil.Emit<PredicateDelegate> emit, Sigil.Label failLabel)
     {
@@ -2103,7 +2099,7 @@ public sealed class IlPredicateCompiler
     }
 
     /// <summary>A single-clause RULE whose body can be inlined FLAT into a caller
-    /// (Phase 29 case 1) — like <see cref="IsLeafPredicate"/> but allowing a body
+    /// (inline-rule case 1) — like <see cref="IsLeafPredicate"/> but allowing a body
     /// of deterministic builtins, arithmetic and unification. It must create no
     /// choice point, need no environment frame, make no user call, and not cut: so
     /// NO allocate/deallocate, NO cut/neck_cut/get_level, NO Call/Execute (any
@@ -2151,7 +2147,7 @@ public sealed class IlPredicateCompiler
                         BytecodeIO.ReadInt32(code, pc + 1));
                     // meta-call + backtrackable builtins need resume cursors /
                     // the enclosing-call machinery — not a flat body.
-                    // chunk 433 — precomputed flags instead of name compares.
+                    // precomputed flags instead of name compares.
                     if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
                         return false;
                     pc += OpcodeTable.Get((byte)op).Size;
@@ -2178,7 +2174,7 @@ public sealed class IlPredicateCompiler
     /// single-clause special case) to any clause count. Eligibility for inlining
     /// a multi-clause fact's clause dispatch into its caller's IL method —
     /// Phase 1 of docs/design/il-local-inlining.md. (Single-clause facts are
-    /// already inlined by the chunk-69 leaf path; this covers the multi-clause
+    /// already inlined by the leaf path; this covers the multi-clause
     /// generators, e.g. crypt's odd/even.)</summary>
     internal static bool IsFactPredicate(CompiledPredicate pred)
     {
@@ -2270,19 +2266,19 @@ public sealed class IlPredicateCompiler
         Opcode.Allocate => true,
         Opcode.Deallocate => true,
         Opcode.NeckCut => true,
-        // Deep cut (chunk 215): get_level captures the entry barrier into
+        // Deep cut: get_level captures the entry barrier into
         // a Y slot, cut commits to it. Emitted as engine.GetLevel /
         // engine.CutToLevel.
         Opcode.GetLevel => true,
         Opcode.Cut => true,
-        // Chunk 220 — fused opcodes. Emit pair of engine calls; the
+        // fused opcodes. Emit pair of engine calls; the
         // single-opcode-walk advances by the fused size, skipping the
         // padding Nop.
         Opcode.AllocateGetLevel => true,
         Opcode.DeallocateProceed => true,
         Opcode.Nop => true,   // padding inside fused opcodes; emit no-op
         Opcode.Execute => true,
-        // Compound argument structure (chunk 48).
+        // Compound argument structure.
         Opcode.GetStructure => true,
         Opcode.PutStructure => true,
         Opcode.UnifyAtom => true,
@@ -2293,7 +2289,7 @@ public sealed class IlPredicateCompiler
         Opcode.UnifyVariableY => true,
         Opcode.UnifyValueY => true,
         Opcode.UnifyVoid => true,
-        // List head matching (chunk 49).
+        // List head matching.
         Opcode.GetList => true,
         Opcode.PutList => true,
         // ADR-019 inline nested compound build/match.
@@ -2309,7 +2305,7 @@ public sealed class IlPredicateCompiler
         Opcode.TrustMe => true,
         Opcode.Jump => true,
         Opcode.GetLevelB => true,
-        // PSTR + Call (chunk 50).
+        // PSTR + Call.
         Opcode.GetPstr => true,
         Opcode.PutPstr => true,
         Opcode.Call => true,
@@ -2323,7 +2319,7 @@ public sealed class IlPredicateCompiler
         // Fused flat ops carry only register / Y / int-literal operands — no
         // bigint/float-literal gating needed, so always IL-emittable.
         Opcode.AIntBin or Opcode.AIntCmp => true,
-        // Meta dbg_info (chunk 55) — pure compile-time metadata; the
+        // Meta dbg_info — pure compile-time metadata; the
         // emit path skips it without producing any IL.
         Opcode.Meta => true,
         _ => false,
@@ -2350,9 +2346,9 @@ public sealed class IlPredicateCompiler
     private PredicateDelegate CompileSingleClause(CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
-        // Case-2 rule inline (chunk 367): each inlined rule body's own non-tail
+        // Case-2 rule inline: each inlined rule body's own non-tail
         // calls thread through THIS caller's forward-resume cursor space, so the
-        // resume-label array must be sized to include them. Chunk 433 — computed
+        // resume-label array must be sized to include them. computed
         // ONCE here and passed down (EmitSingleClauseMetaCpBody used to recompute).
         var ruleInlineSites = ComputeRuleInlineSites(predicate, calleeMap);
         int callSiteCount = CountNonTailCallOpcodes(predicate.BytecodeUnfused)
@@ -2374,7 +2370,7 @@ public sealed class IlPredicateCompiler
 
     /// <summary>The shared single-clause-leaf body emit used by both the
     /// runtime path (<see cref="CompileSingleClause"/>, which builds a
-    /// <c>DynamicMethod</c>) and the chunk-71 persisted-assembly path
+    /// <c>DynamicMethod</c>) and the persisted-assembly path
     /// (<see cref="EmitToMethodBuilder"/>, which builds a static method
     /// on a <see cref="System.Reflection.Emit.TypeBuilder"/>). Pure head
     /// match + optional tail call, no IL choice points, no
@@ -2386,7 +2382,7 @@ public sealed class IlPredicateCompiler
     {
         var failLabel = emit.DefineLabel("fail");
         _emitOwnerFid = predicate.FunctorId;
-        // Self-tail-recursion → in-method loop (chunk 349): a self Execute
+        // Self-tail-recursion → in-method loop: a self Execute
         // branches here (args already in registers) rather than the marker /
         // dispatch-loop round trip. For a leaf the body start IS the cursor-0
         // entry (no cursor switch).
@@ -2402,7 +2398,7 @@ public sealed class IlPredicateCompiler
         emit.Return();
     }
 
-    /// <summary>Chunk 71: defines a static method named
+    /// <summary>defines a static method named
     /// <paramref name="methodName"/> on <paramref name="typeBuilder"/>
     /// and emits the predicate's IL into it. Returns the
     /// <c>MethodBuilder</c> so the caller can later bake the type and
@@ -2443,13 +2439,13 @@ public sealed class IlPredicateCompiler
             ? null
             : SelfFromArrayField(delegatesField, slot);
 
-        // Chunk 402: reset the per-method member-cursor output so a non-region method
+        // reset the per-method member-cursor output so a non-region method
         // doesn't inherit the previous region's table.
         LastRegionMemberCursors = null;
 
         // Prereq-i for the Stage-9 bundle prune: region compilation in the persisted-IL
         // path. A region method bakes its absorbed members' bodies in, so once it ships
-        // their standalone forms can be pruned. The region emit uses the chunk-194
+        // their standalone forms can be pruned. The region emit uses the
         // patchable functor-id / resume-marker helpers, so it patches cross-process like
         // every other persisted method. (Region compilation is off unless RegionCompile
         // is set; with it on, EVERY predicate compiles as a region root — correct but
@@ -2466,7 +2462,7 @@ public sealed class IlPredicateCompiler
                 var plan = IlRegionPlanner.Plan(region,
                     m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0,
                     m => RegionBuiltinResumePcs(m, calleeMap));
-                // Chunk 402: hand the builder the (memberName, arity, entryCursor) table
+                // hand the builder the (memberName, arity, entryCursor) table
                 // so the load path can alias a stripped member's functor to
                 // EncodeResumeMarker(rootFid, entryCursor) — name-relative (the runtime
                 // process re-interns the name; functor ids drift cross-process).
@@ -2510,8 +2506,8 @@ public sealed class IlPredicateCompiler
         }
         else if (TryDescribeIndexed(predicate, calleeMap, out var indexedInfo))
         {
-            // Chunk 217 — full indexed dispatch (O(1) + buckets) in persisted
-            // IL. The emit bakes the functor id via the chunk-197 patching
+            // full indexed dispatch (O(1) + buckets) in persisted
+            // IL. The emit bakes the functor id via the patching
             // mechanism so a fresh process resolves the runtime id at
             // LoadBundle; the dispatch model is rebuilt lazily on first call
             // from the engine's linked code.
@@ -2539,7 +2535,7 @@ public sealed class IlPredicateCompiler
         }
         else if (TryDescribeSwitchedChain(predicate, calleeMap, out var switchedInfo))
         {
-            // Chunk 189: switch_on_term-headed predicates emit through
+            // switch_on_term-headed predicates emit through
             // the same try_me_else body emitter — only the recogniser
             // differs.
             if (emitSelf is null)
@@ -2572,7 +2568,7 @@ public sealed class IlPredicateCompiler
             doVerify: DoVerify || DebugMode);
         EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf,
             typeof(Func<Activation, int, bool>),   // runtime path: SelfFromHolder → Func
-            ruleInlineSites);                  // chunk 433 — precomputed by the caller
+            ruleInlineSites);                  // precomputed by the caller
         var del = FinishEmit(emit,
             $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
         IndexedDelegateHolder.Register(holderKey, del);
@@ -2581,7 +2577,7 @@ public sealed class IlPredicateCompiler
     }
 
     // ============================================================================
-    // Chunk 359 — Tier-1 IL local-predicate inlining, Phase 1 (multi-clause facts)
+    // Tier-1 IL local-predicate inlining, Phase 1 (multi-clause facts)
     // (docs/design/il-local-inlining.md). Gated OFF by default behind
     // SHUMWAY_INLINE_FACTS=1 — a backtracking/cursor bug would give wrong
     // answers, so the default path is untouched while this is validated.
@@ -2633,9 +2629,9 @@ public sealed class IlPredicateCompiler
                     && callee.ClauseCount >= 2 && IsFactPredicate(callee)
                     && TryGetFactClauseRanges(callee, out var ranges)
                     && ranges.Count == callee.ClauseCount
-                    // Profitability gate (chunk 362): inline ONLY facts whose
+                    // Profitability gate: inline ONLY facts whose
                     // every clause has a distinct constant first arg, so the
-                    // chunk-360 index pre-filter makes a BOUND call deterministic
+                    // index pre-filter makes a BOUND call deterministic
                     // (the clear crypt-style win). A fact without that index
                     // (a grammar/dictionary fact with compound or repeated first
                     // args) inlines as a plain linear chain — no indexing gain —
@@ -2680,7 +2676,7 @@ public sealed class IlPredicateCompiler
     /// unique-constant first-arg index), <c>Nfact-unshaped</c>,
     /// <c>ext-or-builtin</c>, <c>var-or-control</c>.</summary>
     /// <summary>Stage-1 diagnostic (SHUMWAY_IL_SHAPE=3): for each promoted
-    /// predicate, build its IL-eligible region (Phase 29 region compilation) and
+    /// predicate, build its IL-eligible region and
     /// report its size at the default budget and uncapped — to size real regions
     /// and tune the budget before the emit stages. No emit.</summary>
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
@@ -2759,7 +2755,7 @@ public sealed class IlPredicateCompiler
     }
 
     /// <summary>Emits an inlined multi-clause fact's clause chain at a non-tail
-    /// call site (chunk 359). For each clause c (0..K-1): if not the last, push
+    /// call site. For each clause c (0..K-1): if not the last, push
     /// an IL CP `(this delegate, BaseCursor+c, fact arity)` — its continuation
     /// is the caller's delegate re-entered at the alternative cursor, which the
     /// caller's cursor switch routes to <c>AltLabels[c]</c>; then emit clause c's
@@ -2777,7 +2773,7 @@ public sealed class IlPredicateCompiler
         byte[] fcode = site.Fact.BytecodeUnfused;
         int k = site.ClauseRanges.Count;
 
-        // Phase 1b (chunk 360): when every clause has a DISTINCT constant first
+        // Phase 1b: when every clause has a DISTINCT constant first
         // argument (all integer or all atom — crypt's odd/even/lefteven), emit a
         // first-argument index pre-filter so a BOUND arg jumps straight to its
         // single clause (deterministic, no choice point) instead of the linear
@@ -2836,7 +2832,7 @@ public sealed class IlPredicateCompiler
                     EmitAtomId(emit, keys[c]);   // patchable: a persisted bundle resolves
                                                  // the runtime atom id at load (a raw
                                                  // build-time id would mismatch a fresh
-                                                 // process — the chunk-359 inliner's
+                                                 // process — the inliner's
                                                  // persisted-bundle correctness bug).
                     emit.BranchIfEqual(detLabels[c]);
                 }
@@ -2899,7 +2895,7 @@ public sealed class IlPredicateCompiler
 
     /// <summary>For an all-constant-first-arg fact (every clause's first head
     /// match against arg 0 is a distinct constant of one kind), returns the kind
-    /// (<paramref name="isAtom"/>) and the per-clause key. Enables the chunk-360
+    /// (<paramref name="isAtom"/>) and the per-clause key. Enables the
     /// index pre-filter; returns false (→ plain linear chain) for any clause
     /// whose first arg is a variable, a compound, a mixed kind, or a duplicate
     /// of another clause's.</summary>
@@ -2963,9 +2959,9 @@ public sealed class IlPredicateCompiler
     {
         var failLabel = emit.DefineLabel("fail");
         var startLabel = emit.DefineLabel("start");
-        // Phase 16: a single label per forward-resume cursor. The
+        // a single label per forward-resume cursor. The
         // cursor switch branches here directly; the same label is
-        // marked at the post-Call body point. The chunk-66 backtrack-
+        // marked at the post-Call body point. The backtrack-
         // drive bodies are gone — backtracking through the callee's
         // CPs is handled naturally by the engine's CP cascade, with
         // each callee-clause's saved Cp pointing back at our resume
@@ -2974,13 +2970,13 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < callSiteCount; i++)
             resumeLabels[i] = emit.DefineLabel($"resume_{i + 1}");
 
-        // Chunk 359: inlined multi-clause facts take cursors after the call-site
+        // inlined multi-clause facts take cursors after the call-site
         // resume cursors (1..callSiteCount), i.e. from callSiteCount+1.
         var inlineSites = ComputeInlineSites(emit, predicate, calleeMap,
             firstCursor: callSiteCount + 1, out _);
-        // Case-2 rule inline (chunk 367): the bodies of these callees are emitted
+        // Case-2 rule inline: the bodies of these callees are emitted
         // inline; their non-tail calls thread through this caller's resume cursors
-        // (already counted into callSiteCount → resumeLabels). Chunk 433 — the
+        // (already counted into callSiteCount → resumeLabels). the
         // runtime path precomputed this when sizing callSiteCount and passes it
         // down; the persisted path (null) computes it here (a no-op under
         // _persistPatches — ComputeRuleInlineSites returns the shared empty map).
@@ -3010,7 +3006,7 @@ public sealed class IlPredicateCompiler
             for (int j = 0; j < site.AltLabels.Length; j++)
                 cursorLabels[site.BaseCursor + j] = site.AltLabels[j];
 
-        // Chunk 426 (CSE, mirrors the region Stage-11 hoist): every inlined-fact
+        // CSE (mirrors the region Stage-11 hoist): every inlined-fact
         // clause alternative's PushIlChoicePoint reloads the SAME self-delegate —
         // a per-push holder dictionary probe on the runtime path. Hoist that load
         // to ONE local ahead of the cursor switch (which dominates every push
@@ -3035,7 +3031,7 @@ public sealed class IlPredicateCompiler
 
         emit.MarkLabel(startLabel);
         int idxCounter = 0;
-        // Self-tail-recursion → in-method loop (chunk 349): startLabel is the
+        // Self-tail-recursion → in-method loop: startLabel is the
         // cursor-0 entry (the cursor switch above already branched the resume
         // cursors away), so a self Execute branches straight back here.
         EmitClauseBody(emit, predicate.BytecodeUnfused, 0, predicate.BytecodeUnfused.Length,
@@ -3052,7 +3048,7 @@ public sealed class IlPredicateCompiler
         emit.Return();
     }
 
-    // Chunk 218's IsBacktrackableBuiltinName — builtins that push a CP and call
+    // Builtins that push a CP and call
     // ResumeAtReturnPc on retry, whose IL call_builtin site needs a resume
     // marker — is now BuiltinEntry.IsBacktrackable, DERIVED by reflection
     // (BacktrackableDetector) from each builtin's IL rather than a hand list, so
@@ -3104,17 +3100,16 @@ public sealed class IlPredicateCompiler
             else if (b == (byte)Opcode.TryMeElse
                      && BytecodeIO.ReadInt32(bytecode, pc + 5) == OpcodeTable.InlineIteCpArity)
                 count++;
-            // Phase 19: CallBuiltin call/N and CallBuiltin '$call'/2 are
+            // CallBuiltin call/N and CallBuiltin '$call'/2 are
             // also non-tail Calls — they thread through
             // IlMetaCallHelper.Dispatch and need a resume-cursor slot.
             else if (b == (byte)Opcode.CallBuiltin)
             {
                 int builtinId = BytecodeIO.ReadInt32(bytecode, pc + 1);
                 var e = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-                // call/$call thread through IlMetaCallHelper.Dispatch
-                // (chunk 182); backtrackable builtins need a resume marker
-                // for their CP's resume (chunk 218). Chunk 433 —
-                // precomputed flags instead of name compares.
+                // call/$call thread through IlMetaCallHelper.Dispatch;
+                // backtrackable builtins need a resume marker for their
+                // CP's resume. Precomputed flags instead of name compares.
                 if (e.IsCall || e.IsDollarCall || e.IsBacktrackable) count++;
             }
             var info = OpcodeTable.Get(b);
@@ -3132,7 +3127,7 @@ public sealed class IlPredicateCompiler
     /// id (which is stable across queries, unlike the absolute bytecode
     /// address embedded in the operand).
     ///
-    /// <para><paramref name="calleeMap"/> turns on chunk-69 inlining of
+    /// <para><paramref name="calleeMap"/> turns on inlining of
     /// small leaf callees: when a Call or Execute site references a
     /// predicate that's in the map and passes <see cref="IsLeafPredicate"/>,
     /// the callee's body opcodes are emitted directly into the caller's
@@ -3144,11 +3139,11 @@ public sealed class IlPredicateCompiler
     /// inlined-Call case: the callee's <c>proceed</c> becomes a fall-through
     /// (the caller has more body to execute after the inlined block)
     /// instead of <c>return true</c>.</para></summary>
-    /// <summary>Owner fid threaded through the body emit so chunk-173
+    /// <summary>Owner fid threaded through the body emit so
     /// debug markers can identify which predicate's IL each marker
     /// belongs to. Set by the public Compile/CompileInstrumented
     /// entry points and the persisted-assembly path.
-    /// Phase 16 chunk 182: also used by threaded non-tail Call sites
+    /// Also used by threaded non-tail Call sites
     /// to encode the resume marker (functorId, cursor).
     /// THREAD-STATIC on purpose: compiles run concurrently on the shared
     /// IlCompileWorker AND on engine threads (bundle / persisted builds —
@@ -3161,7 +3156,7 @@ public sealed class IlPredicateCompiler
     [System.ThreadStatic]
     private static int _emitOwnerFid;
 
-    /// <summary>Phase 17 — when non-null, the emit pipeline is building
+    /// <summary>when non-null, the emit pipeline is building
     /// a persisted-bundle .dll. Every functor/atom/resume-marker constant
     /// is replaced with a unique sentinel int (drawn from
     /// <see cref="IlPatchSiteCodec.SentinelBase"/>); the corresponding
@@ -3373,7 +3368,7 @@ public sealed class IlPredicateCompiler
                 emit.MarkLabel(joinLabel);
                 regZeroAtom = -1;
             }
-            // Phase 29 region compilation (Stage 3): a member block's proceed /
+            // Region compilation (Stage 3): a member block's proceed /
             // intra-region call become br's into the shared region method instead
             // of returning to the dispatch loop. Handled before the normal opcode
             // switch so the region layout takes precedence.
@@ -3382,7 +3377,7 @@ public sealed class IlPredicateCompiler
                 continue;
             if (op == Opcode.Meta)
             {
-                // Dbg-info Meta opcode (chunk 55) — runtime no-op. Skip
+                // Dbg-info Meta opcode — runtime no-op. Skip
                 // the 6 bytes (opcode + sub-byte + 4-byte payload) without
                 // emitting any IL.
                 pc += 6;
@@ -3746,7 +3741,7 @@ public sealed class IlPredicateCompiler
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
-            // Chunk 220 — fused opcodes. Emit the equivalent pair of
+            // fused opcodes. Emit the equivalent pair of
             // engine calls; the size includes the padding Nop.
             if (op == Opcode.AllocateGetLevel)
             {
@@ -3776,7 +3771,7 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.Nop)
             {
-                // Padding inside a fused opcode (chunk 220); the outer
+                // Padding inside a fused opcode; the outer
                 // fused-opcode case has already advanced PC past it, so
                 // a standalone Nop in the walker is just a 1-byte skip.
                 pc += 1;
@@ -3917,7 +3912,7 @@ public sealed class IlPredicateCompiler
             if (op == Opcode.CallBuiltin)
             {
                 int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
-                // chunk 433 — one GetById (was two: Name then Arity), and the
+                // one GetById (was two: Name then Arity), and the
                 // precomputed IsCall / IsDollarCall / IsBacktrackable flags
                 // instead of per-walk name compares.
                 var builtinEntry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
@@ -3958,11 +3953,11 @@ public sealed class IlPredicateCompiler
 
                 if (builtinEntry.IsCall || builtinEntry.IsDollarCall)
                 {
-                    // Phase 19 — meta-call dispatch. Three outcomes from
+                    // meta-call dispatch. Three outcomes from
                     // IlMetaCallHelper.Dispatch:
                     //   target >= 0      → user predicate / control
                     //                      helper. Thread the dispatch
-                    //                      exactly like a chunk-182 non-
+                    //                      exactly like a non-
                     //                      tail Call.
                     //   target == -2     → synchronous success (the goal
                     //                      was `!`, `true`, or a builtin
@@ -3995,11 +3990,11 @@ public sealed class IlPredicateCompiler
                         // No special handling here — the non-tail path
                         // is correct.
                     }
-                    // Chunk 424 — inside a region the cursor comes from the
+                    // inside a region the cursor comes from the
                     // PLAN (keyed by this site's pc) and the marker carries
                     // the REGION's fid, so the dispatch loop re-enters the
                     // region method at the right switch slot. Standalone
-                    // keeps the chunk-182 sequential counter.
+                    // keeps the sequential counter.
                     int resumeCursor;
                     Sigil.Label metaResumeLabel;
                     int markerOwnerFid;
@@ -4092,7 +4087,7 @@ public sealed class IlPredicateCompiler
                 // entry = BuiltinsRegistry.GetById(id)
                 // if (!entry.Impl(engine)) goto fail
                 //
-                // Chunk 218: backtrackable builtins (between/3, append/3,
+                // backtrackable builtins (between/3, append/3,
                 // repeat/0, retract/1, …) push a CP whose resume calls
                 // ResumeAtReturnPc(returnPc) — the returnPc is captured at
                 // first invocation as engine.BuiltinReturnPc. The IL emit
@@ -4101,13 +4096,13 @@ public sealed class IlPredicateCompiler
                 // dispatcher decodes the marker and re-enters this IL at
                 // the post-builtin label. Non-backtrackable builtins skip
                 // the cursor allocation — straight invocation.
-                bool isBacktrackable = builtinEntry.IsBacktrackable;   // chunk 433
+                bool isBacktrackable = builtinEntry.IsBacktrackable;
                 Sigil.Label? builtinResumeLabel = null;
                 if (isBacktrackable)
                 {
-                    // Chunk 424 — region members take their cursor from the
+                    // region members take their cursor from the
                     // PLAN (keyed by pc) with the REGION's fid in the marker;
-                    // standalone keeps the chunk-218 sequential counter.
+                    // standalone keeps the sequential counter.
                     int resumeCursor;
                     int markerOwnerFid;
                     if (regionCtx is not null)
@@ -4153,7 +4148,7 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.ExecuteBuiltin)
             {
-                // Phase 33 W6 — the chunk-248 fused tail builtin: dispatch the
+                // the fused tail builtin: dispatch the
                 // builtin, then Proceed. Reaches the IL only for bundle-decoded
                 // predicates (the linker's Execute→ExecuteBuiltin rewrite for
                 // foreigns / late-resolved builtins); non-meta entries only
@@ -4447,20 +4442,15 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.Call)
             {
-                // Non-tail Call. With chunk 66 the IL site captures
-                // engine.B (preCallB) before invoking the sub-call
-                // helper, then on success pushes a meta-CP that saves
-                // preCallB as Cell.Int(preCallB) in arity-1 of the
-                // CP frame. On backtrack the resume path reads
-                // preCallB back, drives Activation.BacktrackRunner to
-                // fetch the callee's next solution, and re-enters
-                // the body at the post-call label.
-                int siteFunctorId = FindCallSiteFunctorId(callSites, pc);   // chunk 433
+                // Non-tail Call — threaded: Cp is set to a resume marker
+                // and control tail-transfers to the callee; a backtrack
+                // re-enters this delegate at the post-call cursor.
+                int siteFunctorId = FindCallSiteFunctorId(callSites, pc);
                 if (siteFunctorId < 0)
                     throw new InvalidOperationException(
                         $"Call opcode at pc={pc} has no matching call site in the predicate's metadata.");
 
-                // Chunk 359 — multi-clause fact inline (gated SHUMWAY_INLINE_FACTS).
+                // multi-clause fact inline (gated SHUMWAY_INLINE_FACTS).
                 // Emit the callee fact's clause chain in-method instead of the
                 // trampoline: each clause pushes a CP (this delegate @ the
                 // alternative cursor) then head-matches the call args; a match
@@ -4474,7 +4464,7 @@ public sealed class IlPredicateCompiler
                     {
                         // The inlined call has no trampoline resume; mark its
                         // (dead) resume label so the cursor switch's branch to it
-                        // is well-formed, exactly as the chunk-69 leaf path does.
+                        // is well-formed, exactly as the leaf path does.
                         int inlSiteIdx = callSiteIndexCounter();
                         emit.MarkLabel(resumeLabels[inlSiteIdx - 1]);
                     }
@@ -4482,7 +4472,7 @@ public sealed class IlPredicateCompiler
                     continue;
                 }
 
-                // Phase 29 case 2 (chunk 367): inline a single-clause rule that
+                // Inline-rule case 2: inline a single-clause rule that
                 // makes user calls and/or cuts. Set B0 = engine.B at the inline
                 // entry so the body's deep cut (allocate_get_level / get_level)
                 // captures THIS barrier — the inlined cut then prunes only the
@@ -4568,7 +4558,7 @@ public sealed class IlPredicateCompiler
                     continue;
                 }
 
-                // Inlining (chunk 69): if the callee is a small static
+                // Inlining: if the callee is a small static
                 // leaf, emit its body opcodes inline instead of routing
                 // through IlCallHelper.Run. Leaves push no CPs so no
                 // meta-CP is needed; the post-call label still gets
@@ -4595,8 +4585,8 @@ public sealed class IlPredicateCompiler
                     if (callSiteIndexCounter is not null && resumeLabels is not null)
                     {
                         int leafSiteIdx = callSiteIndexCounter();
-                        // Leaves leave no CPs behind, so under Phase 16
-                        // threading they don't set a resume marker; the
+                        // Leaves leave no CPs behind, so under threading
+                        // they don't set a resume marker; the
                         // cursor=leafSiteIdx entry is never invoked.
                         // Mark the resume label anyway so the cursor
                         // switch's branch has a target (dead code but
@@ -4607,9 +4597,7 @@ public sealed class IlPredicateCompiler
                     continue;
                 }
 
-                // Phase 16 chunk 182 — threaded non-tail Call. Instead
-                // of recursing into RunSubroutine via IlCallHelper.Run,
-                // we tail-call to the callee (same machinery `Execute`
+                // Threaded non-tail Call: we tail-call to the callee (same machinery `Execute`
                 // uses) and set Cp to a resume marker that the bytecode
                 // interpreter will recognise when the callee Proceeds.
                 // The marker encodes (this delegate's functor id,
@@ -4617,7 +4605,7 @@ public sealed class IlPredicateCompiler
                 // the forward-resume cursor. No recursive C# stack
                 // frame; backtracking through the callee's CPs
                 // naturally lands at the caller's marker again. The
-                // chunk-66 meta-CP push is gone — backtracking
+                // meta-CP push is gone — backtracking
                 // semantics fall out of the natural CP cascade.
                 if (callSiteIndexCounter is null || resumeLabels is null)
                     throw new InvalidOperationException(
@@ -4628,7 +4616,7 @@ public sealed class IlPredicateCompiler
                         + $"force={forceLeafRuleInline}, region={regionCtx is not null}).");
 
                 int siteIdx = callSiteIndexCounter();
-                // Phase 16: the cursor encoded in the resume marker is
+                // the cursor encoded in the resume marker is
                 // cursorBase-relative — single-clause-meta-CP uses
                 // cursorBase=1 (cursors 1..M), TryMeElseChain uses
                 // cursorBase=N (cursors N..N+M-1, leaving 0..N-1 for
@@ -4709,12 +4697,12 @@ public sealed class IlPredicateCompiler
                 // the callee's address via the engine's current functor
                 // address map (set per query) using the stable functor
                 // id from the call site metadata.
-                int siteFunctorId = FindCallSiteFunctorId(callSites, pc);   // chunk 433
+                int siteFunctorId = FindCallSiteFunctorId(callSites, pc);
                 if (siteFunctorId < 0)
                     throw new InvalidOperationException(
                         $"Execute opcode at pc={pc} has no matching call site in the predicate's metadata.");
 
-                // Phase 29 chunk 368 — un-tail. When this body is being INLINED at
+                // Un-tail. When this body is being INLINED at
                 // a non-tail site (suppressProceedReturn), a trailing tail Execute
                 // must become a threaded NON-TAIL call: control has to return to the
                 // caller's continuation after the callee proceeds, not tail-return
@@ -4753,7 +4741,7 @@ public sealed class IlPredicateCompiler
                     continue;
                 }
 
-                // Inlining (chunk 69): if the callee is a small static
+                // Inlining: if the callee is a small static
                 // leaf, emit its body opcodes inline instead of going
                 // through the Pc-set / IlTailCallPending / outer-
                 // dispatch dance. The callee's own proceed (= return
@@ -4977,16 +4965,16 @@ public sealed class IlPredicateCompiler
     {
         public required IReadOnlyList<IndexedAtomClause> Clauses { get; init; }
         /// <summary>True iff every clause's body is the trivial
-        /// <c>get_atom + proceed</c> shape (chunk 52). Trivial bodies
+        /// <c>get_atom + proceed</c> shape. Trivial bodies
         /// don't need an actual body emit — the switch_on_atom
         /// dispatch already matched the atom, so on a ground-key hit
-        /// we just return true. Non-trivial bodies (chunk 190) emit
+        /// we just return true. Non-trivial bodies emit
         /// the body via <see cref="EmitClauseBody"/>.</summary>
         public required bool AllTrivial { get; init; }
     }
 
-    /// <summary>Per-clause layout extracted from a try_me_else chain
-    /// (chunk 52): the [start, end) byte offsets of each clause's body
+    /// <summary>Per-clause layout extracted from a try_me_else chain:
+    /// the [start, end) byte offsets of each clause's body
     /// in the predicate's bytecode. Cursor N during IL dispatch runs
     /// the body at <c>Clauses[N]</c>.</summary>
     private sealed class TryMeElseChainInfo
@@ -5007,7 +4995,7 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         out TryMeElseChainInfo? info)
     {
-        // Chunk 433 — memoized per predicate (see IlShapeMemo): the
+        // memoized per predicate (see IlShapeMemo): the
         // structural walk runs once; the calleeMap-dependent Call check is
         // re-applied per call.
         if (predicate.IlTryMeElseShapeMemo is not IlShapeMemo memo)
@@ -5097,8 +5085,7 @@ public sealed class IlPredicateCompiler
         if (op == Opcode.Execute) return true;
         if (op == Opcode.Call)
         {
-            // Phase 16 threading makes non-leaf callees work the same
-            // way they do for the single-clause-meta-CP path — the IL
+            // Threading makes non-leaf callees uniform — the IL
             // emit sets Cp = resume marker and tail-calls; backtracking
             // through the callee's CPs naturally re-enters us at the
             // marker. No need to require IsLeafPredicate any more.
@@ -5109,13 +5096,13 @@ public sealed class IlPredicateCompiler
         }
         if (op == Opcode.CallBuiltin)
         {
-            // Phase 19: call/N and '$call'/2 are IL-eligible via
+            // call/N and '$call'/2 are IL-eligible via
             // IlMetaCallHelper.Dispatch — no longer rejected.
             return true;
         }
         if (op == Opcode.ExecuteBuiltin)
         {
-            // Phase 33 W6 — the chunk-248 fused tail builtin (the linker's
+            // the fused tail builtin (the linker's
             // Execute→ExecuteBuiltin rewrite for foreign / late-resolved
             // builtins in bundles). Deterministic and backtrackable entries
             // emit; a META goal in tail position (call/N, '$call'/2) would
@@ -5158,7 +5145,7 @@ public sealed class IlPredicateCompiler
         return clauseStart;
     }
 
-    /// <summary>Chunk 189: recognises the chunk-67 first/multi-arg
+    /// <summary>recognises the first/multi-arg
     /// indexed shape — bytecode opens with <c>switch_on_term</c>
     /// (level 0) and may chain into one or more <c>switch_on_arg</c>
     /// (levels 1+) before a final <c>try / retry* / trust</c> chain
@@ -5182,7 +5169,7 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         out TryMeElseChainInfo? info)
     {
-        // Chunk 433 — memoized per predicate (see IlShapeMemo): the
+        // memoized per predicate (see IlShapeMemo): the
         // structural walk runs once; the calleeMap-dependent Call check is
         // re-applied per call.
         if (predicate.IlSwitchedChainShapeMemo is not IlShapeMemo memo)
@@ -5266,7 +5253,7 @@ public sealed class IlPredicateCompiler
         }
 
         // Verify each clause body's opcodes are in the IL subset.
-        // The bodies open with a Meta dbg-info marker (chunk 55) which
+        // The bodies open with a Meta dbg-info marker which
         // EmitClauseBody handles as a no-op.
         foreach (var (s, e) in ranges)
         {
@@ -5285,8 +5272,8 @@ public sealed class IlPredicateCompiler
         return true;
     }
 
-    /// <summary>Chunk 189: emits IL for a switched-chain predicate by
-    /// reusing the chunk-188 <see cref="CompileTryMeElseChain"/>
+    /// <summary>emits IL for a switched-chain predicate by
+    /// reusing the <see cref="CompileTryMeElseChain"/>
     /// path. The two recognisers produce the same
     /// <see cref="TryMeElseChainInfo"/> shape (per-clause body
     /// ranges); the emit doesn't need to know which dispatch path
@@ -5297,10 +5284,10 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
         => CompileTryMeElseChain(predicate, info, calleeMap);
 
-    /// <summary>Chunk 216 — emits IL for a fully indexed predicate,
+    /// <summary>emits IL for a fully indexed predicate,
     /// reproducing the WAM switch dispatch (O(1) key lookup) and bucket
     /// backtracking via the <see cref="IlIndexedDispatchInfo"/> chain-node
-    /// model, rather than the chunk-189 linear walk. Clause bodies are
+    /// model, rather than the linear walk. Clause bodies are
     /// emitted once; chain nodes set up the next-node choice point and
     /// branch to their body; a runtime resolver picks the entry node from
     /// the indexed argument.</summary>
@@ -5358,7 +5345,7 @@ public sealed class IlPredicateCompiler
 
         _emitOwnerFid = predicate.FunctorId;
 
-        // Chunk 426 (CSE, mirrors the region Stage-11 hoist): every chain node's
+        // CSE (mirrors the region Stage-11 hoist): every chain node's
         // PushIlChoicePoint reloads the SAME self-delegate — a per-push holder
         // dictionary probe on the runtime path. Hoist it to ONE local ahead of
         // the cursor switch (which dominates every node label, fresh AND
@@ -5384,7 +5371,7 @@ public sealed class IlPredicateCompiler
         var selfEntry = emit.DefineLabel("idx_self_entry");
 
         // ---- Top: dispatch on the incoming cursor (arg 1). ----
-        // Chunk 426: one O(1) jump table (IL `switch`) over the dense cursor
+        // one O(1) jump table (IL `switch`) over the dense cursor
         // space — 0 → entry resolve; 1..K → chain node; K+1.. → call-site
         // resume — replacing the linear compare chain every invocation (fresh
         // calls AND backtrack re-entries) used to pay in full. An out-of-range
@@ -5407,14 +5394,14 @@ public sealed class IlPredicateCompiler
         if (!TryEmitInlineIndexResolve(emit, info, nodeLabels))
         {
             // Fallback. The functor id is emitted through EmitFunctorId
-            // (chunk 197) so a persisted-bundle .dll gets it patched at
+            // so a persisted-bundle .dll gets it patched at
             // LoadBundle; for runtime promotion it's a direct ldc.i4.
             var entry = emit.DeclareLocal<int>("idx_entry");
             emit.LoadArgument(0);
             EmitFunctorId(emit, predicate.FunctorId);
             emit.Call(IlIndexedDispatchResolveByFidMethod);
             emit.StoreLocal(entry);
-            // Chunk 426: node indices are dense 0..K-1 → O(1) jump table
+            // node indices are dense 0..K-1 → O(1) jump table
             // instead of a linear compare chain.
             emit.LoadLocal(entry);
             emit.Switch(nodeLabels);
@@ -5440,7 +5427,7 @@ public sealed class IlPredicateCompiler
             else if (next >= 0)
             {
                 emit.LoadArgument(0);            // engine
-                effectiveSelf(emit);             // → PredicateDelegate (chunk-426 hoisted local)
+                effectiveSelf(emit);             // → PredicateDelegate (hoisted local)
                 emit.LoadConstant(next + 1);     // resume cursor of the next node
                 emit.LoadConstant(predicate.Arity);
                 emit.Call(EnginePushIlCpMethod);
@@ -5774,7 +5761,7 @@ public sealed class IlPredicateCompiler
     }
 
     /// <summary>Shared try-me-else-chain emit body used by both the
-    /// DynamicMethod runtime path (above) and the chunk-71 persisted
+    /// DynamicMethod runtime path (above) and the persisted
     /// assembly path (<see cref="EmitPersistedTryMeElseChain"/>). All
     /// self-references for the per-clause IL CP push route through
     /// <paramref name="emitSelf"/>; callers pick the holder-based or
@@ -6150,7 +6137,7 @@ public sealed class IlPredicateCompiler
     /// (<c>allocate_get_level; get_variable_y*; staging; call; cut slot</c>)
     /// whose every <c>Call</c> targets an INLINABLE single-clause leaf
     /// (<see cref="IsLeafPredicate"/> / <see cref="IsInlinableLeafRule"/>): the
-    /// call is emitted INLINE (chunk-69 path, forced), so callee failure is a
+    /// call is emitted INLINE (path, forced), so callee failure is a
     /// direct branch to the guard's fail label — fail-direct, no CP machinery.
     /// Call staging and the callee's body temps may write argument registers,
     /// so the clause saves/restores A0..arity-1
@@ -6310,8 +6297,8 @@ public sealed class IlPredicateCompiler
                 {
                     // Tier G: the call must resolve to a callee the guard-slice
                     // emission inlines, making its failure a direct branch
-                    // (fail-direct): an inlinable single-clause leaf (chunk-69
-                    // path), or — G2 — a fail-direct multi-clause / self-tail-
+                    // (fail-direct): an inlinable single-clause leaf (the
+                    // inline path), or — G2 — a fail-direct multi-clause / self-tail-
                     // recursive predicate (sequential-chain inline). Anything
                     // else keeps the CP.
                     if (calleeMap is null)
@@ -6322,7 +6309,7 @@ public sealed class IlPredicateCompiler
                     int fid = FindCallSiteFunctorId(callSites, pc);
                     // ANALYSIS-ONLY: a Call whose target is a registered
                     // BUILTIN — in LINKED bytecode this is already a
-                    // CallBuiltin (the chunk-247/248 linker rewrite), so the
+                    // CallBuiltin (the linker rewrite), so the
                     // emit sites never see it; the --cpfree sweep analyses
                     // UNLINKED bytecode, where the classification must match
                     // what the linked form would get. NOT enabled for emission:
@@ -7587,8 +7574,8 @@ public sealed class IlPredicateCompiler
         var failLabel = emit.DefineLabel("fail");
         var gcCtx = new GuardContEmitContext();          // ADR-033 (no-op if unused)
 
-        // Phase 16 chunk 188: multi-clause TryMeElseChain threads
-        // non-leaf Call sites just like the chunk-182 single-clause
+        // The multi-clause TryMeElseChain threads
+        // non-leaf Call sites just like the single-clause
         // path. The cursor space is partitioned:
         //   cursor 0..N-1   → clause entries
         //   cursor N..N+M-1 → forward-resume points for the M
@@ -7634,7 +7621,7 @@ public sealed class IlPredicateCompiler
 
         _emitOwnerFid = predicate.FunctorId;
 
-        // Chunk 426 (CSE, mirrors the region Stage-11 hoist): every clause's
+        // CSE (mirrors the region Stage-11 hoist): every clause's
         // PushIlChoicePoint reloads the SAME self-delegate — a per-push holder
         // dictionary probe on the runtime path. Hoist it to ONE local ahead of
         // the cursor switch (which dominates every clause entry, fresh AND
@@ -7649,7 +7636,7 @@ public sealed class IlPredicateCompiler
             effectiveSelf = e => e.LoadLocal(selfDelLoc);
         }
 
-        // Top-level cursor dispatch. Chunk 426: one O(1) jump table (IL
+        // Top-level cursor dispatch. one O(1) jump table (IL
         // `switch`) over the dense cursor space — 0..N-1 → clause entry;
         // N..N+M-1 → call-site resume — replacing the linear compare chain
         // (resume compares + one compare interleaved per clause) that every
@@ -7667,7 +7654,7 @@ public sealed class IlPredicateCompiler
         // cursor out of [0..N+M-1] (unreachable) → fail.
         emit.Branch(failLabel);
 
-        // Self-tail-recursion → in-method loop (chunk 350): a self Execute in
+        // Self-tail-recursion → in-method loop: a self Execute in
         // any clause body resets the cursor to 0 and branches here — clause
         // 0's entry (a fresh self-call must try the first clause, not re-enter
         // the clause it was called from).
@@ -7684,7 +7671,7 @@ public sealed class IlPredicateCompiler
             // next clause (directly, or via the restore stub), and the commit
             // materialises the CP lazily only in the rare pending-wakeups case
             // (see EmitCpFreeGuardClause). forceLeafRuleInline: a tier-G guard
-            // Call MUST take the chunk-69 inline path (its failure is then a
+            // Call MUST take the inline path (its failure is then a
             // direct branch to the guard's fail label). Recognition ran once
             // in the pre-scan above (guardOk/guardInfo).
             if (guardOk[i])
@@ -7771,7 +7758,7 @@ public sealed class IlPredicateCompiler
             if (i < clauses.Count - 1)
             {
                 emit.LoadArgument(0);                      // engine
-                effectiveSelf(emit);                       // → PredicateDelegate (chunk-426 hoisted local)
+                effectiveSelf(emit);                       // → PredicateDelegate (hoisted local)
                 emit.LoadConstant(i + 1);                  // next cursor
                 emit.LoadConstant(predicate.Arity);
                 emit.Call(EnginePushIlCpMethod);
@@ -7819,7 +7806,7 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         out IndexedAtomInfo? info)
     {
-        // Chunk 433 — memoized per predicate (see IlShapeMemo): the
+        // memoized per predicate (see IlShapeMemo): the
         // structural walk runs once; the calleeMap-dependent Call check is
         // re-applied per call.
         if (predicate.IlIndexedAtomShapeMemo is not IlShapeMemo memo)
@@ -7865,7 +7852,7 @@ public sealed class IlPredicateCompiler
         if ((Opcode)code[varLbl] != Opcode.Try) return false;
 
         var table = predicate.SwitchTables[tableId];
-        // Phase 18: the table only carries atom-headed clauses. A
+        // the table only carries atom-headed clauses. A
         // predicate with mixed list-pattern + atom-headed clauses
         // (e.g. main/1 = `main([F|_]) :- ... ; main([]) :- ...`) ends
         // up with the list-pattern clause UN-INDEXED — it's reachable
@@ -7886,7 +7873,7 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < table.Count; i++)
         {
             int bodyOffset = table.Values[i];
-            // Skip a leading Meta(DbgInfo) opcode (chunk 55) — the WAM
+            // Skip a leading Meta(DbgInfo) opcode — the WAM
             // emitter places one at the start of each clause body for
             // stack-trace mapping; from the IL detector's perspective it's
             // pure metadata that lives before the actual head-matching ops.
@@ -7911,9 +7898,9 @@ public sealed class IlPredicateCompiler
         {
             int start = raw[i].BodyOffset;
             int end = i + 1 < raw.Count ? raw[i + 1].BodyOffset : code.Length;
-            // Trivial-body shape (chunk 52): get_atom (9 bytes) + proceed
+            // Trivial-body shape: get_atom (9 bytes) + proceed
             // (1 byte). Anything else qualifies as "non-trivial" and
-            // chunk-190 emits the body via EmitClauseBody.
+            // emits the body via EmitClauseBody.
             bool trivial =
                 end == start + 10
                 && (Opcode)code[start + 9] == Opcode.Proceed;
@@ -7981,11 +7968,11 @@ public sealed class IlPredicateCompiler
     }
 
     /// <summary>Shared indexed-atom-shape emit body used by both the
-    /// DynamicMethod runtime path (above) and the chunk-71 persisted
+    /// DynamicMethod runtime path (above) and the persisted
     /// assembly path. Self-references for the per-clause IL CP push
     /// route through <paramref name="emitSelf"/>.
     ///
-    /// <para>Chunk 76 — PGO. <paramref name="profileKey"/> ≥ 0 emits
+    /// <para>PGO. <paramref name="profileKey"/> ≥ 0 emits
     /// the <em>instrumented</em> ground-dispatch: each atom match
     /// lands on its own success label that records a hit via
     /// <see cref="IlProfileCounters.Bump"/>. <paramref name="groundOrder"/>,
@@ -8014,8 +8001,8 @@ public sealed class IlPredicateCompiler
         var failLabel = emit.DefineLabel("fail");
         _emitOwnerFid = predicate.FunctorId;
 
-        // Per-clause body labels. For trivial clauses (chunk 52) the
-        // body is `get_atom + proceed`; for non-trivial (chunk 190)
+        // Per-clause body labels. For trivial clauses the
+        // body is `get_atom + proceed`; for non-trivial
         // it's whatever IL-supported opcodes the body holds. Both run
         // via EmitClauseBody.
         var bodyLabels = new Sigil.Label[n];
@@ -8030,7 +8017,7 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < n; i++)
             varEnterLabels[i] = emit.DefineLabel($"var_enter_{i}");
 
-        // Chunk-182 Call-site cursors for non-tail Calls inside any
+        // Call-site resume cursors for non-tail Calls inside any
         // clause body. The cursor space is partitioned:
         //   cursor 0          → tag dispatch (ground/var)
         //   cursor 1..n-1     → varEnter[cursor] (next clause on backtrack)
@@ -8043,7 +8030,7 @@ public sealed class IlPredicateCompiler
         for (int j = 0; j < totalCallSites; j++)
             callResumeLabels[j] = emit.DefineLabel($"call_resume_{j + 1}");
 
-        // Chunk 426 (CSE, mirrors the region Stage-11 hoist): every var-path
+        // CSE (mirrors the region Stage-11 hoist): every var-path
         // clause's PushIlChoicePoint reloads the SAME self-delegate — a
         // per-push holder dictionary probe on the runtime path. Hoist it to
         // ONE local ahead of the cursor switch (which dominates every
@@ -8058,7 +8045,7 @@ public sealed class IlPredicateCompiler
             effectiveSelf = e => e.LoadLocal(selfDelLoc);
         }
 
-        // Top-level cursor dispatch. Chunk 426: one O(1) jump table (IL
+        // Top-level cursor dispatch. one O(1) jump table (IL
         // `switch`) over the dense cursor space — 0 → tag dispatch; 1..n-1 →
         // varEnter[cursor]; n..n+M-1 → call-site resume — replacing the
         // linear compare chain that tested cursor==0 LAST, making the
@@ -8111,7 +8098,7 @@ public sealed class IlPredicateCompiler
 
         if (profileKey >= 0)
         {
-            // Chunk 76 PGO: per-clause success label that bumps the
+            // PGO: per-clause success label that bumps the
             // hit counter, then jumps to the body.
             var successLabels = new Sigil.Label[n];
             for (int ci = 0; ci < n; ci++)
@@ -8152,7 +8139,7 @@ public sealed class IlPredicateCompiler
             if (i < n - 1)
             {
                 emit.LoadArgument(0);                  // engine
-                effectiveSelf(emit);                   // → PredicateDelegate (chunk-426 hoisted local)
+                effectiveSelf(emit);                   // → PredicateDelegate (hoisted local)
                 emit.LoadConstant(i + 1);              // next cursor
                 emit.LoadConstant(1);                  // arity
                 emit.Call(EnginePushIlCpMethod);
@@ -8193,7 +8180,7 @@ public sealed class IlPredicateCompiler
     /// the evaluation stack — the running predicate's own delegate, used
     /// as the callback target for <c>engine.PushIlChoicePoint</c>. Two
     /// implementations, both a direct <c>ldsfld / ldc / ldelem.ref</c> slot
-    /// load (Phase 33 IL round 2 — the DynamicMethod path used to be
+    /// load (the DynamicMethod path used to be
     /// <c>call IndexedDelegateHolder.Get</c>, a ConcurrentDictionary probe
     /// per multi-clause region invocation, ~3% of engine time on the Tier-1
     /// profile):
@@ -8230,14 +8217,13 @@ public sealed class IlPredicateCompiler
     /// table is process-wide but write-once-per-key.</summary>
     internal static class IndexedDelegateHolder
     {
-        // Phase 33 IL round 2 — the store is a plain slot ARRAY indexed by
+        // The store is a plain slot ARRAY indexed by
         // the (sequential, RegistrationLock-serialised) holder key, and
         // SelfFromHolder emits a direct `ldsfld / ldc / ldelem.ref` instead
         // of a call — the Tier-1 profile showed the previous
         // ConcurrentDictionary.TryGetValue as ~3% of engine time, one
-        // hash+bucket probe per multi-clause region invocation (it had
-        // replaced a contended `lock` in chunk 232; this removes the probe
-        // altogether). Publication safety: Register runs under
+        // hash+bucket probe per multi-clause region invocation; the
+        // direct slot load removes the probe altogether. Publication safety: Register runs under
         // RegistrationLock; a grow copies the old entries and stores the
         // new delegate into the NEW array BEFORE Volatile.Write publishes
         // it, so any array version a reader can observe after delegate X
@@ -8279,7 +8265,7 @@ public sealed class IlPredicateCompiler
 
     /// <summary>Resolves a callee functor id to its current-query
     /// bytecode address by consulting <see cref="Activation.CurrentFunctorAddresses"/>.
-    /// Called from IL-emitted Execute opcodes (chunk 47) so the tail-call
+    /// Called from IL-emitted Execute opcodes so the tail-call
     /// target stays correct across queries even when the link layout
     /// changes between them.</summary>
     public static class IlExecuteHelper
@@ -8293,7 +8279,7 @@ public sealed class IlPredicateCompiler
                     + "The embedding layer must populate it at query setup.");
             if (!map.TryGetValue(functorId, out int address))
                 throw PrologRuntimeException.UndefinedProcedure(functorId);
-            // Phase 19+ — the address may be a CallTarget.ForUndefined
+            // The address may be a CallTarget.ForUndefined
             // sentinel left by the linker (the IL caller's static
             // rewrite baked a direct Call/Execute against an
             // unresolved functor) AND the implicit_dynamic auto-
@@ -8306,14 +8292,14 @@ public sealed class IlPredicateCompiler
         }
     }
 
-    /// <summary>Phase 19 — runtime helper that the IL emit calls from
+    /// <summary>runtime helper that the IL emit calls from
     /// <c>CallBuiltin call/N</c> and <c>CallBuiltin '$call'/2</c> sites.
-    /// Mirrors the bytecode interpreter's <c>DispatchCall</c> (chunks 86,
-    /// 88) but returns a sentinel value so the IL caller can branch on
+    /// Mirrors the bytecode interpreter's <c>DispatchCall</c>
+    /// but returns a sentinel value so the IL caller can branch on
     /// the three outcomes: synchronous success (the goal was a control
     /// construct that resolved inline — cut, true, or a builtin that
     /// returned true), synchronous failure (fail or a builtin that
-    /// returned false), or "dispatch this target via the chunk-182
+    /// returned false), or "dispatch this target via the
     /// threaded path" (an ordinary user predicate / a builtin replaced by
     /// a $call_* helper).
     ///
@@ -8374,7 +8360,7 @@ public sealed class IlPredicateCompiler
             Cell goal = DerefCell(engine, engine.GetRegister(0));
 
             // Save call/N's extra args before SetRegister reshuffles them.
-            // Per-engine scratch (chunk 416): consumed into registers below,
+            // Per-engine scratch: consumed into registers below,
             // before any recursion or builtin can re-enter.
             int extraCount = callArity - 1;
             Cell[] extra = extraCount <= 0
@@ -8414,7 +8400,7 @@ public sealed class IlPredicateCompiler
             for (int i = 0; i < extraCount; i++)
                 engine.SetRegister(goalArity + i, extra[i]);
 
-            // Chunk 416 — shared meta-call route cache (see MetaRoute.cs).
+            // shared meta-call route cache (see MetaRoute.cs).
             // Same cache the bytecode interpreter's DispatchCall fills; each
             // dispatcher executes a cached kind exactly as its own slow path.
             var addresses = engine.CurrentFunctorAddresses;
@@ -8458,7 +8444,7 @@ public sealed class IlPredicateCompiler
             }
 
             int functorId = FunctorTable.Intern(atomId, totalArity);
-            // Chunk-88 control-construct routing — `!` inside the
+            // Control-construct routing — `!` inside the
             // runtime goal commits to the call's barrier via the
             // $call_* helpers' arity-3 form (X[2] carries the barrier).
             var userKind = MetaRouteKind.Jump;
@@ -8550,7 +8536,7 @@ public sealed class IlPredicateCompiler
                 int late = engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
                 if (late < 0)
                 {
-                    // Chunk 417: honour the `unknown` flag (throws on error).
+                    // honour the `unknown` flag (throws on error).
                     if (UnknownProcedure.Fails(engine, functorId))
                         return SyncFail;
                     throw PrologRuntimeException.UndefinedProcedure(functorId);   // unreachable
@@ -8563,7 +8549,7 @@ public sealed class IlPredicateCompiler
         }
 
         /// <summary>Invokes a builtin reached as a runtime meta-call goal
-        /// (chunk 416 — shared by the slow path and the cached
+        /// (shared by the slow path and the cached
         /// Builtin route).</summary>
         private static int InvokeBuiltinGoal(Activation engine, int builtinId)
         {

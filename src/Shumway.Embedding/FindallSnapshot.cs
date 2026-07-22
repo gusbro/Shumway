@@ -4,11 +4,11 @@ using Shumway.Core;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Phase 33 I2b — a backtrack-safe <em>cell image</em> of one findall solution.
+/// A backtrack-safe <em>cell image</em> of one findall solution.
 ///
 /// <para><c>findall/3</c> enumerates its goal under a <c>fail</c>-driven loop,
 /// so each recorded solution must survive the backtracking that reclaims the
-/// WAM heap between solutions. The chunk-83 mechanism did this by materialising
+/// WAM heap between solutions. The mechanism did this by materialising
 /// each solution to a managed <see cref="Term"/> AST (a GC object graph, off the
 /// heap) and re-materialising it back to cells at collect — a heap→AST→heap
 /// round-trip that allocates one managed node per term node (measured ~264 B for
@@ -166,7 +166,7 @@ internal static class FindallSnapshot
 
     /// <summary><paramref name="firstHead"/> is the source cons head-cell
     /// address. Mirrors <see cref="HeapTermCopy.CopyLis"/> — iterative spine
-    /// walk (chunk 111) so a long list does not recurse per element.</summary>
+    /// walk so a long list does not recurse per element.</summary>
     private static Cell CopyLis(Activation engine, int firstHead,
         List<Cell> cells, Dictionary<int, int> varMap, Dictionary<int, int> structMap)
     {

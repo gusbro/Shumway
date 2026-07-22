@@ -5,7 +5,7 @@ using Shumway.Core;
 namespace Shumway.Compiler.Modes;
 
 /// <summary>
-/// Chunk 73 — parses the body of a <c>:- mode(...)</c> directive into a
+/// Parses the body of a <c>:- mode(...)</c> directive into a
 /// <see cref="ModeDeclaration"/>. Because <c>mode</c> is a prefix
 /// operator (priority 1150) and <c>is</c> is an infix operator
 /// (priority 700), <c>:- mode foo(+, -) is det.</c> parses as
@@ -47,7 +47,7 @@ public static class ModeDirectiveParser
         return true;
     }
 
-    /// <summary>Chain-aware variant (Phase 33, PrologToC corpus): the classic
+    /// <summary>Chain-aware variant: the classic
     /// DEC-10 / Quintus style packs MANY specs into ONE directive as a
     /// ','-chain — <c>:- mode f(+,-), g(+), h(?,-).</c> parses as
     /// <c>mode(','(f(+,-), ','(g(+), h(?,-))))</c>. Splits the chain and

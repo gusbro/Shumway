@@ -13,7 +13,7 @@ public static class FunctorTable
     private static readonly ConcurrentDictionary<int, (int AtomId, int Arity)> _byId = new();
     private static int _nextId;
 
-    // Chunk 428 — dense lock-free by-id fast path for Lookup/TryLookup.
+    // dense lock-free by-id fast path for Lookup/TryLookup.
     // Lookup is paid on every compound-compound unification (UnifyStr,
     // OccursIn, StructuralCompareIterative) and per live Str cell in the heap
     // GC mark, so the ConcurrentDictionary probe was hot-path cost. Functor
@@ -95,7 +95,7 @@ public static class FunctorTable
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public static (int AtomId, int Arity) Lookup(int functorId)
     {
-        // Chunk 428 — dense-array fast path; on a 64-bit runtime the
+        // dense-array fast path; on a 64-bit runtime the
         // volatile long read is a plain mov.
         long[] arr = _byIdArray;
         if ((uint)functorId < (uint)arr.Length)

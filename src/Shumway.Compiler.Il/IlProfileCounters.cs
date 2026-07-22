@@ -1,7 +1,7 @@
 namespace Shumway.Compiler.Il;
 
 /// <summary>
-/// Chunk 76 — profile-guided optimisation (PGO) of IL code. A
+/// Profile-guided optimisation (PGO) of IL code: a
 /// process-wide store of per-predicate dispatch-hit counters.
 ///
 /// <para>When a multi-clause predicate is first promoted to Tier-1 IL,

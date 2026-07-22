@@ -4,12 +4,9 @@ using Shumway.Core;
 namespace Shumway.Builtins;
 
 /// <summary>
-/// Atom and list manipulation. The Phase 1 implementation covers the
-/// deterministic modes that show up in everyday code; non-deterministic
-/// modes (<c>length</c> with both args unbound, <c>append</c> with the
-/// result given and the splits enumerated) need backtracking support
-/// the embedding API doesn't yet expose, so they're rejected with a
-/// clear instantiation error.
+/// Atom and list manipulation builtins: <c>length/2</c>, <c>append/3</c>
+/// (including the non-deterministic split modes), <c>atom_codes/2</c> and
+/// <c>atom_concat/3</c> (including split enumeration).
 /// </summary>
 public static class AtomListBuiltins
 {
@@ -48,8 +45,7 @@ public static class AtomListBuiltins
             return engine.UnifyRegisterWithHeapAt(0, listHeapIdx);
         }
 
-        // Chunk 131c: ISO precedence — both unbound or N bound but not
-        // an integer. Both var → instantiation_error; N at the wrong
+        // ISO precedence: both var → instantiation_error; N at the wrong
         // type → type_error(integer, _).
         if (listCell.Tag == Tag.Ref && nCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
@@ -84,16 +80,14 @@ public static class AtomListBuiltins
     /// <item>(+, +, ?): L1 (and ideally L2) ground — result is L1 ++ L2
     ///   unified with L3.</item>
     /// <item>(?, ?, +): L1/L2 unbound, L3 ground — enumerate every
-    ///   prefix/suffix split via a runtime CP (chunk 56). Each backtrack
-    ///   advances the split point by one element.</item>
+    ///   prefix/suffix split via a runtime CP. Each backtrack advances
+    ///   the split point by one element.</item>
     /// </list></summary>
     public static bool Append(Activation engine)
     {
-        // chunk 432: two-pass det path — walk L1's spine once to count
-        // (and classify the tail), reserve the result cells in one
-        // allocation, then walk again filling. Replaces a List<Cell>
-        // head buffer allocated per call; the det path is now
-        // intermediate-allocation-free.
+        // Two-pass det path: walk L1's spine once to count (and classify
+        // the tail), reserve the result cells in one allocation, then walk
+        // again filling — no intermediate buffer.
         int count = 0;
         Cell cursor = Resolve(engine, engine.GetRegister(0));
         while (cursor.Tag == Tag.Lis)
@@ -147,15 +141,13 @@ public static class AtomListBuiltins
         }
         if (cursor.Tag == Tag.Ref)
             // L3 is a partial list while L1 is open too — nothing closed to
-            // drive the split off. Phase 33 (PrologToC corpus): this used to
-            // raise instantiation_error (chunk 131c), but the PURE append/3
-            // never raises — it enumerates solutions by unification, and the
-            // classic difference-list idiom `append(Open, [], Open)` (closing
-            // an open list's tail hole, e.g. the DEC-10 rdtok tokenizer's
-            // dictionary) must succeed at the first solution. Enumerate k =
-            // 0, 1, 2, …: L1 unifies with a k-element fresh-var list and L3
-            // with those same vars prefixed onto L2 — unification against the
-            // callers' partial lists prunes each attempt. Unbounded on
+            // drive the split off. Do NOT raise instantiation_error: the PURE
+            // append/3 enumerates solutions by unification, and the classic
+            // difference-list idiom `append(Open, [], Open)` (closing an open
+            // list's tail hole) must succeed at the first solution. Enumerate
+            // k = 0, 1, 2, …: L1 unifies with a k-element fresh-var list and
+            // L3 with those same vars prefixed onto L2 — unification against
+            // the callers' partial lists prunes each attempt. Unbounded on
             // backtracking, exactly like SWI's append(X, Y, Z).
             return new AppendOpenCursor(returnPc).Start(engine);
 
@@ -334,7 +326,7 @@ public static class AtomListBuiltins
             return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
         }
 
-        // Chunk 131c: first arg bound to something other than an atom.
+        // First arg bound to something other than an atom.
         throw new PrologRuntimeException("type_error", "atom");
     }
 
@@ -363,13 +355,12 @@ public static class AtomListBuiltins
     {
         var sb = new StringBuilder();
         Cell cursor = Resolve(engine, codesCell);
-        // Chunk 131c: an unbound code list at entry is instantiation_error.
         if (cursor.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         while (true)
         {
-            // Phase 33 ISO audit — a PSTR is a code list; consume its
-            // text and continue at its tail.
+            // A PSTR is a code list; consume its text and continue at its
+            // tail.
             if (cursor.Tag == Tag.Pstr)
             {
                 sb.Append(engine.ReadPstrChain(cursor, out cursor));
@@ -398,8 +389,8 @@ public static class AtomListBuiltins
     /// <item>(+, +, ?): A and B are atoms; C is their concatenation.</item>
     /// <item>(?, ?, +): A and/or B unbound, C is a ground atom —
     ///   enumerate every <c>(prefix, suffix)</c> split of C's name via a
-    ///   runtime CP (chunk 56). Each backtrack moves the split one
-    ///   character to the right.</item>
+    ///   runtime CP. Each backtrack moves the split one character to the
+    ///   right.</item>
     /// </list></summary>
     public static bool AtomConcat(Activation engine)
     {

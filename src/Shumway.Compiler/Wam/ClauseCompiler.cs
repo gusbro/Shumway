@@ -8,7 +8,7 @@ namespace Shumway.Compiler.Wam;
 /// rules with non-trivial bodies, head args ranging over atoms / integers /
 /// variables / anonymous / compounds (including lists), and the conjunctive
 /// body operator <c>,/2</c>. Disjunction, cut and other control constructs
-/// follow in later chunks (8d, 8e).
+/// follow elsewhere.
 ///
 /// <para><b>Head compilation</b> is the two-pass BFS from 8b. Pass 1 handles
 /// top-level head arguments, deferring compounds; pass 2 drains the worklist,
@@ -156,8 +156,7 @@ public sealed class ClauseCompiler
 
         // ADR-018: `X is Expr` and the six comparisons compile to the
         // arithmetic instruction set (a_eval_*) in CompileBodyGoal — no term,
-        // no synthetic variables. (The chunk-295/296 goal-rewriting ArithInline
-        // is superseded.)
+        // no synthetic variables.
 
         // For each named (non-anonymous) variable, record which chunk indices it
         // appears in. Chunk 0 = head + first goal; chunk i >= 1 = goal i.
@@ -172,13 +171,13 @@ public sealed class ClauseCompiler
         if (DebugCodegen)
             permanents = AllNamedVariables(headArgs, goals, permanents);
 
-        // Chunk 405 register-allocator survey (ADR-021), diag builds only —
-        // see DiagYSurvey. Stripped from normal builds (chunk 414).
+        // Register-allocator survey (ADR-021), diag builds only —
+        // see DiagYSurvey. Stripped from normal builds.
         DiagYSurvey(name, headArgs, goals, permanents);
 
         // Cut analysis: a `!` is a NECK cut — reading the engine's _b0 register
         // directly, no barrier slot — when every goal before it is inline
-        // (Phase 33 W2). Inline goals (`is`/comparisons → a_int_*/a_eval_*, and
+        // Inline goals (`is`/comparisons → a_int_*/a_eval_*, and
         // earlier cuts) never CALL and never push choice points, so _b0 is
         // still the predicate-entry barrier when the cut runs; the pervasive
         // Arity guard shape `p(X) :- X > 0, !, Body.` is thus frameless.
@@ -226,7 +225,7 @@ public sealed class ClauseCompiler
         // slot, or (b) preserve the caller's CP across a non-tail CALL. An
         // inline goal — a cut or arithmetic (`is`/comparisons → a_int_*/a_eval_*)
         // — does NOT clobber CP, so a body that is inline goals followed by at
-        // most one final (tail) call needs no frame. (Phase 26 B: a neck cut
+        // most one final (tail) call needs no frame. (A neck cut
         // before the single recursive call no longer forces an empty
         // `allocate [0]`, matching GProlog.) A real call BEFORE the last goal
         // does need the frame, since it overwrites CP and we must still return.
@@ -247,7 +246,7 @@ public sealed class ClauseCompiler
         if (DebugCodegen && goals.Count > 0)
             needFrame = true;
 
-        // Chunk 220 — fuse the common Allocate+GetLevel prologue when both
+        // fuse the common Allocate+GetLevel prologue when both
         // are emitted; otherwise emit individually.
         if (needFrame && needsDeepCut)
         {
@@ -336,7 +335,7 @@ public sealed class ClauseCompiler
         int[]? firstGoalArgOrder = WarrenScheduleFirstGoal(state, goals);
 
         // ----- Body goals -----
-        // Per-call env trimming (chunk 57): for each Call / CallBuiltin
+        // Per-call env trimming: for each Call / CallBuiltin
         // emission, compute how many Y slots are still live AFTER the
         // call returns. The interpreter trims the frame accordingly so
         // subsequent CPs / sub-frames pack tightly. The vector is
@@ -383,7 +382,7 @@ public sealed class ClauseCompiler
                 if (goal is AtomTerm { Name: "!" })
                 {
                     // Cut emission. Neck cut — position 0, or preceded only by
-                    // inline goals (Phase 33 W2) — reads _b0 directly; a deep
+                    // inline goals — reads _b0 directly; a deep
                     // cut (after a real call) reads the saved barrier from
                     // Y[cutSlot].
                     if (i < inlinePrefixLen || i == 0)
@@ -395,7 +394,7 @@ public sealed class ClauseCompiler
                     {
                         // `!` as the final goal: no execute/call follows.
                         // Just close the frame (if any) and return to caller.
-                        // Chunk 220 — fuse Deallocate+Proceed when both fire.
+                        // fuse Deallocate+Proceed when both fire.
                         if (needFrame)
                             state.Emitter.EmitDeallocateProceed();
                         else
@@ -577,21 +576,21 @@ public sealed class ClauseCompiler
     /// chunks — those need permanent (Y) storage to survive an intervening call.
     /// The result is deterministic (insertion-ordered) so Y slot indices are
     /// stable for given source.</summary>
-    /// <summary>Chunk 405 survey output (see the call site above): per
+    /// <summary>Survey output (see the call site above): per
     /// <c>name/arity</c>, the total permanents allocated across its clauses and
     /// how many are Class B (live only across inline goals). Null = off (the
-    /// default; the CLI sets it under <c>SHUMWAY_Y_SURVEY=1</c>). Chunk 414:
-    /// the per-clause collection only exists in <c>-p:ShumwayDiag=true</c>
+    /// default; the CLI sets it under <c>SHUMWAY_Y_SURVEY=1</c>).
+    /// The per-clause collection only exists in <c>-p:ShumwayDiag=true</c>
     /// builds — in a normal build the survey stays empty.</summary>
     public static Dictionary<string, (int PermTotal, int ClassB)>? YSurvey;
 
-    /// <summary>Chunk 405 (register-allocator design survey, ADR-021):
+    /// <summary>Register-allocator design survey (ADR-021):
     /// quantifies the CEILING of the classic-allocator arc by classifying each
     /// permanent. Class B = a permanent whose chunk-crossings are ALL over
     /// inline-compiled goals (cut / =/2 / is / the six comparisons), i.e. what
     /// a chunk-transparency allocator would demote; Class A = crosses a real
     /// call — irreducible in the WAM model. Diagnostic only; stripped from
-    /// normal builds via <c>[Conditional("SHUMWAY_DIAG")]</c> (chunk 414).</summary>
+    /// normal builds via <c>[Conditional("SHUMWAY_DIAG")]</c>.</summary>
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void DiagYSurvey(
         string name, Term[] headArgs, List<Term> goals, List<string> permanents)
@@ -606,19 +605,19 @@ public sealed class ClauseCompiler
         YSurvey[key] = (prev.PermTotal + permanents.Count, prev.ClassB + classB);
     }
 
-    /// <summary>Chunk 405 survey — <see cref="ClassifyPermanents"/> under the
+    /// <summary>Survey variant — <see cref="ClassifyPermanents"/> under the
     /// refuted inline-transparency model: a goal the compiler lowers WITHOUT a
     /// call (cut, <c>=/2</c>, <c>is/2</c>, the six arithmetic comparisons) does
     /// not end a chunk, so a variable whose uses straddle only such goals stays
     /// temporary. NOT used for codegen (unsound — choice-point liveness is not
-    /// clause-local, see the chunk-model-refinement-failed record); used only to
+    /// clause-local); used only to
     /// size what a sound allocator could ever reclaim.</summary>
     private static HashSet<string> ClassifyPermanentsInlineTransparent(
         Term[] headArgs, List<Term> goals)
     {
         var occurs = new Dictionary<string, HashSet<int>>();
         var stack = new Stack<Term>();
-        // Iterative walk (Phase 33 I12): a recursive descent used one C# frame
+        // Iterative walk: a recursive descent used one C# frame
         // per node, so a deeply-nested argument (e.g. a long list) overflowed
         // the stack. The explicit work-stack keeps C# stack use O(1).
         void Visit(Term root, int chunk)
@@ -670,7 +669,7 @@ public sealed class ClauseCompiler
         var order = new List<string>();
         var stack = new Stack<Term>();
 
-        // Iterative walk (Phase 33 I12): see ClassifyPermanentsInlineTransparent
+        // Iterative walk: see ClassifyPermanentsInlineTransparent
         // — a recursive descent overflowed on a deeply-nested argument.
         void Visit(Term root, int chunk)
         {
@@ -773,10 +772,10 @@ public sealed class ClauseCompiler
         Term[] headArgs, List<Term> goals,
         IReadOnlyCollection<string> permanents, Dictionary<string, int> outPreferred)
     {
-        // Target the first CALL of chunk 0 — which, with a transparent neck cut
-        // (chunk 309), may sit at index 1. Mirrors the Warren scheduler so a
+        // Target the first CALL of chunk 0 — which, with a transparent neck
+        // cut, may sit at index 1. Mirrors the Warren scheduler so a
         // head var preferenced into its register is the one the scheduler then
-        // leaves in place (Phase 26 A: `p :- !, recur(Args)` extracts Args
+        // leaves in place (`p :- !, recur(Args)` extracts Args
         // straight into the recursive call's argument registers, no put_value).
         if (goals.Count == 0) return;
         if (goals[FirstScheduledCallIndex(goals)] is not CompoundTerm firstGoal) return;
@@ -818,7 +817,7 @@ public sealed class ClauseCompiler
 
     private static void CountVarOccurrences(Term root, Dictionary<string, int> counts)
     {
-        // Iterative (Phase 33 I12): a recursive descent overflowed on a
+        // Iterative: a recursive descent overflowed on a
         // deeply-nested argument (e.g. a long list).
         var stack = new Stack<Term>();
         stack.Push(root);
@@ -892,11 +891,11 @@ public sealed class ClauseCompiler
     /// <summary>A body goal whose compiled form never clobbers the continuation
     /// pointer, never updates <c>B0</c>, and never pushes a choice point: the
     /// cut (<c>!</c>), arithmetic (<c>is/2</c> and the six comparisons →
-    /// <c>a_int_*</c> / <c>a_eval_*</c>), and — Phase 33 W9 — <c>=/2</c>.
+    /// <c>a_int_*</c> / <c>a_eval_*</c>), and — <c>=/2</c>.
     /// Such a goal needs no environment frame to survive it, and a <c>!</c>
     /// after a prefix of them is still a NECK cut.
     /// <para><c>=/2</c> CP-safety across BOTH its lowerings: the inline form
-    /// (Phase 26 get_*/unify_* head-style matching) is plain unification; the
+    /// (get_*/unify_* head-style matching) is plain unification; the
     /// fallback is a <c>call_builtin</c> of the non-backtrackable <c>=/2</c>,
     /// which runs inline in the dispatch loop — Cp untouched, B0 untouched
     /// (only Call/Execute update it), no choice point. An attvar unification
@@ -942,7 +941,7 @@ public sealed class ClauseCompiler
 
         // Snapshot home → head-var name for X-mapped vars with home < N.
         // Updated as saves rebind vars out of the arg range.
-        // (chunk 433 — the loop only reads the map, so iterate Names
+        // (the loop only reads the map, so iterate Names
         // directly instead of materialising a defensive ToList copy.)
         var homeToVar = new Dictionary<int, string>();
         foreach (var name in s.Xs.Names)
@@ -956,7 +955,7 @@ public sealed class ClauseCompiler
         var forced = new HashSet<string>();
         for (int i = 0; i < N; i++)
             CollectForcedSaves(gArgs[i], rootDepth: 0, s, N, forced);
-        // chunk 433 — in-place sort instead of LINQ OrderBy. The Seq component
+        // in-place sort instead of LINQ OrderBy. The Seq component
         // reproduces OrderBy's stability over the set's enumeration order
         // exactly (two names CAN share a slot via head-arg aliasing).
         var forcedOrder = new List<(int Slot, int Seq, string Name)>(forced.Count);
@@ -995,7 +994,7 @@ public sealed class ClauseCompiler
         }
 
         // === Step 3: Iteratively break cycles in the cross-arg graph. ===
-        // chunk 433 — the per-node reads sets and successor lists are
+        // the per-node reads sets and successor lists are
         // allocated ONCE and cleared/refilled per cycle-break iteration
         // (Recompute used to allocate N fresh HashSets per iteration, and
         // FindCycleNode + TopoSort each rebuilt per-node successor lists).
@@ -1028,7 +1027,7 @@ public sealed class ClauseCompiler
             }
             // Successor lists (edge i → j iff j ∈ reads[i], j ≠ i, arg j
             // writes X[j]), sorted ascending — shared by the cycle finder
-            // (which visited them in this order before chunk 433 too) and
+            // (which visits them in this order) and
             // the topo sort (whose result is order-insensitive: in-degrees
             // and the SortedSet ready queue decide the output).
             for (int i = 0; i < N; i++)
@@ -1053,7 +1052,7 @@ public sealed class ClauseCompiler
     private static void CollectForcedSaves(
         Term root, int rootDepth, CompileState s, int N, HashSet<string> sink)
     {
-        // Iterative (Phase 33 I12): a recursive descent overflowed on a
+        // Iterative: a recursive descent overflowed on a
         // deeply-nested body argument (e.g. a long list literal in a goal).
         var stack = new Stack<(Term Term, int Depth)>();
         stack.Push((root, rootDepth));
@@ -1077,7 +1076,7 @@ public sealed class ClauseCompiler
     /// <summary>Set of X-register slots in <c>[0, N)</c> that <paramref name="arg"/>'s
     /// own emission would read directly — flat-var sources (and direct
     /// sub-args of a top-level compound). Sub-compounds contribute via
-    /// <see cref="CollectForcedSaves"/>, not here. (chunk 433 — fills a
+    /// <see cref="CollectForcedSaves"/>, not here. (fills a
     /// caller-owned set so the scheduler reuses one set per node across
     /// cycle-break iterations instead of allocating fresh ones.)</summary>
     private static void FillDirectReads(Term arg, CompileState s, int N, HashSet<int> reads)
@@ -1122,7 +1121,7 @@ public sealed class ClauseCompiler
 
     /// <summary>Finds any node that participates in a cycle of the arg
     /// dependency graph (the precomputed sorted successor lists from the
-    /// scheduler's <c>Recompute</c> — chunk 433: previously rebuilt + sorted
+    /// scheduler's <c>Recompute</c> — previously rebuilt + sorted
     /// per DFS node here). Returns the node's index, or <c>null</c> when the
     /// graph is acyclic. Iterative DFS with three-colour marking keeps the
     /// stack bounded.</summary>
@@ -1161,7 +1160,7 @@ public sealed class ClauseCompiler
 
     /// <summary>Kahn's topological sort of the arg dependency graph,
     /// preferring lower indices on ties for deterministic output.
-    /// (chunk 433 — consumes the scheduler's precomputed successor lists
+    /// (consumes the scheduler's precomputed successor lists
     /// instead of re-deriving per-node edge lists from the reads sets;
     /// the SortedSet ready queue makes the output order-insensitive to
     /// edge-list order, so the result is unchanged.)</summary>
@@ -1191,7 +1190,7 @@ public sealed class ClauseCompiler
 
     private static void CollectVarNames(Term root, HashSet<string> sink)
     {
-        // Iterative (Phase 33 I12): called on each head argument, so a recursive
+        // Iterative: called on each head argument, so a recursive
         // descent overflowed on a deeply-nested head term (e.g. a long list).
         var stack = new Stack<Term>();
         stack.Push(root);
@@ -1238,7 +1237,7 @@ public sealed class ClauseCompiler
     // Head compilation (extends 8a / 8b with permanent-routed variables)
     // ============================================================================
 
-    /// <summary>Phase 26 — tries to compile <c>A = B</c> inline as head-style
+    /// <summary>tries to compile <c>A = B</c> inline as head-style
     /// get / unify instead of a call to the <c>=/2</c> builtin. Handles the case
     /// where one side is a temporary (X-register) variable: a SEEN temp unifies
     /// the other side against its register (via <see cref="CompileHeadArg"/>); a
@@ -1404,7 +1403,7 @@ public sealed class ClauseCompiler
 
     /// <summary>Depth past which CSE keying is abandoned (returns null, so the
     /// term is not shared). CSE of a large / deep head sub-term is pointless —
-    /// the key would be an O(size) string and, before Phase 33 I12, the recursion
+    /// the key would be an O(size) string and a recursive comparison
     /// overflowed the C# stack on a long list. A shallow bound keeps the useful
     /// small-compound CSE while sidestepping both costs.</summary>
     private const int StructuralKeyMaxDepth = 64;
@@ -1414,7 +1413,7 @@ public sealed class ClauseCompiler
     /// subterms (a DAG — the runtime materializer preserves sharing, so an
     /// asserted clause's head can carry one) serializes as its unshared TREE,
     /// exponential in depth — observed as a multi-GB StringBuilder hanging a
-    /// Logtalk library load inside a runtime assertz (Phase 33). One shared
+    /// Logtalk library load inside a runtime assertz. One shared
     /// budget threaded through the walk bounds total work to O(this) per key,
     /// and a key that long is useless for CSE anyway.</summary>
     private const int StructuralKeyMaxLength = 256;
@@ -1465,7 +1464,7 @@ public sealed class ClauseCompiler
     {
         // The inline build recurses only into the LAST argument, so the chain
         // is linear — walk it as a loop rather than one C# frame per level.
-        // Phase 33 I12: the former recursion overflowed on a long list (whose
+        // the former recursion overflowed on a long list (whose
         // tail is always the last argument), crashing the host at compile time.
         // The emission order is identical.
         while (true)
@@ -1516,7 +1515,7 @@ public sealed class ClauseCompiler
     /// for. Only such trees benefit from the reserve-upfront path.</summary>
     private static bool HasNonLastNestedCompound(Term t)
     {
-        // Iterative (Phase 33 I12): a recursive descent overflowed on a deeply
+        // Iterative: a recursive descent overflowed on a deeply
         // nested term (e.g. a long list) even though the answer for a flat list
         // is just false.
         if (t is not CompoundTerm) return false;
@@ -1543,7 +1542,7 @@ public sealed class ClauseCompiler
     /// the root header).</summary>
     private static bool AllNestedCompoundsInlinable(Term t)
     {
-        // Iterative (Phase 33 I12): see HasNonLastNestedCompound.
+        // Iterative: see HasNonLastNestedCompound.
         if (t is not CompoundTerm) return true;
         var stack = new Stack<Term>();
         stack.Push(t);
@@ -1788,7 +1787,7 @@ public sealed class ClauseCompiler
             return;
         }
 
-        // Phase 26 — inline `=/2` unification. Compile `Var = Term` with the
+        // inline `=/2` unification. Compile `Var = Term` with the
         // head-matching machinery (get_* / unify_*) instead of a call to the
         // =/2 builtin (which builds the term separately and dispatches). Mirrors
         // GProlog (`X = [A|B]` → get_list + unify). Only the safe temp-X-var
@@ -1834,7 +1833,7 @@ public sealed class ClauseCompiler
             s.Emitter.EmitCallBuiltin(builtinId, isLast ? -1 : livePermsAfter);
             if (isLast)
             {
-                // Chunk 220 — fuse Deallocate+Proceed for the common end-of-body epilogue.
+                // fuse Deallocate+Proceed for the common end-of-body epilogue.
                 if (hasFrame) s.Emitter.EmitDeallocateProceed();
                 else s.Emitter.EmitProceed();
             }
@@ -1925,7 +1924,7 @@ public sealed class ClauseCompiler
     private static void UpdateMaxLiveYIdxFromTerm(
         Term root, IReadOnlyDictionary<string, int> ys, ref int maxYIdx)
     {
-        // Iterative (Phase 33 I12): a recursive descent overflowed on a deeply
+        // Iterative: a recursive descent overflowed on a deeply
         // nested body argument (e.g. a long list).
         var stack = new Stack<Term>();
         stack.Push(root);
@@ -1996,7 +1995,7 @@ public sealed class ClauseCompiler
     /// No expression term is built.</summary>
     private void CompileArithIs(CompileState s, Term target, Term expr, bool isLast, bool hasFrame)
     {
-        // Phase 26 constant folding: a fully-literal arithmetic expression is
+        // Constant folding: a fully-literal arithmetic expression is
         // evaluated at compile time and delivered as a DIRECT unification of the
         // target with the resulting literal — `X is 1*2` becomes `X = 2` (a
         // put_integer; no eval stack, no runtime multiply). The fold reuses the

@@ -4,7 +4,7 @@ using Shumway.Core;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Phase 33 I2 — direct heap-to-heap term copy for <c>copy_term/2</c>.
+/// direct heap-to-heap term copy for <c>copy_term/2</c>.
 ///
 /// <para>The previous path went heap → managed AST (<see cref="TermReader"/>)
 /// → heap (<see cref="Materializer"/>), allocating a full <see cref="Term"/>
@@ -29,7 +29,7 @@ namespace Shumway.Embedding;
 ///     so no cross-node variable sharing is lost.</item>
 /// </list></para>
 ///
-/// <para>The list spine is walked iteratively (Phase-8 chunk 111): a recursive
+/// <para>The list spine is walked iteratively: a recursive
 /// descent down the tail would use one C# stack frame per element and overflow
 /// on a long list.</para>
 /// </summary>
@@ -40,7 +40,7 @@ internal static class HeapTermCopy
     public static Cell CopyRegister(Activation engine, int regIdx)
     {
         // Pool the two identity maps on the engine (clear-on-use), the
-        // chunk-432 pattern: the depth guard means only the outermost copy uses
+        // pattern: the depth guard means only the outermost copy uses
         // the pooled instances; a nested copy (none happens today — copy_term/2
         // does not re-enter itself — but future callers might) allocates fresh.
         engine.CopyTermDepth++;

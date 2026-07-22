@@ -5,7 +5,7 @@ namespace Shumway.Builtins;
 
 /// <summary>
 /// String-oriented builtins focused on grammar / parsing workflows
-/// (Phase-1 scope, ADR-009 / docs/design/pstr-design.md). Strings ride
+/// (see docs/design/pstr-design.md). Strings ride
 /// the PSTR representation; the conversions here pair them up with
 /// atoms, code lists, and char lists so the surrounding code can pick
 /// whichever shape it likes per use case.
@@ -34,7 +34,7 @@ public static class StringBuiltins
     ///   with <c>AB</c>.</item>
     /// <item>(?, ?, +): with <c>AB</c> ground and one or both of
     ///   <c>A</c>, <c>B</c> unbound, enumerates every prefix/suffix
-    ///   split of <c>AB</c> via a runtime CP (chunk 59) — same shape as
+    ///   split of <c>AB</c> via a runtime CP — same shape as
     ///   <c>atom_concat/3</c>'s split mode.</item>
     /// </list></summary>
     public static bool StringConcat(Activation engine)
@@ -51,7 +51,7 @@ public static class StringBuiltins
 
         if (aGround && bGround)
         {
-            // Lazy concat (chunk 70): when both sides are already PSTRs,
+            // Lazy concat: when both sides are already PSTRs,
             // build the result by copying A's content into a fresh buffer
             // and pointing the tail at B — no allocation for B's content.
             // Mixed PSTR/atom inputs fall back to the eager path because
@@ -168,7 +168,7 @@ public static class StringBuiltins
     /// in <paramref name="PadChars"/> from each piece. Mirrors SWI's
     /// behaviour: empty <c>SepChars</c> means "no splitting" (whole
     /// string returned, trimmed). Pieces are PSTRs in the resulting
-    /// list. Phase-1 supports +,+,+,? mode only.</summary>
+    /// list. Only the +,+,+,? mode is supported.</summary>
     public static bool SplitString(Activation engine)
     {
         string s = ReadStringOrAtom(engine, 0, "split_string/4");
@@ -257,9 +257,8 @@ public static class StringBuiltins
     /// <summary>Returns the heap index where the dereferenced cell
     /// lives, or <c>-1</c> when <paramref name="c"/> isn't a Ref (no
     /// heap address to talk about — the value already lives in the
-    /// register). Used by chunk-70's lazy <c>string_concat</c> when
-    /// it needs the source PSTR header's address to chain a new
-    /// header to it.</summary>
+    /// register). Used by the lazy <c>string_concat</c> when it needs
+    /// the source PSTR header's address to chain a new header to it.</summary>
     private static int ResolveIndex(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return -1;
@@ -280,7 +279,7 @@ public static class StringBuiltins
             int lisIdx = start + 2 * i;
             int headIdx = lisIdx + 1;
             engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            // Chunk 222: see AtomCharBuiltins.BuildCharAtomList.
+            // Single-char atom cache: see AtomCharBuiltins.BuildCharAtomList.
             int code = s[i];
             int atomId = AtomTable.GetSingleCharAtomId(code);
             if (atomId < 0)

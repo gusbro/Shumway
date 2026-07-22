@@ -41,7 +41,7 @@ public enum ExecutableDeploymentMode
 }
 
 /// <summary>
-/// Phase 14 chunk 174: produces a single-file native-platform
+/// Produces a single-file native-platform
 /// executable that loads an embedded <see cref="Bundle"/> and runs
 /// a user-supplied goal at startup, then exits.
 ///
@@ -248,7 +248,7 @@ public static class ExecutableEmitter
             verboseOut?.WriteLine($"shumway-exe: wrote {finalPath} "
                 + $"({new FileInfo(finalPath).Length:N0} bytes).");
 
-            // Chunk 247: copy each --foreign-dll next to the
+            // copy each --foreign-dll next to the
             // produced executable. The runtime's LoadBundle path
             // (called from the generated Program.Main) probes the
             // executable's AppContext.BaseDirectory for the names
@@ -349,7 +349,7 @@ internal static class Program
             // compiling the ~780-line prelude at runtime; falls back to
             // consulting it if the bundle carries none.
             {engineConstruction}
-            // Chunk 173: opt-in Tier-1 IL with per-opcode debug markers.
+            // opt-in Tier-1 IL with per-opcode debug markers.
             // Set SHUMWAY_IL_PROMOTE=N (N>=1) to enable promotion,
             // optionally SHUMWAY_IL_DEBUG=1 to inject post-opcode
             // WAM-semantics assertions in the IL.

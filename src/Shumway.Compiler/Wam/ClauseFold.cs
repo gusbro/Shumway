@@ -75,7 +75,7 @@ public static class ClauseFold
     public enum CalleeClass
     {
         /// <summary>Every guard callee is a single-clause test-like leaf —
-        /// shipped G1 (chunk-69 forced inline).</summary>
+        /// shipped G1 (forced inline).</summary>
         LeafInlinable,
         /// <summary>Worst callee is multi-clause (≤4) with test-like bodies and
         /// at most a SELF-tail recursion — shipped G2 (sequential-chain

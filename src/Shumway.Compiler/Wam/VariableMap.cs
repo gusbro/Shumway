@@ -11,9 +11,8 @@ namespace Shumway.Compiler.Wam;
 /// a fresh, unconstrained binding, so the compiler emits no opcode for them in
 /// head argument positions and treats them as freshly-allocated cells elsewhere.</para>
 ///
-/// <para>Phase 1 keeps everything in X registers. The temporary-vs-permanent
-/// distinction (Y registers, env frames) lands when body chunks introduce calls
-/// that survive across multiple goals; until then, every name stays in X.</para>
+/// <para>This map keeps everything in X registers; the temporary-vs-permanent
+/// distinction (Y registers, env frames) is the clause compiler's job.</para>
 /// </summary>
 public sealed class VariableMap
 {

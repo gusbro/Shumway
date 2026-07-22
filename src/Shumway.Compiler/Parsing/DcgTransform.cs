@@ -29,7 +29,7 @@ namespace Shumway.Compiler.Parsing;
 /// negation <c>\+/1</c> in rule bodies thread the diff-list through
 /// each branch and unify their sOut endpoints with a shared output
 /// state so the caller sees one diff-list pair regardless of which
-/// branch fired (chunk 58). Users invoke the resulting predicate
+/// branch fired. Users invoke the resulting predicate
 /// directly via its expanded arity — for instance, after
 /// <c>sentence --&gt; noun_phrase, verb_phrase.</c> the query is
 /// <c>?- sentence(Input, []).</c>. A <c>phrase/2</c> wrapper that
@@ -248,7 +248,7 @@ public static class DcgTransform
             return (goal, sOut);
         }
 
-        // Double-quoted string terminal (chunk 439 — standard DCG, not
+        // Double-quoted string terminal (standard DCG, not
         // dialect-gated). Under double_quotes = codes / chars the parser
         // already expanded "ab" into a cons list at parse time, so the
         // terminal-list case above covers those modes. Under the default
@@ -280,7 +280,7 @@ public static class DcgTransform
             return (body, sIn);
 
         // Disjunction: each branch consumes the same input range and must end
-        // at ONE shared diff-list endpoint. Phase 33 W5 — a branch whose
+        // at ONE shared diff-list endpoint. A branch whose
         // endpoint is a FRESH state variable (the common case: it consumed
         // something) gets the shared endpoint SUBSTITUTED into its body
         // directly, like SWI/GProlog's expander; only a branch whose endpoint
@@ -358,7 +358,7 @@ public static class DcgTransform
             return (new CompoundTerm("call", newArgs) { Position = body.Position }, sOut);
         }
 
-        // Lookahead: `peek(X)` (chunk 52) — succeeds iff X is the next
+        // Lookahead: `peek(X)` — succeeds iff X is the next
         // element of the input, consuming nothing. Transforms to
         // `sIn = [X | _]` so the head of the diff-list state is
         // pattern-matched but the state itself stays at sIn.
@@ -373,7 +373,7 @@ public static class DcgTransform
             return (unifyGoal, sIn);
         }
 
-        // Pushback: `pushback(L)` (chunk 52) — extends the diff-list
+        // Pushback: `pushback(L)` — extends the diff-list
         // residue by prepending the elements of L, so the *next*
         // non-terminal sees them. After `a --> [x], pushback([y]).`,
         // calling `a([x, z], R)` yields R = [y, z] (the y was pushed
@@ -414,7 +414,7 @@ public static class DcgTransform
         return new VarTerm($"$S{counter}");
     }
 
-    /// <summary>Phase 33 W5 — makes a disjunction branch end at the shared
+    /// <summary>Makes a disjunction branch end at the shared
     /// endpoint. When the branch's own endpoint is a FRESH `$Sn` variable
     /// (it consumed input), the shared variable is substituted for it in the
     /// branch body — no reconciliation goal. When the endpoint is still
@@ -462,7 +462,7 @@ public static class DcgTransform
 
     /// <summary>Builds <c>[l1, l2, …, ln | tail]</c> for a list term
     /// <paramref name="listTerm"/> ending in <paramref name="tail"/>.
-    /// Used by the DCG pushback transform (chunk 52) to splice the
+    /// Used by the DCG pushback transform to splice the
     /// pushed-back elements onto the residual diff-list endpoint.</summary>
     private static Term BuildConsChainEndingIn(Term listTerm, Term tail)
     {

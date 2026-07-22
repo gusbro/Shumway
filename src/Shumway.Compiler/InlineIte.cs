@@ -10,7 +10,7 @@ namespace Shumway.Compiler;
 /// The two sides MUST agree, so the predicate lives here, in one place.
 ///
 /// <para>First cut, deliberately conservative: every part must be a conjunction
-/// of PLAIN goals — no cuts (those need the chunk-408 barrier threading), no
+/// of PLAIN goals — no cuts (those need the MetaTransform barrier threading), no
 /// nested control constructs (they keep the helper path, where MetaTransform's
 /// rewrites apply), no variables in goal position (runtime call/1 dispatch does
 /// the ISO error checks). Extending eligibility widens the win later without
@@ -38,7 +38,7 @@ public static class InlineIte
     {
         CompoundTerm { Functor: ",", Args.Length: 2 } conj =>
             IsPlainConjunction(conj.Args[0]) && IsPlainConjunction(conj.Args[1]),
-        AtomTerm { Name: "!" } => false,   // needs the chunk-408 barrier — helper path
+        AtomTerm { Name: "!" } => false,   // needs the cut barrier — helper path
         AtomTerm a => !IsControlName(a.Name, 0),   // true/fail are plain builtins
         CompoundTerm c => !IsControlName(c.Functor, c.Args.Length),
         _ => false,   // vars, numbers, strings in goal position → runtime path

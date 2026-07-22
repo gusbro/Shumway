@@ -1,7 +1,7 @@
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 237 — marks a C# method as a foreign Prolog predicate so
+/// marks a C# method as a foreign Prolog predicate so
 /// <see cref="PrologEngine.RegisterPredicates(object)"/> (and its
 /// static-class overload) can register it with
 /// <see cref="Shumway.Builtins.BuiltinsRegistry"/> without
@@ -58,7 +58,7 @@ public sealed class PrologPredicateAttribute : Attribute
     /// predicate does. Surfaces in the predicate reference.</summary>
     public string? Summary { get; init; }
 
-    /// <summary>Chunk 244 — when <c>true</c>, the method is a
+    /// <summary>when <c>true</c>, the method is a
     /// non-deterministic generator: on success Prolog can
     /// backtrack into it for additional solutions, exactly like a
     /// native predicate built on multi-clause backtracking. The

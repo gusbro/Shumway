@@ -4,7 +4,7 @@ using Shumway.Compiler.Ast;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 239 — composite-type term converters: collections,
+/// composite-type term converters: collections,
 /// tuples, key-value pairs, nullables, dictionaries. The scalar
 /// conversions live in <see cref="TermConverters"/>; this file
 /// handles the structurally-recursive mappings that need to call

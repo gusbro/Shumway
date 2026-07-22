@@ -18,7 +18,7 @@ namespace Shumway.Embedding;
 /// <code>
 ///   [0..3]    Magic 'S','H','M','O'
 ///   [4..7]    Format version (uint32, = 2)
-///   [8]       Compression flag (Phase 33 T6): 0 = raw body, 1 = the whole
+///   [8]       Compression flag: 0 = raw body, 1 = the whole
 ///             body below is ONE Brotli stream — the same framing as the
 ///             .shum (see BundleFormat.FinalizeImage / OpenBody; bodies
 ///             &lt; 4 KB stay raw)
@@ -29,7 +29,7 @@ namespace Shumway.Embedding;
 ///                 bytecodeBytes    : bytes (CompiledModuleCodec output)
 ///                 buildMode        : byte (0=release, 1=debug)        [V2+]
 ///                 arityCompat      : byte (0/1 — compiled in Arity
-///                                    compatibility mode)              [chunk 441]
+///                                    compatibility mode)
 ///                 definedCount     : uint32
 ///                   for each defined predicate:
 ///                     name         : len-prefixed UTF-8
@@ -50,7 +50,7 @@ namespace Shumway.Embedding;
 ///                         isMeta   : byte (0=direct, 1=meta — every
 ///                                    in-module reference to the target
 ///                                    sits inside a meta-call argument;
-///                                    see ShmoCallEdge)         [chunk 441]
+///                                    see ShmoCallEdge)
 ///                 qualifiedRefsCount: uint32
 ///                   for each:
 ///                     module       : len-prefixed UTF-8
@@ -58,7 +58,7 @@ namespace Shumway.Embedding;
 ///                     arity        : uint32
 /// </code>
 ///
-/// <para>V3 (chunk 209): adds a <c>dynamicSeeds</c> trailer carrying the
+/// <para>V3: adds a <c>dynamicSeeds</c> trailer carrying the
 /// source clauses of <c>:- dynamic foo/N.</c> predicates as
 /// <see cref="TermCodec"/>-encoded blobs. The engine needs these to mutate
 /// the predicates at runtime; the static bytecode can't hold them. Layout
@@ -74,7 +74,7 @@ namespace Shumway.Embedding;
 ///                       bytes       : TermCodec-encoded clause term
 /// </code>
 ///
-/// <para>The <c>clauseTerms</c> trailer (chunk 411) — the module's RAW static
+/// <para>The <c>clauseTerms</c> trailer — the module's RAW static
 /// clauses (post-parse, pre-transform; dynamic heads excluded, they travel in
 /// <c>dynamicSeeds</c>) as <see cref="TermCodec"/>-encoded blobs. The LTO
 /// channel: present in Release too (the <c>.shmo</c> is an intermediate
@@ -112,7 +112,7 @@ public static class ShmoFormat
 
 /// <summary>Compilation mode the <c>.shmo</c> was built in.
 /// Currently a metadata-only flag: the linker surfaces it in the
-/// chunk-173 map file and the chunk-172 <c>--strip</c> option may
+/// map file and the <c>--strip</c> option may
 /// use it to decide which entries are safe to strip. Future
 /// extensions (per-instruction line info, source-position metadata,
 /// etc.) ride on this flag.</summary>

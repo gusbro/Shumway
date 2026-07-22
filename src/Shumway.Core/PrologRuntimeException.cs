@@ -23,7 +23,7 @@ public sealed class PrologRuntimeException : Exception
 
     /// <summary>Name of the builtin whose Impl raised this exception.
     /// Stamped by the interpreter's <c>CallBuiltin</c> dispatch as the
-    /// exception unwinds out of the Impl (chunk 130); <c>null</c> if the
+    /// exception unwinds out of the Impl; <c>null</c> if the
     /// exception arose outside builtin dispatch (e.g. from the bytecode
     /// interpreter's own resolver) or has not yet reached a dispatch
     /// site. The translation in <c>MetaBuiltins.TranslateRuntimeError</c>
@@ -36,7 +36,7 @@ public sealed class PrologRuntimeException : Exception
 
     /// <summary>The offending value an <c>error/2</c> term should
     /// report — the X in <c>type_error(integer, X)</c>, the Y in
-    /// <c>domain_error(not_less_than_zero, Y)</c>. Chunk 144 lets the
+    /// <c>domain_error(not_less_than_zero, Y)</c>. This lets the
     /// throwing site capture this so the catcher's value-slot variable
     /// binds to the actual culprit rather than a fresh anonymous var.
     /// Stored as an opaque <c>object</c> because Core can't reference

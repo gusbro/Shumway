@@ -43,7 +43,7 @@ public sealed class ClauseReader
         _operators = operators;
         _flags = flags;
         _lexer = lexer;
-        // Phase 30: the flag affects LEXING ($...$ atoms, #line markers),
+        // The flag affects LEXING ($...$ atoms, #line markers),
         // so the lexer adopts the caller's setting up front; the
         // set_prolog_flag directive (below) can also flip it mid-file.
         lexer.ArityCompat = flags.ArityCompat;
@@ -51,7 +51,7 @@ public sealed class ClauseReader
         _parser = new Parser(lexer, operators, flags);
     }
 
-    /// <summary>Chunk 436 — operators Arity sources rely on for their
+    /// <summary>Operators Arity sources rely on for their
     /// declaration directives. <c>:- extrn foo/3:far, bar/2.</c>
     /// declares external predicates; parsed like the other declaration
     /// prefixes (fx 1150) so the directive at least round-trips —
@@ -65,7 +65,7 @@ public sealed class ClauseReader
     private readonly global::Shumway.Compiler.Lexer.Lexer _lexer;
 
     // ------------------------------------------------------------------
-    // Chunk 437 — `:- define(TermA = TermB).` (ALWAYS active, not gated
+    // `:- define(TermA = TermB).` (ALWAYS active, not gated
     // by arity_compat). After the directive, every subterm of a
     // subsequent clause that is value-equal to TermA is replaced by
     // TermB. The directive is consumed here — it never reaches the
@@ -76,7 +76,7 @@ public sealed class ClauseReader
     private Dictionary<string, Term>? _atomDefines;
     private List<(Term Lhs, Term Rhs)>? _otherDefines;
 
-    /// <summary>Chunk 437 — recognises and records a
+    /// <summary>Recognises and records a
     /// <c>:- define(TermA = TermB).</c> directive. Returns true when the
     /// directive was consumed here (the caller drops it). Semantic
     /// choices:
@@ -124,7 +124,7 @@ public sealed class ClauseReader
         return true;
     }
 
-    /// <summary>Chunk 437 — applies every active define to
+    /// <summary>Applies every active define to
     /// <paramref name="clause"/>'s term. Semantic choices:
     /// <list type="bullet">
     /// <item>SINGLE PASS: every subterm is checked once, top-down,
@@ -198,7 +198,7 @@ public sealed class ClauseReader
             Term term = _parser.ReadClauseTerm();
             Clause clause = Clause.From(term);
 
-            // Chunk 437: a `:- define(A = B).` directive is consumed
+            // A `:- define(A = B).` directive is consumed
             // here, BEFORE substitution — active defines are not applied
             // inside another define directive's own arguments.
             if (clause.Kind == ClauseKind.Directive
@@ -222,7 +222,7 @@ public sealed class ClauseReader
         }
     }
 
-    /// <summary>Chunk 436 (arity_compat only) — Arity native-code
+    /// <summary>arity_compat only — Arity native-code
     /// sections. <c>:- c.</c> switches the source to embedded C that
     /// must be skipped RAW (it isn't parseable as Prolog) until a line
     /// starting with the directive <c>:- prolog.</c> (or EOF, which
@@ -243,7 +243,7 @@ public sealed class ClauseReader
             // peeked token would replay ahead of the resumed input.
             _parser.DiscardLookahead();
             string declsText = _lexer.SkipNativeCodeSection();
-            // Phase 30 (ADR-022) step 1 — capture the raw `:- c` declaration
+            // ADR-022 — capture the raw `:- c` declaration
             // text in a synthetic `:- '$native_decls'(RawText)` directive (raw
             // text as a non-interned StringTerm) so a later stage can hand it to
             // the C-subset parser. Until then it is an ignored directive
@@ -280,7 +280,7 @@ public sealed class ClauseReader
             bool atEnd = false;
             try
             {
-                // Chunk 436: IsAtEnd peeks the next token, so it too can
+                // IsAtEnd peeks the next token, so it too can
                 // throw on unlexable input — it must sit inside the
                 // recovery try or a bad character right after a clause
                 // escapes as a crash.
@@ -296,7 +296,7 @@ public sealed class ClauseReader
                     {
                         try
                         {
-                            // Chunk 437: define directives are consumed
+                            // define directives are consumed
                             // pre-substitution (a malformed one — e.g.
                             // `:- define(x).` without `=` — throws and is
                             // captured as a diagnostic like any other
@@ -339,7 +339,7 @@ public sealed class ClauseReader
             }
             catch (LexerException ex)
             {
-                // Chunk 436: a tokenizer error (e.g. Arity's backquote
+                // A tokenizer error (e.g. Arity's backquote
                 // char literals — a character Shumway has no lexeme
                 // for) is a diagnostic like any parse error, not a
                 // crash. SkipToClauseTerminator steps over unlexable
@@ -384,7 +384,7 @@ public sealed class ClauseReader
             ApplyCharConversionDirective(ccArgs, clause.Position);
     }
 
-    /// <summary>Chunk 152 — ISO §6.4.2 / §8.14.9. The directive
+    /// <summary>ISO §6.4.2 / §8.14.9. The directive
     /// <c>:- char_conversion(In, Out)</c> registers an in-character
     /// to out-character mapping that the lexer applies to the start
     /// of the next token. An identity mapping (<c>In == Out</c>)
@@ -429,7 +429,7 @@ public sealed class ClauseReader
         }
         else if (flagName.Name == "arity_compat")
         {
-            // Phase 30 — must take effect during LEXING (it gates the
+            // Must take effect during LEXING (it gates the
             // $...$ atom syntax and #line markers), so flip the live
             // lexer too, like char_conversion does via its shared map.
             bool on = valueName.Name switch

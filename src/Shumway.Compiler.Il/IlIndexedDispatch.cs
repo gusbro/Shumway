@@ -3,21 +3,19 @@ using Shumway.Core;
 namespace Shumway.Compiler.Il;
 
 /// <summary>
-/// Chunk 216 — full first/multi-argument indexed dispatch for Tier-1 IL,
+/// Full first/multi-argument indexed dispatch for Tier-1 IL,
 /// reproducing the WAM switch machinery (<c>switch_on_term</c> /
 /// <c>switch_on_arg</c> + the typed <c>switch_on_atom</c> /
 /// <c>switch_on_integer</c> / <c>switch_on_structure</c>(<c>_arg</c>)
-/// tables) with O(1) key lookup and correct bucket backtracking, instead
-/// of the chunk-189 linear clause walk.
+/// tables) with O(1) key lookup and correct bucket backtracking.
 ///
 /// <para>The model represents a predicate as a flat list of <b>chain
 /// nodes</b>. A node is one <c>try</c> / <c>retry</c> / <c>trust</c>
 /// position in the bytecode: it runs a particular clause body and, on
 /// backtrack, hands off to its <see cref="ChainNode.NextCursor"/> (the
-/// following node in the same chain, or -1 for a chain tail). This
-/// generalises the chunk-188 emit, where the "next" was implicitly
-/// <c>i + 1</c>; here a bucket chain links only the clauses that share a
-/// key, and a var-head clause legitimately appears in several chains.</para>
+/// following node in the same chain, or -1 for a chain tail). A bucket
+/// chain links only the clauses that share a key, and a var-head clause
+/// legitimately appears in several chains.</para>
 ///
 /// <para>The dispatch cascade itself (which chain a given call enters) is
 /// resolved at run time by <see cref="ResolveEntryCursor"/>, a dispatch-
@@ -276,17 +274,14 @@ public static class IlIndexedDispatch
     // first call. Used by BOTH the runtime promotion path and the
     // persisted-bundle path — the latter is the whole point (a persisted
     // .dll loaded in a fresh process has no build-time model holder, but
-    // the functor id is name-relative via chunk-197 patching and the
+    // the functor id is name-relative via load-time patching and the
     // engine's linked code is available at first call).
-    // ------------------------------------------------------------------
-    // Chunk 233 — per-engine cache moved onto the Activation itself
-    // (Activation.IlIndexedDispatchCache is a plain object slot). The
-    // previous shape was a ConditionalWeakTable<Activation, ConcurrentDictionary> —
-    // every IL Call to an indexed predicate paid the ConditionalWeakTable's
-    // internal lock + the ConcurrentDictionary's bucket lock (visible
-    // as Monitor.Enter_Slowpath in dotnet-trace). Activation is single-
-    // threaded so a plain Dictionary suffices; the engine-typed slot
-    // gives the cache engine lifetime without the weak-table.
+    //
+    // The cache lives on the Activation itself
+    // (Activation.IlIndexedDispatchCache is a plain object slot): the
+    // Activation is single-threaded, so a plain Dictionary suffices and
+    // the engine-typed slot gives the cache engine lifetime — a weak
+    // table + concurrent dictionary would pay two locks per IL Call.
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private static Dictionary<int, IndexGraph> CacheFor(Activation engine)

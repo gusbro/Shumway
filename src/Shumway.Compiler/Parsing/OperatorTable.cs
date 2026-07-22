@@ -5,7 +5,7 @@ namespace Shumway.Compiler.Parsing;
 /// (prefix, infix, postfix); the same atom can have multiple definitions across
 /// different kinds — <c>-</c> is both a unary prefix and a binary infix, for
 /// example. <see cref="Default"/> returns a freshly-built table seeded with the
-/// ISO operators most commonly used in Phase 1 grammar-processing code.
+/// the ISO operators grammar-processing code most commonly uses.
 ///
 /// <para>The parser consults the table at every potential operator position to
 /// decide whether the current atom is acting as a prefix, infix or postfix
@@ -125,7 +125,7 @@ public sealed class OperatorTable
         // Module-level directive heads (common public/dynamic-style declarations)
         t.Define("public", 1150, OperatorType.Fx);
         t.Define("dynamic", 1150, OperatorType.Fx);
-        // Arity-Prolog alias for `dynamic` (chunk 265). Accepted at the
+        // Arity-Prolog alias for `dynamic`. Accepted at the
         // same precedence so `:- visible foo/N.` parses identically to
         // `:- dynamic foo/N.`; the directive handler treats them as
         // synonyms.

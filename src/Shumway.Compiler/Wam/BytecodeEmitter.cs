@@ -71,7 +71,7 @@ public sealed class BytecodeEmitter
 
     public void EmitDeallocate() => _bytes.Add((byte)Opcode.Deallocate);
 
-    /// <summary>Chunk 220 — fused Allocate+GetLevel (clause prologue with
+    /// <summary>fused Allocate+GetLevel (clause prologue with
     /// deep cut). Replaces the 5+5=10 bytes of two separate opcodes with
     /// a single 10-byte instruction in canonical layout
     /// <c>[op:1] [count:4] [slot:4] [Nop:1]</c>. The interpreter dispatch
@@ -85,7 +85,7 @@ public sealed class BytecodeEmitter
         _bytes.Add((byte)Opcode.Nop);
     }
 
-    /// <summary>Chunk 220 — fused Deallocate+Proceed (clause epilogue
+    /// <summary>fused Deallocate+Proceed (clause epilogue
     /// when the frame was allocated). 2-byte layout
     /// <c>[op:1] [Nop:1]</c>; the interpreter handler does deallocate +
     /// the full proceed semantics (FlushPendingWakeups + SetPc(Cp), with
@@ -208,7 +208,7 @@ public sealed class BytecodeEmitter
         EmitInt(tableId);
     }
 
-    // ---------- Multi-arg indexing (Phase 2) ----------
+    // ---------- Multi-arg indexing ----------
 
     public void EmitSwitchOnArg(int argIdx, int varAddr, int constAddr, int listAddr, int structAddr)
     {
@@ -311,7 +311,7 @@ public sealed class BytecodeEmitter
     /// <see cref="MetaSubOpcode.DbgInfo"/> sub-byte and a 4-byte entry id
     /// payload. The interpreter treats Meta as a runtime no-op; the
     /// payload is consumed by the stack-trace path to find each clause's
-    /// source position (chunk 55).</summary>
+    /// source position.</summary>
     public void EmitMetaDbgInfo(int entryId)
     {
         _bytes.Add((byte)Opcode.Meta);
@@ -467,7 +467,7 @@ public sealed class BytecodeEmitter
         EmitInt(rel);
     }
 
-    // Compact encoding (Phase 26): the three operand kinds (each ≤ 6) and the
+    // Compact encoding: the three operand kinds (each ≤ 6) and the
     // op / rel (each ≤ a byte) pack into a single 32-bit word; only the three
     // values keep their own 4-byte words. a_int_bin: 29 → 17 bytes; a_int_cmp:
     // 21 → 13. Packed word — a_int_bin: aKind | bKind<<8 | tKind<<16 | op<<24;
@@ -629,7 +629,7 @@ public sealed class BytecodeEmitter
         // merge only fires when this call lands EXACTLY at the end of the last
         // unify_void (nothing emitted in between — within one structure's
         // argument run); any intervening instruction, label or clause boundary
-        // moves the write position past it. (chunk 347)
+        // moves the write position past it.
         if (_lastUnifyVoidPos >= 0 && _bytes.Count == _lastUnifyVoidPos + 5
             && _bytes[_lastUnifyVoidPos] == (byte)Opcode.UnifyVoid)
         {

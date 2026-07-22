@@ -32,7 +32,7 @@ public sealed class NonDetForeignCursor<T>
         _host = host;
         _unifyCurrent = unifyCurrent;
         Resume = (e, _) => Advance(e, isResume: true);
-        OnPrune = _iter.Dispose;   // chunk 245 — cut past the CP disposes the iterator
+        OnPrune = _iter.Dispose;   // cut past the CP disposes the iterator
     }
 
     /// <summary>The first step (from the foreign bridge body); returns into the

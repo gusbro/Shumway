@@ -9,16 +9,15 @@ namespace Shumway.Builtins;
 /// then iterate via <c>member/2</c>, picking up backtracking via the
 /// standard WAM choice-point machinery.
 ///
-/// <para>The pattern matches what we did in chunk 40 for
-/// <c>clause/2</c> and <c>current_predicate/1</c>: keep the C# side
-/// purely enumerative and let Prolog do the iteration. Costs more
-/// list allocation than a stateful builtin would, but each piece is
-/// simple to reason about and the multi-solution semantics are
+/// <para>Same pattern as <c>clause/2</c> and <c>current_predicate/1</c>:
+/// keep the C# side purely enumerative and let Prolog do the iteration.
+/// Costs more list allocation than a stateful builtin would, but each
+/// piece is simple to reason about and the multi-solution semantics are
 /// trivially correct.</para>
 /// </summary>
 public static class MultiSolutionHelpers
 {
-    /// <summary>Chunk 408 — <c>'$get_cut_barrier'(K)</c>: unifies K with the
+    /// <summary><c>'$get_cut_barrier'(K)</c>: unifies K with the
     /// clause's cut barrier (<see cref="Activation.B0"/>, the choice-point level the
     /// caller's Call/Execute established — what a neck cut commits to). Inserted
     /// by <c>MetaTransform</c> as the FIRST body goal of a clause that has a
@@ -26,7 +25,7 @@ public static class MultiSolutionHelpers
     /// synthesised helper, and the captured barrier threads through to it so the
     /// branch cut commits the HOST clause (ISO 7.8.8 cut transparency in
     /// then/else and disjunction branches) instead of just the helper. The cut
-    /// itself runs as <c>'$call'(!, K)</c> — the chunk-88 barrier-cut path.</summary>
+    /// itself runs as <c>'$call'(!, K)</c> — the barrier-cut path.</summary>
     public static bool GetCutBarrier(Activation engine)
         => engine.UnifyRegisterWithCell(0, Cell.Int(engine.B0));
 
@@ -55,7 +54,7 @@ public static class MultiSolutionHelpers
     public static bool MakeVarList(Activation engine)
     {
         Cell nCell = Resolve(engine, engine.GetRegister(0));
-        // Chunk 131a: ISO precedence — instantiation_error before type_error.
+        // ISO precedence — instantiation_error before type_error.
         if (nCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (nCell.Tag != Tag.Int)
@@ -75,7 +74,7 @@ public static class MultiSolutionHelpers
     public static bool SubAtomDecompositions(Activation engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
-        // Chunk 131a: ISO precedence — instantiation_error before type_error.
+        // ISO precedence — instantiation_error before type_error.
         if (atomCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (atomCell.Tag != Tag.Atom)
@@ -153,12 +152,12 @@ public static class MultiSolutionHelpers
     /// ascending — identical to the eager list — so a bound argument filters via
     /// the per-decomposition unification.
     ///
-    /// <para>This was reverted once (b0417db) because it lost / looped under
-    /// Tier-1 IL; the root cause was a MISSING <c>IsBacktrackable</c> flag (the
-    /// IL emit skipped the resume-marker / <c>BuiltinReturnPc</c> setup, so the
-    /// cursor resumed at PC 0). <see cref="BacktrackableDetector"/> now derives
-    /// that flag from this method's IL (it calls <c>IndexEnumCursor.Start</c>),
-    /// so it is correct under both tiers automatically.</para></summary>
+    /// <para>TRAP: a cursor builtin like this MUST be seen as backtrackable by
+    /// the Tier-1 IL emit, or it skips the resume-marker /
+    /// <c>BuiltinReturnPc</c> setup and the cursor resumes at PC 0 (silent
+    /// solution loss). <see cref="BacktrackableDetector"/> derives that flag
+    /// from this method's IL (it calls <c>IndexEnumCursor.Start</c>), so it is
+    /// correct under both tiers automatically.</para></summary>
     public static bool SubAtomEnum(Activation engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));

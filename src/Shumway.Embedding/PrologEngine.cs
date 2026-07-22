@@ -24,7 +24,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 {
     public const string DefaultModuleName = "user";
 
-    /// <summary>Per-engine global-variable store (chunk 145) backing
+    /// <summary>Per-engine global-variable store backing
     /// the SWI <c>nb_setval/2</c> / <c>nb_getval/2</c> family.
     /// Survives across queries on this engine.</summary>
     public Shumway.Builtins.GlobalVarStore GlobalVars { get; } =
@@ -50,7 +50,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private Activation? _liveConsultEngine;
     private readonly OperatorTable _operators = OperatorTable.Default();
 
-    /// <summary>Save-state chunk 264: chronological log of every source
+    /// <summary>Save-state chronological log of every source
     /// string passed to <see cref="ConsultString"/>, excluding the
     /// auto-loaded prelude (which the ctor always loads first).
     /// <see cref="SaveState"/> writes this list verbatim into a
@@ -59,13 +59,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// state.</summary>
     private readonly List<string> _consultHistory = new();
 
-    /// <summary>Phase 24 chunk 266 — Arity-Prolog recorded database.
+    /// <summary>Arity-Prolog recorded database.
     /// Lazily constructed on first access so engines that never use it
     /// pay nothing.</summary>
     private RecordedDatabase? _records;
     public RecordedDatabase Records => _records ??= new RecordedDatabase();
 
-    /// <summary>Phase 24 chunk 272 — per-engine pseudo-random generator
+    /// <summary>per-engine pseudo-random generator
     /// behind <c>random/1</c>, <c>random_between/3</c> and
     /// <c>randomize/1</c>. Seedable via Randomize; defaults to a
     /// time-based seed on first access.</summary>
@@ -76,7 +76,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// seeded by <paramref name="seed"/>. Backs <c>randomize/1</c>.</summary>
     public void Randomize(int seed) => _random = new System.Random(seed);
 
-    /// <summary>Per-engine stream registry (chunk 140). Owns every
+    /// <summary>Per-engine stream registry. Owns every
     /// open stream, the alias map, and the current-input /
     /// current-output cursors. Lazily built on first access so an
     /// engine that never touches streams pays nothing.</summary>
@@ -84,7 +84,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal StreamRegistry Streams =>
         _streams ??= new StreamRegistry(Out);
 
-    /// <summary>Activation-wide mutable flag state (chunk 58). Builtins
+    /// <summary>Activation-wide mutable flag state. Builtins
     /// <c>set_prolog_flag/2</c> and <c>current_prolog_flag/2</c> read
     /// and write here. The parser instances created during ConsultString
     /// and SetupQuery receive the same instance by reference, so a
@@ -93,7 +93,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// and every query made against this engine.</summary>
     private readonly PrologFlags _flags = new();
 
-    /// <summary>Diagnostic accessor for the flag state (chunk 58). Tests
+    /// <summary>Diagnostic accessor for the flag state. Tests
     /// can read <see cref="PrologFlags.DoubleQuotes"/> through this to
     /// verify <c>set_prolog_flag</c> took effect, but mutations should
     /// go through the builtin or a future host-side API.</summary>
@@ -195,7 +195,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         public int NextOperandAddr;
         /// <summary>The absolute start of this clause's bytecode chunk
         /// in the program buffer (the chain-instruction address) and
-        /// the chunk's total length. Tracked so the chunk-150 chain
+        /// the chunk's total length. Tracked so the chain
         /// GC can reclaim the bytes of dead clauses into a per-engine
         /// free-list for reuse by subsequent <c>assertz</c> /
         /// <c>asserta</c>.</summary>
@@ -242,12 +242,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         /// candidates for the engine-wide free list. Populated by
         /// <c>retract</c> / <c>abolish</c>; drained by
         /// <c>garbage_collect_clauses</c> into the engine-wide
-        /// free-list (chunk 151b: persistent across queries) where the
+        /// free-list (persistent across queries) where the
         /// next <c>assertz</c> / <c>asserta</c> can reuse the bytes
         /// instead of extending the program buffer.</summary>
         public readonly List<(int Addr, int Length)> DeadChunks = new();
     }
-    /// <summary>Phase 33 (Logtalk bring-up) — dynamic-chain metadata,
+    /// <summary>dynamic-chain metadata,
     /// one table PER persistent buffer. Chain state records absolute byte
     /// offsets into one specific buffer, but nested queries (a deferred
     /// <c>:- initialization</c> goal running QueryAll from inside a
@@ -279,7 +279,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         /// program buffer via <c>engine.AppendCode</c>.</summary>
         public readonly List<(int Addr, int Length)> FreeChunks = new();
 
-        /// <summary>Phase 33 (Logtalk bring-up) — live-linked static
+        /// <summary>live-linked static
         /// predicates' unresolved call sites (absolute operand position in
         /// THIS table's buffer, callee fid), accumulated across the consult
         /// batches linked into it so a forward reference (batch N calls a
@@ -292,7 +292,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     /// <summary>The table describing the host's CURRENT persistent buffer
     /// (<see cref="_persistentProgram"/>). Reused across queries while the
-    /// buffer is (chunk 151b); replaced whenever the buffer is rebuilt or
+    /// buffer is; replaced whenever the buffer is rebuilt or
     /// invalidated.</summary>
     private DynChainTable _dynChainTable = new();
 
@@ -308,7 +308,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private DynChainTable GetOrCreateChainTable(Activation engine)
         => _engineChainTables.GetValue(engine, static _ => new DynChainTable());
 
-    /// <summary>Phase 33 — every engine born via SetupQueryFromTerm, weakly
+    /// <summary>every engine born via SetupQueryFromTerm, weakly
     /// held (in birth order). Backs the dynamic-mutation BROADCAST: with
     /// nested queries (Logtalk's deferred <c>:- initialization</c> chains)
     /// several engines are suspended mid-execution at once, each on its own
@@ -368,7 +368,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
            && ReferenceEquals(engine.CurrentProgram, _persistentProgram);
 
     /// <summary>Post-mutation buffer bookkeeping: an owner engine's growth
-    /// is synced back to the host (chunk 151b); a non-owner (stale) engine
+    /// is synced back to the host; a non-owner (stale) engine
     /// instead marks the host buffer for rebuild — the store already holds
     /// the mutation, and the next setup re-derives dispatch from it.</summary>
     private void SyncOrInvalidateAfterMutation(Activation engine, bool ownedHostBuffer)
@@ -377,7 +377,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         else InvalidatePersistent();
     }
 
-    /// <summary>Chunk 151b — synchronises <see cref="_persistentProgram"/>
+    /// <summary>synchronises <see cref="_persistentProgram"/>
     /// back from the running engine after a mid-query
     /// <see cref="Activation.AppendCode"/> may have reallocated and grown
     /// the buffer. PrologEngine holds its own reference to the buffer
@@ -435,19 +435,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     // ====================================================================
-    // Chunk 155b — runtime in-place extension of extensible-indexed
-    // dynamic predicates (chunk 155a layout).
+    // runtime in-place extension of extensible-indexed
+    // dynamic predicates.
     // ====================================================================
 
-    /// <summary>Chunk 155b — returns <c>true</c> iff the predicate
-    /// <paramref name="functorId"/>'s live dispatch is the chunk-155a
+    /// <summary>returns <c>true</c> iff the predicate
+    /// <paramref name="functorId"/>'s live dispatch is the
     /// extensible-indexed layout (<c>enter_dynamic</c> +
     /// <c>switch_on_term</c> + <c>try_me_else</c>-headed bucket
     /// chains). Walks the predicate's entry to distinguish:
-    /// chunk-155a chains begin with <c>try_me_else</c> (patchable
-    /// <c>&lt;next&gt;</c> operand) whereas chunk-154's contiguous
+    /// chains begin with <c>try_me_else</c> (patchable
+    /// <c>&lt;next&gt;</c> operand) whereas contiguous
     /// indexed layout begins with <c>try</c>.</summary>
-    /// <summary>Chunk 156 — walks through the multi-level cascade
+    /// <summary>walks through the multi-level cascade
     /// from the predicate's <c>switch_on_term</c> var label,
     /// descending through any number of <c>switch_on_arg</c> level
     /// switches, until it reaches the final chain head (the chain
@@ -481,12 +481,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (prog is null || predAddr + 18 > prog.Length) return false;
         if (prog[predAddr] != (byte)Shumway.Core.Opcode.EnterDynamic) return false;
         if (prog[predAddr + 1] != (byte)Shumway.Core.Opcode.SwitchOnTerm) return false;
-        // Chunk 156: for single-arg the var label points at a
+        // for single-arg the var label points at a
         // try_me_else chain head; for multi-arg it points at the
         // next level's switch_on_arg (or, after layers of cascade,
         // eventually at a chain head). Walk through switch_on_arg
         // nodes until we reach a try_me_else chain head; that's
-        // the signature of every chunk-155/156 indexed layout.
+        // the signature of every indexed layout.
         int varLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
         while (varLbl > 0 && varLbl + 1 <= prog.Length)
         {
@@ -504,7 +504,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return false;
     }
 
-    /// <summary>Chunk 155b — walks the chain starting at
+    /// <summary>walks the chain starting at
     /// <paramref name="chainHead"/>, following <c>&lt;next&gt;</c>
     /// operands until the entry whose <c>&lt;next&gt;</c> is the
     /// absolute <see cref="Activation.DynamicFailStubAddr"/>. Returns the
@@ -540,7 +540,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 155f — returns <c>true</c> when the chain
+    /// <summary>returns <c>true</c> when the chain
     /// entry at <paramref name="entryAddr"/> sits in a 9-byte
     /// chain-instruction slot (the original try_me_else footprint,
     /// possibly demoted to retry_me_else + 4 nops by an asserta).
@@ -563,7 +563,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return 5;
     }
 
-    /// <summary>Chunk 155b — given the predicate entry and the new
+    /// <summary>given the predicate entry and the new
     /// clause's arg-0 classification, locate the bucket chain head
     /// the new clause should be appended to. Returns <c>-1</c> when
     /// no bucket exists (new key) or the arg is var (every bucket
@@ -590,7 +590,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Walk the const-label cascade for level 0 only. The cascade
         // is atom → integer → structure within one level; on multi-
-        // arg (chunk 156) the cascade's last default points at the
+        // arg the cascade's last default points at the
         // NEXT LEVEL's switch_on_arg, which marks the level boundary
         // and stops the walk — arg-0's bucket is in level 0 only,
         // higher-level buckets are routed through different chain
@@ -647,7 +647,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 155b/c — in-place extension of an extensible-
+    /// <summary>In-place extension of an extensible-
     /// indexed dynamic predicate's chains for an <c>assertz</c>.
     /// Compiles the new clause body, appends it to the buffer, then
     /// either (155b) extends the bucket chain for the new clause's
@@ -659,7 +659,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     ///
     /// Returns <c>false</c> if the predicate isn't using the chunk-
     /// 155a layout, the new clause is var-arg-at-0 (would need to
-    /// extend every bucket — a chunk-155d concern), or the new key
+    /// extend every bucket — a concern), or the new key
     /// needs a sub-switch that doesn't exist yet (e.g. first int
     /// assertz to an atom-only predicate). In any of those cases
     /// the caller falls back to rebuild.</summary>
@@ -667,7 +667,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Activation engine, int functorId, Shumway.Compiler.Ast.Clause newClause)
     {
         if (!IsExtensibleIndexedLayout(engine, functorId)) return false;
-        // Phase 33 — capture buffer ownership before any AppendCode.
+        // capture buffer ownership before any AppendCode.
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var addrMap = engine.CurrentFunctorAddresses!;
         var prog = engine.CurrentProgram!;
@@ -686,7 +686,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         bool isVarArg = arg0 is Shumway.Compiler.Ast.VarTerm;
 
         // Plan which chain tails the new clause's body will be
-        // linked into. var-arg-at-0 (chunk 155e) extends every
+        // linked into. var-arg-at-0 extends every
         // chain — var fallthrough, list bucket if present, and
         // every bucket chain reachable through the atom / integer /
         // structure sub-switch tables. Concrete arg-0 (chunks
@@ -694,7 +694,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // bucket chain, creating it for new-key).
         int bucketChainHead = -1;
         bool isNewKey = false;
-        // Chunk 156: for multi-arg layouts, the var slot at
+        // for multi-arg layouts, the var slot at
         // predAddr+2 points at the next level's switch_on_arg, not
         // at the final var chain. Walk through the level cascade to
         // reach the actual chain head.
@@ -753,7 +753,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
 
         // Compile the new clause (transforms identical to the chain
-        // path; chunk 427 — shared helper with a fact fast path).
+        // path; shared helper with a fact fast path).
         var compiledClause = CompileRuntimeAssertClause(engine, functorId, newClause);
         if (compiledClause is null) return false;
 
@@ -815,10 +815,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // For every chain in the plan, append a new chain entry
         // pointing at the new body and patch the chain's prior tail.
         // This covers (depending on path):
-        //   - chunk 155b: bucket + var (2 entries).
-        //   - chunk 155c: var only (the new bucket already includes
+        //   - bucket + var (2 entries).
+        //   - var only (the new bucket already includes
         //     the new clause as its tail).
-        //   - chunk 155e: every chain (var + list + every bucket
+        //   - every chain (var + list + every bucket
         //     across all sub-switches).
         foreach (int tailNext in chainTailNexts)
         {
@@ -847,18 +847,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         SyncOrInvalidateAfterMutation(engine, ownsHost);
 
         // Refresh interpreter pools — the clause may have interned new
-        // literals (chunk 427: skipped when the pools didn't grow).
+        // literals (skipped when the pools didn't grow).
         RefreshLiteralPoolsIfGrown(engine);
         return true;
     }
 
-    /// <summary>Chunk 155c — locates the sub-switch
+    /// <summary>locates the sub-switch
     /// (<c>switch_on_atom</c> / <c>switch_on_integer</c> /
     /// <c>switch_on_structure</c>) that handles the new clause's
     /// arg-0 type and returns its table id and the key value for the
     /// new arg. Returns <c>false</c> if the predicate doesn't yet
     /// have a sub-switch of that type — adding one would be a layout
-    /// change beyond chunk 155c's scope.</summary>
+    /// change beyond scope.</summary>
     private static bool TryLocateSubSwitchForArg(
         Activation engine, int predAddr, Shumway.Compiler.Ast.Term arg0,
         out int keyValue, out int tableId)
@@ -890,7 +890,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // Walk the cascade from constLbl looking for the wanted
-        // sub-switch opcode. Stop at SwitchOnArg — chunk-156 multi-
+        // sub-switch opcode. Stop at SwitchOnArg — multi-
         // arg layouts put a level boundary there, and the new key's
         // sub-switch must live within level 0.
         int p = constLbl;
@@ -915,7 +915,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return false;
     }
 
-    /// <summary>Chunk 155c — walks the var-fallthrough chain and
+    /// <summary>walks the var-fallthrough chain and
     /// returns the body addresses of clauses whose arg-0 is var
     /// (so they'd be merged into every concrete bucket chain). The
     /// var chain enumerates clauses in source order, so its Nth
@@ -962,7 +962,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return hc.Args[0] is Shumway.Compiler.Ast.VarTerm;
     }
 
-    /// <summary>Chunk 156 — recursively enumerates every chain head
+    /// <summary>recursively enumerates every chain head
     /// reachable from a switch address. Walks both single- and
     /// multi-level layouts: switch_on_term and switch_on_arg cascade
     /// through 4 child labels; switch_on_atom / _integer /
@@ -1043,11 +1043,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 155e/156 — collects every chain's tail-next
+    /// <summary>Collects every chain's tail-next
     /// operand, used by the var-arg-at-0 / multi-arg extension paths
     /// that need to append a new entry to every chain. Builds on
     /// <see cref="EnumerateChainHeadsRecursive"/> so multi-level
-    /// layouts (chunk-156) are fully covered.</summary>
+    /// layouts are fully covered.</summary>
     private bool CollectAllChainTailNextOperands(
         Activation engine, int predAddr, List<int> tailNextOperands)
     {
@@ -1069,11 +1069,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     // ====================================================================
-    // Chunk 155f — in-place asserta for extensible-indexed dynamic
+    // in-place asserta for extensible-indexed dynamic
     // predicates.
     // ====================================================================
 
-    /// <summary>Chunk 155f — prepends a clause to a chunk-155a
+    /// <summary>Prepends a clause to an extensible-
     /// indexed predicate in place. Asserta is harder than assertz
     /// because the chain head's address changes (the new entry
     /// becomes the head, the old head gets demoted to a non-head),
@@ -1086,7 +1086,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// the chain or fail_stub).
     ///
     /// Returns <c>false</c> when the predicate isn't using the
-    /// chunk-155a layout, the new key has no existing sub-switch
+    /// layout, the new key has no existing sub-switch
     /// (would be a layout change), or any chain to demote isn't
     /// currently a <c>try_me_else</c> head (a chain whose only
     /// remaining live entry has died — unusual but a possibility
@@ -1095,7 +1095,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Activation engine, int functorId, Shumway.Compiler.Ast.Clause newClause)
     {
         if (!IsExtensibleIndexedLayout(engine, functorId)) return false;
-        // Phase 33 — capture buffer ownership before any AppendCode.
+        // capture buffer ownership before any AppendCode.
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var addrMap = engine.CurrentFunctorAddresses!;
         var prog = engine.CurrentProgram!;
@@ -1112,7 +1112,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int arity = headComp.Args.Length;
         bool isVarArg = arg0 is Shumway.Compiler.Ast.VarTerm;
 
-        // Chunk 156: for multi-arg, the var slot at predAddr+2
+        // for multi-arg, the var slot at predAddr+2
         // cascades through switch_on_arg before reaching a chain
         // head. Walk the cascade to find the final var chain.
         int varChainHead = FindFinalVarChainHead(engine, predAddr);
@@ -1167,7 +1167,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // dedupes, but the same-key path adds bucket + var manually.
         chainsToDemote = chainsToDemote.Distinct().ToList();
 
-        // Compile the new clause's body (chunk 427 — shared helper with
+        // Compile the new clause's body (shared helper with
         // a fact fast path).
         var compiledClause = CompileRuntimeAssertClause(engine, functorId, newClause);
         if (compiledClause is null) return false;
@@ -1237,12 +1237,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         RedirectChainHeads(engine, predAddr, redirectMap);
 
         SyncOrInvalidateAfterMutation(engine, ownsHost);
-        // Chunk 427: refresh skipped when the pools didn't grow.
+        // refresh skipped when the pools didn't grow.
         RefreshLiteralPoolsIfGrown(engine);
         return true;
     }
 
-    /// <summary>Chunk 155f — like
+    /// <summary>like
     /// <see cref="BuildAndAppendNewBucketChain"/> but with the new
     /// clause's body FIRST (the asserta order) followed by the var-
     /// arg bodies in source order. Returns the new bucket chain
@@ -1273,9 +1273,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return chunkAddr;
     }
 
-    /// <summary>Chunk 155f/156 — collects every chain head reachable
+    /// <summary>Collects every chain head reachable
     /// from the predicate's entry into <paramref name="heads"/>,
-    /// across every level of multi-arg switch dispatch (chunk-156).
+    /// across every level of multi-arg switch dispatch.
     /// Delegates to <see cref="EnumerateChainHeadsRecursive"/>.</summary>
     private bool CollectAllChainHeadsForRedirect(
         Activation engine, int predAddr, HashSet<int> heads)
@@ -1286,7 +1286,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return true;
     }
 
-    /// <summary>Chunk 155f — walks every pointer slot that can
+    /// <summary>walks every pointer slot that can
     /// reference a chain head and replaces any value present in
     /// <paramref name="redirect"/> with the new address. Touches:
     /// <c>switch_on_term</c>'s var / list / struct operands at
@@ -1299,7 +1299,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Activation engine, int predAddr, IReadOnlyDictionary<int, int> redirect)
     {
         if (redirect.Count == 0) return;
-        // Chunk 156: walk the predicate's dispatch graph recursively,
+        // walk the predicate's dispatch graph recursively,
         // patching every switch operand and switch-table value/default
         // that matches an entry in redirect.
         var visitedSwitches = new HashSet<int>();
@@ -1389,7 +1389,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 155f — returns a new
+    /// <summary>returns a new
     /// <see cref="Shumway.Core.SwitchTable"/> with every value
     /// (including the default address) replaced if present in
     /// <paramref name="redirect"/>. Returns <c>null</c> when no
@@ -1418,16 +1418,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     // ====================================================================
-    // Chunk 155d — in-place retract for extensible-indexed dynamic
+    // in-place retract for extensible-indexed dynamic
     // predicates.
     // ====================================================================
 
-    /// <summary>Chunk 155d — returns the body address of the
+    /// <summary>returns the body address of the
     /// <paramref name="clauseIndex"/>'th still-alive clause in the
     /// var-fallthrough chain, where "alive" is defined as
     /// <c>died == long.MaxValue</c> in the entry's
     /// <c>check_visible</c>. Previously-retracted entries (died set
-    /// to some generation by a prior chunk-155d retract) are
+    /// to some generation by a prior retract) are
     /// skipped, so the index aligns with the post-removal
     /// <c>_dynamicClauses</c> ordering — except that this lookup
     /// runs BEFORE the current <c>RemoveAt</c>, so
@@ -1466,7 +1466,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 155d — walks every chain in the chunk-155a
+    /// <summary>Walks every chain in the extensible-
     /// indexed predicate (each bucket chain reached through a switch
     /// table value, the list chain head, and the var-fallthrough
     /// chain), and patches the died slot of every entry whose
@@ -1485,7 +1485,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int predAddr = addrMap[functorId];
         int failStub = engine.DynamicFailStubAddr;
 
-        // Chunk 156: enumerate every chain head reachable from the
+        // enumerate every chain head reachable from the
         // top-level switch, including multi-level cascades through
         // switch_on_arg.
         var heads = new HashSet<int>();
@@ -1517,11 +1517,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return anyPatched;
     }
 
-    /// <summary>Chunk 155c — writes <paramref name="newTable"/> into
+    /// <summary>writes <paramref name="newTable"/> into
     /// the dynamic region's slot of the cached <see cref="_dynamicLink"/>
     /// so the next query's <see cref="SetupQueryFromTerm"/> (which
     /// rebuilds the merged engine.SwitchTables list from
-    /// staticLink + _dynamicLink + queryLink) carries the chunk-155c
+    /// staticLink + _dynamicLink + queryLink) carries the
     /// mutation forward. The merged-table id at runtime is
     /// <c>staticLink.SwitchTables.Count + dynamicLocalId</c>; we
     /// undo the offset to find the right slot in _dynamicLink.
@@ -1536,14 +1536,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             dynList[dynLocalId] = newTable;
         // If the link's IReadOnlyList isn't actually a List (some
         // alternative implementation), the mutation can't be made
-        // persistent — chunk 155c degrades gracefully: the current
+        // persistent — degrades gracefully: the current
         // query holds the update via engine.SwitchTables, the next
         // query will rebuild from the unmutated link and miss it.
-        // That just regresses to the chunk-154 rebuild fallback for
+        // That just regresses to the rebuild fallback for
         // the affected predicate, which is correct, only slower.
     }
 
-    /// <summary>Chunk 155c — emits a fresh bucket chain containing
+    /// <summary>emits a fresh bucket chain containing
     /// every var-arg clause's body (in source order) followed by
     /// the new clause's body, appends it to the buffer, and returns
     /// the chain head address. The chain head uses
@@ -1589,17 +1589,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // chunkAddr should equal startAddr (we computed offsets to
         // match). Verify in debug builds.
         System.Diagnostics.Debug.Assert(chunkAddr == startAddr,
-            $"chunk 155c: new bucket chain address mismatch (expected {startAddr}, got {chunkAddr}).");
+            $"in-place assertz: new bucket chain address mismatch (expected {startAddr}, got {chunkAddr}).");
         return chunkAddr;
     }
 
-    /// <summary>Chunk 150/151b — pulls the first free chunk whose
+    /// <summary>Pulls the first free chunk whose
     /// length is at least <paramref name="needed"/> off the chain
     /// table's free-list and returns its address; the chunk's tail
     /// (beyond <paramref name="needed"/> bytes) goes back on the list.
     /// Returns -1 when no fit is available, meaning the caller should
     /// fall back to <c>engine.AppendCode</c>. The free-list lives on the
-    /// per-buffer <see cref="DynChainTable"/> (Phase 33 — its addresses
+    /// per-buffer <see cref="DynChainTable"/> (its addresses
     /// are buffer-relative), so chunks freed in one query are reusable
     /// by the next while that buffer is reused.</summary>
     private static int TryReuseFreeChunk(
@@ -1620,7 +1620,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     /// <summary>Test hook: returns the absolute byte offset of clause
     /// <paramref name="clauseIndex"/>'s died slot in the running program,
-    /// or <c>null</c> when no chain state exists. Used by chunk-123 tests
+    /// or <c>null</c> when no chain state exists. Used by tests
     /// to verify <c>retract</c> patches the slot.</summary>
     internal int? PeekDiedAddr(int functorId, int clauseIndex)
     {
@@ -1641,7 +1641,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return chain.Entries[clauseIndex].NextOperandAddr;
     }
 
-    // chunk 432: the generation lives in a shared GenerationBox handed to
+    // the generation lives in a shared GenerationBox handed to
     // every Activation this host sets up, so enter_dynamic samples it with a
     // field read instead of a Func<long> invoke per dynamic call. The ONE
     // bump site is InvalidateDynamicCache (every assertz / asserta /
@@ -1692,7 +1692,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>:- option(...)</c> directives may surface a friendlier knob.</summary>
     public IlPromotionStore IlPromotion { get; } = new();
 
-    /// <summary>Chunk 75 — JIT indexing profile. Tracks per-predicate
+    /// <summary>JIT indexing profile. Tracks per-predicate
     /// runtime call counts so the engine can defer building switch
     /// tables for a dynamic predicate until it proves hot. Set
     /// <c>engine.JitIndexing.Threshold</c> to tune (or, in tests, to
@@ -1702,7 +1702,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     /// <summary>Pre-decoded compiled modules from any bundle loaded
     /// with a <see cref="BundleEntry.CompiledBytecode"/> blob
-    /// (chunk 38 / chunk 45). Future runtime paths (chunk 51 onward)
+    ///. Future runtime paths
     /// can consult this cache to skip the WAM compile step entirely
     /// when the consulted source matches a precompiled module — for
     /// now it surfaces purely as a diagnostic property.</summary>
@@ -1795,12 +1795,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (newId != oldId) Shumway.Core.BytecodeIO.WriteInt32(code, off, newId);
     }
 
-    // Phase 20: most-recent query's functor→address map, for the
+    // most-recent query's functor→address map, for the
     // profiler's address→name resolution. Null until the first query
     // under a profiling build.
     private IReadOnlyDictionary<int, int>? _profileFunctorAddresses;
 
-    /// <summary>Phase 20 — renders the current <see cref="Shumway.Core.Profiler"/>
+    /// <summary>renders the current <see cref="Shumway.Core.Profiler"/>
     /// report, resolving recorded callee addresses to <c>Name/Arity</c>
     /// via the most recent query's link and builtin ids via the
     /// registry. Returns the empty string in a non-profile build.</summary>
@@ -1818,7 +1818,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 addrToName[addr] = $"{name}/{arity}";
             }
 
-        // Chunk 403: nearest-predicate-at-or-below resolver for pc-keyed counters
+        // nearest-predicate-at-or-below resolver for pc-keyed counters
         // (retry_me_else attribution) — a clause's retry pc sits INSIDE its
         // predicate's code range, past the entry address.
         var sortedAddrs = addrToName.Keys.ToArray();
@@ -1846,7 +1846,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             nearestPredicateName: NearestName);
     }
 
-    /// <summary>Chunk 209 — per-module set of BARE (un-mangled) local
+    /// <summary>per-module set of BARE (un-mangled) local
     /// functor ids contributed by a bundle loaded via
     /// <see cref="LoadEntryFromBytecode"/>. A bundle's predicates are
     /// already compiled (and mangled <c>module$name</c>), so
@@ -1859,14 +1859,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private readonly Dictionary<string, HashSet<int>> _precompiledModuleLocals = new();
 
     /// <summary>Snapshot of the most recent query's call stack as a
-    /// list of <c>Name/Arity</c> predicate indicators (chunk 51).
+    /// list of <c>Name/Arity</c> predicate indicators.
     /// Captured automatically when a runtime error escapes; available
     /// via <see cref="ShumwayPrologException.StackTrace"/>.</summary>
     public IReadOnlyList<(string Name, int Arity)> LastErrorStackTrace { get; private set; }
         = Array.Empty<(string, int)>();
 
     /// <summary>Source-position-enriched view of
-    /// <see cref="LastErrorStackTrace"/> (chunk 53). Each frame carries
+    /// <see cref="LastErrorStackTrace"/>. Each frame carries
     /// the first-clause <c>SourcePosition</c> of the predicate, when
     /// the bytecode came from a source consult; synthetic predicates
     /// surface as <see cref="Shumway.Compiler.Lexer.SourcePosition.Start"/>.</summary>
@@ -2057,7 +2057,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (var (fid, pred) in _dynamicPredicateCache)
             sub._dynamicPredicateCache[fid] = pred;
         // The sub-engine shares the parent's static program, so the
-        // parent's compiled-static-predicate cache (chunk 82) is valid
+        // parent's compiled-static-predicate cache is valid
         // for it — pass it through so a meta-call's sub-engine query
         // doesn't recompile the whole program from scratch.
         foreach (var (fid, pred) in _staticPredicateCache)
@@ -2073,7 +2073,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <summary>Adds <paramref name="clause"/> to the end of its predicate's
     /// dynamic clause list. The predicate must have been declared
     /// <c>:- dynamic foo/N</c> previously (in any module). Returns the
-    /// head's functor id (chunk 427 — the caller needs it for the
+    /// head's functor id (the caller needs it for the
     /// incremental dispatch update; returning it avoids a second
     /// extraction's string intern).</summary>
     internal int Assertz(Clause clause)
@@ -2086,14 +2086,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     /// <summary>Adds <paramref name="clause"/> at the front of its predicate's
-    /// dynamic clause list. Returns the head's functor id (chunk 427).</summary>
+    /// dynamic clause list. Returns the head's functor id.</summary>
     internal int Asserta(Clause clause)
     {
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
         GetOrCreateDynamicSlot(fid).Insert(0, clause);
         InvalidateDynamicCache(fid);
-        // Chunk 155f: persistent invalidation moved into
+        // persistent invalidation moved into
         // PrependDynamicClauseIncremental — the in-place path can
         // handle most indexed-dynamic asserta cases now, and only
         // genuinely-unhandled ones force a rebuild.
@@ -2197,15 +2197,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>:- dynamic</c>. Exposed to <c>MetaBuiltins.Retract</c> /
     /// <c>Abolish</c> so they can raise the ISO
     /// <c>permission_error(modify, static_procedure, _)</c> rather than
-    /// silently failing on a static predicate (chunk 131e).</summary>
+    /// silently failing on a static predicate.</summary>
     internal bool IsDynamic(int functorId) => _dynamicFunctors.Contains(functorId);
 
     /// <summary>Snapshot of every functor declared <c>:- dynamic</c>.
     /// Used by <c>garbage_collect_clauses/0</c> to iterate them.
-    /// (Chunk 150.)</summary>
+    ///</summary>
     internal IEnumerable<int> AllDynamicFunctors() => _dynamicFunctors.ToArray();
 
-    // chunk 431 — single spare buffer reused across retract/1's remaining-
+    // single spare buffer reused across retract/1's remaining-
     // candidates snapshots (the ISO call-time view copied at CP-push time).
     // One buffer covers the overwhelmingly common case (non-nested retract);
     // a nested enumeration that misses simply allocates, exactly like the
@@ -2213,14 +2213,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // enumeration from Rent until the matching Return, which fires at
     // exactly one of (a) the resume's no-further-match failure, (b) the
     // resume's last-candidate success (no new CP pushed), or (c) the CP's
-    // OnPrune when a cut discards it (chunk 245 — fired exactly once, and
+    // OnPrune when a cut discards it (fired exactly once, and
     // cleared on pop so a resumed CP can never also prune). Discard paths
     // with no hook (exception unwind, query teardown) just drop the buffer
     // to the .NET GC — same as pre-431, never a double-hand-out.
     private Clause[]? _retractSnapshotSpare;
     private const int RetractSnapshotSpareMaxLen = 4096;
 
-    /// <summary>chunk 431 — returns a buffer with at least
+    /// <summary>returns a buffer with at least
     /// <paramref name="minLength"/> slots for a retract tail snapshot,
     /// reusing the per-engine spare when it fits.</summary>
     internal Clause[] RentRetractSnapshot(int minLength)
@@ -2234,7 +2234,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return new Clause[minLength];
     }
 
-    /// <summary>chunk 431 — hands a snapshot buffer back for reuse. Clears
+    /// <summary>hands a snapshot buffer back for reuse. Clears
     /// the used range so the pool never pins retracted clause ASTs alive,
     /// and keeps the larger of (current spare, returned buffer), capped so
     /// one huge predicate can't park a giant array on the engine.</summary>
@@ -2258,7 +2258,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Activation engine, int functorId, Clause clause, int knownIndex = -1)
     {
         if (!_dynamicClauses.TryGetValue(functorId, out var list)) return false;
-        // Chunk 423: retract's first step scans the live list, so it
+        // retract's first step scans the live list, so it
         // already knows the match's index — trust it after a cheap
         // reference check instead of an O(N) IndexOf (Blint: 80K
         // retracts × an ~125-entry IndexOf walk). The resume path
@@ -2268,7 +2268,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             ? knownIndex
             : list.IndexOf(clause);
         if (idx < 0) return false;
-        // Chunk 155d: for a chunk-155a indexed predicate, capture the
+        // for a indexed predicate, capture the
         // matched clause's body address from the var chain BEFORE
         // removing the clause from _dynamicClauses (the var-chain
         // walk reads idx-indexed entries in their pre-removal order).
@@ -2278,24 +2278,24 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             retiredBodyAddr = FindBodyAddrForClauseIndex(engine, functorId, idx);
         list.RemoveAt(idx);
         InvalidateDynamicCache(functorId);
-        // Phase 33 — a retract from a non-owner engine (a nested query
+        // a retract from a non-owner engine (a nested query
         // rebuilt the host buffer since this engine's setup) patches only
         // this engine's buffer; the host's newer buffer would keep the
         // clause visible on cross-query reuse. Force a rebuild from the
         // (already-updated) store. Owner engines pay nothing.
         if (!EngineOwnsHostBuffer(engine)) InvalidatePersistent();
-        // For the chunk-127 chain layout, PatchDiedFromChain walks
+        // For the chain layout, PatchDiedFromChain walks
         // the predicate's single chain and patches entry[idx]'s
-        // died slot. For the chunk-155a indexed layout, the chain
+        // died slot. For the indexed layout, the chain
         // state populated by PopulateDynChainFor lists every chain
         // entry from every bucket + the var chain in CONTIGUOUS
         // bytecode order (PopulateDynChainFor does a linear walk),
         // so entry[idx] maps to an unrelated bucket's died slot
-        // — skip the chunk-127 path here and let chunk-155d handle
-        // the multi-chain patching below.
+        // — skip the plain-chain path here and let
+        // the multi-chain patching below handle it.
         if (!isIndexed)
         {
-            // Phase 33 — patch by CLAUSE IDENTITY, not by store index. The
+            // patch by CLAUSE IDENTITY, not by store index. The
             // index-based patch was sound when the single chain mirrored
             // _dynamicClauses 1:1; with per-engine chain tables an engine's
             // chain can lag the store (a broadcast skipped by a guard, or
@@ -2304,7 +2304,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // this engine's own view while the retracted one stays visible
             // (observed as Logtalk's loading-stack "ghost" entries).
             PatchDiedFromChainByClause(engine, functorId, clause);
-            // Phase 20: reclaim accumulated dead clauses from the chain
+            // reclaim accumulated dead clauses from the chain
             // when it's safe (no in-progress enumeration of this
             // predicate). An assert+retract loop (e.g. next_char_i) would
             // otherwise grow the chain with retracted-but-still-linked
@@ -2313,7 +2313,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // dead clauses.
             TryReclaimDeadDynamicChain(engine, functorId);
         }
-        // Phase 33 — broadcast the retract to every other live engine's
+        // broadcast the retract to every other live engine's
         // buffer (matched by clause identity — chain entries hold the same
         // Clause objects the store held), so a suspended outer query's
         // dispatch also stops seeing the clause when it resumes.
@@ -2340,7 +2340,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
 
     /// <summary>Minimum number of dead (retracted-but-still-linked)
-    /// clauses in a chunk-127 dynamic chain before reclamation kicks in.
+    /// clauses in a dynamic chain before reclamation kicks in.
     /// Re-threading costs O(live) pointer patches (it does NOT recompile
     /// anything — see <see cref="GarbageCollectClauses"/>), so this only
     /// amortises the choice-point scan and the patch writes. Every
@@ -2348,20 +2348,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// real cost for read-heavy churn idioms (Blint's <c>next_char_i</c>
     /// unget buffer is READ via <c>call/1</c> dispatch ~105K times per
     /// lint, each walking the tombstones the threshold lets linger).
-    /// Chunk 422 swept the value on Blint's deterministic opcode count:
+    /// swept the value on Blint's deterministic opcode count:
     /// 32→29.21M, 16→28.40M, 8→28.02M, 4→27.78M, 2→27.69M. 4 is the
     /// knee — below it the per-fire fixed costs (the CP-stack scan and
     /// the chainAddrs set) buy almost nothing.</summary>
     private const int ReclaimDeadThreshold = 4;
 
-    /// <summary>Chunk 420 — number of times the automatic dead-chain
+    /// <summary>number of times the automatic dead-chain
     /// reclamation actually fired across this engine's lifetime.
     /// Deterministic diagnostic for tests; the re-thread itself lives in
     /// the persistent program bytes.</summary>
     public long ChainReclaims { get; private set; }
 
-    /// <summary>Phase 20 — physically drops retracted-but-still-linked
-    /// clauses from a dynamic predicate's chunk-127 chain by rebuilding
+    /// <summary>physically drops retracted-but-still-linked
+    /// clauses from a dynamic predicate's chain by rebuilding
     /// it from the live clauses, but ONLY when no in-progress enumeration
     /// could still need them (ISO logical update view). A clause
     /// retracted while a call is enumerating the predicate must stay
@@ -2371,8 +2371,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// chain. A fresh call re-samples the current generation at
     /// enter_dynamic and never sees the dropped clauses.
     ///
-    /// <para>Chunk 420 dropped the old <c>dead &lt; Entries.Count</c>
-    /// gate (a chunk-150-era leftover from when reclamation recompiled
+    /// <para>dropped the old <c>dead &lt; Entries.Count</c>
+    /// gate (a leftover from when reclamation recompiled
     /// the live clauses): it made the steady-state tombstone load scale
     /// with the LIVE clause count, so a busy predicate with ~125 live
     /// entries (Blint's <c>saved_cur_line_i/2</c> save-stack) sat
@@ -2384,8 +2384,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (engine.CurrentProgram is null) return;
         if (GetChainTable(engine) is not { } tbl
             || !tbl.Chains.TryGetValue(functorId, out var chain)) return;
-        // Only the plain chunk-127 trampoline+chain layout. Indexed
-        // dynamic predicates (chunk 155/156) use the rebuild-on-mutate
+        // Only the plain trampoline+chain layout. Indexed
+        // dynamic predicates use the rebuild-on-mutate
         // fallback and aren't handled here.
         if (chain.HeadClauseAddr < 0 || chain.TrampolineExecuteOperandAddr < 0) return;
         int dead = chain.DeadChunks.Count;
@@ -2408,12 +2408,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         ChainReclaims++;
 
         // Safe and worthwhile — re-thread the chain through its live
-        // entries in place (chunk 150). This keeps the trampoline at its
+        // entries in place. This keeps the trampoline at its
         // address, so every caller's already-baked Call operand stays
         // valid (rebuilding the trampoline at a new address would orphan
         // them); it only patches the in-chunk <next> links to bypass the
         // dead entries, and drains the dead chunks to the free list for
-        // reuse by later assertz/asserta. The chunk-150 "avoid mid-query
+        // reuse by later assertz/asserta. The "avoid mid-query
         // while another goal iterates this predicate" caveat is exactly
         // the safety condition checked above.
         GarbageCollectClauses(engine, functorId, reclaimChunks: false);
@@ -2428,7 +2428,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _dynamicClauses.Remove(functorId);
         _dynamicFunctors.Remove(functorId);
         InvalidateDynamicCache(functorId);
-        // Chunk 151b: dropping a dynamic functor changes the
+        // dropping a dynamic functor changes the
         // dynamic-region layout — the next query has to rebuild
         // the persistent program.
         InvalidatePersistent();
@@ -2442,7 +2442,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         AbolishDynamic(functorId);              // bumps _dbGeneration
         AbolishDynamicInChain(engine, functorId);
-        // Phase 33 — broadcast: suspended engines' dispatch must also
+        // broadcast: suspended engines' dispatch must also
         // stop seeing the abolished clauses when they resume.
         if (OtherLiveEnginesByTable(engine) is { } others)
             foreach (var other in others)
@@ -2461,7 +2461,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 && entry.DiedOperandAddr + sizeof(long) <= program.Length)
                 Shumway.Core.BytecodeIO.WriteInt64(
                     program, entry.DiedOperandAddr, _dbGeneration.Value);
-            // Chunk 150: stage incremental chunks for GC reclamation.
+            // stage incremental chunks for GC reclamation.
             if (entry.ChunkAddr >= 0)
                 chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
         }
@@ -2622,14 +2622,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         RestoreDbFrom(engine, snapshot);
     }
 
-    /// <summary>Chunk 150 — re-threads <paramref name="functorId"/>'s
+    /// <summary>re-threads <paramref name="functorId"/>'s
     /// chain through only its live entries, bypassing every dead
     /// (retracted or abolished) entry in the running bytecode. The
     /// dead entries' bytecode is left in place (orphaned but
     /// harmless); the win is dispatch speed — future calls walk
     /// O(live) entries instead of O(ever-asserted).
     ///
-    /// <para>Safe to call between queries. The chunk-120 design
+    /// <para>Safe to call between queries. The design
     /// captures view-gen at goal entry and saves CP <c>NextOperandAddr</c>
     /// values into per-CP state, so in-flight goals that already hold a
     /// CP into a dead entry's <c>retry_me_else</c> address still resume
@@ -2647,7 +2647,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var program = engine.CurrentProgram;
         int failStub = engine.DynamicFailStubAddr;
 
-        // Phase 33 — skip the reclaim when the chain's cached offsets are
+        // skip the reclaim when the chain's cached offsets are
         // stale relative to the live buffer (bounds OR structural: re-threading
         // through them would write past the array, or splice a wrong <next>
         // into an unrelated instruction → heap corruption surfacing later as an
@@ -2661,10 +2661,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // The trampoline always points at chain.HeadClauseAddr, which
         // is a try_me_else of stable 9-byte footprint — either the
         // empty stub emitted at consult-time, or an asserta'd clause
-        // emitted by chunk 128 with native try_me_else. The GC never
+        // emitted by with native try_me_else. The GC never
         // touches the trampoline or the head opcode (the alternative
         // would be promoting a non-head retry_me_else to try_me_else,
-        // which is safe only when the entry has the chunk-128
+        // which is safe only when the entry has the
         // 4-Nop-pad — a native 5-byte retry_me_else from assertz has
         // its check_visible at bytes 5-8 and can't be widened in
         // place). Instead, GC re-threads the <next> chain starting
@@ -2673,7 +2673,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // the next live entry's chain-instruction address.
         //
         // If the head itself is dead (retracted from the asserta'd
-        // chunk-128 head, or the empty stub that's always "dead"
+        // head, or the empty stub that's always "dead"
         // with check_visible(0, 0)), dispatch walks it once, the
         // check_visible filters it, and the GC-patched <next> jumps
         // straight to the first live entry. One extra walk per call;
@@ -2709,12 +2709,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // chunks' bytecode in place rather than recycling it. A choice
         // point still in flight (e.g. retract's own re-satisfiable CP,
         // or a failure-driven loop's outer CP) may resume into a dead
-        // chunk; chunk-120's check_visible then filters it by captured
+        // chunk; check_visible then filters it by captured
         // view-gen — but only if the bytecode is intact. Recycling an
         // address an in-flight CP still references would let a later
         // assertz overwrite a live retry_me_else (observed as
         // "RetryMeElse without an active choice point"). The bypassed
-        // bytes are reclaimed by the chunk-158 persistent compaction
+        // bytes are reclaimed by the persistent compaction
         // between queries instead. We still clear DeadChunks so the
         // reclaim threshold resets.
         int reclaimed = 0;
@@ -2755,7 +2755,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>clpfd</c>, and never a builtin) plus every dynamic predicate that
     /// currently holds clauses. Each is flagged dynamic-or-not so listing
     /// can print a <c>:- dynamic</c> header for the dynamic ones.</summary>
-    /// <summary>Chunk 256 — strips the <c>&lt;module&gt;$</c>
+    /// <summary>strips the <c>&lt;module&gt;$</c>
     /// prefix that <see cref="ModuleRewrite"/> adds to local
     /// predicates so the listing path can present users with the
     /// name they actually wrote. <c>user$helper</c> →
@@ -2800,7 +2800,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return (demangled, arity);
     }
 
-    /// <summary>Chunk 255 — for a source-stripped bundle the engine
+    /// <summary>for a source-stripped bundle the engine
     /// has no AST to print, but it does have the
     /// <see cref="Shumway.Compiler.Wam.CompiledPredicate"/>
     /// metadata (arity + clause count) in
@@ -2816,7 +2816,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             ? p : null;
     }
 
-    /// <summary>Chunk 254 — enumerates the AST clauses backing
+    /// <summary>enumerates the AST clauses backing
     /// <paramref name="functorId"/>. Pulls from every user module's
     /// <c>Clauses</c> list (filtering by head functor) for static
     /// predicates, and from <c>_dynamicClauses[fid]</c> for dynamic
@@ -2859,7 +2859,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         foreach (var (fid, clauses) in _dynamicClauses)
             if (clauses.Count > 0 && seen.Add(fid)) yield return (fid, true);
-        // Chunk 255: source-stripped bundles populate
+        // source-stripped bundles populate
         // _precompiledStaticPredicates without ever touching
         // manifest.Clauses. Surface those so listing/0 enumerates
         // every user predicate, stripped-source or not. The
@@ -2879,7 +2879,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 255 — true when the functor is part of the
+    /// <summary>true when the functor is part of the
     /// always-loaded prelude / clpfd library. Listing skips these
     /// the same way it skips builtins.</summary>
     private bool IsLibraryFunctor(int fid)
@@ -2993,7 +2993,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         if (_dynamicFunctors.Contains(fid)) return;
 
-        // Phase 19+ — implicit_dynamic flag (default true) auto-
+        // implicit_dynamic flag (default true) auto-
         // promotes an undefined predicate on its first assertz/asserta.
         // Matches SWI-Prolog / SICStus / GNU Prolog: in all three, the
         // first assert on a predicate without static clauses creates
@@ -3010,7 +3010,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             _dynamicFunctors.Add(fid);
             if (!_dynamicClauses.ContainsKey(fid))
                 _dynamicClauses[fid] = new List<Clause>();
-            // Chunk 430 — the dynamic-functor set feeds the ModuleRewrite
+            // the dynamic-functor set feeds the ModuleRewrite
             // contexts; this is the one mutation path that doesn't run
             // through InvalidatePersistent, so advance the derivation
             // generation explicitly. (Auto-promotion can't actually change
@@ -3021,14 +3021,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return;
         }
 
-        // Chunk 131e: ISO §7.12.2.h — modifying a static procedure
+        // ISO §7.12.2.h — modifying a static procedure
         // is permission_error(modify, static_procedure, Name/Arity).
         // The Detail string carries the indicator for diagnostic
         // continuity; the translated form lands in the second slot
         // of the permission_error compound through the standard
         // TranslateRuntimeError path (the third "Obj" slot stays as
         // an anonymous variable for now — a richer Term-valued
-        // exception payload is queued for later in chunk 131).
+        // exception payload is queued for later).
         // Detail encodes Operation,ObjectType — TranslateRuntimeError
         // splits and builds the three-arg permission_error compound
         // (the third Obj slot stays as an anonymous variable, since
@@ -3037,7 +3037,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             "permission_error", "modify,static_procedure");
     }
 
-    /// <summary>Phase 19+ — emits a fresh empty-dynamic trampoline for
+    /// <summary>emits a fresh empty-dynamic trampoline for
     /// <paramref name="fid"/> directly into the engine's live program
     /// buffer mid-query and registers it in
     /// <see cref="Activation.CurrentFunctorAddresses"/>. Called by the
@@ -3058,7 +3058,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <list type="bullet">
     /// <item>Patches the body's <c>CallBuiltin</c> call sites (the
     ///   fail stub uses a fixed builtin id, so there's nothing to
-    ///   resolve — kept for symmetry with the chunk-127 append
+    ///   resolve — kept for symmetry with the append
     ///   path).</item>
     /// <item>Adds <paramref name="fid"/> to the engine's address map
     ///   (the underlying dictionary, cast through the
@@ -3067,7 +3067,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     ///   <see cref="_dynChains"/> picks up the trampoline's
     ///   <c>TailNextAddr</c> / <c>HeadClauseAddr</c> /
     ///   <c>TrampolineExecuteOperandAddr</c>, making subsequent
-    ///   chunk-127 / chunk-128 in-place assertz / asserta
+    ///   / in-place assertz / asserta
     ///   extensions work just like declared-dynamic
     ///   predicates.</item>
     /// </list></summary>
@@ -3076,7 +3076,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Root fix: never append at a stale owner position (see
         // ResyncOwnerAppendPosition).
         ResyncOwnerAppendPosition(engine);
-        // Phase 33 — capture buffer ownership before AppendCode (growth
+        // capture buffer ownership before AppendCode (growth
         // reallocation changes the engine's reference).
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var (atomId, arity) = FunctorTable.Lookup(fid);
@@ -3134,7 +3134,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // Patch any call-site operands the predicate emitted (the fail
-        // body has none, but the path mirrors the chunk-127 append for
+        // body has none, but the path mirrors the append for
         // symmetry / future-proofing against richer auto-promote stubs).
         var addrMap = engine.CurrentFunctorAddresses;
         foreach (var site in predicate.CallSites)
@@ -3170,7 +3170,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // real clause's, leaving the latter visible.
         //
         // Manual layout: only the trampoline-level offsets matter for
-        // chunk-127's incremental append — the chunk emits the real
+        // incremental append — the chunk emits the real
         // clause's own retry_me_else + check_visible + body and adds
         // a fresh DynChainEntry to chain.Entries pointing at the
         // emitted chunk. So _dynChains[fid].Entries stays empty here.
@@ -3180,7 +3180,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             HeadClauseAddr = trampolineAddr + 6,
             TailNextAddr = trampolineAddr + 7,
         };
-        // Phase 33 — record into THIS engine's chain table: the
+        // record into THIS engine's chain table: the
         // trampoline lives in this engine's buffer.
         GetOrCreateChainTable(engine).Chains[fid] = chain;
 
@@ -3192,7 +3192,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     /// <summary>
-    /// Phase 33 (Logtalk bring-up) — live-links a batch of newly consulted
+    /// live-links a batch of newly consulted
     /// STATIC predicates into the running query's code space so a later
     /// goal in the SAME query can reach them. The static counterpart of
     /// <see cref="AppendDynamicClauseIncremental"/>: a <c>consult/1</c>
@@ -3243,7 +3243,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 $"[LIVE-LINK] skip(no-manifest) mod={moduleName} n={newStaticClauses.Count}");
             return;
         }
-        // Phase 33 — capture buffer ownership before AppendCode below.
+        // capture buffer ownership before AppendCode below.
         bool ownsHost = EngineOwnsHostBuffer(engine);
 
         // --- SAME transform pipeline as the setup static branch --------
@@ -3323,8 +3323,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Forward references: record this batch's unresolved sites (baked
         // with the undefined sentinel), then re-patch every accumulated
         // site whose callee is now linked. Absolute operand position =
-        // loadOffset + Offset + 1 (skip the Call opcode byte). Phase 33:
-        // the list lives on the per-buffer chain table — its positions are
+        // loadOffset + Offset + 1 (skip the Call opcode byte).
+        // The list lives on the per-buffer chain table — its positions are
         // offsets into THIS engine's buffer.
         var unresolved = GetOrCreateChainTable(engine).LiveConsultUnresolved
             ??= new List<(int, int)>();
@@ -3353,7 +3353,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     /// <summary>
-    /// Phase 33 (Logtalk bring-up) — ensures every dynamic functor that a
+    /// ensures every dynamic functor that a
     /// mid-query consult declared (<c>:- dynamic</c> / <c>:- multifile</c>)
     /// has a live dynamic trampoline in the running query, materialising an
     /// empty one for any that lacks it and linking its already-routed
@@ -3418,7 +3418,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 else if (valueName == "false") _flags.ImplicitDynamic = false;
                 break;
             case "arity_compat":
-                // Phase 30 — consult-time directive form. The ClauseReader's
+                // consult-time directive form. The ClauseReader's
                 // pre-pass already flipped the live lexer for THIS file; this
                 // records it for subsequent consults.
                 if (valueName == "true") _flags.ArityCompat = true;
@@ -3444,7 +3444,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Phase 19+ — walks every clause's body looking for
+    /// <summary>walks every clause's body looking for
     /// <c>assertz(Head)</c>, <c>asserta(Head)</c>, or <c>assert(Head)</c>
     /// with a literal-callable Head (an atom or a compound), and
     /// auto-declares the corresponding functor as dynamic when it has
@@ -3543,14 +3543,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             : clause.Term;
         return head switch
         {
-            // chunk 431: read-through the AST node's cached ids (seeded by
+            // read-through the AST node's cached ids (seeded by
             // TermReader on the assert path) — drops a string-keyed table
             // probe per assert. The lazy intern is transient; ClauseCompiler
             // promotes asserted predicate names permanent when it compiles
             // the clause, and promotion preserves the id.
             AtomTerm a => FunctorTable.Intern(a.ResolveAtomId(), 0),
             CompoundTerm c => c.ResolveFunctorId(),
-            // Chunk 131e: ISO assertz/asserta/retract — a clause head
+            // ISO assertz/asserta/retract — a clause head
             // that isn't callable raises type_error(callable, Head);
             // an unbound head raises instantiation_error.
             VarTerm => throw new Shumway.Core.PrologRuntimeException("instantiation_error"),
@@ -3581,7 +3581,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// shouldn't be mutated directly.</summary>
     public IReadOnlyDictionary<string, ModuleManifest> Modules => _modules;
 
-    /// <summary>Chunk 73 — every <c>:- mode</c> declaration the engine
+    /// <summary>every <c>:- mode</c> declaration the engine
     /// has consulted, aggregated across all modules into one
     /// <see cref="Shumway.Compiler.Modes.ModeTable"/>. Built fresh on
     /// each access so it always reflects the current module set. The
@@ -4389,7 +4389,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// conditions) are running right now. While one is, the OUTER query is suspended
     /// mid-flight — its activation, its Break bytes, its in-flight choice points all live in
     /// the current code space — so a nested query's setup must not treat itself as the safe
-    /// point it usually is: no auto-compaction (chunk 158's "no in-flight choice points hold
+    /// point it usually is: no auto-compaction ("no in-flight choice points hold
     /// addresses into it" premise is false here; the compaction is merely deferred to the
     /// next real query), and no breakpoint re-sync (the armed table describes the OUTER
     /// query's buffer and must keep doing so).</summary>
@@ -5375,7 +5375,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     /// <summary>Snapshot of every registered operator, as
     /// (Precedence, Type, Name) triples. Used by <c>current_op/3</c>
-    /// (chunk 138) to drive its backtracking enumeration.</summary>
+    /// to drive its backtracking enumeration.</summary>
     internal IEnumerable<(int Precedence, OperatorType Type, string Name)> EnumerateOperators()
         => _operators.Enumerate();
 
@@ -5388,7 +5388,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         ArgumentNullException.ThrowIfNull(path);
         Bundle bundle = BundleReader.ReadFromFile(path);
-        // Chunk 247 — pass the bundle's directory so the foreign-
+        // pass the bundle's directory so the foreign-
         // assembly auto-loader can find sibling DLLs (the typical
         // `myapp.shum` + `MyForeigns.dll` layout).
         LoadBundleCore(bundle, System.IO.Path.GetDirectoryName(
@@ -5398,11 +5398,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <summary>Loads an in-memory <see cref="Bundle"/> into this engine —
     /// useful for tests and for in-process pipelines that prefer not to
     /// round-trip through disk. Entries that carry a pre-compiled
-    /// bytecode blob (chunk 38 / chunk 45) get their IL-eligible
+    /// bytecode blob get their IL-eligible
     /// predicates eagerly warmed via <see cref="IlPromotion"/>'s
     /// <c>Warm</c> path; the precompiled clause list is cached on
     /// <see cref="PrecompiledClauseCache"/> so subsequent query setups
-    /// can skip the WAM compile for those clauses (chunk 53).</summary>
+    /// can skip the WAM compile for those clauses.</summary>
     public void LoadBundle(Bundle bundle) => LoadBundleCore(bundle, bundleDir: null);
 
     /// <summary>ADR-035 — write a bundle entry's embedded source to a stable file the
@@ -5506,7 +5506,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private void LoadBundleCore(Bundle bundle, string? bundleDir)
     {
         ArgumentNullException.ThrowIfNull(bundle);
-        // Chunk 247 — auto-register every foreign DLL the linker
+        // auto-register every foreign DLL the linker
         // recorded into the bundle. Each entry is a filename only;
         // we look for it adjacent to the bundle file first, then
         // alongside the executable (AppContext.BaseDirectory), then
@@ -5557,7 +5557,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     compiledIlEntries: null,
                     dynamicSeeds: shmo.DynamicSeeds,
                     nativeBlocks: shmo.NativeBlocks,
-                    operators: shmo.Operators));   // Phase 33 (PrologToC)
+                    operators: shmo.Operators));
             }
             effectiveEntries = combined;
         }
@@ -5574,7 +5574,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         foreach (var entry in effectiveEntries)
         {
-            // Phase 33 (PrologToC) — replay the entry's `:- op/3` definitions
+            // replay the entry's `:- op/3` definitions
             // into the runtime operator table BEFORE loading it. A
             // source-stripped entry otherwise loses its ops entirely (the
             // debug path re-executes them via ConsultString, for which this
@@ -5595,12 +5595,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 } ;
                 if (opType is { } t) DefineOperator(od.Name, od.Priority, t);
             }
-            // Chunk 178: source-less load. When the bundle was built
-            // with --strip (or compiled in Release with chunk 177's
+            // source-less load. When the bundle was built
+            // with --strip (or compiled in Release with
             // source omission), Source is empty and we cannot
             // ConsultString. The entry's CompiledBytecode + Defined
             // metadata carry everything we need — the bytecode is
-            // already runtime-ready (mangled per chunk 176) and the
+            // already runtime-ready (mangled) and the
             // Defined list tells us which functors are public /
             // dynamic / local. Set up a ModuleManifest from the
             // metadata and queue the precompiled predicates for the
@@ -5651,7 +5651,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     if (DebugSession is not null)
                         Debugging.ShumwayDebugHelper.NoteSourceFile(materialised);
                 }
-                // Chunk 440 — consult under the entry's module name so a
+                // consult under the entry's module name so a
                 // module-less file keeps the per-file module identity its
                 // .shmo bytecode was compiled (and mangled) with, instead of
                 // merging into the rolling "user" module.
@@ -5667,14 +5667,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Decode each entry's CompiledModule and stash the predicates
         // for diagnostics. The source-bearing entries also feed
         // IL warmup from here (their PrecompiledClauseCache
-        // substitution remains active — chunk 176 made the .shmo
+        // substitution remains active — made the .shmo
         // bytecode byte-identical to what SetupQueryFromTerm would
         // produce, so the warmed IL delegates' call sites now
         // resolve correctly).
-        // Chunk 192: load persisted IL FIRST (before the Sigil warm
+        // load persisted IL FIRST (before the Sigil warm
         // path below) so RegisterBoundDelegate's first-wins
         // semantics actually let the pre-compiled IL take effect.
-        // Pre-chunk-192 the order was reversed and IlPromotion.Warm
+        // Pre-the order was reversed and IlPromotion.Warm
         // had already invoked Sigil for every promotable predicate
         // by the time the persisted bind ran — the persisted IL was
         // technically loaded but never used.
@@ -5687,7 +5687,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 || !System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
                 continue;
 
-            // Phase 33 T3 — clone + patch + Assembly.Load + delegate binding
+            // clone + patch + Assembly.Load + delegate binding
             // happen ONCE per IL content for the whole process
             // (GetOrLoadPersistedIl, mirroring _loadedNativeLibraries); this
             // engine only replays the per-engine registrations from the cache.
@@ -5703,7 +5703,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (module.IndexGraphs is not null)
                 foreach (var kv in module.IndexGraphs)
                     _persistedIndexGraphs[kv.Key] = kv.Value;
-            // Chunk 402: a region method publishes its members' entry cursors.
+            // a region method publishes its members' entry cursors.
             // The alias marker dispatches the region delegate at the member's
             // entry. Consumed (lowest priority) by the query address map.
             if (module.RegionAliases is not null)
@@ -5745,7 +5745,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Phase 17 — overwrites every build-time atom-id / functor-id
+    /// <summary>overwrites every build-time atom-id / functor-id
     /// / resume-marker constant in <paramref name="ilBytes"/> with the
     /// runtime-process equivalent, in-place. The patch sites carry the
     /// build-process <c>(name, arity)</c> pair plus a recorded absolute
@@ -5756,7 +5756,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// at that offset. Runs BEFORE <c>Assembly.Load</c> so the JIT sees
     /// runtime values as inline IL constants — zero per-dispatch
     /// overhead.</summary>
-    /// <summary>Chunk 225 Stage B.1 — populate the interpreter's
+    /// <summary>Stage B.1 — populate the interpreter's
     /// IlByFunctorId table from <see cref="IlPromotion"/>, then rewrite
     /// every <see cref="Shumway.Core.Opcode.Call"/> site whose callee
     /// already has a registered IL delegate into the equivalent
@@ -5773,7 +5773,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         byte[] queryBytes)
     {
         _diagCallIlCount = 0;
-        // Phase 33 L1 — fresh per-query mid-run rewrite state, and the hook the
+        // fresh per-query mid-run rewrite state, and the hook the
         // promotion store fires when a delegate installs (sync or drained async).
         _promotableCallSites?.Clear();
         _rewriteInterp = interp;
@@ -5809,11 +5809,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         interp.IlByFunctorId = ilTable;
         DiagIlTable(ilTable);
 
-        // Chunk 226 Stage B.2 — build a fid-keyed view of
+        // Stage B.2 — build a fid-keyed view of
         // predicatesByAddress so we can look up the callee's
         // CompiledPredicate by functor id when classifying Call sites
         // as bytecode-only. The same predicate may live under
-        // multiple addresses (the chunk-127 enter_dynamic trampoline
+        // multiple addresses (the enter_dynamic trampoline
         // is at the entry address but the chain bodies sit at later
         // addresses); the functor id is unique.
         var predicateByFid = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
@@ -5913,14 +5913,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     continue;
                 }
 
-                // Phase 33 L1 (Stage B.4) — the site stays a generic Call/Execute
+                // the site stays a generic Call/Execute
                 // because the callee may still earn IL mid-query. Record it (by
                 // callee fid) so the moment the callee's delegate installs, the
                 // site is patched to CallIl/ExecuteIl for the rest of the query.
                 // Persistent-buffer sites only: the query overlay is rebuilt at
                 // the next setup anyway, and its buffer may be replaced mid-query.
                 // Skip dynamic callees — their dispatch must keep feeding the
-                // JitIndexProfile counter inside OnDispatch (chunk 227).
+                // JitIndexProfile counter inside OnDispatch.
                 if (absAddr < _querySplit
                     && (calleePred is null || !IsDynamicPredicate(calleePred)))
                 {
@@ -5933,7 +5933,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         DiagIlRewriteTotal();
     }
 
-    // Phase 33 L1 — generic Call/Execute sites whose callee may promote later,
+    // generic Call/Execute sites whose callee may promote later,
     // indexed by callee fid, in the PERSISTENT buffer. Rebuilt every query setup
     // (see InstallCallIlRewrites); consumed by OnCalleePromoted.
     private Dictionary<int, List<(int AbsAddr, bool IsExecute)>>? _promotableCallSites;
@@ -5945,7 +5945,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private readonly List<WeakReference<Shumway.Interpreter.BytecodeInterpreter>>
         _liveInterps = new();
 
-    /// <summary>Phase 33 L1 — Stage B.4: called (on the engine thread, from
+    /// <summary>Stage B.4: called (on the engine thread, from
     /// <see cref="IlPromotionStore.OnPromotionInstalled"/>) when a delegate is
     /// installed mid-query. Publishes the delegate in the interpreter's direct
     /// <c>IlByFunctorId</c> table and patches the callee's recorded generic call
@@ -5990,8 +5990,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _promotableCallSites.Remove(calleeFid);
     }
 
-    /// <summary>Chunk 414 — diag-build-only (<c>-p:ShumwayDiag=true</c> +
-    /// <c>SHUMWAY_IL_DIAG=1</c>): the chunk-396 per-query IL-dispatch
+    /// <summary>diag-build-only (<c>-p:ShumwayDiag=true</c> +
+    /// <c>SHUMWAY_IL_DIAG=1</c>): the per-query IL-dispatch
     /// diagnostics. All three hooks are stripped from normal builds.</summary>
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private void DiagIlTable(Func<Shumway.Core.Activation, int, bool>?[]? ilTable)
@@ -6013,17 +6013,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 $"[il-diag] CallIl/ExecuteIl rewrites installed this query={_diagCallIlCount}");
     }
 
-    /// <summary>Chunk 226/227 — true when the predicate is a dynamic
+    /// <summary>True when the predicate is a dynamic
     /// one (its bytecode begins with <see cref="Shumway.Core.Opcode.EnterDynamic"/>
-    /// per chunk 159). Dynamic predicates must keep using the
+    ///). Dynamic predicates must keep using the
     /// <see cref="Shumway.Core.Opcode.Call"/> / <see cref="Shumway.Core.Opcode.Execute"/>
     /// path so the OnDispatch hook can bump the JitIndexProfile
-    /// counter (chunk 75) that drives re-indexing.</summary>
+    /// counter that drives re-indexing.</summary>
     private static bool IsDynamicPredicate(Shumway.Compiler.Wam.CompiledPredicate pred)
         => pred.Bytecode.Length > 0
             && pred.Bytecode[0] == (byte)Shumway.Core.Opcode.EnterDynamic;
 
-    // ---- Phase 33 T3 — process-wide persisted-IL cache ---------------------
+    // ---- process-wide persisted-IL cache ---------------------
     // Loading a bundle entry's persisted IL means: clone + patch the assembly
     // image, Assembly.Load, reflect the P_* methods, CreateDelegate each. All
     // of that output is engine-agnostic — compiled IL takes Activation as a
@@ -6099,7 +6099,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     private static PersistedIlModule? LoadPersistedIl(BundleEntry entry)
     {
-        // Phase 17 — overwrite each baked build-time atom/functor id sentinel
+        // overwrite each baked build-time atom/functor id sentinel
         // with the runtime-process id BEFORE handing the bytes to
         // Assembly.Load. Once the assembly is loaded its IL is read-only
         // mapped, so the patch must happen on the byte buffer (a copy so we
@@ -6117,7 +6117,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Method-name layout from PersistedIlBuilder:
         //   P_{slot}_{functorId}_{sanitisedName}
-        // Phase 17 — when CompiledIlEntries is present (V3+ bundles), use the
+        // when CompiledIlEntries is present (V3+ bundles), use the
         // per-method (name, arity) table to intern the name in THIS process
         // and bind the delegate under the runtime functor id. Falls back to
         // parsing the build-time functor id from the method name only for
@@ -6169,7 +6169,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (graphByMethod is not null
                 && graphByMethod.TryGetValue(method.Name, out var graphBytes))
                 (indexGraphs ??= new())[functorId] = graphBytes;
-            // Chunk 402: functorId here is the region ROOT's runtime fid; each
+            // functorId here is the region ROOT's runtime fid; each
             // member's runtime fid maps to a marker at the member's entry cursor.
             if (regionMembersByMethod is not null
                 && regionMembersByMethod.TryGetValue(method.Name, out var rMembers))
@@ -6184,7 +6184,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
         }
 
-        // Populate the static delegates array (chunk 71 multi-clause
+        // Populate the static delegates array (multi-clause
         // self-reference). Once per loaded assembly — the field lives on the
         // loaded type, shared by every engine using this module.
         var dF = type.GetField(
@@ -6205,8 +6205,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         };
     }
 
-    // ---- Phase 33 T4 — process-wide static-region link cache ---------------
-    // The static region links once per ENGINE (chunk 151b caches it in
+    // ---- process-wide static-region link cache ---------------
+    // The static region links once per ENGINE (caches it in
     // _staticLink), but an EnginePool loading the same bundle N times still
     // ran N identical full-program links on each engine's first query. The
     // link is a pure function of the ordered predicate list (bytecode +
@@ -6217,7 +6217,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // links fresh — never a wrong hit. LinkResult is read-only downstream:
     // its bytecode is COPIED into each engine's persistent buffer (per-engine
     // Call→CallIl patches land in the copy), and static switch tables are
-    // never mutated (chunk-155 in-place mutation applies to dynamics only).
+    // never mutated (in-place mutation applies to dynamics only).
     private static readonly Dictionary<string, Shumway.Compiler.Wam.Linker.LinkResult>
         _sharedStaticLinks = new();
     private static readonly object _sharedStaticLinksLock = new();
@@ -6382,7 +6382,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 178: registers a source-less bundle entry's
+    /// <summary>registers a source-less bundle entry's
     /// predicates with the engine without going through
     /// <see cref="ConsultString"/>. Populates the per-module
     /// <see cref="ModuleManifest"/> from the entry's
@@ -6395,7 +6395,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// the static-link region so call sites resolve identically to
     /// the source-bearing path. The bytecode is byte-identical to
     /// what <see cref="SetupQueryFromTerm"/> would have produced
-    /// (chunk 176's ModuleRewrite parity).</summary>
+    ///.</summary>
     /// <summary>Decodes a bundle entry's <see cref="BundleEntry.CompiledBytecode"/>,
     /// remaps its module-local literal ids into the engine's shared pools (see
     /// <see cref="RemapPrecompiledLiterals"/>), records the module, and warms its IL
@@ -6421,7 +6421,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _precompiledModules[entry.ModuleName] = module;
         // Warm IL only when the host opted into Tier 1 (Threshold > 0). Warming under
         // the default threshold=0 would force Sigil over every eligible predicate at
-        // load — wasteful when the user wanted Tier 0, and it hits chunk-189/190 IL
+        // load — wasteful when the user wanted Tier 0, and it hits IL
         // corner cases the runtime promotion path avoids under threshold 0.
         bool warmIl = IlPromotion.Threshold > 0;
         foreach (var pred in module.Predicates)
@@ -6468,7 +6468,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     _dynamicClauses[fid] = new List<Clause>();
             }
             else // Local — record the bare fid so query setup can fold
-                 // it into the module's locals (chunk 209).
+                 // it into the module's locals.
             {
                 if (!_precompiledModuleLocals.TryGetValue(entry.ModuleName, out var localSet))
                 {
@@ -6479,7 +6479,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
         }
 
-        // Chunk 209: seed _dynamicClauses with the source-declared
+        // seed _dynamicClauses with the source-declared
         // clauses of every `:- dynamic foo/N.` predicate. Mirrors what
         // ConsultString does (PrologEngine.cs:3318-3341) — without
         // this, dispatch / clause/2 / retract would see an empty
@@ -6501,7 +6501,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // call (evictable on the first mutation).
             if (seed.EncodedClauses.Count > 0)
                 IlPromotion.MarkPrime(fid);
-            // Chunk 440 — remember which module these clauses came from.
+            // remember which module these clauses came from.
             // The entry's static bytecode was mangled by ShmoCompiler
             // under entry.ModuleName, so the query-setup rewrite of these
             // rehydrated clauses must run under the SAME module context
@@ -6547,13 +6547,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // new predicates.
         _staticLink = null;
         _staticPredicateCache.Clear();
-        _skipCompileMergedCache = null;   // chunk 430 — static cache cleared
+        _skipCompileMergedCache = null;   // static cache cleared
         InvalidatePersistent();
     }
 
     /// <summary>Per-engine cache of precompiled predicates from any
     /// bundle blob loaded with <see cref="LoadBundle(Bundle)"/>
-    /// (chunk 53). The query-setup path consults this cache before
+    ///. The query-setup path consults this cache before
     /// running ModuleCompiler over the consulted source — for any
     /// predicate whose functor id is in the cache, the cached
     /// <see cref="Shumway.Compiler.Wam.CompiledPredicate"/> is reused
@@ -6563,9 +6563,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         => _precompiledClauseCache;
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _precompiledClauseCache = new();
 
-    /// <summary>Chunk 178: pre-compiled predicates from source-less
+    /// <summary>pre-compiled predicates from source-less
     /// bundle entries. Their bytecode is already mangled + runtime-
-    /// ready (ShmoCompiler in chunk 176 applies the same transforms
+    /// ready (ShmoCompiler in applies the same transforms
     /// SetupQueryFromTerm would), so they bypass the AST → ModuleCompiler
     /// pipeline entirely and slot straight into the static-link region.
     /// Populated by <see cref="LoadEntryFromBytecode"/> on
@@ -6582,7 +6582,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// stripped indexed predicate resolves its entry clause without a WAM body.</summary>
     private readonly Dictionary<int, byte[]> _persistedIndexGraphs = new();
 
-    /// <summary>Chunk 402 — region member-entry aliases, keyed by the member's runtime
+    /// <summary>region member-entry aliases, keyed by the member's runtime
     /// functor id; the value is <c>EncodeResumeMarker(regionRootRuntimeFid, entryCursor)</c>.
     /// Populated at LoadBundle from each region method's <see cref="Shumway.Compiler.Il.
     /// IlPersistedEntry.RegionMembers"/> table. Injected into the query address map
@@ -6591,15 +6591,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// region method at the member's entry cursor.</summary>
     private readonly Dictionary<int, int> _regionMemberAliases = new();
 
-    /// <summary>Chunk 230 — read-only view of
+    /// <summary>read-only view of
     /// <see cref="_precompiledStaticPredicates"/>. Lets
     /// <see cref="BundleWriter.CompileEntryToIl"/> see the predicates
-    /// loaded from a source-less bundle entry (the chunk-178 path),
+    /// loaded from a source-less bundle entry (the path),
     /// not just the ones populated by ConsultString.</summary>
     public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
         PrecompiledStaticPredicates => _precompiledStaticPredicates;
 
-    /// <summary>Per-engine cache of compiled dynamic predicates (chunk 68).
+    /// <summary>Per-engine cache of compiled dynamic predicates.
     /// The query-setup path consults this cache alongside
     /// <see cref="_precompiledClauseCache"/> so the ModuleCompiler can
     /// skip recompiling a dynamic predicate's bytecode + switch tables
@@ -6614,7 +6614,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _dynamicPredicateCache = new();
 
     /// <summary>Per-engine cache of compiled <em>static</em> predicates
-    /// (chunk 82). Static predicates are immutable between consults, so
+    ///. Static predicates are immutable between consults, so
     /// once compiled their bytecode is reused on every subsequent query
     /// instead of being recompiled from source — which is the dominant
     /// cost a meta-call (findall / call / forall, each a fresh query
@@ -6627,7 +6627,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _staticPredicateCache = new();
 
     // ====================================================================
-    // Chunk 430 — per-query setup caching. Query setup used to re-derive
+    // per-query setup caching. Query setup used to re-derive
     // stable state on every query: the full transform chain over every
     // consulted module (prelude included), three dictionary merges, and a
     // bare-alias loop doing two Substring allocs + an intern per linked
@@ -6636,19 +6636,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // rebuild.
     // ====================================================================
 
-    /// <summary>Chunk 430 — derivation generation. Bumped by every mutation
+    /// <summary>derivation generation. Bumped by every mutation
     /// that can change the per-module transform pipeline's output: consult,
     /// bundle load, abolish, restore_state and every dynamic-functor-set
     /// change funnel through <see cref="InvalidatePersistent"/> (which
     /// bumps), and the implicit_dynamic auto-promotion in
     /// <see cref="EnsureDynamic"/> (which doesn't invalidate the persistent
     /// buffer) bumps explicitly. Bumping more often than strictly necessary
-    /// (e.g. on the chunk-158 compaction) is safe — it just costs one
+    /// (e.g. on the compaction) is safe — it just costs one
     /// re-transform at the next query setup, which was the per-query status
     /// quo before this chunk.</summary>
     private int _derivationGen;
 
-    /// <summary>Chunk 430 — cached output of the static transform chain
+    /// <summary>cached output of the static transform chain
     /// (MetaWrapperUnfold → ClausePipeline → ModuleRewrite) over every
     /// consulted module, plus the user-module locals set and the set of
     /// rewritten-clause head functor ids. A pure function of the module
@@ -6662,7 +6662,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private HashSet<int>? _staticRewriteHeadFids;
     private int _staticRewriteGen = -1;
 
-    /// <summary>Chunk 440 — per-module locals sets computed by the static
+    /// <summary>per-module locals sets computed by the static
     /// rewrite pass (the same `locals` each module's ModuleRewrite context
     /// gets), cached alongside <see cref="_staticRewriteUserLocals"/>. The
     /// dynamic-clause rewrite consults it so a dynamic clause attributed to
@@ -6672,18 +6672,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// module name.</summary>
     private Dictionary<string, HashSet<int>>? _staticRewriteModuleLocals;
 
-    /// <summary>Chunk 440 — module attribution for dynamic predicates whose
+    /// <summary>module attribution for dynamic predicates whose
     /// clauses came from a named module: bundle dynamic-seed rehydration
     /// (<see cref="LoadEntryFromBytecode"/>) and source-bearing bundle
     /// entries consulted under the entry's module name. A fid absent here
     /// rewrites under the default user context (runtime asserts, plain
-    /// ConsultString — unchanged behaviour). Chunk 209 used to sidestep
+    /// ConsultString — unchanged behaviour). used to sidestep
     /// this by forcing every module-less .shmo to module "user", which made
     /// two module-less files unlinkable (duplicate_module) and aliased
     /// their locals.</summary>
     private readonly Dictionary<int, string> _dynamicSeedModule = new();
 
-    /// <summary>Chunk 430 — per-functor cache of the dynamic clause lists'
+    /// <summary>per-functor cache of the dynamic clause lists'
     /// transform + rewrite (ClausePipeline + ModuleRewrite under the
     /// user-module dynamic context, including any MetaTransform helper
     /// clauses the pipeline synthesised, whose head fids are recorded
@@ -6695,7 +6695,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _dynamicRewriteCache = new();
     private int _dynamicRewriteGen = -1;
 
-    /// <summary>Chunk 430 — merged skip-compile cache (the per-query merge
+    /// <summary>merged skip-compile cache (the per-query merge
     /// of <see cref="_precompiledClauseCache"/> +
     /// <see cref="_staticPredicateCache"/> + <see cref="_dynamicPredicateCache"/>,
     /// dynamic winning, exactly the precedence the per-query merge used).
@@ -6705,21 +6705,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// (<see cref="DropDynamicPredicateCacheEntry"/>).</summary>
     private Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _skipCompileMergedCache;
 
-    /// <summary>Chunk 430 — link metadata derived from
+    /// <summary>link metadata derived from
     /// <see cref="_staticLink"/> + <see cref="_dynamicLink"/>:
     /// <see cref="_persistentAddressesCache"/> is the merged REAL address
     /// map (fed to the query linker as external symbols — it must NOT
     /// contain aliases, or a query call site to a module-local predicate's
     /// bare name would link-resolve and break module visibility);
     /// <see cref="_persistentAddressBaseCache"/> additionally carries the
-    /// bare-name aliases for module-local predicates (the chunk-86
+    /// bare-name aliases for module-local predicates (the
     /// meta-call alias loop, hoisted out of the per-query path);
     /// <see cref="_persistentPredsByAddressCache"/> is the merged
     /// predicates-by-address map. All three are rebuilt exactly when the
     /// persistent regions are rebuilt (<c>builtPersistentNow</c>); every
     /// <see cref="_staticLink"/> invalidation also forces that via
     /// <see cref="InvalidatePersistent"/>, and the link results themselves
-    /// are immutable (the chunk-155c switch-table mirror mutates
+    /// are immutable (the switch-table mirror mutates
     /// <c>_dynamicLink.SwitchTables</c> only, which is why the merged
     /// switch-table list is still rebuilt per query).</summary>
     private Dictionary<int, int>? _persistentAddressesCache;
@@ -6732,7 +6732,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// embeds those ids.</summary>
     private readonly Shumway.Compiler.Wam.LiteralPools _literalPools = new();
 
-    /// <summary>Chunk 427 — runtime-assert compile cache. The per-assert
+    /// <summary>runtime-assert compile cache. The per-assert
     /// pipeline used to build a fresh <see cref="ModuleRewrite.Context"/>
     /// (+ HashSet) and ClauseCompiler per call; both are safe to reuse
     /// (ClauseCompiler re-binds its pool refs at the top of every Compile;
@@ -6742,13 +6742,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private Shumway.Compiler.Wam.ClauseCompiler? _assertClauseCompiler;
     private ModuleRewrite.Context? _assertDynCtx;
 
-    /// <summary>Chunk 427 — the literal-pool lengths the live query's
+    /// <summary>the literal-pool lengths the live query's
     /// interpreter currently holds; recorded at query setup and after each
     /// refresh. <see cref="RefreshLiteralPoolsIfGrown"/> compares against
     /// these (not "did this one compile grow the pool") so a compile that
     /// interned a literal and then bailed to a fallback path can't leave a
     /// later same-literal compile thinking the interpreter is current.</summary>
-    /// <summary>Chunk 427 / Phase 33 — the literal-pool lengths each
+    /// <summary>The literal-pool lengths each
     /// engine's interpreter was built (or last refreshed) with, PER
     /// ENGINE. Host-level counters broke under the mutation broadcast:
     /// refreshing engine A updated them, so engine B's refresh compared
@@ -6763,7 +6763,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// bundle load). A query links only its transient region against this.</summary>
     private Shumway.Compiler.Wam.Linker.LinkResult? _staticLink;
 
-    /// <summary>Chunk 151b: the persistent program buffer —
+    /// <summary>the persistent program buffer —
     /// <c>prefix + static + dynamic</c>. Owned by PrologEngine across
     /// queries; <c>assertz</c> / <c>asserta</c> extend it in-place
     /// (capacity-doubled). Each query's
@@ -6788,7 +6788,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private Shumway.Compiler.Wam.Linker.LinkResult? _dynamicLink;
 
 
-    /// <summary>Chunk 151b: when a query is in flight, the address at
+    /// <summary>when a query is in flight, the address at
     /// which the per-query overlay begins (the
     /// <see cref="ProgramView"/>'s <c>Split</c>). Persistent growth
     /// mid-query must stay below this, otherwise the query region's
@@ -6798,12 +6798,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// growth.</summary>
     private int _querySplit = -1;
 
-    /// <summary>Chunk 151b: how much address space to reserve between
+    /// <summary>how much address space to reserve between
     /// the persistent program's end and the per-query region's start.
     /// Mid-query <c>assertz</c> may extend persistent up to this much
     /// before the persistent / query address ranges would collide; an
     /// assert that would overflow this gap forces a rebuild
-    /// (effectively reverting to the chunk-150 within-query free-list
+    /// (effectively reverting to the within-query free-list
     /// model for that one assertz). 64 MB is more than any realistic
     /// per-query dynamic burst needs.</summary>
     private const int PersistentToQueryGap = 64 * 1024 * 1024;
@@ -6816,7 +6816,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _persistentProgram = null;
         _persistentLength = 0;
         _dynamicLink = null;
-        // Chunk 430 — every mutation that can change the per-module
+        // every mutation that can change the per-module
         // transform derivation funnels through here (consult, bundle
         // load, abolish, restore_state, dynamic-functor-set changes);
         // advance the derivation generation so the static / dynamic
@@ -6825,7 +6825,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // they are rebuilt whenever the persistent buffer is
         // (builtPersistentNow), which this method forces.
         _derivationGen++;
-        // Phase 33 — chain state + free-list describe offsets in the
+        // chain state + free-list describe offsets in the
         // now-invalidated buffer; start a fresh table for the rebuild.
         // Live engines still running on the old buffer keep their own
         // table through _engineChainTables — invalidation never desyncs
@@ -6833,11 +6833,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _dynChainTable = new DynChainTable();
     }
 
-    /// <summary>Phase 11 chunk 157 — user-facing entry point for
+    /// <summary>user-facing entry point for
     /// persistent-buffer compaction. Invalidates the cached dynamic-
     /// region link so the next query setup rebuilds it from current
     /// <c>_dynamicClauses</c>. After a long run of in-place
-    /// mutations (chunks 155b-f), the buffer accumulates clause
+    /// mutations, the buffer accumulates clause
     /// bodies and chain entries that aren't reachable from any
     /// current clause; compaction reclaims them by starting the
     /// next dynamic region's layout from scratch. Reachable
@@ -6851,14 +6851,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _persistentMutationsSinceCompact = 0;
     }
 
-    /// <summary>Phase 12 chunk 158 — mutation counter that drives
+    /// <summary>mutation counter that drives
     /// the auto-compaction watermark. Bumped on every dynamic-store
     /// mutation (assertz / asserta / retract / abolish); reset by
     /// <see cref="CompactDynamicCodeBuffer"/> and by the auto-
     /// compaction trigger in <c>SetupQueryFromTerm</c>.</summary>
     private long _persistentMutationsSinceCompact;
 
-    /// <summary>Phase 12 chunk 158 — how many dynamic-store mutations
+    /// <summary>how many dynamic-store mutations
     /// the engine accumulates before automatically compacting the
     /// persistent buffer at the next query's setup. Default 1000;
     /// host code can raise it (large batch workloads where rebuild
@@ -6868,14 +6868,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// callable via <c>compact_dynamic_buffer/0,1</c>.</summary>
     public long CompactWatermark { get; set; } = 1000;
 
-    /// <summary>Phase 12 chunk 158 — diagnostic read of the mutation
+    /// <summary>diagnostic read of the mutation
     /// counter (mainly for tests that need to verify auto-compaction
     /// fires at the right moment).</summary>
     public long PersistentMutationsSinceCompact =>
         _persistentMutationsSinceCompact;
 
     /// <summary>Canonical encodings of every (subgoal, answer) pair the
-    /// tabling driver has recorded (chunk 106). Backs the <c>'$tbl_seen'/1</c>
+    /// tabling driver has recorded. Backs the <c>'$tbl_seen'/1</c>
     /// builtin — an O(1) duplicate-answer test for the semi-naive fixpoint.
     /// Persists for the engine's life, alongside the tabling dynamic
     /// predicates it mirrors.</summary>
@@ -6889,7 +6889,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// (<c>abolish_all_tables/0</c>).</summary>
     internal void ClearTablingKeys() => _tablingSeen.Clear();
 
-    /// <summary>Stack of in-flight findall solution buffers (chunk 83).
+    /// <summary>Stack of in-flight findall solution buffers.
     /// MetaTransform rewrites <c>findall/3</c> with a callable goal into a
     /// goal sequence driven by the <c>'$findall_*'</c> builtins, which run
     /// in this engine: <c>'$findall_push'</c> pushes a frame here,
@@ -6897,7 +6897,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>'$findall_collect'</c> pops it. Solutions must survive the
     /// <c>fail</c>-driven backtracking that enumerates the goal, so they are
     /// held off the WAM heap. Each frame entry is one of two backtrack-safe
-    /// forms: a <see cref="Cell"/>[] cell image (Phase 33 I2b — the fast
+    /// forms: a <see cref="Cell"/>[] cell image (the fast
     /// findall path, no per-node managed object) or a managed <see cref="Term"/>
     /// AST (bagof/setof, which inspect the terms for witness grouping, and the
     /// findall value-leaf fallback). A stack so nested findall calls each get
@@ -6916,8 +6916,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _findallStack[^1].Add(solution);
     }
 
-    /// <summary>Records a solution as a backtrack-safe cell image (Phase 33 I2b,
-    /// the fast findall path).</summary>
+    /// <summary>Records a solution as a backtrack-safe cell image
+    /// (the fast findall path).</summary>
     internal void RecordFindallSnapshot(Cell[] snapshot)
     {
         if (_findallStack.Count == 0)
@@ -6946,7 +6946,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         // Every dynamic-store mutation funnels through here (assertz,
         // asserta, retract, abolish), so this is the one place the
-        // ADR-015 generation clock has to advance and the chunk-158
+        // ADR-015 generation clock has to advance and the
         // auto-compaction mutation counter ticks.
         _dbGeneration.Value++;
         _persistentMutationsSinceCompact++;
@@ -6981,17 +6981,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // reads this host-lifetime set (shared into every per-query engine),
         // so the fallback path takes over from the very next clause entry.
         _mutatedDynamicFids.Add(functorId);
-        // Chunk 430 — the functor's clause list changed, so its cached
+        // the functor's clause list changed, so its cached
         // transformed/rewritten clauses are stale too.
         _dynamicRewriteCache.Remove(functorId);
     }
 
-    /// <summary>Chunk 430 — removes a dynamic predicate's compiled-bytecode
+    /// <summary>removes a dynamic predicate's compiled-bytecode
     /// cache entry and keeps the merged skip-compile cache in step, falling
     /// back to the static / precompiled tier's entry when one exists (the
     /// same precedence the merge uses: precompiled &lt; static &lt;
     /// dynamic). Used by <see cref="InvalidateDynamicCache"/> and the
-    /// chunk-75 JIT hotness-flip drops at query setup.</summary>
+    /// JIT hotness-flip drops at query setup.</summary>
     private void DropDynamicPredicateCacheEntry(int functorId)
     {
         _dynamicPredicateCache.Remove(functorId);
@@ -7236,7 +7236,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// (the largest predicate-entry address ≤ the given address) via
     /// the current query's link-time predicates-by-address map.
     /// Used by the runtime error path to assemble a Prolog-side stack
-    /// trace (chunk 51).</summary>
+    /// trace.</summary>
     private IReadOnlyList<(string Name, int Arity)> ResolveAddressesToFunctors(
         IEnumerable<int> addresses)
     {
@@ -7271,7 +7271,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// at index 0, its caller at index 1, and so on. Exposed for
     /// debugging and used internally to populate
     /// <see cref="LastErrorStackTrace"/> when a runtime error escapes
-    /// (chunks 51 + 53).</summary>
+    ///.</summary>
     private (IReadOnlyList<(string, int)> Plain, IReadOnlyList<StackFrame> WithPositions)
         CaptureStackTrace(Activation engine)
     {
@@ -7286,11 +7286,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     /// <summary>Variant of <see cref="ResolveAddressesToFunctors"/>
-    /// that also returns each frame's source position (chunk 53).
+    /// that also returns each frame's source position.
     /// Returned as a pair: the legacy <c>(name, arity)</c> tuples for
     /// <see cref="LastErrorStackTrace"/> back-compat, plus the
     /// position-enriched <see cref="StackFrame"/> list for the new
-    /// chunk-53 surface.</summary>
+    /// surface.</summary>
     private (IReadOnlyList<(string Name, int Arity)> Plain,
              IReadOnlyList<StackFrame> WithPositions)
         ResolveAddressesWithPositions(IEnumerable<int> addresses)
@@ -7315,7 +7315,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (name == "__query__") continue;
             plain.Add((name, arity));
             // Locate the most recent Meta(DbgInfo) opcode at or before the
-            // PC inside this predicate's bytecode (chunk 55). Its payload
+            // PC inside this predicate's bytecode. Its payload
             // is the clause index; we use it to pick the precise per-clause
             // source position from ClauseSourcePositions, falling back to
             // the predicate's first-clause position when no Meta opcode is
@@ -7423,7 +7423,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     /// <summary>Runs an interpreter step, intercepting <c>throw/1</c> for
-    /// in-engine <c>catch/3</c> (chunk 85). When the thrown ball unifies
+    /// in-engine <c>catch/3</c>. When the thrown ball unifies
     /// with the catcher of an active catch frame, the engine rolls back to
     /// that frame and resumes at its recovery goal; the loop repeats if
     /// recovery (or the continuation) throws again. A ball that no frame
@@ -7532,7 +7532,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         else
         {
-            // Chunk 131e: ISO §8.15.3.3 — a non-callable Recovery goal
+            // ISO §8.15.3.3 — a non-callable Recovery goal
             // is type_error(callable, Recovery); an unbound one is
             // instantiation_error.
             if (goal.Tag == Tag.Ref)
@@ -7555,7 +7555,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             "catch/3 recovery helper predicate has no compiled address.");
     }
 
-    /// <summary>Loads the CLP(FD) constraint library (chunk 89) into this
+    /// <summary>Loads the CLP(FD) constraint library into this
     /// engine, making the finite-domain constraints — <c>#=</c>, <c>#\=</c>,
     /// <c>#&lt;</c>, <c>#&gt;</c>, <c>#=&lt;</c>, <c>#&gt;=</c>, <c>in</c>,
     /// <c>ins</c> — and their operators available to subsequently consulted
@@ -7567,7 +7567,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         MarkModuleNonDebuggable(Clpfd.ModuleName);   // ADR-035 — a library, not the user's code
     }
 
-    /// <summary>Loads the CLP(R) constraint library (chunk 99) into this
+    /// <summary>Loads the CLP(R) constraint library into this
     /// engine, making linear-equality constraints over the reals available
     /// through the <c>{Constraint}</c> wrapper. CLP(R) is opt-in: an engine
     /// that never calls this carries none of the library's weight.
@@ -7712,7 +7712,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private readonly Dictionary<string, NativeBlockEntry> _nativeBlocks = new();
 
     private int _nativeBlockConsultSeq;
-    // Phase 33 — the engine's monotonic synthesized-helper sequence: every
+    // the engine's monotonic synthesized-helper sequence: every
     // consult/assert transform on this engine draws unique helper ids, so a
     // second consult's `$disj_N` can never collide with the first's in the same
     // module. Per-engine (not global) so the atom space stays bounded across
@@ -7732,7 +7732,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// Tier-0 win until the ADR's stage (b) lands. Set before consulting.</summary>
     public bool EnableInlineIte { get; set; }
 
-    // Phase 33 D4 → D1 — the per-engine NATIVE ARENA: a chunked unmanaged bump
+    // the per-engine NATIVE ARENA: a chunked unmanaged bump
     // allocator with mark/restore, serving every call-scoped native buffer a
     // `:- native` P/Invoke needs — out-scalar/out-string cells (D4), and now
     // (D1) the whole t_reftype graph: nodes, pars arrays and char* buffers.
@@ -7787,7 +7787,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    // Phase 33 A4 — the per-dispatch block lookup keyed by ATOM ID: '$native_run'
+    // the per-dispatch block lookup keyed by ATOM ID: '$native_run'
     // reads the block-name register as a raw atom cell (no Term materialization)
     // and probes this int-keyed cache instead of hashing the name string per call.
     // Populated lazily; cleared whenever a block is (re)registered.
@@ -8099,7 +8099,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         };
     }
 
-    /// <summary>Save-state chunk 264 — writes a snapshot of this engine's
+    /// <summary>Save-state writes a snapshot of this engine's
     /// state to <paramref name="path"/> as a V6 .shum bundle.
     ///
     /// <para>Full mode (<paramref name="dynamicOnly"/> = false, the
@@ -8123,7 +8123,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         BundleWriter.WriteToFile(BuildSnapshotBundle(dynamicOnly), path);
     }
 
-    /// <summary>Save-state chunk 264 — in-memory variant returning the
+    /// <summary>Save-state in-memory variant returning the
     /// serialized bundle bytes. Used by tests; the file-path overload
     /// is what user code typically calls.</summary>
     public byte[] SaveStateToBytes(bool dynamicOnly = false)
@@ -8152,7 +8152,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return new Bundle(Array.Empty<BundleEntry>(), foreignAssemblies: null, snapshot);
     }
 
-    /// <summary>Save-state chunk 264 — restores a snapshot previously
+    /// <summary>Save-state restores a snapshot previously
     /// written by <see cref="SaveState"/>. Full-mode snapshots reset
     /// this engine's state first (clearing every consulted module,
     /// dynamic clause, and operator declaration not in the parser
@@ -8171,7 +8171,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         RestoreStateFromBundle(BundleReader.ReadFromFile(path));
     }
 
-    /// <summary>Save-state chunk 264 — in-memory variant of
+    /// <summary>Save-state in-memory variant of
     /// <see cref="RestoreState"/>; reads from a bundle byte array.</summary>
     public void RestoreStateFromBytes(byte[] data)
     {
@@ -8189,7 +8189,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (!snap.DynamicOnly)
         {
             // Full reset: drop every consulted module (keep only the
-            // default 'user' module), every dynamic clause, the chunk-82
+            // default 'user' module), every dynamic clause, the
             // static-predicate cache, the cached static link region, the
             // persistent dynamic buffer, and the consult-history log.
             // Then re-consult the prelude (the ctor's first step) and
@@ -8200,7 +8200,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             _dynChainTable = new DynChainTable();
             _staticPredicateCache.Clear();
             _dynamicPredicateCache.Clear();
-            _skipCompileMergedCache = null;   // chunk 430 — both caches cleared
+            _skipCompileMergedCache = null;   // both caches cleared
             _precompiledStaticPredicates.Clear();
             _staticLink = null;
             InvalidatePersistent();
@@ -8218,7 +8218,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // (which needs a live Activation) and just bookkeep via Assertz +
         // invalidate the persistent buffer once at the end. The next
         // query rebuilds dispatch from scratch and sees every restored
-        // clause through the normal chunk-126 trampoline path.
+        // clause through the normal trampoline path.
         bool anyRestored = false;
         foreach (var seed in snap.DynamicClauses)
         {
@@ -8242,7 +8242,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// up front so any <c>:- op</c> declarations take effect immediately; the
     /// returned clause stream is sorted into module-local storage and a final
     /// compile happens at query time.</para></summary>
-    /// <summary>Chunk 235 — public file-loading entry, the embedding-API
+    /// <summary>public file-loading entry, the embedding-API
     /// counterpart of the REPL's local <c>ConsultFile</c> and the
     /// <c>consult/1</c> / <c>reconsult/1</c> builtins. Routes by
     /// extension: <c>.shum</c> goes through
@@ -8405,7 +8405,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// resolve against.</summary>
     private string? _consultBaseDir;
 
-    /// <summary>Chunk 236 — classical <c>reconsult/1</c> semantics: for
+    /// <summary>classical <c>reconsult/1</c> semantics: for
     /// every <c>Name/Arity</c> the file defines in its target module,
     /// abolish any pre-existing clauses (static <em>and</em> dynamic),
     /// then load the file. Predicates the file doesn't mention are left
@@ -8463,7 +8463,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 236 — light reader pass over a source string,
+    /// <summary>light reader pass over a source string,
     /// returning the target module name (the <c>:- module/1</c>
     /// directive's argument, or <see cref="DefaultModuleName"/> if
     /// absent) and the set of head functor ids of every non-directive
@@ -8493,7 +8493,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return (moduleName, heads);
     }
 
-    /// <summary>Chunk 236 — abolishes the named functor in the given
+    /// <summary>abolishes the named functor in the given
     /// module: drops every matching clause from the module manifest
     /// (and removes the functor from any companion sets:
     /// PublicFunctors / DiscontiguousFunctors / MultifileFunctors /
@@ -8528,12 +8528,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Compiled-code caches must be dropped so the next query
         // recompiles against the trimmed manifest.
         _staticPredicateCache.Clear();
-        _skipCompileMergedCache = null;   // chunk 430 — static cache cleared
+        _skipCompileMergedCache = null;   // static cache cleared
         _staticLink = null;
         InvalidatePersistent();
     }
 
-    /// <summary>Chunk 237 — registers every method on
+    /// <summary>registers every method on
     /// <paramref name="instance"/> that carries a
     /// <see cref="PrologPredicateAttribute"/>, binding it as a
     /// foreign Prolog predicate. The method's C# signature must be
@@ -8547,13 +8547,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// resulting <c>Name/Arity</c> collides with a previously
     /// registered builtin (the existing builtin would silently win
     /// otherwise — confusing during development).</para></summary>
-    /// <summary>Chunk 238 — per-engine custom term converters
+    /// <summary>per-engine custom term converters
     /// registered via <see cref="RegisterConverter{T}"/>. Lazily
     /// allocated; null when the engine only uses the built-in
     /// scalar mappings.</summary>
     private Dictionary<Type, (object ToTerm, object FromTerm)>? _userConverters;
 
-    /// <summary>Chunk 238 — register a custom C#-type ↔ Prolog-term
+    /// <summary>register a custom C#-type ↔ Prolog-term
     /// pair for <typeparamref name="T"/>. Takes precedence over the
     /// built-in scalar conversions (so a host can override the
     /// default <c>string</c> → <see cref="StringTerm"/> mapping with,
@@ -8568,7 +8568,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _userConverters[typeof(T)] = (toTerm, fromTerm);
     }
 
-    /// <summary>Chunk 238 — converts <paramref name="value"/> to a
+    /// <summary>converts <paramref name="value"/> to a
     /// Prolog <see cref="Term"/>. Resolution order: a user converter
     /// for <typeparamref name="T"/> if registered, then the built-in
     /// scalar mapping (<see cref="TermConverters"/>). Throws
@@ -8586,7 +8586,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return result;
         if (CompositeConverters.TryToTerm<T>(this, value, out result))
             return result;
-        // Chunk 241: convention discovery — a generator-emitted (or
+        // convention discovery — a generator-emitted (or
         // hand-written) ToPrologTerm(engine) on T.
         if (ConventionConverters.TryToTerm<T>(this, value, out result))
             return result;
@@ -8596,7 +8596,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             + "or add [PrologTerm] to a partial type to get generated converters.");
     }
 
-    /// <summary>Chunk 238 — inverse of <see cref="ToTerm{T}"/>:
+    /// <summary>inverse of <see cref="ToTerm{T}"/>:
     /// extracts a <typeparamref name="T"/> from <paramref name="term"/>.
     /// User converters win over the built-in mappings.</summary>
     public T FromTerm<T>(Term term)
@@ -8619,7 +8619,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             + "or add [PrologTerm] to a partial type to get generated converters.");
     }
 
-    /// <summary>Chunk 239 — reflective bridge: invoke
+    /// <summary>reflective bridge: invoke
     /// <see cref="ToTerm{T}"/> when the element type is only known
     /// at runtime (the path the collection / tuple / nullable /
     /// dictionary handlers take to recurse into element types).
@@ -8628,7 +8628,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// delegate invoke.</summary>
     internal Term ToTermDynamic(Type type, object? value)
     {
-        // Phase 33 C3 — the cached delegate is now COMPILED (engine.ToTerm<T>((T)v))
+        // the cached delegate is now COMPILED (engine.ToTerm<T>((T)v))
         // instead of a wrapper that re-ran MethodInfo.Invoke + a fresh object[] per
         // ELEMENT of every converted collection. Expression.Compile interprets
         // under Native AOT, so this stays AOT-correct.
@@ -8647,7 +8647,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return del(this, value);
     }
 
-    /// <summary>Chunk 239 — reflective bridge for the inverse
+    /// <summary>reflective bridge for the inverse
     /// direction; same caching strategy as
     /// <see cref="ToTermDynamic"/>.</summary>
     internal object? FromTermDynamic(Type type, Term term)
@@ -8690,7 +8690,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         RegisterPredicatesImpl(type, instance: null, staticOnly: false);
     }
 
-    /// <summary>Chunk 247 overload — when
+    /// <summary>overload — when
     /// <paramref name="staticOnly"/> is true, instance methods
     /// decorated with <c>[PrologPredicate]</c> are silently
     /// skipped instead of throwing. Used by the auto-loader path
@@ -8707,7 +8707,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// for static classes.</summary>
     public void RegisterPredicates<T>() => RegisterPredicates(typeof(T));
 
-    /// <summary>Chunk 247 — loads <paramref name="assemblyPath"/>
+    /// <summary>loads <paramref name="assemblyPath"/>
     /// via <see cref="System.Reflection.Assembly.LoadFrom"/> and
     /// registers every <c>[PrologPredicate]</c>-decorated <c>static</c>
     /// method across all types in the assembly. Instance methods are
@@ -8715,7 +8715,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// have). The runtime <see cref="LoadBundle(Bundle)"/> path calls
     /// this for each <see cref="Bundle.ForeignAssemblies"/> entry the
     /// linker recorded.</summary>
-    /// <summary>Chunk 247 — probes for a foreign assembly by name
+    /// <summary>probes for a foreign assembly by name
     /// in the directories the bundle's foreign-DLL convention
     /// inspects: the bundle's own directory first (typical
     /// <c>myapp.shum</c> + <c>MyForeigns.dll</c> layout), then the
@@ -8799,7 +8799,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
                 if (method.IsStatic == false && instance is null)
                 {
-                    // Chunk 247: the static-only auto-loader path
+                    // the static-only auto-loader path
                     // (foreign-DLL scanning) silently skips instance
                     // methods — there's no instance available, and
                     // failing the whole DLL because one type mixes
@@ -8825,7 +8825,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 }
                 else
                 {
-                    // Chunk 242: typed signature — locate the
+                    // typed signature — locate the
                     // generator-emitted bridge in the same type.
                     // Name convention: "_{Method}_PrologBridge". The
                     // bridge has the same staticness as the user
@@ -8885,7 +8885,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     if (!ReferenceEquals(existing.Impl.Method, del.Method)
                         || !Equals(existing.Impl.Target, del.Target))
                     {
-                        // Chunk 247: the static-only auto-loader
+                        // the static-only auto-loader
                         // path (foreign-DLL scanning) silently skips
                         // collisions for the same reason it skips
                         // instance methods — failing the whole DLL
@@ -8961,17 +8961,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private void ConsultStringLocked(string source, bool recordInHistory,
         string? moduleNameFallback)
     {
-        // Save-state chunk 264: record every user-visible consult so
+        // Save-state record every user-visible consult so
         // SaveState can serialize it. The prelude (auto-loaded by the
         // ctor) and any other engine-internal source go through this
         // private path with recordInHistory=false to stay out of the
         // snapshot.
         if (recordInHistory) _consultHistory.Add(source);
-        // The static program is about to change — drop the chunk-82
+        // The static program is about to change — drop the
         // compiled-static-predicate cache so the next query recompiles,
         // and the ADR-015 cached static linked region with it.
         _staticPredicateCache.Clear();
-        _skipCompileMergedCache = null;   // chunk 430 — static cache cleared
+        _skipCompileMergedCache = null;   // static cache cleared
         _staticLink = null;
         InvalidatePersistent();
         List<Clause> rawClauses;
@@ -9015,7 +9015,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         rawClauses = Shumway.Compiler.Parsing.IncludeExpander.Expand(
             rawClauses, _consultBaseDir, _operators, _flags);
 
-        // Chunk 440 — a source-bearing bundle entry consults under the
+        // a source-bearing bundle entry consults under the
         // entry's module name (the per-file fallback ShmoCompiler resolved
         // at compile time), so two module-less files keep their own local
         // namespaces instead of merging into a rolling "user" module. A
@@ -9169,7 +9169,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                      && spf.Args[0] is AtomTerm spfFlag
                      && spf.Args[1] is AtomTerm spfValue)
             {
-                // Phase 19+ — flags that the parser doesn't already
+                // flags that the parser doesn't already
                 // pre-process (double_quotes is the only one) get
                 // applied at consult time. Mirrors the runtime
                 // set_prolog_flag/2 builtin so the directive form
@@ -9217,7 +9217,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // op/3 already processed in-place by ClauseReader. Other
             // unrecognised directives pass through silently — they may be
             // implementation-defined hooks that future chunks handle.
-            // Chunk 436 (arity_compat only): same policy as
+            // arity_compat only: same policy as
             // shumway-compile — an unknown directive is reported as a
             // warning (to stderr) and consult continues. Without the
             // flag the silent pass-through above is unchanged.
@@ -9237,7 +9237,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
         }
 
-        // Discontiguous enforcement (chunk 60): clauses for a given
+        // Discontiguous enforcement: clauses for a given
         // functor must appear contiguously in source unless the
         // functor is declared :- discontiguous. We walk the just-read
         // clauses in source order, tracking which functors have been
@@ -9292,7 +9292,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 IsNativeFunctionName);
         }
 
-        // Source-declared clauses for dynamic predicates (chunk 68): route
+        // Source-declared clauses for dynamic predicates: route
         // them to the runtime _dynamicClauses store so retract / assertz
         // see them just like runtime-asserted clauses do. Without this
         // routing, source-declared facts for a `:- dynamic foo/N.`
@@ -9325,7 +9325,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                         // Tier-1 IL snapshot from the first call (evictable on
                         // the first mutation).
                         IlPromotion.MarkPrime(fid);
-                        // Chunk 440 — clauses routed here from a named
+                        // clauses routed here from a named
                         // module (a source-bearing bundle entry, or an
                         // explicit `:- module/1` source) must be rewritten
                         // under that module's context at query setup so
@@ -9339,7 +9339,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                         // SAME query; direct-call dispatch picks it up on the
                         // next query's clean recompile of the predicate.
                         //
-                        // Phase 33 — do NOT patch the live dispatch in place at
+                        // do NOT patch the live dispatch in place at
                         // this site. AppendDynamicClauseIncremental extends the
                         // dynamic predicate's compiled chain, and for a predicate
                         // whose dispatch lives in the *persistent* code region
@@ -9368,7 +9368,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                         // extend they are invisible and the load fails
                         // (core_messages: permission_error / unknown protocol).
                         // AppendDynamicClauseIncremental self-guards against a
-                        // stale chain (Phase 33 — see DynChainAddressesStale) so
+                        // stale chain (see DynChainAddressesStale) so
                         // the heavy-load corruption that motivated skipping this
                         // is prevented at the write sites, not by dropping the
                         // extend.
@@ -9382,14 +9382,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             clauses = keptClauses;
         }
 
-        // Tabling (chunk 104): a `:- table p/N` predicate's clauses are
+        // Tabling: a `:- table p/N` predicate's clauses are
         // re-headed to '$tabled$p'/N and a driver clause that routes
         // through '$table_call' is synthesised. Done after the dynamic
         // routing so it only sees the static clauses.
         if (tabledFunctors is not null && tabledFunctors.Count > 0)
             clauses = TransformTabledPredicates(clauses, tabledFunctors, publics);
 
-        // Phase 19+ — implicit_dynamic pre-scan. When the flag is on
+        // implicit_dynamic pre-scan. When the flag is on
         // (the default), walk every clause body for a literal
         // `assertz(Head)` / `asserta(Head)` / `assert(Head)` call and
         // auto-add Head's functor to _dynamicFunctors if it has no
@@ -9417,7 +9417,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         if (moduleDirectiveSeen || moduleName != DefaultModuleName)
         {
-            // Explicit module (or a chunk-440 per-file fallback module
+            // Explicit module (or a per-file fallback module
             // from a source-bearing bundle entry): replace any previous
             // load of this module.
             var manifest = new ModuleManifest(moduleName);
@@ -9452,7 +9452,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // Consulting may have added source clauses for an already-cached
-        // dynamic predicate (chunk 68). Drop the cache wholesale — the
+        // dynamic predicate. Drop the cache wholesale — the
         // next query will recompile each dynamic predicate against the
         // updated clause set. Consult is one-shot at engine setup in the
         // common case, so this is amortised away.
@@ -9481,7 +9481,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (clauses.Count > 0)
             {
                 LinkConsultedStaticPredicatesLive(liveEng, clauses, moduleName);
-                // Phase 33 — BROADCAST: a suspended outer engine (a nested
+                // BROADCAST: a suspended outer engine (a nested
                 // deferred-init query consulted this file) must also reach
                 // the new predicates when it resumes — e.g. Logtalk's
                 // arbitrary.lgt compile (outer engine) statically binds to
@@ -9541,7 +9541,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
         }
 
-        // Phase 33 — RESUME-boundary reconciliation: this consult (and the
+        // RESUME-boundary reconciliation: this consult (and the
         // nested queries its initialization goals spawned) may have mutated
         // dynamic predicates through OTHER engines' views; before control
         // returns to the suspended caller, diff its dispatch view against
@@ -9552,7 +9552,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     /// <summary>Enforces the contiguity rule for clauses inside a single
-    /// consulted source (chunk 60). Clauses for the same functor must
+    /// consulted source. Clauses for the same functor must
     /// be adjacent unless the functor is declared <c>:- discontiguous</c>.
     /// Splitting them is almost always a bug — the discontiguous
     /// declaration is the explicit opt-in that turns the diagnostic
@@ -10037,7 +10037,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             && slash.Args[0] is AtomTerm name)
         {
             Term arityTerm = slash.Args[1];
-            // Phase 30 (arity_compat) — Arity annotates directive indicators:
+            // arity_compat — Arity annotates directive indicators:
             // `:- public foo/8:far.` / `:- public f/2:system(...)`. With `:`
             // at xfy 200 (tighter than `/` 400) that parses as
             // /(name, :(arity, Annotation)) — accept and IGNORE the
@@ -10105,7 +10105,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             engine: this);
     }
 
-    /// <summary>Chunk 240 — typed-result query: runs the query and
+    /// <summary>typed-result query: runs the query and
     /// projects the binding of <paramref name="variableName"/>
     /// through <see cref="FromTerm{T}"/> for every solution. The
     /// natural shape for a query that asks for one specific value
@@ -10129,7 +10129,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 240 — single-variable overload: when the
+    /// <summary>single-variable overload: when the
     /// query has exactly one non-anonymous variable, infer the
     /// name. Useful for the common
     /// <c>engine.Query&lt;int&gt;("between(1, 5, X).")</c> idiom
@@ -10165,7 +10165,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return Query<T>(queryText, vars[0]);
     }
 
-    /// <summary>Chunk 240 — runs the query and returns the first
+    /// <summary>runs the query and returns the first
     /// solution's binding of <paramref name="variableName"/>
     /// projected through <see cref="FromTerm{T}"/>; <c>default</c>
     /// (a null reference / zero value) when the query fails. Drops
@@ -10178,7 +10178,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return default;
     }
 
-    /// <summary>Chunk 240 — single-variable overload of
+    /// <summary>single-variable overload of
     /// <see cref="QueryFirst{T}(string,string)"/>.</summary>
     public T? QueryFirst<T>(string queryText)
     {
@@ -10331,7 +10331,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
              Activation Activation,
              BytecodeInterpreter Interp) SetupQueryFromTermUnderGate(Term queryTerm)
     {
-        // Phase 12 chunk 158: auto-compaction. When the accumulated
+        // auto-compaction. When the accumulated
         // mutation count crosses the watermark, invalidate the
         // persistent buffer here at query setup (the safe point —
         // no in-flight choice points hold addresses into it). The
@@ -10345,7 +10345,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (_debugEvalDepth == 0 && _persistentMutationsSinceCompact >= CompactWatermark)
             CompactDynamicCodeBuffer();
 
-        // Phase 33 — live-linked-consult forward-reference sites now live on
+        // live-linked-consult forward-reference sites now live on
         // the per-buffer chain table, so they follow their buffer's lifetime
         // automatically (a rebuilt buffer starts a fresh table).
 
@@ -10370,7 +10370,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             ? null
             : QueryLabel ?? AstTermRenderer.Render(queryTerm, 999, _operators);
 
-        // Chunk 417 — the Phase-19+ implicit_dynamic pre-scan is NO
+        // the Phase-19+ implicit_dynamic pre-scan is NO
         // LONGER applied to the query body. Pre-declaring an
         // assertz-target made it observable as an EMPTY dynamic
         // predicate from the query's start, so a goal sequenced BEFORE
@@ -10379,7 +10379,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // existence_error — diverging from ISO/SWI and from the same
         // goal without the later assertz. The REPL pattern the pre-scan
         // existed for (`?- assertz(pepe), call(pepe).`) is covered by
-        // the chunk-207 runtime path: assertz auto-promotes and
+        // the runtime path: assertz auto-promotes and
         // materialises a trampoline mid-query; a direct call site's
         // unresolved sentinel re-resolves through
         // ResolveTargetMaybeAutoPromoted and a meta-call probes the
@@ -10398,17 +10398,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // can call it by name.
         List<Clause> allRewritten;
         HashSet<int>? userLocalsCache;
-        // Chunk 440 — every module's locals set, for the per-fid dynamic-
+        // every module's locals set, for the per-fid dynamic-
         // clause rewrite below (a dynamic clause attributed to module M
         // rewrites under M's context, not user's).
         Dictionary<string, HashSet<int>>? moduleLocalsCache;
-        // Chunk 430 — head functor ids of every clause in allRewritten
+        // head functor ids of every clause in allRewritten
         // (static + dynamic program). Maintained alongside the clause
         // list so the stub emission and the cacheableFunctors snapshot
         // below stop re-interning every clause head per query.
         HashSet<int> rewrittenHeadFids;
 
-        // Chunk 74 — mode specialization. Built once per query setup; the
+        // mode specialization. Built once per query setup; the
         // transform appends an implicit cut to every clause of a
         // predicate whose declared modes are all deterministic. Applied
         // after DCG / meta / phrase expansion so it conjoins onto the
@@ -10417,7 +10417,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         if (_staticRewriteGen == _derivationGen && _staticRewriteClauses is not null)
         {
-            // Chunk 430 — the static program hasn't changed since the
+            // the static program hasn't changed since the
             // last setup: reuse the transformed + rewritten clause list.
             // Copy it, because stubs and the synthetic query clause are
             // appended below; the Clause objects themselves are immutable
@@ -10429,7 +10429,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         else
         {
-            // Phase 33 — the derivation is being REGENERATED: MetaTransform
+            // the derivation is being REGENERATED: MetaTransform
             // helper names ('$disj_N', '$catchgoal_N', ...) come from the
             // global NextMetaHelperId counter, so the fresh ASTs reference
             // fresh helper ids. Any COMPILED artifact from the previous
@@ -10475,7 +10475,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // (prelude, :- disable_debug) run without stop sites anyway, so they
                 // still get the optimization.
                 bool opaqueModule = _nonDebuggableModules.Contains(name);
-                // Chunk 407 — module-local meta-wrapper unfold (ifthen/2-style user
+                // module-local meta-wrapper unfold (ifthen/2-style user
                 // control wrappers called with statically-known goals become inline
                 // if-then-else, eliminating the goal-term build + wrapper frame +
                 // runtime meta-dispatch). Runs BEFORE the pipeline so MetaTransform
@@ -10488,7 +10488,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 var transformed = ClausePipeline.Apply(unfolded, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId);
 
                 var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
-                // Chunk 209: fold in the bare local fids contributed by a
+                // fold in the bare local fids contributed by a
                 // bundled (precompiled) version of this module — those
                 // predicates aren't in manifest.Clauses, so the line above
                 // can't see them.
@@ -10518,7 +10518,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             rewrittenHeadFids = new HashSet<int>();
             foreach (var c in allRewritten)
                 rewrittenHeadFids.Add(HeadFunctorIdOf(c));
-            // Chunk 430 — snapshot for the next setup (the transform chain
+            // snapshot for the next setup (the transform chain
             // is a pure function of the consulted program; every input
             // mutation bumps _derivationGen).
             _staticRewriteClauses = new List<Clause>(allRewritten);
@@ -10549,7 +10549,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // namespacing are a more invasive change parked for later.
         if (_dynamicClauses.Count > 0)
         {
-            // Chunk 430 — per-functor transform cache. A functor's entry
+            // per-functor transform cache. A functor's entry
             // is dropped by InvalidateDynamicCache when its clause list
             // mutates; the whole table is dropped when the derivation
             // generation moves (the dynamic rewrite context's inputs —
@@ -10565,7 +10565,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 DefaultModuleName,
                 userLocalsCache ?? new HashSet<int>(),
                 _dynamicFunctors);
-            // Chunk 440 — per-module contexts for dynamic predicates whose
+            // per-module contexts for dynamic predicates whose
             // clauses came from a named module (bundle seeds / source-
             // bearing entries). Built lazily; everything unattributed
             // keeps the user context above.
@@ -10613,24 +10613,24 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // these, calls to a dynamic predicate that's been declared but
         // never assertz'd would fail at link time with an unresolved-call
         // error. The stub always fails — its purpose is just to give the
-        // predicate a valid bytecode home. Chunk 430: the precomputed
+        // predicate a valid bytecode home. the precomputed
         // head-fid set replaces the per-query re-intern of every clause
         // head; stub fids are added to it as they're emitted.
         EmitEmptyDynamicStubs(allRewritten, queryTerm.Position, rewrittenHeadFids);
 
         // Snapshot the functor ids of every clause that exists *before*
         // the synthetic query clause is added — the static + dynamic
-        // program. Only these are eligible for the chunk-82 static cache:
+        // program. Only these are eligible for the static cache:
         // the __query__ clause, and any auxiliary predicate a transform
         // or the compiler derives from a query's control constructs, are
         // query-specific — caching them would let one query's goal leak
-        // into the next. (Chunk 430 — rewrittenHeadFids is exactly the
+        // into the next. (rewrittenHeadFids is exactly the
         // head fids of allRewritten at this point, stubs included.)
         var cacheableFunctors = rewrittenHeadFids;
 
         // Synthetic query clause — rewrite in the user module's context, but
         // with userLocalsCache (which doesn't include __query__) so the
-        // head functor remains bare. Phase 33 — the stub's synthesized helpers
+        // head functor remains bare. the stub's synthesized helpers
         // use the reserved `$q` namespace: they are rewritten under the SAME
         // user-module mangling as the consulted clauses' helpers, so without
         // the prefix a stub `$disj_1` collides with a consulted `$disj_1`
@@ -10658,7 +10658,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
         }
 
-        // JIT indexing (chunk 75): a dynamic predicate compiles
+        // JIT indexing: a dynamic predicate compiles
         // unindexed until its runtime call count crosses the JIT
         // threshold. A cold-but-now-hot predicate (or vice versa) has
         // a stale cached compile at the wrong indexing level — drop it
@@ -10670,7 +10670,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
             {
-                // Chunk 430 — route through the drop helper so the merged
+                // route through the drop helper so the merged
                 // skip-compile cache stays in step.
                 DropDynamicPredicateCacheEntry(fid);
                 anyHotnessFlip = true;
@@ -10682,13 +10682,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
             {
-                DropDynamicPredicateCacheEntry(fid);   // chunk 430
+                DropDynamicPredicateCacheEntry(fid);
                 anyHotnessFlip = true;
             }
             if (!_jitIndexProfile.IsHot(fid))
                 unindexedFunctors.Add(fid);
         }
-        // Chunk 154: a cold→hot transition needs the persistent buffer
+        // a cold→hot transition needs the persistent buffer
         // rebuilt so the JIT-promoted indexed compilation actually
         // takes effect at runtime — without this the cache holds the
         // indexed form but the live dispatch still runs the chain
@@ -10696,20 +10696,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (anyHotnessFlip) InvalidatePersistent();
 
         // Skip-compile cache. Two contributors live here:
-        //   - Bundle skip-compile (chunk 55): populated by LoadBundle from
+        //   - Bundle skip-compile: populated by LoadBundle from
         //     a bundle's compiled bytecode blob.
-        //   - Dynamic predicate cache (chunk 68): populated lazily by the
+        //   - Dynamic predicate cache: populated lazily by the
         //     query-setup path itself; invalidated on every assertz /
         //     asserta / retract / abolish that touches the functor.
         // ModuleCompiler reuses any cached predicate whose bytecode doesn't
         // reference per-module literal pools.
-        // Chunk 430 — the three-way merge is maintained incrementally
+        // the three-way merge is maintained incrementally
         // across queries instead of being re-copied per query: built here
         // on demand, nulled wherever _staticPredicateCache is cleared,
         // kept in step with every dynamic-cache add / remove
         // (DropDynamicPredicateCacheEntry) and with the two populate
         // loops below. Merge precedence unchanged: bundle precompiled
-        // (chunk 55), static (chunk 82), then dynamic (chunk 68) —
+        //, static, then dynamic —
         // dynamic last so a predicate that turned dynamic wins over a
         // stale static entry (a consult clears the static cache anyway).
         var mergedSkip = _skipCompileMergedCache;
@@ -10768,7 +10768,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
                 {
                     _dynamicPredicateCache[pred.FunctorId] = pred;
-                    // Chunk 430 — mirror into the merged skip-compile
+                    // mirror into the merged skip-compile
                     // cache (dynamic has top precedence in the merge).
                     if (_skipCompileMergedCache is not null)
                         _skipCompileMergedCache[pred.FunctorId] = pred;
@@ -10804,11 +10804,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         launcher.EmitCallBuiltin(failBuiltinId, numLivePermanents: 0);
         byte[] prefix = launcher.ToBytes();
 
-        // --- ADR-015 chunk B + chunk 151b: persistent code space -------
+        // --- ADR-015 chunk B + persistent code space -------
         // Partition the compiled predicates into three regions:
         //   * static  — cacheable + non-dynamic, linked once.
         //   * dynamic — cacheable + dynamic, linked once into the
-        //     persistent buffer; mutated in place by chunk-120
+        //     persistent buffer; mutated in place by
         //     assertz / retract / abolish across queries.
         //   * query   — non-cacheable (the synthetic __query__ clause
         //     plus catch/disjunction/negation helpers). Linked per
@@ -10827,7 +10827,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             else queryPreds.Add(pred);
             addedFids.Add(pred.FunctorId);
         }
-        // Chunk 178: source-less bundle predicates are already
+        // source-less bundle predicates are already
         // compiled (LoadEntryFromBytecode populated
         // _precompiledStaticPredicates). Append them to the static
         // region — they bypassed the AST → ModuleCompiler pipeline
@@ -10902,14 +10902,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 if (_dynamicLink.Addresses.TryGetValue(fid, out int dynAddr))
                     BytecodeIO.WriteInt32(_persistentProgram!, prefix.Length + offset + 1, dynAddr);
         }
-        // Chunk 151b: pick the per-query overlay's start address with
+        // pick the per-query overlay's start address with
         // enough headroom over the persistent length for mid-query
         // assertz extensions (typically far less than 64 MB).
         _querySplit = _persistentLength + PersistentToQueryGap;
 
         // Build the merged external-symbols table for the query
         // linker — it resolves calls into both the static and
-        // dynamic regions of the persistent buffer. Chunk 430: cached
+        // dynamic regions of the persistent buffer. cached
         // alongside the persistent link itself (the LinkResult address
         // maps are immutable), together with the bare-alias overlay and
         // the merged predicates-by-address map — rebuilding the three
@@ -10922,7 +10922,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             foreach (var (fid, a) in _dynamicLink!.Addresses) pa[fid] = a;
             _persistentAddressesCache = pa;
 
-            // Runtime call/1 (chunk 86) dispatches a goal by its bare
+            // Runtime call/1 dispatches a goal by its bare
             // functor, but a module-local predicate is linked under its
             // mangled "module$name" functor. Pre-compute the persistent
             // regions' bare-functor aliases once per rebuild; the
@@ -10961,7 +10961,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         byte[] queryBytes = queryLink.Bytecode;
 
         // Merge the three regions' link metadata; downstream code is
-        // region-agnostic and reads this combined view. Chunk 430: seed
+        // region-agnostic and reads this combined view. seed
         // from the cached persistent base, which already carries the
         // persistent regions' bare-name aliases — a query-region REAL
         // address overwrites a colliding alias here, preserving the old
@@ -10970,7 +10970,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // profiler's diagnostic map now also contains those aliases.
         var mergedAddresses = new Dictionary<int, int>(_persistentAddressBaseCache!);
         foreach (var (fid, a) in queryLink.Addresses) mergedAddresses[fid] = a;
-        // Phase 20: keep the functor→address map of the most recent
+        // keep the functor→address map of the most recent
         // query so the profiler can resolve a recorded callee address
         // back to a Name/Arity. Only assembled when profiling is
         // compiled in — otherwise it's a cheap reference assignment we
@@ -10978,14 +10978,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (Shumway.Core.Profiler.Enabled)
             _profileFunctorAddresses = mergedAddresses;
         // The merged switch-table list is still rebuilt per query (cheap
-        // reference copies): the chunk-155c new-key assertz path REPLACES
+        // reference copies): the new-key assertz path REPLACES
         // entries of _dynamicLink.SwitchTables in place for cross-query
         // persistence, so a cached merged snapshot would go stale.
         var mergedSwitchTables =
             new List<Shumway.Core.SwitchTable>(staticLink.SwitchTables);
         mergedSwitchTables.AddRange(_dynamicLink!.SwitchTables);
         mergedSwitchTables.AddRange(queryLink.SwitchTables);
-        // Chunk 430 — persistent part pre-merged at rebuild time.
+        // persistent part pre-merged at rebuild time.
         var mergedPredicatesByAddress =
             new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
                 _persistentPredsByAddressCache!);
@@ -11020,7 +11020,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var programView = new Shumway.Core.ProgramView(
             _persistentProgram!, queryBytes, _querySplit);
 
-        // Cache freshly-compiled static predicates (chunk 82). A predicate
+        // Cache freshly-compiled static predicates. A predicate
         // is cacheable only if its functor headed a clause in the static +
         // dynamic program (cacheableFunctors) — that excludes the
         // __query__ clause and every query-derived auxiliary — and it is
@@ -11034,7 +11034,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
             {
                 _staticPredicateCache[fid] = pred;
-                // Chunk 430 — mirror into the merged skip-compile cache.
+                // mirror into the merged skip-compile cache.
                 // Dynamic entries take precedence in the merge; a fid here
                 // is never in the dynamic cache (it isn't in
                 // _dynamicFunctors, and abolish drops cache entries when
@@ -11046,11 +11046,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
         }
 
-        // Runtime call/1 (chunk 86) dispatches a goal by its bare functor,
+        // Runtime call/1 dispatches a goal by its bare functor,
         // but a module-local predicate is linked under its mangled
         // "module$name" functor. Add a bare-functor alias for each so a
         // runtime call/N can resolve a local predicate by its plain name.
-        // Chunk 430: the persistent regions' aliases are already in
+        // the persistent regions' aliases are already in
         // mergedAddresses (pre-computed at persistent rebuild — see
         // _persistentAddressBaseCache); only the query region's handful
         // of entries still need the per-query string walk.
@@ -11065,7 +11065,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // IlMetaCallHelper.Dispatch). Map each such IL-only functor to its
         // resume marker (EncodeResumeMarker(fid, 0)): the marker flows through
         // SetPc and the main Dispatch loop's IsResumeMarker check routes it to
-        // the IL delegate via IlByFunctorId — exactly the chunk-316 path a
+        // the IL delegate via IlByFunctorId — exactly the path a
         // compiled CallIl already uses. Only inject where there is no WAM
         // address (a non-stripped IL predicate keeps its WAM and meta-calls
         // through it unchanged). A module-local predicate is registered under
@@ -11089,7 +11089,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 addressMap[bareFid] = marker;
         }
 
-        // Chunk 402 — region member-entry aliases, LOWEST priority: an absorbed-only
+        // region member-entry aliases, LOWEST priority: an absorbed-only
         // member with no WAM address (stripped) and no standalone IL delegate (pruned)
         // still resolves by fid — into its region method at the member's entry cursor.
         // The ContainsKey guards keep every better resolution (a real WAM address, or
@@ -11115,16 +11115,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             Out = Out,
             Host = this,
             Operators = new OperatorTableAdapter(_operators),
-            // Per-engine stream registry (chunk 140) — wired through
+            // Per-engine stream registry — wired through
             // so StreamBuiltins reaches handles, the alias map, and
             // the current-input / current-output cursors.
             Streams = Streams,
             // The current-query address map lets IL-emitted Execute
-            // opcodes (chunk 47) resolve their tail-call target via a
+            // opcodes resolve their tail-call target via a
             // stable functor-id lookup instead of an embedded address
             // that would only be valid for one query's linked layout.
             CurrentFunctorAddresses = addressMap,
-            // Chunk 417 — the ISO `unknown` flag, wired through dispatch.
+            // the ISO `unknown` flag, wired through dispatch.
             OnUnknown = _flags.Unknown switch
             {
                 "fail" => Shumway.Core.UnknownAction.Fail,
@@ -11132,12 +11132,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 _ => Shumway.Core.UnknownAction.Error,
             },
             // String literal pool for IL-emitted get_pstr/put_pstr
-            // (chunk 50) and the linked program byte array for the
+            // and the linked program byte array for the
             // IL Call re-entry helper.
             CurrentStringLiterals = module.StringLiterals,
             CurrentProgram = program,
-            // ADR-015 chunk C — bytecode-level dynamic dispatch reads the
-            // host's generation at every enter_dynamic opcode. chunk 432:
+            // ADR-015 — bytecode-level dynamic dispatch reads the
+            // host's generation at every enter_dynamic opcode
             // through the shared GenerationBox (a field read) instead of
             // a Func<long> invoke per dynamic call.
             DbGenerationBox = _dbGeneration,
@@ -11166,7 +11166,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Heap-buffer pool: seed the fresh activation with the recycled
         // buffer (if any) BEFORE anything materializes onto the heap.
         AdoptPooledHeap(engine);
-        // Chunk 151b: the persistent buffer is over-allocated, so the
+        // the persistent buffer is over-allocated, so the
         // engine's ProgramLength must reflect the live region (not the
         // raw byte[] capacity) for AppendCode's offset accounting. The
         // overlay + split let the dispatch loop refresh the
@@ -11174,11 +11174,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         engine.SetInitialProgramLength(_persistentLength);
         engine.CurrentQueryOverlay = queryBytes;
         engine.CurrentQuerySplit = _querySplit;
-        // Chunk 169: the dispatch loop caches its ProgramView and
+        // the dispatch loop caches its ProgramView and
         // refreshes only when this generation flips, so the per-
         // query rewire above has to advertise itself.
         engine.BumpProgramGeneration();
-        // Chunk 155b/c: expose the linked switch tables on the engine
+        // expose the linked switch tables on the engine
         // as a MUTABLE list. The same list reference is handed to the
         // interpreter; the new-key assertz path swaps entries in place
         // and the interpreter sees the update on the next dispatch
@@ -11201,7 +11201,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 Shumway.Compiler.Il.IlIndexedDispatch.RegisterPersistedGraph(
                     engine, fid, graphBytes);
 
-        // Chunk 225 Stage B.1: wire the direct IL-delegate table (the
+        // wire the direct IL-delegate table (the
         // CallIl opcode reads this) and rewrite every Call site whose
         // callee already has IL into a CallIl. The opcode's slow path
         // (Call → DispatchToTier1OrBytecode → Tier1Dispatcher?.OnDispatch)
@@ -11219,10 +11219,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             interp.RefreshLiteralPools(s, f, b);
             engine.CurrentStringLiterals = s;
         };
-        // Chunk 427 — record the pool lengths the interpreter was built
+        // record the pool lengths the interpreter was built
         // with; RefreshLiteralPoolsIfGrown compares against these so the
         // per-assert refresh (three Snapshot() array copies) only runs
-        // when a compile actually interned a new literal. Phase 33: per
+        // when a compile actually interned a new literal. per
         // engine (see _interpPoolCounts).
         _interpPoolCounts.AddOrUpdate(engine, new[]
         {
@@ -11231,7 +11231,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             module.BigIntLiterals.Count,
         });
 
-        // Chunk 144: lets a PrologRuntimeException thrown from a
+        // lets a PrologRuntimeException thrown from a
         // builtin Impl carry the offending term in its error/2 value
         // slot, instead of the Phase-9 fresh anonymous variable.
         // Eager materialisation here means the term survives sub-engine
@@ -11247,7 +11247,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return TermReader.Materialize(engine, slot);
         };
 
-        // Chunk 162: opt-in SHUMWAY_CP_TRACE dump. The diagnostic prints
+        // opt-in SHUMWAY_CP_TRACE dump. The diagnostic prints
         // "name/arity@offset" for each live CP's saved BP using the
         // same address->predicate map the stack-trace resolver uses,
         // so we can spot a CP that should have been cut but is still
@@ -11276,20 +11276,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // program. retract patches the slot in place; next call's
         // check_visible filters the clause out (the bytecode-level
         // logical-update view path that supersedes chunk C's redirect).
-        // Chunk 151b: only rebuild chain state from scratch when the
+        // only rebuild chain state from scratch when the
         // persistent buffer is fresh. While it's being reused across
         // queries, the incremental assertz / asserta / retract paths
         // maintain _dynChains directly — a contiguous walk from
         // predAddr can't see chunks appended elsewhere by AppendCode.
         if (builtPersistentNow)
         {
-            // Phase 33 — a fresh buffer gets a fresh chain table. Older
+            // a fresh buffer gets a fresh chain table. Older
             // tables stay alive through _engineChainTables for any outer
             // (nested-query) engines still running on their buffers.
             _dynChainTable = new DynChainTable();
             PopulateDynChains(program, addressMap, mergedPredicatesByAddress);
         }
-        // Phase 33 — associate this engine with the table describing the
+        // associate this engine with the table describing the
         // buffer it runs on: every in-place dynamic mutation this engine
         // performs resolves chain state through this association, so a
         // nested query's rebuild can never make it patch wrong offsets.
@@ -11323,7 +11323,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         interp.Tier1Dispatcher = new Tier1DispatcherAdapter(
             IlPromotion, linkResult.PredicatesByAddress, _jitIndexProfile);
 
-        // Chunk 76 — PGO phase-2 pass. Once per query setup, off the
+        // PGO phase-2 pass. Once per query setup, off the
         // hot path: any promoted, instrumented predicate that has
         // accumulated enough profile samples is recompiled to its
         // optimised (dispatch-reordered) form. Build a functor-keyed
@@ -11332,13 +11332,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (var (_, pred) in linkResult.PredicatesByAddress)
             functorToPredicate[pred.FunctorId] = pred;
         IlPromotion.ConsiderPgoRecompiles(functorToPredicate, functorToPredicate);
-        // Phase 16 chunk 183: IlSubroutineRunner / BacktrackRunner /
-        // SetBacktrackFloor wirings deleted. The chunk-50 IL Call /
-        // chunk-66 meta-CP backtrack-driver / chunk-174 floor pin
+        // IlSubroutineRunner / BacktrackRunner /
+        // SetBacktrackFloor wirings deleted. The IL Call /
+        // meta-CP backtrack-driver / floor pin
         // were all replaced by threaded resume-marker dispatch
-        // (chunks 181 + 182).
+        //.
         // Remember the per-query address → predicate map so error
-        // reporting (chunk 51) can translate the engine's PC and env-
+        // reporting can translate the engine's PC and env-
         // chain return addresses into Name/Arity stack frames.
         _currentPredicatesByAddress = linkResult.PredicatesByAddress;
 
@@ -11457,7 +11457,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// harness <c>--alloc</c> mode.</summary>
     public long LastQueryCellsAllocated => _lastQueryEngine?.CellsAllocated ?? 0;
 
-    /// <summary>Chunk 427 — single-clause transform + compile for the four
+    /// <summary>single-clause transform + compile for the four
     /// runtime <c>assertz</c> / <c>asserta</c> compile sites (chain and
     /// extensible-indexed, append and prepend). Facts take a fast path that
     /// bypasses the ClausePipeline and ModuleRewrite entirely — each pass is
@@ -11491,7 +11491,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             _assertDynCtx ??= new ModuleRewrite.Context(
                 DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
             toCompile = ModuleRewrite.Rewrite(transformed[0], _assertDynCtx);
-            // Phase 33 — the helpers used to be DROPPED here, leaving the
+            // the helpers used to be DROPPED here, leaving the
             // asserted clause's body calling a '$catchgoal_N' that nothing
             // defines until the next query setup regenerates it from the
             // store — an existence_error when the clause runs in the SAME
@@ -11508,7 +11508,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
     }
 
-    /// <summary>Phase 33 — compiles and live-links the MetaTransform helper
+    /// <summary>compiles and live-links the MetaTransform helper
     /// clauses generated while incrementally compiling a runtime-asserted
     /// clause (<paramref name="transformed"/>[1..]). Helpers are grouped by
     /// head functor and each group compiled as ONE multi-clause static
@@ -11747,7 +11747,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return addr;
     }
 
-    /// <summary>Chunk 427 — refreshes the interpreter's literal pools only
+    /// <summary>refreshes the interpreter's literal pools only
     /// when the engine pools actually grew past what the interpreter holds
     /// (recorded at query setup / last refresh). The pools are append-only
     /// with stable ids (<see cref="Shumway.Compiler.Wam.LiteralPool{T}"/>),
@@ -11757,7 +11757,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>next_char_i(42)</c> interns nothing.</summary>
     private void RefreshLiteralPoolsIfGrown(Activation engine)
     {
-        // Phase 33 — per-engine counters (an engine with no record refreshes
+        // per-engine counters (an engine with no record refreshes
         // unconditionally; refresh is idempotent).
         var counts = _interpPoolCounts.GetValue(engine, static _ => new int[3]);
         if (_literalPools.Strings.Count == counts[0]
@@ -11781,7 +11781,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// chain isn't in the new structure (paso-3 trust_me tail or indexed
     /// dispatch); in those cases the chunk-C redirect handles the update.
     ///
-    /// <para>Phase 33 — BROADCAST entry point: applies the extension to the
+    /// <para>BROADCAST entry point: applies the extension to the
     /// mutating engine AND to every other live engine's buffer (each via
     /// its own chain table), so suspended outer/nested queries observe the
     /// assert when they resume — the single-code-space semantics SWI /
@@ -11800,7 +11800,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
     }
 
-    /// <summary>Phase 33 — reconciles <paramref name="engine"/>'s dynamic
+    /// <summary>reconciles <paramref name="engine"/>'s dynamic
     /// dispatch view with the authoritative store at a RESUME boundary
     /// (a mid-query consult returning to its suspended caller). The
     /// mutation broadcast keeps live views coherent when every in-place
@@ -11846,11 +11846,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Phase 33 — rebuilds one functor's dynamic-dispatch view in
+    /// <summary>rebuilds one functor's dynamic-dispatch view in
     /// <paramref name="target"/>'s buffer from the authoritative store.
     /// Needed when the in-place mutation paths can't keep that view
     /// coherent — the archetype: the target's buffer compiled the dynamic
-    /// predicate with the chunk-155 INDEXED layout (it went hot), whose
+    /// predicate with the INDEXED layout (it went hot), whose
     /// bucket entries the chain-table-based retract broadcast cannot
     /// patch, leaving retracted clauses visible forever in that engine
     /// (Logtalk's loading-stack ghosts). Strategy: materialize a fresh
@@ -11942,35 +11942,35 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Root fix: a suspended owner resuming after a sibling extended the
         // shared buffer must append AFTER that content, not over it.
         ResyncOwnerAppendPosition(engine);
-        // Chunk 155b: try the new extensible-indexed in-place
-        // extension first. If the predicate uses the chunk-155
+        // try the new extensible-indexed in-place
+        // extension first. If the predicate uses the extensible-indexed
         // layout (enter_dynamic + switch_on_term + try_me_else
         // bucket chains) AND the new clause's arg-0 key matches an
         // existing bucket, we extend each affected chain in place
         // — no rebuild needed. Returns true if handled here.
         if (TryAppendToIndexedDynamic(engine, functorId, newClause))
             return;
-        // Fall back to the chain layout (chunk-127) or, for cases
-        // chunk-155b can't yet handle (new key, var-arg, multi-arg
+        // Fall back to the chain layout or, for cases
+        // can't yet handle (new key, var-arg, multi-arg
         // indexed), to the persistent-buffer rebuild.
-        // Fall back: chunk-127 chain extension applies only when
+        // Fall back: chain extension applies only when
         // chain state is populated (i.e. the predicate was compiled
         // as a try_me_else chain). Otherwise the layout is some
-        // form of indexed dispatch that chunk-155b/c didn't handle
+        // form of indexed dispatch that didn't handle
         // — for a hot predicate, request a persistent rebuild so the
         // next query sees the new clause through a fresh compile.
-        // Phase 33 — resolve chain state through THIS engine's table (the
+        // resolve chain state through THIS engine's table (the
         // one describing its buffer; see DynChainTable) and capture buffer
         // ownership before any AppendCode.
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var chainTable = GetChainTable(engine);
-        // Phase 19+ — mid-query trampoline materialisation. If the
+        // mid-query trampoline materialisation. If the
         // predicate was auto-promoted mid-query via EnsureDynamic
         // (implicit_dynamic=true with a runtime-bound assertz head),
         // _dynamicFunctors holds it but no chain state was ever
         // built — the trampoline lives in bytecode emitted by
         // SetupQueryFromTerm, and that ran before the auto-promote.
-        // Build a fresh trampoline now so the chunk-127 extension
+        // Build a fresh trampoline now so the extension
         // below has something to extend.
         if ((chainTable is null || !chainTable.Chains.ContainsKey(functorId))
             && _dynamicFunctors.Contains(functorId)
@@ -11988,7 +11988,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             || engine.DynamicFailStubAddr <= 0)
         {
             if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
-            // Phase 33 — an unextendable chain record (a trust_me tail, or
+            // an unextendable chain record (a trust_me tail, or
             // a contiguous walk over an indexed layout) means THIS engine's
             // live view can't take the clause in place — without repair its
             // dispatch silently diverges from the store forever (the
@@ -11999,7 +11999,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return;
         }
 
-        // Phase 33 — last-line safety: skip the in-place extend when the
+        // last-line safety: skip the in-place extend when the
         // chain is stale relative to the live buffer (the tail-next patch
         // below would splice into instruction interior → "reserved_invalid
         // / 0xCF" corruption). With per-engine chain tables this should
@@ -12020,7 +12020,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // Apply the same transforms the setup path runs — dynamic clauses
-        // share a flat module rewrite context (chunk 427 — shared helper
+        // share a flat module rewrite context (shared helper
         // with a fact fast path).
         var compiledClause = CompileRuntimeAssertClause(engine, functorId, newClause);
         if (compiledClause is null) return;
@@ -12038,7 +12038,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         emitter.AppendBytes(compiledClause.Bytecode);
         byte[] chunk = emitter.ToBytes();
 
-        // Chunk 150: try the free-list (chunks reclaimed by a prior
+        // try the free-list (chunks reclaimed by a prior
         // GC) before extending the program buffer. Tripwire: a reused
         // chunk must not contain the tail slot we're about to patch —
         // copying into it would destroy the live tail and the patch below
@@ -12096,7 +12096,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             chunkLength: chunk.Length));
         chain.TailNextAddr = chunkAddr + NextOperandLocal;
 
-        // Chunk 151b: AppendCode may have reallocated the buffer;
+        // AppendCode may have reallocated the buffer;
         // refresh PrologEngine's reference so the next query sees the
         // live buffer (owner engine) — or, when this engine's buffer is
         // no longer the host's (a nested query rebuilt it), mark the
@@ -12107,7 +12107,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // The clause may have interned new literals — refresh the
         // interpreter so check_visible isn't running against a stale
-        // pool snapshot for any subsequent call (chunk 427: skipped
+        // pool snapshot for any subsequent call (skipped
         // when the pools didn't grow).
         RefreshLiteralPoolsIfGrown(engine);
     }
@@ -12139,7 +12139,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// silently when the chain doesn't have a trampoline (paso-3
     /// emission or indexed dispatch).
     ///
-    /// <para>Phase 33 — BROADCAST entry point (see
+    /// <para>BROADCAST entry point (see
     /// <see cref="AppendDynamicClauseIncremental"/>).</para></summary>
     internal void PrependDynamicClauseIncremental(
         Activation engine, int functorId, Clause newClause)
@@ -12160,14 +12160,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Root fix: a suspended owner resuming after a sibling extended the
         // shared buffer must append AFTER that content, not over it.
         ResyncOwnerAppendPosition(engine);
-        // Chunk 155f: try in-place asserta for chunk-155a layout.
+        // try in-place asserta for layout.
         if (TryPrependToIndexedDynamic(engine, functorId, newClause))
             return;
-        // Phase 19+ — mirror the assertz path: when the predicate was
+        // mirror the assertz path: when the predicate was
         // auto-promoted mid-query (no trampoline ever built), build
         // one now so the chain prepend below has a chain to prepend
         // to.
-        // Phase 33 — resolve chain state through THIS engine's table and
+        // resolve chain state through THIS engine's table and
         // capture buffer ownership before any AppendCode.
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var chainTable = GetChainTable(engine);
@@ -12179,7 +12179,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             MaterializeDynamicTrampoline(engine, functorId);
             chainTable ??= GetChainTable(engine);
         }
-        // Fall back to chunk-128 chain prepend for chain layout, or
+        // Fall back to chain prepend for chain layout, or
         // rebuild for indexed layouts we can't extend in place.
         if (chainTable is null
             || !chainTable.Chains.TryGetValue(functorId, out var chain)
@@ -12187,7 +12187,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             || engine.CurrentProgram is null)
         {
             if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
-            // Phase 33 — repair this engine's live view (see the assertz
+            // repair this engine's live view (see the assertz
             // counterpart). The rebuild re-links the store in order, so
             // the asserta'd clause (already prepended there) lands at the
             // rebuilt chain's head.
@@ -12196,7 +12196,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         if (engine.DynamicFailStubAddr <= 0) return;
 
-        // Phase 33 — last-line safety: skip the in-place prepend when the
+        // last-line safety: skip the in-place prepend when the
         // chain is stale (the head-demotion / trampoline patch would write
         // past the live buffer or into an unrelated instruction). With
         // per-engine chain tables this should never fire; if it does, fall
@@ -12216,7 +12216,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         var (_, arity) = FunctorTable.Lookup(functorId);
 
-        // Same transform pipeline as the setup path (chunk 427 — shared
+        // Same transform pipeline as the setup path (shared
         // helper with a fact fast path).
         var compiledClause = CompileRuntimeAssertClause(engine, functorId, newClause);
         if (compiledClause is null) return;
@@ -12237,7 +12237,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         emitter.AppendBytes(compiledClause.Bytecode);
         byte[] chunk = emitter.ToBytes();
 
-        // Chunk 150: try the free-list before extending the program.
+        // try the free-list before extending the program.
         // Tripwire (mirrors the assertz path): a reused chunk must not
         // contain the trampoline operand or the old head we patch below.
         int chunkAddr = TryReuseFreeChunk(chainTable.FreeChunks, chunk.Length);
@@ -12299,13 +12299,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (chain.TailNextAddr < 0)
             chain.TailNextAddr = chunkAddr + NextOperandLocal;
 
-        // Chunk 151b: keep the persistent-buffer reference in sync
+        // keep the persistent-buffer reference in sync
         // (owner engine) — or mark the host buffer for rebuild when this
-        // engine's buffer is no longer the host's (Phase 33).
+        // engine's buffer is no longer the host's.
         SyncOrInvalidateAfterMutation(engine, ownsHost);
 
         // Refresh interpreter pools — same reasoning as the assertz path
-        // (chunk 427: skipped when the pools didn't grow).
+        // (skipped when the pools didn't grow).
         RefreshLiteralPoolsIfGrown(engine);
     }
 
@@ -12330,7 +12330,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// query whose captured view-gen is below it still sees the clause.
     /// After patching the slot, also drops the chain entry — the chain
     /// stays aligned with <see cref="_dynamicClauses"/>.</summary>
-    /// <summary>Phase 33 — true if any of a dynamic chain's cached byte
+    /// <summary>true if any of a dynamic chain's cached byte
     /// offsets fall outside the writable range of the live program buffer.
     /// A stale chain entry (its <see cref="_dynChains"/> record indexing a
     /// buffer since rebuilt smaller) would make an in-place died / next
@@ -12352,7 +12352,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return false;
     }
 
-    /// <summary>Phase 33 — O(1) structural staleness check: the byte at
+    /// <summary>O(1) structural staleness check: the byte at
     /// <paramref name="opcodeAddr"/> must be a chain instruction
     /// (<c>try_me_else</c> / <c>retry_me_else</c>). A dynamic chain's
     /// <c>TailNextAddr</c> is the <c>&lt;next&gt;</c> operand at offset +1 of
@@ -12369,7 +12369,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             || op == (byte)Shumway.Core.Opcode.RetryMeElse;
     }
 
-    /// <summary>Phase 33 — full structural staleness check for a dynamic
+    /// <summary>full structural staleness check for a dynamic
     /// chain: the head and every entry's <c>&lt;next&gt;</c> operand
     /// (offset +1) must sit right after a chain instruction in the live
     /// buffer. Catches a stale-but-in-range chain (its cached offsets point
@@ -12389,7 +12389,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return false;
     }
 
-    /// <summary>Phase 33 — broadcast counterpart of
+    /// <summary>broadcast counterpart of
     /// <see cref="PatchDiedFromChain"/>: finds the target engine's chain
     /// entries whose <see cref="DynChainEntry.Clause"/> IS the retracted
     /// clause (reference identity — the store and every chain share the
@@ -12436,13 +12436,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     private void PatchDiedFromChain(Activation engine, int functorId, int clauseIndex)
     {
-        // Phase 33 — the engine's own chain table (describes ITS buffer).
+        // the engine's own chain table (describes ITS buffer).
         if (GetChainTable(engine) is not { } tbl
             || !tbl.Chains.TryGetValue(functorId, out var chain)) return;
         if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return;
         var entry = chain.Entries[clauseIndex];
         var program = engine.CurrentProgram;
-        // Phase 33 — last-line safety: skip the in-place died patch when
+        // last-line safety: skip the in-place died patch when
         // the entry's cached slot is out of range OR structurally stale
         // (should never fire with per-engine tables). The clause is
         // already removed from _dynamicClauses by the caller, so clause/2
@@ -12451,7 +12451,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             && entry.DiedOperandAddr + sizeof(long) <= program.Length
             && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
             BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
-        // Chunk 150: stage the chunk for free-list reuse on GC, but
+        // stage the chunk for free-list reuse on GC, but
         // only when it was an incrementally-allocated chunk (consult-
         // time blocks have ChunkAddr=-1 and can't be freed without
         // disturbing the rest of the predicate's contiguous bytecode).
@@ -12514,7 +12514,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int clauseIndex = 0;
         int pendingNextOperand = -1;
         int tailNextOperand = -1;
-        // Chunk 150: track each chunk's start address as we walk so
+        // track each chunk's start address as we walk so
         // entries record ChunkAddr / ChunkLength for the free-list
         // reuse on GC. The chunk starts at the chain instruction and
         // ends at the next chain instruction (or the end of the
@@ -12541,7 +12541,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (info.Op == Shumway.Core.Opcode.TryMeElse
                 || info.Op == Shumway.Core.Opcode.RetryMeElse)
             {
-                // Chunk 150: a new chain instruction marks a chunk
+                // a new chain instruction marks a chunk
                 // boundary. Close out the previous chunk's length on
                 // the most-recent entry (if any).
                 if (currentChunkStart >= 0 && chain.Entries.Count > 0)
@@ -12597,7 +12597,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         List<Clause> allRewritten, Shumway.Compiler.Lexer.SourcePosition pos,
         HashSet<int> seen)
     {
-        // Chunk 430 — `seen` arrives as the precomputed head-fid set of
+        // `seen` arrives as the precomputed head-fid set of
         // allRewritten (maintained by the caller's cached transform
         // bookkeeping), replacing the per-query walk that re-interned
         // every clause head. Stub fids are added to the set so the
@@ -12620,7 +12620,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 430 — the chunk-86 bare-functor alias computation,
+    /// <summary>the bare-functor alias computation,
     /// factored out so it can run once per persistent rebuild over the
     /// persistent regions' addresses (cached in
     /// <see cref="_persistentAddressBaseCache"/>) and per query over just
@@ -12693,7 +12693,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             {
                 if (owner.TryGetValue(fid, out var other))
                 {
-                    // Multifile escape hatch (chunk 60): if both the
+                    // Multifile escape hatch: if both the
                     // already-owning module and the current one declare
                     // the functor :- multifile, the duplicate is
                     // intentional. Each module's clauses live

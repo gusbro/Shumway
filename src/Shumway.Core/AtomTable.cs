@@ -33,8 +33,8 @@ public static class AtomTable
     public const int FalseId = 4;
     public const int FirstUserId = 16;
 
-    // Chunk 222: ConcurrentDictionary lets Intern probe transients
-    // lock-free on the fast path, mirroring the chunk-214 lock-free
+    // ConcurrentDictionary lets Intern probe transients
+    // lock-free on the fast path, mirroring the lock-free
     // path for permanents. Single-threaded engines saw
     // Monitor.Enter_Slowpath as the 6th-hottest function in dotnet-
     // trace because every transient atom creation (atom_chars per-
@@ -48,10 +48,10 @@ public static class AtomTable
     private static readonly Dictionary<int, Atom> _transientById = new();
     private static readonly Dictionary<int, TransientWeakEntry> _transientWeak = new();
     private static readonly List<WeakReference<Atom>> _foreignWeakRefs = new();
-    // Chunk 232 — System.Threading.Lock (new in .NET 9) is markedly
+    // System.Threading.Lock (new in .NET 9) is markedly
     // faster than the legacy object-based monitor on uncontended paths.
     // For Blint, AtomTable.Intern shows up at ~1.8% inclusive in
-    // dotnet-trace with the chunk-222 lock-free fast paths in place;
+    // dotnet-trace with the lock-free fast paths in place;
     // the ~1.2% in children is mostly Monitor.Enter_Slowpath when
     // the transient-promotion or new-atom slow path acquires _lock.
     // System.Threading.Lock skips the syncblock dance and uses a
@@ -60,7 +60,7 @@ public static class AtomTable
     private static readonly System.Threading.Lock _lock = new();
     private static int _nextId = FirstUserId;
 
-    // Chunk 167: fast-path for the most common GetById case. Permanent
+    // fast-path for the most common GetById case. Permanent
     // atoms (string literals, public predicate names, the single-char
     // cache, etc.) get dense ids and far outnumber lookups on transient
     // / weak ids. A flat array indexed by id, grown copy-on-write, lets
@@ -88,7 +88,7 @@ public static class AtomTable
         public TransientWeakEntry(WeakReference<Atom> weak, string name) { Weak = weak; Name = name; }
     }
 
-    // Chunk 166: cache of single-character atom ids. Chunk 222 widened
+    // cache of single-character atom ids. Widened
     // it from 128 (ASCII) to 256 (Latin-1 — what `char (byte)` covers
     // and what every other major Prolog (GNU, SWI, SICStus) pre-
     // interns). The character-I/O builtins (peek_char/get_char/put_char),
@@ -100,7 +100,7 @@ public static class AtomTable
 
     /// <summary>Number of permanent atoms a freshly-reset table holds:
     /// the five pre-registered specials (<c>[]</c>, <c>{}</c>, <c>.</c>,
-    /// <c>true</c>, <c>false</c>) plus the chunk-166 single-char ASCII
+    /// <c>true</c>, <c>false</c>) plus the single-char ASCII
     /// cache (codes 0..127). <c>.</c> is in both sets so it counts
     /// once. Tests use this as the baseline when asserting on
     /// <see cref="PermanentCount"/> after an intern.</summary>
@@ -126,7 +126,7 @@ public static class AtomTable
     /// or <c>-1</c> if <paramref name="code"/> is outside the cached
     /// range. The cache is populated at class-load time so this is a
     /// pure array index — no lock, no allocation. Used by character-
-    /// I/O builtins (chunk 166).</summary>
+    /// I/O builtins.</summary>
     public static int GetSingleCharAtomId(int code)
     {
         if ((uint)code >= (uint)SingleCharAtomCacheLimit) return -1;
@@ -168,7 +168,7 @@ public static class AtomTable
         ArgumentNullException.ThrowIfNull(name);
         if (permanent)
         {
-            // Lock-free fast path (chunks 213/222, unchanged): a permanent
+            // Lock-free fast path: a permanent
             // atom satisfies a permanent intern request directly; its
             // identity is stable and it is never collected. A transient
             // hit must NOT short-circuit here — it needs
@@ -176,14 +176,14 @@ public static class AtomTable
             if (_permanentByName.TryGetValue(name, out var perm))
                 return perm;
         }
-        // chunk 432: ONE lock-free by-name probe for the transient
+        // ONE lock-free by-name probe for the transient
         // (permanent:false) path — it used to probe _permanentByName first
         // (a guaranteed miss for a transient atom, paying a full string
         // hash) and then _byName. Every live atom of EITHER tier has a
         // _byName entry, and a permanent's WeakReference target is strongly
         // held by _permanentById so TryGetTarget always succeeds for it —
         // so a single _byName hit satisfies a permanent:false request
-        // regardless of tier (chunk 222's safety argument for the
+        // regardless of tier (the safety argument for the
         // lock-free read of the ConcurrentDictionary still applies; a
         // GC-collected weak target is a miss and falls through to _lock).
         else if (_byName.TryGetValue(name, out var liveRef)
@@ -217,7 +217,7 @@ public static class AtomTable
     /// <summary>Returns the atom with <paramref name="id"/>, or <c>null</c> if no live atom carries that id.</summary>
     public static Atom? GetById(int id)
     {
-        // Chunk 167: lock-free fast-path for permanent atoms via a
+        // lock-free fast-path for permanent atoms via a
         // dense array. The dispatcher's hot path (every atom name
         // resolution during term materialisation, every atom_concat /
         // char_code result, etc.) lands here, and permanents
@@ -267,7 +267,7 @@ public static class AtomTable
         ArgumentNullException.ThrowIfNull(reachable);
         lock (_lock)
         {
-            // Phase 2: compact foreign-hold weak refs and collect ids still alive in C#.
+            // compact foreign-hold weak refs and collect ids still alive in C#.
             var foreignAlive = new HashSet<int>();
             for (int i = _foreignWeakRefs.Count - 1; i >= 0; i--)
             {
@@ -277,7 +277,7 @@ public static class AtomTable
                     _foreignWeakRefs.RemoveAt(i);
             }
 
-            // Phase 3: walk Transient. Keep if reachable; demote to TransientWeak if only C#
+            // walk Transient. Keep if reachable; demote to TransientWeak if only C#
             // holds it; otherwise drop entirely.
             var toDemote = new List<KeyValuePair<int, Atom>>();
             var toDrop = new List<KeyValuePair<int, Atom>>();
@@ -302,7 +302,7 @@ public static class AtomTable
                 _byName.TryRemove(kv.Value.Name, out _);
             }
 
-            // Phase 4: walk TransientWeak. Promote back to Transient if an engine resurrected
+            // walk TransientWeak. Promote back to Transient if an engine resurrected
             // it; drop entirely if the .NET GC has collected the atom; otherwise leave alone.
             var weakToPromote = new List<KeyValuePair<int, Atom>>();
             var weakToRemove = new List<KeyValuePair<int, string>>();
@@ -357,7 +357,7 @@ public static class AtomTable
             _transientById.Clear();
             _transientWeak.Clear();
             _foreignWeakRefs.Clear();
-            // Chunk 167: clear the array fast-path too. Otherwise a
+            // clear the array fast-path too. Otherwise a
             // post-reset Intern that lands on a stale slot (because
             // _nextId restarts at FirstUserId but the array still
             // holds prior atoms at those ids) would return the
@@ -372,7 +372,7 @@ public static class AtomTable
             AddPreRegisteredLocked(ConsFunctorId, ".");
             AddPreRegisteredLocked(TrueId, "true");
             AddPreRegisteredLocked(FalseId, "false");
-            // Chunk 166: rebuild the single-char-atom cache too —
+            // rebuild the single-char-atom cache too —
             // ResetForTesting just wiped the underlying atoms, so the
             // pre-populated ids in _singleCharAtomIds are stale.
             RebuildSingleCharCacheLocked();

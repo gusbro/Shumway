@@ -7,7 +7,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Shumway.SourceGen;
 
 /// <summary>
-/// Chunk 242 — Roslyn incremental source generator that emits a
+/// Roslyn incremental source generator that emits a
 /// <c>bool(Activation)</c> bridge method for every
 /// <c>[Shumway.Embedding.PrologPredicate]</c>-decorated method whose
 /// signature is <em>not</em> the raw
@@ -82,7 +82,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         var containing = method.ContainingType;
         if (containing is null) return null;
 
-        // Chunk 244: NonDeterministic = true switches to the
+        // NonDeterministic = true switches to the
         // iterator-driven bridge. Detect it first since the
         // signature-skip rule below would otherwise let an
         // accidentally-non-det signature pass through.
@@ -125,7 +125,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                 engineParamIndex = i;
                 continue;
             }
-            // Chunk 246 — mode from RefKind. Plain = + (input),
+            // Mode from RefKind. Plain = + (input),
             // out = - (output), ref = ? (bidirectional, nullable
             // signals unbound).
             ParamMode mode = p.RefKind switch
@@ -153,7 +153,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                 p.Name, typeName, paramElementType, i, mode, isValueTypeNullable));
         }
 
-        // Chunk 246 — out/ref are incompatible with a non-bool /
+        // out/ref are incompatible with a non-bool /
         // non-void return: the return-as-output and an out/ref-as-
         // output would both want to bind a register, with no clear
         // contract for which is which. Reject the combo (the
@@ -175,7 +175,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         //   void                  -> always succeed, no output register
         //   bool                  -> success value, no output register
         //   T                     -> encode + unify with next register
-        //   IEnumerable<T>        -> non-det generator (chunk 244)
+        //   IEnumerable<T>        -> non-det generator
         ReturnShape returnShape;
         string? returnTypeName = null;
         string? elementTypeName = null;
@@ -288,7 +288,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         string staticness = b.IsStatic ? "static " : "";
         string bridgeName = "_" + b.MethodName + "_PrologBridge";
 
-        sb.Append(indent).Append("/// <summary>Chunk 242 generated bridge for ")
+        sb.Append(indent).Append("/// <summary>Generated bridge for ")
           .Append(b.MethodName)
           .AppendLine(". Decodes registers via FromTerm&lt;T&gt;, calls the user method,");
         sb.Append(indent).AppendLine("/// then unifies the encoded return value (when non-void / non-bool).</summary>");
@@ -298,7 +298,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         sb.Append(indent).AppendLine("{");
         sb.Append(indent).AppendLine("    var host = (global::Shumway.Embedding.PrologEngine)engine.Host!;");
 
-        // Chunk 246 — per-parameter decode based on mode:
+        // Per-parameter decode based on mode:
         //   Input (+) : FromTerm<T>(...) — fails with
         //     instantiation_error if the register is a var.
         //   Output (-) : just declare the local; the user method
@@ -313,7 +313,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
             switch (p.Mode)
             {
                 case ParamMode.Input:
-                    // Phase 33 C3 — integer scalars read the register CELL
+                    // Integer scalars read the register CELL
                     // directly (zero allocation; the Term path allocated one
                     // IntTerm per scalar arg per call). The helper raises the
                     // same instantiation_error on an unbound register and
@@ -332,7 +332,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                           .Append(i).AppendLine(");");
                         break;
                     }
-                    // Chunk 246 — explicit instantiation_error for
+                    // Explicit instantiation_error for
                     // + mode lets the user see an ISO-shaped Prolog
                     // error rather than the InvalidCastException
                     // the converter would raise on a VarTerm.
@@ -451,7 +451,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
     private static string nonDetUnifyName(BridgeModel b)
         => "_" + b.MethodName + "_PrologNonDetUnify";
 
-    /// <summary>Chunk 246 — after the user method returns, unify
+    /// <summary>After the user method returns, unify
     /// every out (-) and ref-with-bound-value (?) parameter back
     /// into its register. The pre-call decode for ? mode passed a
     /// Nullable; null means "user wants to leave the register
@@ -495,7 +495,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
     }
 
     /// <summary>Emits the per-predicate "unify the current solution value"
-    /// step as a STATIC method (chunk 244 logic, restructured): a static
+    /// step as a STATIC method: a static
     /// method group has its delegate cached by the compiler, so handing it to
     /// <see cref="NonDetForeignCursor{T}"/> costs no per-call allocation. The
     /// cursor drives the MoveNext + CP-push + Dispose machinery.</summary>

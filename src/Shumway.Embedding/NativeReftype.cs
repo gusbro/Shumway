@@ -49,7 +49,7 @@ public static class NativeReftype
     public static IntPtr Materialize(Term term, Encoding? encoding = null)
         => Materialize(term, encoding, arena: null);
 
-    /// <summary>Phase 33 D1 — when <paramref name="arena"/> is non-null, every
+    /// <summary>when <paramref name="arena"/> is non-null, every
     /// allocation (nodes, pars arrays, char* buffers) bump-allocates from the
     /// engine's native arena instead of <c>AllocHGlobal</c>; the caller
     /// releases the WHOLE graph by restoring its arena mark taken at call
@@ -170,8 +170,8 @@ public static class NativeReftype
     // Allocates a NUL-terminated native byte buffer holding `s` encoded with
     // `enc` — a C `char*`. Byte-oriented encodings only (UTF-8 / ASCII /
     // Latin1 / a codepage), where a single 0 byte terminates the string.
-    // Phase 33 D3 — encodes through a POOLED buffer: no per-call byte[]
-    // garbage. Phase 33 D1 — with an `arena` the buffer is call-scoped
+    // encodes through a POOLED buffer: no per-call byte[]
+    // garbage. with an `arena` the buffer is call-scoped
     // (released by the caller's mark restore); otherwise HGlobal, freed by
     // the graph walk / the caller.</summary>
     internal static IntPtr AllocString(string s, Encoding enc, PrologEngine? arena = null)
@@ -188,7 +188,7 @@ public static class NativeReftype
     }
 
     // Reads a NUL-terminated native `char*` and decodes it with `enc`.
-    // Phase 33 D3 — decodes through a POOLED buffer; only the string allocates.
+    // decodes through a POOLED buffer; only the string allocates.
     internal static string ReadString(IntPtr p, Encoding enc)
     {
         if (p == IntPtr.Zero) return string.Empty;

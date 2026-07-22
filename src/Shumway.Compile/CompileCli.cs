@@ -9,7 +9,7 @@ namespace Shumway.Compile;
 /// <summary>
 /// <c>shumway-compile</c> CLI. Takes one or more Prolog source files
 /// and emits a per-module compiled-object <c>.shmo</c> artifact for
-/// each (chunk 160). The linker (<c>shumway-link</c>, chunk 164)
+/// each. The linker (<c>shumway-link</c>)
 /// combines one or more <c>.shmo</c>s into a deployable <c>.shum</c>
 /// bundle.
 ///
@@ -31,7 +31,7 @@ namespace Shumway.Compile;
 ///
 /// <para>By default the compiler prints <c>compiling X → Y</c> per
 /// file to stderr. <c>--verbose</c> adds the public / dynamic
-/// predicate list per file (chunk 170).</para>
+/// predicate list per file.</para>
 ///
 /// <para>Exit codes: 0 on success, 1 on compile error, 3 on usage
 /// error. With multiple inputs, a failure on one file still attempts
@@ -79,7 +79,7 @@ internal static class CompileCli
         Console.Error.WriteLine(
             $"shumway-compile: compiling {input} -> {output} "
             + $"[{buildMode.ToString().ToLowerInvariant()}]");
-        // Chunk 405 — register-allocator design survey. Classifies every permanent
+        // Register-allocator design survey (ADR-021). Classifies every permanent
         // allocated while compiling this file (Class B = live only across inline
         // goals; Class A = crosses a real call, irreducible). Diagnostic.
         bool ySurvey = Environment.GetEnvironmentVariable("SHUMWAY_Y_SURVEY") == "1";
@@ -89,8 +89,8 @@ internal static class CompileCli
         {
             var result = ShmoCompiler.TryCompileFile(input, buildMode, maxErrors: 100,
                 arityCompat: opts.ArityCompat);
-            // Chunk 436 — warnings (e.g. unknown directives under
-            // --arity) are reported but never fail the compile.
+            // Warnings (e.g. unknown directives under --arity) are
+            // reported but never fail the compile.
             foreach (var warn in result.Warnings)
                 Console.Error.WriteLine(
                     $"{input}:{warn.Line}:{warn.Column}: warning: {warn.Message}");
@@ -113,7 +113,7 @@ internal static class CompileCli
                 if (survey.Count == 0)
                     Console.Error.WriteLine(
                         "[y-survey] empty — the per-clause collection is compiled in only "
-                        + "with a `dotnet build -p:ShumwayDiag=true` build (chunk 414).");
+                        + "with a `dotnet build -p:ShumwayDiag=true` build.");
                 int totalPerms = survey.Values.Sum(v => v.PermTotal);
                 int totalB = survey.Values.Sum(v => v.ClassB);
                 Console.Error.WriteLine(
@@ -502,11 +502,11 @@ internal static class CompileCli
                         Console.Error.WriteLine($"shumway-compile: unknown option '{arg}'.");
                         return null;
                     }
-                    // Chunk 434 — wildcard inputs (`shumway-compile *.pl`,
-                    // `src\*.ari`). The Windows shell hands globs through
-                    // verbatim, so expand them here. A pattern matching
-                    // nothing is a usage error (silently compiling zero
-                    // files would read as success).
+                    // Wildcard inputs (`shumway-compile *.pl`, `src\*.ari`).
+                    // The Windows shell hands globs through verbatim, so
+                    // expand them here. A pattern matching nothing is a
+                    // usage error (silently compiling zero files would
+                    // read as success).
                     if (arg.IndexOfAny(WildcardChars) >= 0)
                     {
                         if (!TryExpandWildcard(arg, opts.InputPaths)) return null;
@@ -527,7 +527,7 @@ internal static class CompileCli
 
     private static readonly char[] WildcardChars = { '*', '?' };
 
-    /// <summary>Chunk 434 — expands a wildcard input argument against the
+    /// <summary>Expands a wildcard input argument against the
     /// file system (directory part + pattern part), appending the matches
     /// in case-insensitive sorted order so multi-file output is
     /// deterministic. Returns false (after printing the error) when the

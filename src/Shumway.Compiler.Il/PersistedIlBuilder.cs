@@ -7,7 +7,7 @@ using Shumway.Core;
 namespace Shumway.Compiler.Il;
 
 /// <summary>
-/// Chunk 71 — emits a persisted .NET assembly (.dll bytes) holding the
+/// Emits a persisted .NET assembly (.dll bytes) holding the
 /// IL for every IL-promotable predicate in a set of compiled modules.
 /// Counterpart to the runtime
 /// <see cref="IlPredicateCompiler"/> which targets
@@ -55,13 +55,13 @@ public static class PersistedIlBuilder
         /// (so the delegate no longer reads the WAM).</summary>
         public required bool Strippable { get; init; }
 
-        /// <summary>For a chunk-216 indexed predicate, the serialised
+        /// <summary>For an indexed predicate, the serialised
         /// WAM-independent dispatch graph (<see cref="IndexGraphCodec"/>); null
         /// for self-contained shapes. Registered at LoadBundle so a stripped
         /// indexed predicate dispatches without its WAM body.</summary>
         public byte[]? IndexGraph { get; init; }
 
-        /// <summary>Chunk 402 — for a REGION method, the non-root members'
+        /// <summary>For a REGION method, the non-root members'
         /// external-entry cursor table (name, arity, MemberEntry cursor); null
         /// otherwise. Flows into <see cref="IlPersistedEntry.RegionMembers"/> so
         /// LoadBundle can alias a stripped member to its region entry.</summary>
@@ -74,7 +74,7 @@ public static class PersistedIlBuilder
     /// metadata callers need at load time, and the
     /// <see cref="IlPatchSite"/> table the LoadBundle path uses to
     /// rewrite each baked build-time atom/functor id constant into the
-    /// equivalent runtime-process id (Phase 17 — functor/atom ids drift
+    /// equivalent runtime-process id (functor/atom ids drift
     /// across processes since they're ordinal in the global AtomTable
     /// /FunctorTable, and the LINK process accumulates interns that
     /// the RUN process doesn't).</summary>
@@ -85,7 +85,7 @@ public static class PersistedIlBuilder
     /// REMAIN in <paramref name="predicates"/> (the callee map) so those region methods
     /// can still absorb their bodies, and they keep their Tier-0 WAM as a safety fallback
     /// (a later step may strip it). Null = no prune.</param>
-    /// <param name="emitOnly">Phase 33 (bundle-wide calleeMap) — when non-null,
+    /// <param name="emitOnly">When non-null,
     /// only these functor ids get standalone IL methods; everything else in
     /// <paramref name="predicates"/> serves purely as the CALLEE MAP for
     /// resolution. This is how a multi-entry bundle compiles each entry's IL
@@ -153,7 +153,7 @@ public static class PersistedIlBuilder
         // Stable ordering for bisection: sort eligible by functorId.
         eligible.Sort((a, b) => a.FunctorId.CompareTo(b.FunctorId));
 
-        // Phase 17: switch the predicate compiler into persist mode so
+        // Switch the predicate compiler into persist mode so
         // every atom-id / functor-id / resume-marker constant emit
         // routes through a sentinel + records the IlPatchSite. After
         // psab.Save() below we scan the resulting PE for each
@@ -175,7 +175,7 @@ public static class PersistedIlBuilder
             // guaranteed by the runtime, so slot and functorId both
             // live in the name where they can be parsed unambiguously.
             string methodName = SanitiseMethodName($"P_{slot}_{functorId}_{functorName}");
-            // Phase 17: snapshot patch-list size before this predicate's
+            // Snapshot patch-list size before this predicate's
             // emit so we can roll back partially-recorded patches on a
             // mid-emit failure (otherwise the post-Save scan would look
             // for sentinels that never landed in any method body).
@@ -201,7 +201,7 @@ public static class PersistedIlBuilder
                 // but the emit blew up. Most often this is Sigil's verifier
                 // flagging dead-code or stack-mismatch issues in a generated
                 // sequence the predicate compiler hasn't been hardened
-                // against yet (chunk-190 corner cases are a known source).
+                // against yet.
                 // The runtime IL promotion store would have caught the same
                 // failure and skipped the predicate; do the same here so a
                 // single bad predicate doesn't abort the entire .shum
@@ -229,7 +229,7 @@ public static class PersistedIlBuilder
                 MethodName = methodName,
                 DelegateSlot = slot++,
                 IndexGraph = indexGraph,
-                // Chunk 402: a region method reports its members' external-entry
+                // A region method reports its members' external-entry
                 // cursors so the load path can alias stripped members into it.
                 RegionMembers = ic.LastRegionMemberCursors,
                 // Strippable when self-contained (not indexed) OR indexed with a
@@ -247,7 +247,7 @@ public static class PersistedIlBuilder
         psab.Save(stream);
         byte[] bytes = stream.ToArray();
 
-        // Phase 17 — locate each sentinel in the saved PE and record
+        // Locate each sentinel in the saved PE and record
         // its absolute byte offset. Each sentinel is unique and is
         // emitted exactly once (via the 5-byte long form of ldc.i4),
         // so a single forward scan over the PE bytes finds them all.
@@ -312,7 +312,7 @@ public static class PersistedIlBuilder
             }
             int ilStart = fileOffset + headerSize;
             int ilEnd = ilStart + ilLength;
-            // Phase 33 — a PROPER opcode walk, not a sliding byte window.
+            // A PROPER opcode walk, not a sliding byte window.
             // The old heuristic ("any int preceded by byte 0x20") matched
             // sentinel-shaped bytes inside a `switch` instruction's jump
             // table: two adjacent 4-byte branch targets like 0x320 / 0x17E
@@ -426,7 +426,7 @@ public static class PersistedIlBuilder
 
     /// <summary>Returns true iff <paramref name="pred"/> falls inside
     /// the IL compiler's promotable subset — exactly the set
-    /// <see cref="IlPredicateCompiler.CanCompile"/> accepts. Chunk 71
+    /// <see cref="IlPredicateCompiler.CanCompile"/> accepts. This
     /// covers single-clause-leaf, single-clause-with-meta-CP, indexed-
     /// atom dispatch, and try-me-else chains; the runtime path and
     /// the persisted path share the same eligibility check now.</summary>
@@ -434,8 +434,8 @@ public static class PersistedIlBuilder
         CompiledPredicate pred,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
-        // Chunk 217 — indexed dispatch is now persistable. Its IL bakes the
-        // predicate's functor id via the chunk-197 patching mechanism (so a
+        // Indexed dispatch is persistable. Its IL bakes the
+        // predicate's functor id via the patching mechanism (so a
         // fresh process resolves the runtime-process id at LoadBundle), and
         // the dispatch model is rebuilt lazily on first call from the
         // engine's linked code + switch tables. No build-time runtime state
@@ -443,7 +443,7 @@ public static class PersistedIlBuilder
         return new IlPredicateCompiler().CanCompile(pred, calleeMap);
     }
 
-    // ----- Chunk 414 — diag-build-only hooks (-p:ShumwayDiag=true), stripped
+    // ----- Diag-build-only hooks (-p:ShumwayDiag=true), stripped
     // from normal builds via [Conditional("SHUMWAY_DIAG")]. -----
 
     /// <summary>SHUMWAY_PERSIST_RANGE="lo,hi" — bisection aid restricting the

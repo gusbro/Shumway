@@ -3,7 +3,7 @@ using Shumway.Compiler.Ast;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Phase 24 chunk 266 — the Arity-Prolog recorded database. A second
+/// The Arity-Prolog recorded database. A second
 /// in-memory store separate from dynamic predicates, indexed by an
 /// arbitrary <em>key term</em> (not the <c>functor/arity</c> a dynamic
 /// predicate is). Each <c>recorda/3</c> / <c>recordz/3</c> returns a

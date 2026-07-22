@@ -11,7 +11,7 @@ namespace Shumway.Builtins;
 public static class TypeBuiltins
 {
     /// <summary><c>var(X)</c> — X is an unbound variable. An attributed
-    /// variable (chunk 77) counts as unbound — it has no value yet,
+    /// variable counts as unbound — it has no value yet,
     /// only attributes.</summary>
     public static bool IsVar(Activation engine)
     {
@@ -28,9 +28,8 @@ public static class TypeBuiltins
         return t != Tag.Ref && t != Tag.AttVar;
     }
 
-    /// <summary><c>attvar(X)</c> — X is an attributed variable
-    /// (chunk 77). False for plain unbound variables and for any
-    /// bound term.</summary>
+    /// <summary><c>attvar(X)</c> — X is an attributed variable.
+    /// False for plain unbound variables and for any bound term.</summary>
     public static bool IsAttVar(Activation engine) => Tag0(engine) == Tag.AttVar;
 
     /// <summary><c>atom(X)</c> — X is bound to an atom (including <c>[]</c>

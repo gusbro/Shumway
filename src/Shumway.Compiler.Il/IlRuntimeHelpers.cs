@@ -14,14 +14,11 @@ namespace Shumway.Compiler.Il;
 /// shouldn't have) and surfaces as <see cref="InvalidOperationException"/>
 /// rather than a silent miscompile.</para>
 ///
-/// <para>Phase 16 chunk 183: the chunk-50 <c>Call</c>, chunk-66
-/// <c>RunBacktrack</c> / <c>ReadPreCallB</c>, and chunk-174
-/// <c>RunBacktrackWithFloor</c> helpers were deleted when IL non-tail
-/// Call dispatch switched to threaded continuation (no recursive
-/// RunSubroutine, no meta-CP backtrack-driver). Only the PSTR helpers
-/// remain — they don't have an obvious threaded analogue and the IL
-/// emit still routes through them for the PSTR-cell-construction
-/// opcodes.</para>
+/// <para>Only the PSTR helpers live here — IL non-tail Call dispatch is
+/// threaded continuation (no recursive subroutine helper, no meta-CP
+/// backtrack-driver), and the PSTR-cell-construction opcodes have no
+/// obvious threaded analogue, so the IL emit still routes through
+/// them.</para>
 /// </summary>
 public static class IlRuntimeHelpers
 {

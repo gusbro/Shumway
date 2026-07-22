@@ -1,11 +1,11 @@
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 75 — JIT indexing. A per-engine runtime profile of how often
+/// JIT indexing. A per-engine runtime profile of how often
 /// each predicate is called, used to decide <em>when</em> a dynamic
 /// predicate is worth indexing.
 ///
-/// <para>ADR-007 deferred JIT indexing to Phase 3: "observes runtime
+/// <para>ADR-007 deferred JIT indexing to "observes runtime
 /// call patterns and builds indexes adaptively". Shumway's realisation:
 /// a dynamic predicate compiles to a plain <c>try_me_else</c> chain
 /// (O(N) dispatch, cheap to build) until its call count crosses

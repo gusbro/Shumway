@@ -31,14 +31,11 @@ public sealed class ActivationConfig
     /// disables automatic collection (explicit <c>garbage_collect/0</c>
     /// still works).
     ///
-    /// <para>Default <c>1&lt;&lt;20</c> (1 M cells ≈ 8 MB). Auto-collection
-    /// was held off through chunk 212 while the SHUMWAY_GC_STRESS fuzz
-    /// surfaced a missing root in the tabling / meta-call machinery; chunk
-    /// 213 traced it to control words (notably the <c>get_level</c> cut
-    /// barrier) stored as <c>Tag.Ref</c> and relocated by the conservative
-    /// stack scan, fixed it with <c>Tag.RawInt</c>-tagged control words,
-    /// and re-enabled auto-collection. The watermark was raised from
-    /// 256 K to 1 M cells (chunk 214) after profiling showed collection at
+    /// <para>Default <c>1&lt;&lt;20</c> (1 M cells ≈ 8 MB). TRAP the
+    /// default guards against: control words (notably the <c>get_level</c>
+    /// cut barrier) must be <c>Tag.RawInt</c>-tagged, or the conservative
+    /// stack scan relocates them as heap refs. The watermark was raised from
+    /// 256 K to 1 M cells after profiling showed collection at
     /// 256 K cost ~12% of Blint's wall time; 1 M still bounds the heap far
     /// below the unbounded baseline (Blint: 8 MB vs 64 MB) while collecting
     /// ~4x less often.</para></summary>

@@ -36,14 +36,14 @@ public readonly record struct Token(
 
     /// <summary>True iff at least one whitespace character or comment
     /// preceded this token in the source. The parser uses this for
-    /// the ISO §6.4.7 function-call disambiguation (chunk 149):
+    /// the ISO §6.4.7 function-call disambiguation:
     /// <c>foo(x)</c> is a compound, <c>foo (x)</c> is the atom
     /// <c>foo</c> followed by a parenthesised term.</summary>
     public bool HasLeadingWhitespace { get; init; }
 
     /// <summary>True for atom tokens produced from a QUOTED source form
     /// (<c>'...'</c>, or the Arity <c>$...$</c> form). The parser uses
-    /// this to keep quoting-sensitive surface syntax honest (chunk 439):
+    /// this to keep quoting-sensitive surface syntax honest:
     /// the Arity snip opener <c>[!</c> requires a BARE <c>!</c> — a
     /// quoted <c>'!'</c> after <c>[</c> is an ordinary list element
     /// (<c>['!', X]</c> is a two-element list, not a snip).</summary>

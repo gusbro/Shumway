@@ -9,13 +9,13 @@ namespace Shumway.Builtins;
 /// <item><c>nb_setval/2</c> / <c>nb_getval/2</c> — non-backtrackable.
 ///   A change persists across backtracking; matches the
 ///   "shared counter / accumulator" use case.</item>
-/// <item><c>b_setval/2</c> / <c>b_getval/2</c> — backtrackable.
-///   The binding is reverted on backtrack via the engine's
-///   ExtraTrail; matches the "thread per-branch context" pattern.</item>
+/// <item><c>b_setval/2</c> / <c>b_getval/2</c> — backtrackable in
+///   intent; currently stored non-backtrackably (see
+///   <see cref="GlobalVarStore"/>).</item>
 /// </list>
 ///
 /// <para>The store lives on the per-engine
-/// <see cref="GlobalVarStore"/> (chunk 145). Names are atoms; values
+/// <see cref="GlobalVarStore"/>. Names are atoms; values
 /// are full heap-allocated copies of the input term, so the var holds
 /// a stable snapshot rather than a heap-pointer that could later be
 /// reclaimed.</para>
@@ -29,10 +29,10 @@ public static class GlobalVarsBuiltins
         // For value-bearing cells (Int / Atom / Float-paired / BigInt
         // / Foreign) the cell itself carries the value, safe across
         // queries. Str / Lis / Pstr cells carry a heap index and could
-        // dangle once the per-query heap unwinds — those store-and-go
-        // cases need a deep snapshot, which a future chunk will add.
-        // The accumulator / counter pattern that motivates global vars
-        // overwhelmingly uses integers, so this works in practice.
+        // dangle once the per-query heap unwinds — those cases would
+        // need a deep snapshot (not implemented). The accumulator /
+        // counter pattern that motivates global vars overwhelmingly
+        // uses integers, so this works in practice.
         Globals(engine).Set(nameId, value, backtrackable: false);
         return true;
     }
@@ -102,7 +102,7 @@ public static class GlobalVarsBuiltins
         return host.GlobalVars;
     }
 
-    /// <summary>Chunk 423 — the store is keyed by atom id (see
+    /// <summary>The store is keyed by atom id (see
     /// <see cref="GlobalVarStore"/>), so the builtins resolve the key
     /// to its id and never touch the name string on the hot path.</summary>
     private static int ResolveAtomId(Activation engine, Cell cell)

@@ -5,7 +5,7 @@ using Shumway.Compiler.Ast;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 258 — clause pretty-printer with width-aware multi-line
+/// clause pretty-printer with width-aware multi-line
 /// layout. Drives the <c>portray_clause/1,2</c> builtins and the
 /// listing path. Output matches the SWI / SICStus convention:
 ///

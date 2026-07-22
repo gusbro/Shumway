@@ -3,7 +3,7 @@ using Shumway.Core;
 namespace Shumway.Compiler.Il;
 
 /// <summary>
-/// Chunk 173: post-opcode runtime assertions for the Tier-1 IL
+/// Post-opcode runtime assertions for the Tier-1 IL
 /// compiler's debug mode. The IL emit, when
 /// <see cref="IlPredicateCompiler.DebugMode"/> is on, injects a
 /// call to one of these markers right after each WAM opcode's
@@ -25,7 +25,7 @@ namespace Shumway.Compiler.Il;
 /// time, so the trace always knows which predicate's IL it
 /// lives in — independent of whatever sub-call nesting the
 /// engine is currently in (a static "current predicate" would
-/// stale-out across calls, see chunk-173's first attempt).</para>
+/// stale-out across calls).</para>
 /// </summary>
 public static class IlDebugMarkers
 {

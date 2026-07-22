@@ -31,9 +31,9 @@ public static class PredicateDisassembler
         bool arityCompat = false)
     {
         ArgumentNullException.ThrowIfNull(source);
-        // Phase 30 Arity/Prolog32 sources ($...$ atoms, #line markers, the
-        // `extrn` declaration operator) lex only with arity_compat on — the
-        // corpus files under C:\temp\test / testGen start with a `#line`
+        // Arity/Prolog32 sources ($...$ atoms, #line markers, the
+        // `extrn` declaration operator) lex only with arity_compat on —
+        // real Arity corpus files start with a `#line`
         // directive, so the flag must be set before the first token.
         ClauseReader reader = arityCompat
             ? new ClauseReader(

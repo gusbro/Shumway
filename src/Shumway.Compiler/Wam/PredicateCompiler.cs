@@ -39,7 +39,7 @@ namespace Shumway.Compiler.Wam;
 /// </summary>
 public sealed class PredicateCompiler
 {
-    /// <summary>Chunk 177: when <c>false</c>, the compiler omits the
+    /// <summary>when <c>false</c>, the compiler omits the
     /// <see cref="Opcode.Meta"/>+<see cref="MetaSubOpcode.DbgInfo"/>
     /// per-clause source-position markers from the emitted bytecode.
     /// Release mode in <c>shumway-compile</c> sets this so a stripped
@@ -128,7 +128,7 @@ public sealed class PredicateCompiler
         }
     }
 
-    /// <summary><paramref name="enableIndexing"/> (chunk 75 — JIT
+    /// <summary><paramref name="enableIndexing"/> (JIT
     /// indexing) gates first-arg / multi-arg indexing. When false the
     /// predicate always compiles to the plain <c>try_me_else</c> chain,
     /// even if its clauses would otherwise discriminate. The engine
@@ -243,16 +243,16 @@ public sealed class PredicateCompiler
             };
         }
 
-        // Decide whether indexing pays off. ADR-007's Phase-1 model only
-        // considered A1; Phase 2 adds sequential multi-arg fallback (chunk
-        // 67) — when A1 is var in the call, dispatch consults A2, then A3,
+        // Decide whether indexing pays off. First-arg (A1) indexing
+        // (ADR-007) plus the sequential multi-arg fallback
+        // — when A1 is var in the call, dispatch consults A2, then A3,
         // etc. An arg position k is indexable iff some clause has a
         // concrete (non-var, non-other) value at position k. If no arg
         // position is indexable, fall through to the plain try_me_else
         // chain.
         var perArgInfo = new ArgInfo[arity][];
         var indexableArgs = new List<int>();
-        // JIT indexing (chunk 75): when the engine hasn't yet proven
+        // JIT indexing: when the engine hasn't yet proven
         // this predicate hot, skip the indexability scan entirely and
         // emit the plain chain. Cold / churning dynamic predicates
         // don't pay the switch-table build cost.
@@ -266,16 +266,16 @@ public sealed class PredicateCompiler
             }
         }
 
-        // Chunk 154: the indexed path emits enter_dynamic at the
+        // the indexed path emits enter_dynamic at the
         // entry and check_visible per clause when isDynamic, so a hot
         // dynamic predicate's runtime dispatch honours the ISO
         // logical-update view via the same mechanism the chain path
         // uses.
         //
-        // Chunk 156: every isDynamic + indexable case routes through
+        // every isDynamic + indexable case routes through
         // CompileIndexedDynamic, which now handles multi-arg layouts
         // too — every bucket chain across every level is extensible
-        // via the chunk-155 try_me_else pattern. The chunk-154
+        // via the try_me_else pattern. The
         // indexed fallback is only used for static predicates now.
         if (isDynamic && indexableArgs.Count > 0)
             return CompileIndexedDynamic(
@@ -291,7 +291,7 @@ public sealed class PredicateCompiler
 
     /// <summary>Size of one <see cref="Opcode.Meta"/> + <see cref="MetaSubOpcode.DbgInfo"/>
     /// instruction: 1 opcode byte + 1 sub-byte + 4-byte entry id payload.
-    /// Chunk 177: gated on <see cref="EmitDebugInfo"/> — Release builds
+    /// gated on <see cref="EmitDebugInfo"/> — Release builds
     /// account for the absent bytes here too (otherwise the per-clause
     /// dispatch addresses wouldn't match the emitted bytecode).</summary>
     private const int MetaDbgInfoSize = 6;
@@ -484,7 +484,7 @@ public sealed class PredicateCompiler
     }
 
     // ============================================================================
-    // Indexing (ADR-007 first-arg + chunk 67 multi-arg fallback)
+    // Indexing (ADR-007 first-arg + sequential multi-arg fallback)
     // ============================================================================
 
     private enum ArgKind { Var, Atom, Int, List, Struct, Other }
@@ -840,7 +840,7 @@ public sealed class PredicateCompiler
     {
         int metaDbgInfoSize = emitDebugInfo ? MetaDbgInfoSize : 0;
         int n = compiledClauses.Count;
-        // Chunk 154: dynamic indexed predicates wrap their entry in
+        // dynamic indexed predicates wrap their entry in
         // enter_dynamic (samples DbGeneration into CurrentViewGen) and
         // gate every clause body with check_visible (filters by born/
         // died vs the captured view-gen), the same ADR-015 chunk-C
@@ -947,7 +947,7 @@ public sealed class PredicateCompiler
         static int SwitchSize(int argIdx) => argIdx == 0 ? 17 : 21;
         static int SubDispatchSize(int argIdx) => argIdx == 0 ? 5 : 9;
 
-        // Chunk 154: start the predicate-local layout after the
+        // start the predicate-local layout after the
         // enter_dynamic byte when this is a dynamic predicate. Every
         // switch / chain / body offset shifts up by 1; targets stored
         // in switch tables and try/retry/trust addresses are
@@ -1046,7 +1046,7 @@ public sealed class PredicateCompiler
             // opcode; the runtime executes the no-op Meta then the body.
             clauseBodyPos[i] = pos;
             pos += metaDbgInfoSize;
-            // Chunk 154: every dynamic clause carries its own
+            // every dynamic clause carries its own
             // check_visible immediately after the Meta marker, so any
             // dispatch path (switch table direct jump, bucket chain,
             // var-fallthrough chain) runs the visibility filter before
@@ -1202,7 +1202,7 @@ public sealed class PredicateCompiler
                 EmitChain(emitter, ss.AllClauses, clauseBodyPos, arity, dispatchSites);
         }
 
-        // Chunk 154: emit enter_dynamic at the very entry of every
+        // emit enter_dynamic at the very entry of every
         // dynamic indexed predicate. Captures DbGeneration into
         // CurrentViewGen so the per-clause check_visible below filters
         // against a stable view of the database for the duration of
@@ -1321,12 +1321,12 @@ public sealed class PredicateCompiler
         for (int i = 0; i < n; i++)
         {
             if (emitDebugInfo) emitter.EmitMetaDbgInfo(i);
-            // Chunk 154: dynamic clauses run a check_visible
+            // dynamic clauses run a check_visible
             // sentinel (born=0, died=MaxValue) — the persistent
             // buffer is rebuilt on every mutation so live born/died
-            // values come from the rebuild itself. Chunk 155 will
-            // wire real per-clause born/died and extend chains in
-            // place to avoid the rebuild.
+            // values come from the rebuild itself. (The in-place
+            // chain machinery patches real born/died without a
+            // rebuild on the incremental paths.)
             if (isDynamic)
                 emitter.EmitCheckVisible(born: 0L, died: long.MaxValue);
             int clauseStart = emitter.Position;
@@ -1398,10 +1398,10 @@ public sealed class PredicateCompiler
     }
 
     // ============================================================================
-    // Chunk 155 — Extensible indexed dispatch for dynamic predicates
+    // Extensible indexed dispatch for dynamic predicates
     // ============================================================================
 
-    /// <summary>Chunk 155 — first-argument indexed compilation for
+    /// <summary>first-argument indexed compilation for
     /// dynamic predicates with chains that can be extended in place
     /// by <c>assertz</c> / <c>asserta</c> without re-linking the
     /// predicate. Differences from <see cref="CompileIndexed"/>:
@@ -1409,7 +1409,7 @@ public sealed class PredicateCompiler
     /// <item>Bucket chains use <c>try_me_else</c> / <c>retry_me_else</c>
     ///   (chain-walking via patchable <c>&lt;next&gt;</c> operands) instead
     ///   of the contiguous <c>try</c> / <c>retry</c> / <c>trust</c>
-    ///   triplet — the chunk-127/128 incremental-assertz path can extend
+    ///   triplet — the incremental-assertz path can extend
     ///   any chain's tail by appending a new chunk at the end of the
     ///   buffer and patching the previous tail's operand.</item>
     /// <item>Each chain entry is <c>try_me_else &lt;next&gt; arity</c> /
@@ -1577,7 +1577,7 @@ public sealed class PredicateCompiler
                 : varChainHead;
 
         // For each level, compute the const cascade label, list label,
-        // and struct label — same logic as the chunk-155a single-arg
+        // and struct label — same logic as the single-arg
         // case, just per-level.
         for (int li = 0; li < numLevels; li++)
         {
@@ -1750,7 +1750,7 @@ public sealed class PredicateCompiler
     }
 
     /// <summary>Per-level bucket / chain bookkeeping for the multi-arg
-    /// extensible-indexed compilation in chunk 156.</summary>
+    /// extensible-indexed compilation.</summary>
     private sealed class LevelData
     {
         public int ArgIdx;
