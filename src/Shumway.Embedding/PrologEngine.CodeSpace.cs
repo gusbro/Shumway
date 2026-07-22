@@ -45,7 +45,7 @@ public sealed partial class PrologEngine
     /// (ADR-015 chunk B). Null until the first query builds it; nulled
     /// whenever the static program changes (<see cref="ConsultString"/> /
     /// bundle load). A query links only its transient region against this.</summary>
-    private Shumway.Compiler.Wam.Linker.LinkResult? _staticLink;
+    internal Shumway.Compiler.Wam.Linker.LinkResult? _staticLink;
 
     /// <summary>the persistent program buffer —
     /// <c>prefix + static + dynamic</c>. Owned by PrologEngine across
@@ -58,18 +58,18 @@ public sealed partial class PrologEngine
     /// with the query region's linked offsets. Null until the first
     /// query builds it; nulled by <see cref="InvalidatePersistent"/>
     /// when the dynamic-functor set changes (consult, declaration).</summary>
-    private byte[]? _persistentProgram;
+    internal byte[]? _persistentProgram;
 
     /// <summary>Logical end of <see cref="_persistentProgram"/>. The
     /// buffer is over-allocated (capacity-doubled), so a slack tail
     /// of zero bytes (Invalid opcode) follows the valid region; a stray
     /// PC into it fails loudly.</summary>
-    private int _persistentLength;
+    internal int _persistentLength;
 
     /// <summary>Cached link result for the dynamic predicates only —
     /// the address map a per-query link uses to resolve calls into
     /// the dynamic region without re-linking it.</summary>
-    private Shumway.Compiler.Wam.Linker.LinkResult? _dynamicLink;
+    internal Shumway.Compiler.Wam.Linker.LinkResult? _dynamicLink;
 
 
     /// <summary>when a query is in flight, the address at
@@ -95,7 +95,7 @@ public sealed partial class PrologEngine
     /// <summary>Marks the persistent program as stale so the next query
     /// setup rebuilds it. Called on every consult and on every change
     /// to the dynamic-functor set.</summary>
-    private void InvalidatePersistent()
+    internal void InvalidatePersistent()
     {
         _persistentProgram = null;
         _persistentLength = 0;
@@ -114,7 +114,7 @@ public sealed partial class PrologEngine
         // Live engines still running on the old buffer keep their own
         // table through _engineChainTables — invalidation never desyncs
         // an in-flight query's in-place dispatch.
-        _dynChainTable = new DynChainTable();
+        ResetDynChains();
     }
 
     /// <summary>user-facing entry point for

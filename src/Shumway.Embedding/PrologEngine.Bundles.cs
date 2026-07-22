@@ -1453,7 +1453,7 @@ public sealed partial class PrologEngine
             _modules.Clear();
             _modules[DefaultModuleName] = new ModuleManifest(DefaultModuleName);
             _dynStore.ClearAllSlots();
-            _dynChainTable = new DynChainTable();
+            ResetDynChains();
             _staticPredicateCache.Clear();
             _dynamicPredicateCache.Clear();
             _skipCompileMergedCache = null;   // both caches cleared

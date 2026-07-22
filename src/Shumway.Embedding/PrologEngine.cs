@@ -91,7 +91,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>:- set_prolog_flag(double_quotes, codes).</c> directive at the
     /// top of a source affects every subsequent parse of that source
     /// and every query made against this engine.</summary>
-    private readonly PrologFlags _flags = new();
+    internal readonly PrologFlags _flags = new();
 
     /// <summary>Diagnostic accessor for the flag state. Tests
     /// can read <see cref="PrologFlags.DoubleQuotes"/> through this to
@@ -103,7 +103,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// which functors are dynamic and the ordered clause list each holds.
     /// The bytecode-level machinery (trampolines, chains, snapshots) stays
     /// on this engine and consults the store as its source of truth.</summary>
-    private readonly DynamicClauseStore _dynStore = new();
+    internal readonly DynamicClauseStore _dynStore = new();
 
     /// <summary>ADR-034 — dynamic functor ids mutated at any point in this
     /// host's lifetime. Shared BY REFERENCE into every per-query
@@ -122,128 +122,6 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <summary>Test hook — the pooled buffer's capacity in cells (0 = empty).</summary>
     internal long PooledHeapCapacityCells => _heapPool.CapacityCells;
 
-    /// <summary>ADR-015 chunk C step 4: per-dynamic-functor chain state
-    /// — one entry per clause currently in <see cref="_dynamicClauses"/>,
-    /// in the same order, carrying the absolute byte position of the
-    /// clause's <c>check_visible</c> died-slot in
-    /// <see cref="Activation.CurrentProgram"/>. <c>retract</c> patches the
-    /// 8-byte died slot in place; the next call's
-    /// <c>check_visible</c> sees the new value and skips the clause.
-    /// Populated after every query setup / dynamic-predicate
-    /// recompile.</summary>
-    private sealed class DynChainEntry
-    {
-        public readonly Clause Clause;
-        /// <summary>Absolute byte position of this clause's
-        /// <c>check_visible</c> died slot (8 bytes). <c>retract</c>
-        /// patches it in place to mark the clause logically gone.</summary>
-        public int DiedOperandAddr;
-        /// <summary>Absolute byte position of this clause's chain
-        /// instruction's <c>&lt;next&gt;</c> address operand (4 bytes) —
-        /// where its <c>try_me_else</c> or <c>retry_me_else</c> says to
-        /// jump on backtrack. The last clause's points at the fail-stub;
-        /// <c>assertz</c> will patch the previous-last's slot in place to
-        /// link a freshly compiled clause into the chain. -1 when the
-        /// clause has no chain instruction in front of it (paso-3 single-
-        /// clause emission without a fail-stub address — those predicates
-        /// fall back to the chunk-C recompile path).</summary>
-        public int NextOperandAddr;
-        /// <summary>The absolute start of this clause's bytecode chunk
-        /// in the program buffer (the chain-instruction address) and
-        /// the chunk's total length. Tracked so the chain
-        /// GC can reclaim the bytes of dead clauses into a per-engine
-        /// free-list for reuse by subsequent <c>assertz</c> /
-        /// <c>asserta</c>.</summary>
-        public int ChunkAddr;
-        public int ChunkLength;
-        public DynChainEntry(Clause c, int died, int next, int chunkAddr, int chunkLength)
-        {
-            Clause = c;
-            DiedOperandAddr = died;
-            NextOperandAddr = next;
-            ChunkAddr = chunkAddr;
-            ChunkLength = chunkLength;
-        }
-    }
-    private sealed class DynChainState
-    {
-        public readonly List<DynChainEntry> Entries = new();
-        /// <summary>Absolute byte position of the operand at the bytecode
-        /// tail of this predicate's chain — the <c>&lt;next&gt;</c> of
-        /// either the latest-appended clause's <c>retry_me_else</c>, or
-        /// (for never-asserted dynamic predicates) the empty-stub clause's
-        /// <c>try_me_else</c>. <c>assertz</c> writes the new clause's
-        /// chunk address here to link it onto the chain, then updates
-        /// this to point at the new clause's own <c>&lt;next&gt;</c>
-        /// operand. -1 when the predicate's last instruction is
-        /// <c>trust_me</c> (paso-3 emission without a fail-stub) — those
-        /// predicates fall back to the chunk-C recompile path.</summary>
-        public int TailNextAddr = -1;
-        /// <summary>Absolute byte position of the trampoline's
-        /// <c>execute &lt;chain-head&gt;</c> operand — the 4-byte address
-        /// asserta patches to install a new chain head. -1 when there is
-        /// no trampoline.</summary>
-        public int TrampolineExecuteOperandAddr = -1;
-        /// <summary>Absolute byte position of the current chain head's
-        /// chain instruction (a <c>try_me_else</c>). asserta in-place
-        /// rewrites this byte from <c>try_me_else</c> (9 bytes) to
-        /// <c>retry_me_else &lt;same-next&gt;</c> (5 bytes) + 4 nops,
-        /// demoting the old head into a regular middle clause without
-        /// shifting anything.</summary>
-        public int HeadClauseAddr = -1;
-
-        /// <summary>Chunk-150 free-list staging: the bytecode regions
-        /// of clauses that have been retracted or abolished and so are
-        /// candidates for the engine-wide free list. Populated by
-        /// <c>retract</c> / <c>abolish</c>; drained by
-        /// <c>garbage_collect_clauses</c> into the engine-wide
-        /// free-list (persistent across queries) where the
-        /// next <c>assertz</c> / <c>asserta</c> can reuse the bytes
-        /// instead of extending the program buffer.</summary>
-        public readonly List<(int Addr, int Length)> DeadChunks = new();
-    }
-    /// <summary>dynamic-chain metadata,
-    /// one table PER persistent buffer. Chain state records absolute byte
-    /// offsets into one specific buffer, but nested queries (a deferred
-    /// <c>:- initialization</c> goal running QueryAll from inside a
-    /// mid-query consult — Logtalk's loader files nest these many levels
-    /// deep) rebuild the persistent buffer while OUTER engines are still
-    /// executing on their older buffers. A single host-level table would
-    /// describe only the newest buffer — a resumed outer engine's assertz
-    /// would then patch new-buffer offsets into its old buffer (the
-    /// 0xCF / ArgumentOutOfRange corruption family), or, with the
-    /// staleness guards, skip the patch and lose same-query visibility of
-    /// its own assert (the Logtalk conditional-compilation failure). So
-    /// each Activation is associated at query setup with the table describing
-    /// ITS buffer, and every in-place mutation resolves chain state
-    /// through the engine performing it. The free-chunk list rides along
-    /// because its addresses are equally buffer-relative. SWI / GProlog
-    /// sidestep all of this with a single mutable code space; the
-    /// per-engine table is the equivalent alignment for our
-    /// snapshot-per-query model, with <see cref="_dynamicClauses"/> as
-    /// the authoritative store bridging buffer generations.</summary>
-    private sealed class DynChainTable
-    {
-        public readonly Dictionary<int, DynChainState> Chains = new();
-
-        /// <summary>Chunk-150 free-list of dead-clause bytecode regions
-        /// in THIS table's buffer. <c>garbage_collect_clauses</c> moves a
-        /// predicate's <see cref="DynChainState.DeadChunks"/> here; the
-        /// next <c>assertz</c> / <c>asserta</c> scans for a fit
-        /// (first-fit) and reuses the bytes instead of extending the
-        /// program buffer via <c>engine.AppendCode</c>.</summary>
-        public readonly List<(int Addr, int Length)> FreeChunks = new();
-
-        /// <summary>live-linked static
-        /// predicates' unresolved call sites (absolute operand position in
-        /// THIS table's buffer, callee fid), accumulated across the consult
-        /// batches linked into it so a forward reference (batch N calls a
-        /// predicate a later batch M&gt;N defines) is re-patched once M
-        /// links. Per-buffer because the positions are buffer offsets —
-        /// with the consult broadcast, batches land in several engines'
-        /// buffers, each with its own positions.</summary>
-        public List<(int AbsPos, int FunctorId)>? LiveConsultUnresolved;
-    }
 
 
     // the generation lives in a shared GenerationBox handed to
@@ -251,7 +129,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // field read instead of a Func<long> invoke per dynamic call. The ONE
     // bump site is InvalidateDynamicCache (every assertz / asserta /
     // retract / abolish funnels through it).
-    private readonly Shumway.Core.GenerationBox _dbGeneration = new();
+    internal readonly Shumway.Core.GenerationBox _dbGeneration = new();
 
     /// <summary>A monotonic counter bumped by every <c>assertz</c> /
     /// <c>asserta</c> / <c>retract</c> / <c>abolish</c> — the

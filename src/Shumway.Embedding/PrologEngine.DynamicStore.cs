@@ -1508,7 +1508,7 @@ public sealed partial class PrologEngine
     /// fast path is gated on <c>!Modes.AllModesDeterministic</c>. Returns
     /// <c>null</c> when the transform produced nothing (the pre-427
     /// <c>rewritten.Count == 0</c> guard).</summary>
-    private Shumway.Compiler.Wam.CompiledClause? CompileRuntimeAssertClause(
+    internal Shumway.Compiler.Wam.CompiledClause? CompileRuntimeAssertClause(
         Activation engine, int functorId, Clause newClause)
     {
         Clause toCompile;
@@ -1793,7 +1793,7 @@ public sealed partial class PrologEngine
     /// complete and the three per-assert <c>Snapshot()</c> array copies can
     /// be skipped — the common case: an asserted fact like
     /// <c>next_char_i(42)</c> interns nothing.</summary>
-    private void RefreshLiteralPoolsIfGrown(Activation engine)
+    internal void RefreshLiteralPoolsIfGrown(Activation engine)
     {
         // per-engine counters (an engine with no record refreshes
         // unconditionally; refresh is idempotent).
@@ -1906,9 +1906,9 @@ public sealed partial class PrologEngine
     /// call the rebuild — a fresh trampoline always accepts in-place
     /// appends so recursion shouldn't arise, but a guard keeps a
     /// pathological shape from looping. Single-threaded per host.</summary>
-    private bool _inFidViewRebuild;
+    internal bool _inFidViewRebuild;
 
-    private void RebuildEngineFidChainView(Activation target, int functorId)
+    internal void RebuildEngineFidChainView(Activation target, int functorId)
     {
         if (_inFidViewRebuild) return;
         if (target.CurrentProgram is null
@@ -2155,7 +2155,7 @@ public sealed partial class PrologEngine
     /// state exists.</summary>
     internal int? PeekTailNextAddr(int functorId)
     {
-        if (!_dynChainTable.Chains.TryGetValue(functorId, out var chain)) return null;
+        if (!DynChains.Chains.TryGetValue(functorId, out var chain)) return null;
         return chain.TailNextAddr;
     }
 
@@ -2164,7 +2164,7 @@ public sealed partial class PrologEngine
     /// next call.</summary>
     internal int? PeekHeadClauseAddr(int functorId)
     {
-        if (!_dynChainTable.Chains.TryGetValue(functorId, out var chain)) return null;
+        if (!DynChains.Chains.TryGetValue(functorId, out var chain)) return null;
         return chain.HeadClauseAddr;
     }
 
@@ -2510,7 +2510,7 @@ public sealed partial class PrologEngine
         IReadOnlyDictionary<int, int> addressMap,
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress)
     {
-        _dynChainTable.Chains.Clear();
+        DynChains.Chains.Clear();
         var seen = new HashSet<int>();
         foreach (int fid in _dynStore.Functors)
             if (seen.Add(fid))
@@ -2538,7 +2538,7 @@ public sealed partial class PrologEngine
     private void PopulateDynChainFor(
         int fid, byte[] program, int predAddr, int predByteLength)
     {
-        _dynChainTable.Chains.Remove(fid);
+        DynChains.Chains.Remove(fid);
         // Empty dynamic predicates still need chain state for incremental
         // assertz — the empty-stub clause's try_me_else <fail-stub> is the
         // first patch target. So default to an empty clause list rather
@@ -2624,7 +2624,7 @@ public sealed partial class PrologEngine
         // predicates have the empty-stub clause as the patch target for
         // the first incremental assertz).
         if (chain.Entries.Count > 0 || tailNextOperand >= 0)
-            _dynChainTable.Chains[fid] = chain;
+            DynChains.Chains[fid] = chain;
     }
 
 }

@@ -1412,14 +1412,14 @@ public sealed partial class PrologEngine
             // a fresh buffer gets a fresh chain table. Older
             // tables stay alive through _engineChainTables for any outer
             // (nested-query) engines still running on their buffers.
-            _dynChainTable = new DynChainTable();
+            ResetDynChains();
             PopulateDynChains(program, addressMap, mergedPredicatesByAddress);
         }
         // associate this engine with the table describing the
         // buffer it runs on: every in-place dynamic mutation this engine
         // performs resolves chain state through this association, so a
         // nested query's rebuild can never make it patch wrong offsets.
-        _engineChainTables.AddOrUpdate(engine, _dynChainTable);
+        AssociateEngineWithCurrentChains(engine);
         // ... and track it for the dynamic-mutation broadcast (a mutation
         // from a nested query must also reach the buffers of suspended
         // outer engines — see _liveEngines).
@@ -1429,14 +1429,14 @@ public sealed partial class PrologEngine
         {
             int probeFid = FunctorTable.Intern(
                 AtomTable.Intern("$lgt_file_loading_stack_", permanent: true).Id, 2);
-            int chainEntries = _dynChainTable.Chains.TryGetValue(probeFid, out var pch)
+            int chainEntries = DynChains.Chains.TryGetValue(probeFid, out var pch)
                 ? pch.Entries.Count : -1;
             int storeCount = _dynStore.TryGetClauses(probeFid, out var pcs) ? pcs.Count : -1;
             Console.Error.WriteLine(
                 $"[STK-SETUP] eng={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(engine):X8}"
                 + $" builtNow={builtPersistentNow}"
                 + $" buf={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(program):X8}"
-                + $" tbl={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_dynChainTable):X8}"
+                + $" tbl={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(DynChains):X8}"
                 + $" chainEntries={chainEntries} store={storeCount}");
         }
 
