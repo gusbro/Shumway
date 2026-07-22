@@ -694,15 +694,34 @@ internal sealed class ConsultPipeline
         // predicate would be invisible to retract/2 and clause/2.
         if (E._dynStore.FunctorCount > 0)
         {
+            // A MULTIFILE predicate accumulates clauses from SEVERAL modules,
+            // so the per-fid seed-module rewrite at query setup cannot work
+            // (one module context would mis-mangle the other contributors'
+            // module-local body calls — clpfd's verify_attributes/4 clauses
+            // rewritten under clpr's context left clpfd_in_dom unmangled).
+            // Instead, a multifile clause is rewritten HERE, under its origin
+            // module's context, and stored pre-mangled; query setup then uses
+            // the pass-through default context for the fid (no seed module).
+            ModuleRewrite.Context? multifileCtx = null;
+            ModuleRewrite.Context MultifileCtx()
+                => multifileCtx ??= new ModuleRewrite.Context(
+                    moduleName,
+                    ComputeConsultLocalFunctors(clauses, publics),
+                    E._dynStore.Functors);
+
             var keptClauses = new List<Clause>(clauses.Count);
-            foreach (var c in clauses)
+            foreach (var c0 in clauses)
             {
+                var c = c0;
                 if (PrologEngine.TryExtractHead(c, out string n, out int a))
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
                     if (E._dynStore.IsDynamic(fid))
                     {
+                        bool isMultifile = pendingMultifile?.Contains(fid) == true;
+                        if (isMultifile && moduleName != PrologEngine.DefaultModuleName)
+                            c = ModuleRewrite.Rewrite(c, MultifileCtx());
                         E._dynStore.Slot(fid).Add(c);
                         // ADR-023 — a CONSULT-borne clause is a mutation of the
                         // dynamic predicate exactly like a runtime assertz, and
@@ -726,7 +745,10 @@ internal sealed class ConsultPipeline
                         // under that module's context at query setup so
                         // their body calls to module-locals mangle the
                         // same way the module's static clauses do.
-                        if (moduleName != PrologEngine.DefaultModuleName)
+                        // (A multifile clause is already rewritten above and
+                        // must NOT get a seed module — a later contributor
+                        // from another module would hijack the context.)
+                        if (moduleName != PrologEngine.DefaultModuleName && !isMultifile)
                             E._dynamicSeedModule[fid] = moduleName;
                         // Mid-query consult (consult/1 from a live query): the
                         // clause is already in E._dynStore.Slots (above), so
@@ -982,6 +1004,22 @@ internal sealed class ConsultPipeline
                     + "the source.");
             }
         }
+    }
+
+    /// <summary>The module-local (non-public) head functors of this consult's
+    /// clause set — the set a <see cref="ModuleRewrite.Context"/> mangles.</summary>
+    private static HashSet<int> ComputeConsultLocalFunctors(
+        IEnumerable<Clause> clauses, HashSet<int> publicFunctors)
+    {
+        var locals = new HashSet<int>();
+        foreach (var c in clauses)
+        {
+            if (!PrologEngine.TryExtractHead(c, out string name, out int arity)) continue;
+            int fid = FunctorTable.Intern(
+                AtomTable.Intern(name, permanent: true).Id, arity);
+            if (!publicFunctors.Contains(fid)) locals.Add(fid);
+        }
+        return locals;
     }
 
     internal static int HeadFunctorIdOf(Clause clause)

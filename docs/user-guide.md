@@ -207,8 +207,10 @@ engine.UseClpfd();   // module 'clpfd'  — finite-domain constraints
 engine.UseClpr();    // module 'clpr'   — linear-real constraints
 ```
 
-(The two cannot share an engine — both define a public
-`verify_attributes/4`.)
+Both libraries can be enabled on one engine (their `verify_attributes/4`
+hooks are `:- multifile`, dispatched by the attribute module); keep each
+variable's constraints within one library — mixed clpfd+clpr constraints
+on the same variable are not supported.
 
 ### Catching runtime exceptions
 

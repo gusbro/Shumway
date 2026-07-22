@@ -16,8 +16,11 @@ namespace Shumway.Embedding;
 /// is determined — once it turns linear it is posted for real.
 /// Variables determined to a single value are bound to it.</para>
 ///
-/// <para>CLP(R) and CLP(FD) cannot share an engine — both define a public
-/// <c>verify_attributes/4</c>.</para>
+/// <para>CLP(R) and CLP(FD) can share an engine: both declare their
+/// <c>verify_attributes/4</c> hook <c>:- multifile</c>, and the hook's first
+/// argument (the attribute module) dispatches each wakeup to the right
+/// library. Constraints must stay per-library — a variable carrying BOTH
+/// clpfd and clpr attributes is not supported.</para>
 /// </summary>
 internal static class Clpr
 {
@@ -28,6 +31,7 @@ internal static class Clpr
 
         :- public '{}'/1.
         :- public verify_attributes/4.
+        :- multifile verify_attributes/4.
         :- public '$clpr_dep_eq'/2.
         :- public clpr_attr_goals/3.
 

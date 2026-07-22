@@ -84,6 +84,7 @@ internal static class Clpfd
         :- public sum/3.
         :- public scalar_product/4.
         :- public verify_attributes/4.
+        :- multifile verify_attributes/4.
         :- public clpfd_attr_goals/3.
         :- public label/1.
         :- public labeling/2.
