@@ -1663,7 +1663,7 @@ public sealed partial class PrologEngine
         return locals;
     }
 
-    private static bool TryExtractHead(Clause clause, out string name, out int arity)
+    internal static bool TryExtractHead(Clause clause, out string name, out int arity)
     {
         Term headTerm = clause.Kind == ClauseKind.Rule
             ? ((CompoundTerm)clause.Term).Args[0]

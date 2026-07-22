@@ -908,7 +908,7 @@ public sealed partial class PrologEngine
         return false;   // undefined → retractall is a no-op
     }
 
-    private void EnsureDynamic(int fid)
+    internal void EnsureDynamic(int fid)
     {
         if (_dynStore.IsDynamic(fid)) return;
 
@@ -990,7 +990,7 @@ public sealed partial class PrologEngine
     ///   extensions work just like declared-dynamic
     ///   predicates.</item>
     /// </list></summary>
-    private void MaterializeDynamicTrampoline(Activation engine, int fid)
+    internal void MaterializeDynamicTrampoline(Activation engine, int fid)
     {
         // Root fix: never append at a stale owner position (see
         // ResyncOwnerAppendPosition).
@@ -1137,7 +1137,7 @@ public sealed partial class PrologEngine
     /// forward references to predicates a later batch defines are re-patched
     /// as those addresses become known.</para>
     /// </summary>
-    private void LinkConsultedStaticPredicatesLive(
+    internal void LinkConsultedStaticPredicatesLive(
         Activation engine, IReadOnlyList<Clause> newStaticClauses, string moduleName)
     {
         bool diagLive = Environment.GetEnvironmentVariable("SHUMWAY_UNDEF_DIAG") == "1";
@@ -1283,7 +1283,7 @@ public sealed partial class PrologEngine
     /// <c>ResolveTargetMaybeAutoPromoted</c> already resolves through — so
     /// no separate visibility set is needed for dynamics.
     /// </summary>
-    private void EnsureLiveDynamicTrampolines(Activation engine)
+    internal void EnsureLiveDynamicTrampolines(Activation engine)
     {
         if (engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap)
             return;
@@ -1328,7 +1328,7 @@ public sealed partial class PrologEngine
     /// handles the rest of the recognised set. Unknown flags are
     /// silently ignored at consult time — the runtime builtin
     /// surfaces the diagnostic.</summary>
-    private void ApplyConsultSetPrologFlag(string flagName, string valueName)
+    internal void ApplyConsultSetPrologFlag(string flagName, string valueName)
     {
         switch (flagName)
         {
@@ -1372,7 +1372,7 @@ public sealed partial class PrologEngine
     /// predicate with a real dynamic trampoline; a first-time assertz
     /// at runtime then has somewhere to put the new clause and
     /// subsequent calls dispatch to it.</summary>
-    private void CollectImplicitDynamics(IEnumerable<Clause> clauses, HashSet<int> publicsInSameConsult)
+    internal void CollectImplicitDynamics(IEnumerable<Clause> clauses, HashSet<int> publicsInSameConsult)
     {
         var seen = new HashSet<int>();
         foreach (var c in clauses)
@@ -1853,7 +1853,7 @@ public sealed partial class PrologEngine
     /// (Appended late-arrivals land at the chain tail regardless of their
     /// store position — set-visibility is exact, relative order of
     /// clauses this engine never saw may differ from the store.)</summary>
-    private void ReconcileEngineDynamicView(Activation engine)
+    internal void ReconcileEngineDynamicView(Activation engine)
     {
         if (GetChainTable(engine) is not { } tbl) return;
         if (engine.CurrentProgram is null) return;

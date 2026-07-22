@@ -201,7 +201,7 @@ public sealed partial class PrologEngine
     /// the runtime's default <c>Assembly.Load</c> probe path as a
     /// last resort. Returns <c>null</c> if every probe misses; the
     /// caller surfaces a file-not-found.</summary>
-    private static string? ResolveForeignAssemblyPath(string name, string? bundleDir)
+    internal static string? ResolveForeignAssemblyPath(string name, string? bundleDir)
     {
         if (bundleDir is not null)
         {

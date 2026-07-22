@@ -66,7 +66,7 @@ public sealed partial class PrologEngine
     /// a warning and skipped (the program may only need predicates Shumway
     /// already provides, or it will surface a clearer per-predicate
     /// existence_error later) rather than aborting the whole consult.</summary>
-    private void ExecuteUseModuleDirective(Term spec)
+    internal void ExecuteUseModuleDirective(Term spec)
     {
         if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
         {
@@ -119,14 +119,14 @@ public sealed partial class PrologEngine
         }
     }
 
-    private int _nativeBlockConsultSeq;
+    internal int _nativeBlockConsultSeq;
     // the engine's monotonic synthesized-helper sequence: every
     // consult/assert transform on this engine draws unique helper ids, so a
     // second consult's `$disj_N` can never collide with the first's in the same
     // module. Per-engine (not global) so the atom space stays bounded across
     // engines/processes; the query stub uses the reserved `$q` prefix instead.
     private int _metaHelperSeq;
-    private int NextMetaHelperId() => ++_metaHelperSeq;
+    internal int NextMetaHelperId() => ++_metaHelperSeq;
 
 
     /// <summary>ADR-025 — enables the inline if-then-else lowering: an eligible

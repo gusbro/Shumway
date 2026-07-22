@@ -14,7 +14,13 @@ public sealed partial class PrologEngine
     /// engine's life, so a literal keeps a stable id across queries — the
     /// precondition for caching the static linked region, whose bytecode
     /// embeds those ids.</summary>
-    private readonly Shumway.Compiler.Wam.LiteralPools _literalPools = new();
+    internal readonly Shumway.Compiler.Wam.LiteralPools _literalPools = new();
+
+    /// <summary>Every live query's interpreter (weak — a finished query's interp
+    /// collects naturally), so mutation-time invalidation can clear a fid's
+    /// <c>IlByFunctorId</c> slot in ALL of them (see InvalidateDynamicCache).</summary>
+    internal readonly List<WeakReference<Shumway.Interpreter.BytecodeInterpreter>>
+        _liveInterps = new();
 
     /// <summary>runtime-assert compile cache. The per-assert
     /// pipeline used to build a fresh <see cref="ModuleRewrite.Context"/>
@@ -80,7 +86,7 @@ public sealed partial class PrologEngine
     /// The setup code picks this with enough headroom over the
     /// persistent length for typical mid-query <c>assertz</c>
     /// growth.</summary>
-    private int _querySplit = -1;
+    internal int _querySplit = -1;
 
     /// <summary>how much address space to reserve between
     /// the persistent program's end and the per-query region's start.
@@ -226,7 +232,7 @@ public sealed partial class PrologEngine
     /// <see cref="RemoveDynamic"/>, <see cref="RemoveDynamicByReference"/>,
     /// <see cref="AbolishDynamic"/>) so the next query sees a fresh
     /// compile that picks up the modification.</summary>
-    private void InvalidateDynamicCache(int functorId)
+    internal void InvalidateDynamicCache(int functorId)
     {
         // Every dynamic-store mutation funnels through here (assertz,
         // asserta, retract, abolish), so this is the one place the
@@ -276,7 +282,7 @@ public sealed partial class PrologEngine
     /// same precedence the merge uses: precompiled &lt; static &lt;
     /// dynamic). Used by <see cref="InvalidateDynamicCache"/> and the
     /// JIT hotness-flip drops at query setup.</summary>
-    private void DropDynamicPredicateCacheEntry(int functorId)
+    internal void DropDynamicPredicateCacheEntry(int functorId)
     {
         _dynamicPredicateCache.Remove(functorId);
         var merged = _skipCompileMergedCache;
@@ -288,5 +294,181 @@ public sealed partial class PrologEngine
         else
             merged.Remove(functorId);
     }
+
+
+    /// <summary>Per-engine cache of precompiled predicates from any
+    /// bundle blob loaded with <see cref="LoadBundle(Bundle)"/>
+    ///. The query-setup path consults this cache before
+    /// running ModuleCompiler over the consulted source — for any
+    /// predicate whose functor id is in the cache, the cached
+    /// <see cref="Shumway.Compiler.Wam.CompiledPredicate"/> is reused
+    /// verbatim. Mutating the cache directly is not supported; use
+    /// <see cref="LoadBundle(Bundle)"/> to populate it.</summary>
+    public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> PrecompiledClauseCache
+        => _precompiledClauseCache;
+    internal readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _precompiledClauseCache = new();
+
+    /// <summary>pre-compiled predicates from source-less
+    /// bundle entries. Their bytecode is already mangled + runtime-
+    /// ready (ShmoCompiler in applies the same transforms
+    /// SetupQueryFromTerm would), so they bypass the AST → ModuleCompiler
+    /// pipeline entirely and slot straight into the static-link region.
+    /// Populated by <see cref="LoadEntryFromBytecode"/> on
+    /// <see cref="LoadBundle(Bundle)"/>; consumed by
+    /// <see cref="SetupQueryFromTerm"/> when it (re)builds the static
+    /// link. Keyed by FunctorId so a later source-carrying consult of
+    /// the same predicate replaces the precompiled entry cleanly.</summary>
+    internal readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
+        _precompiledStaticPredicates = new();
+
+    /// <summary>Persisted WAM-independent dispatch graphs (--strip-wam), keyed by
+    /// runtime functor id. Populated at LoadBundle; registered onto each query's
+    /// fresh engine at setup (the indexed-dispatch cache is per-engine), so a
+    /// stripped indexed predicate resolves its entry clause without a WAM body.</summary>
+    internal readonly Dictionary<int, byte[]> _persistedIndexGraphs = new();
+
+    /// <summary>region member-entry aliases, keyed by the member's runtime
+    /// functor id; the value is <c>EncodeResumeMarker(regionRootRuntimeFid, entryCursor)</c>.
+    /// Populated at LoadBundle from each region method's <see cref="Shumway.Compiler.Il.
+    /// IlPersistedEntry.RegionMembers"/> table. Injected into the query address map
+    /// (lowest priority — only for a member with no WAM address and no standalone IL
+    /// delegate) so a by-fid call to a stripped absorbed member dispatches INTO its
+    /// region method at the member's entry cursor.</summary>
+    internal readonly Dictionary<int, int> _regionMemberAliases = new();
+
+    /// <summary>read-only view of
+    /// <see cref="_precompiledStaticPredicates"/>. Lets
+    /// <see cref="BundleWriter.CompileEntryToIl"/> see the predicates
+    /// loaded from a source-less bundle entry (the path),
+    /// not just the ones populated by ConsultString.</summary>
+    public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
+        PrecompiledStaticPredicates => _precompiledStaticPredicates;
+
+    /// <summary>Per-engine cache of compiled dynamic predicates.
+    /// The query-setup path consults this cache alongside
+    /// <see cref="_precompiledClauseCache"/> so the ModuleCompiler can
+    /// skip recompiling a dynamic predicate's bytecode + switch tables
+    /// when its clause set hasn't changed since the last compile.
+    /// Invalidated on every <c>assertz</c> / <c>asserta</c> /
+    /// <c>retract</c> / <c>abolish</c> against the same functor.
+    /// Predicates whose bytecode references per-module literal pools
+    /// (string / float / big-integer) are filtered out at populate time
+    /// — see <see cref="Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable"/>.</summary>
+    public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> DynamicPredicateCache
+        => _dynamicPredicateCache;
+    internal readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _dynamicPredicateCache = new();
+
+    /// <summary>Per-engine cache of compiled <em>static</em> predicates
+    ///. Static predicates are immutable between consults, so
+    /// once compiled their bytecode is reused on every subsequent query
+    /// instead of being recompiled from source — which is the dominant
+    /// cost a meta-call (findall / call / forall, each a fresh query
+    /// setup) used to pay. Cleared wholesale by <see cref="ConsultString"/>,
+    /// the only operation that changes the static program. Predicates
+    /// whose bytecode references per-module literal pools are filtered
+    /// out at populate time, exactly as for the dynamic cache.</summary>
+    public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> StaticPredicateCache
+        => _staticPredicateCache;
+    internal readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _staticPredicateCache = new();
+
+    // ====================================================================
+    // per-query setup caching. Query setup used to re-derive
+    // stable state on every query: the full transform chain over every
+    // consulted module (prelude included), three dictionary merges, and a
+    // bare-alias loop doing two Substring allocs + an intern per linked
+    // functor. Everything below is a cache of one of those derivations,
+    // keyed either by the derivation generation or by the persistent-link
+    // rebuild.
+    // ====================================================================
+
+    /// <summary>derivation generation. Bumped by every mutation
+    /// that can change the per-module transform pipeline's output: consult,
+    /// bundle load, abolish, restore_state and every dynamic-functor-set
+    /// change funnel through <see cref="InvalidatePersistent"/> (which
+    /// bumps), and the implicit_dynamic auto-promotion in
+    /// <see cref="EnsureDynamic"/> (which doesn't invalidate the persistent
+    /// buffer) bumps explicitly. Bumping more often than strictly necessary
+    /// (e.g. on the compaction) is safe — it just costs one
+    /// re-transform at the next query setup, which was the per-query status
+    /// quo before this chunk.</summary>
+    internal int _derivationGen;
+
+    /// <summary>cached output of the static transform chain
+    /// (MetaWrapperUnfold → ClausePipeline → ModuleRewrite) over every
+    /// consulted module, plus the user-module locals set and the set of
+    /// rewritten-clause head functor ids. A pure function of the module
+    /// manifests, the mode table, the dynamic-functor set and the
+    /// precompiled module locals — all of which bump
+    /// <see cref="_derivationGen"/> when they change. Between consults,
+    /// every query reuses this instead of re-transforming the whole program
+    /// (the ~600-line prelude included) per query.</summary>
+    internal List<Clause>? _staticRewriteClauses;
+    internal HashSet<int>? _staticRewriteUserLocals;
+    internal HashSet<int>? _staticRewriteHeadFids;
+    internal int _staticRewriteGen = -1;
+
+    /// <summary>per-module locals sets computed by the static
+    /// rewrite pass (the same `locals` each module's ModuleRewrite context
+    /// gets), cached alongside <see cref="_staticRewriteUserLocals"/>. The
+    /// dynamic-clause rewrite consults it so a dynamic clause attributed to
+    /// a non-user module (see <see cref="_dynamicSeedModule"/>) mangles its
+    /// body calls against THAT module's locals — matching the entry's
+    /// static bytecode, which ShmoCompiler mangled under the per-file
+    /// module name.</summary>
+    internal Dictionary<string, HashSet<int>>? _staticRewriteModuleLocals;
+
+    /// <summary>module attribution for dynamic predicates whose
+    /// clauses came from a named module: bundle dynamic-seed rehydration
+    /// (<see cref="LoadEntryFromBytecode"/>) and source-carrying bundle
+    /// entries consulted under the entry's module name. A fid absent here
+    /// rewrites under the default user context (runtime asserts, plain
+    /// ConsultString — unchanged behaviour). used to sidestep
+    /// this by forcing every module-less .shmo to module "user", which made
+    /// two module-less files unlinkable (duplicate_module) and aliased
+    /// their locals.</summary>
+    internal readonly Dictionary<int, string> _dynamicSeedModule = new();
+
+    /// <summary>per-functor cache of the dynamic clause lists'
+    /// transform + rewrite (ClausePipeline + ModuleRewrite under the
+    /// user-module dynamic context, including any MetaTransform helper
+    /// clauses the pipeline synthesised, whose head fids are recorded
+    /// alongside). An entry drops when its functor's clause list mutates
+    /// (<see cref="InvalidateDynamicCache"/>); the whole table drops when
+    /// <see cref="_derivationGen"/> moves (the rewrite context's inputs —
+    /// user locals, dynamic-functor set, mode table — may have changed).</summary>
+    internal readonly Dictionary<int, (List<Clause> Clauses, List<int> HeadFids)>
+        _dynamicRewriteCache = new();
+    internal int _dynamicRewriteGen = -1;
+
+    /// <summary>merged skip-compile cache (the per-query merge
+    /// of <see cref="_precompiledClauseCache"/> +
+    /// <see cref="_staticPredicateCache"/> + <see cref="_dynamicPredicateCache"/>,
+    /// dynamic winning, exactly the precedence the per-query merge used).
+    /// Maintained incrementally: nulled wherever
+    /// <see cref="_staticPredicateCache"/> is cleared, kept in step with
+    /// every <see cref="_dynamicPredicateCache"/> add / remove
+    /// (<see cref="DropDynamicPredicateCacheEntry"/>).</summary>
+    internal Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _skipCompileMergedCache;
+
+    /// <summary>link metadata derived from
+    /// <see cref="_staticLink"/> + <see cref="_dynamicLink"/>:
+    /// <see cref="_persistentAddressesCache"/> is the merged REAL address
+    /// map (fed to the query linker as external symbols — it must NOT
+    /// contain aliases, or a query call site to a module-local predicate's
+    /// bare name would link-resolve and break module visibility);
+    /// <see cref="_persistentAddressBaseCache"/> additionally carries the
+    /// bare-name aliases for module-local predicates (the
+    /// meta-call alias loop, hoisted out of the per-query path);
+    /// <see cref="_persistentPredsByAddressCache"/> is the merged
+    /// predicates-by-address map. All three are rebuilt exactly when the
+    /// persistent regions are rebuilt (<c>builtPersistentNow</c>); every
+    /// <see cref="_staticLink"/> invalidation also forces that via
+    /// <see cref="InvalidatePersistent"/>, and the link results themselves
+    /// are immutable (the switch-table mirror mutates
+    /// <c>_dynamicLink.SwitchTables</c> only, which is why the merged
+    /// switch-table list is still rebuilt per query).</summary>
+    internal Dictionary<int, int>? _persistentAddressesCache;
+    internal Dictionary<int, int>? _persistentAddressBaseCache;
+    internal Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _persistentPredsByAddressCache;
 
 }

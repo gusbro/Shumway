@@ -160,7 +160,7 @@ public sealed partial class PrologEngine
     /// button, and the file is consulted afterwards. Without it the breakpoint is asked for
     /// against an empty program, binds nothing, and is forgotten — and the program runs to
     /// completion untouched, which is exactly what it did.</para></summary>
-    private void RebindPendingBreakpoints()
+    internal void RebindPendingBreakpoints()
     {
         if (_requestedBreakpoints.Count == 0) return;
 

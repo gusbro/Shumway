@@ -30,7 +30,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public Shumway.Builtins.GlobalVarStore GlobalVars { get; } =
         new Shumway.Builtins.GlobalVarStore();
 
-    private readonly Dictionary<string, ModuleManifest> _modules = new()
+    internal readonly Dictionary<string, ModuleManifest> _modules = new()
     {
         [DefaultModuleName] = new ModuleManifest(DefaultModuleName),
     };
@@ -41,14 +41,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // it. Nulled at every static-clause mutation (consult / restore / bundle
     // load); dynamic functors are checked live against _dynStore.Functors, so
     // assert/retract need not invalidate it.
-    private HashSet<int>? _staticHeadFunctorsCache;
+    internal HashSet<int>? _staticHeadFunctorsCache;
     // Set for the duration of a RUNTIME consult (consult/1 called from within a
     // live query). When set, source-declared dynamic clauses are also pushed
     // into the live dispatch (AppendDynamicClauseIncremental) so a call later in
     // the SAME query sees them — exactly as a runtime assertz would. Null during
     // startup/ctor consults, where the next query builds dispatch fresh.
-    private Activation? _liveConsultEngine;
-    private readonly OperatorTable _operators = OperatorTable.Default();
+    internal Activation? _liveConsultEngine;
+    internal readonly OperatorTable _operators = OperatorTable.Default();
 
     /// <summary>Save-state chronological log of every source
     /// string passed to <see cref="ConsultString"/>, excluding the
@@ -57,7 +57,24 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// snapshot bundle; <see cref="RestoreState"/> resets the engine
     /// and replays each entry in order to rebuild the same module
     /// state.</summary>
-    private readonly List<string> _consultHistory = new();
+    internal readonly List<string> _consultHistory = new();
+
+    /// <summary>Full paths already consulted — a re-consult of a loaded file
+    /// is a no-op instead of doubling its clauses.</summary>
+    internal readonly HashSet<string> _consultedPaths = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>ADR-035 — functors whose module was declared :- disable_debug.
+    /// Engine-wide (fids are global) and additive across consults.</summary>
+    internal readonly HashSet<int> _nonDebuggableFunctors = new();
+    internal readonly HashSet<string> _nonDebuggableModules = new();
+
+    /// <summary>ADR-035 — the DebugSiteTable file id the consult in progress
+    /// is reading (default: the synthetic string-source file).</summary>
+    internal int _debugFileId = Shumway.Core.DebugSiteTable.InternFile("<string>");
+
+    /// <summary>Directory of the file being consulted (null for a raw string
+    /// consult) — :- include/1 paths resolve against it.</summary>
+    internal string? _consultBaseDir;
 
     /// <summary>Arity-Prolog recorded database.
     /// Lazily constructed on first access so engines that never use it
@@ -152,7 +169,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// as <c>built_in</c> (they are not user-defined and cannot be modified),
     /// which is what a client like Logtalk's linter checks to decide a call is
     /// to a known system predicate rather than an undefined one.</summary>
-    private readonly HashSet<int> _preludeFunctors = new();
+    internal readonly HashSet<int> _preludeFunctors = new();
 
     /// <summary>The sink that I/O builtins (<c>write/1</c>, <c>nl/0</c>,
     /// <c>writeln/1</c>) write into. Defaults to <see cref="System.Console.Out"/>;
@@ -185,13 +202,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// now it surfaces purely as a diagnostic property.</summary>
     public IReadOnlyDictionary<string, Shumway.Compiler.Wam.CompiledModule> PrecompiledModules
         => _precompiledModules;
-    private readonly Dictionary<string, Shumway.Compiler.Wam.CompiledModule> _precompiledModules = new();
+    internal readonly Dictionary<string, Shumway.Compiler.Wam.CompiledModule> _precompiledModules = new();
     /// <summary>Float-literal support — for a precompiled (bundle) predicate, the
     /// float pool its bytecode's <c>get_float</c>/<c>put_float</c> literalIds index
     /// (its own module's <c>FloatLiterals</c>). The IL compiler bakes the value, so
     /// it needs the right pool per fid. Everything else (runtime-compiled clauses,
     /// dynamic snapshots) indexes the engine's live <c>_literalPools.Floats</c>.</summary>
-    private readonly Dictionary<int, IReadOnlyList<double>> _precompiledFloatPool = new();
+    internal readonly Dictionary<int, IReadOnlyList<double>> _precompiledFloatPool = new();
 
     /// <summary>Every dynamic functor that currently has clauses. Used by the
     /// persisted-IL build to snapshot dynamic predicates — including ones the
@@ -218,7 +235,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// literal ids from its module-local pools into this engine's shared
     /// <see cref="_literalPools"/>, rewriting the bytecode operands in place. See the
     /// call site in <c>LoadEntryFromBytecode</c> for why.</summary>
-    private void RemapPrecompiledLiterals(Shumway.Compiler.Wam.CompiledModule module)
+    internal void RemapPrecompiledLiterals(Shumway.Compiler.Wam.CompiledModule module)
     {
         var floats = module.FloatLiterals;
         var strings = module.StringLiterals;
@@ -333,7 +350,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// fids into the module's locals so a dynamic clause's body call to
     /// a bundled local predicate gets the same mangling the bundle's
     /// own bytecode used.</summary>
-    private readonly Dictionary<string, HashSet<int>> _precompiledModuleLocals = new();
+    internal readonly Dictionary<string, HashSet<int>> _precompiledModuleLocals = new();
 
     /// <summary>Snapshot of the most recent query's call stack as a
     /// list of <c>Name/Arity</c> predicate indicators.
@@ -590,7 +607,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// invocation was terminated by <c>halt/0</c> or <c>halt/1</c>, this
     /// holds the exit code requested. <c>null</c> when no halt has fired.
     /// Reset to <c>null</c> at the start of each query.</summary>
-    public int? LastHaltExitCode { get; private set; }
+    public int? LastHaltExitCode { get; internal set; }
 
     /// <summary>The parser operator table used by this engine. Reflects
     /// every <c>:- op(P, T, N)</c> directive consulted so far, including
