@@ -129,6 +129,6 @@ public enum ShmoBuildMode : byte
     /// sites + per-clause frames/variables/head-args) baked in. A bundle built
     /// this way is debuggable at load with NO re-consult from source. Plain
     /// <see cref="Debug"/> stays release-shape — it exists only to retain source
-    /// for the linker's source-bearing paths and for stack-trace mapping.</summary>
+    /// for the linker's source-carrying paths and for stack-trace mapping.</summary>
     Debuggable = 2,
 }

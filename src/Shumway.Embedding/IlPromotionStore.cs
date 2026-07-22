@@ -86,7 +86,7 @@ public sealed class IlPromotionStore
     }
 
     /// <summary>Supplies the float-literal pool a predicate indexes; get_float/put_float
-    /// bake ldc.r8 constants from it. Null → float-bearing predicates stay Tier-0.</summary>
+    /// bake ldc.r8 constants from it. Null → predicates with float literals stay Tier-0.</summary>
     public Func<int, System.Collections.Generic.IReadOnlyList<double>?>? FloatPoolProvider { get; set; }
 
     private T WithFloatPool<T>(int functorId, Func<T> compile)

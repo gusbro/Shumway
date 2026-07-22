@@ -26,7 +26,7 @@ public static class GlobalVarsBuiltins
     {
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         Cell value = Resolve(engine, engine.GetRegister(1));
-        // For value-bearing cells (Int / Atom / Float-paired / BigInt
+        // For value-carrying cells (Int / Atom / Float-paired / BigInt
         // / Foreign) the cell itself carries the value, safe across
         // queries. Str / Lis / Pstr cells carry a heap index and could
         // dangle once the per-query heap unwinds — those cases would

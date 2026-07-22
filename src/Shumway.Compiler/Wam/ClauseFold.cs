@@ -86,8 +86,8 @@ public static class ClauseFold
         /// tail position) — reachable by a STATIC transitive inline (a G3
         /// extension), still no engine changes.</summary>
         FailDirectClosure,
-        /// <summary>Worst callee is defined in-file but non-det / cut-bearing /
-        /// control-bearing / &gt;4 clauses / mutually recursive / self-recursive
+        /// <summary>Worst callee is defined in-file but non-det / contains a cut /
+        /// contains control constructs / &gt;4 clauses / mutually recursive / self-recursive
         /// in non-tail position — needs the TRUE dynamic fail-continuation
         /// (engine continuation stack).</summary>
         NeedsDynamic,

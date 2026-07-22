@@ -6,7 +6,7 @@ namespace Shumway.Dap;
 /// <summary>ADR-036 — <c>shumway-dap</c>: the debug adapter VS Code launches. All it
 /// does is hand its stdio to <see cref="DapProxy"/> — stdout is the DAP channel, so
 /// every diagnostic goes to stderr, and nothing else may ever write to the console.</summary>
-internal static class Program
+internal static class DapCli
 {
     public static int Main(string[] args)
     {

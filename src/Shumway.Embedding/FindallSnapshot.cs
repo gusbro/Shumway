@@ -63,7 +63,7 @@ internal static class FindallSnapshot
     }
 
     /// <summary>Re-emits a snapshot onto <paramref name="engine"/>'s heap and
-    /// returns the root value cell. A block copy: every index-bearing cell is
+    /// returns the root value cell. A block copy: every cell carrying a heap index is
     /// shifted by the allocation base, so the image's relative addressing
     /// becomes absolute. Fresh vars (self-referential REFs) stay unbound.</summary>
     public static Cell EmitSnapshot(Activation engine, Cell[] snap)

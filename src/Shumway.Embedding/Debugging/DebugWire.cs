@@ -60,7 +60,7 @@ public enum DebugCommandKind
     ClearBreakpoints = 7,
     SetLastCallOptimisation = 8,
 
-    /// <summary>"Stop at the next goal, briefly, so I can get my bearings." The debugger's
+    /// <summary>"Stop at the next goal, briefly, so I can orient myself." The debugger's
     /// bootstrap, and the answer to a genuine deadlock: Visual Studio can only create the
     /// objects that represent a .pl file — the ones a breakpoint binds against — from inside
     /// a real stop event; and a stop can only happen once a breakpoint is bound. Neither can

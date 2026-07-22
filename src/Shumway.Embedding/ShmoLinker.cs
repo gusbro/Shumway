@@ -976,7 +976,7 @@ public static class ShmoLinker
                 // dynamic functor with an empty clause list, and query
                 // setup emits the fail-only stub trampoline. A clauseless
                 // dynamic declaration adds no bytecode, so the entry's
-                // CompiledBytecode is untouched; source-bearing entries
+                // CompiledBytecode is untouched; source-carrying entries
                 // get the directive prepended so the ConsultString load
                 // path registers the same declaration.
                 IReadOnlyList<ShmoDefinedPredicate> entryDefined = obj.Defined;

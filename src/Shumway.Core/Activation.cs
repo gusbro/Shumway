@@ -2127,8 +2127,8 @@ public sealed partial class Activation
     /// A REFERENCE to the embedding layer's host-lifetime set (shared across
     /// this host's per-query engines, single-threaded by the engine
     /// concurrency contract), installed at query setup. Compiled IL whose
-    /// clause embeds an inlined dynamic-SNAPSHOT (a stable rule-bearing
-    /// dynamic, ADR-023/034) tests membership at clause entry via
+    /// clause embeds an inlined dynamic-SNAPSHOT (a stable dynamic
+    /// with rules, ADR-023/034) tests membership at clause entry via
     /// <see cref="IsDynMutated"/> and takes the un-inlined fallback path when
     /// the snapshot is stale — mutation mid-query is visible immediately
     /// because the set instance is shared, not copied.</summary>

@@ -56,7 +56,7 @@ public sealed class GlobalVarStore
             (AtomTable.GetById(p.Key)?.Name ?? "", p.Value));
 
     /// <summary>ADR-016 — rewrites every stored cell through the heap
-    /// collector's relocation map. A no-op for value-bearing cells
+    /// collector's relocation map. A no-op for value-carrying cells
     /// (Int/Atom/Float/BigInt/Foreign carry no heap index); cells that
     /// reference the heap (Str/Lis/Pstr) get their payload remapped so
     /// they survive a mid-query compaction.</summary>

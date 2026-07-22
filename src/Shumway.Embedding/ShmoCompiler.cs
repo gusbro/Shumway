@@ -649,7 +649,7 @@ public static class ShmoCompiler
         // The mangling context uses the RESOLVED runtime module name (the
         // directive's argument, else the per-file fallback),
         // matching what the engine applies when it loads the entry: the
-        // source-bearing LoadBundle path consults under the entry's module
+        // source-carrying LoadBundle path consults under the entry's module
         // name, and the source-less path's dynamic-seed rehydration rewrites
         // under the same name via _dynamicSeedModule.
         var rewriteCtx = new ModuleRewrite.Context(moduleName, localFids, dynamicFids);

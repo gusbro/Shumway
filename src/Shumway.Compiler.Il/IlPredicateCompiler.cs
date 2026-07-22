@@ -5810,10 +5810,10 @@ public sealed class IlPredicateCompiler
         /// bytecode scan. Concurrent: parallel test hosts build bundles
         /// side by side (one link per process in the CLI).</summary>
         public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte>
-            RuleBearingDynamicFids = new();
+            DynamicFidsWithRules = new();
 
         /// <summary>Stable-dynamic census — dynamic predicates with clauses,
-        /// split rule-bearing (the mutation-cold fast-path candidate pool)
+        /// split into with-rules (the mutation-cold fast-path candidate pool)
         /// vs fact-only (the real assert/retract targets).</summary>
         public static long DynPoolRules, DynPoolFacts;
 
@@ -5837,7 +5837,7 @@ public sealed class IlPredicateCompiler
             RejectCalleeCaps = RejectCalleeCut = RejectCalleeShape = 0;
             System.Array.Clear(RejectGuardOpByOpcode);
             RejectShapeDetail.Clear();
-            RuleBearingDynamicFids.Clear();
+            DynamicFidsWithRules.Clear();
             DynPoolRules = DynPoolFacts = 0;
             AcceptWithDynSnapshot = 0;
             IndexedBucketCpNodes = IndexedBucketCandidates = IndexedBucketAccept = 0;
@@ -5861,7 +5861,7 @@ public sealed class IlPredicateCompiler
             sb.AppendLine($"    callee over caps (raise candidate): {RejectCalleeCaps}");
             sb.AppendLine($"    callee has cut                    : {RejectCalleeCut}");
             if (DynPoolRules + DynPoolFacts > 0)
-                sb.AppendLine($"    dynamic pool: rule-bearing={DynPoolRules} fact-only={DynPoolFacts}");
+                sb.AppendLine($"    dynamic pool: with-rules={DynPoolRules} fact-only={DynPoolFacts}");
             if (AcceptWithDynSnapshot > 0)
                 sb.AppendLine($"    accepted w/ inlined dynamic snapshot (checked): {AcceptWithDynSnapshot}");
             if (IndexedBucketCpNodes > 0)
@@ -6335,13 +6335,13 @@ public sealed class IlPredicateCompiler
                     }
                     // ADR-034 — a dynamic SNAPSHOT callee (ADR-023 bake): its
                     // truth can change at runtime, so inlining is allowed only
-                    // for rule-bearing (mutation-cold) dynamics, and only with
+                    // for dynamics with rules (mutation-cold), and only with
                     // the clause-entry staleness test the collected fid
                     // triggers. Fact-only dynamics are the real assert
                     // targets — never caller-inlined.
                     if (callee.IsDynamicSnapshot)
                     {
-                        if (!callee.SnapshotRuleBearing)
+                        if (!callee.SnapshotHasRules)
                         {
                             if (!suppressStats)
                                 CpFreeGuardStats.BumpShapeDetail("dyn-snapshot-facts");
@@ -6465,7 +6465,7 @@ public sealed class IlPredicateCompiler
         // DynamicSeeds) — the census set fed from the warm engine's clause
         // store is the ground truth there. Runtime: the set is empty and the
         // bytecode scan below sees the real in-place chain with clause bodies.
-        if (CpFreeGuardStats.RuleBearingDynamicFids.ContainsKey(pred.FunctorId))
+        if (CpFreeGuardStats.DynamicFidsWithRules.ContainsKey(pred.FunctorId))
             return true;
         byte[] code = pred.BytecodeUnfused;
         int pc = 0;
@@ -6799,9 +6799,9 @@ public sealed class IlPredicateCompiler
                         reject = FailDirectReject.HasCalls;      // cross tail — G3 candidate
                         return false;
                     }
-                    // ADR-034 — a dynamic-snapshot target: rule-bearing only,
+                    // ADR-034 — a dynamic-snapshot target: only one with rules,
                     // and the caller clause carries its staleness test.
-                    if (tailTgt.IsDynamicSnapshot && !tailTgt.SnapshotRuleBearing)
+                    if (tailTgt.IsDynamicSnapshot && !tailTgt.SnapshotHasRules)
                     {
                         CpFreeGuardStats.BumpShapeDetail("dyn-snapshot-facts");
                         reject = FailDirectReject.HasCalls;
@@ -6934,11 +6934,11 @@ public sealed class IlPredicateCompiler
                         string g3Detail = "g3:inner-shape";
                         try
                         {
-                            // ADR-034 — a dynamic-SNAPSHOT inner: rule-bearing
-                            // only (fact-only dynamics are real assert
+                            // ADR-034 — a dynamic-SNAPSHOT inner: only one with
+                            // rules (fact-only dynamics are real assert
                             // targets); an accepted one is collected below so
                             // the top-level clause carries its staleness test.
-                            if (inner.IsDynamicSnapshot && !inner.SnapshotRuleBearing)
+                            if (inner.IsDynamicSnapshot && !inner.SnapshotHasRules)
                             {
                                 innerOk = false;
                                 g3Detail = "dyn-snapshot-facts";
@@ -6953,7 +6953,7 @@ public sealed class IlPredicateCompiler
                                 // inlined (its clauses change at runtime) —
                                 // classify without recursing (the recursion
                                 // would pollute the inner-reject counters).
-                                // Split by clause shape: a rule-bearing dynamic
+                                // Split by clause shape: a dynamic with rules
                                 // (:- visible for findall/setof visibility, the
                                 // Arity idiom) is mutation-cold in practice —
                                 // the stable-dynamic fast-path candidate pool.
@@ -7127,7 +7127,7 @@ public sealed class IlPredicateCompiler
                     case Opcode.EnterDynamic:
                         // The callee itself is dynamic (direct guard call to a
                         // dynamic predicate). Same rules/facts split as the
-                        // inner-dynamic case — rule-bearing dynamics are the
+                        // inner-dynamic case — dynamics with rules are the
                         // stable-dynamic fast-path candidate pool.
                         CpFreeGuardStats.BumpShapeDetail(DynamicHasRuleBodies(callee)
                             ? "op:EnterDynamic-rules" : "op:EnterDynamic-facts");

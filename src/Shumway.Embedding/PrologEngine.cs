@@ -2154,13 +2154,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 enableIndexing: true, isDynamic: false, failStubAddr: 0);
         // ADR-034 — mark the snapshot so caller-side inlining knows this
         // "static-looking" predicate is really a dynamic whose truth can
-        // change; rule-bearing (from the RAW source clauses — the transformed
+        // change; having rules (per the RAW source clauses — the transformed
         // ones may have been rewritten) gates checked caller-inlining.
         snap.IsDynamicSnapshot = true;
         foreach (var c in raw)
             if (c.Kind == Shumway.Compiler.Ast.ClauseKind.Rule)
             {
-                snap.SnapshotRuleBearing = true;
+                snap.SnapshotHasRules = true;
                 break;
             }
         return snap;
@@ -5632,7 +5632,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 continue;
             }
 
-            // Otherwise (a non-Debuggable source-bearing entry): when debugging, show the code
+            // Otherwise (a non-Debuggable source-carrying entry): when debugging, show the code
             // FROM that source. The source-stripped entry took the bytecode branch above; there
             // is nothing to show but the module name, and the debugger resolves it the ordinary
             // way (by module name to a `<module>.pl` on disk). But here the exact text the
@@ -5665,7 +5665,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // Decode each entry's CompiledModule and stash the predicates
-        // for diagnostics. The source-bearing entries also feed
+        // for diagnostics. The source-carrying entries also feed
         // IL warmup from here (their PrecompiledClauseCache
         // substitution remains active — made the .shmo
         // bytecode byte-identical to what SetupQueryFromTerm would
@@ -5717,10 +5717,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // Source-less entries already decoded above (via LoadEntryFromBytecode).
             if (_precompiledModules.ContainsKey(entry.ModuleName)
                 && string.IsNullOrEmpty(entry.Source)) continue;
-            // Source-bearing: the source consult is the truth, so the bytecode is an
+            // Source-carrying: the source consult is the truth, so the bytecode is an
             // IL-warm / skip-compile cache only — don't register static predicates.
             // (The shared helper also remaps literals, which fixes float value-baking
-            // for a warmed-from-bytecode source-bearing predicate under Threshold>0.)
+            // for a warmed-from-bytecode source-carrying predicate under Threshold>0.)
             DecodeAndRegisterPrecompiledModule(entry, registerStaticPredicates: false);
         }
         // A bundle's predicates join the static program — drop the
@@ -6393,19 +6393,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <see cref="_precompiledStaticPredicates"/>. The next
     /// <see cref="SetupQueryFromTerm"/> appends those predicates to
     /// the static-link region so call sites resolve identically to
-    /// the source-bearing path. The bytecode is byte-identical to
+    /// the source-carrying path. The bytecode is byte-identical to
     /// what <see cref="SetupQueryFromTerm"/> would have produced
     ///.</summary>
     /// <summary>Decodes a bundle entry's <see cref="BundleEntry.CompiledBytecode"/>,
     /// remaps its module-local literal ids into the engine's shared pools (see
     /// <see cref="RemapPrecompiledLiterals"/>), records the module, and warms its IL
     /// when Tier 1 is enabled. The single decode path shared by the source-less
-    /// <see cref="LoadEntryFromBytecode"/> and the source-bearing
+    /// <see cref="LoadEntryFromBytecode"/> and the source-carrying
     /// <see cref="LoadBundleCore"/> loop.
     ///
     /// <para><paramref name="registerStaticPredicates"/> — true only for the
     /// source-less path: there the bytecode IS the definition, so each predicate
-    /// goes into <see cref="_precompiledStaticPredicates"/>. For a source-bearing
+    /// goes into <see cref="_precompiledStaticPredicates"/>. For a source-carrying
     /// entry the source consult is the truth and the bytecode is only an IL-warm /
     /// skip-compile cache, so it is NOT registered there.</para></summary>
     private Shumway.Compiler.Wam.CompiledModule DecodeAndRegisterPrecompiledModule(
@@ -6443,7 +6443,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Resolve the manifest under the entry's module name. The
         // contract here mirrors ConsultString's "explicit module"
         // path (PrologEngine.cs:2792) — `:- module(name).` would have
-        // landed us in the same place. A subsequent source-bearing
+        // landed us in the same place. A subsequent source-carrying
         // load of the same module name is allowed to extend it
         // (consistent with the "rolling user module" pattern), but
         // each predicate id is at most once in the precompiled set.
@@ -6571,7 +6571,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// Populated by <see cref="LoadEntryFromBytecode"/> on
     /// <see cref="LoadBundle(Bundle)"/>; consumed by
     /// <see cref="SetupQueryFromTerm"/> when it (re)builds the static
-    /// link. Keyed by FunctorId so a later source-bearing consult of
+    /// link. Keyed by FunctorId so a later source-carrying consult of
     /// the same predicate replaces the precompiled entry cleanly.</summary>
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
         _precompiledStaticPredicates = new();
@@ -6674,7 +6674,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     /// <summary>module attribution for dynamic predicates whose
     /// clauses came from a named module: bundle dynamic-seed rehydration
-    /// (<see cref="LoadEntryFromBytecode"/>) and source-bearing bundle
+    /// (<see cref="LoadEntryFromBytecode"/>) and source-carrying bundle
     /// entries consulted under the entry's module name. A fid absent here
     /// rewrites under the default user context (runtime asserts, plain
     /// ConsultString — unchanged behaviour). used to sidestep
@@ -9015,7 +9015,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         rawClauses = Shumway.Compiler.Parsing.IncludeExpander.Expand(
             rawClauses, _consultBaseDir, _operators, _flags);
 
-        // a source-bearing bundle entry consults under the
+        // a source-carrying bundle entry consults under the
         // entry's module name (the per-file fallback ShmoCompiler resolved
         // at compile time), so two module-less files keep their own local
         // namespaces instead of merging into a rolling "user" module. A
@@ -9326,7 +9326,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                         // the first mutation).
                         IlPromotion.MarkPrime(fid);
                         // clauses routed here from a named
-                        // module (a source-bearing bundle entry, or an
+                        // module (a source-carrying bundle entry, or an
                         // explicit `:- module/1` source) must be rewritten
                         // under that module's context at query setup so
                         // their body calls to module-locals mangle the
@@ -9418,7 +9418,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (moduleDirectiveSeen || moduleName != DefaultModuleName)
         {
             // Explicit module (or a per-file fallback module
-            // from a source-bearing bundle entry): replace any previous
+            // from a source-carrying bundle entry): replace any previous
             // load of this module.
             var manifest = new ModuleManifest(moduleName);
             manifest.Clauses.AddRange(clauses);
@@ -10567,7 +10567,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 _dynamicFunctors);
             // per-module contexts for dynamic predicates whose
             // clauses came from a named module (bundle seeds / source-
-            // bearing entries). Built lazily; everything unattributed
+            // carrying entries). Built lazily; everything unattributed
             // keeps the user context above.
             Dictionary<string, ModuleRewrite.Context>? namedDynCtx = null;
             foreach (var (fid, clauses) in _dynamicClauses)
@@ -10834,7 +10834,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // entirely, and their bytecode is byte-identical to what
         // we'd have produced from source. Any predicate id that
         // also appeared in module.Predicates above (e.g. a later
-        // source-bearing consult of the same functor) wins by
+        // source-carrying consult of the same functor) wins by
         // staying in module.Predicates and we skip the precompiled
         // copy so we don't add the same id twice to the linker.
         foreach (var (fid, pred) in _precompiledStaticPredicates)

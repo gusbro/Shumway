@@ -139,7 +139,7 @@ public sealed class CompiledPredicate
     /// mutation-cold and eligible for checked caller-inlining; a fact-only
     /// dynamic is a real assert/retract target and is never
     /// caller-inlined.</summary>
-    public bool SnapshotRuleBearing { get; set; }
+    public bool SnapshotHasRules { get; set; }
 
     /// <summary>One <see cref="SourcePosition"/> per clause, in source
     /// order. Aligned with the <c>Meta(DbgInfo, clauseIndex)</c> opcodes

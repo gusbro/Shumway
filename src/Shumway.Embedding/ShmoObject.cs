@@ -103,7 +103,7 @@ public sealed class ShmoDefinedPredicate
 /// <list type="bullet">
 /// <item><see cref="ModuleName"/> — identifier for diagnostics.</item>
 /// <item><see cref="Source"/> — original Prolog source. Optional (may be
-/// empty for stripped objects); the linker emits source-bearing bundles
+/// empty for stripped objects); the linker emits source-carrying bundles
 /// when present so the runtime <see cref="PrologEngine.LoadBundle(Bundle)"/>
 /// path keeps working as it does today.</item>
 /// <item><see cref="Bytecode"/> — the per-module

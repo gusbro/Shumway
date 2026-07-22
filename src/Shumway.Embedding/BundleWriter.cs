@@ -65,7 +65,7 @@ public static class BundleWriter
                 // Stable-dynamic census — the link-time calleeMap only ever
                 // sees a dynamic predicate's hollow trampoline (the compiler
                 // peels its clauses into DynamicSeeds), so the CP-free stats
-                // can't classify rule-bearing vs fact-only dynamics from
+                // can't classify with-rules vs fact-only dynamics from
                 // bytecode. Feed the split from the warm engine's rehydrated
                 // clause store instead.
                 foreach (int fid in warmEngine.DynamicFunctorsWithClauses())
@@ -76,7 +76,7 @@ public static class BundleWriter
                     if (rules)
                     {
                         Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats
-                            .RuleBearingDynamicFids[fid] = 1;
+                            .DynamicFidsWithRules[fid] = 1;
                         Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.DynPoolRules++;
                     }
                     else
@@ -385,7 +385,7 @@ public static class BundleWriter
         var dynamicSnapshotFids = new HashSet<int>();
         // Every dynamic predicate that has clauses — NOT just DynamicPredicateCache,
         // which skips pool-literal (float) predicates. Snapshotting straight from
-        // the dynamic store covers float-bearing dynamics too.
+        // the dynamic store covers dynamics with float literals too.
         var dynFids = new HashSet<int>(engine.DynamicPredicateCache.Keys);
         foreach (var f in engine.DynamicFunctorsWithClauses()) dynFids.Add(f);
         foreach (var fid in dynFids)
