@@ -39,13 +39,22 @@ public sealed class Solution
     /// failed-query sentinel created by <c>Query(string)</c>.</summary>
     internal PrologEngine? Activation { get; }
 
+    /// <summary>For each bound variable whose value is a compound: the heap
+    /// address of the value's root node — the address a cyclic term's
+    /// <c>_C{addr}</c> marker carries when the cycle re-enters at that root.
+    /// Lets a display layer print <c>A = [a, b | A]</c> instead of the raw
+    /// marker. Null when not collected (failed-query sentinel).</summary>
+    internal IReadOnlyDictionary<string, int>? ValueRootAddresses { get; }
+
     internal Solution(bool success, IReadOnlyDictionary<string, Term> bindings,
-        bool isLast = false, PrologEngine? engine = null)
+        bool isLast = false, PrologEngine? engine = null,
+        IReadOnlyDictionary<string, int>? valueRootAddresses = null)
     {
         Success = success;
         Bindings = bindings;
         IsLast = isLast;
         Activation = engine;
+        ValueRootAddresses = valueRootAddresses;
     }
 
     /// <summary>Returns the binding for the named variable, or <c>null</c> if the

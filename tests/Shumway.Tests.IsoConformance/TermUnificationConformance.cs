@@ -180,6 +180,78 @@ public class TermUnificationConformance
         Assert.Equal(Int(2), sol["Y"]);
     }
 
+    // Sound unification against an ALREADY-cyclic input (built by plain =/2)
+    // must FAIL, not hang: it can never produce a finite tree. SWI behaves
+    // the same. These used to loop forever in the occurs-check walk.
+
+    [Fact]
+    public void UnifyWithOccursCheck_CyclicOperandAgainstVar_Fails()
+    {
+        var engine = new PrologEngine();
+        Assert.False(engine.Query(
+            "X = f(X), unify_with_occurs_check(X, Y).").Success);
+        Assert.False(engine.Query(
+            "X = [a|X], unify_with_occurs_check(X, Y).").Success);
+    }
+
+    [Fact]
+    public void UnifyWithOccursCheck_TwoCyclicOperands_Fails()
+    {
+        var engine = new PrologEngine();
+        Assert.False(engine.Query(
+            "X = f(X), Y = f(Y), unify_with_occurs_check(X, Y).").Success);
+    }
+
+    [Fact]
+    public void UnifyWithOccursCheck_CyclicOperandWithItself_Succeeds()
+    {
+        // Identity short-circuits before any walk — X and X are the
+        // same cell, cyclic or not.
+        var engine = new PrologEngine();
+        Assert.True(engine.Query(
+            "X = f(X), unify_with_occurs_check(X, X), Y = ok.").Success);
+    }
+
+    // Plain =/2 between two ALREADY-cyclic terms is ISO-undefined (STO);
+    // Shumway terminates with rational-tree semantics like SWI — a compound
+    // pair re-encountered during the walk is an equation already in the
+    // system, assumed true. These used to overflow the C# stack (cyclic
+    // structs) or loop forever (cyclic list spines).
+
+    [Fact]
+    public void PlainUnify_TwoCyclicTerms_Succeeds()
+    {
+        var engine = new PrologEngine();
+        Assert.True(engine.Query(
+            "X = f(X), Y = f(Y), X = Y, Ok = yes.").Success);
+        Assert.True(engine.Query(
+            "X = [a|X], Y = [a|Y], X = Y, Ok = yes.").Success);
+        // Different cycle periods, same infinite unfolding.
+        Assert.True(engine.Query(
+            "X = [a,b|X], Y = [a|Z], Z = [b|Y], X = Y, Ok = yes.").Success);
+    }
+
+    [Fact]
+    public void PlainUnify_MismatchedCyclicTerms_FailsInsteadOfLooping()
+    {
+        var engine = new PrologEngine();
+        Assert.False(engine.Query(
+            "X = f(a, X), Y = f(b, Y), X = Y.").Success);
+        Assert.False(engine.Query(
+            "X = f(X), Y = g(Y), X = Y.").Success);
+    }
+
+    [Fact]
+    public void UnifyWithOccursCheck_SharedSubtermDag_IsNotACycle()
+    {
+        // f(A, g(A)) shares g(A) twice as a DAG — sharing must not be
+        // mistaken for a cycle by the cycle guard.
+        var engine = new PrologEngine();
+        Assert.True(engine.Query(
+            "T = g(A), unify_with_occurs_check(f(A, T), f(B, g(B))), B = 1.")
+            .Success);
+    }
+
     [Fact]
     public void UnifyWithOccursCheck_VarToVar_Succeeds()
     {

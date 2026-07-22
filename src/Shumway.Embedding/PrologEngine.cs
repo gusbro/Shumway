@@ -12723,9 +12723,25 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         PrologEngine? host = null)
     {
         var bindings = new Dictionary<string, Term>(varNames.Count);
+        var rootAddrs = new Dictionary<string, int>(varNames.Count);
         for (int i = 0; i < varNames.Count; i++)
+        {
             bindings[varNames[i]] = TermReader.Materialize(engine, varHeapIndices[i]);
-        return new Solution(success: true, bindings: bindings, isLast: isLast, engine: host);
+            // Record the value's root-node address — the address a cyclic
+            // term's _C{addr} marker carries when it cycles back to the root,
+            // so the REPL can display the cycle as the variable itself.
+            int addr = engine.Deref(varHeapIndices[i]);
+            Cell c = engine.GetHeap(addr);
+            int root = c.Tag switch
+            {
+                Tag.Lis or Tag.Str => c.AsHeapIndex,
+                Tag.Functor => addr,
+                _ => -1,
+            };
+            if (root >= 0) rootAddrs[varNames[i]] = root;
+        }
+        return new Solution(success: true, bindings: bindings, isLast: isLast, engine: host,
+            valueRootAddresses: rootAddrs);
     }
 
     private static void CollectVariables(Term term, List<string> order, HashSet<string> seen)

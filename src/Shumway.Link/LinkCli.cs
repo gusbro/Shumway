@@ -77,24 +77,28 @@ internal static class LinkCli
             }
         }
 
-        // --goal Z validates syntactically AND becomes an implicit
-        // entry point (the goal's head pred drives reachability).
+        // --goal Z validates syntactically and contributes reachability
+        // roots. The goal is any REPL-acceptable query — its call-position
+        // predicates may be user, builtin or prelude (`time(main)`), and any
+        // user predicate named inside it (a meta-call argument) stays linked.
+        var goalCallRefs = new List<PredicateRef>();
+        var goalTermRefs = new List<PredicateRef>();
         if (!string.IsNullOrEmpty(opts.Goal))
         {
-            if (!ExecutableEmitter.TryValidateGoal(opts.Goal, out _, out var headPred,
-                    out string? goalErr))
+            if (!ExecutableEmitter.TryCollectGoalRefs(opts.Goal,
+                    out goalCallRefs, out goalTermRefs, out string? goalErr))
             {
                 Console.Error.WriteLine($"shumway-link: --goal: {goalErr}");
                 return ExitUsageError;
             }
-            if (!opts.EntryPoints.Contains(headPred))
-                opts.EntryPoints.Add(headPred);
         }
 
         var config = new LinkConfig
         {
             Objects = objects,
             EntryPoints = opts.EntryPoints,
+            GoalCallRefs = goalCallRefs,
+            GoalTermRefs = goalTermRefs,
             AllowUndefined = opts.AllowUndefined,
             Libraries = libraries,
             // --exe deploys a startup-sensitive single-engine app, so bake the
@@ -747,10 +751,13 @@ internal static class LinkCli
             + "                           / 1 (failure) / 2 (uncaught Prolog exception).\n"
             + "                           Building requires the .NET 10 SDK; running needs\n"
             + "                           the .NET 10 runtime unless --self-contained.\n"
-            + "  -g, --goal <term>        The Prolog goal the --exe runs at startup. The\n"
-            + "                           trailing '.' is optional ('main' and 'main.' are\n"
-            + "                           both fine). Checked syntactically at link time,\n"
-            + "                           and counted as an entry point for reachability.\n"
+            + "  -g, --goal <term>        The Prolog goal the --exe runs at startup — any\n"
+            + "                           query the REPL would accept, e.g. 'main' or\n"
+            + "                           'time(main)' (builtins and prelude predicates are\n"
+            + "                           fine in call position). The trailing '.' is\n"
+            + "                           optional. Checked at link time; every user\n"
+            + "                           predicate the goal names counts as a reachability\n"
+            + "                           root, so it stays linked.\n"
             + "  -c, --self-contained     With --exe, bundle the .NET runtime into the\n"
             + "                           executable (~70 MB, runs on a machine with\n"
             + "                           nothing installed). Default is framework-\n"

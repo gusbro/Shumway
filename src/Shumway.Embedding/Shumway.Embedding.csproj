@@ -10,6 +10,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Shumway.Tests.Embedding" />
+    <!-- The REPL reads Solution.ValueRootAddresses to display cyclic terms
+         as their query variable (A = [a, b | A]). -->
+    <InternalsVisibleTo Include="shumway" />
   </ItemGroup>
 
   <PropertyGroup>

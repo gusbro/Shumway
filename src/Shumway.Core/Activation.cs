@@ -3697,9 +3697,35 @@ public sealed partial class Activation
     /// each first. Returns <c>true</c> on success, <c>false</c> on failure. On failure the
     /// caller is responsible for unwinding the trail back to the pre-unify state.
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool Unify(int aIdx, int bIdx)
+        => Unify(aIdx, bIdx, 0, null);
+
+    /// <summary>C#-recursion depth past which plain unification escalates to
+    /// the guarded (pair-set) mode. Typical terms never reach it and pay
+    /// nothing; only deep nesting — or a CYCLIC pair, whose recursion would
+    /// otherwise overflow the C# stack — escalates. Well below the
+    /// stack-overflow point (same scheme as the standard-order comparator).</summary>
+    private const int UnifyRecursionLimit = 512;
+
+    /// <summary>List-spine iterations past which <see cref="UnifyLis"/>
+    /// engages the pair guard: a CYCLIC spine loops forever WITHOUT growing
+    /// the C# stack, so the depth limit alone cannot catch it. High enough
+    /// that real lists (under a million elements) never pay the guard.</summary>
+    private const int UnifySpineGuardLimit = 1 << 20;
+
+    // Guarded mode: `activePairs` holds every compound pair currently being
+    // (or already) unified in this walk. Re-encountering a pair means the
+    // equation is already in the system — assume it holds and move on
+    // (rational-tree unification, the coinductive reading SWI implements:
+    // X = f(X), Y = f(Y), X = Y is true). Pairs are kept, not removed, so
+    // shared (DAG) subterms also unify once.
+    private bool Unify(int aIdx, int bIdx, int depth, HashSet<long>? activePairs)
     {
         Profiler.Unify();
+        if (activePairs is null && depth >= UnifyRecursionLimit)
+            activePairs = new HashSet<long>();
         int aAddr = Deref(aIdx);
         int bAddr = Deref(bIdx);
         if (aAddr == bAddr) return true;
@@ -3737,8 +3763,8 @@ public sealed partial class Activation
         {
             Tag.Atom => aCell.AsAtomId == bCell.AsAtomId,
             Tag.Int => aCell.AsInt == bCell.AsInt,
-            Tag.Str => UnifyStr(aCell.AsHeapIndex, bCell.AsHeapIndex),
-            Tag.Lis => UnifyLis(aCell.AsHeapIndex, bCell.AsHeapIndex),
+            Tag.Str => UnifyStr(aCell.AsHeapIndex, bCell.AsHeapIndex, depth, activePairs),
+            Tag.Lis => UnifyLis(aCell.AsHeapIndex, bCell.AsHeapIndex, depth, activePairs),
             Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
             Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
@@ -3854,15 +3880,18 @@ public sealed partial class Activation
     /// notably long cons-cell lists, which is precisely why PSTR exists for strings —
     /// would warrant a future switch to an explicit push-down list.</para>
     /// </summary>
-    private bool UnifyStr(int fA, int fB)
+    private bool UnifyStr(int fA, int fB, int depth = 0, HashSet<long>? activePairs = null)
     {
         int functorIdA = _heap[fA].AsFunctorId;
         int functorIdB = _heap[fB].AsFunctorId;
         if (functorIdA != functorIdB) return false;
+        if (activePairs is not null
+            && !activePairs.Add(((long)fA << 32) | (uint)fB))
+            return true;   // pair already in the system — rational-tree unify
         var (_, arity) = FunctorTable.Lookup(functorIdA);
         for (int i = 1; i <= arity; i++)
         {
-            if (!Unify(fA + i, fB + i)) return false;
+            if (!Unify(fA + i, fB + i, depth + 1, activePairs)) return false;
         }
         return true;
     }
@@ -3872,7 +3901,7 @@ public sealed partial class Activation
     /// indices of head cells (the payloads of their containing LIS cells); the matching
     /// tail cells live immediately after.
     /// </summary>
-    private bool UnifyLis(int hA, int hB)
+    private bool UnifyLis(int hA, int hB, int depth = 0, HashSet<long>? activePairs = null)
     {
         // walk the list spine iteratively. The previous shape
         // (Unify head, then Unify tails re-entering UnifyLis) recursed one
@@ -3881,9 +3910,17 @@ public sealed partial class Activation
         // the normal recursive call (nesting depth, not spine length); the
         // tails are deref'd here and the loop continues while both remain
         // cons cells, delegating anything else to the general Unify.
+        //
+        // A CYCLIC spine loops here WITHOUT growing the C# stack, so past
+        // UnifySpineGuardLimit iterations the pair guard engages: a revisited
+        // cons pair is an equation already in the system — rational-tree true.
+        int spineIters = 0;
         while (true)
         {
-            if (!Unify(hA, hB)) return false;
+            if (activePairs is not null
+                && !activePairs.Add(((long)hA << 32) | (uint)hB))
+                return true;   // cyclic spine — rational-tree unify
+            if (!Unify(hA, hB, depth + 1, activePairs)) return false;
             int aAddr = Deref(hA + 1);
             int bAddr = Deref(hB + 1);
             if (aAddr == bAddr) { Profiler.Unify(); return true; }   // the tail Unify the recursion used to count
@@ -3894,9 +3931,11 @@ public sealed partial class Activation
                 Profiler.Unify();   // the tail Unify the recursion used to count
                 hA = aCell.AsHeapIndex;
                 hB = bCell.AsHeapIndex;
+                if (activePairs is null && ++spineIters >= UnifySpineGuardLimit)
+                    activePairs = new HashSet<long>();
                 continue;
             }
-            return Unify(aAddr, bAddr);
+            return Unify(aAddr, bAddr, depth + 1, activePairs);
         }
     }
 
@@ -3961,6 +4000,9 @@ public sealed partial class Activation
     /// <c>X = f(X)</c>), at the cost of one structural walk per bind.
     /// </summary>
     public bool UnifyWithOccursCheck(int aIdx, int bIdx)
+        => UnifyWithOccursCheck(aIdx, bIdx, activePairs: null);
+
+    private bool UnifyWithOccursCheck(int aIdx, int bIdx, HashSet<long>? activePairs)
     {
         int aAddr = Deref(aIdx);
         int bAddr = Deref(bIdx);
@@ -4008,8 +4050,8 @@ public sealed partial class Activation
         {
             Tag.Atom => aCell.AsAtomId == bCell.AsAtomId,
             Tag.Int => aCell.AsInt == bCell.AsInt,
-            Tag.Str => UnifyStrWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex),
-            Tag.Lis => UnifyLisWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex),
+            Tag.Str => UnifyStrWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex, activePairs),
+            Tag.Lis => UnifyLisWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex, activePairs),
             Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
             Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
@@ -4018,35 +4060,59 @@ public sealed partial class Activation
         };
     }
 
-    private bool UnifyStrWithOccursCheck(int fA, int fB)
+    // The compound walk threads an active-pair set so unifying two CYCLIC
+    // terms (X = f(X), Y = f(Y), unify_with_occurs_check(X, Y)) terminates:
+    // re-entering a pair already on the walk's path means the unification
+    // could only succeed by building an infinite tree, which sound
+    // unification must reject — so it FAILS (SWI behaves the same).
+    private bool UnifyStrWithOccursCheck(int fA, int fB, HashSet<long>? activePairs = null)
     {
         int functorIdA = _heap[fA].AsFunctorId;
         int functorIdB = _heap[fB].AsFunctorId;
         if (functorIdA != functorIdB) return false;
+        long pairKey = ((long)fA << 32) | (uint)fB;
+        activePairs ??= new HashSet<long>();
+        if (!activePairs.Add(pairKey)) return false;   // cyclic pair → fail
         var (_, arity) = FunctorTable.Lookup(functorIdA);
-        for (int i = 1; i <= arity; i++)
-            if (!UnifyWithOccursCheck(fA + i, fB + i)) return false;
-        return true;
+        bool ok = true;
+        for (int i = 1; i <= arity && ok; i++)
+            ok = UnifyWithOccursCheck(fA + i, fB + i, activePairs);
+        activePairs.Remove(pairKey);
+        return ok;
     }
 
-    private bool UnifyLisWithOccursCheck(int hA, int hB)
+    private bool UnifyLisWithOccursCheck(int hA, int hB, HashSet<long>? activePairs = null)
     {
-        if (!UnifyWithOccursCheck(hA, hB)) return false;
-        return UnifyWithOccursCheck(hA + 1, hB + 1);
+        long pairKey = ((long)hA << 32) | (uint)hB;
+        activePairs ??= new HashSet<long>();
+        if (!activePairs.Add(pairKey)) return false;   // cyclic pair → fail
+        bool ok = UnifyWithOccursCheck(hA, hB, activePairs)
+               && UnifyWithOccursCheck(hA + 1, hB + 1, activePairs);
+        activePairs.Remove(pairKey);
+        return ok;
     }
 
     /// <summary>True iff the variable cell at <paramref name="targetAddr"/>
     /// is structurally reachable from the (dereferenced) value at
-    /// <paramref name="sourceAddr"/>. Walks the source term iteratively
-    /// over an explicit stack so deep / long-list structures do not
-    /// overflow C# recursion.</summary>
+    /// <paramref name="sourceAddr"/> — OR that value is CYCLIC. Both mean
+    /// the bind must be rejected: sound unification only ever produces
+    /// finite trees, so binding a variable to an already-cyclic term fails
+    /// (SWI behaves the same; a naive walk would loop forever). Walks the
+    /// source iteratively over an explicit stack (no C# recursion), with an
+    /// on-path set for cycle detection (a negative stack entry is the exit
+    /// marker that leaves the path) and a done set so shared (DAG) subterms
+    /// are checked once, not re-flagged as cycles.</summary>
     private bool OccursIn(int targetAddr, int sourceAddr)
     {
         var stack = new Stack<int>();
+        var onPath = new HashSet<int>();
+        HashSet<int>? done = null;
         stack.Push(sourceAddr);
         while (stack.Count > 0)
         {
-            int addr = Deref(stack.Pop());
+            int raw = stack.Pop();
+            if (raw < 0) { onPath.Remove(~raw); continue; }   // exit marker
+            int addr = Deref(raw);
             if (addr == targetAddr) return true;
             Cell c = _heap[addr];
             switch (c.Tag)
@@ -4054,6 +4120,10 @@ public sealed partial class Activation
                 case Tag.Str:
                 {
                     int fIdx = c.AsHeapIndex;
+                    if (onPath.Contains(fIdx)) return true;   // cyclic source
+                    if (!(done ??= new HashSet<int>()).Add(fIdx)) break;
+                    onPath.Add(fIdx);
+                    stack.Push(~fIdx);
                     int functorId = _heap[fIdx].AsFunctorId;
                     var (_, arity) = FunctorTable.Lookup(functorId);
                     for (int i = 1; i <= arity; i++) stack.Push(fIdx + i);
@@ -4062,6 +4132,10 @@ public sealed partial class Activation
                 case Tag.Lis:
                 {
                     int hIdx = c.AsHeapIndex;
+                    if (onPath.Contains(hIdx)) return true;   // cyclic source
+                    if (!(done ??= new HashSet<int>()).Add(hIdx)) break;
+                    onPath.Add(hIdx);
+                    stack.Push(~hIdx);
                     stack.Push(hIdx);
                     stack.Push(hIdx + 1);
                     break;
@@ -4070,6 +4144,10 @@ public sealed partial class Activation
                 {
                     // PSTR characters are immediate ints — only the
                     // logical tail can carry a variable.
+                    if (onPath.Contains(addr)) return true;   // cyclic source
+                    if (!(done ??= new HashSet<int>()).Add(addr)) break;
+                    onPath.Add(addr);
+                    stack.Push(~addr);
                     int tailIdx = ComputePstrTailIndex(c);
                     stack.Push(tailIdx);
                     break;

@@ -41,6 +41,22 @@ public sealed class LinkConfig
     public IReadOnlyList<ShmoObject> Objects { get; init; } = Array.Empty<ShmoObject>();
     public IReadOnlyList<PredicateRef> EntryPoints { get; init; } = Array.Empty<PredicateRef>();
 
+    /// <summary>The <c>--goal</c>'s CALL-position references (see
+    /// <see cref="ExecutableEmitter.TryCollectGoalRefs"/>). Unlike
+    /// <see cref="EntryPoints"/>, one of these may resolve to a builtin or a
+    /// prelude predicate — the goal is any query the REPL would accept
+    /// (<c>time(main)</c>, <c>writeln(hola)</c>). Only a reference that
+    /// resolves NOWHERE (not user, not builtin, not prelude) fails the
+    /// link.</summary>
+    public IReadOnlyList<PredicateRef> GoalCallRefs { get; init; } = Array.Empty<PredicateRef>();
+
+    /// <summary>The <c>--goal</c>'s speculative subterm references — callable
+    /// terms in argument position (<c>main</c> inside <c>time(main)</c>). One
+    /// that resolves to a user predicate becomes a reachability root, exactly
+    /// like an entry point; anything else is silently ignored (it may be plain
+    /// data).</summary>
+    public IReadOnlyList<PredicateRef> GoalTermRefs { get; init; } = Array.Empty<PredicateRef>();
+
     /// <summary>When <c>true</c>, missing predicates downgrade from
     /// errors to warnings. The bundle is still produced, and the engine
     /// raises <c>existence_error/2</c> if a missing predicate is
@@ -500,6 +516,54 @@ public static class ShmoLinker
                 continue;
             }
             roots.Add((mod, ep, $"entry {ep}"));
+        }
+        // --goal references. Call-position refs resolve like entry points but
+        // may also land on a builtin or prelude predicate (the goal is any
+        // REPL-acceptable query — e.g. `time(main)`); only a reference that
+        // resolves nowhere fails the link. Subterm refs are speculative
+        // roots: a user predicate named anywhere in the goal term stays
+        // linked (that is how `main` inside `time(main)` survives
+        // reachability), anything else is ignored as data.
+        foreach (var gr in config.GoalCallRefs)
+        {
+            string? mod = ResolveEntryPointModule(gr, globalPublic, globalDynamic,
+                moduleDefined, out string? ambiguityMessage);
+            if (ambiguityMessage is not null)
+            {
+                Emit(LinkSeverity.Error, "ambiguous_entry", ambiguityMessage, null);
+                continue;
+            }
+            if (mod is not null)
+            {
+                roots.Add((mod, gr, $"goal {gr}"));
+                continue;
+            }
+            if (preludePublics.Contains(gr)) { preludeUsed.Add(gr); continue; }
+            if (builtinPredicates.Contains(gr)) continue;
+            Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
+                "goal_not_found",
+                $"--goal calls {gr}, which is not defined in any linked .shmo, "
+                + "builtin, or prelude.", null);
+        }
+        foreach (var gr in config.GoalTermRefs)
+        {
+            string? mod = ResolveEntryPointModule(gr, globalPublic, globalDynamic,
+                moduleDefined, out string? ambiguityMessage);
+            if (mod is null)
+            {
+                // A speculative ref that matches locals in several modules
+                // is kept in ALL of them — the goal may meta-call it, and
+                // linking more is the safe side of speculation.
+                if (ambiguityMessage is not null)
+                    foreach (var (modName, defs) in moduleDefined)
+                    {
+                        if (defs.ContainsKey(gr))
+                            roots.Add((modName, gr, $"goal term {gr}"));
+                    }
+                if (preludePublics.Contains(gr)) preludeUsed.Add(gr);
+                continue;
+            }
+            roots.Add((mod, gr, $"goal term {gr}"));
         }
         foreach (var obj in objects)
         {

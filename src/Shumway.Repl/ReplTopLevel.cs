@@ -9,7 +9,7 @@ namespace Shumway.Repl;
 /// A minimal interactive top-level (REPL) for Shumway. It
 /// consults any files named on the command line, then reads queries from
 /// standard input, runs each, and prints its solutions; pressing ';'
-/// after a solution searches for the next. The session ends at
+/// (or space / Tab) after a solution searches for the next. The session ends at
 /// <c>halt.</c> or end of input.
 ///
 /// <para>This is a thin client over the <see cref="PrologEngine"/>
@@ -758,7 +758,7 @@ internal static class ReplTopLevel
             + "\n"
             + "Interactive Shumway Prolog top-level. Consults each file named on the\n"
             + "command line (a .pl consults source; a .shum loads a linked bundle), then\n"
-            + "reads queries from the console. End a query with '.'; type ';' for more\n"
+            + "reads queries from the console. End a query with '.'; ';' or space for more\n"
             + $"solutions; ESC cancels a running query; 'halt.' or {eof} exits.\n"
             + "\n"
             + "Arguments after `--` are not consulted: they reach the program as the argv\n"
@@ -870,17 +870,54 @@ internal static class ReplTopLevel
             }
         }
 
-        var lines = new List<string>();
+        // Cyclic-term display: a cycle that re-enters at the root of a user
+        // variable's value renders as that variable — `A = [a, b | A]` — by
+        // mapping the materializer's `_C{addr}` marker back to the variable
+        // whose value is rooted at that address.
+        Dictionary<string, string>? cycleNames = null;
+        if (solution.ValueRootAddresses is { } rootAddrs)
+            foreach (string name in userVars)
+                if (rootAddrs.TryGetValue(name, out int addr))
+                    (cycleNames ??= new Dictionary<string, string>())
+                        .TryAdd($"_C{addr}", name);
+
+        // SWI-style binding display: user vars whose values are identical are
+        // CHAINED — `A = B, B = algo` instead of `A = algo, B = algo` — and
+        // two vars sharing one still-unbound variable show their aliasing
+        // (`A = B.`) instead of nothing. A lone unbound var stays omitted.
+        var renderedValue = new Dictionary<string, string>();
+        var groups = new Dictionary<string, List<string>>();
         foreach (string name in userVars)
         {
             Term? val = solution[name];
-            if (val is null) continue;
-            bool isUnbound = val is VarTerm;
+            if (val is null || residualsByVar.ContainsKey(name)) continue;
+            if (cycleNames is not null) val = SubstituteVarNames(val, cycleNames);
+            string key = AstTermRenderer.Render(val, 1200, ops);
+            renderedValue[name] = key;
+            if (!groups.TryGetValue(key, out var members))
+                groups[key] = members = new List<string>();
+            members.Add(name);
+        }
+
+        var lines = new List<string>();
+        var groupEmitted = new HashSet<string>();
+        foreach (string name in userVars)
+        {
             if (residualsByVar.TryGetValue(name, out var rs))
+            {
                 foreach (Term g in rs) lines.Add(AstTermRenderer.Render(g, 1200, ops));
-            else if (!isUnbound)
-                lines.Add($"{name} = {AstTermRenderer.Render(val, 1200, ops)}");
-            // Else: unbound var with no residuals — omit (SWI behaviour).
+                continue;
+            }
+            if (!renderedValue.TryGetValue(name, out string? key)
+                || !groupEmitted.Add(key))
+                continue;   // no value, or its group was already emitted
+            var members = groups[key];
+            for (int i = 0; i + 1 < members.Count; i++)
+                lines.Add($"{members[i]} = {members[i + 1]}");
+            // The last member carries the value — unless the shared value is
+            // itself an unbound variable (the chain alone says it all).
+            if (solution[members[^1]] is not VarTerm)
+                lines.Add($"{members[^1]} = {key}");
         }
         foreach (Term g in unattachedResiduals)
             lines.Add(AstTermRenderer.Render(g, 1200, ops));
@@ -934,7 +971,8 @@ internal static class ReplTopLevel
     }
 
     /// <summary>After a solution, asks whether to search for the next:
-    /// ';' means yes (a single keypress when interactive).
+    /// ';', space or Tab mean yes (a single keypress when interactive,
+    /// SWI-style); anything else stops.
     ///
     /// <para>With redirected/piped input the top-level takes only the FIRST
     /// solution and does not consume any input — every <c>.</c>-terminated
@@ -948,6 +986,7 @@ internal static class ReplTopLevel
     {
         if (Console.IsInputRedirected)
             return false;
-        return Console.ReadKey(intercept: true).KeyChar == ';';
+        ConsoleKeyInfo k = Console.ReadKey(intercept: true);
+        return k.KeyChar is ';' or ' ' || k.Key == ConsoleKey.Tab;
     }
 }
