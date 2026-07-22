@@ -300,7 +300,7 @@ public static class NativeBlockCompiler
         /// <summary>True if <paramref name="c"/> is a `:- native` function that
         /// resolves to a P/Invoke target (a native library export, not a C# interop
         /// method — those go through <see cref="EmitInteropCall"/>'s snapshot path).</summary>
-        private bool IsNativePInvoke(CCallExpr c, out PrologEngine.NativeResolution res)
+        private bool IsNativePInvoke(CCallExpr c, out NativeRuntime.NativeResolution res)
         {
             res = null!;
             if (_hostInstance is null || !_hostInstance.IsNativeFunction(c.Name, c.Args.Count)) return false;
@@ -313,7 +313,7 @@ public static class NativeBlockCompiler
         /// (which materializes / marshals / writes back). Bails a block whose native
         /// call uses an out-scalar parameter — those write back to a block-local and
         /// stay on the interpreter.</summary>
-        private Expression EmitNativeCall(CCallExpr c, PrologEngine.NativeResolution res)
+        private Expression EmitNativeCall(CCallExpr c, NativeRuntime.NativeResolution res)
         {
             var sig = res.Signature!;
             if (c.Args.Count != sig.ParamKinds.Length) throw new NativeBlockBailException();

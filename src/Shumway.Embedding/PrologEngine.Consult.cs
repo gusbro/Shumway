@@ -493,9 +493,7 @@ public sealed partial class PrologEngine
                 // interop method. The block call site materializes its reftype args.
                 foreach (var (n, a) in nativeSpecs)
                 {
-                    _nativeFunctions.Add(FunctorTable.Intern(
-                        AtomTable.Intern(n, permanent: true).Id, a));
-                    _nativeFunctionNames.Add(n);
+                    MarkNativeFunction(n, a);
                 }
             }
             else if (TryReadFunctorIndicatorDirective(body, "discontiguous", out var discSpecs))

@@ -1161,9 +1161,7 @@ public sealed partial class PrologEngine
         // are not re-applied without re-consulting the source).
         foreach (var pr in entry.NativeFunctions)
         {
-            _nativeFunctions.Add(FunctorTable.Intern(
-                AtomTable.Intern(pr.Name, permanent: true).Id, pr.Arity));
-            _nativeFunctionNames.Add(pr.Name);
+            MarkNativeFunction(pr.Name, pr.Arity);
         }
         if (!string.IsNullOrEmpty(entry.NativeDecls))
             RegisterNativePrototypes(

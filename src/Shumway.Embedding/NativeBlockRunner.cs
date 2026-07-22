@@ -349,7 +349,7 @@ public static class NativeBlockRunner
     /// then the reftype structs are dematerialized back into their slots and freed.
     /// (First cut: scalar + reftype params; the native function may modify the
     /// struct's scalar fields in place.)</summary>
-    private static object? PInvokeCall(PrologEngine.NativeResolution res, CCallExpr c, PrologEngine host,
+    private static object? PInvokeCall(NativeRuntime.NativeResolution res, CCallExpr c, PrologEngine host,
         Dictionary<string, object?> env, Dictionary<string, object?> outputs, Func<string, MethodInfo?> resolve)
     {
         var sig = res.Signature!;
@@ -484,7 +484,7 @@ public static class NativeBlockRunner
     /// here — the IL compiler bails a block that has any to the interpreter. The
     /// result is normalized to a boxed <c>long</c> (integer / pointer) or
     /// <c>double</c> (floating) so the emitted IL unboxes one model type.</summary>
-    internal static object? PInvokeFromIl(PrologEngine host, PrologEngine.NativeResolution res,
+    internal static object? PInvokeFromIl(PrologEngine host, NativeRuntime.NativeResolution res,
         object?[] args, byte[] kinds, string?[] reftypeNames, object?[]? outScalars = null)
     {
         var sig = res.Signature!;
