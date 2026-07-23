@@ -632,8 +632,15 @@ public static class AtomCharBuiltins
             sb.Append(engine.ReadPstrChain(cursor, out cursor));
             cursor = Resolve(engine, cursor);
         }
+        // A proper list has at most one cons cell per heap cell; walking more
+        // than that means the list is cyclic (e.g. L = ['1'|L]). Bound the walk
+        // so a cyclic argument raises type_error(list) instead of looping until
+        // the process runs out of memory (an uncatchable .NET failure).
+        int steps = 0, stepCap = engine.HeapTop + 1;
         while (cursor.Tag == Tag.Lis)
         {
+            if (++steps > stepCap)
+                throw new PrologRuntimeException("type_error", "list");
             Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
             if (head.Tag == Tag.Ref)
             {

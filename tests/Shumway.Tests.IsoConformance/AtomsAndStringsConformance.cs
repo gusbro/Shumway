@@ -98,6 +98,17 @@ public class AtomsAndStringsConformance
     }
 
     [Fact]
+    public void NumberChars_CyclicList_RaisesCatchableError_NotOutOfMemory()
+    {
+        // A cyclic list argument (L = ['1'|L]) must raise a catchable
+        // type_error(list) instead of walking forever until the process runs
+        // out of memory (an uncatchable failure).
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "L = ['1'|L], catch(number_chars(_, L), error(type_error(list,_),_), true).").Success);
+    }
+
+    [Fact]
     public void NumberChars_RejectsNonIsoNumberSyntax()
     {
         var engine = new PrologEngine();
