@@ -25,12 +25,14 @@ internal static class Coroutining
         :- public freeze/2.
         :- public frozen/2.
         :- public dif/2.
+        :- public when/2.
         :- public verify_attributes/4.
         :- multifile verify_attributes/4.
         :- public coroutining_attr_goals/3.
         % public because the hook (a dynamic clause, body not module-mangled)
         % references it in its residual Goals — like clpfd's '$fd_set'/3.
         :- public '$co_alias_check'/1.
+        :- public '$when_fire'/1.
 
         % The attribute value is frozen(Goal) where Goal is one goal or a
         % (G1, G2) conjunction, oldest first — waking runs them in the
@@ -50,6 +52,52 @@ internal static class Coroutining
         frozen(X, G) :-
             ( var(X), get_attr(X, coroutining, frozen(G0)) -> G = G0
             ; G = true
+            ).
+
+        %! when(+Condition, :Goal) | Coroutining | Runs Goal as soon as Condition becomes true. Condition is nonvar(X), ground(X), ?=(X,Y), or a (,)/(;) of these.
+        when(Condition, Goal) :-
+            ( var(Condition) -> throw(error(instantiation_error, when/2))
+            ; '$when_valid'(Condition) -> true
+            ; throw(error(domain_error(when_condition, Condition), when/2))
+            ),
+            ( '$when_holds'(Condition) -> call(Goal)
+            ; '$when_attach'(Condition, trigger(Condition, Goal, _Fired))
+            ).
+
+        '$when_valid'(nonvar(_)).
+        '$when_valid'(ground(_)).
+        '$when_valid'(?=(_, _)).
+        '$when_valid'((A, B)) :- '$when_valid'(A), '$when_valid'(B).
+        '$when_valid'((A ; B)) :- '$when_valid'(A), '$when_valid'(B).
+
+        % Does the condition hold right now?
+        '$when_holds'(nonvar(X)) :- nonvar(X).
+        '$when_holds'(ground(X)) :- ground(X).
+        '$when_holds'(?=(X, Y)) :- ?=(X, Y).
+        '$when_holds'((A, B)) :- '$when_holds'(A), '$when_holds'(B).
+        '$when_holds'((A ; B)) :- ( '$when_holds'(A) -> true ; '$when_holds'(B) ).
+
+        % Watch every variable the condition mentions. A single shared Fired
+        % flag in the trigger keeps Goal to one run even though several
+        % variables (and re-attachments) carry a copy of the trigger.
+        '$when_attach'(Condition, Trigger) :-
+            term_variables(Condition, Vars),
+            '$when_watch'(Vars, Trigger).
+        '$when_watch'([], _).
+        '$when_watch'([V|Vs], Trigger) :-
+            freeze(V, '$when_fire'(Trigger)),
+            '$when_watch'(Vs, Trigger).
+
+        % A watched variable was bound. Re-check:
+        %   already fired   -> nothing;
+        %   now holds       -> claim the flag and run Goal once;
+        %   still undecided -> re-attach to the variables that remain (a
+        %                      partial binding can expose new ones, e.g. under
+        %                      ground/1), reusing Fired so the run stays unique.
+        '$when_fire'(trigger(Condition, Goal, Fired)) :-
+            ( Fired == fired -> true
+            ; '$when_holds'(Condition) -> Fired = fired, call(Goal)
+            ; '$when_attach'(Condition, trigger(Condition, Goal, Fired))
             ).
 
         %! dif(?X, ?Y) | Coroutining | Constrains X and Y to be different: fails when they become identical, succeeds once they cannot unify.

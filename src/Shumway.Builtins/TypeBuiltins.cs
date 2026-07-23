@@ -118,6 +118,10 @@ public static class TypeBuiltins
         }
         switch (cell.Tag)
         {
+            // An attributed variable is an UNBOUND variable (freeze/dif/clpfd
+            // attach attributes to it) — a term holding one is not ground.
+            case Tag.AttVar:
+                return false;
             case Tag.Atom:
             case Tag.Int:
             case Tag.BigInt:

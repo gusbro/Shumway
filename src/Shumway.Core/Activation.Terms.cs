@@ -1439,6 +1439,79 @@ public sealed partial class Activation
             _pendingWakeups.RemoveRange(count, _pendingWakeups.Count - count);
     }
 
+    /// <summary>The saved machine state a trial unification must restore.
+    /// Returned by <see cref="BeginTrialUnify"/> and consumed by
+    /// <see cref="EndTrialUnify"/> — the caller may materialise the live
+    /// bindings in between (which <see cref="EndTrialUnify"/> then rolls
+    /// back).</summary>
+    public readonly struct TrialUnifyScope
+    {
+        internal readonly int HeapTop, BindingTrail, ExtraTrail, Hb, Wakeups;
+        internal TrialUnifyScope(int heapTop, int bindingTrail, int extraTrail,
+            int hb, int wakeups)
+        {
+            HeapTop = heapTop; BindingTrail = bindingTrail; ExtraTrail = extraTrail;
+            Hb = hb; Wakeups = wakeups;
+        }
+    }
+
+    /// <summary>Trial-unifies registers <paramref name="regA"/> and
+    /// <paramref name="regB"/>, LEAVING the bindings in place so the caller
+    /// can read the unifier (e.g. materialise each bound variable's value).
+    /// The caller MUST call <see cref="EndTrialUnify"/> with the returned
+    /// <paramref name="scope"/> to roll the bindings back. Returns false when
+    /// the terms cannot unify — in which case the rollback is done here and
+    /// <paramref name="scope"/> must not be used. On success,
+    /// <paramref name="boundVars"/> holds the distinct heap addresses of the
+    /// pre-existing variables (plain or attributed) the trial bound.</summary>
+    public bool BeginTrialUnify(int regA, int regB,
+        out List<int> boundVars, out TrialUnifyScope scope)
+    {
+        scope = new TrialUnifyScope(_heapTop, _bindingTrailTop, _extraTrailTop,
+            _hb, _pendingWakeups.Count);
+
+        // Hb at the heap top makes every trial binding trail — even to "old"
+        // variables — which is both what the unwind needs and what lets the
+        // trail double as the record of WHICH variables the trial bound.
+        SetHb(_heapTop);
+        bool unified = UnifyRegisters(regA, regB);
+
+        boundVars = new List<int>();
+        if (!unified)
+        {
+            EndTrialUnify(scope);
+            return false;
+        }
+
+        var seen = new HashSet<int>();
+        for (int i = scope.BindingTrail; i < _bindingTrailTop; i++)
+        {
+            int addr = _bindingTrail[i];
+            if (addr < scope.HeapTop && seen.Add(addr)) boundVars.Add(addr);
+        }
+        // Attributed variables bind via a ValueChange entry carrying the
+        // original ATTVAR cell, not a plain binding-trail address.
+        for (int i = scope.ExtraTrail; i < _extraTrailTop; i++)
+        {
+            ref var e = ref _extraTrail[i];
+            if (e.Type == TrailType.ValueChange && e.OldValue.Tag == Tag.AttVar
+                && e.HeapIdx < scope.HeapTop && seen.Add(e.HeapIdx))
+                boundVars.Add(e.HeapIdx);
+        }
+        return true;
+    }
+
+    /// <summary>Rolls back a trial unification begun by
+    /// <see cref="BeginTrialUnify"/>: bindings, heap top, Hb and any
+    /// attribute-hook wakeups the trial queued.</summary>
+    public void EndTrialUnify(TrialUnifyScope scope)
+    {
+        UnwindTrails(scope.BindingTrail, scope.ExtraTrail);
+        SetHeapTop(scope.HeapTop);
+        SetHb(scope.Hb);
+        TruncatePendingWakeups(scope.Wakeups);
+    }
+
     /// <summary>Trial-unifies the terms in registers <paramref name="regA"/>
     /// and <paramref name="regB"/>, then rolls everything back — bindings,
     /// heap top, Hb and any attribute-hook wakeups the trial queued. Returns
@@ -1454,54 +1527,22 @@ public sealed partial class Activation
     public bool TrialUnifyCollectingBoundVars(int regA, int regB,
         out List<int> unifierVars)
     {
-        int savedHeapTop = _heapTop;
-        int savedBindingTrail = _bindingTrailTop;
-        int savedExtraTrail = _extraTrailTop;
-        int savedHb = _hb;
-        int savedWakeups = _pendingWakeups.Count;
+        if (!BeginTrialUnify(regA, regB, out unifierVars, out var scope))
+            return false;
 
-        // Hb at the heap top makes every trial binding trail — even to "old"
-        // variables — which is both what the unwind needs and what lets the
-        // trail double as the record of WHICH variables the trial bound.
-        SetHb(_heapTop);
-        bool unified = UnifyRegisters(regA, regB);
+        // Value-side variables — walked BEFORE the unwind, while the
+        // bindings are still in place. The walk appends to unifierVars.
+        // Separate visited set for structure cells: a var home can BE a
+        // list-pair head slot, and sharing the set would skip that pair.
+        var seen = new HashSet<int>(unifierVars);
+        var visited = new HashSet<int>();
+        int boundCount = unifierVars.Count;
+        for (int i = 0; i < boundCount; i++)
+            CollectUnboundVars(GetHeap(unifierVars[i]), scope.HeapTop,
+                unifierVars, seen, visited);
 
-        unifierVars = new List<int>();
-        if (unified)
-        {
-            var seen = new HashSet<int>();
-            int firstBoundValue = unifierVars.Count;   // == 0; kept for clarity
-            for (int i = savedBindingTrail; i < _bindingTrailTop; i++)
-            {
-                int addr = _bindingTrail[i];
-                if (addr < savedHeapTop && seen.Add(addr)) unifierVars.Add(addr);
-            }
-            // Attributed variables bind via a ValueChange entry carrying the
-            // original ATTVAR cell, not a plain binding-trail address.
-            for (int i = savedExtraTrail; i < _extraTrailTop; i++)
-            {
-                ref var e = ref _extraTrail[i];
-                if (e.Type == TrailType.ValueChange && e.OldValue.Tag == Tag.AttVar
-                    && e.HeapIdx < savedHeapTop && seen.Add(e.HeapIdx))
-                    unifierVars.Add(e.HeapIdx);
-            }
-            // Value-side variables — walked BEFORE the unwind, while the
-            // bindings are still in place. The walk appends to unifierVars;
-            // the snapshot bound keeps it over the trial-bound vars only.
-            // Separate visited set for structure cells: a var home can BE a
-            // list-pair head slot, and sharing the set would skip that pair.
-            int boundCount = unifierVars.Count;
-            var visited = new HashSet<int>();
-            for (int i = firstBoundValue; i < boundCount; i++)
-                CollectUnboundVars(GetHeap(unifierVars[i]), savedHeapTop,
-                    unifierVars, seen, visited);
-        }
-
-        UnwindTrails(savedBindingTrail, savedExtraTrail);
-        SetHeapTop(savedHeapTop);
-        SetHb(savedHb);
-        TruncatePendingWakeups(savedWakeups);
-        return unified;
+        EndTrialUnify(scope);
+        return true;
     }
 
     /// <summary>Appends to <paramref name="into"/> the distinct unbound

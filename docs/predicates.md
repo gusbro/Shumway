@@ -65,6 +65,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | Predicate | Description |
 | --- | --- |
 | `=..(?Term, ?List)` | Relates a term to the list of its functor and arguments. |
+| `?=(@X, @Y)` | Succeeds if the (in)equality of X and Y is already decided (identical, or cannot unify). |
 | `arg(+N, +Term, ?Arg)` | Unifies Arg with the Nth argument of the compound term. |
 | `atom_to_term(+Atom, -Term, -Bindings)` | Parses an atom into a term plus its variable bindings. |
 | `copy_term(+Term, -Copy)` | Copies a term with fresh variables. |
@@ -89,6 +90,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `term_attvars(+Term, -Vars)` | Unifies Vars with the attributed variables reachable from Term. |
 | `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
 | `term_variables(+Term, -Variables)` | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5). |
+| `unifiable(@X, @Y, -Unifier)` | If X and Y unify, Unifier is the list of V=Value bindings that make them equal; else fails. |
 
 ## Control
 
@@ -424,6 +426,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `dif(?X, ?Y)` | Constrains X and Y to be different: fails when they become identical, succeeds once they cannot unify. |
 | `freeze(?Var, :Goal)` | Delays Goal until Var is bound; runs it at once when Var is already bound. |
 | `frozen(?Var, -Goal)` | Unifies Goal with the conjunction of goals delayed on Var (true when none). |
+| `when(+Condition, :Goal)` | Runs Goal as soon as Condition becomes true. Condition is nonvar(X), ground(X), ?=(X,Y), or a (,)/(;) of these. |
 
 ## Global variables
 

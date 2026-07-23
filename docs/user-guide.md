@@ -216,10 +216,12 @@ libraries load with `:- use_module(library(clpfd))` /
 `library(clpr)` / `library(coroutining))`.
 
 The coroutining library provides `freeze/2` (delay a goal until a
-variable is bound), `frozen/2`, and `dif/2` (a sound disequality that
-fails the moment its arguments become identical). `term_attvars/2` and
-`call_residue_vars/2` are always available (they need no library), the
-latter collecting the still-constrained variables a goal creates.
+variable is bound), `frozen/2`, `when/2` (delay on a general condition —
+`nonvar/1`, `ground/1`, `?=/2`, and their `(,)`/`(;)` combinations), and
+`dif/2` (a sound disequality that fails the moment its arguments become
+identical). `?=/2` (decided (in)equality), `unifiable/3` (the unifier of
+two terms as a `V=Value` list), `term_attvars/2` and `call_residue_vars/2`
+are always available and need no library.
 
 ### Catching runtime exceptions
 

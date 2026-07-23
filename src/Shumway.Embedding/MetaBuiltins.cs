@@ -57,6 +57,12 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$dif_check", 3, DifCheck);
         BuiltinsRegistry.Register("$attv_snapshot", 1, AttvSnapshot);
         BuiltinsRegistry.Register("$attv_new_since", 2, AttvNewSince);
+        BuiltinsRegistry.Register("?=", 2, DecidedUnify,
+            Term, "?=(@X, @Y)",
+            "Succeeds if the (in)equality of X and Y is already decided (identical, or cannot unify).");
+        BuiltinsRegistry.Register("unifiable", 3, Unifiable,
+            Term, "unifiable(@X, @Y, -Unifier)",
+            "If X and Y unify, Unifier is the list of V=Value bindings that make them equal; else fails.");
 
         BuiltinsRegistry.Register("call", 1, Call1,
             Control, "call(:Goal)", "Calls a goal.");

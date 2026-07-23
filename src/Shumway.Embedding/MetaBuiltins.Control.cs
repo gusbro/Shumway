@@ -1108,6 +1108,75 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithHeapAt(2, BuildRefList(engine, boundVars));
     }
 
+    /// <summary><c>?=(X, Y)</c> — succeeds iff the (in)equality of X and Y is
+    /// already DECIDED: they are identical, or they cannot unify. Further
+    /// instantiation cannot change the outcome. (SWI/SICStus §; the condition
+    /// <c>when/2</c> waits on.) Implemented as a fully-rolled-back trial
+    /// unification: cannot unify → decided; unifiable with no bindings → they
+    /// are identical → decided; unifiable via bindings → undecided → fail.</summary>
+    public static bool DecidedUnify(Activation engine)
+    {
+        if (!engine.BeginTrialUnify(0, 1, out var boundVars, out var scope))
+            return true;   // cannot unify → the inequality is decided
+        engine.EndTrialUnify(scope);
+        return boundVars.Count == 0;   // no bindings → already identical
+    }
+
+    /// <summary><c>unifiable(X, Y, Unifier)</c> — if X and Y can unify,
+    /// <c>Unifier</c> is the list of <c>V = Value</c> bindings that would make
+    /// them equal (the original variables of X/Y preserved); fails when they
+    /// cannot unify. No binding is left behind. (SWI builtin.)</summary>
+    public static bool Unifiable(Activation engine)
+    {
+        if (!engine.BeginTrialUnify(0, 1, out var boundVars, out var scope))
+            return false;   // cannot unify → the predicate fails
+
+        // While the trial bindings are live, snapshot each `V = Value` pair as
+        // a managed AST. TermReader.Materialize names every unbound variable
+        // `_G<addr>` — so the value side and the `V` side (which is exactly the
+        // bound variable, named the same way) refer to the same original
+        // variables. Every such addr is a pre-existing variable (< the scope's
+        // heap top): unification binds variables to existing cells, it never
+        // introduces fresh unbound ones.
+        var pairs = new System.Collections.Generic.List<Term>(boundVars.Count);
+        foreach (int a in boundVars)
+            pairs.Add(new CompoundTerm("=", new Term[]
+            {
+                new VarTerm("_G" + a),
+                TermReader.Materialize(engine, a),
+            }));
+
+        engine.EndTrialUnify(scope);
+
+        // Rebuild the unifier on the heap, mapping each `_G<addr>` name back to
+        // the original variable at that address (still unbound post-rollback).
+        Term listAst = MakeListTerm(pairs);
+        var shared = new System.Collections.Generic.Dictionary<string, int>();
+        CollectOriginalVarNames(listAst, shared);
+        Cell listCell = Materializer.MaterializeAsCellSharing(engine, listAst, shared);
+        return engine.UnifyRegisterWithCell(2, listCell);
+    }
+
+    /// <summary>Seeds <paramref name="shared"/> with every <c>_G&lt;addr&gt;</c>
+    /// variable name in <paramref name="term"/> mapped to its heap address, so
+    /// <see cref="Materializer.MaterializeAsCellSharing"/> reuses the original
+    /// variable cells rather than allocating fresh ones.</summary>
+    private static void CollectOriginalVarNames(Term term,
+        System.Collections.Generic.Dictionary<string, int> shared)
+    {
+        switch (term)
+        {
+            case VarTerm v:
+                if (v.Name.Length > 2 && v.Name[0] == '_' && v.Name[1] == 'G'
+                    && int.TryParse(v.Name.AsSpan(2), out int addr))
+                    shared[v.Name] = addr;
+                break;
+            case CompoundTerm c:
+                foreach (Term arg in c.Args) CollectOriginalVarNames(arg, shared);
+                break;
+        }
+    }
+
     /// <summary><c>'$attv_snapshot'(-S)</c> — S is an opaque snapshot of the
     /// set of attributed-variable homes known to the engine right now. The
     /// C# half of <c>call_residue_vars/2</c>, paired with

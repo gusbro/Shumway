@@ -170,6 +170,7 @@ public sealed class OperatorTable
         t.Define(">", 700, OperatorType.Xfx);
         t.Define("=<", 700, OperatorType.Xfx);
         t.Define(">=", 700, OperatorType.Xfx);
+        t.Define("?=", 700, OperatorType.Xfx);
 
         // Arithmetic
         t.Define("+", 500, OperatorType.Yfx);

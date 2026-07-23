@@ -255,4 +255,151 @@ public class CoroutiningTests
             "dif(X, a), call_residue_vars(dif(Y, b), Vs), Vs = [V], V == Y.");
         Assert.True(sol.Success);
     }
+
+    // ===== ground/1 on attributed variables (core correctness) =====
+
+    [Fact]
+    public void Ground_TreatsAnAttributedVariableAsNonGround()
+    {
+        // put_attr makes X an attvar (unbound); a term holding it is not
+        // ground. (Regression: ground/1 used to treat an attvar cell as a
+        // bound value, so a frozen/clpfd variable read as ground.)
+        Assert.False(new PrologEngine().Query("put_attr(X, m, v), ground(f(1, X)).").Success);
+        Assert.True(new PrologEngine().Query("put_attr(X, m, v), \\+ ground(g(X)).").Success);
+    }
+
+    // ===== ?=/2 (core builtin, no library) =====
+
+    [Fact]
+    public void DecidedUnify_GroundDifferent_Decided() =>
+        Assert.True(new PrologEngine().Query("a ?= b.").Success);
+
+    [Fact]
+    public void DecidedUnify_Identical_Decided() =>
+        Assert.True(new PrologEngine().Query("f(X, b) ?= f(X, b).").Success);
+
+    [Fact]
+    public void DecidedUnify_TwoUnbound_Undecided() =>
+        Assert.False(new PrologEngine().Query("X ?= Y.").Success);
+
+    [Fact]
+    public void DecidedUnify_PartiallyUnifiable_Undecided() =>
+        Assert.False(new PrologEngine().Query("f(X) ?= f(a).").Success);
+
+    [Fact]
+    public void DecidedUnify_LeavesNoBinding()
+    {
+        var sol = new PrologEngine().Query("( a ?= b ; true ), X = kept.");
+        Assert.True(sol.Success);
+        Assert.Equal("kept", sol["X"]!.ToString());
+    }
+
+    // ===== unifiable/3 (core builtin, no library) =====
+
+    [Fact]
+    public void Unifiable_TwoStructures_ReportsTheBindings()
+    {
+        var sol = new PrologEngine().Query(
+            "unifiable(f(X, b), f(a, Y), U), U = [X=a, Y=b].");
+        Assert.True(sol.Success);
+    }
+
+    [Fact]
+    public void Unifiable_TwoVars_BindsOneToTheOther()
+    {
+        var sol = new PrologEngine().Query("unifiable(X, Y, U), U = [X=Y].");
+        Assert.True(sol.Success);
+    }
+
+    [Fact]
+    public void Unifiable_Identical_EmptyUnifier()
+    {
+        var sol = new PrologEngine().Query("unifiable(a, a, U).");
+        Assert.True(sol.Success);
+        Assert.Equal("[]", sol["U"]!.ToString());
+    }
+
+    [Fact]
+    public void Unifiable_CannotUnify_Fails() =>
+        Assert.False(new PrologEngine().Query("unifiable(a, b, _U).").Success);
+
+    [Fact]
+    public void Unifiable_LeavesNoBinding()
+    {
+        // X must remain unbound after unifiable/3 reports X=a.
+        var sol = new PrologEngine().Query("unifiable(X, a, _U), var(X).");
+        Assert.True(sol.Success);
+    }
+
+    // ===== when/2 =====
+
+    [Fact]
+    public void When_Nonvar_FiresOnBinding()
+    {
+        var sol = Co().Query("when(nonvar(X), Y = woke), X = 1.");
+        Assert.True(sol.Success);
+        Assert.Equal("woke", sol["Y"]!.ToString());
+    }
+
+    [Fact]
+    public void When_Nonvar_AlreadyBound_RunsImmediately()
+    {
+        var sol = Co().Query("X = 1, when(nonvar(X), Y = ran).");
+        Assert.True(sol.Success);
+        Assert.Equal("ran", sol["Y"]!.ToString());
+    }
+
+    [Fact]
+    public void When_Ground_WaitsForEverySubterm()
+    {
+        // Must NOT fire until both X and Y are bound (the re-attach path).
+        var sol = Co().Query(
+            "when(ground(f(X, Y)), Z = g), X = 1, ( var(Z) -> Y = 2 ; throw(too_early) ).");
+        Assert.True(sol.Success);
+        Assert.Equal("g", sol["Z"]!.ToString());
+    }
+
+    [Fact]
+    public void When_DecidedEquality_FiresWhenDecided()
+    {
+        var sol = Co().Query("when(?=(X, a), Y = dec), X = b.");
+        Assert.True(sol.Success);
+        Assert.Equal("dec", sol["Y"]!.ToString());
+    }
+
+    [Fact]
+    public void When_Disjunction_FiresWhenEitherHolds()
+    {
+        var sol = Co().Query("when((nonvar(X) ; nonvar(Y)), Z = fired), Y = 1.");
+        Assert.True(sol.Success);
+        Assert.Equal("fired", sol["Z"]!.ToString());
+    }
+
+    [Fact]
+    public void When_Conjunction_FiresWhenBothHold()
+    {
+        var sol = Co().Query(
+            "when((nonvar(X), nonvar(Y)), Z = both), "
+            + "X = 1, ( var(Z) -> Y = 2 ; throw(too_early) ).");
+        Assert.True(sol.Success);
+        Assert.Equal("both", sol["Z"]!.ToString());
+    }
+
+    [Fact]
+    public void When_RunsGoalAtMostOnce()
+    {
+        var sol = Co().Query(
+            "when((nonvar(X) ; nonvar(Y)), assertz(w_log(hit))), "
+            + "X = 1, Y = 2, findall(H, w_log(H), Hs), Hs == [hit].");
+        Assert.True(sol.Success);
+    }
+
+    [Fact]
+    public void When_MalformedCondition_Throws()
+    {
+        var e = Co();
+        var ex = Assert.Throws<ShumwayPrologException>(
+            () => e.Query("when(silly(X), true)."));
+        Assert.Contains("domain_error", ex.Message);
+    }
 }
