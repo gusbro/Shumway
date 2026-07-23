@@ -495,11 +495,13 @@ public sealed class Lexer
         // long stays a plain Integer token; larger values carry BigValue.
         if (c == '0')
         {
+            // ISO §6.4.4: radix markers are lowercase only. `0X` / `0B` / `0O`
+            // are NOT radix literals (0 followed by an uppercase token).
             int radix = Peek(1) switch
             {
-                'x' or 'X' => 16,
-                'o' or 'O' => 8,
-                'b' or 'B' => 2,
+                'x' => 16,
+                'o' => 8,
+                'b' => 2,
                 _ => 0,
             };
             if (radix == 16 && RadixDigitValue(Peek(2)) < 0)

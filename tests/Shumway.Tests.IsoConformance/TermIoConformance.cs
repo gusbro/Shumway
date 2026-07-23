@@ -158,6 +158,18 @@ public class TermIoConformance : IDisposable
     }
 
     [Fact]
+    public void RadixLiterals_AreLowercaseOnly()
+    {
+        // ISO §6.4.4: 0x / 0o / 0b are lowercase. Uppercase 0X is 0 followed by
+        // a variable, so `X = 0X1` is a syntax error, while 0x1 is 1.
+        var e = new PrologEngine();
+        Assert.True(e.Query("0x1f =:= 31.").Success);
+        Assert.True(e.Query(
+            "catch((read_term_from_atom('X = 0X1', _, []), fail), "
+            + "error(syntax_error(_), _), true).").Success);
+    }
+
+    [Fact]
     public void CharCodeConstant_QuoteMustBeDoubled()
     {
         // ISO §6.3.7: the character code of a quote is 0''' (doubled) or 0'\'.

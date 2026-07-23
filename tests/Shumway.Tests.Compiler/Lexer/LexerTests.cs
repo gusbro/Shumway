@@ -123,12 +123,21 @@ public class LexerTests
     [Theory]
     [InlineData("0xff", 255L)]
     [InlineData("0x10", 16L)]
-    [InlineData("0XCAFE", 0xCAFEL)]
     public void Integer_HexLiteral_IsParsed(string source, long expected)
     {
         Token t = First(source);
         Assert.Equal(TokenKind.Integer, t.Kind);
         Assert.Equal(expected, t.IntValue);
+    }
+
+    [Fact]
+    public void Integer_UppercaseRadixMarker_IsNotAHexLiteral()
+    {
+        // ISO §6.4.4: radix markers are lowercase only. `0XCAFE` is the
+        // integer 0 followed by the variable CAFE, not a hex literal.
+        var toks = Tokens("0XCAFE");
+        Assert.Equal(TokenKind.Integer, toks[0].Kind);
+        Assert.Equal(0L, toks[0].IntValue);
     }
 
     [Fact]
