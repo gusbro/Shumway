@@ -161,61 +161,55 @@ public static class AtomCharBuiltins
     {
         Cell numCell = Resolve(engine, engine.GetRegister(0));
         Cell strCell = Resolve(engine, engine.GetRegister(1));
+        bool numIsNumber = numCell.Tag is Tag.Int or Tag.Float or Tag.BigInt;
 
-        // Numeric → list direction.
-        if (numCell.Tag == Tag.Int)
-        {
-            string s = numCell.AsInt.ToString(CultureInfo.InvariantCulture);
-            int listIdx = asCodes
-                ? BuildIntCodesList(engine, s)
-                : BuildCharAtomList(engine, s);
-            return engine.UnifyRegisterWithHeapAt(1, listIdx);
-        }
-        if (numCell.Tag == Tag.Float)
-        {
-            double v = Cell.DecodeFloat(numCell, engine.GetHeap(numCell.FloatPairedIndex));
-            // Round-trippable ISO float form (decimal point + lowercase e) so
-            // number_codes/number_chars re-reads it in either direction.
-            string s = Number.FormatPrologFloat(v);
-            int listIdx = asCodes
-                ? BuildIntCodesList(engine, s)
-                : BuildCharAtomList(engine, s);
-            return engine.UnifyRegisterWithHeapAt(1, listIdx);
-        }
-        if (numCell.Tag == Tag.BigInt)
-        {
-            string s = engine.AsBigInt(numCell).ToString(CultureInfo.InvariantCulture);
-            int listIdx = asCodes
-                ? BuildIntCodesList(engine, s)
-                : BuildCharAtomList(engine, s);
-            return engine.UnifyRegisterWithHeapAt(1, listIdx);
-        }
+        // ISO §8.16.7 / §8.16.8 precedence and direction.
+        //  (a) both arguments unbound → instantiation_error.
+        if (numCell.Tag == Tag.Ref && strCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        //  (b) Number bound to a non-number → type_error(number, _).
+        if (numCell.Tag != Tag.Ref && !numIsNumber)
+            throw new PrologRuntimeException("type_error", "number");
 
-        // List → numeric direction.
-        if (numCell.Tag == Tag.Ref)
+        //  (c) The list argument, when instantiated, is type-checked and — if
+        //      fully bound — parsed as a number and unified with Number (the
+        //      PRIMARY direction, so number_chars(1, "01") parses "01"→1 and
+        //      succeeds). A bound element that is not a character is a
+        //      type_error even past an earlier unbound one (§8.16.8); a list
+        //      that only has unbound elements/tail falls through to generate.
+        if (strCell.Tag != Tag.Ref)
         {
-            // ISO §8.16.7 / §8.16.8: the list arg must be sufficiently
-            // instantiated. If it's also a var the call is doubly
-            // ambiguous → instantiation_error.
-            if (strCell.Tag == Tag.Ref)
+            string s = AnalyzeCharList(engine, strCell, asCodes, out bool hasUnbound);
+            if (!hasUnbound)
+            {
+                // Full Prolog number syntax (§6.4.4): radix (0x/0o/0b), char
+                // code (0'c), BigInteger-size decimals, floats, leading layout.
+                if (TryBuildPrologNumber(engine, s, out Cell numResult, out int floatIdx))
+                    return floatIdx >= 0
+                        ? engine.UnifyRegisterWithHeapAt(0, floatIdx)
+                        : engine.UnifyRegisterWithCell(0, numResult);
+                // Text that does not denote a number is a (catchable) syntax error.
+                throw new PrologRuntimeException("syntax_error", "illegal_number");
+            }
+            // The list has unbound parts: Number must supply the value.
+            if (!numIsNumber)
                 throw new PrologRuntimeException("instantiation_error");
-            string s = asCodes
-                ? ReadCodesToString(engine, strCell, builtinName)
-                : ReadCharAtomsToString(engine, strCell);
-            // Full Prolog number syntax (§6.4.4): radix (0x/0o/0b), char
-            // code (0'c), BigInteger-size decimals, and floats; not just
-            // what long.TryParse knows.
-            if (TryBuildPrologNumber(engine, s, out Cell numResult, out int floatIdx))
-                return floatIdx >= 0
-                    ? engine.UnifyRegisterWithHeapAt(0, floatIdx)
-                    : engine.UnifyRegisterWithCell(0, numResult);
-            // ISO: text that does not denote a number is a syntax error —
-            // a catchable one, so catch/3 can recover.
-            throw new PrologRuntimeException("syntax_error", "illegal_number");
+            // fall through to generate + unify against the partial list.
         }
 
-        // First arg bound but not a number: ISO type_error(number, _).
-        throw new PrologRuntimeException("type_error", "number");
+        //  (d) The list is a variable (or a partial list) and Number is a
+        //      number → generate its characters and unify.
+        string text = numCell.Tag switch
+        {
+            Tag.Int => numCell.AsInt.ToString(CultureInfo.InvariantCulture),
+            Tag.Float => Number.FormatPrologFloat(
+                Cell.DecodeFloat(numCell, engine.GetHeap(numCell.FloatPairedIndex))),
+            _ => engine.AsBigInt(numCell).ToString(CultureInfo.InvariantCulture),
+        };
+        int listIdx = asCodes
+            ? BuildIntCodesList(engine, text)
+            : BuildCharAtomList(engine, text);
+        return engine.UnifyRegisterWithHeapAt(1, listIdx);
     }
 
     /// <summary>Parses ISO Prolog number syntax
@@ -235,12 +229,29 @@ public static class AtomCharBuiltins
         cell = default;
         floatIdx = -1;
         int i = 0, n = s.Length;
-        while (i < n && char.IsWhiteSpace(s[i])) i++;   // leading layout
-        bool neg = false;
-        if (i < n && (s[i] == '-' || s[i] == '+'))      // '+' is the lenient extension
+        // Leading layout — whitespace AND comments (§6.4.1), so a number token
+        // may be preceded by `/* */` or a `%` line comment.
+        while (i < n)
         {
-            neg = s[i] == '-';
+            if (char.IsWhiteSpace(s[i])) { i++; continue; }
+            if (s[i] == '%') { while (i < n && s[i] != '\n') i++; continue; }
+            if (s[i] == '/' && i + 1 < n && s[i + 1] == '*')
+            {
+                i += 2;
+                while (i + 1 < n && !(s[i] == '*' && s[i + 1] == '/')) i++;
+                i = System.Math.Min(n, i + 2);
+                continue;
+            }
+            break;
+        }
+        // ISO §6.3.1: a numeric constant has no leading '+' — only a '-' sign
+        // (which yields a negative number). Layout after the sign is allowed.
+        bool neg = false;
+        if (i < n && s[i] == '-')
+        {
+            neg = true;
             i++;
+            while (i < n && char.IsWhiteSpace(s[i])) i++;   // e.g. "- 1" → -1
         }
         if (i >= n || !char.IsDigit(s[i])) return false;
 
@@ -301,7 +312,9 @@ public static class AtomCharBuiltins
                 while (i < n && char.IsDigit(s[i])) i++;
             }
         }
-        if (!sawFraction && !sawExponent) return false;
+        // ISO §6.3.1.2: a float MUST have a fractional part (a decimal point
+        // followed by digits); an exponent alone (1e1) is not a valid float.
+        if (!sawFraction) return false;
         if (i != n) return false;
         if (!double.TryParse(s.Substring(start), NumberStyles.Float,
                 CultureInfo.InvariantCulture, out double dv))
@@ -595,6 +608,60 @@ public static class AtomCharBuiltins
     }
 
     // ---------- List-reading helpers ----------
+
+    /// <summary>Walks a number_chars/number_codes list argument (§8.16.8),
+    /// concatenating its bound characters. Sets <paramref name="hasUnbound"/>
+    /// when any element or the tail is an unbound variable — the caller then
+    /// takes the generate direction (Number → list) rather than parsing.
+    /// A bound element that is not a valid character / code, or a bound
+    /// improper tail, throws a type_error even past an earlier unbound
+    /// element (a bad bound element wins over instantiation). The returned
+    /// string is meaningful only when <paramref name="hasUnbound"/> is
+    /// false.</summary>
+    private static string AnalyzeCharList(
+        Activation engine, Cell listCell, bool asCodes, out bool hasUnbound)
+    {
+        hasUnbound = false;
+        var sb = new StringBuilder();
+        Cell cursor = Resolve(engine, listCell);
+        if (cursor.Tag == Tag.Pstr)
+        {
+            // A PSTR is a code list; for number_chars its elements are codes,
+            // not one-char atoms — the ISO element-type error applies.
+            if (!asCodes) throw new PrologRuntimeException("type_error", "character");
+            sb.Append(engine.ReadPstrChain(cursor, out cursor));
+            cursor = Resolve(engine, cursor);
+        }
+        while (cursor.Tag == Tag.Lis)
+        {
+            Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
+            if (head.Tag == Tag.Ref)
+            {
+                hasUnbound = true;
+            }
+            else if (asCodes)
+            {
+                if (head.Tag != Tag.Int)
+                    throw new PrologRuntimeException("type_error", "character_code");
+                if (!hasUnbound) sb.Append((char)head.AsInt);
+            }
+            else
+            {
+                if (head.Tag != Tag.Atom)
+                    throw new PrologRuntimeException("type_error", "character");
+                string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
+                if (name.Length != 1)
+                    throw new PrologRuntimeException("type_error", "character");
+                if (!hasUnbound) sb.Append(name[0]);
+            }
+            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+        }
+        if (cursor.Tag == Tag.Ref)
+            hasUnbound = true;
+        else if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
+            throw new PrologRuntimeException("type_error", "list");
+        return sb.ToString();
+    }
 
     private static string ReadCodesToString(Activation engine, Cell codesCell, string builtinName)
     {
