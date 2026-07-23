@@ -43,6 +43,18 @@ public sealed class Parser
     /// (<see cref="ReadClauseTerm"/> / <see cref="ReadTerm"/>).</summary>
     private bool _sawDcgArrow;
 
+    /// <summary>The priority of <paramref name="name"/> as a bare operator-atom
+    /// term — the maximum of its prefix / infix / postfix priorities, or 0 when
+    /// it is not an operator.</summary>
+    private int BareOperatorAtomPriority(string name)
+    {
+        int p = 0;
+        if (_operators.TryGetPrefix(name, out int pre, out _)) p = System.Math.Max(p, pre);
+        if (_operators.TryGetInfix(name, out int inf, out _)) p = System.Math.Max(p, inf);
+        if (_operators.TryGetPostfix(name, out int post, out _)) p = System.Math.Max(p, post);
+        return p;
+    }
+
     public Parser(Lexer.Lexer lexer) : this(lexer, OperatorTable.Default(), new PrologFlags())
     {
     }
@@ -343,8 +355,30 @@ public sealed class Parser
             }
         }
 
+        // ISO §6.3.1.3: a bare operator-atom used as the OPERAND of an operator
+        // has the operator's own priority, so it cannot sit where a
+        // lower-priority term is required — `- -` (the operand `-` has priority
+        // 500, but a prefix `-` admits ≤ 200) is a syntax error, as is `a * *`
+        // (the right operand `*` needs ≤ 399). This is checked only in an
+        // operator-operand position (maxPrec < 999): a bare operator-atom used
+        // as a delimited ARGUMENT or list element (`f(:-)`, `[:-,-]`, read at
+        // 999) or at the top level is a complete atom term and stays valid. A
+        // parenthesised `(*)` / compound `f(*)` reads as a non-atom (exempt),
+        // and a QUOTED atom (`'<'`) is a plain priority-0 atom (exempt).
+        Token pk = PeekToken();
+        Term prim = ReadPrimary();
         builtPrec = 0;
-        return ReadPrimary();
+        if (maxPrec < 999 && pk.Kind == TokenKind.Atom && !pk.WasQuoted
+            && prim is AtomTerm bareAt && bareAt.Name == pk.Text)
+        {
+            int p = BareOperatorAtomPriority(bareAt.Name);
+            if (p > maxPrec)
+                throw new ParseException(
+                    $"Operator '{bareAt.Name}' (priority {p}) needs parentheses "
+                    + $"to be an operand here (maximum priority {maxPrec}).", pk.Position);
+            builtPrec = p;
+        }
+        return prim;
     }
 
     // ---------- Primaries (atom, var, number, string, list, brace, paren, compound) ----------
