@@ -428,6 +428,10 @@ internal sealed class ConsultPipeline
         HashSet<int>? tabledFunctors = null;
         Dictionary<int, List<Shumway.Compiler.Modes.ModeDeclaration>>? pendingModes = null;
         List<Term>? initializationGoals = null;
+        // ISO §7.4.2 general goal directives (`:- G` where G is not a
+        // recognised declaration), in source order — run right after the
+        // batch commit, before any initialization/1 goal.
+        List<Term>? directiveGoals = null;
         // ADR-022 — accumulated raw text of this consult's `:- c` regions (the
         // captured `$native_decls` directives), parsed into the C symbol table
         // for the embedded native-block transform below.
@@ -609,26 +613,50 @@ internal sealed class ConsultPipeline
                 // namespace); load the module the same way.
                 E.ExecuteUseModuleDirective(umDir2.Args[0]);
             }
-            // op/3 already processed in-place by ClauseReader. Other
-            // unrecognised directives pass through silently — they may be
-            // implementation-defined hooks that future chunks handle.
-            // arity_compat only: same policy as
-            // shumway-compile — an unknown directive is reported as a
-            // warning (to stderr) and consult continues. Without the
-            // flag the silent pass-through above is unchanged.
-            else if (E._flags.ArityCompat)
+            else
             {
+                // A directive that matched none of the branches above is
+                // either a declaration handled elsewhere (op/3 applied at
+                // parse time by ClauseReader; char_conversion; include —
+                // expanded earlier) or a plain goal.
                 string dirName = body switch
                 {
                     AtomTerm dirAtom => dirAtom.Name,
                     CompoundTerm dirComp => dirComp.Functor,
                     _ => "",
                 };
-                if (dirName.Length > 0
-                    && !ShmoCompiler.RecognizedDirectives.Contains(dirName)
-                    && !ShmoCompiler.SilentlyIgnoredDirectives.Contains(dirName))
-                    Console.Error.WriteLine(
-                        $"warning: unknown directive '{dirName}' ignored (arity_compat)");
+                bool recognisedDeclaration = dirName.Length == 0
+                    || ShmoCompiler.RecognizedDirectives.Contains(dirName)
+                    || ShmoCompiler.SilentlyIgnoredDirectives.Contains(dirName);
+
+                if (E._flags.ArityCompat)
+                {
+                    // Arity sources carry directives (extrn, ...) with no
+                    // Shumway meaning; warn + skip rather than run them as
+                    // goals, which could collide with a real builtin name.
+                    if (!recognisedDeclaration)
+                        Console.Error.WriteLine(
+                            $"warning: unknown directive '{dirName}' ignored (arity_compat)");
+                }
+                else if (!recognisedDeclaration)
+                {
+                    // ISO §7.4.2 — a directive `:- G` that is NOT one of the
+                    // recognised declaration directives is a goal to execute
+                    // during loading. Shumway commits a file's clauses as a
+                    // batch after this scan, and a query cannot run safely
+                    // mid-scan (the live-consult dispatch state is not
+                    // re-entrant), so the goal is collected here and run in
+                    // source order the moment the batch commits — before any
+                    // initialization/1 goal (§7.4.2.7), which ISO defers to
+                    // after the whole text is loaded. Running post-commit also
+                    // lets the goal see this file's own predicates (a strict
+                    // clause-by-clause loader would only show those defined
+                    // before the directive). A goal that fails or raises prints
+                    // a warning and loading continues; halt/0-1 ends the load.
+                    (directiveGoals ??= new List<Term>()).Add(body);
+                }
+                // A recognised declaration reaching here (op/3, char_conversion,
+                // …) is already handled at its own site — nothing to do.
             }
         }
 
@@ -918,6 +946,13 @@ internal sealed class ConsultPipeline
         // bound after them is a breakpoint that never fires.
         E.RebindPendingBreakpoints();
 
+        // ISO §7.4.2 general goal directives run now, after the batch commit
+        // and in source order — before initialization/1 (§7.4.2.7), which ISO
+        // defers to after the whole text is loaded.
+        if (directiveGoals is not null)
+            foreach (var g in directiveGoals)
+                RunConsultDirectiveGoal(g);
+
         // `:- initialization(Goal)` goals run now, after the consult has
         // committed, in source order (SWI load-time semantics). A goal that
         // fails or raises prints a warning and loading continues — matching
@@ -966,6 +1001,38 @@ internal sealed class ConsultPipeline
         // into its continuation. See ReconcileEngineDynamicView.
         if (E._liveConsultEngine is { } resumeEng)
             E.ReconcileEngineDynamicView(resumeEng);
+    }
+
+    /// <summary>Runs a general (non-declaration) directive goal — ISO §7.4.2.
+    /// A goal that fails or raises prints a warning to stderr and loading
+    /// continues; <c>halt/0-1</c> ends the load (propagated as
+    /// <see cref="PrologHaltException"/>, mirroring the <c>initialization/1</c>
+    /// handling above). The goal runs on the live engine, so an undefined
+    /// predicate — the classic <c>:- use_module</c> typo — surfaces as an
+    /// <c>existence_error</c> warning instead of being silently dropped.</summary>
+    private void RunConsultDirectiveGoal(Term goal)
+    {
+        try
+        {
+            E.LastHaltExitCode = null;
+            bool ok = false;
+            foreach (var sol in E.QueryAll(goal)) { ok = sol.Success; break; }
+
+            if (E.LastHaltExitCode is int exitCode)
+                throw new PrologHaltException(exitCode);
+
+            if (!ok)
+                Console.Error.WriteLine(
+                    $"Warning: directive failed: {goal}");
+        }
+        catch (PrologHaltException) { throw; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"Warning: directive raised: {goal}: {ex.Message}");
+            if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
+                Console.Error.WriteLine(ex.StackTrace);
+        }
     }
 
     /// <summary>Enforces the contiguity rule for clauses inside a single
