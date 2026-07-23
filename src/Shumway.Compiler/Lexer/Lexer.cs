@@ -622,6 +622,14 @@ public sealed class Lexer
             throw new LexerException(
                 $"0' quote must be written '' or \\' at {pos}.", pos);
         }
+        if ((c < ' ' || c == '\x7f') && !ArityCompat)
+        {
+            // ISO 6.3.7: only space (0' ) is a valid layout char after 0';
+            // a raw tab / newline / other control char must be escaped.
+            throw new LexerException(
+                $"Raw control character (0x{(int)c:x2}) after 0' at {pos} "
+                + "— use an escape sequence.", pos);
+        }
         Advance();
         return c;
     }
@@ -739,6 +747,16 @@ public sealed class Lexer
                 // doubled-quote escape ('') above applies in both modes.
                 Advance();
                 sb.Append((char)ReadEscapeSequence(pos));
+            }
+            else if ((c < ' ' || c == '\x7f') && !ArityCompat)
+            {
+                // ISO 6.3.7: a raw control character (tab, newline, …) is not
+                // a valid quoted-token char — it must be written as an escape
+                // (\t, \n, …) or, for a newline, the \<newline> continuation.
+                // Arity-era sources are exempt (they embed literal bytes).
+                throw new LexerException(
+                    $"Raw control character (0x{(int)c:x2}) in quoted atom "
+                    + $"at {pos} — use an escape sequence.", pos);
             }
             else
             {

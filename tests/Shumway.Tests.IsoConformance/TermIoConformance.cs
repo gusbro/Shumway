@@ -173,6 +173,23 @@ public class TermIoConformance : IDisposable
             + "error(syntax_error(_), _), true).").Success);
     }
 
+    [Fact]
+    public void QuotedAtom_RawControlCharacter_IsASyntaxError()
+    {
+        // ISO §6.3.7: a raw control character in a quoted atom (or after 0')
+        // must be escaped; reading one raises a catchable syntax_error.
+        var e = new PrologEngine();
+        // Source "'<rawtab>'" — a quoted atom whose only char is a raw tab.
+        Assert.True(e.Query(
+            "atom_codes(A, [0''', 0'\\t, 0''']), "
+            + "catch((read_term_from_atom(A, _, []), fail), "
+            + "error(syntax_error(_), _), true).").Success);
+        // The escaped form '\t' reads fine (a one-char atom, code 9).
+        Assert.True(e.Query(
+            "atom_codes(Src, [0''', 0'\\\\, 0't, 0''']), "
+            + "read_term_from_atom(Src, T, []), atom_codes(T, [9]).").Success);
+    }
+
     private static string Captured(PrologEngine e, string goal)
     {
         var sol = e.Query($"with_output_to(atom(A), {goal}).");
