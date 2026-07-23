@@ -220,6 +220,30 @@ public class CoroutiningTests
         Assert.StartsWith("dif(", sol["G"]!.ToString());
     }
 
+    [Fact]
+    public void Dif_ReSuspension_DoesNotAccumulateDuplicateConstraints()
+    {
+        // Regression: dif re-suspended on every partial binding without
+        // retiring the previous incarnation, so the residual repeated the
+        // same constraint many times. Here A's two bindings drive two
+        // re-suspensions; the projection must still show exactly ONE dif.
+        var sol = Co().Query(
+            "dif(A, [C|B]), A = [[]|_], A = [B], "
+            + "copy_term(C, _Cc, Gs), Gs = [G], length(Gs, 1).");
+        Assert.True(sol.Success);
+        Assert.StartsWith("dif(", sol["G"]!.ToString());
+    }
+
+    [Fact]
+    public void Dif_MultiVariableConstraint_ProjectsOnce()
+    {
+        // A dif watching two variables must be shown once (owner-variable
+        // rule), not once per watched variable.
+        var sol = Co().Query(
+            "dif(f(X, Y), f(a, b)), copy_term(f(X, Y), _C, Gs), length(Gs, 1).");
+        Assert.True(sol.Success);
+    }
+
     // ===== call_residue_vars/2 =====
 
     [Fact]

@@ -33,6 +33,7 @@ internal static class Coroutining
         % references it in its residual Goals — like clpfd's '$fd_set'/3.
         :- public '$co_alias_check'/1.
         :- public '$when_fire'/1.
+        :- public '$dif_wake'/1.
 
         % The attribute value is frozen(Goal) where Goal is one goal or a
         % (G1, G2) conjunction, oldest first — waking runs them in the
@@ -104,15 +105,33 @@ internal static class Coroutining
         dif(X, Y) :-
             '$dif_check'(X, Y, Out),
             ( Out == none -> true
-            ; co_suspend(Out, dif(X, Y))
+            ; '$dif_suspend'(X, Y, Out)
             ).
 
-        % Suspend Goal on every variable the trial unification bound —
-        % binding ANY of them can change the disequality's status, and
-        % re-running dif/2 then either fails, succeeds for good, or
-        % re-suspends on the new frontier.
-        co_suspend([], _).
-        co_suspend([V|Vs], Goal) :- freeze(V, Goal), co_suspend(Vs, Goal).
+        % Post ONE constraint incarnation, watching every variable of the
+        % current unifier. The incarnation carries a shared Alive flag; a
+        % re-suspension (below) retires the previous incarnation by binding
+        % its flag to `dead`, so the same dif is not re-accumulated on every
+        % variable at every wake — only the latest incarnation stays live.
+        '$dif_suspend'(X, Y, Vars) :-
+            '$dif_freeze'(Vars, dif_c(X, Y, _Alive)).
+        '$dif_freeze'([], _).
+        '$dif_freeze'([V|Vs], C) :- freeze(V, '$dif_wake'(C)), '$dif_freeze'(Vs, C).
+
+        % A watched variable was bound. Re-check the disequality:
+        %   retired incarnation -> nothing;
+        %   the terms can never unify -> the dif holds for good, retire it;
+        %   the terms are now identical -> '$dif_check' FAILS, so we fail (the
+        %     binding that woke us fails, as dif demands);
+        %   still undecided -> retire this incarnation and post a fresh one on
+        %     the variables that remain.
+        '$dif_wake'(dif_c(X, Y, Alive)) :-
+            ( Alive == dead -> true
+            ; '$dif_check'(X, Y, Out),
+              ( Out == none -> Alive = dead
+              ; Alive = dead, '$dif_suspend'(X, Y, Out)
+              )
+            ).
 
         % ===== the verify_attributes hook =====
         % Fired when a variable carrying frozen goals is bound. Aliasing to
@@ -136,20 +155,24 @@ internal static class Coroutining
             ; Goals = [G]
             ).
 
-        % Fails iff some dif/2 suspension's arguments became identical.
+        % Fails iff some live dif/2 suspension's arguments became identical.
         % Anything still non-identical stays covered by the migrated
         % suspension; non-dif frozen goals are untouched by aliasing.
         '$co_alias_check'((A, B)) :-
             !, '$co_alias_check'(A), '$co_alias_check'(B).
-        '$co_alias_check'(dif(X, Y)) :- !, X \== Y.
+        '$co_alias_check'('$dif_wake'(dif_c(X, Y, Alive))) :-
+            !, ( Alive == dead -> true ; X \== Y ).
         '$co_alias_check'(_).
 
         % ===== projection: residual constraints for the top level =====
         % attribute_goals/4 is dynamic (pre-declared by the prelude); a
         % dynamic clause's body is not module-mangled, so it delegates to
         % the public coroutining_attr_goals/3, whose body resolves locals.
-        % Each frozen conjunct projects as freeze(V, G) — except a dif/2
-        % suspension, which reads back as the dif constraint itself.
+        % A dif/when suspension reads back as its user-facing constraint,
+        % emitted ONCE — from its owner variable (the first variable of the
+        % watched terms), skipping any retired incarnation — so a constraint
+        % watching several variables (or superseded by re-suspension) is not
+        % shown many times. A plain freeze goal projects as freeze(V, G).
         attribute_goals(coroutining, Attr, V, Goals) :-
             coroutining_attr_goals(Attr, V, Goals).
         coroutining_attr_goals(frozen(G), V, Goals) :-
@@ -159,7 +182,22 @@ internal static class Coroutining
             !,
             co_project(A, V, Goals, Mid),
             co_project(B, V, Mid, Tail).
-        co_project(dif(X, Y), _, [dif(X, Y)|Tail], Tail) :- !.
+        co_project('$dif_wake'(dif_c(X, Y, Alive)), V, Goals, Tail) :-
+            !,
+            ( Alive \== dead, '$co_owner'((X, Y), V)
+              -> Goals = [dif(X, Y)|Tail]
+            ; Goals = Tail
+            ).
+        co_project('$when_fire'(trigger(Cond, Goal, Fired)), V, Goals, Tail) :-
+            !,
+            ( Fired \== fired, '$co_owner'(Cond, V)
+              -> Goals = [when(Cond, Goal)|Tail]
+            ; Goals = Tail
+            ).
         co_project(G, V, [freeze(V, G)|Tail], Tail).
+
+        % V owns a constraint iff it is the first variable of the watched
+        % terms — the once-only emission rule (as CLP(FD) does for propagators).
+        '$co_owner'(Term, V) :- term_variables(Term, [First|_]), First == V.
         """;
 }
