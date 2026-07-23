@@ -161,26 +161,42 @@ public static class IOBuiltins
 
     /// <summary>Parses the <c>variable_names([Name=Var, ...])</c> option
     /// into <see cref="TermRenderOptions.VariableNames"/>, keyed by each
-    /// still-unbound <c>Var</c>'s dereferenced heap index. A bound Var, a
-    /// non-atom Name, or a malformed pair is skipped (SWI is lenient
-    /// here).</summary>
+    /// still-unbound <c>Var</c>'s dereferenced heap index. ISO §7.10.5 / §8.14:
+    /// an unbound list or an unbound Name raises <c>instantiation_error</c>; a
+    /// bound-but-malformed list, a non-<c>=</c>/2 element, or a non-atom Name
+    /// raises <c>domain_error(write_option, …)</c>. A bound Var is accepted and
+    /// simply carries no name.</summary>
     private static void ApplyVariableNames(Activation engine, Cell listCell, TermRenderOptions options)
     {
         Cell cur = Resolve(engine, listCell);
+        if (cur.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        // A bound-but-malformed element (or improper tail, or non-atom name)
+        // is a domain_error even past an earlier unbound element/name — the
+        // instantiation_error is deferred (sawUnbound) and only raised if the
+        // whole list is otherwise well-formed.
+        bool sawUnbound = false;
         while (cur.Tag == Tag.Lis)
         {
             int headIdx = cur.AsHeapIndex;
             Cell pair = Resolve(engine, engine.GetHeap(headIdx));
-            if (pair.Tag == Tag.Str)
+            if (pair.Tag is Tag.Ref or Tag.AttVar) { sawUnbound = true; }
+            else
             {
+                if (pair.Tag != Tag.Str)
+                    throw new PrologRuntimeException("domain_error", "write_option");
                 int pairIdx = pair.AsHeapIndex;
                 var (pAtom, pArity) = FunctorTable.Lookup(engine.GetHeap(pairIdx).AsFunctorId);
-                if (pArity == 2 && (AtomTable.GetById(pAtom)?.Name ?? "") == "=")
+                if (pArity != 2 || (AtomTable.GetById(pAtom)?.Name ?? "") != "=")
+                    throw new PrologRuntimeException("domain_error", "write_option");
+                Cell nameCell = Resolve(engine, engine.GetHeap(pairIdx + 1));
+                if (nameCell.Tag is Tag.Ref or Tag.AttVar) { sawUnbound = true; }
+                else if (nameCell.Tag != Tag.Atom)
+                    throw new PrologRuntimeException("domain_error", "write_option");
+                else
                 {
-                    Cell nameCell = Resolve(engine, engine.GetHeap(pairIdx + 1));
-                    Cell varCell = engine.GetHeap(pairIdx + 2);
-                    int varAddr = ResolveVarAddr(engine, varCell);
-                    if (nameCell.Tag == Tag.Atom && varAddr >= 0)
+                    int varAddr = ResolveVarAddr(engine, engine.GetHeap(pairIdx + 2));
+                    if (varAddr >= 0)
                     {
                         options.VariableNames ??= new System.Collections.Generic.Dictionary<int, string>();
                         // First binding for a given variable wins.
@@ -191,6 +207,11 @@ public static class IOBuiltins
             }
             cur = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
+        if (cur.Tag is Tag.Ref or Tag.AttVar) sawUnbound = true;
+        else if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
+            throw new PrologRuntimeException("domain_error", "write_option");
+        if (sawUnbound)
+            throw new PrologRuntimeException("instantiation_error");
     }
 
     /// <summary>Dereferences <paramref name="varCell"/>; returns its heap

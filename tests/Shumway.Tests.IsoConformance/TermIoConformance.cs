@@ -207,6 +207,35 @@ public class TermIoConformance : IDisposable
             + "T == -(1).").Success);
     }
 
+    [Fact]
+    public void Writeq_CommaOperatorIsTightAndUnquoted()
+    {
+        // The `,` operator renders as `a,b`, not `a , b` nor the quoted
+        // `a ',' b` — quoting an operator in operator position is wrong.
+        var e = new PrologEngine();
+        Assert.Equal("a,b,c", Captured(e, "writeq((a,b,c))"));
+        Assert.Equal("a:-b,c", Captured(e, "writeq((a:-b,c))"));
+        // …but the bare comma atom still quotes.
+        Assert.Equal("','", Captured(e, "writeq(',')"));
+    }
+
+    [Fact]
+    public void WriteTerm_ValidatesTheVariableNamesOption()
+    {
+        // ISO §7.10.5: an unbound name -> instantiation_error, a non-atom name
+        // or non-list -> domain_error(write_option, _). A bound-malformed
+        // element wins over an earlier unbound one.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(write_term(T, [variable_names([N=T])]), error(instantiation_error,_), true).").Success);
+        Assert.True(e.Query(
+            "catch(write_term(T, [variable_names([7=T])]), error(domain_error(write_option,_),_), true).").Success);
+        Assert.True(e.Query(
+            "catch(write_term(T, [variable_names(notalist)]), error(domain_error(write_option,_),_), true).").Success);
+        // A well-formed list still works.
+        Assert.Equal("V", Captured(e, "write_term(X, [variable_names(['V'=X])])"));
+    }
+
     private static string Captured(PrologEngine e, string goal)
     {
         var sol = e.Query($"with_output_to(atom(A), {goal}).");

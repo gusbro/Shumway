@@ -141,10 +141,15 @@ public static class TermRenderer
                     OperatorShape.Xfx or OperatorShape.Yfx => infixPrec - 1,
                     _ => infixPrec - 1,
                 };
-                bool tight = options.TightSymbolicOperators && IsSymbolicName(name);
+                // The `,` operator renders tight and unquoted — `a,b`, not
+                // `a , b` or the quoted `a ',' b`. An operator in operator
+                // position is always written raw (unquoted): it is a valid
+                // token there, so quoting `,` / `|` would be wrong.
+                bool tight = options.TightSymbolicOperators
+                    && (IsSymbolicName(name) || name == ",");
                 Render(engine, engine.GetHeap(functorIdx + 1), output, options, leftMax);
                 if (!tight) output.Write(' ');
-                WriteAtomName(name, output, options);
+                output.Write(name);
                 if (!tight) output.Write(' ');
                 Render(engine, engine.GetHeap(functorIdx + 2), output, options, rightMax);
                 if (needsParens) output.Write(')');
