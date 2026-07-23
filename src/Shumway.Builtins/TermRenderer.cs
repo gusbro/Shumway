@@ -237,12 +237,35 @@ public static class TermRenderer
         output.Write('\'');
         foreach (char c in name)
         {
-            if (c == '\'') output.Write("\\'");
-            else if (c == '\\') output.Write("\\\\");
+            string? esc = EscapeQuotedChar(c);
+            if (esc is not null) output.Write(esc);
             else output.Write(c);
         }
         output.Write('\'');
     }
+
+    /// <summary>The writeq/write_canonical escape sequence for a character
+    /// inside a single-quoted atom, or <c>null</c> when the character is
+    /// written literally. ISO §6.3.7: the quote and backslash are escaped,
+    /// the named control characters use their letter escapes, and any other
+    /// control / DEL character uses the <c>\xHH\</c> hexadecimal form — so a
+    /// quoted atom carrying a newline round-trips through <c>read/1</c>
+    /// instead of embedding a raw control byte.</summary>
+    private static string? EscapeQuotedChar(char c) => c switch
+    {
+        '\'' => "\\'",
+        '\\' => "\\\\",
+        '\a' => "\\a",
+        '\b' => "\\b",
+        '\t' => "\\t",
+        '\n' => "\\n",
+        '\v' => "\\v",
+        '\f' => "\\f",
+        '\r' => "\\r",
+        _ when c < ' ' || c == '\x7f'
+            => "\\x" + ((int)c).ToString("x", CultureInfo.InvariantCulture) + "\\",
+        _ => null,
+    };
 
     /// <summary>The writeq-style form of an atom name: single-quoted (with
     /// <c>'</c> and <c>\</c> escaped) unless it needs no quoting. Shared with the
@@ -256,8 +279,8 @@ public static class TermRenderer
         sb.Append('\'');
         foreach (char c in name)
         {
-            if (c == '\'') sb.Append("\\'");
-            else if (c == '\\') sb.Append("\\\\");
+            string? esc = EscapeQuotedChar(c);
+            if (esc is not null) sb.Append(esc);
             else sb.Append(c);
         }
         sb.Append('\'');
@@ -296,6 +319,10 @@ public static class TermRenderer
         // All-symbolic atom: every character is an ISO graphic char.
         if (IsSymbolChar(first))
         {
+            // …but a name that OPENS a block comment (`/*`) is consumed as a
+            // comment when written bare, so it must be quoted to round-trip.
+            // (`*/`, `//*` etc. do not open a comment and stay bare.)
+            if (name.StartsWith("/*", System.StringComparison.Ordinal)) return false;
             for (int i = 1; i < name.Length; i++)
                 if (!IsSymbolChar(name[i])) return false;
             return true;

@@ -134,6 +134,52 @@ public class TermIoConformance : IDisposable
         Assert.Equal("plain_atom", File.ReadAllText(_tempPath));
     }
 
+    [Fact]
+    public void Writeq_EscapesControlCharactersInQuotedAtoms()
+    {
+        // ISO §6.3.7: a quoted atom carrying a control character writes it as
+        // the escape sequence, so it round-trips through read/1 rather than
+        // embedding a raw control byte.
+        var e = new PrologEngine();
+        Assert.Equal("'\\n'", Captured(e, "writeq('\\n')"));
+        Assert.Equal("'\\t'", Captured(e, "writeq('\\t')"));
+        Assert.Equal("'a\\nb'", Captured(e, "writeq('a\\nb')"));
+    }
+
+    [Fact]
+    public void Writeq_QuotesAtomThatWouldOpenABlockComment()
+    {
+        // A bare `/*` is consumed as a comment opener, so writeq must quote it;
+        // `*/` and `//*` do not open a comment and stay bare.
+        var e = new PrologEngine();
+        Assert.Equal("'/*'", Captured(e, "writeq('/*')"));
+        Assert.Equal("*/", Captured(e, "writeq('*/')"));
+        Assert.Equal("//*", Captured(e, "writeq('//*')"));
+    }
+
+    [Fact]
+    public void CharCodeConstant_QuoteMustBeDoubled()
+    {
+        // ISO §6.3.7: the character code of a quote is 0''' (doubled) or 0'\'.
+        var e = new PrologEngine();
+        Assert.True(e.Query("0''' =:= 39.").Success);
+        Assert.True(e.Query("0'\\' =:= 39.").Success);
+        // A lone quote after 0' is not a valid single-quoted character: the
+        // reader raises a syntax error (surfaced here via read_term_from_atom,
+        // which wraps the lexer error as a catchable syntax_error).
+        Assert.True(e.Query(
+            "atom_codes(A, [0'0, 0''', 0''', 0'=]), "   // the atom "0''="
+            + "catch((read_term_from_atom(A, _, []), fail), "
+            + "error(syntax_error(_), _), true).").Success);
+    }
+
+    private static string Captured(PrologEngine e, string goal)
+    {
+        var sol = e.Query($"with_output_to(atom(A), {goal}).");
+        Assert.True(sol.Success);
+        return sol["A"]!.ToString();
+    }
+
     // ---------- write_canonical/1, write_canonical/2 ----------
 
     [Fact]

@@ -612,6 +612,16 @@ public sealed class Lexer
             Advance();
             return ReadEscapeSequence(pos);
         }
+        if (c == '\'')
+        {
+            // ISO 6.3.7: a quote inside a 0' character-code constant must be
+            // written doubled (0''') or escaped (0'\'). A lone quote is not a
+            // valid single-quoted character — `0''` is `0'` followed by the
+            // opening of a quoted atom, not the code of the quote.
+            if (Peek(1) == '\'') { Advance(); Advance(); return '\''; }
+            throw new LexerException(
+                $"0' quote must be written '' or \\' at {pos}.", pos);
+        }
         Advance();
         return c;
     }
