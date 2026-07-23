@@ -610,7 +610,11 @@ public sealed class Lexer
         if (c == '\\')
         {
             Advance();
-            return ReadEscapeSequence(pos);
+            int code = ReadEscapeSequence(pos);
+            if (code == EscapeContinuation)
+                throw new LexerException(
+                    $"0' line continuation is not a character at {pos}.", pos);
+            return code;
         }
         if (c == '\'')
         {
@@ -634,11 +638,26 @@ public sealed class Lexer
         return c;
     }
 
+    /// <summary>The sentinel <see cref="ReadEscapeSequence"/> returns for a
+    /// line-continuation escape (<c>\</c> immediately before a newline): it
+    /// stands for NO character. Callers building a string skip it.</summary>
+    internal const int EscapeContinuation = -1;
+
     private int ReadEscapeSequence(SourcePosition pos)
     {
         if (_offset >= _source.Length)
             throw new LexerException($"Unterminated escape sequence at {pos}.", pos);
         char c = _source[_offset];
+
+        // ISO 6.4.2.1 line continuation: a backslash immediately followed by a
+        // newline is elided (yields no character). Handles LF, CR, and CRLF.
+        if (c == '\n' || c == '\r')
+        {
+            Advance();
+            if (c == '\r' && _offset < _source.Length && _source[_offset] == '\n')
+                Advance();
+            return EscapeContinuation;
+        }
 
         // Hex escape (ISO / SWI / Scryer): `\x` followed by one or more hex
         // digits and a terminating backslash, e.g. `\x1b\`. The terminator is
@@ -746,7 +765,8 @@ public sealed class Lexer
                 // through to the literal-character branch below; the
                 // doubled-quote escape ('') above applies in both modes.
                 Advance();
-                sb.Append((char)ReadEscapeSequence(pos));
+                int e = ReadEscapeSequence(pos);
+                if (e != EscapeContinuation) sb.Append((char)e);
             }
             else if ((c < ' ' || c == '\x7f') && !ArityCompat)
             {
@@ -831,7 +851,8 @@ public sealed class Lexer
             else if (c == '\\')
             {
                 Advance();
-                sb.Append((char)ReadEscapeSequence(pos));
+                int e = ReadEscapeSequence(pos);
+                if (e != EscapeContinuation) sb.Append((char)e);
             }
             else
             {

@@ -174,6 +174,21 @@ public class TermIoConformance : IDisposable
     }
 
     [Fact]
+    public void QuotedAtom_LineContinuationEscapeIsElided()
+    {
+        // ISO §6.4.2.1: a backslash immediately before a newline is a line
+        // continuation — it yields no character. '\<newline>a' is the atom a.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "atom_codes(A, [0''', 0'\\\\, 0'\\n, 0'a, 0''']), "   // source '\<nl>a'
+            + "read_term_from_atom(A, T, []), T == a.").Success);
+        // A continuation in the MIDDLE elides only the newline: 'a\<nl>b' = ab.
+        Assert.True(e.Query(
+            "atom_codes(A, [0''', 0'a, 0'\\\\, 0'\\n, 0'b, 0''']), "
+            + "read_term_from_atom(A, T, []), T == ab.").Success);
+    }
+
+    [Fact]
     public void QuotedAtom_RawControlCharacter_IsASyntaxError()
     {
         // ISO §6.3.7: a raw control character in a quoted atom (or after 0')
