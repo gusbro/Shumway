@@ -190,6 +190,23 @@ public class TermIoConformance : IDisposable
             + "read_term_from_atom(Src, T, []), atom_codes(T, [9]).").Success);
     }
 
+    [Fact]
+    public void Writeq_ParenthesisesANumericOperandOfPrefixMinus()
+    {
+        // ISO: writeq(-(1)) must produce output that reads back as the
+        // compound -(1), not the negative-number literal -1. `- 1` would
+        // read as -1, so the operand is parenthesised: `- (1)`.
+        var e = new PrologEngine();
+        Assert.Equal("- (1)", Captured(e, "writeq(-(1))"));
+        Assert.Equal("- (1^2)", Captured(e, "writeq(-(1^2))"));
+        // A negative operand or `+` does not need it.
+        Assert.Equal("- -1", Captured(e, "writeq(-(-1))"));
+        // Round-trip: the compound survives write→read.
+        Assert.True(e.Query(
+            "with_output_to(atom(A), writeq(-(1))), read_term_from_atom(A, T, []), "
+            + "T == -(1).").Success);
+    }
+
     private static string Captured(PrologEngine e, string goal)
     {
         var sol = e.Query($"with_output_to(atom(A), {goal}).");

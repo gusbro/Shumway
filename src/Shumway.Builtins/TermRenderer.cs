@@ -153,6 +153,12 @@ public static class TermRenderer
             if (arity == 1 && options.Operators.TryGetPrefix(name, out int prefixPrec, out OperatorShape prefixShape))
             {
                 bool needsParens = prefixPrec > maxPriority;
+                // ISO writeq: prefix `-` applied to a term whose leftmost token
+                // is a non-negative number must parenthesise THE OPERAND —
+                // `- 1` reads back as the negative-number literal -1, not the
+                // compound -(1). `+`/`\` have no such literal, so only `-`.
+                bool operandParens = name == "-"
+                    && RendersLeadingDigit(engine, engine.GetHeap(functorIdx + 1), options);
                 if (needsParens) output.Write('(');
                 WriteAtomName(name, output, options);
                 // Even in tight mode a prefix symbolic operator needs a
@@ -162,7 +168,10 @@ public static class TermRenderer
                 // always get one trailing space.
                 output.Write(' ');
                 int argMax = prefixShape == OperatorShape.Fy ? prefixPrec : prefixPrec - 1;
-                Render(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
+                if (operandParens) output.Write('(');
+                Render(engine, engine.GetHeap(functorIdx + 1), output, options,
+                    operandParens ? 1200 : argMax);
+                if (operandParens) output.Write(')');
                 if (needsParens) output.Write(')');
                 return;
             }
@@ -328,6 +337,46 @@ public static class TermRenderer
             return true;
         }
         return false;
+    }
+
+    /// <summary>True when <paramref name="cell"/> renders with a leading
+    /// decimal digit — i.e. its leftmost token is a non-negative number. Used
+    /// to decide whether the operand of a prefix <c>-</c> must be
+    /// parenthesised (so it does not fuse into a negative-number literal).
+    /// Descends the left spine of an infix operator and through a postfix
+    /// operand; a functional compound, a list, an atom or a negative number
+    /// does not start with a digit.</summary>
+    private static bool RendersLeadingDigit(
+        Activation engine, Cell cell, TermRenderOptions options)
+    {
+        if (cell.Tag == Tag.Ref)
+        {
+            int addr = engine.Deref(cell.AsHeapIndex);
+            cell = engine.GetHeap(addr);
+        }
+        switch (cell.Tag)
+        {
+            case Tag.Int:
+                return cell.AsInt >= 0;
+            case Tag.BigInt:
+                return engine.AsBigInt(cell).Sign >= 0;
+            case Tag.Float:
+                return Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex)) >= 0;
+            case Tag.Str:
+            {
+                if (options.IgnoreOps || options.Operators is null) return false;
+                int fIdx = cell.AsHeapIndex;
+                var (atomId, ar) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
+                string fname = AtomTable.GetById(atomId)?.Name ?? "";
+                if (ar == 2 && options.Operators.TryGetInfix(fname, out _, out _))
+                    return RendersLeadingDigit(engine, engine.GetHeap(fIdx + 1), options);
+                if (ar == 1 && options.Operators.TryGetPostfix(fname, out _, out _))
+                    return RendersLeadingDigit(engine, engine.GetHeap(fIdx + 1), options);
+                return false;
+            }
+            default:
+                return false;
+        }
     }
 
     /// <summary>ISO §6.4.2 "graphic char" set — the characters a
