@@ -43,6 +43,13 @@ public sealed class Parser
     /// (<see cref="ReadClauseTerm"/> / <see cref="ReadTerm"/>).</summary>
     private bool _sawDcgArrow;
 
+    // Set by ReadPrefixOrPrimary / ReadTermInternal: true when the term just
+    // read was a BARE operator-atom (unparenthesised, unquoted, no operator
+    // applied on top). ISO §6.3.1.3 forbids it as the immediate operand of an
+    // operator; the apply sites throw — except for the predicate-indicator
+    // `op/N` (see TryApplyInfix), which every Prolog accepts (`dynamic/1`).
+    private bool _bareOp;
+
     /// <summary>The priority of <paramref name="name"/> as a bare operator-atom
     /// term — the maximum of its prefix / infix / postfix priorities, or 0 when
     /// it is not an operator.</summary>
@@ -143,6 +150,7 @@ public sealed class Parser
     private Term ReadTermInternal(int maxPrec, out int builtPrec)
     {
         Term left = ReadPrefixOrPrimary(maxPrec, out builtPrec);
+        bool leftBareOp = _bareOp;   // is `left` (still) a bare operator-atom?
 
         while (true)
         {
@@ -153,12 +161,12 @@ public sealed class Parser
             // for operator-lookup purposes.
             if (tok.Kind == TokenKind.Comma)
             {
-                if (!TryApplyInfix(",", 1000, OperatorType.Xfy, maxPrec, ref left, ref builtPrec)) break;
+                if (!TryApplyInfix(",", 1000, OperatorType.Xfy, maxPrec, ref left, ref builtPrec, ref leftBareOp)) break;
                 continue;
             }
             if (tok.Kind == TokenKind.Bar)
             {
-                if (!TryApplyInfix("|", 1100, OperatorType.Xfy, maxPrec, ref left, ref builtPrec)) break;
+                if (!TryApplyInfix("|", 1100, OperatorType.Xfy, maxPrec, ref left, ref builtPrec, ref leftBareOp)) break;
                 continue;
             }
 
@@ -169,12 +177,12 @@ public sealed class Parser
                 if (_operators.TryGetInfix(tok.Text, out int iPrec, out OperatorType iType))
                 {
                     knownOp = true;
-                    applied = TryApplyInfix(tok.Text, iPrec, iType, maxPrec, ref left, ref builtPrec);
+                    applied = TryApplyInfix(tok.Text, iPrec, iType, maxPrec, ref left, ref builtPrec, ref leftBareOp);
                 }
                 if (!applied && _operators.TryGetPostfix(tok.Text, out int pPrec, out OperatorType pType))
                 {
                     knownOp = true;
-                    applied = TryApplyPostfix(tok.Text, pPrec, pType, maxPrec, ref left, ref builtPrec);
+                    applied = TryApplyPostfix(tok.Text, pPrec, pType, maxPrec, ref left, ref builtPrec, ref leftBareOp);
                 }
                 // The lexer reads a maximal run of graphic
                 // chars, so '1+-2' tokenises as Int(1), Atom('+-'),
@@ -193,7 +201,7 @@ public sealed class Parser
                 // clause like `a = b :- c` or Logtalk's `X::Y :- Body`) into
                 // `=`/`::`-rooted garbage instead of stopping at the ':-'.
                 if (!applied && !knownOp && tok.Text.Length > 1
-                    && TrySplitInfixUnary(tok, maxPrec, ref left, ref builtPrec))
+                    && TrySplitInfixUnary(tok, maxPrec, ref left, ref builtPrec, ref leftBareOp))
                     applied = true;
                 if (applied) continue;
             }
@@ -201,10 +209,11 @@ public sealed class Parser
             break;
         }
 
+        _bareOp = leftBareOp;   // report whether the whole term is a bare op-atom
         return left;
     }
 
-    private bool TrySplitInfixUnary(Token tok, int maxPrec, ref Term left, ref int builtPrec)
+    private bool TrySplitInfixUnary(Token tok, int maxPrec, ref Term left, ref int builtPrec, ref bool leftBareOp)
     {
         // Try every prefix length from longest down — longer match
         // wins so '1+--2' goes '+' / '--' if '--' is a known prefix
@@ -225,7 +234,7 @@ public sealed class Parser
             _lookahead.Insert(1, new Token(TokenKind.Atom,
                 new SourcePosition(tok.Position.Line, sufCol,
                     tok.Position.Offset + len, tok.Position.FileId), suffix));
-            if (TryApplyInfix(prefix, piPrec, piType, maxPrec, ref left, ref builtPrec))
+            if (TryApplyInfix(prefix, piPrec, piType, maxPrec, ref left, ref builtPrec, ref leftBareOp))
                 return true;
             // The infix didn't fit (precedence constraint) — undo the
             // split so other tokenisers can have a go.
@@ -238,7 +247,7 @@ public sealed class Parser
 
     private bool TryApplyInfix(
         string name, int opPrec, OperatorType opType,
-        int maxPrec, ref Term left, ref int builtPrec)
+        int maxPrec, ref Term left, ref int builtPrec, ref bool leftBareOp)
     {
         if (opPrec > maxPrec) return false;
         // Left-arg constraint: x = strictly lower, y = same or lower
@@ -249,23 +258,47 @@ public sealed class Parser
         NextToken();
         int rightMax = opType == OperatorType.Xfy ? opPrec : opPrec - 1;
         Term right = ReadTermInternal(rightMax, out _);
+        bool rightBareOp = _bareOp;
+
+        // ISO §6.3.1.3: the operands of an operator may not be a bare
+        // operator-atom (`* = *` must be `(*) = (*)`) — EXCEPT the
+        // predicate-indicator `op/N` (`dynamic/1`, `not/1`), where the operator
+        // atom is the left operand of `/` and the right is a non-negative
+        // integer. Every Prolog accepts that, so it is exempt.
+        bool isIndicator = name == "/" && right is IntTerm ri && ri.Value >= 0;
+        if (leftBareOp && !isIndicator)
+            throw new ParseException(
+                $"Operator atom cannot be the left operand of '{name}' "
+                + "without parentheses.", pos);
+        if (rightBareOp)
+            throw new ParseException(
+                $"Operator atom cannot be the right operand of '{name}' "
+                + "without parentheses.", pos);
+
         left = new CompoundTerm(name, new[] { left, right }) { Position = pos };
         builtPrec = opPrec;
+        leftBareOp = false;   // `left` is now a compound
         return true;
     }
 
     private bool TryApplyPostfix(
         string name, int opPrec, OperatorType opType,
-        int maxPrec, ref Term left, ref int builtPrec)
+        int maxPrec, ref Term left, ref int builtPrec, ref bool leftBareOp)
     {
         if (opPrec > maxPrec) return false;
         int leftMax = opType == OperatorType.Yf ? opPrec : opPrec - 1;
         if (builtPrec > leftMax) return false;
 
+        if (leftBareOp)
+            throw new ParseException(
+                $"Operator atom cannot be the operand of postfix '{name}' "
+                + "without parentheses.", PeekToken().Position);
+
         SourcePosition pos = PeekToken().Position;
         NextToken();
         left = new CompoundTerm(name, new[] { left }) { Position = pos };
         builtPrec = opPrec;
+        leftBareOp = false;
         return true;
     }
 
@@ -350,7 +383,14 @@ public sealed class Parser
                 NextToken();
                 int rightMax = opType == OperatorType.Fy ? opPrec : opPrec - 1;
                 Term operand = ReadTermInternal(rightMax, out _);
+                // ISO §6.3.1.3: a prefix operator's operand may not be a bare
+                // operator-atom (`- =` must be `- (=)`).
+                if (_bareOp)
+                    throw new ParseException(
+                        $"Operator atom cannot be the operand of prefix "
+                        + $"'{tok.Text}' without parentheses.", pos);
                 builtPrec = opPrec;
+                _bareOp = false;
                 return new CompoundTerm(tok.Text, new[] { operand }) { Position = pos };
             }
         }
@@ -368,15 +408,23 @@ public sealed class Parser
         Token pk = PeekToken();
         Term prim = ReadPrimary();
         builtPrec = 0;
-        if (maxPrec < 999 && pk.Kind == TokenKind.Atom && !pk.WasQuoted
+        _bareOp = false;
+        if (pk.Kind == TokenKind.Atom && !pk.WasQuoted
             && prim is AtomTerm bareAt && bareAt.Name == pk.Text)
         {
             int p = BareOperatorAtomPriority(bareAt.Name);
-            if (p > maxPrec)
-                throw new ParseException(
-                    $"Operator '{bareAt.Name}' (priority {p}) needs parentheses "
-                    + $"to be an operand here (maximum priority {maxPrec}).", pk.Position);
-            builtPrec = p;
+            if (p > 0)   // the atom is an operator
+            {
+                _bareOp = true;
+                // builtPrec stays 0: the bare atom's own token priority for
+                // subsequent operator application is 0 (so `dynamic/1` still
+                // lets `/` bind it). The ISO §6.3.1.3 rejection rides on
+                // _bareOp (the apply sites) and the direct priority throw below.
+                if (maxPrec < 999 && p > maxPrec)
+                    throw new ParseException(
+                        $"Operator '{bareAt.Name}' (priority {p}) needs parentheses "
+                        + $"to be an operand here (maximum priority {maxPrec}).", pk.Position);
+            }
         }
         return prim;
     }
