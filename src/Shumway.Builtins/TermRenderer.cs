@@ -147,11 +147,11 @@ public static class TermRenderer
                 // token there, so quoting `,` / `|` would be wrong.
                 bool tight = options.TightSymbolicOperators
                     && (IsSymbolicName(name) || name == ",");
-                Render(engine, engine.GetHeap(functorIdx + 1), output, options, leftMax);
+                RenderOperand(engine, engine.GetHeap(functorIdx + 1), output, options, leftMax);
                 if (!tight) output.Write(' ');
                 output.Write(name);
                 if (!tight) output.Write(' ');
-                Render(engine, engine.GetHeap(functorIdx + 2), output, options, rightMax);
+                RenderOperand(engine, engine.GetHeap(functorIdx + 2), output, options, rightMax);
                 if (needsParens) output.Write(')');
                 return;
             }
@@ -162,8 +162,10 @@ public static class TermRenderer
                 // is a non-negative number must parenthesise THE OPERAND —
                 // `- 1` reads back as the negative-number literal -1, not the
                 // compound -(1). `+`/`\` have no such literal, so only `-`.
-                bool operandParens = name == "-"
-                    && RendersLeadingDigit(engine, engine.GetHeap(functorIdx + 1), options);
+                bool operandParens =
+                    (name == "-"
+                     && RendersLeadingDigit(engine, engine.GetHeap(functorIdx + 1), options))
+                    || IsBareOperatorAtomCell(engine, engine.GetHeap(functorIdx + 1), options);
                 if (needsParens) output.Write('(');
                 WriteAtomName(name, output, options);
                 // Even in tight mode a prefix symbolic operator needs a
@@ -185,7 +187,7 @@ public static class TermRenderer
                 bool needsParens = postPrec > maxPriority;
                 if (needsParens) output.Write('(');
                 int argMax = postShape == OperatorShape.Yf ? postPrec : postPrec - 1;
-                Render(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
+                RenderOperand(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
                 bool tightPost = options.TightSymbolicOperators && IsSymbolicName(name);
                 if (!tightPost) output.Write(' ');
                 WriteAtomName(name, output, options);
@@ -342,6 +344,40 @@ public static class TermRenderer
             return true;
         }
         return false;
+    }
+
+    /// <summary>Renders an operator's operand, parenthesising it when it is a
+    /// bare operator-atom — `-(-,-)` writes as `(-)-(-)`, not `- - -` (which
+    /// the reader rejects: ISO §6.3.1.3 forbids a bare operator-atom as an
+    /// operand). Otherwise defers to the priority-driven <see cref="Render"/>.</summary>
+    private static void RenderOperand(
+        Activation engine, Cell cell, TextWriter output, TermRenderOptions options, int maxPrio)
+    {
+        if (IsBareOperatorAtomCell(engine, cell, options))
+        {
+            output.Write('(');
+            Render(engine, cell, output, options, 1200);
+            output.Write(')');
+        }
+        else
+        {
+            Render(engine, cell, output, options, maxPrio);
+        }
+    }
+
+    /// <summary>True when <paramref name="cell"/> is an atom that is a defined
+    /// prefix / infix / postfix operator (so, as a bare operand, it must be
+    /// parenthesised to round-trip).</summary>
+    private static bool IsBareOperatorAtomCell(
+        Activation engine, Cell cell, TermRenderOptions options)
+    {
+        if (options.IgnoreOps || options.Operators is null) return false;
+        if (cell.Tag == Tag.Ref) cell = engine.GetHeap(engine.Deref(cell.AsHeapIndex));
+        if (cell.Tag != Tag.Atom) return false;
+        string name = NameOfAtom(cell.AsAtomId);
+        return options.Operators.TryGetPrefix(name, out _, out _)
+            || options.Operators.TryGetInfix(name, out _, out _)
+            || options.Operators.TryGetPostfix(name, out _, out _);
     }
 
     /// <summary>True when <paramref name="cell"/> renders with a leading

@@ -235,6 +235,22 @@ public class TermIoConformance : IDisposable
     }
 
     [Fact]
+    public void Writeq_ParenthesisesAnOperatorAtomOperand()
+    {
+        // ISO §6.3.1.3: a bare operator-atom cannot be an operand, so writeq
+        // must parenthesise one — -(-,-) writes as (-)-(-), not `- - -` (which
+        // the reader rejects). The output must round-trip.
+        var e = new PrologEngine();
+        Assert.Equal("(-)-(-)", Captured(e, "writeq(-(-,-))"));
+        Assert.Equal("(*)=(*)", Captured(e, "writeq(=(*,*))"));
+        Assert.True(e.Query(
+            "with_output_to(atom(A), writeq(-(-,-))), read_term_from_atom(A, T, []), "
+            + "T == -(-,-).").Success);
+        // …but an operator-atom as a functor argument stays bare.
+        Assert.Equal("f(-,*)", Captured(e, "writeq(f(-,*))"));
+    }
+
+    [Fact]
     public void Writeq_CommaOperatorIsTightAndUnquoted()
     {
         // The `,` operator renders as `a,b`, not `a , b` nor the quoted
