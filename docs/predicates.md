@@ -130,7 +130,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | Predicate | Description |
 | --- | --- |
 | `aggregate_all(+Template, :Goal, -Result)` | Aggregates Goal's solutions with a count, sum, bag or set template. |
-| `bagof(?Template, :Goal, -List)` | Collects Goal's solutions, grouped by free-variable witness; fails when there are none. |
+| `bagof(?Template, :Goal, -List)` | Collects Goal's solutions; fails when there are none. |
 | `findall(?Template, :Goal, -List)` | Collects an instance of Template for every solution of Goal into a list. |
 | `findall(?Template, :Goal, -List, ?Tail)` | Like findall/3 but the result is a difference list ending in Tail. |
 | `setof(?Template, :Goal, -List)` | Like bagof/3 but the result list is sorted and duplicate-free. |

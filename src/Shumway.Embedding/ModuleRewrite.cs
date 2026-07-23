@@ -88,6 +88,19 @@ public static class ModuleRewrite
 
     private static Term RewriteGoal(Term goal, Context ctx)
     {
+        // A variable in a goal position (a clause body, a control-flow sub-goal)
+        // is a runtime meta-call. Wrap it call('$mqual'(Module, Var)) so the
+        // live-engine dispatch resolves its bound goal against THIS module's
+        // locals first — the same module-relative resolution a direct meta-arg
+        // (findall/call) gets. The explicit call/1 keeps it compiling as a
+        // meta-call (a bare variable body goal is call(Var) by ISO anyway).
+        if (goal is VarTerm)
+            return new CompoundTerm("call", new[]
+            {
+                (Term)new CompoundTerm(MqualFunctor,
+                    new[] { (Term)new AtomTerm(ctx.ModuleName), goal }),
+            });
+
         if (goal is AtomTerm a)
         {
             if (IsControlFlow(a.Name, 0)) return goal;
@@ -123,15 +136,78 @@ public static class ModuleRewrite
                     ? goal
                     : new CompoundTerm(c.Functor, newArgs) { Position = c.Position };
             }
+            // Meta-predicate with a VARIABLE goal argument (a callable goal was
+            // already inlined + mangled by MetaTransform): tag the variable with
+            // the compile-time module so a runtime meta-call (findall/call/…)
+            // resolves the bare goal relative to THIS module's locals. The tag
+            // travels with the goal term into the live-engine dispatch, where
+            // DispatchCall / MetaCallInEngine unwrap it. Public / builtin goals
+            // fall through the tag transparently (module$name lookup misses, then
+            // the bare name resolves). See the module-local-meta-call fix.
+            if (MetaGoalPositions(c.Functor, c.Args.Length) is int[] positions)
+            {
+                Term[]? tagged = null;
+                foreach (int pos in positions)
+                {
+                    if (c.Args[pos] is not VarTerm) continue;
+                    tagged ??= (Term[])c.Args.Clone();
+                    tagged[pos] = new CompoundTerm(MqualFunctor,
+                        new[] { (Term)new AtomTerm(ctx.ModuleName), c.Args[pos] })
+                        { Position = c.Position };
+                }
+                if (tagged is not null)
+                    c = new CompoundTerm(c.Functor, tagged) { Position = c.Position };
+            }
+
             if (IsLocal(c.Functor, c.Args.Length, ctx) && !IsDynamic(c.Functor, c.Args.Length, ctx))
                 return new CompoundTerm(MangledName(c.Functor, ctx), c.Args)
                     { Position = c.Position };
-            if (IsBuiltin(c.Functor, c.Args.Length)) return goal;
-            return goal;
+            if (IsBuiltin(c.Functor, c.Args.Length)) return c;
+            return c;
         }
 
         return goal;
     }
+
+    /// <summary>the module-qualifier wrapper for a runtime-variable meta-goal.
+    /// <c>'$mqual'(Module, Goal)</c> — unwrapped at the meta-dispatch sites so
+    /// <c>Goal</c>'s bare functor resolves against <c>Module</c>'s locals first.</summary>
+    public const string MqualFunctor = "$mqual";
+
+    /// <summary>The goal-carrying argument positions of the control
+    /// meta-predicates (0-based). A variable in one of these positions is tagged
+    /// with the clause's module. Callable goals in these positions are already
+    /// inlined + mangled by MetaTransform before this pass, so only variables are
+    /// seen here. Higher-order library predicates (maplist/foldl/…) that pass a
+    /// callable closure by name are a separate case — deferred.</summary>
+    private static int[]? MetaGoalPositions(string functor, int arity) => (functor, arity) switch
+    {
+        ("findall", 3) => Pos1,
+        ("findall", 4) => Pos1,
+        ("bagof", 3) => Pos1,
+        ("setof", 3) => Pos1,
+        ("aggregate_all", 3) => Pos1,
+        ("forall", 2) => Pos01,
+        ("catch", 3) => Pos02,
+        ("once", 1) => Pos0,
+        ("ignore", 1) => Pos0,
+        ("\\+", 1) => Pos0,
+        ("not", 1) => Pos0,
+        ("call", 1) => Pos0,
+        ("call", 2) => Pos0,
+        ("call", 3) => Pos0,
+        ("call", 4) => Pos0,
+        ("call", 5) => Pos0,
+        ("call", 6) => Pos0,
+        ("call", 7) => Pos0,
+        ("call", 8) => Pos0,
+        _ => null,
+    };
+
+    private static readonly int[] Pos0 = { 0 };
+    private static readonly int[] Pos1 = { 1 };
+    private static readonly int[] Pos01 = { 0, 1 };
+    private static readonly int[] Pos02 = { 0, 2 };
 
     private static bool IsDynamic(string name, int arity, Context ctx)
     {

@@ -174,7 +174,7 @@ public static class MetaTransform
         if (goal is CompoundTerm ct
             && ct.Args.Length == 1
             && (ct.Functor == "\\+" || ct.Functor == "not")
-            && (ct.Args[0] is AtomTerm || ct.Args[0] is CompoundTerm))
+            && InlinableGoal(ct.Args[0]))
         {
             return WithPosition(
                 SynthesizeNegationHelper(ct.Args[0], ref counter, helpers), goal.Position);
@@ -215,7 +215,7 @@ public static class MetaTransform
         if (goal is CompoundTerm onceCt
             && (onceCt.Functor == "once" || onceCt.Functor == "ignore")
             && onceCt.Args.Length == 1
-            && (onceCt.Args[0] is AtomTerm || onceCt.Args[0] is CompoundTerm))
+            && InlinableGoal(onceCt.Args[0]))
         {
             return WithPosition(
                 SynthesizeOnceHelper(
@@ -239,7 +239,7 @@ public static class MetaTransform
         if (goal is CompoundTerm fa
             && fa.Functor == "findall"
             && fa.Args.Length == 3
-            && (fa.Args[1] is AtomTerm || fa.Args[1] is CompoundTerm))
+            && InlinableGoal(fa.Args[1]))
         {
             Term collectLoop = new CompoundTerm(",", new[]
             {
@@ -273,7 +273,7 @@ public static class MetaTransform
         if (goal is CompoundTerm bs
             && (bs.Functor == "bagof" || bs.Functor == "setof")
             && bs.Args.Length == 3
-            && (bs.Args[1] is AtomTerm || bs.Args[1] is CompoundTerm))
+            && InlinableGoal(bs.Args[1]))
         {
             Term rewritten = RewriteBagof(
                 bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], ref counter);
@@ -290,8 +290,8 @@ public static class MetaTransform
         if (goal is CompoundTerm fl
             && fl.Functor == "forall"
             && fl.Args.Length == 2
-            && fl.Args[0] is not VarTerm
-            && fl.Args[1] is not VarTerm)
+            && InlinableGoal(fl.Args[0])
+            && InlinableGoal(fl.Args[1]))
         {
             Term inner = new CompoundTerm(",", new[]
             {
@@ -314,8 +314,8 @@ public static class MetaTransform
         if (goal is CompoundTerm ca
             && ca.Functor == "catch"
             && ca.Args.Length == 3
-            && ca.Args[0] is not VarTerm
-            && ca.Args[2] is not VarTerm)
+            && InlinableGoal(ca.Args[0])
+            && InlinableGoal(ca.Args[2]))
         {
             return WithPosition(
                 RewriteCatch(ca.Args[0], ca.Args[1], ca.Args[2], ref counter, helpers),
@@ -346,6 +346,7 @@ public static class MetaTransform
             && ct2.Args.Length >= 1
             && ct2.Args[0] is Term first
             && first is not VarTerm
+            && !IsMqualGoal(first)
             && IsStaticallyExtendable(first))
         {
             int extra = ct2.Args.Length - 1;
@@ -558,6 +559,21 @@ public static class MetaTransform
     /// the bare equivalent — rewriting <c>call(!)</c> to <c>!</c> would
     /// silently change the cut scope. The exclude set is the same one
     /// <c>DispatchCall</c> intercepts after functor lookup.</summary>
+    /// <summary><c>'$mqual'(Module, Goal)</c> — a runtime-variable meta-goal
+    /// tagged with its meta-caller's module by ModuleRewrite. It is an OPAQUE
+    /// runtime marker: this transform must never inline it (unwrapping /
+    /// module-relative resolution happens at the live-engine dispatch). Re-running
+    /// the pipeline over an already-tagged clause (the prelude bake, --exe) would
+    /// otherwise splice <c>$mqual</c> in as a real body goal → Call $mqual/2 →
+    /// existence_error.</summary>
+    private static bool IsMqualGoal(Term t) =>
+        t is CompoundTerm c && c.Functor == "$mqual" && c.Args.Length == 2;
+
+    /// <summary>A goal this transform may inline: syntactically callable AND not
+    /// the opaque <c>$mqual</c> marker.</summary>
+    private static bool InlinableGoal(Term t) =>
+        (t is AtomTerm || t is CompoundTerm) && !IsMqualGoal(t);
+
     private static bool IsStaticallyExtendable(Term t)
     {
         string name;

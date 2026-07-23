@@ -81,6 +81,11 @@ public sealed partial class BytecodeInterpreter
         FunctorTable.Intern(AtomTable.Intern("$call_arrow", permanent: true).Id, 3);
     private static readonly int CallNegFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$call_neg", permanent: true).Id, 1);
+    // '$mqual'(Module, Goal) — a runtime-variable meta-goal tagged with the
+    // module of the clause that meta-called it (ModuleRewrite). Unwrapped in the
+    // meta-dispatch so Goal's bare functor resolves against Module's locals first.
+    private static readonly int MqualFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
 
     /// <summary>Optional hook the interpreter consults on every
     /// <c>call</c> / <c>execute</c> to ask whether a Tier-1 IL

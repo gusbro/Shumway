@@ -83,6 +83,9 @@ internal static class Prelude
         :- public recorded/2.
         :- public tab/1.
         :- public apply/2.
+        :- public findall/3.
+        :- public bagof/3.
+        :- public setof/3.
         :- public findall/4.
         :- public retractall/1.
         :- public listing/0.
@@ -152,6 +155,42 @@ internal static class Prelude
         % variable Condition/Action (it must NOT use an isolated sub-engine —
         % that would hide the called goals' assert/retract).
         forall(Cond, Action) :- \+ ( call(Cond), \+ call(Action) ).
+
+        %! findall(?Template, :Goal, -List) | Findall & aggregation | Collects an instance of Template for every solution of Goal into a list.
+        % Runs Goal in the LIVE engine via call/1 and the in-engine collect
+        % primitives ('$findall_push' opens a solution frame, '$findall_record_s'
+        % snapshots Template at each solution, '$findall_collect' closes the frame
+        % and unifies List). Mirrors the inline loop MetaTransform emits for a
+        % statically-callable findall/3; this clause is the runtime fallback for a
+        % variable Goal. It must NOT use an isolated sub-engine — that lacked the
+        % parent's bundle-precompiled predicates and hid the goal's side effects.
+        findall(Template, Goal, List) :-
+            ( '$findall_push', call(Goal), '$findall_record_s'(Template), fail
+            ; '$findall_collect'(List) ).
+
+        %! bagof(?Template, :Goal, -List) | Findall & aggregation | Collects Goal's solutions; fails when there are none.
+        %! setof(?Template, :Goal, -List) | Findall & aggregation | Like bagof/3 but the result list is sorted and duplicate-free.
+        % Runtime (variable-goal) fallback for bagof/3 and setof/3, in the LIVE
+        % engine over findall/3. A statically-callable bagof/setof is rewritten by
+        % MetaTransform with full witness grouping; this fallback keeps the
+        % simplified no-grouping semantics (findall + fail-on-empty), stripping
+        % ^/2 existential wrappers. '$strip_existential'/2 preserves the '$mqual'
+        % module tag so the collected goal still resolves in the meta-caller's
+        % module.
+        bagof(Template, Goal, Bag) :-
+            '$strip_existential'(Goal, Inner),
+            findall(Template, Inner, Bag0),
+            Bag0 \= [],
+            Bag = Bag0.
+        setof(Template, Goal, Set) :-
+            '$strip_existential'(Goal, Inner),
+            findall(Template, Inner, Bag0),
+            Bag0 \= [],
+            sort(Bag0, Set).
+        '$strip_existential'('$mqual'(M, G), '$mqual'(M, S)) :- !, '$strip_caret'(G, S).
+        '$strip_existential'(G, S) :- '$strip_caret'(G, S).
+        '$strip_caret'(V, S) :- nonvar(V), V = _ ^ G, !, '$strip_caret'(G, S).
+        '$strip_caret'(G, G).
 
         %! catch(:Goal, ?Catcher, :Recovery) | Control | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead.
         % Runs in the LIVE engine using the catch-frame machinery

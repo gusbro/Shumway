@@ -206,6 +206,12 @@ public sealed partial class BytecodeInterpreter
         int pc = _engine.P;
         Cell goal = DerefCell(_engine.GetRegister(0));
 
+        // '$mqual'(Module, Goal): a runtime-variable meta-goal tagged with the
+        // module of the clause that meta-called it. Unwrap it, updating X0 to the
+        // real goal; the module (or -1) steers the user-address resolution below
+        // so a bare goal functor resolves against that module's locals first.
+        int resolutionModule = PrepareMqualGoal(ref goal);
+
         // Save call/N's extra arguments before the registers are reloaded.
         // The per-engine scratch is safe here: the extras are consumed into
         // registers below, before any recursion or builtin can re-enter.
@@ -258,7 +264,10 @@ public sealed partial class BytecodeInterpreter
                 new System.Collections.Generic.Dictionary<long, Shumway.Core.MetaRoute>();
             _engine.MetaRouteCacheStamp = addresses;
         }
-        bool routeCacheable = (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits
+        // A module-tagged goal bypasses the route cache: its resolution depends
+        // on the module too, and the tagged path is the (uncommon) variable
+        // meta-call, not the hot direct-call path.
+        bool routeCacheable = resolutionModule < 0 && (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits
         long routeKey = ((long)atomId << 16) | (uint)totalArity;
         if (routeCacheable && cache.TryGetValue(routeKey, out var route))
         {
@@ -372,6 +381,18 @@ public sealed partial class BytecodeInterpreter
             return InvokeBuiltinGoal(builtinId);
         }
 
+        // Module-relative resolution: a tagged goal resolves against the
+        // meta-caller's module locals (module$name) first, so a runtime-variable
+        // meta-call reaches a module-local predicate the same way a compile-time
+        // one is mangled. Falls through to the bare functor (public / global) when
+        // the module has no such local.
+        if (resolutionModule >= 0 && addresses is not null)
+        {
+            int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
+            if (addresses.TryGetValue(mangledFid, out int mangledAddr))
+                return JumpToUserGoal(code, pc, mangledAddr);
+        }
+
         if (addresses is not null && addresses.TryGetValue(functorId, out int address))
         {
             if (routeCacheable)
@@ -429,6 +450,86 @@ public sealed partial class BytecodeInterpreter
         bool tail = following == Opcode.Deallocate || following == Opcode.Proceed;
         DispatchToTier1OrBytecode(address, tail);
         return true;
+    }
+
+    /// <summary>Unwraps a <c>'$mqual'(Module, Goal)</c> tag on the goal in X0,
+    /// updating <paramref name="goal"/> and X0 to the real goal and returning the
+    /// module atom id (innermost wins on nesting) or -1 when untagged. When the
+    /// real goal is a control construct, the module is distributed into its goal
+    /// sub-args (so they keep resolving in that module once the <c>$call_*</c>
+    /// helper runs them) and -1 is returned.</summary>
+    private int PrepareMqualGoal(ref Cell goal)
+    {
+        int module = -1;
+        while (goal.Tag == Tag.Str)
+        {
+            int fidx = goal.AsHeapIndex;
+            if (_engine.GetHeap(fidx).AsFunctorId != MqualFunctorId) break;
+            Cell mCell = DerefCell(_engine.GetHeap(fidx + 1));
+            if (mCell.Tag == Tag.Atom) module = mCell.AsAtomId;
+            goal = DerefCell(_engine.GetHeap(fidx + 2));
+        }
+        if (module < 0) return -1;
+
+        if (goal.Tag == Tag.Str)
+        {
+            int fid = _engine.GetHeap(goal.AsHeapIndex).AsFunctorId;
+            if (fid == ConjFunctorId || fid == DisjFunctorId || fid == ArrowFunctorId)
+            {
+                goal = DistributeMqual(goal, module, arg0Goal: true, arg1Goal: true);
+                _engine.SetRegister(0, goal);
+                return -1;
+            }
+            if (fid == NegFunctorId || fid == NotFunctorId)
+            {
+                goal = DistributeMqual(goal, module, arg0Goal: true, arg1Goal: false);
+                _engine.SetRegister(0, goal);
+                return -1;
+            }
+        }
+        _engine.SetRegister(0, goal);
+        return module;
+    }
+
+    /// <summary>Allocates <c>'$mqual'(Module, Goal)</c> on the heap.</summary>
+    private Cell BuildMqual(int moduleAtomId, Cell goalCell)
+    {
+        int f = _engine.AllocateHeap(3);
+        _engine.SetHeap(f, Cell.Functor(MqualFunctorId));
+        _engine.SetHeap(f + 1, Cell.Atom(moduleAtomId));
+        _engine.SetHeap(f + 2, goalCell);
+        return Cell.Str(f);
+    }
+
+    /// <summary>Rebuilds a binary/unary control construct with its goal-position
+    /// sub-args re-tagged <c>'$mqual'(Module, sub)</c>, so a module travels into
+    /// the sub-goals a runtime-variable meta-goal resolves.</summary>
+    private Cell DistributeMqual(Cell ctor, int module, bool arg0Goal, bool arg1Goal)
+    {
+        int src = ctor.AsHeapIndex;
+        int fid = _engine.GetHeap(src).AsFunctorId;
+        var (_, arity) = FunctorTable.Lookup(fid);
+        // Capture the source args before BuildMqual allocates (so the reserved
+        // ctor block and the $mqual blocks never interleave mid-write).
+        Cell a0 = arity > 0 ? _engine.GetHeap(src + 1) : default;
+        Cell a1 = arity > 1 ? _engine.GetHeap(src + 2) : default;
+        Cell w0 = arg0Goal && arity > 0 ? BuildMqual(module, a0) : a0;
+        Cell w1 = arg1Goal && arity > 1 ? BuildMqual(module, a1) : a1;
+        int f = _engine.AllocateHeap(arity + 1);
+        _engine.SetHeap(f, Cell.Functor(fid));
+        if (arity > 0) _engine.SetHeap(f + 1, w0);
+        if (arity > 1) _engine.SetHeap(f + 2, w1);
+        return Cell.Str(f);
+    }
+
+    /// <summary>Builds the mangled <c>module$name/arity</c> functor id used to
+    /// resolve a bare meta-goal against its meta-caller's module locals.</summary>
+    private static int MangleFunctorId(int moduleAtomId, int nameAtomId, int arity)
+    {
+        string module = AtomTable.GetById(moduleAtomId)?.Name ?? "";
+        string name = AtomTable.GetById(nameAtomId)?.Name ?? "";
+        int mangledAtom = AtomTable.Intern(module + "$" + name, permanent: true).Id;
+        return FunctorTable.Intern(mangledAtom, arity);
     }
 
     /// <summary>Dereferences a cell, following REF chains to the term it

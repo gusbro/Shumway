@@ -170,6 +170,8 @@ public sealed partial class IlPredicateCompiler
             FunctorTable.Intern(AtomTable.Intern("$call_arrow", permanent: true).Id, 3);
         private static readonly int CallNegFid =
             FunctorTable.Intern(AtomTable.Intern("$call_neg", permanent: true).Id, 1);
+        private static readonly int MqualFid =
+            FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
 
         /// <summary>Dispatches <c>call/N</c> with <paramref name="callArity"/>
         /// extra-arg count and the supplied cut barrier. Returns the
@@ -188,6 +190,12 @@ public sealed partial class IlPredicateCompiler
         public static int Dispatch(Activation engine, int callArity, int cutBarrier)
         {
             Cell goal = DerefCell(engine, engine.GetRegister(0));
+
+            // '$mqual'(Module, Goal): a module-tagged runtime-variable meta-goal
+            // (see ModuleRewrite / BytecodeInterpreter.DispatchCall). Unwrap it,
+            // updating X0; the module steers the user-address resolution below so
+            // a bare goal functor resolves against that module's locals first.
+            int resolutionModule = PrepareMqualGoal(engine, ref goal);
 
             // Save call/N's extra args before SetRegister reshuffles them.
             // Per-engine scratch: consumed into registers below,
@@ -241,7 +249,9 @@ public sealed partial class IlPredicateCompiler
                     new System.Collections.Generic.Dictionary<long, MetaRoute>();
                 engine.MetaRouteCacheStamp = addresses;
             }
-            bool routeCacheable = (uint)totalArity <= 0xFFFF;
+            // A module-tagged goal bypasses the route cache (its resolution
+            // depends on the module too, and it is the uncommon variable path).
+            bool routeCacheable = resolutionModule < 0 && (uint)totalArity <= 0xFFFF;
             long routeKey = ((long)atomId << 16) | (uint)totalArity;
             if (routeCacheable && cache.TryGetValue(routeKey, out var route))
             {
@@ -357,6 +367,14 @@ public sealed partial class IlPredicateCompiler
             // caller threads Cp = resume_marker, Pc = target,
             // IlTailCallPending = true.
             engine.SetB0(cutBarrier);
+            // Module-relative resolution: a tagged goal resolves against the
+            // meta-caller's module locals (module$name) first.
+            if (resolutionModule >= 0 && addresses is not null)
+            {
+                int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
+                if (addresses.TryGetValue(mangledFid, out int mangledAddr))
+                    return mangledAddr;
+            }
             if (addresses is null
                 || !addresses.TryGetValue(functorId, out int address))
             {
@@ -395,6 +413,76 @@ public sealed partial class IlPredicateCompiler
                 re.StampBuiltin(builtin.Name, builtin.Arity);
                 throw;
             }
+        }
+
+        /// <summary>Mirror of BytecodeInterpreter.PrepareMqualGoal: unwraps a
+        /// <c>'$mqual'(Module, Goal)</c> tag on X0, distributes the module over a
+        /// control construct's goal sub-args, and returns the module (or -1).</summary>
+        private static int PrepareMqualGoal(Activation engine, ref Cell goal)
+        {
+            int module = -1;
+            while (goal.Tag == Tag.Str)
+            {
+                int fidx = goal.AsHeapIndex;
+                if (engine.GetHeap(fidx).AsFunctorId != MqualFid) break;
+                Cell mCell = DerefCell(engine, engine.GetHeap(fidx + 1));
+                if (mCell.Tag == Tag.Atom) module = mCell.AsAtomId;
+                goal = DerefCell(engine, engine.GetHeap(fidx + 2));
+            }
+            if (module < 0) return -1;
+
+            if (goal.Tag == Tag.Str)
+            {
+                int fid = engine.GetHeap(goal.AsHeapIndex).AsFunctorId;
+                if (fid == ConjFid || fid == DisjFid || fid == ArrowFid)
+                {
+                    goal = DistributeMqual(engine, goal, module, arg0Goal: true, arg1Goal: true);
+                    engine.SetRegister(0, goal);
+                    return -1;
+                }
+                if (fid == NegFid || fid == NotFid)
+                {
+                    goal = DistributeMqual(engine, goal, module, arg0Goal: true, arg1Goal: false);
+                    engine.SetRegister(0, goal);
+                    return -1;
+                }
+            }
+            engine.SetRegister(0, goal);
+            return module;
+        }
+
+        private static Cell BuildMqual(Activation engine, int moduleAtomId, Cell goalCell)
+        {
+            int f = engine.AllocateHeap(3);
+            engine.SetHeap(f, Cell.Functor(MqualFid));
+            engine.SetHeap(f + 1, Cell.Atom(moduleAtomId));
+            engine.SetHeap(f + 2, goalCell);
+            return Cell.Str(f);
+        }
+
+        private static Cell DistributeMqual(
+            Activation engine, Cell ctor, int module, bool arg0Goal, bool arg1Goal)
+        {
+            int src = ctor.AsHeapIndex;
+            int fid = engine.GetHeap(src).AsFunctorId;
+            var (_, arity) = FunctorTable.Lookup(fid);
+            Cell a0 = arity > 0 ? engine.GetHeap(src + 1) : default;
+            Cell a1 = arity > 1 ? engine.GetHeap(src + 2) : default;
+            Cell w0 = arg0Goal && arity > 0 ? BuildMqual(engine, module, a0) : a0;
+            Cell w1 = arg1Goal && arity > 1 ? BuildMqual(engine, module, a1) : a1;
+            int f = engine.AllocateHeap(arity + 1);
+            engine.SetHeap(f, Cell.Functor(fid));
+            if (arity > 0) engine.SetHeap(f + 1, w0);
+            if (arity > 1) engine.SetHeap(f + 2, w1);
+            return Cell.Str(f);
+        }
+
+        private static int MangleFunctorId(int moduleAtomId, int nameAtomId, int arity)
+        {
+            string module = AtomTable.GetById(moduleAtomId)?.Name ?? "";
+            string name = AtomTable.GetById(nameAtomId)?.Name ?? "";
+            int mangledAtom = AtomTable.Intern(module + "$" + name, permanent: true).Id;
+            return FunctorTable.Intern(mangledAtom, arity);
         }
 
         private static Cell DerefCell(Activation engine, Cell c) =>

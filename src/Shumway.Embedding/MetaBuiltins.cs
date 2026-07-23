@@ -28,8 +28,13 @@ public static partial class MetaBuiltins
         const string Reflect = "Flags, operators & reflection";
         const string Io = "Input / output";
 
-        BuiltinsRegistry.Register("findall", 3, Findall,
-            FindAgg, "findall(?Template, :Goal, -List)", "Collects an instance of Template for every solution of Goal into a list.");
+        // findall/3 is a prelude predicate (live-engine collect loop over
+        // call/1), NOT a builtin — the old isolated-sub-engine builtin lacked
+        // the parent's bundle-precompiled definitions (a source-stripped
+        // bundle's module-local goal was absent from the sub-engine) and hid
+        // the goal's side effects. See Prelude findall/3. A statically-callable
+        // findall/3 is still rewritten inline by MetaTransform to the same
+        // $findall_* loop; this covers the runtime variable-goal case.
         // In-engine findall plumbing — MetaTransform rewrites
         // findall/3 with a callable goal into a goal sequence using these.
         BuiltinsRegistry.Register("$findall_push",    0, FindallPush);
@@ -41,10 +46,11 @@ public static partial class MetaBuiltins
         // collect step differs (it groups the solutions by witness).
         BuiltinsRegistry.Register("$bagof_collect",   1, BagofCollect);
         BuiltinsRegistry.Register("$setof_collect",   1, SetofCollect);
-        BuiltinsRegistry.Register("bagof",   3, Bagof,
-            FindAgg, "bagof(?Template, :Goal, -List)", "Collects Goal's solutions, grouped by free-variable witness; fails when there are none.");
-        BuiltinsRegistry.Register("setof",   3, Setof,
-            FindAgg, "setof(?Template, :Goal, -List)", "Like bagof/3 but the result list is sorted and duplicate-free.");
+        // bagof/3 & setof/3 variable-goal fallbacks are prelude predicates
+        // (live-engine findall + fail-on-empty), NOT builtins — the old
+        // isolated-sub-engine builtins lacked the parent's bundle-precompiled
+        // definitions. A statically-callable bagof/setof is still rewritten by
+        // MetaTransform with full witness grouping. See Prelude bagof/3, setof/3.
         // forall/2 is a prelude predicate (live-engine \+ (call(C), \+ call(A))),
         // not a builtin — the old isolated-sub-engine builtin hid the called
         // goals' side effects. See Prelude forall/2.
