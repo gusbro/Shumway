@@ -220,7 +220,10 @@ public static class TermRenderer
             if (cursor.Tag != Tag.Lis) break;
             if (!first) output.Write(',');   // ISO: no layout between elements
             int headIdx = cursor.AsHeapIndex;
-            Render(engine, engine.GetHeap(headIdx), output, options);
+            // Each element is an argument-priority (999) position: a ','/2
+            // element must parenthesise (`[(a,b)]`, not `[a,b]` — which would
+            // re-read as a two-element list), as must any operator ≥ 1000.
+            RenderOperand(engine, engine.GetHeap(headIdx), output, options, 999);
             cursor = engine.GetHeap(headIdx + 1);
             first = false;
         }
@@ -233,7 +236,7 @@ public static class TermRenderer
         else
         {
             output.Write('|');   // ISO: compact improper-list tail
-            Render(engine, cursor, output, options);
+            RenderOperand(engine, cursor, output, options, 999);   // arg-priority tail
         }
         output.Write(']');
     }
