@@ -9,10 +9,14 @@ trust_me; Else`). Refinement over the design below: `soft_cut` DISCARDS the ELSE
 CP (cuts to its parent, keeping bindings) when it is the current top — a
 deterministic condition leaves no lingering dead frame, so `time(true)` is
 determinate at the top level; the dead-`BP` neutralisation applies only when the
-condition left choice points above it. **Deferred:** non-eligible `*->` (a cut
-in a branch, nested control in a part, or a runtime-built `*->`), and the Tier-1
-IL describe/emit (a `soft_cut` body is not whitelisted in `IsSupportedOpcode`, so
-it declines IL promotion and runs Tier-0 correctly).
+condition left choice points above it. **Tier-1 IL now implemented:** `soft_cut`
+is whitelisted in `IsSupportedOpcode` and emits `engine.SoftCutToLevel`; the ELSE
+choice point is an IL choice point, so the deterministic case discards it through
+`Cut` (which also drops the `_ilCpStack` entry) and the non-deterministic middle
+case swaps that entry's resume delegate to a fail-delegate
+(`NeutralizeIlChoicePoint`), the IL analogue of the dead `BP`. **Deferred:**
+non-eligible `*->` only (a cut in a branch, nested control in a part, or a
+runtime-built `*->` — still Tier-0-or-error).
 
 ## Context
 

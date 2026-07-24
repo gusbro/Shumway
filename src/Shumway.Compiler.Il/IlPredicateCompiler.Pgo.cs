@@ -300,6 +300,7 @@ public sealed partial class IlPredicateCompiler
                     return false;
                 case Opcode.Meta: pc += 6; continue;
                 case Opcode.Cut:
+                case Opcode.SoftCut:   // ADR-037 — cut-like; a *-> body is also rejected by its try_me_else above
                 case Opcode.NeckCut:
                 case Opcode.GetLevel:
                 case Opcode.AllocateGetLevel:

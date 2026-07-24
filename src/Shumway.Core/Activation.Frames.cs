@@ -843,11 +843,24 @@ public sealed partial class Activation
         {
             // ELSE CP is the top → the condition was deterministic → discard it
             // (cut to its parent) so no neutralised-but-present frame lingers.
+            // Cut also drops the matching _ilCpStack entry when it is an IL CP.
             Cut((int)_stack[barrier + CpBOffset(arity)].Data);
             return;
         }
-        _stack[barrier + CpBpOffset(arity)] = Cell.RawInt(SoftCutDeadBp);
+        // Middle frame. A Tier-1 inline-ITE ELSE CP carries the IL sentinel BP and
+        // is resumed by its delegate (the dead-BP sentinel would be ignored), so
+        // neutralise its _ilCpStack entry instead; a Tier-0 ELSE CP is resumed via
+        // its BP, so patch that to the dead sentinel.
+        if ((int)_stack[barrier + CpBpOffset(arity)].Data == IlChoicePointSentinelBp)
+            NeutralizeIlChoicePoint(barrier);
+        else
+            _stack[barrier + CpBpOffset(arity)] = Cell.RawInt(SoftCutDeadBp);
     }
+
+    /// <summary>ADR-037 — the Tier-1 IL entry point for <c>soft_cut</c>: reads the
+    /// barrier stashed in <c>Y[slot]</c> by <c>get_level_b</c> and applies
+    /// <see cref="SoftCut(int)"/>. Mirrors <see cref="CutToLevel"/>.</summary>
+    public void SoftCutToLevel(int slot) => SoftCut((int)GetY(slot).Data);
 
     /// <summary>
     /// Single-pass interleaved trail compaction (Warren's algorithm extended to the extra

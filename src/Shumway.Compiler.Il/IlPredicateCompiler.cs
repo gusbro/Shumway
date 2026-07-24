@@ -282,6 +282,10 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.GetLevel), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineCutToLevelMethod =
         typeof(Activation).GetMethod(nameof(Activation.CutToLevel), new[] { typeof(int) })!;
+    // ADR-037 — the inline ( Cond *-> Then ; Else ) commit: neutralise the ELSE
+    // choice point named by Y[slot], leaving the condition's CPs intact.
+    private static readonly MethodInfo EngineSoftCutToLevelMethod =
+        typeof(Activation).GetMethod(nameof(Activation.SoftCutToLevel), new[] { typeof(int) })!;
     // a cut is a goal boundary, so pending attribute wakeups must
     // run before the IL-emitted cut commits (the IL counterpart of the
     // flush-before-cut). Returns false when a wakeup failed, which
@@ -795,6 +799,7 @@ public sealed partial class IlPredicateCompiler
         // engine.CutToLevel.
         Opcode.GetLevel => true,
         Opcode.Cut => true,
+        Opcode.SoftCut => true,   // ADR-037 — inline *-> commit (engine.SoftCutToLevel)
         // fused opcodes. Emit pair of engine calls; the
         // single-opcode-walk advances by the fused size, skipping the
         // padding Nop.

@@ -736,6 +736,21 @@ public sealed partial class IlPredicateCompiler
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
+            if (op == Opcode.SoftCut)
+            {
+                // ADR-037 — inline ( Cond *-> Then ; Else ) commit. As with cut,
+                // flush pending attribute wakeups first; then neutralise ONLY the
+                // ELSE choice point named by Y[slot], leaving the condition's CPs.
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                emit.BranchIfFalse(failLabel);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineSoftCutToLevelMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
             if (op == Opcode.CallBuiltin)
             {
                 int builtinId = BytecodeIO.ReadInt32(code, pc + 1);

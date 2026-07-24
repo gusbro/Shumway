@@ -721,6 +721,31 @@ public sealed partial class Activation
         };
     }
 
+    /// <summary>ADR-037 — a resume delegate that always fails. <see cref="SoftCut"/>
+    /// swaps a neutralised inline-ITE ELSE choice point's delegate to this: when
+    /// backtracking later reaches that IL CP (after the condition's CPs above it
+    /// are exhausted) it pops it and keeps backtracking instead of running the
+    /// ELSE branch — the IL-tier analogue of the dead-<c>BP</c> sentinel a Tier-0
+    /// ELSE CP carries.</summary>
+    private static readonly Func<Activation, int, bool> SoftCutFailResume =
+        static (_, _) => false;
+
+    /// <summary>ADR-037 — neutralise the IL choice point whose frame sits at
+    /// stack position <paramref name="barrier"/> (a <see cref="SoftCut"/> target
+    /// whose <c>BP</c> is <see cref="IlChoicePointSentinelBp"/>), by replacing its
+    /// resume delegate with <see cref="SoftCutFailResume"/>. IL CPs are pushed in
+    /// strictly increasing <c>Key</c> (= <c>_b</c>) order, so the search from the
+    /// top stops as soon as it passes the barrier.</summary>
+    private void NeutralizeIlChoicePoint(int barrier)
+    {
+        for (int i = _ilCpTop - 1; i >= 0; i--)
+        {
+            int key = _ilCpStack[i].Key;
+            if (key == barrier) { _ilCpStack[i].Del = SoftCutFailResume; return; }
+            if (key < barrier) return;
+        }
+    }
+
     /// <summary>Wrapper around <see cref="PushIlChoicePoint"/> for
     /// builtins that need runtime choice-point semantics (the
     /// multi-solution <c>call/N</c>, the non-deterministic split modes
