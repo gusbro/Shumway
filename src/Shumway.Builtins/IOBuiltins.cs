@@ -176,6 +176,11 @@ public static class IOBuiltins
         // instantiation_error is deferred (sawUnbound) and only raised if the
         // whole list is otherwise well-formed.
         bool sawUnbound = false;
+        // First occurrence WITHIN this list wins (built into localNames below);
+        // the merge at the end lets a LATER variable_names OPTION override an
+        // earlier one (Neumerkel vn #71 — write_term(T,[variable_names(['Bad'=T]),
+        // variable_names(['Good'=T])]) prints Good).
+        var localNames = new System.Collections.Generic.Dictionary<int, string>();
         while (cur.Tag == Tag.Lis)
         {
             int headIdx = cur.AsHeapIndex;
@@ -198,9 +203,8 @@ public static class IOBuiltins
                     int varAddr = ResolveVarAddr(engine, engine.GetHeap(pairIdx + 2));
                     if (varAddr >= 0)
                     {
-                        options.VariableNames ??= new System.Collections.Generic.Dictionary<int, string>();
-                        // First binding for a given variable wins.
-                        options.VariableNames.TryAdd(
+                        // First binding for a given variable in THIS list wins.
+                        localNames.TryAdd(
                             varAddr, AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "");
                     }
                 }
@@ -212,6 +216,14 @@ public static class IOBuiltins
             throw new PrologRuntimeException("domain_error", "write_option");
         if (sawUnbound)
             throw new PrologRuntimeException("instantiation_error");
+        // Merge into the shared option map with OVERWRITE, so a later
+        // variable_names option wins over an earlier one (vn #71). Only reached
+        // when this list was well-formed (the throws above bail otherwise).
+        if (localNames.Count > 0)
+        {
+            options.VariableNames ??= new System.Collections.Generic.Dictionary<int, string>();
+            foreach (var kv in localNames) options.VariableNames[kv.Key] = kv.Value;
+        }
     }
 
     /// <summary>Dereferences <paramref name="varCell"/>; returns its heap

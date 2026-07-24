@@ -153,16 +153,21 @@ public static class TermRenderer
                     // adjacent tokens of the same character class fuse on re-read
                     // (`1=\\` lexes `=\\` as one atom). Render the operands to
                     // temp writers so we know their edge chars, and insert a space
-                    // ONLY where the operator would fuse with an operand.
+                    // ONLY where the operator would fuse with an operand — EXCEPT
+                    // when the operand is an unbound variable: its variable_names
+                    // name (or _Gn form) is written verbatim per §7.10.5, and
+                    // Neumerkel does not space it (`1+/*r*/V`, not `1+ /*r*/V`).
+                    bool leftVar = IsUnboundVarCell(engine, engine.GetHeap(functorIdx + 1));
+                    bool rightVar = IsUnboundVarCell(engine, engine.GetHeap(functorIdx + 2));
                     var lw = new StringWriter();
                     RenderOperand(engine, engine.GetHeap(functorIdx + 1), lw, options, leftMax);
                     var rw = new StringWriter();
                     RenderOperand(engine, engine.GetHeap(functorIdx + 2), rw, options, rightMax);
                     string ls = lw.ToString(), rs = rw.ToString();
                     output.Write(ls);
-                    if (ls.Length > 0 && CharsFuse(ls[^1], name[0])) output.Write(' ');
+                    if (ls.Length > 0 && !leftVar && CharsFuse(ls[^1], name[0])) output.Write(' ');
                     output.Write(name);
-                    if (rs.Length > 0 && CharsFuse(name[^1], rs[0])) output.Write(' ');
+                    if (rs.Length > 0 && !rightVar && CharsFuse(name[^1], rs[0])) output.Write(' ');
                     output.Write(rs);
                 }
                 else
@@ -212,12 +217,14 @@ public static class TermRenderer
                 if (tightPost)
                 {
                     // As for infix: a tight postfix operator still needs a space
-                    // when the operand's last char would fuse with the operator.
+                    // when the operand's last char would fuse with the operator —
+                    // except when the operand is an unbound variable (verbatim name).
+                    bool postVar = IsUnboundVarCell(engine, engine.GetHeap(functorIdx + 1));
                     var pw = new StringWriter();
                     RenderOperand(engine, engine.GetHeap(functorIdx + 1), pw, options, argMax);
                     string ps = pw.ToString();
                     output.Write(ps);
-                    if (ps.Length > 0 && CharsFuse(ps[^1], name[0])) output.Write(' ');
+                    if (ps.Length > 0 && !postVar && CharsFuse(ps[^1], name[0])) output.Write(' ');
                     WriteAtomName(name, output, options);
                 }
                 else
@@ -472,6 +479,16 @@ public static class TermRenderer
     private static bool CharsFuse(char a, char b)
         => (IsSymbolChar(a) && IsSymbolChar(b))
         || ((char.IsLetterOrDigit(a) || a == '_') && (char.IsLetterOrDigit(b) || b == '_'));
+
+    /// <summary>True when <paramref name="cell"/> dereferences to an unbound
+    /// variable — its written form (a variable_names name, or the <c>_Gn</c>
+    /// fallback) is verbatim, so the tight-operator fusion spacing must not
+    /// apply to it.</summary>
+    private static bool IsUnboundVarCell(Activation engine, Cell cell)
+    {
+        Resolve(engine, ref cell);
+        return cell.Tag is Tag.Ref or Tag.AttVar;
+    }
 
     /// <summary>True when every character of <paramref name="name"/> is
     /// an ISO graphic char — a symbolic operator like <c>/</c> or
