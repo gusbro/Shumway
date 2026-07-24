@@ -231,27 +231,21 @@ public static class AtomCharBuiltins
         int i = 0, n = s.Length;
         // Leading layout — whitespace AND comments (§6.4.1), so a number token
         // may be preceded by `/* */` or a `%` line comment.
-        while (i < n)
-        {
-            if (char.IsWhiteSpace(s[i])) { i++; continue; }
-            if (s[i] == '%') { while (i < n && s[i] != '\n') i++; continue; }
-            if (s[i] == '/' && i + 1 < n && s[i + 1] == '*')
-            {
-                i += 2;
-                while (i + 1 < n && !(s[i] == '*' && s[i + 1] == '/')) i++;
-                i = System.Math.Min(n, i + 2);
-                continue;
-            }
-            break;
-        }
+        i = SkipLayout(s, i);
         // ISO §6.3.1: a numeric constant has no leading '+' — only a '-' sign
-        // (which yields a negative number). Layout after the sign is allowed.
+        // (which yields a negative number). Layout after the sign is allowed and
+        // includes comments — but ONLY when there is real WHITESPACE right after
+        // the '-'. A comment glued to the sign (`-/**/1`) is not layout: `-/**/`
+        // is all graphic chars, so the tokenizer reads it as one graphic ATOM,
+        // not a sign + comment. So `- /**/1` is -1 (#57) while `-/**/1` is a
+        // syntax error (#24); `-1` (digit glued to the sign) stays a literal.
         bool neg = false;
         if (i < n && s[i] == '-')
         {
             neg = true;
             i++;
-            while (i < n && char.IsWhiteSpace(s[i])) i++;   // e.g. "- 1" → -1
+            if (i < n && char.IsWhiteSpace(s[i]))
+                i = SkipLayout(s, i);   // "- 1" or "- /**/1" → -1
         }
         if (i >= n || !char.IsDigit(s[i])) return false;
 
@@ -349,6 +343,29 @@ public static class AtomCharBuiltins
     /// whole remaining string. Handles <c>0'''</c> (quoted quote), the
     /// single-char control escapes, and <c>\x…\</c> / octal
     /// <c>\…\</c>.</summary>
+    /// <summary>Skips ISO layout (§6.4.1) — whitespace, <c>%</c> line comments
+    /// and <c>/* */</c> block comments — from <paramref name="i"/>, returning the
+    /// index of the first non-layout character. Shared by the number parser's
+    /// leading-layout and post-sign-layout skips.</summary>
+    private static int SkipLayout(string s, int i)
+    {
+        int n = s.Length;
+        while (i < n)
+        {
+            if (char.IsWhiteSpace(s[i])) { i++; continue; }
+            if (s[i] == '%') { while (i < n && s[i] != '\n') i++; continue; }
+            if (s[i] == '/' && i + 1 < n && s[i + 1] == '*')
+            {
+                i += 2;
+                while (i + 1 < n && !(s[i] == '*' && s[i + 1] == '/')) i++;
+                i = System.Math.Min(n, i + 2);
+                continue;
+            }
+            break;
+        }
+        return i;
+    }
+
     private static bool TryParseCharCodeLiteral(string s, int i, out long code)
     {
         code = 0;
