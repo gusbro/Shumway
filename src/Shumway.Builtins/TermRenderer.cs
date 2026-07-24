@@ -147,11 +147,32 @@ public static class TermRenderer
                 // token there, so quoting `,` / `|` would be wrong.
                 bool tight = options.TightSymbolicOperators
                     && (IsSymbolicName(name) || name == ",");
-                RenderOperand(engine, engine.GetHeap(functorIdx + 1), output, options, leftMax);
-                if (!tight) output.Write(' ');
-                output.Write(name);
-                if (!tight) output.Write(' ');
-                RenderOperand(engine, engine.GetHeap(functorIdx + 2), output, options, rightMax);
+                if (tight)
+                {
+                    // Tight symbolic operators emit no surrounding spaces, but two
+                    // adjacent tokens of the same character class fuse on re-read
+                    // (`1=\\` lexes `=\\` as one atom). Render the operands to
+                    // temp writers so we know their edge chars, and insert a space
+                    // ONLY where the operator would fuse with an operand.
+                    var lw = new StringWriter();
+                    RenderOperand(engine, engine.GetHeap(functorIdx + 1), lw, options, leftMax);
+                    var rw = new StringWriter();
+                    RenderOperand(engine, engine.GetHeap(functorIdx + 2), rw, options, rightMax);
+                    string ls = lw.ToString(), rs = rw.ToString();
+                    output.Write(ls);
+                    if (ls.Length > 0 && CharsFuse(ls[^1], name[0])) output.Write(' ');
+                    output.Write(name);
+                    if (rs.Length > 0 && CharsFuse(name[^1], rs[0])) output.Write(' ');
+                    output.Write(rs);
+                }
+                else
+                {
+                    RenderOperand(engine, engine.GetHeap(functorIdx + 1), output, options, leftMax);
+                    output.Write(' ');
+                    output.Write(name);
+                    output.Write(' ');
+                    RenderOperand(engine, engine.GetHeap(functorIdx + 2), output, options, rightMax);
+                }
                 if (needsParens) output.Write(')');
                 return;
             }
@@ -187,10 +208,24 @@ public static class TermRenderer
                 bool needsParens = postPrec > maxPriority;
                 if (needsParens) output.Write('(');
                 int argMax = postShape == OperatorShape.Yf ? postPrec : postPrec - 1;
-                RenderOperand(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
                 bool tightPost = options.TightSymbolicOperators && IsSymbolicName(name);
-                if (!tightPost) output.Write(' ');
-                WriteAtomName(name, output, options);
+                if (tightPost)
+                {
+                    // As for infix: a tight postfix operator still needs a space
+                    // when the operand's last char would fuse with the operator.
+                    var pw = new StringWriter();
+                    RenderOperand(engine, engine.GetHeap(functorIdx + 1), pw, options, argMax);
+                    string ps = pw.ToString();
+                    output.Write(ps);
+                    if (ps.Length > 0 && CharsFuse(ps[^1], name[0])) output.Write(' ');
+                    WriteAtomName(name, output, options);
+                }
+                else
+                {
+                    RenderOperand(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
+                    output.Write(' ');
+                    WriteAtomName(name, output, options);
+                }
                 if (needsParens) output.Write(')');
                 return;
             }
@@ -428,6 +463,15 @@ public static class TermRenderer
     /// <c>:-</c> is built from.</summary>
     private static bool IsSymbolChar(char c)
         => "+-*/\\^<>=~:.?@#&$".IndexOf(c) >= 0;
+
+    /// <summary>True when two adjacent output characters would lex as a single
+    /// token — both ISO graphic (symbol) chars (<c>=</c> then <c>\</c> → the one
+    /// atom <c>=\</c>), or both alphanumeric / underscore (an identifier / number
+    /// run). Used to decide whether a tight (space-free) operator needs a
+    /// separating space from an operand so writeq round-trips.</summary>
+    private static bool CharsFuse(char a, char b)
+        => (IsSymbolChar(a) && IsSymbolChar(b))
+        || ((char.IsLetterOrDigit(a) || a == '_') && (char.IsLetterOrDigit(b) || b == '_'));
 
     /// <summary>True when every character of <paramref name="name"/> is
     /// an ISO graphic char — a symbolic operator like <c>/</c> or
