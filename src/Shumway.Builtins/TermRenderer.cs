@@ -191,7 +191,16 @@ public static class TermRenderer
                 bool operandParens =
                     (name == "-"
                      && RendersLeadingDigit(engine, engine.GetHeap(functorIdx + 1), options))
-                    || IsBareOperatorAtomCell(engine, engine.GetHeap(functorIdx + 1), options);
+                    || IsBareOperatorAtomCell(engine, engine.GetHeap(functorIdx + 1), options)
+                    // Neumerkel vn #43: a prefix operator applied to an operand
+                    // that is itself an operator of EQUAL priority is
+                    // parenthesised — `- X^2` → `- (X^2)` (`-` fy 200, `^` xfy
+                    // 200). Strict priority (fy allows equal) would omit these,
+                    // but the conformity Codex wants them; the >-priority case is
+                    // already parenthesised by argMax below, so this only adds the
+                    // equal-priority set.
+                    || OperandIsOperatorPriorityAtLeast(
+                           engine, engine.GetHeap(functorIdx + 1), prefixPrec, options);
                 if (needsParens) output.Write('(');
                 WriteAtomName(name, output, options);
                 // Even in tight mode a prefix symbolic operator needs a
@@ -488,6 +497,27 @@ public static class TermRenderer
     {
         Resolve(engine, ref cell);
         return cell.Tag is Tag.Ref or Tag.AttVar;
+    }
+
+    /// <summary>True when <paramref name="cell"/> is a compound whose principal
+    /// functor is a defined infix (arity 2) or postfix (arity 1) operator of
+    /// priority &gt;= <paramref name="threshold"/>. Used to parenthesise a prefix
+    /// operator's operand when the operand is an operator of equal-or-higher
+    /// priority (Neumerkel writeq conformity).</summary>
+    private static bool OperandIsOperatorPriorityAtLeast(
+        Activation engine, Cell cell, int threshold, TermRenderOptions options)
+    {
+        if (options.IgnoreOps || options.Operators is null) return false;
+        Resolve(engine, ref cell);
+        if (cell.Tag != Tag.Str) return false;
+        int fidx = cell.AsHeapIndex;
+        var (atomId, arity) = FunctorTable.Lookup(engine.GetHeap(fidx).AsFunctorId);
+        string nm = NameOfAtom(atomId);
+        if (arity == 2 && options.Operators.TryGetInfix(nm, out int ip, out _))
+            return ip >= threshold;
+        if (arity == 1 && options.Operators.TryGetPostfix(nm, out int pp, out _))
+            return pp >= threshold;
+        return false;
     }
 
     /// <summary>True when every character of <paramref name="name"/> is
