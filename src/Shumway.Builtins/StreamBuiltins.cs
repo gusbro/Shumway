@@ -164,8 +164,12 @@ public static class StreamBuiltins
                 case "alias":
                     if (argCell.Tag == Tag.Ref)
                         throw new PrologRuntimeException("instantiation_error");
+                    // ISO §8.11.5.3: alias(A) with A not an atom makes the whole
+                    // option invalid → domain_error(stream_option, alias(A))
+                    // (GNU + Neumerkel agree), NOT type_error(atom) — consistent
+                    // with the type(...) case below.
                     if (argCell.Tag != Tag.Atom)
-                        throw new PrologRuntimeException("type_error", "atom");
+                        throw new PrologRuntimeException("domain_error", "stream_option");
                     alias = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
                     break;
                 case "type":
