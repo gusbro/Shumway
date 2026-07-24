@@ -314,14 +314,12 @@ public static class AtomCharBuiltins
             i += 2;
             while (i < n && char.IsDigit(s[i])) i++;
         }
-        bool sawExponent = false;
         if (i < n && (s[i] == 'e' || s[i] == 'E'))
         {
             int j = i + 1;
             if (j < n && (s[j] == '+' || s[j] == '-')) j++;
             if (j < n && char.IsDigit(s[j]))
             {
-                sawExponent = true;
                 i = j + 1;
                 while (i < n && char.IsDigit(s[i])) i++;
             }

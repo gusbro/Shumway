@@ -283,7 +283,7 @@ public class TermIoConformance : IDisposable
     {
         var sol = e.Query($"with_output_to(atom(A), {goal}).");
         Assert.True(sol.Success);
-        return sol["A"]!.ToString();
+        return sol["A"]!.ToString()!;
     }
 
     // ---------- write_canonical/1, write_canonical/2 ----------

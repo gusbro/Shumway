@@ -21,7 +21,6 @@ public static partial class MetaBuiltins
         if (System.Threading.Interlocked.Exchange(ref _initialized, 1) != 0)
             return;
 
-        const string FindAgg = "Findall & aggregation";
         const string Control = "Control";
         const string Database = "Database";
         const string Term = "Term inspection & construction";
