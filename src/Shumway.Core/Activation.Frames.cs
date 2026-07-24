@@ -810,6 +810,45 @@ public sealed partial class Activation
     /// call.</summary>
     public void CutToLevel(int slot) => Cut((int)GetY(slot).Data);
 
+    /// <summary>The <c>BP</c> (next-alternative) value written by
+    /// <see cref="SoftCut"/> to mark an ELSE choice point neutralised. Distinct
+    /// from the <c>-1</c> sentinel an IL choice-point frame carries; a real code
+    /// address is a non-negative offset, so <c>-2</c> can never collide.</summary>
+    public const int SoftCutDeadBp = -2;
+
+    /// <summary>ADR-037 — soft cut. <paramref name="barrier"/> names the ELSE
+    /// choice point of an inline <c>( Cond *-> Then ; Else )</c> (captured into a
+    /// Y slot by a <c>get_level_b</c> emitted AFTER the <c>try_me_else</c>). Once
+    /// <c>Cond</c> succeeds this commits away the <c>Else</c> alternative:
+    /// <list type="bullet">
+    /// <item>If the ELSE CP is the current top (<c>Cond</c> left no choice point),
+    /// it is DISCARDED — cut to its parent, keeping all current bindings — so the
+    /// whole <c>*-></c> is deterministic and the top level sees no remaining
+    /// alternative (this is what makes <c>time(true)</c> determinate).</item>
+    /// <item>If <c>Cond</c> left choice points ABOVE the ELSE CP, that frame is a
+    /// middle frame and cannot be popped, so it is NEUTRALISED — its <c>BP</c>
+    /// slot is set to <see cref="SoftCutDeadBp"/>. Backtracking that later reaches
+    /// it (after the condition's CPs are exhausted) pops it and keeps
+    /// backtracking instead of running <c>Else</c>, so the condition's
+    /// non-determinism survives while <c>Else</c> never runs.</item>
+    /// </list>
+    /// A stale barrier (already popped, e.g. by a surrounding <c>catch/3</c>
+    /// unwind) is a no-op, exactly as <see cref="Cut"/> treats one.</summary>
+    public void SoftCut(int barrier)
+    {
+        if (barrier < 0 || barrier > _b)
+            return;
+        int arity = (int)_stack[barrier + CpArityOffset].Data;
+        if (barrier == _b)
+        {
+            // ELSE CP is the top → the condition was deterministic → discard it
+            // (cut to its parent) so no neutralised-but-present frame lingers.
+            Cut((int)_stack[barrier + CpBOffset(arity)].Data);
+            return;
+        }
+        _stack[barrier + CpBpOffset(arity)] = Cell.RawInt(SoftCutDeadBp);
+    }
+
     /// <summary>
     /// Single-pass interleaved trail compaction (Warren's algorithm extended to the extra
     /// trail). Both trails are walked in temporal order: for each surviving extra entry,

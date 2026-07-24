@@ -410,6 +410,15 @@ public sealed partial class BytecodeInterpreter
             }
             int arity = (int)_engine.GetStack(_engine.B + Activation.CpArityOffset).Data;
             int bp = (int)_engine.GetStack(_engine.B + Activation.CpBpOffset(arity)).Data;
+            if (bp == Activation.SoftCutDeadBp)
+            {
+                // ADR-037 — this ELSE choice point was neutralised by soft_cut
+                // once the condition succeeded. Restore its snapshot and pop it
+                // (TrustMe), then keep backtracking: Else never runs, control
+                // falls through to the choice point that preceded the *-> .
+                _engine.TrustMe();
+                continue;
+            }
             // ADR-035 redo port. Raised BEFORE the jump, while B still names
             // the choice point being resumed — the session identifies which
             // goals died (those called after this CP was pushed) from it.

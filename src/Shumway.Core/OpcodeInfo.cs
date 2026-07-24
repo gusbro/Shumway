@@ -184,6 +184,7 @@ public static class OpcodeTable
         Set(Opcode.NeckCut, 1, "neck_cut");
         Set(Opcode.GetLevel, 5, "get_level", OperandKind.Perm);
         Set(Opcode.Cut, 5, "cut", OperandKind.Perm);
+        Set(Opcode.SoftCut, 5, "soft_cut", OperandKind.Perm);   // ADR-037
 
         // Builtin call and specialised builtin opcodes
         Set(Opcode.CallBuiltin, 9, "call_builtin", OperandKind.BuiltinId, OperandKind.Count);

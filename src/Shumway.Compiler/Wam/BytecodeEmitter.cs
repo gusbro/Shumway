@@ -295,6 +295,17 @@ public sealed class BytecodeEmitter
         EmitInt(permSlot);
     }
 
+    /// <summary>ADR-037 — soft cut: neutralise the ELSE choice point named by
+    /// <paramref name="permSlot"/> (captured by a <c>get_level_b</c> emitted
+    /// AFTER the <c>try_me_else</c>), committing an inline
+    /// <c>( Cond *-&gt; Then ; Else )</c> while leaving the condition's choice
+    /// points intact.</summary>
+    public void EmitSoftCut(int permSlot)
+    {
+        _bytes.Add((byte)Opcode.SoftCut);
+        EmitInt(permSlot);
+    }
+
     /// <summary>Appends a raw byte sequence (typically a single clause's compiled
     /// bytecode) to the emitter's buffer. Used by <c>PredicateCompiler</c> when
     /// inlining each clause's body between the choice-point dispatch

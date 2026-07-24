@@ -381,7 +381,12 @@ public static class MetaTransform
             // E) instead of a synthesized 2-clause helper reached by a Call.
             // Parts are plain by eligibility, so there is nothing to transform
             // inside them.
-            if (InlineIteEnabled && Shumway.Compiler.InlineIte.IsEligible(disj))
+            // ADR-037: a soft-cut disjunction ALWAYS takes the inline path when
+            // eligible — soft cut has no synthesized-helper form, its lowering
+            // IS the inline get_level_b/soft_cut. So it inlines regardless of the
+            // general (default-OFF) inline-ITE flag.
+            if ((InlineIteEnabled || Shumway.Compiler.InlineIte.IsSoftCut(disj))
+                && Shumway.Compiler.InlineIte.IsEligible(disj))
             {
                 // Inlined, so no helper is synthesised here — drop any pending
                 // aggregation kind rather than leak it onto a later ;/\+ (ADR-035).

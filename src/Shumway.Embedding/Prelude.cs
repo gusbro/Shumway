@@ -569,7 +569,7 @@ internal static class Prelude
         %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report (SWI-style): inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers.
         time(Goal) :-
             '$time_start'(Mark),
-            (   call(Goal),
+            (   call(Goal) *->
                 '$time_report'(Mark)
             ;   '$time_report'(Mark),
                 fail

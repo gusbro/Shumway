@@ -9,9 +9,12 @@ namespace Shumway.Tests.Embedding;
 /// <c>call/1</c> and prints a per-answer resource report (inferences =
 /// Tier-0 goal dispatches, elapsed seconds, heap cells allocated, Lips) to
 /// the engine's output. Non-determinism is preserved (each further answer
-/// reports the DELTA since the previous one) and exhausting the goal prints
-/// a final report before failing — matching SWI's REPL prototyping
-/// behaviour.
+/// reports the DELTA since the previous one). Since ADR-037 the body uses
+/// <c>( call(Goal) *-> report ; report, fail )</c>: a deterministic goal makes
+/// <c>time/1</c> deterministic (no spurious choice point), and once the goal
+/// succeeds the else is pruned — so there is one report per answer and NO extra
+/// report on exhausting a non-deterministic goal (a det goal cannot both leave
+/// no choice point and fire an exhaustion report).
 /// </summary>
 public class TimeBuiltinTests
 {
@@ -53,9 +56,11 @@ public class TimeBuiltinTests
         var all = System.Linq.Enumerable.ToList(
             e.QueryAll("time(member(X, [a, b, c]))."));
         Assert.Equal(3, all.Count);
-        // One report per answer plus the final exhausted-redo report.
+        // ADR-037: one report per answer. The old ; else branch also printed a
+        // final report when the goal was exhausted on backtracking; *-> prunes
+        // that else once the goal succeeds, so there are exactly 3 (no 4th).
         int reports = sw.ToString().Split("inferences,").Length - 1;
-        Assert.Equal(4, reports);
+        Assert.Equal(3, reports);
     }
 
     [Fact]

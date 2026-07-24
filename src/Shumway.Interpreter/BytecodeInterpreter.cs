@@ -1338,6 +1338,24 @@ public sealed partial class BytecodeInterpreter
                     break;
                 }
 
+                case Opcode.SoftCut:
+                {
+                    // ADR-037 — commit the inline ( Cond *-> Then ; Else ): flush
+                    // pending attribute wakeups first (as Cut does), then
+                    // neutralise the ELSE choice point named by the slot. Cond's
+                    // choice points survive, so no over-pruning.
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int slot = ReadI32(code, codeArr, pc + 1);
+                    int barrier = (int)_engine.GetY(slot).Data;
+                    _engine.SoftCut(barrier);
+                    _engine.SetPc(pc + 5); inClause = true;
+                    break;
+                }
+
                 // ---------- Compound (STR) and list (LIS) — open instructions ----------
 
                 case Opcode.GetStructure:

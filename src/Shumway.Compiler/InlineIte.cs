@@ -27,9 +27,37 @@ public static class InlineIte
             return IsPlainConjunction(ite.Args[0])
                 && IsPlainConjunction(ite.Args[1])
                 && IsPlainConjunction(disj.Args[1]);
+        // ADR-037 — soft cut. Same inline shape as ->, committed with soft_cut
+        // instead of cut. The condition may additionally be a call/N (compiled
+        // as a runtime call, opaque to cut per *-> semantics) — the common form
+        // is `( call(Goal) *-> ... ; ... )`; Then/Else stay strictly plain.
+        if (disj.Args[0] is CompoundTerm { Functor: "*->", Args.Length: 2 } sc)
+            return IsInlineableCondition(sc.Args[0])
+                && IsPlainConjunction(sc.Args[1])
+                && IsPlainConjunction(disj.Args[1]);
         return IsPlainConjunction(disj.Args[0])
             && IsPlainConjunction(disj.Args[1]);
     }
+
+    /// <summary>True if <paramref name="disj"/> is an inline-eligible soft-cut
+    /// disjunction <c>( Cond *-&gt; Then ; Else )</c> — used to force the inline
+    /// path (soft cut has no helper form) regardless of the general inline-ITE
+    /// flag.</summary>
+    public static bool IsSoftCut(CompoundTerm disj) =>
+        disj.Functor == ";" && disj.Args.Length == 2
+        && disj.Args[0] is CompoundTerm { Functor: "*->", Args.Length: 2 };
+
+    /// <summary>A <c>*-&gt;</c> condition the inline lowering can emit: a
+    /// conjunction of goals each of which is plain OR a <c>call/N</c> (the
+    /// runtime meta-call <see cref="ClauseCompiler"/> already compiles, and which
+    /// is opaque to cut — matching soft-cut condition semantics).</summary>
+    private static bool IsInlineableCondition(Term t) => t switch
+    {
+        CompoundTerm { Functor: ",", Args.Length: 2 } conj =>
+            IsInlineableCondition(conj.Args[0]) && IsInlineableCondition(conj.Args[1]),
+        CompoundTerm { Functor: "call" } => true,
+        _ => IsPlainConjunction(t),
+    };
 
     /// <summary>A conjunction tree of plain goals: atoms / compounds that are not
     /// control constructs, cuts, or meta-goals MetaTransform rewrites. A variable

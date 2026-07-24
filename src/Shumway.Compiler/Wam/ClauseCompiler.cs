@@ -213,8 +213,9 @@ public sealed partial class ClauseCompiler
         int iteBarrierCount = 0;
         var iteBarrierSlot = new Dictionary<int, int>();   // goal index → Y slot
         foreach (int gi in inlineItes)
-            if (((CompoundTerm)goals[gi]).Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 })
-                iteBarrierSlot[gi] = iteBarrierBase + iteBarrierCount++;
+            if (((CompoundTerm)goals[gi]).Args[0]
+                is CompoundTerm { Functor: "->" or "*->", Args.Length: 2 })
+                iteBarrierSlot[gi] = iteBarrierBase + iteBarrierCount++;   // ADR-037: *-> too
 
         var state = new CompileState(
             headArgs.Length,
@@ -489,14 +490,23 @@ public sealed partial class ClauseCompiler
         CompileState s, CompoundTerm disj, bool isLast, bool hasFrame, int barrierSlot)
     {
         bool isIte = disj.Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 };
-        Term? condPart = isIte ? ((CompoundTerm)disj.Args[0]).Args[0] : null;
-        Term thenPart = isIte ? ((CompoundTerm)disj.Args[0]).Args[1] : disj.Args[0];
+        // ADR-037 — ( Cond *-> Then ; Else ): same inline shape as ->, committed
+        // with soft_cut instead of cut, and the barrier captured AFTER the
+        // try_me_else (so it names the ELSE CP, not the parent).
+        bool isSoftCut = disj.Args[0] is CompoundTerm { Functor: "*->", Args.Length: 2 };
+        bool hasCond = isIte || isSoftCut;
+        Term? condPart = hasCond ? ((CompoundTerm)disj.Args[0]).Args[0] : null;
+        Term thenPart = hasCond ? ((CompoundTerm)disj.Args[0]).Args[1] : disj.Args[0];
         Term elsePart = disj.Args[1];
 
         // ADR-025 bring-up fix: capture CURRENT B, not B0 — a pre-ITE body
         // call resets B0, so cutting to it pruned a preceding generator's
         // choice points (boyer lost solutions / crashed). get_level_b takes
         // B at the try point: the cut pops exactly the ITE CP + Cond's CPs.
+        // For -> the barrier is captured BEFORE the try_me_else (names the
+        // parent, so cut pops the ITE CP too). For *-> it is captured AFTER
+        // (below), so it names the ITE CP itself and soft_cut neutralises ONLY
+        // that one.
         if (isIte) s.Emitter.EmitGetLevelB(barrierSlot);
         int tryPos = s.Emitter.Position;
         // ELSE target patched below. The arity operand is the body-CP
@@ -506,6 +516,10 @@ public sealed partial class ClauseCompiler
         // interpreter saves 0 argument registers for it either way.
         s.Emitter.EmitTryMeElse(0, arity: OpcodeTable.InlineIteCpArity);
         s.DispatchSites.Add(tryPos + 1);
+        // ADR-037 — *-> captures the barrier AFTER the try_me_else: the slot now
+        // names the ELSE choice point just pushed, so soft_cut neutralises that
+        // one and leaves the condition's CPs (pushed above) alive.
+        if (isSoftCut) s.Emitter.EmitGetLevelB(barrierSlot);
         // The emitter's Y-initialization tracking is per-EMISSION-ORDER, but at
         // runtime only ONE branch executes: the else branch must be emitted as if
         // starting from the try-point state (else a variable first bound in the
@@ -513,11 +527,14 @@ public sealed partial class ClauseCompiler
         // an uninitialized-slot read), and after the join only variables
         // initialized on BOTH paths may be assumed initialized.
         var initAtTry = new HashSet<string>(s.YsInitialized);
-        if (isIte)
+        if (hasCond)
         {
             foreach (var g in FlattenConjunction(condPart!))
                 CompileBodyGoal(s, g, isLast: false, hasFrame, s.PermanentCount);
-            s.Emitter.EmitCut(barrierSlot);   // commit: pop the ITE CP (+ Cond's CPs)
+            if (isSoftCut)
+                s.Emitter.EmitSoftCut(barrierSlot);   // ADR-037: neutralise ONLY the ELSE CP
+            else
+                s.Emitter.EmitCut(barrierSlot);       // ->: pop the ITE CP (+ Cond's CPs)
         }
         // Branch-tail LCO (ADR-025 follow-up): when the ITE is the clause's
         // LAST goal, each branch's last goal compiles as a last goal —

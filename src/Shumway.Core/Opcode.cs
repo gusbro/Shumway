@@ -325,23 +325,32 @@ public enum Opcode : byte
     // is attached, and release code never contains it at all.
     DebugPort = 0x65,
 
+    // ADR-037 — soft cut. Commits the inline ( Cond *-> Then ; Else ) once Cond
+    // succeeds by NEUTRALISING only the ELSE choice point (captured into Y[slot]
+    // by a get_level_b emitted AFTER the try_me_else, so the slot names the ELSE
+    // CP itself, not the parent as `cut` does). Cond's choice points, pushed
+    // above the ELSE CP, survive — its non-determinism is preserved. Mirrors GNU
+    // Prolog's soft_cut(y(0)). 5 bytes: op + slot(4). See Activation.SoftCut.
+    //   soft_cut <slot:int32>
+    SoftCut = 0x66,
+
     // Extension escape — reserved, never dispatched.
-    ReservedExtension = 0x66,
+    ReservedExtension = 0x67,
 
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
     // block stays hole-free.
-    UnifyEq = 0x67,
-    IsOp = 0x68,
-    LessThan = 0x69,
-    GreaterThan = 0x6A,
-    LessEq = 0x6B,
-    GreaterEq = 0x6C,
-    ArithEq = 0x6D,
-    ArithNotEq = 0x6E,
-    StructEq = 0x6F,
-    StructNotEq = 0x70,
+    UnifyEq = 0x68,
+    IsOp = 0x69,
+    LessThan = 0x6A,
+    GreaterThan = 0x6B,
+    LessEq = 0x6C,
+    GreaterEq = 0x6D,
+    ArithEq = 0x6E,
+    ArithNotEq = 0x6F,
+    StructEq = 0x70,
+    StructNotEq = 0x71,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>
