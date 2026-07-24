@@ -528,12 +528,18 @@ public static class MetaTransform
         };
     }
 
-    /// <summary>Rewrites every cut-transparent <c>!</c> at the
-    /// conjunction level of a branch term into <c>'$call'(!, K)</c> (the
-    /// barrier cut). Nested <c>;</c>/<c>-&gt;</c> inside the branch
-    /// are left for the recursive transform (their own helper synthesis
-    /// replaces THEIR branch cuts with the same K); cut-opaque subterms are
-    /// untouched.</summary>
+    /// <summary>Rewrites every cut-transparent <c>!</c> in a branch term into
+    /// <c>'$call'(!, K)</c> (the barrier cut). Traverses the SAME transparent
+    /// positions as <see cref="HasTransparentBranchCut"/>: conjunction, both arms
+    /// of a nested <c>;</c>, and the then of a nested <c>-&gt;</c> — but NOT a
+    /// condition, <c>\+</c>, or meta-goal argument (cut-opaque, left untouched).
+    ///
+    /// <para>Descending into nested <c>;</c>/<c>-&gt;</c> is required for the
+    /// barrier variable K to appear in the ENCLOSING helper's free variables (a
+    /// nested <c>!</c> left as a bare <c>!</c> would be invisible to that helper's
+    /// free-var collection, so K would not thread down and the inner helper would
+    /// read a garbage barrier). The recursive transform of the rewritten term sees
+    /// <c>'$call'(!, K)</c>, not a bare <c>!</c>, so it does not re-wrap it.</para></summary>
     private static Term ReplaceTransparentCuts(Term branch, string cutK)
     {
         switch (branch)
@@ -545,17 +551,32 @@ public static class MetaTransform
                     new VarTerm(cutK),
                 });
             case CompoundTerm { Functor: ",", Args.Length: 2 } c:
+                return Rebuild2(c, ",",
+                    ReplaceTransparentCuts(c.Args[0], cutK),
+                    ReplaceTransparentCuts(c.Args[1], cutK));
+            case CompoundTerm { Functor: ";", Args.Length: 2 } c:
             {
-                Term l = ReplaceTransparentCuts(c.Args[0], cutK);
-                Term r = ReplaceTransparentCuts(c.Args[1], cutK);
-                if (ReferenceEquals(l, c.Args[0]) && ReferenceEquals(r, c.Args[1]))
-                    return branch;
-                return new CompoundTerm(",", new[] { l, r }) { Position = c.Position };
+                // Left arm: a ( Cond -> Then ) keeps Cond opaque, Then transparent.
+                Term newLeft = c.Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 } ite
+                    ? Rebuild2(ite, "->", ite.Args[0], ReplaceTransparentCuts(ite.Args[1], cutK))
+                    : ReplaceTransparentCuts(c.Args[0], cutK);
+                return Rebuild2(c, ";", newLeft, ReplaceTransparentCuts(c.Args[1], cutK));
             }
+            case CompoundTerm { Functor: "->", Args.Length: 2 } c:
+                // Standalone if-then: then transparent, cond opaque.
+                return Rebuild2(c, "->", c.Args[0], ReplaceTransparentCuts(c.Args[1], cutK));
             default:
                 return branch;
         }
     }
+
+    /// <summary>Rebuilds a 2-arg compound only if an argument actually changed,
+    /// preserving the term's <see cref="Term.Position"/> and letting callers rely
+    /// on reference identity when nothing was rewritten.</summary>
+    private static Term Rebuild2(CompoundTerm original, string functor, Term a0, Term a1)
+        => ReferenceEquals(a0, original.Args[0]) && ReferenceEquals(a1, original.Args[1])
+            ? original
+            : new CompoundTerm(functor, new[] { a0, a1 }) { Position = original.Position };
 
     /// <summary>True iff <paramref name="goal"/> is an atom / compound that
     /// the static call/N rewrite is allowed to extend. Excludes
