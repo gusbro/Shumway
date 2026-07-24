@@ -338,6 +338,17 @@ public sealed partial class Activation
     /// by the dispatchers right before raising existence_error.</summary>
     public Func<int, int>? ResolveLateHelper { get; set; }
 
+    /// <summary>ISO number_chars/number_codes reads the characters as a TERM that
+    /// must be a number (§8.16.8) — so `'-'1` (a quoted prefix minus) reads as -1,
+    /// as does `- /**/1`. The custom number-token parser in
+    /// <c>AtomCharBuiltins.TryBuildPrologNumber</c> handles the common cases; this
+    /// host hook is the fallback that runs the FULL term reader when that fails,
+    /// returning the boxed number (long / double / System.Numerics.BigInteger) or
+    /// null when the chars are not a number. Wired by <c>PrologEngine</c> at query
+    /// setup; kept as <c>object?</c> so <c>Shumway.Core</c> need not reference the
+    /// parser's AST types.</summary>
+    public Func<string, object?>? NumberFromChars { get; set; }
+
     /// <summary>Absolute byte position of the per-query fail-stub
     /// (ADR-015) — a tiny <c>call_builtin fail/0</c>
     /// emitted in the prefix. Dynamic predicates' last-clause chain

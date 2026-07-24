@@ -539,6 +539,51 @@ public static partial class MetaBuiltins
         }
     }
 
+    /// <summary>The <see cref="Activation.NumberFromChars"/> hook: reads
+    /// <paramref name="chars"/> as a full Prolog TERM (the ISO number_chars
+    /// semantics) and, if it is a number, returns its boxed value
+    /// (<see cref="long"/> / <see cref="double"/> /
+    /// <see cref="System.Numerics.BigInteger"/>); otherwise <c>null</c>. Lets
+    /// <c>AtomCharBuiltins</c> resolve the operator/quoting cases its token parser
+    /// cannot — `'-'1` → -1, `- /**/1` → -1 — while a non-number (`'+'1` → +(1),
+    /// `1+1`, an atom) yields null and stays a syntax error. A trailing space +
+    /// dot terminate the clause (space so a graphic-atom tail can't fuse the dot).</summary>
+    private static object? NumberFromCharsHook(Activation engine, string chars)
+    {
+        // number_chars is STRICTER than a clause read: the chars must be exactly a
+        // number, with no TRAILING content — `"3 "` and `"3."` are syntax errors,
+        // though a clause read would skip the trailing space / treat `.` as the
+        // terminator. So reject a trailing-whitespace tail, and read WITHOUT a dot
+        // (ReadTerm) then require true EOF — a trailing `.` leaves a Dot token, so
+        // IsAtEnd is false and `"3."` is rejected. (Leading layout is fine.)
+        if (chars.Length != chars.TrimEnd().Length) return null;
+        Term parsed;
+        try
+        {
+            var parser = new Shumway.Compiler.Parsing.Parser(
+                new Shumway.Compiler.Lexer.Lexer(chars), LiveOperators(engine));
+            parsed = parser.ReadTerm();
+            if (!parser.IsAtEnd()) return null;   // trailing junk → not a number
+        }
+        catch (Exception ex) when (ex is Shumway.Compiler.Parsing.ParseException
+                                    or Shumway.Compiler.Lexer.LexerException)
+        {
+            return null;   // not parseable → not a number
+        }
+        return parsed switch
+        {
+            Shumway.Compiler.Ast.IntTerm it => it.Value,
+            Shumway.Compiler.Ast.BigIntTerm bt => bt.Value,
+            Shumway.Compiler.Ast.FloatTerm ft => ft.Value,
+            _ => null,
+        };
+    }
+
+    /// <summary>Installs <see cref="NumberFromCharsHook"/> on
+    /// <paramref name="engine"/> — called from query setup.</summary>
+    internal static void WireNumberFromChars(Activation engine)
+        => engine.NumberFromChars = s => NumberFromCharsHook(engine, s);
+
     /// <summary>True when the accumulated read/1 text holds no term — only
     /// whitespace, <c>%</c> line comments, and <c>/* */</c> block comments.</summary>
     private static bool IsLayoutOnly(System.Text.StringBuilder sb)

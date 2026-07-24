@@ -1313,6 +1313,9 @@ public sealed partial class PrologEngine
             new List<Shumway.Core.SwitchTable>(linkResult.SwitchTables);
         engine.SwitchTables = mutableSwitchTables;
         engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
+        // ISO number_chars/number_codes fall back to the full term reader for the
+        // operator/quoting cases the token parser can't cover (`'-'1` → -1).
+        MetaBuiltins.WireNumberFromChars(engine);
 
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals,

@@ -188,6 +188,26 @@ public static class AtomCharBuiltins
                     return floatIdx >= 0
                         ? engine.UnifyRegisterWithHeapAt(0, floatIdx)
                         : engine.UnifyRegisterWithCell(0, numResult);
+                // ISO §8.16.8 reads the chars as a TERM that must be a number, so
+                // `'-'1` (quoted prefix minus) is -1 and `'\n-' 3` is -3 — cases the
+                // token parser above doesn't cover. Fall back to the host's full
+                // term reader (wired on the engine); a non-number result stays a
+                // syntax error.
+                if (engine.NumberFromChars?.Invoke(s) is { } boxed)
+                {
+                    if (boxed is double d)
+                        return engine.UnifyRegisterWithHeapAt(0, engine.MakeFloat(d));
+                    System.Numerics.BigInteger bi = boxed switch
+                    {
+                        long l => l,
+                        System.Numerics.BigInteger b => b,
+                        int ii => ii,
+                        _ => throw new PrologRuntimeException("syntax_error", "illegal_number"),
+                    };
+                    Cell c = default;
+                    FinishInteger(engine, bi, ref c);
+                    return engine.UnifyRegisterWithCell(0, c);
+                }
                 // Text that does not denote a number is a (catchable) syntax error.
                 throw new PrologRuntimeException("syntax_error", "illegal_number");
             }
@@ -233,12 +253,12 @@ public static class AtomCharBuiltins
         // may be preceded by `/* */` or a `%` line comment.
         i = SkipLayout(s, i);
         // ISO §6.3.1: a numeric constant has no leading '+' — only a '-' sign
-        // (which yields a negative number). Layout after the sign is allowed and
-        // includes comments — but ONLY when there is real WHITESPACE right after
-        // the '-'. A comment glued to the sign (`-/**/1`) is not layout: `-/**/`
-        // is all graphic chars, so the tokenizer reads it as one graphic ATOM,
-        // not a sign + comment. So `- /**/1` is -1 (#57) while `-/**/1` is a
-        // syntax error (#24); `-1` (digit glued to the sign) stays a literal.
+        // (which yields a negative number). Layout after the sign includes
+        // comments — but ONLY after real WHITESPACE: `- /**/1` is -1 (Neumerkel
+        // number_chars_cont row 40) exactly as `- 1` is (row 36). A comment glued
+        // to the sign (`-/**/1`, row 41) is NOT layout — `-/**/` is all graphic
+        // chars, one atom — so it stays a syntax error; `-1` (digit glued) is a
+        // literal.
         bool neg = false;
         if (i < n && s[i] == '-')
         {
