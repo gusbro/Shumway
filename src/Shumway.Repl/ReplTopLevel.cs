@@ -31,6 +31,13 @@ internal static class ReplTopLevel
             return 0;
         }
 
+        // Route all console output through a column tracker so the top-level can
+        // start an answer on a fresh line when a goal left the cursor mid-line
+        // (see EnsureLineStart). Must precede `new PrologEngine()` so the engine's
+        // default Out (= Console.Out) is the tracked writer, and precede any write.
+        _outputTracker = new ColumnTrackingWriter(Console.Out);
+        Console.SetOut(_outputTracker);
+
         // SHUMWAY_TIMING=1 prints to stderr a per-phase breakdown of
         // wall time spent in (1) process startup + bundle/consult load
         // versus (2) the actual SHUMWAY_GOAL execution. Lets benchmarks
@@ -464,6 +471,7 @@ internal static class ReplTopLevel
     /// editor's Tab handler can query for completion candidates.</summary>
     private static LineEditor? _lineEditor;
     private static PrologEngine? _replEngine;
+    private static ColumnTrackingWriter? _outputTracker;
     private static LineEditor LineEd => _lineEditor ??=
         new LineEditor(
             new HistoryStore(HistoryStore.DefaultPath()),
@@ -664,21 +672,18 @@ internal static class ReplTopLevel
         }
     }
 
-    /// <summary>SWI-style: when the just-run goal left the terminal cursor
-    /// somewhere other than column 0 (a bare <c>writeq/1</c>, <c>write/1</c>,
-    /// etc. with no trailing newline), emit a newline so the top-level's
-    /// <c>true</c> / <c>false</c> / bindings begin on a fresh line instead of
-    /// running into the goal's output. Guarded: a redirected / non-interactive
-    /// stdout has no cursor, so the check is skipped there (no spurious blank
-    /// lines in captured output).</summary>
+    /// <summary>SWI-style: when the just-run goal left the cursor somewhere other
+    /// than column 0 (a bare <c>writeq/1</c>, <c>write/1</c>, etc. with no trailing
+    /// newline), emit a newline so the top-level's <c>true</c> / <c>false</c> /
+    /// bindings begin on a fresh line instead of running into the goal's output.
+    /// The column is tracked on the output we write (see
+    /// <see cref="ColumnTrackingWriter"/>), so this is correct whether stdout is a
+    /// terminal or is redirected / captured — matching SWI, which tracks the stream
+    /// column rather than querying a (possibly absent) hardware cursor.</summary>
     private static void EnsureLineStart()
     {
-        try
-        {
-            if (!Console.IsOutputRedirected && Console.CursorLeft != 0)
-                Console.WriteLine();
-        }
-        catch { /* no console (host without a terminal) — nothing to align. */ }
+        if (_outputTracker is { AtLineStart: false })
+            Console.WriteLine();
     }
 
     /// <summary>Advances <paramref name="solutions"/> by one solution while a
