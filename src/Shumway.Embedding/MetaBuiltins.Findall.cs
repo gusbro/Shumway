@@ -249,103 +249,13 @@ public static partial class MetaBuiltins
         return list;
     }
 
-    /// <summary><c>bagof(Template, Goal, Bag)</c> — the variable-goal fallback
-    /// for bagof/3. When <c>Goal</c> is callable at compile time the
-    /// MetaTransform rewrite handles bagof/3 in the live engine with full
-    /// witness grouping; this builtin only runs when <c>Goal</c> is
-    /// a variable bound at run time, and keeps the pre-behaviour —
-    /// "findall + fail-on-empty", no witness grouping. <c>Var^Goal</c>
-    /// existential wrappers are stripped.</summary>
-    public static bool Bagof(Activation engine)
-    {
-        var results = CollectSolutions(engine, stripExistentials: true);
-        if (results.Count == 0) return false;
-        return BindList(engine, results);
-    }
-
-    /// <summary><c>setof(Template, Goal, Set)</c> — the variable-goal fallback
-    /// for setof/3 (see <see cref="Bagof"/> for the bagof/setof split). Sorts
-    /// the bag into standard order and removes duplicates, but keeps the
-    /// pre-no-grouping behaviour; the compile-time path with full
-    /// witness grouping is the MetaTransform rewrite. The sort runs at the AST
-    /// level via <see cref="TermStandardOrder.Compare"/>.</summary>
-    public static bool Setof(Activation engine)
-    {
-        var results = CollectSolutions(engine, stripExistentials: true);
-        if (results.Count == 0) return false;
-
-        results.Sort(TermStandardOrder.Compare);
-
-        // Dedup adjacent equals in place.
-        int write = 1;
-        for (int read = 1; read < results.Count; read++)
-        {
-            if (TermStandardOrder.Compare(results[read], results[write - 1]) != 0)
-                results[write++] = results[read];
-        }
-        if (write < results.Count) results.RemoveRange(write, results.Count - write);
-
-        return BindList(engine, results);
-    }
-
-    // forall/2 is now a prelude predicate (live-engine \+ (call(C), \+ call(A)));
-    // the old isolated-sub-engine builtin was removed (it hid the called goals'
-    // assert/retract). See Prelude forall/2.
-
-    /// <summary>Shared workhorse for findall/bagof/setof: reads Template and
-    /// Goal, optionally strips <c>^/2</c> existential wrappers from the
-    /// goal, runs it in a peer engine, and projects each solution's
-    /// bindings through Template. The result list is built by the
-    /// per-builtin tail logic (which decides what to do on empty).</summary>
-    private static List<Term> CollectSolutions(Activation engine, bool stripExistentials)
-    {
-        if (engine.Host is not PrologEngine host)
-            throw new InvalidOperationException(
-                "Collection meta-builtins require the engine to be hosted by "
-                + "a PrologEngine. Activation.Host is "
-                + (engine.Host?.GetType().Name ?? "null") + ".");
-
-        Term template = MaterializeRegister(engine, 0);
-        Term goal = MaterializeRegister(engine, 1);
-        // ISO §8.10.1.3 / §8.10.2.3 / §8.10.3.3 — Goal must
-        // be callable. A var (after materialisation) is instantiation_error;
-        // anything else non-callable is type_error(callable, _).
-        if (goal is VarTerm)
-            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        if (goal is not AtomTerm && goal is not CompoundTerm)
-            throw new Shumway.Core.PrologRuntimeException("type_error", "callable");
-        if (stripExistentials) goal = StripExistentials(goal);
-
-        var sub = host.CreateSubEngine();
-        var results = new List<Term>();
-        foreach (Solution sol in sub.QueryAll(goal))
-            results.Add(Substitute(template, sol.Bindings));
-        return results;
-    }
-
-    /// <summary>Builds a Prolog list from the collected results and unifies
-    /// it with the caller's third argument.</summary>
-    private static bool BindList(Activation engine, IReadOnlyList<Term> results)
-    {
-        Term listTerm = new AtomTerm("[]");
-        for (int i = results.Count - 1; i >= 0; i--)
-            listTerm = new CompoundTerm(".", new[] { results[i], listTerm });
-
-        Cell listCell = Materializer.MaterializeAsCell(engine, listTerm);
-        return engine.UnifyRegisterWithCell(2, listCell);
-    }
-
-    /// <summary>Strips any leading <c>^/2</c> existential wrappers off a goal.
-    /// <c>X^Y^Goal</c> reduces to <c>Goal</c>; the stripped variables become
-    /// ordinary free variables of the inner goal. Without solution grouping
-    /// this is purely a no-op syntactically — every variable is already
-    /// existential — but stripping makes ISO-compliant user code work.</summary>
-    private static Term StripExistentials(Term goal)
-    {
-        while (goal is CompoundTerm c && c.Functor == "^" && c.Args.Length == 2)
-            goal = c.Args[1];
-        return goal;
-    }
+    // findall/3, bagof/3, setof/3 and forall/2 are now prelude predicates
+    // (live-engine collect over call/1 + the $findall_* collectors); the old
+    // isolated-sub-engine builtins were removed — they lacked the parent's
+    // bundle-precompiled definitions and hid the goal's side effects. The
+    // witness-grouping $bagof_collect / $setof_collect below still serve the
+    // MetaTransform callable-goal rewrite. See Prelude findall/3, bagof/3,
+    // setof/3, forall/2.
 
     /// <summary>Reads the term currently bound in <c>X[<paramref name="regIdx"/>]</c>
     /// as an AST <see cref="Term"/>. Wraps the register's cell on the heap
@@ -444,31 +354,6 @@ public static partial class MetaBuiltins
                 string s = t.ToString() ?? "";
                 sb.Append('o').Append(s.Length).Append('_').Append(s);
                 break;
-        }
-    }
-
-    /// <summary>Walks <paramref name="term"/> and replaces every
-    /// <see cref="VarTerm"/> whose name appears in
-    /// <paramref name="bindings"/> with its bound value. Used by
-    /// <see cref="Findall"/> to project the sub-engine's solution bindings
-    /// through the user-supplied template.</summary>
-    private static Term Substitute(Term term, IReadOnlyDictionary<string, Term> bindings)
-    {
-        switch (term)
-        {
-            case VarTerm v when bindings.TryGetValue(v.Name, out Term? bound):
-                // Recurse: a binding might itself contain variables that we
-                // need to further substitute (the sub-engine reports
-                // dereferenced terms, but a residual unbound var has its
-                // _GN name preserved and shouldn't be re-walked endlessly).
-                return Substitute(bound, bindings);
-            case CompoundTerm c:
-                var newArgs = new Term[c.Args.Length];
-                for (int i = 0; i < c.Args.Length; i++)
-                    newArgs[i] = Substitute(c.Args[i], bindings);
-                return new CompoundTerm(c.Functor, newArgs);
-            default:
-                return term;
         }
     }
 

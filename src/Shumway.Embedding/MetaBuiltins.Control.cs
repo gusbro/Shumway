@@ -1240,22 +1240,6 @@ public static partial class MetaBuiltins
         return list;
     }
 
-    /// <summary><c>findall(Template, Goal, List)</c> — runs <c>Goal</c> in a
-    /// fresh peer engine, captures the value of <c>Template</c> at every
-    /// solution, and unifies <c>List</c> with the resulting list (empty when
-    /// no solution exists).
-    ///
-    /// <para>The sub-engine approach sidesteps choice-point stack manipulation
-    /// on the calling engine. The trade-off is that <c>Template</c> and
-    /// <c>Goal</c> have to round-trip through the AST <see cref="Term"/>
-    /// representation — variable identity is preserved via the synthetic
-    /// <c>_GN</c> names <see cref="TermReader"/> assigns, which is why the
-    /// substitution step at the end works.</para></summary>
-    public static bool Findall(Activation engine)
-    {
-        var results = CollectSolutions(engine, stripExistentials: false);
-        return BindList(engine, results);
-    }
 
     /// <summary><c>'$findall_push'/0</c> — opens a fresh
     /// solution buffer on the engine's findall stack. Emitted by the
