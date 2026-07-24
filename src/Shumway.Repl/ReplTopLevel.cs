@@ -629,7 +629,7 @@ internal static class ReplTopLevel
         if (!MoveNextWatched(solutions, cts, out bool aborted))
         {
             if (aborted) Console.WriteLine("% Execution aborted.");
-            else if (engine.LastHaltExitCode is null) Console.WriteLine("false.");
+            else if (engine.LastHaltExitCode is null) { EnsureLineStart(); Console.WriteLine("false."); }
             return;
         }
         while (true)
@@ -639,6 +639,10 @@ internal static class ReplTopLevel
             try { width = Console.WindowWidth; }
             catch { width = 80; }
             if (width < 20) width = 80;
+            // SWI-style: if the goal left the cursor mid-line (e.g. a bare
+            // writeq/1 with no trailing nl), start the answer on its own line
+            // so the `true`/bindings don't run into the goal's output.
+            EnsureLineStart();
             Console.Write(FormatSolutionWithResiduals(engine, solution, userVars, width));
             if (solution.IsLast)
             {
@@ -654,10 +658,27 @@ internal static class ReplTopLevel
             if (!MoveNextWatched(solutions, cts, out aborted))
             {
                 if (aborted) Console.WriteLine("% Execution aborted.");
-                else if (engine.LastHaltExitCode is null) Console.WriteLine("false.");
+                else if (engine.LastHaltExitCode is null) { EnsureLineStart(); Console.WriteLine("false."); }
                 return;
             }
         }
+    }
+
+    /// <summary>SWI-style: when the just-run goal left the terminal cursor
+    /// somewhere other than column 0 (a bare <c>writeq/1</c>, <c>write/1</c>,
+    /// etc. with no trailing newline), emit a newline so the top-level's
+    /// <c>true</c> / <c>false</c> / bindings begin on a fresh line instead of
+    /// running into the goal's output. Guarded: a redirected / non-interactive
+    /// stdout has no cursor, so the check is skipped there (no spurious blank
+    /// lines in captured output).</summary>
+    private static void EnsureLineStart()
+    {
+        try
+        {
+            if (!Console.IsOutputRedirected && Console.CursorLeft != 0)
+                Console.WriteLine();
+        }
+        catch { /* no console (host without a terminal) — nothing to align. */ }
     }
 
     /// <summary>Advances <paramref name="solutions"/> by one solution while a
