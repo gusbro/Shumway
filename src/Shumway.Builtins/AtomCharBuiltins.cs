@@ -364,6 +364,11 @@ public static class AtomCharBuiltins
         if (c != '\\')
         {
             if (i + 1 != n) return false;
+            // ISO §6.3.7 / §6.4.2.1: a raw control character (newline, tab, …)
+            // is not a valid char in a 0'c literal — it must be escaped
+            // (0'\n). Reject it so `number_chars(N, "0'<newline>")` is a
+            // syntax error, mirroring the lexer's quoted-atom rule.
+            if (char.IsControl(c)) return false;
             code = c;
             return true;
         }
