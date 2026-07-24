@@ -517,15 +517,19 @@ public sealed partial class IlPredicateCompiler
         return CanCompileCore(predicate, calleeMap, allowIndexedDispatch: true);
     }
 
-    /// <summary>Eligibility check with control over the indexed-
-    /// dispatch shape. The runtime promotion path allows it (fast O(1)
-    /// dispatch); the persisted-bundle path
-    /// (<see cref="PersistedIlBuilder.CanPersist"/>) passes
-    /// <paramref name="allowIndexedDispatch"/>=false because its IL bakes a
-    /// runtime model-holder key that a fresh process wouldn't have — those
-    /// predicates fall back to bytecode in the bundle. Both paths still
-    /// accept the older indexed-atom / try-me-else / switched-chain
-    /// shapes.</summary>
+    /// <summary>Eligibility check with control over the indexed-dispatch shape.
+    /// Both the runtime promotion path and the persisted-bundle path
+    /// (<see cref="PersistedIlBuilder.CanPersist"/>) pass
+    /// <paramref name="allowIndexedDispatch"/>=<c>true</c> today: the full indexed
+    /// IL is process-independent (its functor id is baked via the patch mechanism
+    /// and its dispatch model is rebuilt lazily from the linked code + switch
+    /// tables at first call — or decoded from the persisted <see cref="IlIndexGraph"/>),
+    /// so no build-time runtime state crosses the process boundary. The
+    /// <c>false</c> path (skip the full indexed, keep only the older indexed-atom /
+    /// try-me-else / switched-chain fallbacks) is currently unused, retained for a
+    /// caller that needs it. NB the fallbacks still carry a defensive inline-ITE
+    /// reject; it never decides for an indexed <c>*-&gt;</c>/<c>-&gt;</c> because the
+    /// full indexed handles those first (see the ADR-037 indexed IL tests).</summary>
     internal bool CanCompileCore(CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool allowIndexedDispatch)
     {
