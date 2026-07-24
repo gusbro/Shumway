@@ -1188,7 +1188,11 @@ public sealed partial class Activation
     {
         double a = Cell.DecodeFloat(aHeader, _heap[aHeader.FloatPairedIndex]);
         double b = Cell.DecodeFloat(bHeader, _heap[bHeader.FloatPairedIndex]);
-        return BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b);
+        // Value equality, so -0.0 unifies with 0.0 (IEEE: -0.0 == 0.0),
+        // matching ==/2's value comparison (`number_chars(0.0, "-0.0")` must
+        // succeed). The NaN clause keeps a NaN unifying with a NaN — value
+        // `==` is false for NaN, but there is conceptually one NaN in Prolog.
+        return a == b || (double.IsNaN(a) && double.IsNaN(b));
     }
 
     /// <summary>

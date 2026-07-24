@@ -92,14 +92,15 @@ public class FloatTests
     }
 
     [Fact]
-    public void Unify_PositiveZeroVsNegativeZero_Fails()
+    public void Unify_PositiveZeroVsNegativeZero_Unifies()
     {
-        // == returns true for these, but their bit patterns differ. Unify uses bit
-        // comparison, so they don't unify — matching the "structural equality" intent.
+        // IEEE: -0.0 == 0.0. Unification is value-based (matching ==/2), so
+        // 0.0 and -0.0 unify — `number_chars(0.0, "-0.0")` must succeed
+        // (Neumerkel conformity #64). NaN still unifies with NaN (test above).
         var engine = new Activation();
         int a = engine.MakeFloat(0.0);
         int b = engine.MakeFloat(-0.0);
-        Assert.False(engine.Unify(a, b));
+        Assert.True(engine.Unify(a, b));
     }
 
     [Fact]

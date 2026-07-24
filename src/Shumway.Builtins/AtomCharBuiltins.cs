@@ -179,7 +179,7 @@ public static class AtomCharBuiltins
         //      that only has unbound elements/tail falls through to generate.
         if (strCell.Tag != Tag.Ref)
         {
-            string s = AnalyzeCharList(engine, strCell, asCodes, out bool hasUnbound);
+            string s = AnalyzeCharList(engine, strCell, asCodes, numIsNumber, out bool hasUnbound);
             if (!hasUnbound)
             {
                 // Full Prolog number syntax (§6.4.4): radix (0x/0o/0b), char
@@ -624,7 +624,7 @@ public static class AtomCharBuiltins
     /// string is meaningful only when <paramref name="hasUnbound"/> is
     /// false.</summary>
     private static string AnalyzeCharList(
-        Activation engine, Cell listCell, bool asCodes, out bool hasUnbound)
+        Activation engine, Cell listCell, bool asCodes, bool numberBound, out bool hasUnbound)
     {
         hasUnbound = false;
         var sb = new StringBuilder();
@@ -636,6 +636,32 @@ public static class AtomCharBuiltins
             if (!asCodes) throw new PrologRuntimeException("type_error", "character");
             sb.Append(engine.ReadPstrChain(cursor, out cursor));
             cursor = Resolve(engine, cursor);
+        }
+        // ISO §8.16.8.3.a — when Number is a VARIABLE, a partial list (unbound
+        // tail) is instantiation_error, which takes precedence over a type_error
+        // on any element. Detect it by walking the spine first, so
+        // `number_chars(N, [1|_])` reports instantiation_error (via the
+        // hasUnbound path the caller checks) rather than type_error(character) on
+        // the head 1. Gated on !numberBound: when Number is BOUND we are
+        // generating + unifying, so a partial list is fine but a bad element
+        // (`number_chars(1, [[]|_])`) must still type_error — the element walk
+        // below does that. A proper list always gets the element checks; an
+        // improper (non-list) tail falls through to type_error(list) below.
+        if (!numberBound)
+        {
+            Cell spine = cursor;
+            int spineSteps = 0, spineCap = engine.HeapTop + 1;
+            while (spine.Tag == Tag.Lis)
+            {
+                if (++spineSteps > spineCap)
+                    throw new PrologRuntimeException("type_error", "list");
+                spine = Resolve(engine, engine.GetHeap(spine.AsHeapIndex + 1));
+            }
+            if (spine.Tag == Tag.Ref || spine.Tag == Tag.AttVar)
+            {
+                hasUnbound = true;
+                return sb.ToString();
+            }
         }
         // A proper list has at most one cons cell per heap cell; walking more
         // than that means the list is cyclic (e.g. L = ['1'|L]). Bound the walk
