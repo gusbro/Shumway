@@ -115,6 +115,11 @@ internal static class ReplTopLevel
             .ToArray();
 
         var engine = new PrologEngine();
+        // Point the engine's Out directly at the column tracker (Console.Out is the
+        // synchronized wrapper SetOut installed, which hides ILineStartAware). Set
+        // before the stream registry is built so user_output writes and time/1's
+        // report share the tracker and can query the column. Must precede any query.
+        engine.Out = _outputTracker!;
         // Stash the engine reference so the line editor's
         // Tab completer (constructed lazily on first ReadLine) can
         // query for predicate names.

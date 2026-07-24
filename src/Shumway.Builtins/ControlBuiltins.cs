@@ -84,7 +84,13 @@ public static class ControlBuiltins
         long dInf = inf - inf0;
         long dCells = cells - cells0;
         double lips = dInf / (secs > 1e-9 ? secs : 1e-9);
-        engine.Out.WriteLine(string.Format(
+        var w = engine.Out;
+        // Start the report on a fresh line if the goal left the cursor mid-line
+        // (e.g. time((write(x), true))) — same rule the top-level uses. AtLineStart
+        // is tracked on the bytes written, so this is correct under redirection.
+        if (w is ILineStartAware { AtLineStart: false })
+            w.Write('\n');
+        w.WriteLine(string.Format(
             System.Globalization.CultureInfo.InvariantCulture,
             "% {0:N0} inferences, {1:0.000} seconds, {2:N0} heap cells ({3:N0} Lips)",
             dInf, secs, dCells, lips));

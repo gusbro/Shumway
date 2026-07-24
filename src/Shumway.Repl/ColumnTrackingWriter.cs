@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text;
+using Shumway.Core;
 
 namespace Shumway.Repl;
 
@@ -14,7 +15,7 @@ namespace Shumway.Repl;
 /// <c>Console.CursorLeft</c>, so it works identically whether output is a
 /// terminal or is redirected / captured (a pipe has no queryable cursor).</para>
 /// </summary>
-internal sealed class ColumnTrackingWriter : TextWriter
+internal sealed class ColumnTrackingWriter : TextWriter, ILineStartAware
 {
     private readonly TextWriter _inner;
 
