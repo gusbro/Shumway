@@ -17,7 +17,11 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
         string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
-            source += ".";
+            // Space before the dot: a source ending in a graphic-char atom
+            // (`*`, `*/`, `.+`) would otherwise fuse the terminator into the
+            // atom (`*.` lexes as one atom, not `*` + end), so the clause reads
+            // with no terminator dot. The space keeps the dot a real end token.
+            source += " .";
 
         Term parsed = ParseClauseText(engine, source);
 
@@ -723,7 +727,11 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
         string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
-            source += ".";
+            // Space before the dot: a source ending in a graphic-char atom
+            // (`*`, `*/`, `.+`) would otherwise fuse the terminator into the
+            // atom (`*.` lexes as one atom, not `*` + end), so the clause reads
+            // with no terminator dot. The space keeps the dot a real end token.
+            source += " .";
         Term parsed = ParseClauseText(engine, source);
         Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
         return engine.UnifyRegisterWithCell(1, parsedCell);
@@ -740,7 +748,11 @@ public static partial class MetaBuiltins
             throw new PrologRuntimeException("type_error", "atom");
         string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
-            source += ".";
+            // Space before the dot: a source ending in a graphic-char atom
+            // (`*`, `*/`, `.+`) would otherwise fuse the terminator into the
+            // atom (`*.` lexes as one atom, not `*` + end), so the clause reads
+            // with no terminator dot. The space keeps the dot a real end token.
+            source += " .";
         Term parsed = ParseClauseText(engine, source);
         Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
         return engine.UnifyRegisterWithCell(1, parsedCell);
