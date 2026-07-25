@@ -514,31 +514,26 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
-        return CanCompileCore(predicate, calleeMap, allowIndexedDispatch: true);
+        return CanCompileCore(predicate, calleeMap);
     }
 
-    /// <summary>Eligibility check with control over the indexed-dispatch shape.
-    /// Both the runtime promotion path and the persisted-bundle path
-    /// (<see cref="PersistedIlBuilder.CanPersist"/>) pass
-    /// <paramref name="allowIndexedDispatch"/>=<c>true</c> today: the full indexed
-    /// IL is process-independent (its functor id is baked via the patch mechanism
-    /// and its dispatch model is rebuilt lazily from the linked code + switch
-    /// tables at first call — or decoded from the persisted <see cref="IlIndexGraph"/>),
-    /// so no build-time runtime state crosses the process boundary. The
-    /// <c>false</c> path (skip the full indexed, keep only the older indexed-atom /
-    /// try-me-else / switched-chain fallbacks) is currently unused, retained for a
-    /// caller that needs it. NB the fallbacks still carry a defensive inline-ITE
-    /// reject; it never decides for an indexed <c>*-&gt;</c>/<c>-&gt;</c> because the
-    /// full indexed handles those first (see the ADR-037 indexed IL tests).</summary>
+    /// <summary>Shared eligibility body (no null check): a predicate is IL-eligible
+    /// if it is a compilable single clause, or its multi-clause dispatch matches one
+    /// of the described shapes. The full indexed dispatch is tried first and is
+    /// process-independent (functor id baked via the patch mechanism; dispatch model
+    /// rebuilt lazily from the linked code + switch tables at first call, or decoded
+    /// from the persisted <see cref="IlIndexGraph"/>), so both the runtime and
+    /// persisted-bundle paths use it. The indexed-atom / try-me-else / switched-chain
+    /// recognisers remain as fallbacks for shapes the full indexed doesn't model.</summary>
     internal bool CanCompileCore(CompiledPredicate predicate,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool allowIndexedDispatch)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
         if (predicate.ClauseCount == 1) return CanCompileSingleClause(predicate, calleeMap);
         // full indexed dispatch (O(1) switch + bucket chains).
         // Preferred over the linear IndexedAtom / SwitchedChain recognisers
         // for any switch-led shape; those remain as fallbacks for shapes it
         // doesn't model.
-        if (allowIndexedDispatch && TryDescribeIndexed(predicate, calleeMap, out _)) return true;
+        if (TryDescribeIndexed(predicate, calleeMap, out _)) return true;
         if (TryDescribeIndexedAtomPredicate(predicate, calleeMap, out _)) return true;
         if (TryDescribeTryMeElseChain(predicate, calleeMap, out _)) return true;
         return TryDescribeSwitchedChain(predicate, calleeMap, out _);

@@ -284,7 +284,7 @@ public sealed partial class IlPredicateCompiler
             _regionMemberPureCacheMap = calleeMap;
         }
         if (_regionMemberPureCache.TryGetValue(p.FunctorId, out bool ok)) return ok;
-        ok = CanCompileCore(p, calleeMap, allowIndexedDispatch: true)
+        ok = CanCompileCore(p, calleeMap)
              && RegionMemberOk(p, calleeMap, out _);
         _regionMemberPureCache[p.FunctorId] = ok;
         return ok;
