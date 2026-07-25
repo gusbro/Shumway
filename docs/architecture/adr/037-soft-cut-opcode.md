@@ -14,9 +14,20 @@ is whitelisted in `IsSupportedOpcode` and emits `engine.SoftCutToLevel`; the ELS
 choice point is an IL choice point, so the deterministic case discards it through
 `Cut` (which also drops the `_ilCpStack` entry) and the non-deterministic middle
 case swaps that entry's resume delegate to a fail-delegate
-(`NeutralizeIlChoicePoint`), the IL analogue of the dead `BP`. **Deferred:**
-non-eligible `*->` only (a cut in a branch, nested control in a part, or a
-runtime-built `*->` — still Tier-0-or-error).
+(`NeutralizeIlChoicePoint`), the IL analogue of the dead `BP`.
+
+**Non-eligible `*->` also handled** (a cut in a branch, nested control in a part,
+a standalone `*->`, or one built at runtime): `SynthesizeDisjunctionHelper` gains a
+soft-cut-helper case (`'$choice_level'(K), Cond, '$soft_cut'(K), Then` + `Else`,
+with `'$soft_cut'/1` = `Activation.SoftCut`); `HasTransparentBranchCut` /
+`ReplaceTransparentCuts` descend into `*->` branches; standalone rewrites to
+`( … ; fail )`; the runtime `'$call_disj'` gets a `*->` clause and a bare `*->`
+routes to `'$call_softarrow'` (= `'$call_arrow'` minus the commit). Fixing the
+runtime-built case also fixed a **latent `->` bug**: `DistributeMqual` (the module
+tag for variable meta-calls) wrapped a `;`'s `->`/`*->` left-arg whole, hiding it
+from `$call_disj`'s if-then-else match, so a runtime-built `( true -> a ; b )` ran
+BOTH branches — `WrapGoal` now distributes the module INTO the construct instead
+(interpreter + IL). ADR-037 is fully implemented; nothing deferred.
 
 ## Context
 
