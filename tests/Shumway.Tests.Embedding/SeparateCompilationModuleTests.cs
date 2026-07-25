@@ -124,6 +124,47 @@ public sealed class SeparateCompilationModuleTests
     }
 
     [Fact]
+    public void ImportAll_ResolvesExportsAtCompileTime()
+    {
+        // /1 import-all through separate compilation: ShmoCompiler reads greetq's
+        // export surface from greetq.pl on the compile-time library path, so the
+        // importer's bare hello call mangles to greetq$hello with no explicit
+        // filter.
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+            "shumway-imp1-" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "greetq.pl"), GreetQ);
+            var main = ShmoCompiler.CompileSource(
+                ":- module(app).\n" +
+                ":- public run/1.\n" +
+                ":- use_module(library(greetq)).\n" +
+                "run(X) :- hello(X).\n",
+                "app", libraryDirs: new[] { dir });
+            // The import table was resolved at compile time.
+            Assert.Contains(main.Imports, e => e.Pred == new PredicateRef("hello", 1)
+                && e.Source == "greetq");
+
+            var r = ShmoLinker.Link(new LinkConfig
+            {
+                Objects = new[] { main },
+                EntryPoints = new[] { new PredicateRef("run", 1) },
+                LibraryDirs = new[] { dir },
+            });
+            Assert.True(r.Success, string.Join(", ", r.Diagnostics.Select(d => d.Message)));
+
+            var engine = new PrologEngine();
+            engine.LoadBundle(r.Bundle!);
+            Assert.True(engine.Query("run(world).").Success);
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public void ImportShmoCarriesImportTable()
     {
         var main = ShmoCompiler.CompileSource(
