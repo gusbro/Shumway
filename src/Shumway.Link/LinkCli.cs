@@ -101,6 +101,8 @@ internal static class LinkCli
             GoalTermRefs = goalTermRefs,
             AllowUndefined = opts.AllowUndefined,
             Libraries = libraries,
+            // ADR-038 — --library-dir flags plus SHUMWAY_LIBRARY_PATH.
+            LibraryDirs = CollectLibraryDirs(opts.LibraryDirs),
             // --exe deploys a startup-sensitive single-engine app, so bake the
             // prelude by default there; otherwise only on explicit opt-in. Under
             // --with-compiled-il / --strip-wam the baked prelude is itself
@@ -323,6 +325,9 @@ internal static class LinkCli
         // --native-dll: native C libraries (DLL/.so/.dylib) backing :- native
         // functions; recorded in the bundle so the runtime auto-loads them.
         public List<string> NativeDlls { get; } = new();
+        // ADR-038 --library-dir: directories searched to resolve a
+        // use_module(library(X)) dependency not passed explicitly.
+        public List<string> LibraryDirs { get; } = new();
     }
 
     private static Options? ParseArgs(string[] args)
@@ -359,6 +364,12 @@ internal static class LinkCli
                 case "--allow-undefined":
                 case "-u":
                     opts.AllowUndefined = true;
+                    break;
+
+                case "--library-dir":
+                case "-L":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.LibraryDirs.Add(System.IO.Path.GetFullPath(args[i]));
                     break;
 
                 case "--strip":
@@ -644,6 +655,19 @@ internal static class LinkCli
     private static void ReportMissing(string option) =>
         Console.Error.WriteLine($"shumway-link: option '{option}' requires a value.");
 
+    // ADR-038 — the library search path: --library-dir flags first (highest
+    // precedence), then SHUMWAY_LIBRARY_PATH entries.
+    private static List<string> CollectLibraryDirs(List<string> flagged)
+    {
+        var dirs = new List<string>(flagged);
+        string? env = Environment.GetEnvironmentVariable("SHUMWAY_LIBRARY_PATH");
+        if (!string.IsNullOrEmpty(env))
+            foreach (string d in env.Split(System.IO.Path.PathSeparator,
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                dirs.Add(d);
+        return dirs;
+    }
+
     /// <summary>A failed link must not leave a stale bundle behind, so remove any
     /// pre-existing output — what a C linker does when linking fails.</summary>
     private static void RemoveStaleOutput(string? output)
@@ -684,6 +708,10 @@ internal static class LinkCli
             + "  -u, --allow-undefined    Turn missing-predicate errors into warnings and\n"
             + "                           produce the bundle anyway. Calling a missing\n"
             + "                           predicate at runtime raises an existence_error.\n"
+            + "  -L, --library-dir <dir>  Directory searched to resolve a\n"
+            + "                           use_module(library(X)) dependency not passed\n"
+            + "                           explicitly (X.pl / X.shmo). Repeatable; also reads\n"
+            + "                           SHUMWAY_LIBRARY_PATH.\n"
             + "  -s, --strip              Do not embed the Prolog source text in the bundle.\n"
             + "                           Programs run unchanged (execution uses the\n"
             + "                           compiled code), but listing/1 and source positions\n"
