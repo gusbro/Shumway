@@ -125,11 +125,14 @@ internal static class ReplTopLevel
         // query for predicate names.
         _replEngine = engine;
         engine.Flags.Argv = programArgs;
-        // SHUMWAY_IL_PROMOTE=N sets the Tier-1 promotion threshold.
-        // Without it, Tier-0 (interpreter) handles every dispatch.
-        // With N, predicates that hit N invocations get IL-compiled.
+        // Default: promote a predicate to Tier-1 IL once it has been invoked 32
+        // times, so interactive / --goal runs get compiled code for hot predicates
+        // without any flag. SHUMWAY_IL_PROMOTE=N overrides the threshold; N <= 0
+        // disables promotion (Threshold <= 0 is the "off" sentinel), keeping every
+        // dispatch on the Tier-0 interpreter.
+        engine.IlPromotion.Threshold = 32;
         string? promoteEnv = Environment.GetEnvironmentVariable("SHUMWAY_IL_PROMOTE");
-        if (int.TryParse(promoteEnv, out int promoteN) && promoteN > 0)
+        if (int.TryParse(promoteEnv, out int promoteN))
             engine.IlPromotion.Threshold = promoteN;
         if (stopwatch is not null)
             setupMsAtConsultStart = stopwatch.ElapsedMilliseconds;
