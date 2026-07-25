@@ -4,9 +4,10 @@ namespace Shumway.Link;
 
 /// <summary>
 /// <c>shumway-link</c> CLI. Takes one or more <c>.shmo</c>
-/// compiled-object files (produced by <c>shumway-compile</c>) plus a
-/// set of entry-point predicates and produces a deployable
-/// <c>.shum</c> bundle. Surface for the linker.
+/// compiled-object files (produced by <c>shumway-compile</c>) — or
+/// <c>.pl</c> sources, compiled on the fly — plus a set of entry-point
+/// predicates and produces a deployable <c>.shum</c> bundle. Surface for
+/// the linker.
 ///
 /// <para>Usage:</para>
 /// <code>
@@ -39,10 +40,11 @@ internal static class LinkCli
         var opts = ParseArgs(args);
         if (opts is null) return ExitUsageError;
 
-        // Inputs route by extension: .shum is a LIBRARY (its members are
-        // pulled on demand, FIFO), anything else is an OBJECT (.shmo, always
-        // linked). A .shum must be a shumway-lib librarian archive (it carries
-        // its objects); a linked bundle has none and can't serve as a library.
+        // Inputs route by extension (C-toolchain style): .shum is a LIBRARY (its
+        // members are pulled on demand, FIFO), .pl is SOURCE (compiled on the fly
+        // to an object), anything else is an OBJECT (.shmo, always linked). A .shum
+        // must be a shumway-lib librarian archive (it carries its objects); a
+        // linked bundle has none and can't serve as a library.
         var objects = new List<ShmoObject>();
         var libraries = new List<LinkLibrary>();
         foreach (var path in opts.InputPaths)
@@ -64,6 +66,24 @@ internal static class LinkCli
                     foreach (var m in lib.ArchiveMembers)
                         members.Add(ShmoReader.FromBytes(m.ShmoBytes));
                     libraries.Add(new LinkLibrary(System.IO.Path.GetFileName(path), members));
+                }
+                else if (path.EndsWith(".pl", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Source input: compile it here, exactly as `shumway-compile`
+                    // would, and link the resulting object. Convenience so a small
+                    // program need not be pre-compiled to a .shmo.
+                    var res = ShmoCompiler.TryCompileFile(path, ShmoBuildMode.Release);
+                    foreach (var w in res.Warnings)
+                        Console.Error.WriteLine(
+                            $"{path}:{w.Line}:{w.Column}: warning: {w.Message}");
+                    if (res.Object is null)
+                    {
+                        foreach (var e in res.Errors)
+                            Console.Error.WriteLine(
+                                $"{path}:{e.Line}:{e.Column}: error: {e.Message}");
+                        return ExitLinkError;
+                    }
+                    objects.Add(res.Object);
                 }
                 else
                 {
@@ -687,18 +707,20 @@ internal static class LinkCli
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: shumway-link {-o <output.shum> | -e <output.exe>} {-E pred/N | -g Goal} [options] <a.shmo ... [lib.shum ...]>\n"
+            "Usage: shumway-link {-o <output.shum> | -e <output.exe>} {-E pred/N | -g Goal} [options] <a.pl|a.shmo ... [lib.shum ...]>\n"
             + "\n"
             + "Links compiled Prolog modules (.shmo, produced by shumway-compile) into a\n"
             + "single runnable bundle (.shum) or a native executable. Only code reachable\n"
             + "from the entry points is kept. Inputs may use wildcards (e.g. *.shmo) —\n"
             + "expanded by the linker itself, in sorted order, so they work from any shell.\n"
             + "\n"
-            + "Inputs route by extension. A .shmo is an object and is always linked. A .shum\n"
-            + "is a LIBRARY (a librarian archive built by shumway-lib): its modules are pulled\n"
-            + "in only on demand, to satisfy a reference the objects leave unresolved, like a\n"
-            + "C archive (.a/.lib). Libraries are searched in the order given; the first that\n"
-            + "provides a needed predicate wins. Modules no reference reaches are not linked.\n"
+            + "Inputs route by extension. A .shmo is an object and is always linked. A .pl is\n"
+            + "SOURCE — compiled on the fly (release) and linked, so a small program need not\n"
+            + "be pre-compiled to a .shmo. A .shum is a LIBRARY (a librarian archive built by\n"
+            + "shumway-lib): its modules are pulled in only on demand, to satisfy a reference\n"
+            + "the objects leave unresolved, like a C archive (.a/.lib). Libraries are searched\n"
+            + "in the order given; the first that provides a needed predicate wins. Modules no\n"
+            + "reference reaches are not linked.\n"
             + "\n"
             + "Options:\n"
             + "  -o, --output <path>      Output bundle path. Required unless --exe is given.\n"
