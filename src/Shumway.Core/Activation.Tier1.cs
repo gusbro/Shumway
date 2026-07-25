@@ -14,6 +14,14 @@ public sealed partial class Activation
     // for one query's linked layout).
     public IReadOnlyDictionary<int, int>? CurrentFunctorAddresses { get; set; }
 
+    // ADR-038 — the per-query module import map for runtime variable meta-calls.
+    // Keyed by a packed (moduleAtomId, bareFunctorId) → the mangled Source$name
+    // functor id the importing module bound that name to. A '$mqual'-tagged goal
+    // whose bare functor misses the module's own locals consults this before the
+    // bare-global namespace, mirroring the compile-time ModuleRewrite import step.
+    // Null when no loaded module imports anything (the common case).
+    public IReadOnlyDictionary<long, int>? CurrentImportMap { get; set; }
+
     /// <summary>functor ids that a mid-query <c>consult/1</c>
     /// (from a live query, e.g. Logtalk's <c>'$lgt_load_prolog_code'</c>)
     /// live-linked into the running query's code space and made globally

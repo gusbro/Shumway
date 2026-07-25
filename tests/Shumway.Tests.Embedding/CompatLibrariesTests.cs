@@ -99,28 +99,35 @@ public class CompatLibrariesTests
     // ---------- Two-arg module directive (ISO / SWI / Scryer) ----------
 
     [Fact]
-    public void ModuleDirective_TwoArg_ExportsArePublic_RestAreLocal()
+    public void ModuleDirective_TwoArg_IsExportQualified_NotBareGlobal()
     {
-        // `:- module(Name, [Exports])` — the exported predicate is globally
-        // visible; a non-exported one stays module-local (invisible outside).
+        // ADR-038: `:- module(Name, [Exports])` is EXPORT-QUALIFIED — every
+        // predicate is mangled Name$x (nothing bare-global) and the exports are
+        // reachable only via use_module. So neither the export nor a private
+        // predicate is callable bare from the top-level (user) context.
         var engine = new PrologEngine();
         engine.ConsultString(
             ":- module(mymod, [pub/1]).\n" +
             "pub(hello).\n" +
             "priv(secret).\n");
-        Assert.True(engine.Query("pub(hello).").Success);
-        // priv/1 is module-local: an outside call raises existence_error.
-        Assert.False(engine.Query("catch(priv(_), _, fail).").Success);
+        Assert.True(engine.Modules.ContainsKey("mymod"));
+        Assert.True(engine.Modules["mymod"].IsExportQualified);
+        // Not bare-global: an un-importing caller sees neither name.
+        Assert.False(engine.Query("catch(pub(hello), _, fail).").Success);
+        Assert.False(engine.Query("catch(priv(secret), _, fail).").Success);
     }
 
     [Fact]
     public void ModuleDirective_TwoArg_SkipsNonIndicatorExports()
     {
-        // op/3 and other non-PI export entries are ignored, not fatal.
+        // op/3 and other non-PI export entries are ignored, not fatal — the
+        // consult succeeds and the export-qualified module is registered
+        // (g/1 lives as m3$g, reachable via import — see ExportQualifiedModuleTests).
         var engine = new PrologEngine();
         engine.ConsultString(
             ":- module(m3, [g/1, op(700, xfx, ===)]).\n" +
             "g(ok).\n");
-        Assert.True(engine.Query("g(ok).").Success);
+        Assert.True(engine.Modules.ContainsKey("m3"));
+        Assert.True(engine.Modules["m3"].IsExportQualified);
     }
 }

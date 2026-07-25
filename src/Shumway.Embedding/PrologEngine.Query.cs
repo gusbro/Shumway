@@ -623,7 +623,7 @@ public sealed partial class PrologEngine
                 if (name == DefaultModuleName) userLocalsCache = locals;
                 moduleLocalsCache[name] = locals;
 
-                var ctx = new ModuleRewrite.Context(name, locals, _dynStore.Functors);
+                var ctx = new ModuleRewrite.Context(name, locals, _dynStore.Functors, manifest.Imports);
                 // ADR-035 — a library's HELPERS are library code too. MetaTransform
                 // lowers control constructs into generated predicates ('$call_conj' and
                 // friends), which are not in manifest.Clauses and so cannot be marked at
@@ -1250,6 +1250,8 @@ public sealed partial class PrologEngine
             // stable functor-id lookup instead of an embedded address
             // that would only be valid for one query's linked layout.
             CurrentFunctorAddresses = addressMap,
+            // ADR-038 — the module import map for runtime variable meta-calls.
+            CurrentImportMap = BuildRuntimeImportMap(),
             // the ISO `unknown` flag, wired through dispatch.
             OnUnknown = _flags.Unknown switch
             {
@@ -1652,6 +1654,33 @@ public sealed partial class PrologEngine
     /// (defined as a head functor but not exported via <c>:- public</c>).
     /// Used by <see cref="ModuleRewrite"/> to decide which call targets need
     /// the synthetic <c>module$name</c> prefix.</summary>
+    /// <summary>ADR-038 — builds the per-query runtime import map for variable
+    /// meta-calls: <c>(moduleAtomId, bareFunctorId) → mangled Source$name functor
+    /// id</c>. Returns <c>null</c> when no loaded module imports anything, so the
+    /// hot meta-dispatch path pays nothing in the common case.</summary>
+    internal static long PackImportKey(int moduleAtomId, int bareFunctorId) =>
+        ((long)moduleAtomId << 32) | (uint)bareFunctorId;
+
+    private IReadOnlyDictionary<long, int>? BuildRuntimeImportMap()
+    {
+        Dictionary<long, int>? map = null;
+        foreach (var (name, manifest) in _modules)
+        {
+            if (manifest.Imports.Count == 0) continue;
+            int moduleAtomId = AtomTable.Intern(name, permanent: true).Id;
+            foreach (var (bareFid, srcModule) in manifest.Imports)
+            {
+                var (nameAtomId, arity) = FunctorTable.Lookup(bareFid);
+                string predName = AtomTable.GetById(nameAtomId)?.Name ?? "";
+                int mangledAtom = AtomTable.Intern(
+                    srcModule + "$" + predName, permanent: true).Id;
+                int mangledSourceFid = FunctorTable.Intern(mangledAtom, arity);
+                (map ??= new())[PackImportKey(moduleAtomId, bareFid)] = mangledSourceFid;
+            }
+        }
+        return map;
+    }
+
     private static HashSet<int> ComputeLocalFunctors(
         IEnumerable<Clause> clauses, HashSet<int> publicFunctors)
     {

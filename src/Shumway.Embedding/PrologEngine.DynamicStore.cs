@@ -1183,7 +1183,7 @@ public sealed partial class PrologEngine
         var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
         if (_precompiledModuleLocals.TryGetValue(moduleName, out var bundleLocals))
             locals.UnionWith(bundleLocals);
-        var ctx = new ModuleRewrite.Context(moduleName, locals, _dynStore.Functors);
+        var ctx = new ModuleRewrite.Context(moduleName, locals, _dynStore.Functors, manifest.Imports);
         var rewritten = new List<Clause>(transformed.Count);
         foreach (var c in transformed)
             rewritten.Add(ModuleRewrite.Rewrite(c, ctx));

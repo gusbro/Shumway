@@ -28,6 +28,29 @@ public sealed class ModuleManifest
     public List<Clause> Clauses { get; }
     public HashSet<int> PublicFunctors { get; }
 
+    /// <summary>ADR-038 — set when the module was declared with the two-arg
+    /// <c>:- module(Name, [Exports])</c> directive. An export-qualified module
+    /// contributes NOTHING to the bare-global namespace: every one of its
+    /// predicates is mangled <c>Name$x</c> (so <see cref="PublicFunctors"/> stays
+    /// empty and two such modules can export the same name), and only the
+    /// functors in <see cref="ExportFunctors"/> are importable by other
+    /// modules.</summary>
+    public bool IsExportQualified { get; set; }
+
+    /// <summary>ADR-038 — the importable surface of an export-qualified module:
+    /// the bare <c>Name/Arity</c> functor ids listed in <c>:- module(Name,
+    /// [Exports])</c> (∪ any <c>:- public</c> in that module). An importer of
+    /// <c>p/N</c> resolves it to this module's mangled <c>Name$p/N</c>; importing
+    /// a name absent here is an error. Empty for legacy bare-global modules.</summary>
+    public HashSet<int> ExportFunctors { get; }
+
+    /// <summary>ADR-038 — this module's import table: a bare functor id
+    /// <c>p/N</c> this module imported → the NAME of the export-qualified module
+    /// that provides it. A call to <c>p/N</c> that misses this module's own
+    /// locals resolves through here to <c>Source$p/N</c> before falling back to
+    /// the bare-global namespace. Built from <c>:- use_module/1,2</c>.</summary>
+    public Dictionary<int, string> Imports { get; }
+
     /// <summary>Functors the module declares <c>:- dynamic</c>. These bypass
     /// local-functor mangling so the runtime <c>assertz</c> / <c>retract</c>
     /// store (a flat global table on the engine) can reach the same predicate
@@ -59,6 +82,8 @@ public sealed class ModuleManifest
         Name = name;
         Clauses = new List<Clause>();
         PublicFunctors = new HashSet<int>();
+        ExportFunctors = new HashSet<int>();
+        Imports = new Dictionary<int, string>();
         DynamicFunctors = new HashSet<int>();
         DiscontiguousFunctors = new HashSet<int>();
         MultifileFunctors = new HashSet<int>();

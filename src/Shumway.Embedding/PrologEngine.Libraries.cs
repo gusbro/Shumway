@@ -170,93 +170,110 @@ public sealed partial class PrologEngine
 
     private static readonly string[] LibraryExtensions = { ".pl", ".shum" };
 
+    // ADR-038 — the module name the most recent consult defined, set at
+    // manifest creation (ConsultPipeline). A nested library consult sets it, so
+    // ExecuteUseModuleDirective reads it right after ConsultFile returns to learn
+    // which module a use_module(library(X)) actually loaded (X.pl may declare a
+    // module named other than X).
+    internal string? _lastConsultedModuleName;
+
+    // ADR-038 — resolved library path → the module its file defined, so a second
+    // import of the same library (idempotent, not re-consulted) still yields the
+    // module name for the importer's import table.
+    private readonly Dictionary<string, string> _libraryModuleByPath =
+        new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Executes a <c>use_module/1</c> directive body at consult time.
     /// <c>library(Name)</c> loads a constraint or compatibility library;
-    /// a plain atom names a file to consult. An unknown library is reported as
-    /// a warning and skipped (the program may only need predicates Shumway
-    /// already provides, or it will surface a clearer per-predicate
-    /// existence_error later) rather than aborting the whole consult.</summary>
-    internal void ExecuteUseModuleDirective(Term spec)
+    /// a plain atom names a file to consult. Returns the name of the loaded
+    /// <em>export-qualified</em> module (ADR-038 — the importer builds its import
+    /// table from this module's exports), or <c>null</c> for a legacy bare-global
+    /// module, a baked library, or an unresolved/failed import. An unknown library
+    /// is reported as a warning and skipped rather than aborting the consult.</summary>
+    internal string? ExecuteUseModuleDirective(Term spec)
     {
         if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
         {
             switch (lib.Name)
             {
-                // (1) baked C# libraries — take precedence, they carry native hooks.
-                case "clpfd": UseClpfd(); return;
-                case "clpr":  UseClpr();  return;
-                case "coroutining": UseCoroutining(); return;
+                // (1) baked C# libraries — take precedence, they carry native
+                // hooks and stay bare-global (no import table).
+                case "clpfd": UseClpfd(); return null;
+                case "clpr":  UseClpr();  return null;
+                case "coroutining": UseCoroutining(); return null;
                 default:
                     // (2) ADR-038 — a .pl/.shum on the library search path.
                     if (TryResolveLibrary(lib.Name, out string libPath))
-                    {
-                        LoadResolvedLibrary(lib.Name, libPath);
-                        return;
-                    }
+                        return LoadResolvedLibrary(lib.Name, libPath);
                     // (3) built-in Scryer/Trealla compatibility table.
-                    if (UseCompatLibrary(lib.Name)) return;
+                    if (UseCompatLibrary(lib.Name)) return null;
                     // (4) genuinely unknown.
                     Console.Error.WriteLine(
                         $"warning: unknown library '{lib.Name}' in use_module/1 — ignored");
-                    return;
+                    return null;
             }
         }
         if (spec is AtomTerm fileAtom)
         {
             // Already-loaded module (e.g. consulted directly on the command
-            // line, or imported earlier) — importing it again is a no-op.
-            if (_modules.ContainsKey(fileAtom.Name)) return;
+            // line, or imported earlier) — importing it again is a no-op, but
+            // still yield its name so an importer can build its import table.
+            if (_modules.ContainsKey(fileAtom.Name))
+                return ExportQualifiedNameOrNull(fileAtom.Name);
             string path = fileAtom.Name;
             if (_consultBaseDir is not null && !System.IO.Path.IsPathRooted(path))
                 path = System.IO.Path.Combine(_consultBaseDir, path);
             if (!System.IO.Path.HasExtension(path) && System.IO.File.Exists(path + ".pl"))
                 path += ".pl";
-            // Idempotent: a file already consulted (on the command line or via
-            // an earlier import) is not re-consulted — re-loading it would
-            // double its clauses.
-            try
-            {
-                if (System.IO.File.Exists(path)
-                    && _consultedPaths.Contains(System.IO.Path.GetFullPath(path)))
-                    return;
-            }
-            catch { /* fall through to the normal load */ }
             if (!System.IO.File.Exists(path))
             {
                 Console.Error.WriteLine(
                     $"warning: use_module/1 target '{fileAtom.Name}' not found — ignored");
-                return;
+                return null;
             }
-            // A failing import must not abort the importing consult — warn and
-            // continue; any predicate genuinely needed surfaces a clearer
-            // existence_error at the call site.
-            try { ConsultFile(path); }
-            catch (System.Exception ex)
-            {
-                Console.Error.WriteLine(
-                    $"warning: use_module('{fileAtom.Name}') failed: {ex.Message}");
-            }
+            return LoadResolvedLibrary(fileAtom.Name, path);
         }
+        return null;
     }
 
-    // Consults a library resolved off the search path, idempotently. ConsultFile
-    // is extension-routed (.shum → LoadBundle, else source). A failed import warns
-    // and continues — a predicate genuinely needed surfaces a clearer
+    // Consults a library resolved off the search path, idempotently, and returns
+    // the loaded module's name when it is export-qualified (ADR-038), else null.
+    // ConsultFile is extension-routed (.shum → LoadBundle, else source). A failed
+    // import warns and continues — a predicate genuinely needed surfaces a clearer
     // existence_error at its call site — rather than aborting the importing consult.
-    private void LoadResolvedLibrary(string name, string path)
+    private string? LoadResolvedLibrary(string name, string path)
     {
+        string full;
+        try { full = System.IO.Path.GetFullPath(path); }
+        catch { full = path; }
+        // Already loaded via this path: don't re-consult, but recover the module.
+        if (_libraryModuleByPath.TryGetValue(full, out string? known))
+            return ExportQualifiedNameOrNull(known);
+        if (_consultedPaths.Contains(full))
+            return null;   // loaded by another route; no recorded module mapping
         try
         {
-            if (_consultedPaths.Contains(System.IO.Path.GetFullPath(path))) return;
+            ConsultFile(path);
+            string? loaded = _lastConsultedModuleName;
+            if (loaded is not null) _libraryModuleByPath[full] = loaded;
+            return ExportQualifiedNameOrNull(loaded);
         }
-        catch { /* fall through to the normal load */ }
-        try { ConsultFile(path); }
         catch (System.Exception ex)
         {
             Console.Error.WriteLine(
                 $"warning: use_module(library({name})) failed: {ex.Message}");
+            return null;
         }
     }
+
+    // The module name if it names an export-qualified module (ADR-038), else null
+    // — a legacy bare-global module contributes no import entries.
+    private string? ExportQualifiedNameOrNull(string? moduleName) =>
+        moduleName is not null
+        && _modules.TryGetValue(moduleName, out ModuleManifest? m)
+        && m.IsExportQualified
+            ? moduleName
+            : null;
 
     internal int _nativeBlockConsultSeq;
     // the engine's monotonic synthesized-helper sequence: every

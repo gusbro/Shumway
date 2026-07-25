@@ -398,6 +398,14 @@ public sealed partial class BytecodeInterpreter
             int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
             if (addresses.TryGetValue(mangledFid, out int mangledAddr))
                 return JumpToUserGoal(code, pc, mangledAddr);
+            // ADR-038 — the module's import table: a bare goal it doesn't define
+            // locally resolves to Source$name before the bare-global namespace.
+            var importMap = _engine.CurrentImportMap;
+            if (importMap is not null
+                && importMap.TryGetValue(
+                    ((long)resolutionModule << 32) | (uint)functorId, out int importedFid)
+                && addresses.TryGetValue(importedFid, out int importedAddr))
+                return JumpToUserGoal(code, pc, importedAddr);
         }
 
         if (addresses is not null && addresses.TryGetValue(functorId, out int address))

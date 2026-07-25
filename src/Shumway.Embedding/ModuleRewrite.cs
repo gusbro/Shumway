@@ -26,17 +26,34 @@ public static class ModuleRewrite
         public HashSet<int> LocalFunctors { get; }
         public IReadOnlySet<int> DynamicFunctors { get; }
 
+        /// <summary>ADR-038 — this module's import table: bare functor id →
+        /// the export-qualified source module that provides it. A call that
+        /// misses <see cref="LocalFunctors"/> resolves through here to
+        /// <c>Source$name</c> before the bare-global namespace. Empty for a
+        /// module that imports nothing.</summary>
+        public IReadOnlyDictionary<int, string> Imports { get; }
+
         public Context(string moduleName, HashSet<int> localFunctors)
             : this(moduleName, localFunctors, new HashSet<int>())
         {
         }
 
         public Context(string moduleName, HashSet<int> localFunctors, IReadOnlySet<int> dynamicFunctors)
+            : this(moduleName, localFunctors, dynamicFunctors, EmptyImports)
+        {
+        }
+
+        public Context(string moduleName, HashSet<int> localFunctors,
+            IReadOnlySet<int> dynamicFunctors, IReadOnlyDictionary<int, string> imports)
         {
             ModuleName = moduleName;
             LocalFunctors = localFunctors;
             DynamicFunctors = dynamicFunctors;
+            Imports = imports;
         }
+
+        private static readonly IReadOnlyDictionary<int, string> EmptyImports =
+            new Dictionary<int, string>();
     }
 
     /// <summary>Returns a copy of <paramref name="clause"/> with every local
@@ -110,6 +127,9 @@ public static class ModuleRewrite
             // skip the mangle just like the head does in MangleIfLocal.
             if (IsLocal(a.Name, 0, ctx) && !IsDynamic(a.Name, 0, ctx))
                 return new AtomTerm(MangledName(a.Name, ctx)) { Position = a.Position };
+            // ADR-038 — imported name → Source$name (before the bare-global path).
+            if (!IsDynamic(a.Name, 0, ctx) && TryResolveImport(a.Name, 0, ctx, out string aSrc))
+                return new AtomTerm(ImportedName(aSrc, a.Name)) { Position = a.Position };
             if (IsBuiltin(a.Name, 0)) return goal;
             return goal;
         }
@@ -161,6 +181,11 @@ public static class ModuleRewrite
 
             if (IsLocal(c.Functor, c.Args.Length, ctx) && !IsDynamic(c.Functor, c.Args.Length, ctx))
                 return new CompoundTerm(MangledName(c.Functor, ctx), c.Args)
+                    { Position = c.Position };
+            // ADR-038 — imported name → Source$name (before the bare-global path).
+            if (!IsDynamic(c.Functor, c.Args.Length, ctx)
+                && TryResolveImport(c.Functor, c.Args.Length, ctx, out string cSrc))
+                return new CompoundTerm(ImportedName(cSrc, c.Functor), c.Args)
                     { Position = c.Position };
             if (IsBuiltin(c.Functor, c.Args.Length)) return c;
             return c;
@@ -240,6 +265,23 @@ public static class ModuleRewrite
     }
 
     private static string MangledName(string name, Context ctx) => ctx.ModuleName + "$" + name;
+
+    // ADR-038 — the mangled name of an imported predicate in its SOURCE module.
+    private static string ImportedName(string sourceModule, string name) =>
+        sourceModule + "$" + name;
+
+    // ADR-038 — resolve name/arity through the module's import table.
+    private static bool TryResolveImport(string name, int arity, Context ctx, out string sourceModule)
+    {
+        if (ctx.Imports.Count == 0)
+        {
+            sourceModule = "";
+            return false;
+        }
+        int functorId = FunctorTable.Intern(
+            AtomTable.Intern(name, permanent: true).Id, arity);
+        return ctx.Imports.TryGetValue(functorId, out sourceModule!);
+    }
 
     private static bool IsControlFlow(string functor, int arity) => (functor, arity) switch
     {

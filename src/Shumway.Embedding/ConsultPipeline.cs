@@ -422,6 +422,13 @@ internal sealed class ConsultPipeline
             : moduleNameFallback;
         bool moduleDirectiveSeen = false;
         var publics = new HashSet<int>();
+        // ADR-038 — a `:- module(Name, [Exports])` module is export-qualified:
+        // its exports go here (mangled, importable) and NOT into `publics`, so it
+        // contributes nothing to the bare-global namespace. `pendingImports` maps
+        // each imported bare functor id → the export-qualified module providing it.
+        bool isExportQualified = false;
+        var exports = new HashSet<int>();
+        Dictionary<int, string>? pendingImports = null;
         var clauses = new List<Clause>();
         HashSet<int>? pendingDiscontiguous = null;
         HashSet<int>? pendingMultifile = null;
@@ -471,18 +478,27 @@ internal sealed class ConsultPipeline
                         "Multiple :- module(...) directives in one ConsultString call.");
                 moduleName = name;
                 moduleDirectiveSeen = true;
-                // Standard two-arg `:- module(Name, [p/N, ...])` — the export
-                // list makes those predicates public (globally visible), the
-                // rest stay module-local.
+                // ADR-038 — the two-arg `:- module(Name, [p/N, ...])` form makes
+                // this an export-qualified module: EVERY predicate is mangled
+                // Name$x (nothing bare-global), and the export list is the
+                // importable surface. The exports go to `exports`, NOT `publics`,
+                // so two export-qualified modules can export the same name.
                 if (moduleExports != null)
+                {
+                    isExportQualified = true;
                     foreach (var (n, a) in moduleExports)
-                        publics.Add(FunctorTable.Intern(
+                        exports.Add(FunctorTable.Intern(
                             AtomTable.Intern(n, permanent: true).Id, a));
+                }
             }
             else if (TryReadPublicDirective(body, out var publicSpecs))
             {
+                // ADR-038 — inside an export-qualified module a `:- public` also
+                // means "export" (mangled), not bare-global. (Assumes the module
+                // directive precedes it, the conventional order.)
+                var target = isExportQualified ? exports : publics;
                 foreach (var (n, a) in publicSpecs)
-                    publics.Add(FunctorTable.Intern(
+                    target.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
             }
             else if (TryReadDynamicDirective(body, out var dynamicSpecs))
@@ -604,14 +620,17 @@ internal sealed class ConsultPipeline
                 // and to later queries. Scryer/Trealla programs import their
                 // stdlib this way; without this the directive was silently
                 // dropped and the imports never loaded.
-                E.ExecuteUseModuleDirective(umDir.Args[0]);
+                string? src = E.ExecuteUseModuleDirective(umDir.Args[0]);
+                RecordImports(src, filter: null);
             }
             else if (body is CompoundTerm { Functor: "use_module", Args.Length: 2 } umDir2)
             {
-                // `:- use_module(Spec, ImportList)` — the import list is
-                // advisory (Shumway's public predicates share a flat global
-                // namespace); load the module the same way.
-                E.ExecuteUseModuleDirective(umDir2.Args[0]);
+                // `:- use_module(Spec, ImportList)` — load the module, then import
+                // only the selected predicate indicators (ADR-038).
+                string? src = E.ExecuteUseModuleDirective(umDir2.Args[0]);
+                var filter = new List<(string, int)>();
+                TryReadFunctorSpecList(umDir2.Args[1], filter);
+                RecordImports(src, filter);
             }
             else
             {
@@ -827,6 +846,35 @@ internal sealed class ConsultPipeline
             clauses = keptClauses;
         }
 
+        // ADR-038 — record the predicates this consult imported from an
+        // export-qualified module `src`: each imported bare functor id maps to
+        // `src`, so a call the module doesn't define locally resolves to
+        // `src$name`. `filter == null` imports the module's whole export surface;
+        // otherwise only the listed indicators — importing a non-exported name is
+        // an error. `src == null` (legacy/baked/failed) contributes nothing.
+        void RecordImports(string? src, List<(string Name, int Arity)>? filter)
+        {
+            if (src is null) return;
+            ModuleManifest srcManifest = E._modules[src];
+            // First import of a name wins: a later use_module of a DIFFERENT module
+            // exporting the same name does not silently steal it (C-linker / SWI
+            // conflict semantics). TryAdd is a no-op if the name is already bound.
+            if (filter is null)
+            {
+                foreach (int fid in srcManifest.ExportFunctors)
+                    (pendingImports ??= new()).TryAdd(fid, src);
+                return;
+            }
+            foreach (var (n, a) in filter)
+            {
+                int fid = FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
+                if (!srcManifest.ExportFunctors.Contains(fid))
+                    throw new InvalidOperationException(
+                        $"module '{src}' does not export {n}/{a}");
+                (pendingImports ??= new()).TryAdd(fid, src);
+            }
+        }
+
         // Tabling: a `:- table p/N` predicate's clauses are
         // re-headed to '$tabled$p'/N and a driver clause that routes
         // through '$table_call' is synthesised. Done after the dynamic
@@ -868,6 +916,12 @@ internal sealed class ConsultPipeline
             var manifest = new ModuleManifest(moduleName);
             manifest.Clauses.AddRange(clauses);
             manifest.PublicFunctors.UnionWith(publics);
+            // ADR-038 — export-qualified module: record the importable surface and
+            // this consult's imports.
+            manifest.IsExportQualified = isExportQualified;
+            manifest.ExportFunctors.UnionWith(exports);
+            if (pendingImports is not null)
+                foreach (var (fid, src) in pendingImports) manifest.Imports[fid] = src;
             if (pendingDiscontiguous is not null) manifest.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
             if (pendingMultifile is not null) manifest.MultifileFunctors.UnionWith(pendingMultifile);
             if (pendingModes is not null)
@@ -882,6 +936,10 @@ internal sealed class ConsultPipeline
             var existing = E._modules[PrologEngine.DefaultModuleName];
             existing.Clauses.AddRange(clauses);
             existing.PublicFunctors.UnionWith(publics);
+            // ADR-038 — a bare `user` program that use_module's an export-qualified
+            // library still needs an import table so its calls resolve Source$p.
+            if (pendingImports is not null)
+                foreach (var (fid, src) in pendingImports) existing.Imports[fid] = src;
             if (pendingDiscontiguous is not null) existing.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
             if (pendingMultifile is not null) existing.MultifileFunctors.UnionWith(pendingMultifile);
             if (pendingModes is not null)
@@ -895,6 +953,10 @@ internal sealed class ConsultPipeline
                         existing.ModeDeclarations[fid] = modes;
                 }
         }
+
+        // ADR-038 — record the module this consult defined so an enclosing
+        // use_module(library(X)) learns which module X.pl actually declared.
+        E._lastConsultedModuleName = moduleName;
 
         // Consulting may have added source clauses for an already-cached
         // dynamic predicate. Drop the cache wholesale — the
@@ -1469,7 +1531,9 @@ internal sealed class ConsultPipeline
                         ex.Add(spec);
                     cursor = cons.Args[1];
                 }
-                if (ex.Count > 0) exports = ex;
+                // ADR-038 — a non-null (even empty) export list is the signal that
+                // this is the two-arg module form → export-qualified.
+                exports = ex;
                 return true;
             }
         }

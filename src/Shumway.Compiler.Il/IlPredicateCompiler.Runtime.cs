@@ -384,6 +384,13 @@ public sealed partial class IlPredicateCompiler
                 int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
                 if (addresses.TryGetValue(mangledFid, out int mangledAddr))
                     return mangledAddr;
+                // ADR-038 — the module's import table (Source$name) before bare.
+                var importMap = engine.CurrentImportMap;
+                if (importMap is not null
+                    && importMap.TryGetValue(
+                        ((long)resolutionModule << 32) | (uint)functorId, out int importedFid)
+                    && addresses.TryGetValue(importedFid, out int importedAddr))
+                    return importedAddr;
             }
             if (addresses is null
                 || !addresses.TryGetValue(functorId, out int address))
