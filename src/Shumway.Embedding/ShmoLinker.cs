@@ -87,6 +87,13 @@ public static class ShmoLinker
             : PullLibraryMembers(config.Objects, config.Libraries,
                 config.EntryPoints, foreignIndicators, Emit);
 
+        // ADR-038 — resolve use_module(library(X)) deps from the search path:
+        // compile and link X.pl for any dependency the explicit objects / .shum
+        // libraries left unprovided, transitively (C-linker order: already-provided
+        // inputs win, source compilation last).
+        if (config.LibraryDirs.Count > 0)
+            linkInput = PullLibraryDirDeps(linkInput, config.LibraryDirs, Emit);
+
         // ----- 0. cross-module meta-wrapper unfold (the LTO pass) -----
         // V4 .shmo objects carry their raw static clauses (ClauseTerms). Detect
         // every module's wrapper templates, export the PUBLIC ones globally, and
@@ -1603,6 +1610,67 @@ public static class ShmoLinker
     /// somehow under-pulls surfaces as a normal <c>missing_predicate</c>. The
     /// arity-meta / missing distinction is left entirely to the main
     /// walk — here an unresolved edge a library can't satisfy is just dropped.</para></summary>
+    /// <summary>ADR-038 — resolve <c>use_module(library(X))</c> dependencies from
+    /// the library search path: any dep the current input set does not already
+    /// provide is compiled from <c>X.pl</c> (or read from <c>X.shmo</c>) under the
+    /// search dirs and added, transitively. Convention: the library name is the
+    /// module name. An unresolved dep is left for the reachability walk to report
+    /// as a missing predicate.</summary>
+    private static IReadOnlyList<ShmoObject> PullLibraryDirDeps(
+        IReadOnlyList<ShmoObject> input,
+        IReadOnlyList<string> libraryDirs,
+        Action<LinkSeverity, string, string, string?> emit)
+    {
+        var result = new List<ShmoObject>(input);
+        var have = new HashSet<string>(result.Select(o => o.ModuleName));
+        var queue = new Queue<ShmoObject>(result);
+        while (queue.Count > 0)
+        {
+            var obj = queue.Dequeue();
+            foreach (var dep in obj.LibraryDeps)
+            {
+                if (dep.Baked || have.Contains(dep.LibName)) continue;
+                string? path = ResolveLibraryFile(dep.LibName, libraryDirs);
+                if (path is null) continue;   // reachability walk reports the gap
+                ShmoObject? pulled = null;
+                try
+                {
+                    if (path.EndsWith(".shmo", StringComparison.OrdinalIgnoreCase))
+                        pulled = ShmoReader.FromBytes(System.IO.File.ReadAllBytes(path));
+                    else
+                        pulled = ShmoCompiler.CompileSource(
+                            System.IO.File.ReadAllText(path), dep.LibName);
+                }
+                catch (Exception ex)
+                {
+                    emit(LinkSeverity.Error, "library_pull_failed",
+                        $"library '{dep.LibName}' ({path}): {ex.Message}", dep.LibName);
+                    continue;
+                }
+                if (pulled is not null && have.Add(pulled.ModuleName))
+                {
+                    result.Add(pulled);
+                    queue.Enqueue(pulled);
+                    emit(LinkSeverity.Info, "library_pulled",
+                        $"pulled library '{pulled.ModuleName}' from {path}.", null);
+                }
+            }
+        }
+        return result;
+    }
+
+    private static string? ResolveLibraryFile(string libName, IReadOnlyList<string> dirs)
+    {
+        foreach (string dir in dirs)
+            foreach (string ext in new[] { ".shmo", ".pl" })
+            {
+                string cand = System.IO.Path.Combine(dir, libName + ext);
+                try { if (System.IO.File.Exists(cand)) return cand; }
+                catch { /* an invalid path component — skip */ }
+            }
+        return null;
+    }
+
     private static IReadOnlyList<ShmoObject> PullLibraryMembers(
         IReadOnlyList<ShmoObject> explicitObjects,
         IReadOnlyList<LinkLibrary> libraries,

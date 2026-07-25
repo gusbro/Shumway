@@ -195,6 +195,14 @@ public sealed class LinkConfig
     /// directly. Members no reference reaches are simply not linked.</summary>
     public IReadOnlyList<LinkLibrary> Libraries { get; init; } = Array.Empty<LinkLibrary>();
 
+    /// <summary>ADR-038 — library search directories (from <c>--library-dir</c> /
+    /// <c>SHUMWAY_LIBRARY_PATH</c>). A <c>:- use_module(library(X))</c> dependency
+    /// not satisfied by an explicit object or a <c>.shum</c> library member is
+    /// resolved here — <c>X.pl</c> is compiled and linked in (transitively),
+    /// C-linker style: already-provided inputs win, source compilation is the last
+    /// resort.</summary>
+    public IReadOnlyList<string> LibraryDirs { get; init; } = Array.Empty<string>();
+
     /// <summary>When <c>true</c>, bake the precompiled internal prelude into
     /// the bundle as a source-stripped <c>$prelude</c> entry (its WAM bytecode,
     /// and — under <see cref="IncludeCompiledIl"/> — its Tier-1 IL). A

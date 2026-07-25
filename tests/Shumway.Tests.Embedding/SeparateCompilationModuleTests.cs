@@ -88,6 +88,42 @@ public sealed class SeparateCompilationModuleTests
     }
 
     [Fact]
+    public void LinkerPullsLibraryDependencyFromSearchPath()
+    {
+        // greetq is NOT passed to the linker; it is dropped as greetq.pl on a
+        // library search dir and pulled in on demand (C-linker style).
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+            "shumway-linkpull-" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "greetq.pl"), GreetQ);
+            var main = ShmoCompiler.CompileSource(
+                ":- module(app).\n" +
+                ":- public run/1.\n" +
+                ":- use_module(library(greetq), [hello/1]).\n" +
+                "run(X) :- hello(X).\n", "app");
+
+            var r = ShmoLinker.Link(new LinkConfig
+            {
+                Objects = new[] { main },
+                EntryPoints = new[] { new PredicateRef("run", 1) },
+                LibraryDirs = new[] { dir },
+            });
+            Assert.True(r.Success, string.Join(", ", r.Diagnostics.Select(d => d.Message)));
+            Assert.Contains("greetq", r.ReachedModules);
+
+            var engine = new PrologEngine();
+            engine.LoadBundle(r.Bundle!);
+            Assert.True(engine.Query("run(world).").Success);
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public void ImportShmoCarriesImportTable()
     {
         var main = ShmoCompiler.CompileSource(
