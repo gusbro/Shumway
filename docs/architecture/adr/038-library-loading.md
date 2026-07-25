@@ -2,6 +2,46 @@
 
 **Status:** Accepted — implemented in Phase 36.
 
+## Implementation status
+
+All four components are implemented and tested:
+
+- **Component 1 — library search path + resolver.** `AddLibraryDirectory` /
+  `AddDefaultLibraryDirectories`, `SHUMWAY_LIBRARY_PATH`, and the
+  `file_search_path(library, Dir)` / `library_directory(Dir)` dynamic facts feed a
+  per-engine search path; `use_module(library(X))` resolves `X.pl` / `X.shum`
+  (order: baked C# → search-path file → CompatLibraries → error).
+  `absolute_file_name(library(X), Abs)` resolves the same alias.
+- **Component 2 — export-qualified modules + import tables.** `:- module(Name,
+  [Exports])` mangles every predicate `Name$x`, records the export surface, and
+  builds a per-module import table; resolution is local → imports → bare-global at
+  compile time (`ModuleRewrite`) and at runtime (`$mqual`, interpreter + IL, via
+  `Activation.CurrentImportMap`). Same-name exports coexist. Import of a non-export
+  is an error.
+- **Component 3 — separate compilation + linking.** `shumway-compile` recognises
+  `:- module/2` (export-qualified) and `use_module(library(X))` (both forms — the
+  two-arg filter directly, the one-arg import-all by reading `X`'s export surface
+  off a compile-time `--library-dir` path); the `.shmo`/`.shum` carry
+  export-qualification + the resolved import table (shared serializer across both
+  `.shum` writers). `shumway-link` reaches an imported module through the import
+  table (also a reachability root, so a meta-called import is not
+  dead-code-eliminated) and pulls a `use_module(library(X))` dependency from the
+  `--library-dir` search path when not passed explicitly (C-linker order).
+  `LoadBundle` reconstructs the runtime manifests so a loaded bundle resolves
+  imports cross-process.
+- **Component 4 — repo `lib/` + REPL.** A shipped `lib/` (starter
+  `library(lists_ext)`) is on the default search path; the goal-form
+  `use_module/1` builtin loads from it and imports into the `user` module so an
+  interactive query resolves the imports.
+
+**Deferred (one item):** a **baked C# library** (`clpfd`/`clpr`/`coroutining`)
+consumed through *separate compilation* is recorded as a `ShmoLibraryDep{Baked}`
+but not yet replayed at load, and — more fundamentally — its operators are not
+available to `shumway-compile` at parse time, so a CLP program cannot yet be
+`shumway-compile`d. The baked libraries work fully in the embedded / REPL path
+(the primary use case); consuming them through the compile→link toolchain is a
+follow-up. The `M:goal` qualified-call syntax remains deferred as before.
+
 ## Context
 
 ADR-008 gave Shumway a **flat global namespace**: `:- public foo/N` (and the exports
