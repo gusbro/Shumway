@@ -210,10 +210,54 @@ public static class ShmoReader
             operators[i] = new ShmoOperatorDef(prio, type, name);
         }
 
+        // ADR-038 — export-qualification trailer.
+        bool isExportQualified = br.ReadBoolean();
+        uint exCount = br.ReadUInt32();
+        var exports = new PredicateRef[exCount];
+        for (uint i = 0; i < exCount; i++)
+        {
+            string name = ReadLengthPrefixedUtf8(br);
+            int arity = (int)br.ReadUInt32();
+            exports[i] = new PredicateRef(name, arity);
+        }
+        uint impCount = br.ReadUInt32();
+        var imports = new ShmoImportEntry[impCount];
+        for (uint i = 0; i < impCount; i++)
+        {
+            string name = ReadLengthPrefixedUtf8(br);
+            int arity = (int)br.ReadUInt32();
+            string impSource = ReadLengthPrefixedUtf8(br);
+            imports[i] = new ShmoImportEntry(new PredicateRef(name, arity), impSource);
+        }
+        uint depCount = br.ReadUInt32();
+        var libraryDeps = new ShmoLibraryDep[depCount];
+        for (uint i = 0; i < depCount; i++)
+        {
+            string libName = ReadLengthPrefixedUtf8(br);
+            bool baked = br.ReadBoolean();
+            bool importAll = br.ReadBoolean();
+            IReadOnlyList<PredicateRef>? filter = null;
+            if (!importAll)
+            {
+                uint fCount = br.ReadUInt32();
+                var f = new PredicateRef[fCount];
+                for (uint j = 0; j < fCount; j++)
+                {
+                    string name = ReadLengthPrefixedUtf8(br);
+                    int arity = (int)br.ReadUInt32();
+                    f[j] = new PredicateRef(name, arity);
+                }
+                filter = f;
+            }
+            libraryDeps[i] = new ShmoLibraryDep(libName, filter, baked);
+        }
+
         return new ShmoObject(moduleName, source, bytecode,
             defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds,
             clauseTerms, arityCompat, nativeBlocks, nativeFunctions, nativeDecls,
-            operators);
+            operators,
+            isExportQualified: isExportQualified, exports: exports,
+            imports: imports, libraryDeps: libraryDeps);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

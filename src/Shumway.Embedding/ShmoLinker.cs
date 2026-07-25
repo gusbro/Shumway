@@ -170,6 +170,20 @@ public static class ShmoLinker
             }
         }
 
+        // ADR-038 — per-module import table: a bare imported indicator → the
+        // export-qualified module that provides it. Used by the reachability walk
+        // to reach the source module's (mangled) definition, and carried into the
+        // bundle so a loaded program reconstructs its runtime import resolution.
+        var moduleImports = new Dictionary<string, Dictionary<PredicateRef, string>>();
+        foreach (var obj in objects)
+        {
+            if (obj.Imports.Count == 0) continue;
+            var imp = new Dictionary<PredicateRef, string>();
+            foreach (var e in obj.Imports)
+                imp[e.Pred] = e.Source;
+            moduleImports[obj.ModuleName] = imp;
+        }
+
         // ----- 3. Compile the prelude as an implicit object -----
         // The prelude is always loaded at engine startup, so its
         // public predicates should resolve without the user supplying
@@ -392,6 +406,17 @@ public static class ShmoLinker
                 if (moduleDefined[curMod].ContainsKey(edge))
                 {
                     queue.Enqueue((curMod, edge));
+                    continue;
+                }
+                // 1.5) ADR-038 — imported from an export-qualified module: reach
+                // its (mangled Source$edge) definition. The bytecode already mangled
+                // the call, so only reachability needs the mapping here.
+                if (moduleImports.TryGetValue(curMod, out var curImports)
+                    && curImports.TryGetValue(edge, out var importSrc)
+                    && moduleDefined.TryGetValue(importSrc, out var srcDefs)
+                    && srcDefs.ContainsKey(edge))
+                {
+                    queue.Enqueue((importSrc, edge));
                     continue;
                 }
                 // 2) Global public namespace.

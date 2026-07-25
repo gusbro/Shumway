@@ -232,6 +232,12 @@ public static class ShmoCompiler
         var dynamicSet = new HashSet<PredicateRef>();
         var multifileSet = new HashSet<PredicateRef>();
         var nativeSet = new HashSet<PredicateRef>();
+        // ADR-038 — export-qualified module state (a `:- module(Name, [Exports])`
+        // source), its library dependencies, and the resolved import table.
+        bool isExportQualified = false;
+        var exportSet = new HashSet<PredicateRef>();
+        var libraryDeps = new List<ShmoLibraryDep>();
+        var importEntries = new List<ShmoImportEntry>();
         var ensureLinked = new List<PredicateRef>();
         var tabledSet = new HashSet<PredicateRef>();
         var qualifiedRefs = new List<QualifiedPredicateRef>();
@@ -279,6 +285,36 @@ public static class ShmoCompiler
                     // Fall through to ProcessDirective/warning path? No —
                     // op/3 is fully handled (parse-time by ClauseReader,
                     // persistence here); nothing else to do.
+                    continue;
+                }
+                // ADR-038 — `:- module(Name, [Exports])` (two-arg) is an
+                // export-qualified module: every predicate is mangled Name$x (so
+                // publicSet stays empty and ModuleRewrite mangles them all) and the
+                // export list is the importable surface.
+                if (d.Args[0] is CompoundTerm { Functor: "module", Args.Length: 2 } modDir
+                    && modDir.Args[0] is AtomTerm exqName)
+                {
+                    moduleName = exqName.Name;
+                    isExportQualified = true;
+                    foreach (var spec in ReadPiListLenient(modDir.Args[1]))
+                        exportSet.Add(spec);
+                    continue;
+                }
+                // ADR-038 — `:- use_module(library(X))` / `…, [Filter]`. Record the
+                // dependency for the linker; for a filtered file import, resolve the
+                // import table now (lib name = module name) so ModuleRewrite mangles
+                // the importer's calls to X$pred.
+                if (d.Args[0] is CompoundTerm { Functor: "use_module" } umDir
+                    && umDir.Args.Length is 1 or 2
+                    && TryReadLibrarySpec(umDir.Args[0], out string libName, out bool baked))
+                {
+                    IReadOnlyList<PredicateRef>? filter = null;
+                    if (umDir.Args.Length == 2)
+                        filter = new List<PredicateRef>(ReadPiListLenient(umDir.Args[1]));
+                    libraryDeps.Add(new ShmoLibraryDep(libName, filter, baked));
+                    if (!baked && filter is not null)
+                        foreach (var p in filter)
+                            importEntries.Add(new ShmoImportEntry(p, libName));
                     continue;
                 }
                 try
@@ -330,7 +366,9 @@ public static class ShmoCompiler
             source, rawClauses, publicSet, dynamicSet, ensureLinked,
             qualifiedRefs, buildMode, errors, warnings, arityEverOn, tabledSet,
             nativeDecls.Length > 0 ? nativeDecls.ToString() : null, nativeSet,
-            operatorDefs, multifileSet);
+            operatorDefs, multifileSet,
+            isExportQualified: isExportQualified, exports: exportSet,
+            imports: importEntries, libraryDeps: libraryDeps);
     }
 
     /// <summary>the compile back-half, shared by
@@ -358,7 +396,11 @@ public static class ShmoCompiler
         string? nativeDecls = null,
         HashSet<PredicateRef>? nativeSet = null,
         IReadOnlyList<ShmoOperatorDef>? operatorDefs = null,
-        HashSet<PredicateRef>? multifileSet = null)
+        HashSet<PredicateRef>? multifileSet = null,
+        bool isExportQualified = false,
+        IReadOnlyCollection<PredicateRef>? exports = null,
+        IReadOnlyList<ShmoImportEntry>? imports = null,
+        IReadOnlyList<ShmoLibraryDep>? libraryDeps = null)
     {
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
@@ -655,7 +697,17 @@ public static class ShmoCompiler
         // source-carrying LoadBundle path consults under the entry's module
         // name, and the source-less path's dynamic-seed rehydration rewrites
         // under the same name via _dynamicSeedModule.
-        var rewriteCtx = new ModuleRewrite.Context(moduleName, localFids, dynamicFids);
+        // ADR-038 — the import table for ModuleRewrite: a bare imported functor id
+        // → its source module, so an importer's call to `p` mangles to `Source$p`
+        // in the emitted bytecode (matching the runtime resolution).
+        var importFidMap = new Dictionary<int, string>();
+        if (imports is not null)
+            foreach (var imp in imports)
+                importFidMap[Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(imp.Pred.Name, permanent: true).Id,
+                    imp.Pred.Arity)] = imp.Source;
+        var rewriteCtx = new ModuleRewrite.Context(
+            moduleName, localFids, dynamicFids, importFidMap);
         var rewritten = new List<Clause>(staticClauses.Count);
         foreach (var clause in staticClauses)
             rewritten.Add(ModuleRewrite.Rewrite(clause, rewriteCtx));
@@ -775,7 +827,11 @@ public static class ShmoCompiler
             nativeBlocks: nativeBlocks,
             nativeFunctions: nativeSet?.ToList(),
             nativeDecls: nativeDecls,
-            operators: operatorDefs);
+            operators: operatorDefs,
+            isExportQualified: isExportQualified,
+            exports: exports?.ToList(),
+            imports: imports,
+            libraryDeps: libraryDeps);
         obj.DynamicSnapshotBytecode = dynamicSnapshotBytecode;
         return new ShmoCompileResult(obj, errors, warnings);
     }
@@ -898,6 +954,40 @@ public static class ShmoCompiler
         throw new InvalidOperationException(
             $"Malformed :- {directive} directive (expected Name/Arity, a list of them, "
             + "or a comma-separated sequence).");
+    }
+
+    // ADR-038 — walk a list of Name/Arity predicate indicators, yielding each and
+    // silently skipping non-PI entries (e.g. an op/3 spec in a module export list).
+    private static IEnumerable<PredicateRef> ReadPiListLenient(Term list)
+    {
+        Term cursor = list;
+        while (cursor is CompoundTerm { Functor: ".", Args: [var head, var tail] })
+        {
+            if (head is CompoundTerm { Functor: "/", Args: [AtomTerm n, IntTerm a] })
+                yield return new PredicateRef(n.Name, (int)a.Value);
+            cursor = tail;
+        }
+    }
+
+    // ADR-038 — recognise a use_module spec: library(X) (baked = a built-in C#
+    // constraint library) or a bare atom naming a file.
+    private static bool TryReadLibrarySpec(Term spec, out string libName, out bool baked)
+    {
+        if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
+        {
+            libName = lib.Name;
+            baked = lib.Name is "clpfd" or "clpr" or "coroutining";
+            return true;
+        }
+        if (spec is AtomTerm fileAtom)
+        {
+            libName = fileAtom.Name;
+            baked = false;
+            return true;
+        }
+        libName = "";
+        baked = false;
+        return false;
     }
 
     /// <summary>Accepts a single <c>Name/Arity</c>, a Prolog list of

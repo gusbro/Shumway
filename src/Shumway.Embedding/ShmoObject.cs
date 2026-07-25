@@ -80,6 +80,29 @@ public readonly record struct ShmoOperatorDef(int Priority, string Type, string 
     public override string ToString() => $"op({Priority}, {Type}, {Name})";
 }
 
+/// <summary>ADR-038 — one entry of an export-qualified module's import table
+/// carried in the <c>.shmo</c>: the bare indicator this module imported, and the
+/// name of the export-qualified module that provides it (so a call to
+/// <see cref="Pred"/> resolves to <c>Source$Pred</c>). Resolved by
+/// <c>shumway-compile</c> at compile time from the imported module's interface.</summary>
+public readonly record struct ShmoImportEntry(PredicateRef Pred, string Source)
+{
+    public override string ToString() => $"{Pred} <- {Source}";
+}
+
+/// <summary>ADR-038 — one <c>:- use_module(library(Name))</c> / <c>…, [Imports]</c>
+/// dependency recorded in a <c>.shmo</c>. The linker resolves <see cref="LibName"/>
+/// like a C linker resolves a symbol (explicit <c>.shmo</c> → passed <c>.shum</c>
+/// archive member → library search-path source). <see cref="Filter"/> is the
+/// selected indicators for the two-arg form, or <c>null</c> to import the whole
+/// export surface. <see cref="Baked"/> marks a built-in C# library
+/// (<c>clpfd</c>/…): not a file, replayed as a directive on load.</summary>
+public readonly record struct ShmoLibraryDep(
+    string LibName, IReadOnlyList<PredicateRef>? Filter, bool Baked)
+{
+    public override string ToString() => LibName + (Baked ? " [baked]" : "");
+}
+
 /// <summary>One predicate defined inside a <c>.shmo</c>, together with
 /// its visibility.</summary>
 public sealed class ShmoDefinedPredicate
@@ -210,7 +233,11 @@ public sealed class ShmoObject
         IReadOnlyList<ShmoNativeBlock>? nativeBlocks = null,
         IReadOnlyList<PredicateRef>? nativeFunctions = null,
         string? nativeDecls = null,
-        IReadOnlyList<ShmoOperatorDef>? operators = null)
+        IReadOnlyList<ShmoOperatorDef>? operators = null,
+        bool isExportQualified = false,
+        IReadOnlyList<PredicateRef>? exports = null,
+        IReadOnlyList<ShmoImportEntry>? imports = null,
+        IReadOnlyList<ShmoLibraryDep>? libraryDeps = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -227,7 +254,33 @@ public sealed class ShmoObject
         NativeFunctions = nativeFunctions ?? System.Array.Empty<PredicateRef>();
         NativeDecls = nativeDecls;
         Operators = operators ?? System.Array.Empty<ShmoOperatorDef>();
+        IsExportQualified = isExportQualified;
+        Exports = exports ?? System.Array.Empty<PredicateRef>();
+        Imports = imports ?? System.Array.Empty<ShmoImportEntry>();
+        LibraryDeps = libraryDeps ?? System.Array.Empty<ShmoLibraryDep>();
     }
+
+    /// <summary>ADR-038 — true when compiled from a two-arg
+    /// <c>:- module(Name, [Exports])</c>: every predicate is mangled
+    /// <c>Name$x</c> (nothing bare-global) and <see cref="Exports"/> is the
+    /// importable surface.</summary>
+    public bool IsExportQualified { get; }
+
+    /// <summary>ADR-038 — the importable predicate indicators of an
+    /// export-qualified module (bare <c>Name/Arity</c>).</summary>
+    public IReadOnlyList<PredicateRef> Exports { get; }
+
+    /// <summary>ADR-038 — this module's resolved import table: each bare
+    /// indicator it imported and the export-qualified module providing it. The
+    /// <c>.shmo</c> bytecode already mangles these calls to <c>Source$name</c>;
+    /// the table travels so a loaded bundle reconstructs the runtime manifest and
+    /// its variable-meta-call resolution.</summary>
+    public IReadOnlyList<ShmoImportEntry> Imports { get; }
+
+    /// <summary>ADR-038 — the <c>use_module(library(X))</c> dependencies the
+    /// linker must satisfy (C-linker resolution). A baked-library dep is replayed
+    /// as a directive on load rather than linked.</summary>
+    public IReadOnlyList<ShmoLibraryDep> LibraryDeps { get; }
 
     /// <summary>ADR-024 — the <c>:- native fn/N</c> indicators in this module, so a
     /// source-stripped bundle restores them at load (a native function resolves via

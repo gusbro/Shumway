@@ -140,6 +140,39 @@ public static class ShmoWriter
             WriteLengthPrefixedUtf8(bw, od.Name);
         }
 
+        // ADR-038 — export-qualification trailer: the export surface, resolved
+        // import table, and library dependencies of a :- module/2 module.
+        bw.Write(obj.IsExportQualified);
+        bw.Write((uint)obj.Exports.Count);
+        foreach (var p in obj.Exports)
+        {
+            WriteLengthPrefixedUtf8(bw, p.Name);
+            bw.Write((uint)p.Arity);
+        }
+        bw.Write((uint)obj.Imports.Count);
+        foreach (var imp in obj.Imports)
+        {
+            WriteLengthPrefixedUtf8(bw, imp.Pred.Name);
+            bw.Write((uint)imp.Pred.Arity);
+            WriteLengthPrefixedUtf8(bw, imp.Source);
+        }
+        bw.Write((uint)obj.LibraryDeps.Count);
+        foreach (var dep in obj.LibraryDeps)
+        {
+            WriteLengthPrefixedUtf8(bw, dep.LibName);
+            bw.Write(dep.Baked);
+            bw.Write(dep.Filter is null);   // true = import-all (null filter)
+            if (dep.Filter is not null)
+            {
+                bw.Write((uint)dep.Filter.Count);
+                foreach (var p in dep.Filter)
+                {
+                    WriteLengthPrefixedUtf8(bw, p.Name);
+                    bw.Write((uint)p.Arity);
+                }
+            }
+        }
+
         bw.Flush();
         return BundleFormat.FinalizeImage(ms.ToArray());
     }
