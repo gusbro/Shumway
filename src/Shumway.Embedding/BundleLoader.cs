@@ -200,7 +200,10 @@ internal sealed class BundleLoader
                     compiledIlEntries: null,
                     dynamicSeeds: shmo.DynamicSeeds,
                     nativeBlocks: shmo.NativeBlocks,
-                    operators: shmo.Operators));
+                    operators: shmo.Operators,
+                    isExportQualified: shmo.IsExportQualified,
+                    exports: shmo.Exports,
+                    imports: shmo.Imports));
             }
             effectiveEntries = combined;
         }
@@ -1089,6 +1092,17 @@ internal sealed class BundleLoader
             manifest = new ModuleManifest(entry.ModuleName);
             E._modules[entry.ModuleName] = manifest;
         }
+
+        // ADR-038 — reconstruct the export-qualification + import table so runtime
+        // variable-meta-call resolution matches what the source consult produced.
+        if (entry.IsExportQualified) manifest.IsExportQualified = true;
+        foreach (var ex in entry.Exports)
+            manifest.ExportFunctors.Add(Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(ex.Name, permanent: true).Id, ex.Arity));
+        foreach (var imp in entry.Imports)
+            manifest.Imports[Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(imp.Pred.Name, permanent: true).Id,
+                imp.Pred.Arity)] = imp.Source;
 
         foreach (var d in entry.Defined)
         {

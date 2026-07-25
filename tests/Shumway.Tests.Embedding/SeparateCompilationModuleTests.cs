@@ -63,6 +63,31 @@ public sealed class SeparateCompilationModuleTests
     }
 
     [Fact]
+    public void VariableMetaCall_ResolvesThroughLoadedBundleImportTable()
+    {
+        var greetq = ShmoCompiler.CompileSource(GreetQ, "greetq");
+        // The body is a VARIABLE meta-call, so resolution runs through the
+        // runtime $mqual import path — which needs the bundle to have carried the
+        // import table into the reconstructed manifest (ADR-038 Component 3b).
+        var main = ShmoCompiler.CompileSource(
+            ":- module(app).\n" +
+            ":- public run/1.\n" +
+            ":- use_module(library(greetq), [hello/1]).\n" +
+            "run(X) :- G = hello(X), call(G).\n", "app");
+
+        var r = Link(new[] { main, greetq }, ("run", 1));
+        Assert.True(r.Success);
+
+        // Round-trip through .shum bytes so the manifest reconstruction is exercised.
+        byte[] shum = BundleWriter.ToBytes(r.Bundle!);
+        Bundle back = BundleReader.FromBytes(shum);
+
+        var engine = new PrologEngine();
+        engine.LoadBundle(back);
+        Assert.True(engine.Query("run(world).").Success);
+    }
+
+    [Fact]
     public void ImportShmoCarriesImportTable()
     {
         var main = ShmoCompiler.CompileSource(

@@ -187,7 +187,10 @@ public sealed class BundleEntry
         IReadOnlyList<ShmoNativeBlock>? nativeBlocks = null,
         IReadOnlyList<PredicateRef>? nativeFunctions = null,
         string? nativeDecls = null,
-        IReadOnlyList<ShmoOperatorDef>? operators = null)
+        IReadOnlyList<ShmoOperatorDef>? operators = null,
+        bool isExportQualified = false,
+        IReadOnlyList<PredicateRef>? exports = null,
+        IReadOnlyList<ShmoImportEntry>? imports = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -201,7 +204,24 @@ public sealed class BundleEntry
         NativeFunctions = nativeFunctions ?? Array.Empty<PredicateRef>();
         NativeDecls = nativeDecls;
         Operators = operators ?? Array.Empty<ShmoOperatorDef>();
+        IsExportQualified = isExportQualified;
+        Exports = exports ?? Array.Empty<PredicateRef>();
+        Imports = imports ?? Array.Empty<ShmoImportEntry>();
     }
+
+    /// <summary>ADR-038 — the module was compiled export-qualified
+    /// (<c>:- module(Name, [Exports])</c>): its predicates are mangled and only
+    /// <see cref="Exports"/> is importable. Reconstructed into the runtime
+    /// <see cref="ModuleManifest"/> at load.</summary>
+    public bool IsExportQualified { get; }
+
+    /// <summary>ADR-038 — the export surface of an export-qualified module.</summary>
+    public IReadOnlyList<PredicateRef> Exports { get; }
+
+    /// <summary>ADR-038 — the module's resolved import table (bare indicator →
+    /// source module), so a loaded bundle reconstructs variable-meta-call
+    /// import resolution.</summary>
+    public IReadOnlyList<ShmoImportEntry> Imports { get; }
 
     /// <summary>ADR-024 — the module's <c>:- native</c> indicators (see
     /// <see cref="ShmoObject.NativeFunctions"/>).</summary>

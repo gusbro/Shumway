@@ -153,7 +153,11 @@ public static class BundleWriter
                     // rebuild must not drop them.
                     effective[i].NativeFunctions,
                     effective[i].NativeDecls,
-                    effective[i].Operators);
+                    effective[i].Operators,
+                    // ADR-038 — carry export-qualification + import table too.
+                    isExportQualified: effective[i].IsExportQualified,
+                    exports: effective[i].Exports,
+                    imports: effective[i].Imports);
             }
         }
 
@@ -208,6 +212,7 @@ public static class BundleWriter
             WriteNativeBlocks(bw, entry.NativeBlocks);
             WriteNativeInterop(bw, entry.NativeFunctions, entry.NativeDecls);
             WriteOperators(bw, entry.Operators);
+            WriteExportQualification(bw, entry);
         }
         // Foreign-assemblies trailer after the
         // per-entry payloads. Pre-V5 readers stop after the last
@@ -728,6 +733,27 @@ public static class BundleWriter
             bw.Write((uint)pr.Arity);
         }
         WriteLengthPrefixedUtf8(bw, nativeDecls ?? string.Empty);
+    }
+
+    /// <summary>ADR-038 — per-entry export-qualification: the flag, the export
+    /// surface, and the resolved import table. Shared by both .shum writers (this
+    /// file and the linker's inline serializer) so they stay byte-identical.</summary>
+    internal static void WriteExportQualification(BinaryWriter bw, BundleEntry entry)
+    {
+        bw.Write(entry.IsExportQualified);
+        bw.Write((uint)entry.Exports.Count);
+        foreach (var p in entry.Exports)
+        {
+            WriteLengthPrefixedUtf8(bw, p.Name);
+            bw.Write((uint)p.Arity);
+        }
+        bw.Write((uint)entry.Imports.Count);
+        foreach (var imp in entry.Imports)
+        {
+            WriteLengthPrefixedUtf8(bw, imp.Pred.Name);
+            bw.Write((uint)imp.Pred.Arity);
+            WriteLengthPrefixedUtf8(bw, imp.Source);
+        }
     }
 
     /// <summary>Per-entry <c>:- op/3</c> definitions,

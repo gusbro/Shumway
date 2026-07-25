@@ -322,6 +322,17 @@ public static class ShmoLinker
                 roots.Add((mod, el, $"ensure_linked from '{obj.ModuleName}'"));
             }
         }
+        // ADR-038 — an imported predicate is a declared dependency: keep the
+        // source module's definition even when the only reference is a runtime
+        // meta-call (which leaves no static call-graph edge). Adds a root per
+        // import target — the direct-call case is already reached, so this only
+        // matters for the meta-call case.
+        foreach (var obj in objects)
+            foreach (var imp in obj.Imports)
+                if (moduleDefined.TryGetValue(imp.Source, out var srcDefs)
+                    && srcDefs.ContainsKey(imp.Pred))
+                    roots.Add((imp.Source, imp.Pred, $"import from '{obj.ModuleName}'"));
+
         // public meta-wrappers stay linked even when the LTO unfold
         // removed their last static call site: a runtime-built goal may still
         // dispatch to them, and the unfold must never shrink the linked set.
@@ -829,7 +840,10 @@ public static class ShmoLinker
                     nativeBlocks: obj.NativeBlocks,
                     nativeFunctions: obj.NativeFunctions,
                     nativeDecls: obj.NativeDecls,
-                    operators: obj.Operators));
+                    operators: obj.Operators,
+                    isExportQualified: obj.IsExportQualified,
+                    exports: obj.Exports,
+                    imports: obj.Imports));
             }
             // Bake the precompiled prelude so a bare-loaded engine
             // (PrologEngine.FromBundle / the generated --exe) gets it without
@@ -1829,6 +1843,8 @@ public static class ShmoLinker
             BundleWriter.WriteNativeInterop(bw, e.NativeFunctions, e.NativeDecls);
             // Operator trailer.
             BundleWriter.WriteOperators(bw, e.Operators);
+            // ADR-038 — export-qualification trailer (shared serialiser).
+            BundleWriter.WriteExportQualification(bw, e);
         }
         // Foreign-assemblies trailer. Must mirror
         // BundleWriter.ToBytes's section exactly so a bundle

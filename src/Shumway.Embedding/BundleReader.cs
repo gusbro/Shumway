@@ -147,9 +147,29 @@ public static class BundleReader
                 string opName = ReadLengthPrefixedUtf8(br);
                 operators.Add(new ShmoOperatorDef(opPrio, opType, opName));
             }
+            // ADR-038 — export-qualification + import table per entry.
+            bool isExportQualified = br.ReadBoolean();
+            uint exCount = br.ReadUInt32();
+            var exports = new List<PredicateRef>((int)exCount);
+            for (uint j = 0; j < exCount; j++)
+            {
+                string exName = ReadLengthPrefixedUtf8(br);
+                int exArity = (int)br.ReadUInt32();
+                exports.Add(new PredicateRef(exName, exArity));
+            }
+            uint impCount = br.ReadUInt32();
+            var imports = new List<ShmoImportEntry>((int)impCount);
+            for (uint j = 0; j < impCount; j++)
+            {
+                string impName = ReadLengthPrefixedUtf8(br);
+                int impArity = (int)br.ReadUInt32();
+                string impSrc = ReadLengthPrefixedUtf8(br);
+                imports.Add(new ShmoImportEntry(new PredicateRef(impName, impArity), impSrc));
+            }
             entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined,
                 compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks,
-                nativeFunctions, nativeDecls, operators);
+                nativeFunctions, nativeDecls, operators,
+                isExportQualified: isExportQualified, exports: exports, imports: imports);
         }
         // Foreign-assemblies trailer.
         uint asmCount = br.ReadUInt32();
