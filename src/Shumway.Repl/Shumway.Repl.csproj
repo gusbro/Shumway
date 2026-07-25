@@ -26,4 +26,13 @@
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
   </ItemGroup>
 
+  <!-- ADR-038 — ship the repo lib/ next to the executable so the engine's
+       default library search path (AppContext.BaseDirectory/lib) resolves
+       library(X) for both `dotnet run` and a published build. -->
+  <ItemGroup>
+    <Content Include="..\..\lib\**\*.pl"
+             Link="lib\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

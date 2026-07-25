@@ -288,12 +288,13 @@ public static partial class MetaBuiltins
         return true;
     }
 
-    /// <summary><c>use_module(+Spec)</c> — SWI-style library loader. With
-    /// <c>library(Name)</c> loads a built-in library: the constraint
-    /// libraries <c>clpfd</c> / <c>clpr</c>, or a Scryer/Trealla
-    /// compatibility library (<c>dcgs</c>, <c>format</c>, <c>dif</c>, and the
-    /// prelude-covered no-ops — see <see cref="CompatLibraries"/>). With an
-    /// atom, behaves like <see cref="Consult"/>.</summary>
+    /// <summary><c>use_module(+Spec)</c> — SWI-style library loader, the goal
+    /// (query) form of the <c>:- use_module</c> directive. <c>library(Name)</c>
+    /// loads a baked constraint/compatibility library or resolves a
+    /// <c>.pl</c>/<c>.shum</c> on the library search path (ADR-038); an atom is a
+    /// file to consult. When the loaded module is export-qualified, its whole
+    /// export surface is imported into the top-level <c>user</c> module so a
+    /// following interactive query can call the imported predicates.</summary>
     public static bool UseModule(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -303,35 +304,17 @@ public static partial class MetaBuiltins
         Term arg = MaterializeRegister(engine, 0);
         if (arg is Shumway.Compiler.Ast.VarTerm)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (arg is not (Shumway.Compiler.Ast.AtomTerm
+            or Shumway.Compiler.Ast.CompoundTerm { Functor: "library", Args.Length: 1 }))
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error(atom_or_library, _)");
 
-        if (arg is Shumway.Compiler.Ast.CompoundTerm c
-            && c.Functor == "library" && c.Args.Length == 1
-            && c.Args[0] is Shumway.Compiler.Ast.AtomTerm libAtom)
-        {
-            switch (libAtom.Name)
-            {
-                case "clpfd": host.UseClpfd(); return true;
-                case "clpr":  host.UseClpr();  return true;
-                default:
-                    // Scryer/Trealla stdlib compatibility libraries (dcgs,
-                    // format, dif, and the prelude-covered no-ops).
-                    if (host.UseCompatLibrary(libAtom.Name)) return true;
-                    throw new Shumway.Core.PrologRuntimeException(
-                        $"existence_error(library, {libAtom.Name})");
-            }
-        }
-
-        if (arg is Shumway.Compiler.Ast.AtomTerm pathAtom)
-        {
-            if (!System.IO.File.Exists(pathAtom.Name))
-                throw new Shumway.Core.PrologRuntimeException(
-                    $"existence_error(source_sink, '{pathAtom.Name}')");
-            host.ConsultFile(pathAtom.Name);
-            return true;
-        }
-
-        throw new Shumway.Core.PrologRuntimeException(
-            "type_error(atom_or_library, _)");
+        // Same resolution as the consult-time directive (file search path,
+        // coroutining, compat libraries), returning the loaded export-qualified
+        // module name (or null).
+        string? src = host.ExecuteUseModuleDirective(arg, throwOnUnresolved: true);
+        if (src is not null) host.ImportAllExportsIntoUser(src);
+        return true;
     }
 
     /// <summary><c>save_state(+File)</c> — Arity-Prolog compatible

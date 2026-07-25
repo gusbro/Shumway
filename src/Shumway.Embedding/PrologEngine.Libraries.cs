@@ -108,6 +108,28 @@ public sealed partial class PrologEngine
         AddLibraryDirNormalized(path);
     }
 
+    /// <summary>Adds Shumway's shipped default library directories to the search
+    /// path (ADR-038): a <c>lib/</c> folder beside the running executable (where
+    /// the REPL/CLI's copy of the repo <c>lib/</c> lands, and where <c>--exe</c>
+    /// deploys it) and, if different, a <c>lib/</c> under the current directory.
+    /// The REPL/CLIs call this at startup so <c>use_module(library(X))</c> finds
+    /// the bundled libraries with no configuration.</summary>
+    public void AddDefaultLibraryDirectories()
+    {
+        AddLibraryDirIfExists(System.IO.Path.Combine(AppContext.BaseDirectory, "lib"));
+        AddLibraryDirIfExists(System.IO.Path.Combine(
+            System.IO.Directory.GetCurrentDirectory(), "lib"));
+    }
+
+    private void AddLibraryDirIfExists(string path)
+    {
+        try
+        {
+            if (System.IO.Directory.Exists(path)) AddLibraryDirectory(path);
+        }
+        catch { /* an inaccessible probe path is simply skipped */ }
+    }
+
     // The library directories in resolution order: dynamic facts first (so a
     // program's own :- file_search_path / library_directory wins), then the
     // API/env/shipped dirs.
@@ -183,14 +205,17 @@ public sealed partial class PrologEngine
     private readonly Dictionary<string, string> _libraryModuleByPath =
         new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Executes a <c>use_module/1</c> directive body at consult time.
-    /// <c>library(Name)</c> loads a constraint or compatibility library;
-    /// a plain atom names a file to consult. Returns the name of the loaded
-    /// <em>export-qualified</em> module (ADR-038 — the importer builds its import
-    /// table from this module's exports), or <c>null</c> for a legacy bare-global
-    /// module, a baked library, or an unresolved/failed import. An unknown library
-    /// is reported as a warning and skipped rather than aborting the consult.</summary>
-    internal string? ExecuteUseModuleDirective(Term spec)
+    /// <summary>Executes a <c>use_module/1</c> directive body.
+    /// <c>library(Name)</c> loads a constraint/compatibility library or resolves
+    /// a <c>.pl</c>/<c>.shum</c> on the search path; a plain atom names a file to
+    /// consult. Returns the name of the loaded <em>export-qualified</em> module
+    /// (ADR-038 — the importer builds its import table from this module's
+    /// exports), or <c>null</c> for a legacy bare-global module, a baked library,
+    /// or an unresolved/failed import. <paramref name="throwOnUnresolved"/>
+    /// selects behaviour for an unknown library / missing file: the consult-time
+    /// directive path warns and continues (<c>false</c>); the goal-form
+    /// <c>use_module/1</c> builtin raises an ISO error (<c>true</c>).</summary>
+    internal string? ExecuteUseModuleDirective(Term spec, bool throwOnUnresolved = false)
     {
         if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
         {
@@ -208,6 +233,9 @@ public sealed partial class PrologEngine
                     // (3) built-in Scryer/Trealla compatibility table.
                     if (UseCompatLibrary(lib.Name)) return null;
                     // (4) genuinely unknown.
+                    if (throwOnUnresolved)
+                        throw new Shumway.Core.PrologRuntimeException(
+                            $"existence_error(library, {lib.Name})");
                     Console.Error.WriteLine(
                         $"warning: unknown library '{lib.Name}' in use_module/1 — ignored");
                     return null;
@@ -227,6 +255,9 @@ public sealed partial class PrologEngine
                 path += ".pl";
             if (!System.IO.File.Exists(path))
             {
+                if (throwOnUnresolved)
+                    throw new Shumway.Core.PrologRuntimeException(
+                        $"existence_error(source_sink, '{fileAtom.Name}')");
                 Console.Error.WriteLine(
                     $"warning: use_module/1 target '{fileAtom.Name}' not found — ignored");
                 return null;
@@ -264,6 +295,21 @@ public sealed partial class PrologEngine
                 $"warning: use_module(library({name})) failed: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>ADR-038 — imports the whole export surface of
+    /// <paramref name="sourceModule"/> into the top-level <c>user</c> module's
+    /// import table (first-import-wins), so an interactive query following a
+    /// goal-form <c>use_module(library(X))</c> resolves the imported predicates.
+    /// Invalidates the rewrite caches when it adds anything.</summary>
+    internal void ImportAllExportsIntoUser(string sourceModule)
+    {
+        if (!_modules.TryGetValue(sourceModule, out ModuleManifest? srcManifest)) return;
+        if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest)) return;
+        bool changed = false;
+        foreach (int fid in srcManifest.ExportFunctors)
+            if (userManifest.Imports.TryAdd(fid, sourceModule)) changed = true;
+        if (changed) InvalidatePersistent();
     }
 
     // The module name if it names an export-qualified module (ADR-038), else null

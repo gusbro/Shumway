@@ -776,10 +776,16 @@ public sealed partial class PrologEngine
             {
                 Shumway.Compiler.Parsing.MetaTransform.HelperPrefix = prevPrefix;
             }
-            var ctx = new ModuleRewrite.Context(
-                DefaultModuleName,
-                userLocalsCache ?? new HashSet<int>(),
-                _dynStore.Functors);
+            // ADR-038 — resolve the query goal through the user module's import
+            // table too, so a REPL `?- use_module(library(X))` then a bare call
+            // to an imported predicate resolves to Source$name.
+            var ctx = _modules.TryGetValue(DefaultModuleName, out var userManifest)
+                ? new ModuleRewrite.Context(
+                    DefaultModuleName, userLocalsCache ?? new HashSet<int>(),
+                    _dynStore.Functors, userManifest.Imports)
+                : new ModuleRewrite.Context(
+                    DefaultModuleName, userLocalsCache ?? new HashSet<int>(),
+                    _dynStore.Functors);
             foreach (var clause in queryTransformed)
                 allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
         }

@@ -115,6 +115,11 @@ internal static class ReplTopLevel
             .ToArray();
 
         var engine = new PrologEngine();
+        // ADR-038 — the shipped lib/ (beside the executable) is on the library
+        // search path by default, so use_module(library(X)) finds a bundled
+        // library with no configuration. SHUMWAY_LIBRARY_PATH and
+        // file_search_path/library_directory facts add to it.
+        engine.AddDefaultLibraryDirectories();
         // Point the engine's Out directly at the column tracker (Console.Out is the
         // synchronized wrapper SetOut installed, which hides ILineStartAware). Set
         // before the stream registry is built so user_output writes and time/1's
