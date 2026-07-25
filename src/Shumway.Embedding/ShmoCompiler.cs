@@ -852,13 +852,15 @@ public static class ShmoCompiler
     public static ShmoCompileResult TryCompileFile(string path,
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         int maxErrors = 100,
-        bool arityCompat = false)
+        bool arityCompat = false,
+        IReadOnlyList<string>? libraryDirs = null)
     {
         ArgumentNullException.ThrowIfNull(path);
         string source = File.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
         return TryCompileSource(source, fallback, buildMode, maxErrors, arityCompat,
-            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)));
+            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)),
+            libraryDirs: libraryDirs);
     }
 
     // ------------------------------------------------------------------------
