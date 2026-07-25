@@ -237,6 +237,8 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("$sub_atom_enum",            5, MultiSolutionHelpers.SubAtomEnum);
         // Branch-cut barrier capture (MetaTransform cut transparency).
         BuiltinsRegistry.Register("$get_cut_barrier",          1, MultiSolutionHelpers.GetCutBarrier);
+        // ADR-037 — soft-cut commit for a non-inline-eligible ( Cond *-> Then ; Else ).
+        BuiltinsRegistry.Register("$soft_cut",                 1, MultiSolutionHelpers.SoftCut1);
         // Arity embedded native goal placeholder (ADR-022). The parser emits
         // '$native_goal'(RawCText) for a `{ ... }` block; consult-time
         // NativeTransform rewrites every occurrence to a real '$native_run'

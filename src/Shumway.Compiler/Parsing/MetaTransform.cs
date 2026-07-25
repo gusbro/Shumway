@@ -156,7 +156,8 @@ public static class MetaTransform
         // compiler treats `->/2` as a plain procedure and emits a
         // call to it, which raises existence_error/2 at runtime
         // (the engine doesn't ship `->`/2 as a builtin).
-        if (goal is CompoundTerm itoOnly && itoOnly.Functor == "->"
+        if (goal is CompoundTerm itoOnly
+            && itoOnly.Functor is "->" or "*->"    // ADR-037 — standalone *-> too
             && itoOnly.Args.Length == 2)
         {
             Term withFallback = new CompoundTerm(";", new[]
@@ -502,27 +503,27 @@ public static class MetaTransform
             CompoundTerm { Functor: ",", Args.Length: 2 } c
                 => InsideBranch(c.Args[0]) || InsideBranch(c.Args[1]),
             CompoundTerm { Functor: ";", Args.Length: 2 } c
-                => (c.Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 } ite
+                => (c.Args[0] is CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } ite
                         ? InsideBranch(ite.Args[1])          // then (cond is opaque)
                         : InsideBranch(c.Args[0]))
                    || InsideBranch(c.Args[1]),
-            CompoundTerm { Functor: "->", Args.Length: 2 } c
+            CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } c
                 => InsideBranch(c.Args[1]),                  // then (cond is opaque)
             _ => false,
         };
         // At the TOP level of the body we are not inside a branch yet: descend
-        // through conjunction; a ;/-> here means its branches are branch
+        // through conjunction; a ;/->/*-> here means its branches are branch
         // positions (handled by InsideBranch).
         return body switch
         {
             CompoundTerm { Functor: ",", Args.Length: 2 } c
                 => HasTransparentBranchCut(c.Args[0]) || HasTransparentBranchCut(c.Args[1]),
             CompoundTerm { Functor: ";", Args.Length: 2 } c
-                => (c.Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 } ite
+                => (c.Args[0] is CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } ite
                         ? InsideBranch(ite.Args[1])
                         : InsideBranch(c.Args[0]))
                    || InsideBranch(c.Args[1]),
-            CompoundTerm { Functor: "->", Args.Length: 2 } c
+            CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } c
                 => InsideBranch(c.Args[1]),
             _ => false,
         };
@@ -556,15 +557,16 @@ public static class MetaTransform
                     ReplaceTransparentCuts(c.Args[1], cutK));
             case CompoundTerm { Functor: ";", Args.Length: 2 } c:
             {
-                // Left arm: a ( Cond -> Then ) keeps Cond opaque, Then transparent.
-                Term newLeft = c.Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 } ite
-                    ? Rebuild2(ite, "->", ite.Args[0], ReplaceTransparentCuts(ite.Args[1], cutK))
+                // Left arm: a ( Cond -> Then ) / ( Cond *-> Then ) keeps Cond
+                // opaque, Then transparent.
+                Term newLeft = c.Args[0] is CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } ite
+                    ? Rebuild2(ite, ite.Functor, ite.Args[0], ReplaceTransparentCuts(ite.Args[1], cutK))
                     : ReplaceTransparentCuts(c.Args[0], cutK);
                 return Rebuild2(c, ";", newLeft, ReplaceTransparentCuts(c.Args[1], cutK));
             }
-            case CompoundTerm { Functor: "->", Args.Length: 2 } c:
-                // Standalone if-then: then transparent, cond opaque.
-                return Rebuild2(c, "->", c.Args[0], ReplaceTransparentCuts(c.Args[1], cutK));
+            case CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } c:
+                // Standalone if-then / soft-cut: then transparent, cond opaque.
+                return Rebuild2(c, c.Functor, c.Args[0], ReplaceTransparentCuts(c.Args[1], cutK));
             default:
                 return branch;
         }
@@ -690,6 +692,45 @@ public static class MetaTransform
             helpers.Add(new Clause(
                 ClauseKind.Rule,
                 new CompoundTerm(":-", new[] { BuildHelperHead(), recursedRightIte }),
+                right.Position));
+            return BuildHelperHead();
+        }
+
+        // ADR-037 — soft cut: ( A *-> B ; C ) with A/B/C too rich for the inline
+        // form (a cut in B/C, nested control, …). Two clauses, but the commit is a
+        // SOFT cut: clause 1 captures the helper's Else-alternative CP with
+        // '$choice_level'(K) at entry, runs A, then '$soft_cut'(K) neutralises that
+        // ONE choice point — so C is pruned once A succeeds while A's own choice
+        // points survive (B runs per solution of A). A cut in B/C stays transparent
+        // to the host via the threaded cutK, exactly as in the -> case.
+        if (branchLeft is CompoundTerm sc && sc.Functor == "*->" && sc.Args.Length == 2)
+        {
+            Term scCond = TransformGoal(sc.Args[0], ref counter, helpers, cutK: null);
+            Term scThen = TransformGoal(sc.Args[1], ref counter, helpers, cutK);
+            Term recursedRightSc = TransformGoal(right, ref counter, helpers, cutK);
+            string kVar = $"$SoftB_{counter++}";
+            // Clause 1: '$disj_N'(...) :- '$choice_level'(K), A, '$soft_cut'(K), B.
+            Term scClause1 = new CompoundTerm(",", new[]
+            {
+                (Term)new CompoundTerm("$choice_level", new Term[] { new VarTerm(kVar) }),
+                new CompoundTerm(",", new[]
+                {
+                    scCond,
+                    new CompoundTerm(",", new[]
+                    {
+                        (Term)new CompoundTerm("$soft_cut", new Term[] { new VarTerm(kVar) }),
+                        scThen,
+                    })
+                })
+            });
+            helpers.Add(new Clause(
+                ClauseKind.Rule,
+                new CompoundTerm(":-", new[] { BuildHelperHead(), scClause1 }),
+                left.Position));
+            // Clause 2: '$disj_N'(...) :- C.
+            helpers.Add(new Clause(
+                ClauseKind.Rule,
+                new CompoundTerm(":-", new[] { BuildHelperHead(), recursedRightSc }),
                 right.Position));
             return BuildHelperHead();
         }

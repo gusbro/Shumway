@@ -29,6 +29,26 @@ public static class MultiSolutionHelpers
     public static bool GetCutBarrier(Activation engine)
         => engine.UnifyRegisterWithCell(0, Cell.Int(engine.B0));
 
+    /// <summary><c>'$soft_cut'(+Barrier)</c> — ADR-037. Neutralises the choice
+    /// point at the choice-point pointer <c>Barrier</c> (captured by
+    /// <c>'$choice_level'</c> at a soft-cut helper's clause-1 entry — i.e. the
+    /// helper's <c>Else</c>-alternative CP), committing away <c>Else</c> once the
+    /// condition has succeeded while leaving the condition's own choice points
+    /// intact. This is the builtin form <c>MetaTransform</c> emits for a
+    /// <c>( Cond *-&gt; Then ; Else )</c> that is NOT inline-eligible (a cut in a
+    /// branch, nested control in a part); the inline-eligible case commits with the
+    /// <c>soft_cut</c> opcode directly. See <see cref="Activation.SoftCut"/>.</summary>
+    public static bool SoftCut1(Activation engine)
+    {
+        Cell c = engine.GetRegister(0);
+        if (c.Tag == Tag.Ref)
+            c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        if (c.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer");
+        engine.SoftCut((int)c.AsInt);
+        return true;
+    }
+
     /// <summary><c>'$list_length'(List, N)</c> — given a proper list,
     /// bind <c>N</c> to its length. Fails for partial / improper
     /// lists. Used by the prelude's <c>length/2</c> when the list is

@@ -152,6 +152,8 @@ public sealed partial class IlPredicateCompiler
             FunctorTable.Intern(AtomTable.Intern(";", permanent: true).Id, 2);
         private static readonly int ArrowFid =
             FunctorTable.Intern(AtomTable.Intern("->", permanent: true).Id, 2);
+        private static readonly int SoftArrowFid =   // ADR-037 — *->/2
+            FunctorTable.Intern(AtomTable.Intern("*->", permanent: true).Id, 2);
         private static readonly int NegFid =
             FunctorTable.Intern(AtomTable.Intern("\\+", permanent: true).Id, 1);
         private static readonly int NotFid =
@@ -168,6 +170,8 @@ public sealed partial class IlPredicateCompiler
             FunctorTable.Intern(AtomTable.Intern("$call_disj", permanent: true).Id, 3);
         private static readonly int CallArrowFid =
             FunctorTable.Intern(AtomTable.Intern("$call_arrow", permanent: true).Id, 3);
+        private static readonly int CallSoftArrowFid =   // ADR-037 — bare *->/2
+            FunctorTable.Intern(AtomTable.Intern("$call_softarrow", permanent: true).Id, 3);
         private static readonly int CallNegFid =
             FunctorTable.Intern(AtomTable.Intern("$call_neg", permanent: true).Id, 1);
         private static readonly int MqualFid =
@@ -306,6 +310,12 @@ public sealed partial class IlPredicateCompiler
                 functorId = CallArrowFid;
                 userKind = MetaRouteKind.BarrierHelperJump;
             }
+            else if (functorId == SoftArrowFid)   // ADR-037 — bare ( C *-> T )
+            {
+                engine.SetRegister(2, Cell.Int(cutBarrier));
+                functorId = CallSoftArrowFid;
+                userKind = MetaRouteKind.BarrierHelperJump;
+            }
             else if (functorId == NegFid || functorId == NotFid)
             {
                 functorId = CallNegFid;
@@ -434,7 +444,7 @@ public sealed partial class IlPredicateCompiler
             if (goal.Tag == Tag.Str)
             {
                 int fid = engine.GetHeap(goal.AsHeapIndex).AsFunctorId;
-                if (fid == ConjFid || fid == DisjFid || fid == ArrowFid)
+                if (fid == ConjFid || fid == DisjFid || fid == ArrowFid || fid == SoftArrowFid)
                 {
                     goal = DistributeMqual(engine, goal, module, arg0Goal: true, arg1Goal: true);
                     engine.SetRegister(0, goal);
@@ -460,6 +470,22 @@ public sealed partial class IlPredicateCompiler
             return Cell.Str(f);
         }
 
+        /// <summary>Mirror of BytecodeInterpreter.WrapGoal (ADR-037): distributes
+        /// the module INTO an if-then-else (<c>-&gt;</c> / <c>*-&gt;</c>) rather than
+        /// wrapping it whole, so the enclosing <c>;</c>'s structural if-then-else /
+        /// soft-cut match still fires.</summary>
+        private static Cell WrapGoal(Activation engine, int module, Cell goalCell)
+        {
+            Cell d = DerefCell(engine, goalCell);
+            if (d.Tag == Tag.Str)
+            {
+                int f = engine.GetHeap(d.AsHeapIndex).AsFunctorId;
+                if (f == ArrowFid || f == SoftArrowFid)
+                    return DistributeMqual(engine, d, module, arg0Goal: true, arg1Goal: true);
+            }
+            return BuildMqual(engine, module, goalCell);
+        }
+
         private static Cell DistributeMqual(
             Activation engine, Cell ctor, int module, bool arg0Goal, bool arg1Goal)
         {
@@ -468,8 +494,8 @@ public sealed partial class IlPredicateCompiler
             var (_, arity) = FunctorTable.Lookup(fid);
             Cell a0 = arity > 0 ? engine.GetHeap(src + 1) : default;
             Cell a1 = arity > 1 ? engine.GetHeap(src + 2) : default;
-            Cell w0 = arg0Goal && arity > 0 ? BuildMqual(engine, module, a0) : a0;
-            Cell w1 = arg1Goal && arity > 1 ? BuildMqual(engine, module, a1) : a1;
+            Cell w0 = arg0Goal && arity > 0 ? WrapGoal(engine, module, a0) : a0;
+            Cell w1 = arg1Goal && arity > 1 ? WrapGoal(engine, module, a1) : a1;
             int f = engine.AllocateHeap(arity + 1);
             engine.SetHeap(f, Cell.Functor(fid));
             if (arity > 0) engine.SetHeap(f + 1, w0);

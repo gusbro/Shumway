@@ -62,6 +62,8 @@ public sealed partial class BytecodeInterpreter
         FunctorTable.Intern(AtomTable.Intern(";", permanent: true).Id, 2);
     private static readonly int ArrowFunctorId =
         FunctorTable.Intern(AtomTable.Intern("->", permanent: true).Id, 2);
+    private static readonly int SoftArrowFunctorId =   // ADR-037 — *->/2
+        FunctorTable.Intern(AtomTable.Intern("*->", permanent: true).Id, 2);
     private static readonly int NegFunctorId =
         FunctorTable.Intern(AtomTable.Intern("\\+", permanent: true).Id, 1);
     // `not/1` is the historical SWI / GNU / SICStus synonym for \+/1.
@@ -79,6 +81,8 @@ public sealed partial class BytecodeInterpreter
         FunctorTable.Intern(AtomTable.Intern("$call_disj", permanent: true).Id, 3);
     private static readonly int CallArrowFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$call_arrow", permanent: true).Id, 3);
+    private static readonly int CallSoftArrowFunctorId =   // ADR-037 — bare *->/2
+        FunctorTable.Intern(AtomTable.Intern("$call_softarrow", permanent: true).Id, 3);
     private static readonly int CallNegFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$call_neg", permanent: true).Id, 1);
     // '$mqual'(Module, Goal) — a runtime-variable meta-goal tagged with the

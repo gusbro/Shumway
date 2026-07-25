@@ -326,6 +326,13 @@ public sealed partial class BytecodeInterpreter
             functorId = CallArrowFunctorId;
             userKind = Shumway.Core.MetaRouteKind.BarrierHelperJump;
         }
+        else if (functorId == SoftArrowFunctorId)   // ADR-037 — bare ( C *-> T )
+        {
+            Shumway.Core.Profiler.Note("meta_dispatch: control construct");
+            _engine.SetRegister(2, Cell.Int(barrier));
+            functorId = CallSoftArrowFunctorId;
+            userKind = Shumway.Core.MetaRouteKind.BarrierHelperJump;
+        }
         else if (functorId == NegFunctorId || functorId == NotFunctorId)
         {
             Shumway.Core.Profiler.Note("meta_dispatch: control construct");
@@ -474,7 +481,8 @@ public sealed partial class BytecodeInterpreter
         if (goal.Tag == Tag.Str)
         {
             int fid = _engine.GetHeap(goal.AsHeapIndex).AsFunctorId;
-            if (fid == ConjFunctorId || fid == DisjFunctorId || fid == ArrowFunctorId)
+            if (fid == ConjFunctorId || fid == DisjFunctorId
+                || fid == ArrowFunctorId || fid == SoftArrowFunctorId)
             {
                 goal = DistributeMqual(goal, module, arg0Goal: true, arg1Goal: true);
                 _engine.SetRegister(0, goal);
@@ -489,6 +497,26 @@ public sealed partial class BytecodeInterpreter
         }
         _engine.SetRegister(0, goal);
         return module;
+    }
+
+    /// <summary>Tags a goal-position sub-arg with the resolution module. Normally
+    /// wraps it as <c>'$mqual'(Module, Goal)</c>; but when the goal is itself an
+    /// if-then-else (<c>-&gt;</c> / <c>*-&gt;</c>) — the shape a <c>;</c> matches
+    /// structurally in <c>'$call_disj'</c> to give it if-then-else / soft-cut
+    /// semantics — it distributes the module INTO the construct's Cond/Then
+    /// instead. A wrapping <c>$mqual</c> there would hide the <c>-&gt;</c>/<c>*-&gt;</c>
+    /// from that match (falling to the plain-disjunction clauses, which run BOTH
+    /// branches / raise <c>existence_error(*-&gt;/2)</c>).</summary>
+    private Cell WrapGoal(int module, Cell goalCell)
+    {
+        Cell d = DerefCell(goalCell);
+        if (d.Tag == Tag.Str)
+        {
+            int f = _engine.GetHeap(d.AsHeapIndex).AsFunctorId;
+            if (f == ArrowFunctorId || f == SoftArrowFunctorId)
+                return DistributeMqual(d, module, arg0Goal: true, arg1Goal: true);
+        }
+        return BuildMqual(module, goalCell);
     }
 
     /// <summary>Allocates <c>'$mqual'(Module, Goal)</c> on the heap.</summary>
@@ -513,8 +541,8 @@ public sealed partial class BytecodeInterpreter
         // ctor block and the $mqual blocks never interleave mid-write).
         Cell a0 = arity > 0 ? _engine.GetHeap(src + 1) : default;
         Cell a1 = arity > 1 ? _engine.GetHeap(src + 2) : default;
-        Cell w0 = arg0Goal && arity > 0 ? BuildMqual(module, a0) : a0;
-        Cell w1 = arg1Goal && arity > 1 ? BuildMqual(module, a1) : a1;
+        Cell w0 = arg0Goal && arity > 0 ? WrapGoal(module, a0) : a0;
+        Cell w1 = arg1Goal && arity > 1 ? WrapGoal(module, a1) : a1;
         int f = _engine.AllocateHeap(arity + 1);
         _engine.SetHeap(f, Cell.Functor(fid));
         if (arity > 0) _engine.SetHeap(f + 1, w0);

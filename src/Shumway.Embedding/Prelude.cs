@@ -95,6 +95,7 @@ internal static class Prelude
         :- public '$call_conj'/3.
         :- public '$call_disj'/3.
         :- public '$call_arrow'/3.
+        :- public '$call_softarrow'/3.
         :- public '$call_neg'/1.
         :- dynamic attribute_goals/4.
         :- dynamic '$tbl_running'/0.
@@ -142,9 +143,22 @@ internal static class Prelude
         % K on); a ->/2 condition and \+/1 are opaque, so they use call/1.
         '$call_conj'(A, B, K) :- '$call'(A, K), '$call'(B, K).
         '$call_disj'((C -> T), E, K) :- !, ( call(C) -> '$call'(T, K) ; '$call'(E, K) ).
+        % ADR-037 — a runtime-built ( C *-> T ; E ). The module distribution
+        % (DistributeMqual) keeps the *-> structural so this clause matches; the
+        % soft cut is written with the builtins directly ('$choice_level'(B) at
+        % branch-1 entry names the Else CP, '$soft_cut'(B) neutralises it once C
+        % succeeds — Else pruned, C's non-determinism preserved, T/E transparent
+        % via K).
+        '$call_disj'((C *-> T), E, K) :- !,
+            ( '$choice_level'(B), call(C), '$soft_cut'(B), '$call'(T, K)
+            ; '$call'(E, K) ).
         '$call_disj'(A, _, K) :- '$call'(A, K).
         '$call_disj'(_, B, K) :- '$call'(B, K).
         '$call_arrow'(C, T, K) :- call(C), !, '$call'(T, K).
+        % ADR-037 — bare ( C *-> T ) with no else. Without an else there is nothing
+        % to prune, so soft cut degenerates to conjunction: it is $call_arrow WITHOUT
+        % the commit, so C's non-determinism drives T (each solution of C runs T).
+        '$call_softarrow'(C, T, K) :- call(C), '$call'(T, K).
         '$call_neg'(G) :- ( call(G) -> fail ; true ).
 
         %! forall(:Condition, :Action) | Control | Succeeds if Action holds for every solution of Condition.
