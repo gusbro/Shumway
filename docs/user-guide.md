@@ -348,7 +348,6 @@ Flags:
 | `-r, --release` | Release build (default). Smaller `.shmo`, no per-instruction debug info. |
 | `-d, --debug` | Debug build. The build mode is recorded in the `.shmo` and surfaces in `shumway-link --map` output. |
 | `-v, --verbose` | After each file, list every `:- public` and `:- dynamic` indicator the module exports. |
-| `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` import's export surface at compile time (needed for the one-arg import-all form). Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
 | `--dump-wam <file>` | Append a readable disassembly of each predicate's WAM bytecode to `<file>` (analysis aid; see below). |
 | `--dump-il <file>` | Append the Tier-1 IL the compiler generates for each predicate to `<file>` (analysis aid; see below). |
 | `--regions` | With `--dump-il`, enable **region compilation** so the IL dump shows region methods (flat local code space) instead of one method per predicate. |

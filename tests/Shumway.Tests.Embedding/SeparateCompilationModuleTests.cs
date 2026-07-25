@@ -124,12 +124,35 @@ public sealed class SeparateCompilationModuleTests
     }
 
     [Fact]
-    public void ImportAll_ResolvesExportsAtCompileTime()
+    public void ImportAll_ResolvedByTheLinker_NotTheCompiler()
     {
-        // /1 import-all through separate compilation: ShmoCompiler reads greetq's
-        // export surface from greetq.pl on the compile-time library path, so the
-        // importer's bare hello call mangles to greetq$hello with no explicit
-        // filter.
+        // /1 import-all: the COMPILER never reads the library — it records the
+        // dependency and leaves the calls bare (main.Imports empty). The LINKER,
+        // which has greetq's export surface, resolves the whole surface and
+        // recompiles the importer so hello mangles to greetq$hello.
+        var greetq = ShmoCompiler.CompileSource(GreetQ, "greetq");
+        var main = ShmoCompiler.CompileSource(
+            ":- module(app).\n" +
+            ":- public run/1.\n" +
+            ":- use_module(library(greetq)).\n" +
+            "run(X) :- hello(X).\n", "app");
+        Assert.Empty(main.Imports);
+        Assert.Contains(main.LibraryDeps, d => d.LibName == "greetq" && d.Filter is null);
+
+        var r = Link(new[] { main, greetq }, ("run", 1));
+        Assert.True(r.Success, string.Join(", ", r.Diagnostics.Select(d => d.Message)));
+
+        var engine = new PrologEngine();
+        engine.LoadBundle(r.Bundle!);
+        Assert.True(engine.Query("run(world).").Success);
+    }
+
+    [Fact]
+    public void ImportAll_LinkerPullsAndResolvesFromSearchPath()
+    {
+        // The user's real flow: compile with no library access, then link with
+        // just --library-dir — the linker pulls greetq.pl AND resolves the /1
+        // import-all against its exports.
         string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
             "shumway-imp1-" + System.Guid.NewGuid().ToString("N"));
         System.IO.Directory.CreateDirectory(dir);
@@ -140,11 +163,7 @@ public sealed class SeparateCompilationModuleTests
                 ":- module(app).\n" +
                 ":- public run/1.\n" +
                 ":- use_module(library(greetq)).\n" +
-                "run(X) :- hello(X).\n",
-                "app", libraryDirs: new[] { dir });
-            // The import table was resolved at compile time.
-            Assert.Contains(main.Imports, e => e.Pred == new PredicateRef("hello", 1)
-                && e.Source == "greetq");
+                "run(X) :- hello(X).\n", "app");
 
             var r = ShmoLinker.Link(new LinkConfig
             {

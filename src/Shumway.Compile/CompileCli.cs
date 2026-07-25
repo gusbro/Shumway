@@ -88,7 +88,7 @@ internal static class CompileCli
         try
         {
             var result = ShmoCompiler.TryCompileFile(input, buildMode, maxErrors: 100,
-                arityCompat: opts.ArityCompat, libraryDirs: CollectLibraryDirs(opts));
+                arityCompat: opts.ArityCompat);
             // Warnings (e.g. unknown directives under --arity) are
             // reported but never fail the compile.
             foreach (var warn in result.Warnings)
@@ -418,19 +418,6 @@ internal static class CompileCli
             : output;
     }
 
-    // ADR-038 — the compile-time library search path: --library-dir flags then
-    // SHUMWAY_LIBRARY_PATH.
-    private static List<string> CollectLibraryDirs(Options opts)
-    {
-        var dirs = new List<string>(opts.LibraryDirs);
-        string? env = Environment.GetEnvironmentVariable("SHUMWAY_LIBRARY_PATH");
-        if (!string.IsNullOrEmpty(env))
-            foreach (string d in env.Split(System.IO.Path.PathSeparator,
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                dirs.Add(d);
-        return dirs;
-    }
-
     private sealed class Options
     {
         public List<string> InputPaths { get; } = new();
@@ -442,9 +429,6 @@ internal static class CompileCli
         public bool Regions { get; set; }
         public bool PruneReport { get; set; }
         public bool ArityCompat { get; set; }
-        // ADR-038 — directories searched to resolve a use_module(library(X))
-        // import's export surface at compile time.
-        public List<string> LibraryDirs { get; } = new();
     }
 
     private static Options? ParseArgs(string[] args)
@@ -510,16 +494,6 @@ internal static class CompileCli
 
                 case "--prune-report":
                     opts.PruneReport = true;
-                    break;
-
-                case "--library-dir":
-                case "-L":
-                    if (++i >= args.Length)
-                    {
-                        Console.Error.WriteLine($"shumway-compile: option '{arg}' requires a value.");
-                        return null;
-                    }
-                    opts.LibraryDirs.Add(System.IO.Path.GetFullPath(args[i]));
                     break;
 
                 default:

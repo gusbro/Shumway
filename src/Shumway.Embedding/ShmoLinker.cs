@@ -119,6 +119,14 @@ public static class ShmoLinker
                             obj.ModuleName);
         }
 
+        // ADR-038 — resolve one-arg use_module(library(X)) (import-all) imports:
+        // the compiler recorded the dependency but left the calls bare (it never
+        // reads the library); the linker HAS the library's export surface now, so
+        // it builds each importer's full import table and recompiles it so the
+        // bare calls mangle to Source$pred. Two-arg filtered imports were already
+        // resolved from source at compile time and pass through untouched.
+        linkInput = ResolveImportAllDeps(linkInput, Emit);
+
         // ----- 0. cross-module meta-wrapper unfold (the LTO pass) -----
         // V4 .shmo objects carry their raw static clauses (ClauseTerms). Detect
         // every module's wrapper templates, export the PUBLIC ones globally, and
@@ -802,7 +810,11 @@ public static class ShmoLinker
                         new List<QualifiedPredicateRef>(), ShmoBuildMode.Release, perrs,
                         arityCompat: obj.ArityCompat,
                         operatorDefs: obj.Operators,   // preserve op/3 defs
-                        multifileSet: MultifileSeedSet(obj));
+                        multifileSet: MultifileSeedSet(obj),
+                        // ADR-038 — carry the resolved import table (preserve mangling).
+                        isExportQualified: obj.IsExportQualified,
+                        exports: obj.Exports, imports: obj.Imports,
+                        libraryDeps: obj.LibraryDeps);
                     if (recompiled.Success && recompiled.Object is { } robj
                         && robj.Bytecode.Length > 0)
                     {
@@ -1223,7 +1235,12 @@ public static class ShmoLinker
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
                 arityCompat: obj.ArityCompat,
                 operatorDefs: obj.Operators,   // preserve op/3 defs
-                multifileSet: MultifileSeedSet(obj));
+                multifileSet: MultifileSeedSet(obj),
+                // ADR-038 — carry the resolved import table so this recompile
+                // does not lose the import mangling.
+                isExportQualified: obj.IsExportQualified,
+                exports: obj.Exports, imports: obj.Imports,
+                libraryDeps: obj.LibraryDeps);
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_unfold_recompile_failed",
@@ -1344,7 +1361,11 @@ public static class ShmoLinker
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
                 arityCompat: obj.ArityCompat,
                 operatorDefs: obj.Operators,
-                multifileSet: MultifileSeedSet(obj));
+                multifileSet: MultifileSeedSet(obj),
+                // ADR-038 — carry the resolved import table (preserve mangling).
+                isExportQualified: obj.IsExportQualified,
+                exports: obj.Exports, imports: obj.Imports,
+                libraryDeps: obj.LibraryDeps);
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_cut_elision_recompile_failed",
@@ -1682,6 +1703,91 @@ public static class ShmoLinker
             }
         }
         return result;
+    }
+
+    /// <summary>ADR-038 — resolve one-arg <c>use_module(library(X))</c> import-all
+    /// dependencies. The compiler records the dep but does not touch the library;
+    /// here the linker has X's export surface, so for each module with such a dep
+    /// it builds the full import table (its existing two-arg imports ∪ every export
+    /// of each import-all library) and recompiles it from its clause terms so the
+    /// bare imported calls mangle to <c>Source$pred</c>.</summary>
+    private static IReadOnlyList<ShmoObject> ResolveImportAllDeps(
+        IReadOnlyList<ShmoObject> input,
+        Action<LinkSeverity, string, string, string?> emit)
+    {
+        var exportsByModule = new Dictionary<string, IReadOnlyList<PredicateRef>>();
+        foreach (var o in input)
+            if (o.IsExportQualified)
+                exportsByModule[o.ModuleName] = o.Exports;
+
+        var result = new List<ShmoObject>(input.Count);
+        foreach (var obj in input)
+        {
+            bool hasImportAll = false;
+            foreach (var d in obj.LibraryDeps)
+                if (!d.Baked && d.Filter is null) { hasImportAll = true; break; }
+            if (!hasImportAll || obj.ClauseTerms.Count == 0) { result.Add(obj); continue; }
+
+            var imports = new List<ShmoImportEntry>(obj.Imports);
+            var seen = new HashSet<PredicateRef>();
+            foreach (var e in obj.Imports) seen.Add(e.Pred);
+            bool gained = false;
+            foreach (var dep in obj.LibraryDeps)
+            {
+                if (dep.Baked || dep.Filter is not null) continue;
+                if (!exportsByModule.TryGetValue(dep.LibName, out var exports))
+                    continue;   // unresolved library — reported by the check above
+                foreach (var p in exports)
+                    if (seen.Add(p)) { imports.Add(new ShmoImportEntry(p, dep.LibName)); gained = true; }
+            }
+            if (!gained) { result.Add(obj); continue; }
+
+            var recompiled = RecompileWithImports(obj, imports, emit);
+            result.Add(recompiled ?? obj);
+        }
+        return result;
+    }
+
+    // ADR-038 — recompile a module from its clause terms with a resolved import
+    // table, preserving its metadata (export-qualification, dynamics, ops, native).
+    private static ShmoObject? RecompileWithImports(
+        ShmoObject obj, IReadOnlyList<ShmoImportEntry> imports,
+        Action<LinkSeverity, string, string, string?> emit)
+    {
+        var publicSet = new HashSet<PredicateRef>();
+        var dynamicSet = new HashSet<PredicateRef>();
+        foreach (var d in obj.Defined)
+        {
+            if (d.Visibility == PredicateVisibility.Public) publicSet.Add(d.Indicator);
+            else if (d.Visibility == PredicateVisibility.Dynamic) dynamicSet.Add(d.Indicator);
+        }
+        var rawAll = new List<Shumway.Compiler.Ast.Clause>();
+        foreach (var enc in obj.ClauseTerms)
+            rawAll.Add(TermCodec.DecodeClause(enc));
+        foreach (var seed in obj.DynamicSeeds)
+            foreach (var enc in seed.EncodedClauses)
+                rawAll.Add(TermCodec.DecodeClause(enc));
+        var errors = new List<ShmoCompileError>();
+        var res = ShmoCompiler.CompileFromParts(
+            obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
+            new List<PredicateRef>(obj.EnsureLinked),
+            new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
+            arityCompat: obj.ArityCompat,
+            operatorDefs: obj.Operators,
+            multifileSet: MultifileSeedSet(obj),
+            isExportQualified: obj.IsExportQualified,
+            exports: obj.Exports,
+            imports: imports,
+            libraryDeps: obj.LibraryDeps);
+        if (!res.Success || res.Object is null)
+        {
+            emit(LinkSeverity.Warning, "import_resolve_recompile_failed",
+                $"module {obj.ModuleName}: import-resolution recompile failed "
+                + $"({errors.Count} error(s)); keeping the original object.",
+                obj.ModuleName);
+            return null;
+        }
+        return res.Object;
     }
 
     private static string? ResolveLibraryFile(string libName, IReadOnlyList<string> dirs)

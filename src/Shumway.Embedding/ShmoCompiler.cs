@@ -102,11 +102,10 @@ public static class ShmoCompiler
     public static ShmoObject CompileSource(string source,
         string moduleNameFallback = "user",
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
-        Func<PredicateRef, bool>? clauseFilter = null,
-        IReadOnlyList<string>? libraryDirs = null)
+        Func<PredicateRef, bool>? clauseFilter = null)
     {
         var result = TryCompileSource(source, moduleNameFallback, buildMode,
-            maxErrors: 100, clauseFilter: clauseFilter, libraryDirs: libraryDirs);
+            maxErrors: 100, clauseFilter: clauseFilter);
         if (result.Errors.Count > 0)
         {
             var first = result.Errors[0];
@@ -134,8 +133,7 @@ public static class ShmoCompiler
         int maxErrors = 100,
         bool arityCompat = false,
         Func<PredicateRef, bool>? clauseFilter = null,
-        string? includeBaseDir = null,
-        IReadOnlyList<string>? libraryDirs = null)
+        string? includeBaseDir = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
@@ -314,17 +312,14 @@ public static class ShmoCompiler
                     if (umDir.Args.Length == 2)
                         filter = new List<PredicateRef>(ReadPiListLenient(umDir.Args[1]));
                     libraryDeps.Add(new ShmoLibraryDep(libName, filter, baked));
-                    if (!baked)
-                    {
-                        // /2: import the filtered indicators; /1: import the whole
-                        // export surface, read from the library's interface on the
-                        // compile-time search path (lib name = module name).
-                        IEnumerable<PredicateRef>? toImport = filter
-                            ?? ResolveLibraryExports(libName, libraryDirs);
-                        if (toImport is not null)
-                            foreach (var p in toImport)
-                                importEntries.Add(new ShmoImportEntry(p, libName));
-                    }
+                    // /2 imports are resolved from the SOURCE alone (the filter is
+                    // the list of imported indicators) — the compiler never needs
+                    // the library. /1 (import-all) is resolved by the LINKER, which
+                    // has the library's export surface; the compiler only records
+                    // the dependency here.
+                    if (!baked && filter is not null)
+                        foreach (var p in filter)
+                            importEntries.Add(new ShmoImportEntry(p, libName));
                     continue;
                 }
                 try
@@ -852,15 +847,13 @@ public static class ShmoCompiler
     public static ShmoCompileResult TryCompileFile(string path,
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         int maxErrors = 100,
-        bool arityCompat = false,
-        IReadOnlyList<string>? libraryDirs = null)
+        bool arityCompat = false)
     {
         ArgumentNullException.ThrowIfNull(path);
         string source = File.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
         return TryCompileSource(source, fallback, buildMode, maxErrors, arityCompat,
-            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)),
-            libraryDirs: libraryDirs);
+            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)));
     }
 
     // ------------------------------------------------------------------------
@@ -979,39 +972,6 @@ public static class ShmoCompiler
                 yield return new PredicateRef(n.Name, (int)a.Value);
             cursor = tail;
         }
-    }
-
-    // ADR-038 — resolve library(X)'s export surface at compile time (for a /1
-    // import-all): read X.shmo's interface if present, else parse+compile X.pl,
-    // searching the compile-time library dirs. Returns null when unresolved (the
-    // linker may still pull X, but the /1 imports then won't be mangled here).
-    private static IReadOnlyList<PredicateRef>? ResolveLibraryExports(
-        string libName, IReadOnlyList<string>? libraryDirs)
-    {
-        if (libraryDirs is null) return null;
-        foreach (string dir in libraryDirs)
-        {
-            string shmo = System.IO.Path.Combine(dir, libName + ".shmo");
-            try
-            {
-                if (System.IO.File.Exists(shmo))
-                    return ShmoReader.FromBytes(System.IO.File.ReadAllBytes(shmo)).Exports;
-            }
-            catch { /* fall through to the .pl form */ }
-            string pl = System.IO.Path.Combine(dir, libName + ".pl");
-            try
-            {
-                if (System.IO.File.Exists(pl))
-                {
-                    // Compile only to read the export surface; no libraryDirs, so
-                    // it does not recurse into the library's own imports.
-                    var res = TryCompileSource(System.IO.File.ReadAllText(pl), libName);
-                    if (res.Object is not null) return res.Object.Exports;
-                }
-            }
-            catch { /* unresolved — return null below */ }
-        }
-        return null;
     }
 
     // ADR-038 — recognise a use_module spec: library(X) (baked = a built-in C#

@@ -19,16 +19,20 @@ All four components are implemented and tested:
   `Activation.CurrentImportMap`). Same-name exports coexist. Import of a non-export
   is an error.
 - **Component 3 — separate compilation + linking.** `shumway-compile` recognises
-  `:- module/2` (export-qualified) and `use_module(library(X))` (both forms — the
-  two-arg filter directly, the one-arg import-all by reading `X`'s export surface
-  off a compile-time `--library-dir` path); the `.shmo`/`.shum` carry
-  export-qualification + the resolved import table (shared serializer across both
-  `.shum` writers). `shumway-link` reaches an imported module through the import
-  table (also a reachability root, so a meta-called import is not
-  dead-code-eliminated) and pulls a `use_module(library(X))` dependency from the
-  `--library-dir` search path when not passed explicitly (C-linker order).
-  `LoadBundle` reconstructs the runtime manifests so a loaded bundle resolves
-  imports cross-process.
+  `:- module/2` (export-qualified) and both `use_module(library(X))` forms — but
+  **never reads a library**: the two-arg filtered import is resolved from the
+  *source* (the filter is the imported set), and the one-arg import-all is recorded
+  as a dependency and left for the linker. The `.shmo`/`.shum` carry
+  export-qualification + the (two-arg) resolved import table (shared serializer
+  across both `.shum` writers). `shumway-link` — which has the library's export
+  surface — **resolves the one-arg import-all** (recompiling the importer so its
+  bare calls mangle to `Source$pred`), reaches an imported module through the
+  import table (also a reachability root, so a meta-called import is not
+  dead-code-eliminated), and **pulls** a `use_module(library(X))` dependency from
+  the `--library-dir` search path when it is not already among the passed objects /
+  `.shum` libraries (C-linker order). An unresolved library is reported by name
+  (`unresolved_library`), not as a per-predicate error. `LoadBundle` reconstructs
+  the runtime manifests so a loaded bundle resolves imports cross-process.
 - **Component 4 — repo `lib/` + REPL.** A shipped `lib/` (starter
   `library(lists_ext)`) is on the default search path; the goal-form
   `use_module/1` builtin loads from it and imports into the `user` module so an
