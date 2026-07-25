@@ -223,6 +223,55 @@ identical). `?=/2` (decided (in)equality), `unifiable/3` (the unifier of
 two terms as a `V=Value` list), `term_attvars/2` and `call_residue_vars/2`
 are always available and need no library.
 
+### Loading third-party Prolog libraries
+
+Beyond the baked-in libraries above, you can drop your own (or third-party)
+Prolog `.pl` sources in a directory and load them with
+`use_module(library(X))` — the SICStus/Scryer/SWI convention. Shumway resolves
+`library(X)` to `X.pl` (or a compiled `X.shum`) on a **library search path**,
+fed by all of:
+
+- the shipped `lib/` directory next to the executable (the REPL and CLIs add it
+  automatically — that is where `library(lists_ext)` lives);
+- the `SHUMWAY_LIBRARY_PATH` environment variable (`;`/`:`-separated dirs);
+- `file_search_path(library, Dir).` facts (SWI/Scryer) and
+  `library_directory(Dir).` facts (SICStus) — both are `:- dynamic`, so a
+  program can add to the path at load time;
+- the embedding API: `engine.AddLibraryDirectory("/path/to/libs")` (or
+  `engine.AddDefaultLibraryDirectories()` for the shipped `lib/`).
+
+```prolog
+:- use_module(library(lists_ext)).      % imports its whole export surface
+:- use_module(library(lists_ext), [take/3, drop/3]).  % only these
+```
+
+At the REPL you load a library the same way, as a goal:
+
+```
+?- use_module(library(lists_ext)).
+?- take(2, [a,b,c,d], L).
+L = [a, b].
+```
+
+**Export-qualified modules.** A library that isolates its predicates uses the
+two-argument module directive:
+
+```prolog
+:- module(greetings, [hello/1, bye/1]).   % ONLY hello/1 and bye/1 are importable
+hello(world).
+bye(gone).
+detail(internal).                          % private: invisible to importers
+```
+
+Unlike `:- module(Name).` + `:- public`, which put predicates in one flat global
+namespace, `:- module(Name, [Exports])` makes **every** predicate module-private
+(internally renamed `Name$pred`); only the listed exports can be imported, and a
+module resolves a call as *its own predicate → its imports → the global
+prelude/builtins*. Two export-qualified modules can therefore export the same
+name without colliding, and a library freely calls prelude predicates
+(`member/2`, `append/3`, …) without importing them. Importing a name a module
+does not export is an error.
+
 ### Catching runtime exceptions
 
 A Prolog `throw(Ball)` that the engine does not catch surfaces as a
@@ -299,6 +348,7 @@ Flags:
 | `-r, --release` | Release build (default). Smaller `.shmo`, no per-instruction debug info. |
 | `-d, --debug` | Debug build. The build mode is recorded in the `.shmo` and surfaces in `shumway-link --map` output. |
 | `-v, --verbose` | After each file, list every `:- public` and `:- dynamic` indicator the module exports. |
+| `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` import's export surface at compile time (needed for the one-arg import-all form). Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
 | `--dump-wam <file>` | Append a readable disassembly of each predicate's WAM bytecode to `<file>` (analysis aid; see below). |
 | `--dump-il <file>` | Append the Tier-1 IL the compiler generates for each predicate to `<file>` (analysis aid; see below). |
 | `--regions` | With `--dump-il`, enable **region compilation** so the IL dump shows region methods (flat local code space) instead of one method per predicate. |
@@ -375,6 +425,7 @@ shumway-link -o app.shum \
 | `--entry pred/N[,…]` | Entry-point predicates. Repeatable; comma-separated within a flag. |
 | `--goal Term` | Adds the goal's head as an implicit entry point. Required when `--exe` is set. |
 | `--allow-undefined` | Downgrade missing-predicate errors to warnings; still produce the bundle. The engine raises `existence_error/2` at call time if the missing predicate is actually invoked. |
+| `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` dependency not passed explicitly: `X.pl`/`X.shmo` is compiled and linked in (transitively), C-linker style — already-provided inputs win, source is the last resort. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
 | `-s, --strip` | Remove the embedded Prolog source from every bundle entry. Bytecode preserved. Useful for size analysis / IP-protection. (Stripped bundles dispatch correctly via the source-less load path.) Note: a `.shmo` always carries the module's clause terms — it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). IP stripping is about what ships: the `.shum` / executable, which never carry clause terms. |
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, dropped modules, totals. |
 | `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle so it runs as compiled IL (no load-time JIT of the WAM). By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |
@@ -613,9 +664,12 @@ link-time meaning:
 
 | Directive | Effect |
 |---|---|
-| `:- module(Name).` | Sets this file's module name (default: filename without extension). |
+| `:- module(Name).` | Sets this file's module name (default: filename without extension). Predicates are local unless `:- public`. |
+| `:- module(Name, [a/1, b/2]).` | **Export-qualified** module: every predicate is module-private (renamed `Name$pred`); only the listed indicators are importable via `use_module`. Nothing goes to the flat global namespace, so two such modules may export the same name. |
 | `:- public Name/N.` | Exports the predicate to the global namespace. Required for any predicate called from another module. |
 | `:- public [a/1, b/2].` | List form of the above. |
+| `:- use_module(library(X)).` | Loads library `X` (baked-in, or `X.pl`/`X.shum` on the library search path) and imports its whole export surface. |
+| `:- use_module(library(X), [a/1]).` | As above but imports only the listed indicators. Importing a non-exported name is an error. |
 | `:- dynamic Name/N.` | The predicate is modifiable at runtime (`assertz`, `retract`). Also contributes to the global namespace, so other modules can call it. Even with zero clauses, the indicator counts as defined. |
 | `:- ensure_linked Name/N.` | Tells the linker to treat this predicate as a **reachability root**. Use it when the predicate is called only via runtime meta-call (`call/1` with a constructed goal) — the static call graph won't see the edge, and without this hint the linker would drop the predicate as unreachable. |
 | `:- ensure_linked [a/1, b/2].` | List form of the above. |
