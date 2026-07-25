@@ -207,6 +207,27 @@ public sealed class SeparateCompilationModuleTests
     }
 
     [Fact]
+    public void GoalRefToLocalPredicate_IsPromotedToCallableByName()
+    {
+        // A -g / --goal startup goal naming a module-LOCAL predicate (no
+        // :- public) must be promoted to callable-by-name — the startup goal runs
+        // in the query/user context where the mangled module$name is invisible, so
+        // without promotion it raises existence_error (the reported bug).
+        var prog = ShmoCompiler.CompileSource(
+            "go :- X = 41, Y is X + 1, Y =:= 42.\n", "prog");   // go is local
+        var r = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { prog },
+            GoalCallRefs = new[] { new PredicateRef("go", 0) },
+        });
+        Assert.True(r.Success, string.Join(", ", r.Diagnostics.Select(d => d.Message)));
+
+        var engine = new PrologEngine();
+        engine.LoadBundle(r.Bundle!);
+        Assert.True(engine.Query("go.").Success);   // callable bare after promotion
+    }
+
+    [Fact]
     public void ImportShmoCarriesImportTable()
     {
         var main = ShmoCompiler.CompileSource(

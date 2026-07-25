@@ -680,7 +680,12 @@ public static class ShmoLinker
             // in exchange for correctness without an alias mechanism
             // in the engine.
             var promotionsByModule = new Dictionary<string, List<PredicateRef>>();
-            foreach (var ep in config.EntryPoints)
+            // Entry points AND the startup goal's directly-called predicates
+            // (--goal): a `-g main` whose `main` is a module-local predicate must
+            // be promoted to callable-by-name too, or the bare startup goal raises
+            // existence_error (the goal runs in the query/user context, where the
+            // mangled module$name is invisible).
+            foreach (var ep in config.EntryPoints.Concat(config.GoalCallRefs))
             {
                 // Public/dynamic entries don't need promotion.
                 if (globalPublic.ContainsKey(ep)) continue;
