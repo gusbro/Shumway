@@ -98,6 +98,8 @@ internal static class Prelude
         :- public '$call_softarrow'/3.
         :- public '$call_neg'/1.
         :- dynamic attribute_goals/4.
+        :- dynamic file_search_path/2.
+        :- dynamic library_directory/1.
         :- dynamic '$tbl_running'/0.
         :- dynamic '$tbl_subgoal'/4.
         :- dynamic '$tbl_ans'/2.

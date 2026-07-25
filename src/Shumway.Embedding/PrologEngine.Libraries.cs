@@ -71,6 +71,105 @@ public sealed partial class PrologEngine
         return true;
     }
 
+    // ADR-038 — the ordered library search path. Directories come from (in this
+    // precedence) the file_search_path(library, Dir) / library_directory(Dir)
+    // dynamic facts, the AddLibraryDirectory API, the SHUMWAY_LIBRARY_PATH env
+    // var, and (added by the REPL/CLI) the shipped lib/ directory. Lazily built
+    // so the env read happens once, on first library resolution.
+    private List<string>? _libraryDirs;
+
+    private void EnsureLibraryDirs()
+    {
+        if (_libraryDirs is not null) return;
+        _libraryDirs = new List<string>();
+        string? env = Environment.GetEnvironmentVariable("SHUMWAY_LIBRARY_PATH");
+        if (!string.IsNullOrEmpty(env))
+            foreach (string d in env.Split(System.IO.Path.PathSeparator,
+                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                AddLibraryDirNormalized(d);
+    }
+
+    private void AddLibraryDirNormalized(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        string full;
+        try { full = System.IO.Path.GetFullPath(path); } catch { full = path; }
+        if (!_libraryDirs!.Contains(full, StringComparer.OrdinalIgnoreCase))
+            _libraryDirs!.Add(full);
+    }
+
+    /// <summary>Adds <paramref name="path"/> to this engine's library search
+    /// path (ADR-038), so a later <c>use_module(library(X))</c> can resolve
+    /// <c>X.pl</c> / <c>X.shum</c> under it. Idempotent; the directory need not
+    /// exist yet.</summary>
+    public void AddLibraryDirectory(string path)
+    {
+        EnsureLibraryDirs();
+        AddLibraryDirNormalized(path);
+    }
+
+    // The library directories in resolution order: dynamic facts first (so a
+    // program's own :- file_search_path / library_directory wins), then the
+    // API/env/shipped dirs.
+    private IEnumerable<string> EnumerateLibraryDirs()
+    {
+        int fsp = FunctorTable.Intern(AtomTable.Intern("file_search_path").Id, 2);
+        if (_dynStore.TryGetClauses(fsp, out var fspClauses))
+            foreach (Clause cl in fspClauses)
+                if (cl.Term is CompoundTerm { Functor: "file_search_path",
+                        Args: [AtomTerm { Name: "library" }, var d] }
+                    && TryDirText(d, out string dir))
+                    yield return dir;
+
+        int ld = FunctorTable.Intern(AtomTable.Intern("library_directory").Id, 1);
+        if (_dynStore.TryGetClauses(ld, out var ldClauses))
+            foreach (Clause cl in ldClauses)
+                if (cl.Term is CompoundTerm { Functor: "library_directory", Args: [var d] }
+                    && TryDirText(d, out string dir))
+                    yield return dir;
+
+        EnsureLibraryDirs();
+        foreach (string d in _libraryDirs!) yield return d;
+    }
+
+    private static bool TryDirText(Term t, out string dir)
+    {
+        switch (t)
+        {
+            case AtomTerm a: dir = a.Name; return true;
+            case StringTerm s: dir = s.Content; return true;
+            default: dir = ""; return false;
+        }
+    }
+
+    /// <summary>Resolves <c>library(<paramref name="name"/>)</c> to a file on the
+    /// library search path (ADR-038): the first <c>Dir/name.pl</c> or
+    /// <c>Dir/name.shum</c> that exists, in search-path order. Returns the full
+    /// path in <paramref name="path"/>, or <c>false</c> if none is found.</summary>
+    internal bool TryResolveLibrary(string name, out string path)
+    {
+        foreach (string dir in EnumerateLibraryDirs())
+        {
+            foreach (string ext in LibraryExtensions)
+            {
+                string candidate = System.IO.Path.Combine(dir, name + ext);
+                try
+                {
+                    if (System.IO.File.Exists(candidate))
+                    {
+                        path = System.IO.Path.GetFullPath(candidate);
+                        return true;
+                    }
+                }
+                catch { /* an invalid path component — skip this candidate */ }
+            }
+        }
+        path = "";
+        return false;
+    }
+
+    private static readonly string[] LibraryExtensions = { ".pl", ".shum" };
+
     /// <summary>Executes a <c>use_module/1</c> directive body at consult time.
     /// <c>library(Name)</c> loads a constraint or compatibility library;
     /// a plain atom names a file to consult. An unknown library is reported as
@@ -83,11 +182,20 @@ public sealed partial class PrologEngine
         {
             switch (lib.Name)
             {
+                // (1) baked C# libraries — take precedence, they carry native hooks.
                 case "clpfd": UseClpfd(); return;
                 case "clpr":  UseClpr();  return;
                 case "coroutining": UseCoroutining(); return;
                 default:
+                    // (2) ADR-038 — a .pl/.shum on the library search path.
+                    if (TryResolveLibrary(lib.Name, out string libPath))
+                    {
+                        LoadResolvedLibrary(lib.Name, libPath);
+                        return;
+                    }
+                    // (3) built-in Scryer/Trealla compatibility table.
                     if (UseCompatLibrary(lib.Name)) return;
+                    // (4) genuinely unknown.
                     Console.Error.WriteLine(
                         $"warning: unknown library '{lib.Name}' in use_module/1 — ignored");
                     return;
@@ -128,6 +236,25 @@ public sealed partial class PrologEngine
                 Console.Error.WriteLine(
                     $"warning: use_module('{fileAtom.Name}') failed: {ex.Message}");
             }
+        }
+    }
+
+    // Consults a library resolved off the search path, idempotently. ConsultFile
+    // is extension-routed (.shum → LoadBundle, else source). A failed import warns
+    // and continues — a predicate genuinely needed surfaces a clearer
+    // existence_error at its call site — rather than aborting the importing consult.
+    private void LoadResolvedLibrary(string name, string path)
+    {
+        try
+        {
+            if (_consultedPaths.Contains(System.IO.Path.GetFullPath(path))) return;
+        }
+        catch { /* fall through to the normal load */ }
+        try { ConsultFile(path); }
+        catch (System.Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"warning: use_module(library({name})) failed: {ex.Message}");
         }
     }
 

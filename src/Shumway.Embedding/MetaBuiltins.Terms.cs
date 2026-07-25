@@ -384,13 +384,28 @@ public static partial class MetaBuiltins
     /// is relative to the current working directory of the host
     /// process.
     ///
+    /// <para>ADR-038: a <c>library(X)</c> spec resolves through the engine's
+    /// library search path (the same one <c>use_module(library(X))</c> uses) to
+    /// the absolute path of <c>X.pl</c> / <c>X.shum</c>; an unresolved alias
+    /// fails.</para>
+    ///
     /// <para>Not supported: SWI's 3-arg form with options
-    /// (<c>extensions</c>, <c>file_type</c>, <c>access</c>,
-    /// <c>file_search_path</c>) — those need the
-    /// <c>file_search_path/2</c> registry and a small option
-    /// parser. Add when a program actually needs them.</para></summary>
+    /// (<c>extensions</c>, <c>file_type</c>, <c>access</c>) — those need a small
+    /// option parser. Add when a program actually needs them.</para></summary>
     public static bool AbsoluteFileName2(Activation engine)
     {
+        // ADR-038 — resolve a library(X) alias off the search path.
+        if (RegisterMarshalling.ReadRegisterAsTerm(engine, 0)
+                is CompoundTerm { Functor: "library", Args: [AtomTerm libName] })
+        {
+            if (engine.Host is PrologEngine libHost
+                && libHost.TryResolveLibrary(libName.Name, out string libPath))
+            {
+                int laid = AtomTable.Intern(libPath, permanent: true).Id;
+                return engine.UnifyRegisterWithCell(1, Cell.Atom(laid));
+            }
+            return false;
+        }
         if (!TryGetStringArg(engine, 0, out string spec))
             return false;
         try
