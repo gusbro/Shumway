@@ -165,6 +165,29 @@ public sealed class SeparateCompilationModuleTests
     }
 
     [Fact]
+    public void UnresolvedLibrary_ReportsTheLibraryNotEachPredicate()
+    {
+        // A program importing a library that is neither passed nor on any search
+        // path must fail naming the LIBRARY (the root cause), not degrade into a
+        // confusing missing-predicate error for each imported predicate.
+        var main = ShmoCompiler.CompileSource(
+            ":- module(app).\n" +
+            ":- public run/1.\n" +
+            ":- use_module(library(greetq), [hello/1]).\n" +
+            "run(X) :- hello(X).\n", "app");
+
+        var r = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { main },
+            EntryPoints = new[] { new PredicateRef("run", 1) },
+            // no greetq object, no libraries, no LibraryDirs
+        });
+        Assert.False(r.Success);
+        Assert.Contains(r.Diagnostics, d => d.Code == "unresolved_library"
+            && d.Message.Contains("greetq"));
+    }
+
+    [Fact]
     public void ImportShmoCarriesImportTable()
     {
         var main = ShmoCompiler.CompileSource(

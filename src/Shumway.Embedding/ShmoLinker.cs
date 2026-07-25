@@ -94,6 +94,31 @@ public static class ShmoLinker
         if (config.LibraryDirs.Count > 0)
             linkInput = PullLibraryDirDeps(linkInput, config.LibraryDirs, Emit);
 
+        // ADR-038 — a use_module(library(X)) dependency that is still unresolved
+        // (X's module is not among the linked inputs, not a member of a passed
+        // .shum library, and not a baked C# library) is reported HERE, naming the
+        // library, so the user sees "library 'X' could not be resolved" rather than
+        // a downstream missing-predicate error for each imported predicate.
+        {
+            var provided = new HashSet<string>(linkInput.Select(o => o.ModuleName));
+            foreach (var lib in config.Libraries)
+                foreach (var m in lib.Members)
+                    provided.Add(m.ModuleName);
+            var reportedLibs = new HashSet<string>();
+            foreach (var obj in linkInput)
+                foreach (var dep in obj.LibraryDeps)
+                    if (!dep.Baked && !provided.Contains(dep.LibName)
+                        && reportedLibs.Add(dep.LibName))
+                        Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
+                            "unresolved_library",
+                            $"library '{dep.LibName}' (used by '{obj.ModuleName}') could not "
+                            + "be resolved: it was not passed as a .shmo object, is not a "
+                            + "member of a linked .shum library, and was not found on the "
+                            + "library search path (pass --library-dir <dir> or set "
+                            + "SHUMWAY_LIBRARY_PATH).",
+                            obj.ModuleName);
+        }
+
         // ----- 0. cross-module meta-wrapper unfold (the LTO pass) -----
         // V4 .shmo objects carry their raw static clauses (ClauseTerms). Detect
         // every module's wrapper templates, export the PUBLIC ones globally, and
