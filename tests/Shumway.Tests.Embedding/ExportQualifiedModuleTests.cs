@@ -117,6 +117,27 @@ public class ExportQualifiedModuleTests
     }
 
     [Fact]
+    public void ImportingLibraryWithADirectiveGoal_LeavesProgramPredicatesResolvable()
+    {
+        // Regression: a library whose consult runs a directive AS A GOAL (an
+        // unrecognised `:- G`, like `:- meta_predicate(...)`) triggers a query
+        // setup DURING the enclosing consult, which used to cache a stale static
+        // rewrite — leaving the importing program's OWN predicates unresolvable
+        // (existence_error even though current_predicate reports them defined).
+        using var libs = new LibSet().Add("gendir",
+            ":- module(gendir, [g/0]).\n" +
+            ":- some_unrecognised_directive_xyz.\n" +   // runs as a goal, warns
+            "g.\n");
+        var e = EngineWith(libs);
+        e.ConsultString(
+            ":- use_module(library(gendir)).\n" +
+            "run :- g.\n" +
+            "self :- write(ok).");
+        Assert.True(e.Query("self.").Success);   // the program's own predicate resolves
+        Assert.True(e.Query("run.").Success);    // and its call into the library
+    }
+
+    [Fact]
     public void VariableMetaCall_ResolvesThroughImportTable()
     {
         using var libs = new LibSet().Add("greetq", GreetQ);

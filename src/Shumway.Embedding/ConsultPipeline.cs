@@ -557,6 +557,17 @@ internal sealed class ConsultPipeline
                         E._dynStore[fid] = new List<Clause>();
                 }
             }
+            else if (body is CompoundTerm { Functor: "meta_predicate", Args.Length: 1 })
+            {
+                // Scryer/SICStus/SWI compatibility — accept `:- meta_predicate(Spec)`
+                // (Spec is a term like `foo(0, ?, +)`; `0..9` mark meta args) and
+                // no-op it. Every Scryer library declares it, so recognising it
+                // stops the existence_error(meta_predicate/1) that would otherwise
+                // fire from running it as a goal. Our meta-call resolution already
+                // threads the caller's module through variable meta-args ($mqual +
+                // MetaTransform); acting on the declaration for module-transparency
+                // is future work.
+            }
             else if (TryReadFunctorIndicatorDirective(body, "table", out var tableSpecs))
             {
                 tabledFunctors ??= new HashSet<int>();
@@ -967,6 +978,20 @@ internal sealed class ConsultPipeline
         // New static clauses just landed in E._modules — drop the head-functor
         // cache so HasPredicate / predicate_property/2 sees them.
         E._staticHeadFunctorsCache = null;
+
+        // Consult-cache invalidation. A directive that runs as a goal (an
+        // unrecognised `:- G`, e.g. `:- meta_predicate(...)`) or a NESTED
+        // `:- use_module` consult can trigger a query setup DURING this consult —
+        // and that setup caches the static rewrite + persistent link built from
+        // the manifest as it stood THEN, before this consult filled it in above.
+        // Without re-invalidating here, the directive / initialization goals below
+        // AND the next top-level query reuse that stale cache and see none of this
+        // file's predicates (existence_error on a predicate that current_predicate
+        // reports as defined). The start-of-consult InvalidatePersistent can't
+        // cover it: the clauses land only now. Skip the live-consult path, which
+        // links incrementally and owns its own generation.
+        if (E._liveConsultEngine is null)
+            E.InvalidatePersistent();
 
         // Mid-query consult (consult/1 from a live query): live-link the
         // just-added predicates into the running query's code space so a

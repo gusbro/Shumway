@@ -72,6 +72,7 @@ internal static class ReplTopLevel
         // shumway-link, on purpose.
         var foreignDlls = new List<string>();
         var nativeDlls = new List<string>();
+        var libraryDirs = new List<string>();   // -L / --library-dir (ADR-038)
         string? startupGoalArg = null;   // --goal / -g: run after consulting, then stay
         int? dapPortArg = null;          // --dap <port>: ADR-036 VS Code endpoint
         bool dapWait = false;            // --dap-wait: hold the start until configured
@@ -80,7 +81,7 @@ internal static class ReplTopLevel
         {
             string flag = consultFiles[i];
             if (flag is not ("--foreign-dll" or "--native-dll" or "--goal" or "-g"
-                or "--dap" or "--dap-wait"))
+                or "--dap" or "--dap-wait" or "--library-dir" or "-L"))
                 continue;
             flagArgs.Add(i);
             if (i + 1 >= consultFiles.Length)
@@ -93,6 +94,8 @@ internal static class ReplTopLevel
             {
                 case "--foreign-dll": foreignDlls.Add(consultFiles[i + 1]); break;
                 case "--native-dll": nativeDlls.Add(consultFiles[i + 1]); break;
+                case "--library-dir":
+                case "-L": libraryDirs.Add(consultFiles[i + 1]); break;
                 case "--dap":
                 case "--dap-wait":
                     if (int.TryParse(consultFiles[i + 1], out int dapPort) && dapPort >= 0)
@@ -120,6 +123,9 @@ internal static class ReplTopLevel
         // library with no configuration. SHUMWAY_LIBRARY_PATH and
         // file_search_path/library_directory facts add to it.
         engine.AddDefaultLibraryDirectories();
+        // -L / --library-dir: extra directories searched by use_module(library(X)).
+        foreach (string dir in libraryDirs)
+            engine.AddLibraryDirectory(dir);
         // Point the engine's Out directly at the column tracker (Console.Out is the
         // synchronized wrapper SetOut installed, which hides ILineStartAware). Set
         // before the stream registry is built so user_output writes and time/1's
