@@ -163,8 +163,9 @@ internal sealed class ConsultPipeline
     }
 
     private static bool IsHookHead(Term head) =>
-        head is CompoundTerm { Args.Length: 2 } c
-        && c.Functor is "term_expansion" or "goal_expansion";
+        head is CompoundTerm c
+        && ((c.Functor == "term_expansion" && c.Args.Length is 2 or 6)
+            || (c.Functor == "goal_expansion" && c.Args.Length == 2));
 
     /// <summary>ADR-035 — the functor ids of the predicates a
     /// <c>:- disable_debug.</c> region covered. A predicate's name is mangled
@@ -520,7 +521,8 @@ internal sealed class ConsultPipeline
         // yet apply here — pre-load the shim). Pre-scan for the `:- module` name so
         // a hook / prolog_load_context sees the file's module (the loop sets it too,
         // but only when it reaches the directive).
-        bool hasTermExp = E.HasTermExpansions || E.HasPrologTermExpansion;
+        bool hasTermExp = E.HasTermExpansions || E.HasPrologTermExpansion
+            || E.HasPrologTermExpansion6;
         bool hasGoalExp = E.HasGoalExpansions || E.HasPrologGoalExpansion;
         if (hasTermExp || hasGoalExp)
         {

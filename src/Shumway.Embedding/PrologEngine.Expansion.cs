@@ -69,7 +69,17 @@ public sealed partial class PrologEngine
     private static readonly int TermExpansionFid =
         FunctorTable.Intern(AtomTable.Intern("term_expansion", permanent: true).Id, 2);
 
+    // Scryer's extended term_expansion/6:
+    // term_expansion(Term0, Layout0, Ids0, Term, Layout, Ids). Layout is source
+    // positions (we don't track them, so pass fresh vars); Ids is an already-applied
+    // expansion-id set threaded through the fixpoint to stop re-expansion. clpz's
+    // dual-accumulator `++>` grammar is expanded this way.
+    private static readonly int TermExpansion6Fid =
+        FunctorTable.Intern(AtomTable.Intern("term_expansion", permanent: true).Id, 6);
+
     internal bool HasPrologTermExpansion => HasPredicate(TermExpansionFid);
+
+    internal bool HasPrologTermExpansion6 => HasPredicate(TermExpansion6Fid);
 
     // The Prolog term_expansion/2 hook: call the user predicate
     // `term_expansion(Input, Expanded)` in the live engine (works mid-consult) and
@@ -81,7 +91,7 @@ public sealed partial class PrologEngine
     internal bool TryPrologTermExpansion(Term input, out List<Term> output)
     {
         output = new List<Term>();
-        return ExpandTermFixpoint(input, output, 64) && output.Count switch
+        return ExpandTermFixpoint(input, output, 64, new AtomTerm("[]")) && output.Count switch
         {
             // The fixpoint always adds the input itself when nothing expanded;
             // report "no expansion" in that case so the caller keeps the original.
@@ -98,8 +108,17 @@ public sealed partial class PrologEngine
     // `throw_dcg_expansion_error(E)` marker for a deferred error and relies on a
     // second expansion pass turning it back into `throw(E)`. `depth` bounds the
     // recursion so a pathological hook cannot loop forever.
-    private bool ExpandTermFixpoint(Term term, List<Term> output, int depth)
+    private bool ExpandTermFixpoint(Term term, List<Term> output, int depth, Term ids)
     {
+        // Scryer's term_expansion/6 first — it threads `ids` (the already-applied
+        // expansion set) so its own guard stops re-expansion. clpz's `++>` grammar.
+        if (depth > 0 && HasPrologTermExpansion6
+            && TryPrologTermExpansion6(term, ids, out Term t6, out Term newIds)
+            && !t6.Equals(term))
+        {
+            ExpandTermFixpoint(t6, output, depth - 1, newIds);
+            return true;
+        }
         IReadOnlyList<Term>? repl = HasTermExpansions ? ApplyCsTermExpansion(term) : null;
         if (repl is null && HasPrologTermExpansion)
         {
@@ -115,8 +134,34 @@ public sealed partial class PrologEngine
             return true;
         }
         foreach (var t in repl)
-            ExpandTermFixpoint(t, output, depth - 1);
+            ExpandTermFixpoint(t, output, depth - 1, ids);
         return true;
+    }
+
+    // One term_expansion/6 pass: term_expansion(Term0, Layout0, Ids0, Term, Layout,
+    // Ids). Returns the expanded Term and the new Ids set; false (leaving both at the
+    // inputs) when the hook is undefined or fails for this term.
+    private bool TryPrologTermExpansion6(Term input, Term ids, out Term output, out Term newIds)
+    {
+        var inputVars = new HashSet<string>();
+        CollectVarNames(input, inputVars);
+        var termVar = new VarTerm("$TE6_Term");
+        var idsVar = new VarTerm("$TE6_Ids");
+        var goal = new CompoundTerm("term_expansion", new Term[]
+        {
+            input, new VarTerm("$TE6_L0"), ids, termVar, new VarTerm("$TE6_L1"), idsVar,
+        });
+        foreach (var sol in QueryAll(goal))
+        {
+            Term? t = sol["$TE6_Term"];
+            if (t is null) break;
+            output = RelinkInputVars(t, inputVars, sol);
+            newIds = sol["$TE6_Ids"] ?? ids;
+            return true;
+        }
+        output = input;
+        newIds = ids;
+        return false;
     }
 
     // One term_expansion/2 pass over `input`; appends its flattened result to
@@ -197,7 +242,7 @@ public sealed partial class PrologEngine
     // The clause itself stays in its file's module, so its BODY still resolves
     // against that module's own predicates.
     internal static bool IsGlobalHookFunctor(int fid) =>
-        fid == TermExpansionFid || fid == GoalExpansionFid;
+        fid == TermExpansionFid || fid == GoalExpansionFid || fid == TermExpansion6Fid;
 
     // Apply goal_expansion to every body goal of a clause (or a directive's goal).
     // A fact has no body and is returned unchanged.

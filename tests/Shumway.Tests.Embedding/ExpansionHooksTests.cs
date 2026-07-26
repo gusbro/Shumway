@@ -103,6 +103,21 @@ public class ExpansionHooksTests
     }
 
     [Fact]
+    public void PrologTermExpansion6_ExtendedFormWithIdSet_IsApplied()
+    {
+        var e = new PrologEngine();
+        // Scryer's extended term_expansion/6: Term0, Layout0, Ids0, Term, Layout,
+        // Ids. The Ids set is threaded to stop re-expansion (clpz's `++>` grammar
+        // uses exactly this). \+ member guards a single application.
+        e.ConsultString(
+            "user:term_expansion(mark6(X), _L0, Ids, replaced6(X), [], [done6|Ids]) :- "
+            + "\\+ member(done6, Ids).");
+        e.ConsultString("mark6(hi).");
+        Assert.True(e.Query("replaced6(hi).").Success);
+        Assert.False(e.Query("catch(mark6(hi), _, fail).").Success);
+    }
+
+    [Fact]
     public void PrologGoalExpansion_RewritesBodyGoals_PreservingVariables()
     {
         var e = new PrologEngine();
