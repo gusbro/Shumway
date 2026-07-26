@@ -33,6 +33,21 @@ public class ExpansionHooksTests
     }
 
     [Fact]
+    public void PrologLoadContext_InsideAHook_ReportsTheLoadedFile_NotTheHooksModule()
+    {
+        var e = new PrologEngine();
+        // A GLOBAL (user) term_expansion hook records the module it is invoked for.
+        e.ConsultString(
+            "term_expansion(mark(_), (:- assertz(loaded_from(M)))) :- "
+            + "prolog_load_context(module, M).");
+        // Load a file with its OWN module; its mark(_) triggers the hook. The hook
+        // must see clientmod (the file being loaded), NOT user (the hook's module).
+        e.ConsultString(":- module(clientmod, []).\nmark(here).");
+        Assert.Equal("clientmod",
+            Assert.IsType<AtomTerm>(e.Query("loaded_from(X).")["X"]).Name);
+    }
+
+    [Fact]
     public void PrologLoadContext_FailsOutsideAConsult()
     {
         var e = new PrologEngine();
