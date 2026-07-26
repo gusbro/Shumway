@@ -382,6 +382,24 @@ public sealed class ClauseReader
         else if (body is CompoundTerm { Functor: "char_conversion", Args: var ccArgs }
                  && ccArgs.Length == 2)
             ApplyCharConversionDirective(ccArgs, clause.Position);
+        else if (body is CompoundTerm { Functor: "module", Args: [_, var exportList] })
+            ApplyModuleListOps(exportList, clause.Position);
+    }
+
+    /// <summary>SICStus/Scryer allow <c>op(P, T, N)</c> entries in a module's export
+    /// list (<c>:- module(atts, [op(1199, fx, attribute), ...])</c>): the operator is
+    /// active for the rest of the module's own source AND becomes importable. We
+    /// activate each here, in place, so the module body parses with them — the same
+    /// point a standalone <c>:- op</c> directive would take effect.</summary>
+    private void ApplyModuleListOps(Term exportList, SourcePosition pos)
+    {
+        Term cursor = exportList;
+        while (cursor is CompoundTerm { Functor: ".", Args: [var element, var rest] })
+        {
+            if (element is CompoundTerm { Functor: "op", Args: var opArgs } && opArgs.Length == 3)
+                ApplyOpDirective(opArgs, pos);
+            cursor = rest;
+        }
     }
 
     /// <summary>ISO §6.4.2 / §8.14.9. The directive

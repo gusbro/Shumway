@@ -130,6 +130,24 @@ public class ClauseReaderTests
     }
 
     [Fact]
+    public void ModuleDirective_OpInExportList_AffectsLaterClauses()
+    {
+        // SICStus/Scryer put op/3 entries in the module export list
+        // (atts.pl: `:- module(atts, [op(1199, fx, attribute), ...])`).
+        // The operator must be active for the rest of the module source —
+        // atts.pl's own `(:- attribute Atts)` pattern depends on it.
+        var clauses = ReadAll(
+            ":- module(m, [op(1199, fx, attribute), q/0]).\n" +
+            "q :- attribute foo.\n");
+
+        Assert.Equal(2, clauses.Count);
+        // `attribute foo` parsed as the prefix compound attribute(foo),
+        // so q's body is that compound.
+        Assert.Equal(Cmp(":-", Atom("q"), Cmp("attribute", Atom("foo"))),
+            clauses[1].Term);
+    }
+
+    [Fact]
     public void OpDirective_ListOfNames_DefinesAllOfThem()
     {
         var clauses = ReadAll(
