@@ -176,6 +176,10 @@ public sealed partial class IlPredicateCompiler
             FunctorTable.Intern(AtomTable.Intern("$call_neg", permanent: true).Id, 1);
         private static readonly int MqualFid =
             FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
+        // ISO module-qualified goal `Module:Goal` — same (Module, Goal) shape as
+        // $mqual; unwrapped so call(M:G, Extra) extends G, not the ':' functor.
+        private static readonly int ColonFid =
+            FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
 
         /// <summary>Dispatches <c>call/N</c> with <paramref name="callArity"/>
         /// extra-arg count and the supplied cut barrier. Returns the
@@ -441,7 +445,14 @@ public sealed partial class IlPredicateCompiler
             while (goal.Tag == Tag.Str)
             {
                 int fidx = goal.AsHeapIndex;
-                if (engine.GetHeap(fidx).AsFunctorId != MqualFid) break;
+                int fid = engine.GetHeap(fidx).AsFunctorId;
+                // Both $mqual(Module, Goal) and the ISO Module:Goal qualifier share
+                // the (Module, Goal) layout. `M:G` with a non-atom module is not a
+                // valid qualification — leave it for the checks below.
+                if (fid == MqualFid) { }
+                else if (fid == ColonFid
+                         && DerefCell(engine, engine.GetHeap(fidx + 1)).Tag == Tag.Atom) { }
+                else break;
                 Cell mCell = DerefCell(engine, engine.GetHeap(fidx + 1));
                 if (mCell.Tag == Tag.Atom) module = mCell.AsAtomId;
                 goal = DerefCell(engine, engine.GetHeap(fidx + 2));

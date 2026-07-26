@@ -90,6 +90,12 @@ public sealed partial class BytecodeInterpreter
     // meta-dispatch so Goal's bare functor resolves against Module's locals first.
     private static readonly int MqualFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$mqual", permanent: true).Id, 2);
+    // The ISO module-qualified goal `Module:Goal` — the same (Module, Goal)
+    // shape as $mqual, written by the user (e.g. call(error:ilist, X)). Unwrapped
+    // in the meta-dispatch exactly like $mqual so `call(M:G, Extra)` extends G,
+    // not the ':' functor.
+    private static readonly int ColonFunctorId =
+        FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
 
     /// <summary>Optional hook the interpreter consults on every
     /// <c>call</c> / <c>execute</c> to ask whether a Tier-1 IL

@@ -626,6 +626,10 @@ public static class MetaTransform
                                     // CallBuiltin call/N anyway since the
                                     // first arg stays a `call/N` compound
                                     // until it's recursed past.
+            (":", 2) => false,      // module-qualified goal `M:G`. Extending it
+                                    // statically would build (:)/N; the runtime
+                                    // dispatcher distributes the extra args into
+                                    // G inside the module qualification instead.
             _ => true,
         };
     }

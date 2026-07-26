@@ -521,7 +521,15 @@ public sealed partial class BytecodeInterpreter
         while (goal.Tag == Tag.Str)
         {
             int fidx = goal.AsHeapIndex;
-            if (_engine.GetHeap(fidx).AsFunctorId != MqualFunctorId) break;
+            int fid = _engine.GetHeap(fidx).AsFunctorId;
+            // Both the engine's $mqual(Module, Goal) tag and the ISO Module:Goal
+            // qualifier share the same (Module, Goal) layout. A user-written
+            // `M:G` with a non-atom module is not a valid qualification — leave it
+            // for the callable/type checks below rather than unwrapping it.
+            if (fid == MqualFunctorId) { }
+            else if (fid == ColonFunctorId
+                     && DerefCell(_engine.GetHeap(fidx + 1)).Tag == Tag.Atom) { }
+            else break;
             Cell mCell = DerefCell(_engine.GetHeap(fidx + 1));
             if (mCell.Tag == Tag.Atom) module = mCell.AsAtomId;
             goal = DerefCell(_engine.GetHeap(fidx + 2));

@@ -123,6 +123,7 @@ internal static class Prelude
         :- public put_atts/3.
         :- public get_atts/3.
         :- public strip_module/3.
+        :- public '$skip_max_list'/4.
         :- public '$absent_attr'/3.
         :- public abolish_all_tables/0.
         :- public abolish_table/1.
@@ -1032,5 +1033,17 @@ internal static class Prelude
         strip_module(MG, M, G) :-
             ( nonvar(MG), MG = M0:G0 -> M = M0, G = G0
             ; G = MG, ( var(M) -> M = user ; true ) ).
+
+        % '$skip_max_list'(?Length, ?Max, ?List, ?Tail): walk List's spine,
+        % stopping after Max elements (when Max is a bound integer) or at the
+        % first non-cons tail. Length is the number walked, Tail the term reached.
+        % A Scryer/SWI built-in that library(error)'s must_be(list,_) and others
+        % rely on for proper/partial-list checking.
+        '$skip_max_list'(Length, Max, List, Tail) :-
+            '$skip_max_list_'(List, Max, 0, Length, Tail).
+        '$skip_max_list_'(List, Max, N, N, List) :- integer(Max), N >= Max, !.
+        '$skip_max_list_'([H|T], Max, N0, N, Tail) :-
+            !, N1 is N0 + 1, '$skip_max_list_'(T, Max, N1, N, Tail).
+        '$skip_max_list_'(List, _, N, N, List).
         """;
 }
