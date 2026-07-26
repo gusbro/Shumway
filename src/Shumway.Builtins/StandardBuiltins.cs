@@ -102,6 +102,10 @@ public static class StandardBuiltins
             Attr, "get_attr(+Var, +Module, -Value)", "Reads a module's attribute from a variable.");
         BuiltinsRegistry.Register("del_attr", 2, AttvarBuiltins.DelAttr,
             Attr, "del_attr(+Var, +Module)", "Removes a module's attribute from a variable.");
+        BuiltinsRegistry.Register("$attr_modules", 2, AttvarBuiltins.AttrModules,
+            Attr, "'$attr_modules'(+Var, -Modules)",
+            "The module atoms under which Var carries an attribute (SICStus/Scryer "
+            + "library(atts) compatibility primitive).");
 
         // I/O.
         const string Io = "Input / output";

@@ -56,6 +56,42 @@ public static class AttvarBuiltins
         return true;
     }
 
+    /// <summary><c>'$attr_modules'(+Var, -Modules)</c> — the list of module atoms
+    /// under which <c>Var</c> carries an attribute (empty if none / not an
+    /// attributed variable). The engine-level enumeration the SICStus/Scryer
+    /// <c>library(atts)</c> shim needs to build <c>'$get_attr_list'</c>; the rest
+    /// of that API is Prolog over put_attr / get_attr / del_attr.</summary>
+    public static bool AttrModules(Activation engine)
+    {
+        int varAddr = RegisterToHeap(engine, 0);
+        var modules = engine.AttrModules(varAddr);
+        int list = BuildAtomIdList(engine, modules);
+        return engine.UnifyRegisterWithHeapAt(1, list);
+    }
+
+    // Builds a proper list of atoms (by id) on the heap, ADR-017 inline cons.
+    private static int BuildAtomIdList(Activation engine, IReadOnlyCollection<int> atomIds)
+    {
+        int count = atomIds.Count;
+        if (count == 0)
+        {
+            int nil = engine.AllocateHeap(1);
+            engine.SetHeap(nil, Cell.Atom(AtomTable.EmptyListId));
+            return nil;
+        }
+        int start = engine.AllocateHeap(2 * count + 1);
+        int i = 0;
+        foreach (int id in atomIds)
+        {
+            int lisIdx = start + 2 * i;
+            engine.SetHeap(lisIdx, Cell.Lis(lisIdx + 1));
+            engine.SetHeap(lisIdx + 1, Cell.Atom(id));
+            i++;
+        }
+        engine.SetHeap(start + 2 * count, Cell.Atom(AtomTable.EmptyListId));
+        return start;
+    }
+
     /// <summary>Resolves an argument register to a heap index. A
     /// register holding a REF — the usual shape for a variable argument
     /// — already names a heap cell; an immediate is copied onto a fresh

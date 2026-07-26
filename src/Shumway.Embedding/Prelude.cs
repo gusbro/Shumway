@@ -115,6 +115,14 @@ internal static class Prelude
         :- public '$tbl_dispatch'/3.
         :- public '$tbl_consume'/3.
         :- public '$tbl_negate'/1.
+        :- public '$put_to_attr_list'/3.
+        :- public '$get_from_attr_list'/3.
+        :- public '$del_from_attr_list'/3.
+        :- public '$get_attr_list'/2.
+        :- public '$term_attributed_variables'/2.
+        :- public put_atts/3.
+        :- public get_atts/3.
+        :- public '$absent_attr'/3.
         :- public abolish_all_tables/0.
         :- public abolish_table/1.
         :- public well_founded/2.
@@ -964,5 +972,55 @@ internal static class Prelude
             retractall('$tbl_newd'(K, _)),
             retractall('$tbl_fresh'(K)),
             '$tbl_drop_each'(Ks).
+
+        % SICStus/Scryer library(atts) storage primitives — the Prolog half of the
+        % put_atts/get_atts shim (the C# half is '$attr_modules'/2). Each module M
+        % keeps a LIST of its attribute terms on the variable via put_attr/get_attr;
+        % '$get_attr_list' flattens every module's list into [M:Attr, ...].
+        '$term_attributed_variables'(T, Vs) :- term_attvars(T, Vs).
+        '$put_to_attr_list'(V, M, Attr) :-
+            ( get_attr(V, M, L0) -> true ; L0 = [] ),
+            functor(Attr, F, A),
+            '$attr_exclude'(L0, F, A, L1),
+            put_attr(V, M, [Attr|L1]).
+        '$get_from_attr_list'(V, M, Attr) :-
+            get_attr(V, M, L),
+            functor(Attr, F, A),
+            '$attr_find'(L, F, A, Attr).
+        '$del_from_attr_list'(V, M, Attr) :-
+            (   get_attr(V, M, L0)
+            ->  functor(Attr, F, A),
+                '$attr_exclude'(L0, F, A, L1),
+                ( L1 == [] -> del_attr(V, M) ; put_attr(V, M, L1) )
+            ;   true
+            ).
+        '$get_attr_list'(V, Ls) :- '$attr_modules'(V, Ms), '$attr_collect'(Ms, V, Ls).
+        '$attr_collect'([], _, []).
+        '$attr_collect'([M|Ms], V, Ls) :-
+            ( get_attr(V, M, As) -> '$attr_pairs'(As, M, Ls, Ls1) ; Ls = Ls1 ),
+            '$attr_collect'(Ms, V, Ls1).
+        '$attr_pairs'([], _, Ls, Ls).
+        '$attr_pairs'([A|As], M, [M:A|Ls0], Ls) :- '$attr_pairs'(As, M, Ls0, Ls).
+        '$attr_exclude'([], _, _, []).
+        '$attr_exclude'([X|Xs], F, A, Out) :-
+            ( functor(X, F, A) -> Out = Out1 ; Out = [X|Out1] ),
+            '$attr_exclude'(Xs, F, A, Out1).
+        '$attr_find'([X|Xs], F, A, Attr) :-
+            ( functor(X, F, A) -> Attr = X ; '$attr_find'(Xs, F, A, Attr) ).
+
+        % Direct put_atts/3 & get_atts/3 (explicit module) — the usable SICStus/
+        % Scryer attribute API without loading library(atts). The +Attr / -Attr /
+        % bare-Attr modes match atts: +Attr and bare-Attr set/add, -Attr removes
+        % (put) or checks-absent (get). (Scryer's put_atts/2 / get_atts/2 are the
+        % module-implicit forms library(atts) generates per :- attribute; the
+        % 3-arg forms are what its goal_expansion lowers a call to.)
+        put_atts(V, M, +Attr) :- !, '$put_to_attr_list'(V, M, Attr).
+        put_atts(V, M, -Attr) :- !, '$del_from_attr_list'(V, M, Attr).
+        put_atts(V, M, Attr)  :- '$put_to_attr_list'(V, M, Attr).
+        get_atts(V, M, +Attr) :- !, '$get_from_attr_list'(V, M, Attr).
+        get_atts(V, M, -Attr) :- !, '$absent_attr'(V, M, Attr).
+        get_atts(V, M, Attr)  :- '$get_from_attr_list'(V, M, Attr).
+        '$absent_attr'(V, M, Attr) :-
+            ( '$get_from_attr_list'(V, M, Attr) -> false ; true ).
         """;
 }
