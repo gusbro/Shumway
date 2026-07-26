@@ -1738,9 +1738,16 @@ internal sealed class ConsultPipeline
 
     private static bool TryReadFunctorSpec(Term term, out (string Name, int Arity) spec)
     {
-        if (term is CompoundTerm slash && slash.Functor == "/" && slash.Args.Length == 2
-            && slash.Args[0] is AtomTerm name)
+        if (term is CompoundTerm slash && slash.Functor == "/" && slash.Args.Length == 2)
         {
+            // A module-qualified indicator `Module:Name/Arity` (Scryer/SICStus,
+            // e.g. `:- discontiguous clpz:goal_expansion/5.`) parses as
+            // /(:(Module, Name), Arity) since `:` binds tighter than `/`. Strip
+            // the module — discontiguous/multifile group by the bare predicate.
+            Term nameSlot = slash.Args[0];
+            if (nameSlot is CompoundTerm { Functor: ":", Args: [_, var inner] })
+                nameSlot = inner;
+            if (nameSlot is not AtomTerm name) { spec = ("", 0); return false; }
             Term arityTerm = slash.Args[1];
             // arity_compat — Arity annotates directive indicators:
             // `:- public foo/8:far.` / `:- public f/2:system(...)`. With `:`

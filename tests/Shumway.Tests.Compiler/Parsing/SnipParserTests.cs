@@ -16,14 +16,46 @@ namespace Shumway.Tests.Compiler.Parsing;
 /// sees a plain Prolog goal and needs no awareness of the source
 /// syntax.</para>
 ///
-/// <para>Trade-off: a list whose first element is the cut atom now
-/// must be written <c>[(!), ...]</c> instead of <c>[!, ...]</c> —
-/// a pattern that virtually never appears in real code.</para>
+/// <para>A real snip always has a goal after the opening <c>!</c>. A bare
+/// <c>!</c> that immediately closes or continues the list — <c>[!]</c>,
+/// <c>[!, X]</c>, <c>[! | T]</c> — is an ordinary list with the cut atom as an
+/// element (ISO-valid; Scryer's clpz uses it), not a snip.</para>
 /// </summary>
 public class SnipParserTests
 {
     private static Term Parse(string source) =>
         new Parser(new global::Shumway.Compiler.Lexer.Lexer(source)).ReadTerm();
+
+    private static Term List(params Term[] items)
+    {
+        Term t = new AtomTerm("[]");
+        for (int i = items.Length - 1; i >= 0; i--)
+            t = new CompoundTerm(".", new[] { items[i], t });
+        return t;
+    }
+
+    [Fact]
+    public void BareCut_AsSoleListElement_IsAList()
+    {
+        // [!] -> '.'(!, []), NOT a snip.
+        Assert.Equal(List(new AtomTerm("!")), Parse("[!]"));
+    }
+
+    [Fact]
+    public void BareCut_AsFirstListElement_IsAList()
+    {
+        // [!, b] -> [!, b]
+        Assert.Equal(List(new AtomTerm("!"), new AtomTerm("b")), Parse("[!, b]"));
+    }
+
+    [Fact]
+    public void BareCut_AsListHeadWithTail_IsAList()
+    {
+        // [! | T] -> '.'(!, T)
+        Assert.Equal(
+            new CompoundTerm(".", new Term[] { new AtomTerm("!"), new VarTerm("T") }),
+            Parse("[! | T]"));
+    }
 
     [Fact]
     public void EmptyBodyless_SimpleGoal_DesugarsToOnce()

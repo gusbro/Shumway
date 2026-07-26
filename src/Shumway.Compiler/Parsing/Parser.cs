@@ -491,9 +491,16 @@ public sealed class Parser
                 // needs to be written `[(!), ...]` instead of `[!, ...]`.
                 // A QUOTED '!' is never a snip opener: the
                 // Arity corpus writes lists like ['!', Token], which must
-                // parse as ordinary two-element lists.
+                // parse as ordinary two-element lists. Nor is a bare '!'
+                // that immediately closes or continues the list — `[!]`,
+                // `[!, X]`, `[! | T]` are ordinary lists with the cut atom as
+                // an element (ISO-valid, and used by real libraries such as
+                // Scryer's clpz). A real snip `[! Goal !]` always has a goal
+                // after the opening '!'.
                 if (PeekToken().Kind == TokenKind.Atom && PeekToken().Text == "!"
-                    && !PeekToken().WasQuoted)
+                    && !PeekToken().WasQuoted
+                    && PeekTokenAt(1).Kind is not (TokenKind.RBracket
+                        or TokenKind.Comma or TokenKind.Bar))
                 {
                     NextToken();   // consume the opening '!'
                     Term snipBody = ReadTermInternal(1200, out _);

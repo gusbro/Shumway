@@ -122,6 +122,7 @@ internal static class Prelude
         :- public '$term_attributed_variables'/2.
         :- public put_atts/3.
         :- public get_atts/3.
+        :- public strip_module/3.
         :- public '$absent_attr'/3.
         :- public abolish_all_tables/0.
         :- public abolish_table/1.
@@ -1022,5 +1023,14 @@ internal static class Prelude
         get_atts(V, M, Attr)  :- '$get_from_attr_list'(V, M, Attr).
         '$absent_attr'(V, M, Attr) :-
             ( '$get_from_attr_list'(V, M, Attr) -> false ; true ).
+
+        % strip_module(+MG, -Module, -Goal): remove a Module:Goal qualifier.
+        % Scryer's library(loader) exports it (a compiled-in built-in, so no file
+        % to resolve); dcgs.pl's goal_expansion and other libraries call it. A bare
+        % goal keeps its default module (user). Single level, which is all real code
+        % writes.
+        strip_module(MG, M, G) :-
+            ( nonvar(MG), MG = M0:G0 -> M = M0, G = G0
+            ; G = MG, ( var(M) -> M = user ; true ) ).
         """;
 }
