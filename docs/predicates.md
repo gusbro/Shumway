@@ -318,6 +318,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `portray_clause(+Clause)` | Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, synthetic variable names renamed to A, B, C, ... |
 | `portray_clause(+Stream, +Clause)` | Like portray_clause/1 but writes to the given stream. |
 | `print(+Term)` | Writes a term using print conventions. |
+| `prolog_load_context(?Key, ?Value)` | SWI/Scryer load-context introspection (module / file / source / directory), used by term_expansion/goal_expansion hooks to read the module being loaded. Fails outside a consult. |
 | `put(+Code)` | Writes the character with the given code to the current output stream. Edinburgh-style alias of put_code/1. |
 | `put(+Stream, +Code)` | Stream variant of put/1. |
 | `put_byte(+Byte)` | Writes one byte to the current output binary stream (ISO §8.13.3). |
