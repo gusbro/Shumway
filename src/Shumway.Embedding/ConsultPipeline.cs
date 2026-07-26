@@ -468,22 +468,29 @@ internal sealed class ConsultPipeline
         bool debuggableHere = true;
         HashSet<(string Name, int Arity)>? nonDebuggable = null;
 
-        // term_expansion (C# hooks) — expand each raw term (a clause or a
-        // `:- Directive`) before the directive/clause loop below. A hook may turn
-        // one term into several, or drop it (empty list). Pre-scan for the
+        // term_expansion — expand each raw term (a clause or a `:- Directive`)
+        // before the directive/clause loop below. A hook may turn one term into
+        // several, or drop it. C# hooks run first, then the Prolog `term_expansion/2`
+        // predicate (if defined and already compiled — i.e. loaded by a PRIOR
+        // consult; a hook defined LATER in this same file, e.g. via an in-file
+        // use_module, does not yet apply here — pre-load the shim). Pre-scan for the
         // `:- module` name first so a hook / prolog_load_context sees the file's
         // module (the loop sets it too, but only when it reaches the directive).
-        if (E.HasTermExpansions)
+        if (E.HasTermExpansions || E.HasPrologTermExpansion)
         {
             foreach (var rc in rawClauses)
                 if (rc.Kind == ClauseKind.Directive
                     && rc.Term is CompoundTerm { Functor: ":-", Args: [var mb] }
                     && TryReadModuleDirective(mb, out string? mn, out _))
                 { moduleName = mn; E._currentLoadModule = mn; break; }
+            bool hasProlog = E.HasPrologTermExpansion;
             var expandedRaw = new List<Clause>(rawClauses.Count);
             foreach (var rc in rawClauses)
             {
                 var repl = E.ApplyCsTermExpansion(rc.Term);
+                if (repl is null && hasProlog
+                    && E.TryPrologTermExpansion(rc.Term, out var pexp))
+                    repl = pexp;
                 if (repl is null) { expandedRaw.Add(rc); continue; }
                 foreach (var t in repl) expandedRaw.Add(Clause.From(t));
             }

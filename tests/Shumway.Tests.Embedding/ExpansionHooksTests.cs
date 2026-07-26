@@ -64,6 +64,30 @@ public class ExpansionHooksTests
     }
 
     [Fact]
+    public void PrologTermExpansion_FromAPreloadedHook_ExpandsLaterConsults()
+    {
+        var e = new PrologEngine();
+        // A shim consulted first defines term_expansion/2; a later consult's
+        // matching terms are expanded by it (the downloaded-library path — the
+        // library's own term_expansion works once it is loaded).
+        e.ConsultString("term_expansion(macro(X), expanded(X)).");
+        e.ConsultString("macro(hello).\nplain(y).");
+        Assert.True(e.Query("expanded(hello).").Success);
+        Assert.True(e.Query("plain(y).").Success);
+        Assert.False(e.Query("catch(macro(hello), _, fail).").Success);
+    }
+
+    [Fact]
+    public void PrologTermExpansion_ReturningAList_IsSeveralClauses()
+    {
+        var e = new PrologEngine();
+        e.ConsultString("term_expansion(pair(A,B), [first(A), second(B)]).");
+        e.ConsultString("pair(one, two).");
+        Assert.True(e.Query("first(one).").Success);
+        Assert.True(e.Query("second(two).").Success);
+    }
+
+    [Fact]
     public void CsTermExpansion_CanExpandADirective()
     {
         var e = new PrologEngine();

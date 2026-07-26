@@ -1,4 +1,5 @@
 using Shumway.Compiler.Ast;
+using Shumway.Core;
 
 namespace Shumway.Embedding;
 
@@ -63,5 +64,52 @@ public sealed partial class PrologEngine
             if (r is not null) return r;
         }
         return null;
+    }
+
+    private static readonly int TermExpansionFid =
+        FunctorTable.Intern(AtomTable.Intern("term_expansion", permanent: true).Id, 2);
+
+    internal bool HasPrologTermExpansion => HasPredicate(TermExpansionFid);
+
+    // The Prolog term_expansion/2 hook: call the user predicate
+    // `term_expansion(Input, Expanded)` in the live engine (works mid-consult) and
+    // return its expansion. A term_expansion result that is a PROPER LIST is a list
+    // of clauses (SWI/Scryer); anything else is a single clause; `[]` drops the
+    // term. Returns false when term_expansion/2 is undefined or fails (no
+    // expansion). Only consulted when HasPrologTermExpansion is true, so a program
+    // that defines no hook pays nothing.
+    internal bool TryPrologTermExpansion(Term input, out List<Term> output)
+    {
+        output = new List<Term>();
+        var expandedVar = new VarTerm("$TE_Expanded");
+        var goal = new CompoundTerm("term_expansion", new Term[] { input, expandedVar });
+        foreach (var sol in QueryAll(goal))
+        {
+            Term? expanded = sol["$TE_Expanded"];
+            if (expanded is null) return false;
+            FlattenExpansion(expanded, output);
+            return true;
+        }
+        return false;
+    }
+
+    // A proper list [a,b,…] → its elements (each a clause); [] → nothing (drop);
+    // anything else → itself (one clause).
+    private static void FlattenExpansion(Term t, List<Term> output)
+    {
+        if (t is AtomTerm { Name: "[]" }) return;
+        if (t is CompoundTerm { Functor: ".", Args.Length: 2 })
+        {
+            Term cursor = t;
+            var items = new List<Term>();
+            while (cursor is CompoundTerm { Functor: ".", Args: [var head, var tail] })
+            {
+                items.Add(head);
+                cursor = tail;
+            }
+            if (cursor is AtomTerm { Name: "[]" }) { output.AddRange(items); return; }
+            // Improper list — treat the whole term as one clause.
+        }
+        output.Add(t);
     }
 }
