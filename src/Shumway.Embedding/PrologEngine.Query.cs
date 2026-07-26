@@ -1696,7 +1696,7 @@ public sealed partial class PrologEngine
             if (!TryExtractHead(c, out string name, out int arity)) continue;
             int fid = FunctorTable.Intern(
                 AtomTable.Intern(name, permanent: true).Id, arity);
-            if (!publicFunctors.Contains(fid)) locals.Add(fid);
+            if (!publicFunctors.Contains(fid) && !IsGlobalHookFunctor(fid)) locals.Add(fid);
         }
         return locals;
     }

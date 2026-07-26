@@ -130,17 +130,23 @@ internal sealed class ConsultPipeline
     /// <c>M</c>) defines <c>Head</c> in module <c>M</c> — e.g. atts.pl's
     /// <c>user:term_expansion(...)</c>. Returns the module name and the clause with
     /// the <c>M:</c> stripped from its head; <c>false</c> for an ordinary clause.</summary>
-    private static bool TryStripModuleQualifiedHead(
-        Clause clause, out string? module, out Clause stripped)
+    // A clause head `M:term_expansion(_,_)` or `M:goal_expansion(_,_)` — the only
+    // module-qualified clause heads real libraries use: atts.pl and dcgs.pl install
+    // `user:term_expansion/2` and `user:goal_expansion/2` to register the global
+    // expansion hooks. We strip the `M:` and keep the clause in the CONSULTING
+    // file's module. The hook functor is pinned global (IsGlobalHookFunctor), so it
+    // still installs the single global hook; but its BODY resolves against the file
+    // module's own predicates (dcgs' `dcg_rule`, atts' `expand_terms`) — routing the
+    // whole clause into module M instead would leave those body calls unresolved.
+    // Any OTHER `M:Head` is left untouched (none occur in practice).
+    private static bool TryStripHookHead(Clause clause, out Clause stripped)
     {
-        module = null;
         stripped = clause;
         Term term = clause.Term;
         if (term is CompoundTerm { Functor: ":-", Args: [var head, var body] })
         {
-            if (head is CompoundTerm { Functor: ":", Args: [AtomTerm m, var h0] })
+            if (head is CompoundTerm { Functor: ":", Args: [AtomTerm, var h0] } && IsHookHead(h0))
             {
-                module = m.Name;
                 stripped = new Clause(clause.Kind,
                     new CompoundTerm(":-", new[] { h0, body }) { Position = term.Position },
                     clause.Position);
@@ -148,14 +154,17 @@ internal sealed class ConsultPipeline
             }
             return false;
         }
-        if (term is CompoundTerm { Functor: ":", Args: [AtomTerm m2, var h1] })
+        if (term is CompoundTerm { Functor: ":", Args: [AtomTerm, var h1] } && IsHookHead(h1))
         {
-            module = m2.Name;
             stripped = Clause.From(h1);
             return true;
         }
         return false;
     }
+
+    private static bool IsHookHead(Term head) =>
+        head is CompoundTerm { Args.Length: 2 } c
+        && c.Functor is "term_expansion" or "goal_expansion";
 
     /// <summary>ADR-035 — the functor ids of the predicates a
     /// <c>:- disable_debug.</c> region covered. A predicate's name is mangled
@@ -481,7 +490,6 @@ internal sealed class ConsultPipeline
         // A clause whose head is module-qualified (`M:Head :- Body`, e.g. atts.pl's
         // `user:term_expansion/2`) is routed to module M rather than this file's
         // module. Collected here, merged into each M's manifest at consult end.
-        Dictionary<string, List<Clause>>? crossModuleClauses = null;
         HashSet<int>? pendingDiscontiguous = null;
         HashSet<int>? pendingMultifile = null;
         HashSet<int>? tabledFunctors = null;
@@ -542,20 +550,17 @@ internal sealed class ConsultPipeline
             rawClauses = expandedRaw;
         }
 
-        foreach (var clause in rawClauses)
+        foreach (var rawClause in rawClauses)
         {
+            var clause = rawClause;
             if (clause.Kind != ClauseKind.Directive)
             {
-                // Module-qualified head `M:Head` → define Head in module M
-                // (atts.pl's user:term_expansion/2, user:goal_expansion/2).
-                if (TryStripModuleQualifiedHead(clause, out string? qmod, out Clause stripped))
-                {
-                    crossModuleClauses ??= new();
-                    if (!crossModuleClauses.TryGetValue(qmod!, out var qlist))
-                        crossModuleClauses[qmod!] = qlist = new List<Clause>();
-                    qlist.Add(stripped);
-                    continue;
-                }
+                // `user:term_expansion/2` / `user:goal_expansion/2` head → the
+                // global expansion hook. Strip the `M:` and keep the clause here,
+                // so its body resolves in this file's module (the hook functor
+                // stays global regardless).
+                if (TryStripHookHead(clause, out Clause stripped))
+                    clause = stripped;
                 clauses.Add(clause);
                 if (!debuggableHere && TryReadClauseHead(clause, out var headSpec))
                     (nonDebuggable ??= new()).Add(headSpec);
@@ -1067,17 +1072,6 @@ internal sealed class ConsultPipeline
                 }
         }
 
-        // M:Head clauses → their target modules' manifests (create the module if
-        // absent). They compile under module M's context at the next query setup
-        // like any other clause of M.
-        if (crossModuleClauses is not null)
-            foreach (var (m, cls) in crossModuleClauses)
-            {
-                if (!E._modules.TryGetValue(m, out var mm))
-                    E._modules[m] = mm = new ModuleManifest(m);
-                mm.Clauses.AddRange(cls);
-            }
-
         // ADR-038 — record the module this consult defined so an enclosing
         // use_module(library(X)) learns which module X.pl actually declared.
         E._lastConsultedModuleName = moduleName;
@@ -1284,7 +1278,8 @@ internal sealed class ConsultPipeline
             if (!PrologEngine.TryExtractHead(c, out string name, out int arity)) continue;
             int fid = FunctorTable.Intern(
                 AtomTable.Intern(name, permanent: true).Id, arity);
-            if (!publicFunctors.Contains(fid)) locals.Add(fid);
+            if (!publicFunctors.Contains(fid) && !PrologEngine.IsGlobalHookFunctor(fid))
+                locals.Add(fid);
         }
         return locals;
     }

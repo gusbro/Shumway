@@ -147,6 +147,15 @@ public sealed partial class PrologEngine
 
     internal bool HasPrologGoalExpansion => HasPredicate(GoalExpansionFid);
 
+    // term_expansion/2 and goal_expansion/2 are GLOBAL hooks: any module that
+    // defines one (real libraries do it with a `user:` clause head — atts.pl,
+    // dcgs.pl) contributes to the single global hook, so the functor is never
+    // mangled into a module-local name, even inside an export-qualified module.
+    // The clause itself stays in its file's module, so its BODY still resolves
+    // against that module's own predicates.
+    internal static bool IsGlobalHookFunctor(int fid) =>
+        fid == TermExpansionFid || fid == GoalExpansionFid;
+
     // Apply goal_expansion to every body goal of a clause (or a directive's goal).
     // A fact has no body and is returned unchanged.
     internal Clause ExpandClauseGoals(Clause clause)
