@@ -65,6 +65,9 @@ internal sealed class ConsultPipeline
         // nested ConsultFile from an initialization goal must not leak).
         string? prevBase = E._consultBaseDir;
         E._consultBaseDir = Path.GetDirectoryName(Path.GetFullPath(path));
+        // prolog_load_context(file, _) / (source, _).
+        string? prevLoadFile = E._currentLoadFile;
+        try { E._currentLoadFile = Path.GetFullPath(path); } catch { E._currentLoadFile = path; }
         // ADR-035 — stop sites compiled during this consult are stamped with this
         // file, so a debugger can map a breakpoint in foo.pl back to them.
         int prevFile = E._debugFileId;
@@ -99,6 +102,7 @@ internal sealed class ConsultPipeline
         {
             E._consultBaseDir = prevBase;
             E._debugFileId = prevFile;
+            E._currentLoadFile = prevLoadFile;
         }
     }
 
@@ -351,7 +355,17 @@ internal sealed class ConsultPipeline
         // same thread.
         lock (E.DebugArmGate)
         {
-            ConsultStringLocked(source, recordInHistory, moduleNameFallback);
+            // prolog_load_context(module, _) — save/restore around (possibly
+            // nested) consults so a hook always sees the module being loaded now.
+            string? prevLoadModule = E._currentLoadModule;
+            try
+            {
+                ConsultStringLocked(source, recordInHistory, moduleNameFallback);
+            }
+            finally
+            {
+                E._currentLoadModule = prevLoadModule;
+            }
         }
     }
 
@@ -420,6 +434,9 @@ internal sealed class ConsultPipeline
         string moduleName = string.IsNullOrEmpty(moduleNameFallback)
             ? PrologEngine.DefaultModuleName
             : moduleNameFallback;
+        // prolog_load_context(module, _): the module of the file being loaded,
+        // updated when the :- module directive is seen below.
+        E._currentLoadModule = moduleName;
         bool moduleDirectiveSeen = false;
         var publics = new HashSet<int>();
         // ADR-038 — a `:- module(Name, [Exports])` module is export-qualified:
@@ -477,6 +494,7 @@ internal sealed class ConsultPipeline
                     throw new InvalidOperationException(
                         "Multiple :- module(...) directives in one ConsultString call.");
                 moduleName = name;
+                E._currentLoadModule = name;   // prolog_load_context(module, _)
                 moduleDirectiveSeen = true;
                 // ADR-038 — the two-arg `:- module(Name, [p/N, ...])` form makes
                 // this an export-qualified module: EVERY predicate is mangled

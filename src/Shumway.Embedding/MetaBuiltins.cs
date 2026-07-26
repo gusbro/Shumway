@@ -344,6 +344,11 @@ public static partial class MetaBuiltins
             Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).");
         BuiltinsRegistry.Register("read",      2, Read2,
             Io, "read(+Stream, -Term)", "Reads one term from a stream (ISO §8.14.2).");
+        BuiltinsRegistry.Register("prolog_load_context", 2, PrologLoadContext2,
+            Io, "prolog_load_context(?Key, ?Value)",
+            "SWI/Scryer load-context introspection (module / file / source / "
+            + "directory), used by term_expansion/goal_expansion hooks to read the "
+            + "module being loaded. Fails outside a consult.");
         BuiltinsRegistry.Register("absolute_file_name", 2, AbsoluteFileName2,
             Io, "absolute_file_name(+FileSpec, -Absolute)",
             "Resolves a file specification to an absolute path. The basic 2-arg form: "

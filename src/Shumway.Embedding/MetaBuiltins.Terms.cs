@@ -376,6 +376,33 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(register, Cell.Atom(aid));
     }
 
+    /// <summary><c>prolog_load_context(?Key, ?Value)</c> — SWI/Scryer load-context
+    /// introspection, the way a <c>term_expansion</c>/<c>goal_expansion</c> hook
+    /// reads the module it is expanding for (the module is NOT a hook argument).
+    /// Keys: <c>module</c> (the module being loaded), <c>file</c> / <c>source</c>
+    /// (its path), <c>directory</c> (its directory). Fails outside a consult, or
+    /// for a key whose value is unknown.</summary>
+    public static bool PrologLoadContext2(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host) return false;
+        Term keyTerm = RegisterMarshalling.ReadRegisterAsTerm(engine, 0);
+        if (keyTerm is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (keyTerm is not AtomTerm key)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("atom", keyTerm));
+        string? value = key.Name switch
+        {
+            "module" => host._currentLoadModule,
+            "file" or "source" => host._currentLoadFile,
+            "directory" => host._consultBaseDir,
+            _ => null,
+        };
+        if (value is null) return false;
+        int aid = AtomTable.Intern(value, permanent: true).Id;
+        return engine.UnifyRegisterWithCell(1, Cell.Atom(aid));
+    }
+
     /// <summary><c>absolute_file_name(+FileSpec, -Absolute)</c> —
     /// resolves a file path to an absolute one. The basic 2-arg
     /// form: <c>FileSpec</c> must be a bound atom or PSTR; the

@@ -76,6 +76,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// consult) — :- include/1 paths resolve against it.</summary>
     internal string? _consultBaseDir;
 
+    /// <summary>The module + file currently being loaded, for
+    /// <c>prolog_load_context/2</c> (SWI/Scryer) — a term_expansion/goal_expansion
+    /// hook reads the current module through it rather than an extra hook argument.
+    /// Set (and saved/restored for nested consults) around each consult; null
+    /// outside a consult.</summary>
+    internal string? _currentLoadModule;
+    internal string? _currentLoadFile;
+
     /// <summary>Arity-Prolog recorded database.
     /// Lazily constructed on first access so engines that never use it
     /// pay nothing.</summary>
