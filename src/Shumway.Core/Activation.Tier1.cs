@@ -143,6 +143,70 @@ public sealed partial class Activation
     private bool HasVerifyAttributesHook =>
         CurrentFunctorAddresses?.ContainsKey(VerifyAttributesFunctorId) ?? false;
 
+    /// <summary>Functor id of the bare SICStus/Scryer hook
+    /// <c>verify_attributes/3</c> — the per-module attribute-unification hook
+    /// (<c>M:verify_attributes(Var, Value, Goals)</c>) that Scryer libraries
+    /// (atts.pl, clpz, dif, freeze) define, distinct from our
+    /// <c>verify_attributes/4</c>.</summary>
+    private static readonly int BareVerify3FunctorId =
+        FunctorTable.Intern(AtomTable.Intern("verify_attributes", permanent: true).Id, 3);
+
+    /// <summary>Resolves module <paramref name="moduleId"/>'s Scryer-style
+    /// <c>verify_attributes/3</c> hook to a linked functor id, or -1 if the module
+    /// has none. Tries the export-qualified name <c>Module$verify_attributes/3</c>
+    /// first (a `:- module(M,[..])` library mangles it), then the bare functor.</summary>
+    internal int Verify3FunctorId(int moduleId)
+    {
+        var addrs = CurrentFunctorAddresses;
+        if (addrs is null) return -1;
+        string? mod = AtomTable.GetById(moduleId)?.Name;
+        if (mod is not null)
+        {
+            int mangled = FunctorTable.Intern(
+                AtomTable.Intern(mod + "$verify_attributes", permanent: true).Id, 3);
+            if (addrs.ContainsKey(mangled)) return mangled;
+        }
+        return addrs.ContainsKey(BareVerify3FunctorId) ? BareVerify3FunctorId : -1;
+    }
+
+    private IReadOnlyDictionary<int, int>? _verify3ScanFor;
+    private bool _hasAnyVerify3;
+
+    /// <summary>True when SOME module defines a <c>verify_attributes/3</c> hook.
+    /// Scanned once per distinct <see cref="CurrentFunctorAddresses"/> (attribute
+    /// hooks are static, so it is stable for the query) and cached — gates the
+    /// wakeup fast path so a hookless attributed-variable program pays nothing.</summary>
+    internal bool HasAnyVerify3Hook
+    {
+        get
+        {
+            var addrs = CurrentFunctorAddresses;
+            if (addrs is null) return false;
+            if (!ReferenceEquals(addrs, _verify3ScanFor))
+            {
+                _hasAnyVerify3 = addrs.ContainsKey(BareVerify3FunctorId);
+                if (!_hasAnyVerify3)
+                    foreach (int fid in addrs.Keys)
+                    {
+                        var (nameId, arity) = FunctorTable.Lookup(fid);
+                        if (arity == 3
+                            && (AtomTable.GetById(nameId)?.Name.EndsWith(
+                                    "$verify_attributes", System.StringComparison.Ordinal) ?? false))
+                        { _hasAnyVerify3 = true; break; }
+                    }
+                _verify3ScanFor = addrs;
+            }
+            return _hasAnyVerify3;
+        }
+    }
+
+    /// <summary>Whether attribute module <paramref name="moduleId"/> has any
+    /// unification hook — our <c>verify_attributes/4</c> or its own Scryer-style
+    /// <c>verify_attributes/3</c>. Used by the merge rule to decide whether a shared
+    /// module's values must be pre-unified (no hook) or left for the hook.</summary>
+    internal bool ModuleHasHook(int moduleId) =>
+        HasVerifyAttributesHook || Verify3FunctorId(moduleId) >= 0;
+
     /// <summary>Per-query string literal pool. Set by the embedding
     /// layer at query setup so IL-emitted <c>get_pstr</c> / <c>put_pstr</c>
     /// opcodes can resolve a literal id to its string at

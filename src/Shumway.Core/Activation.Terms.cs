@@ -1636,7 +1636,6 @@ public sealed partial class Activation
             return true;
         var fromRecord = _attrTable[fromHome];
         var toRecord = _attrTable[toHome];
-        bool hasHook = HasVerifyAttributesHook;
         // Snapshot the source modules: the Unify below can't mutate
         // fromRecord, but iterating a dictionary we may also be reading
         // is fragile — copy the pairs first.
@@ -1648,7 +1647,7 @@ public sealed partial class Activation
                 TrailAttrChange(toHome, moduleId, -1);
                 toRecord[moduleId] = fromValueIdx;
             }
-            else if (hasHook)
+            else if (ModuleHasHook(moduleId))
             {
                 // The hook owns this shared module's merge — leave the
                 // destination value untouched; the queued wakeup runs

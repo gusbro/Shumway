@@ -31,10 +31,12 @@ public sealed partial class BytecodeInterpreter
     private bool FlushPendingWakeupsSlow(ProgramView code)
     {
         var addrs = _engine.CurrentFunctorAddresses;
-        if (addrs is null || !addrs.ContainsKey(VerifyAttributesFunctorId))
+        bool has4 = addrs is not null && addrs.ContainsKey(VerifyAttributesFunctorId);
+        if (!has4 && !_engine.HasAnyVerify3Hook)
         {
-            // No verify_attributes/4 linked into this program — attributed
-            // variables stay hookless (the foundation).
+            // Neither our verify_attributes/4 nor any Scryer-style
+            // verify_attributes/3 is linked — attributed variables stay hookless
+            // (the foundation).
             _engine.ClearPendingWakeups();
             return true;
         }
@@ -61,6 +63,8 @@ public sealed partial class BytecodeInterpreter
     /// queue is drained in a loop.</summary>
     private bool RunWakeups(ProgramView code)
     {
+        bool hasVerify4 = _engine.CurrentFunctorAddresses?.ContainsKey(
+            VerifyAttributesFunctorId) ?? false;
         while (_engine.HasPendingWakeups)
         {
             var batch = _engine.TakePendingWakeups();
@@ -71,8 +75,20 @@ public sealed partial class BytecodeInterpreter
             for (int i = 0; i < batch.Count; i++)
             {
                 var (moduleId, attrValueIdx, otherIdx) = batch[i];
+                int v3 = _engine.Verify3FunctorId(moduleId);
                 int goalsVarIdx = _engine.AllocateHeapUnbound();
-                Cell verifyGoal = BuildVerifyGoal(moduleId, attrValueIdx, otherIdx, goalsVarIdx);
+                Cell verifyGoal;
+                if (v3 >= 0)
+                    verifyGoal = BuildVerify3Goal(v3, moduleId, attrValueIdx, otherIdx, goalsVarIdx);
+                else if (hasVerify4)
+                    verifyGoal = BuildVerifyGoal(moduleId, attrValueIdx, otherIdx, goalsVarIdx);
+                else
+                {
+                    // This module is hookless — nothing to run; the bind already
+                    // happened. Leave Goals unbound (RunGoalList treats it as empty).
+                    goalLists[i] = Cell.Ref(goalsVarIdx);
+                    continue;
+                }
                 if (!MetaCallInEngine(code, verifyGoal)) return false;
                 goalLists[i] = Cell.Ref(goalsVarIdx);
             }
@@ -94,6 +110,32 @@ public sealed partial class BytecodeInterpreter
         _engine.SetHeap(f + 2, Cell.Ref(attrValueIdx));
         _engine.SetHeap(f + 3, Cell.Ref(otherIdx));
         _engine.SetHeap(f + 4, Cell.Ref(goalsVarIdx));
+        return Cell.Str(f);
+    }
+
+    /// <summary>Builds the Scryer-style hook
+    /// <c>Module:verify_attributes(ProxyVar, Value, Goals)</c> for a module whose
+    /// hook is <c>verify_attributes/3</c> (functor id <paramref name="v3Functor"/>).
+    /// The hook reads the variable's attributes itself (via <c>get_atts</c>), so we
+    /// hand it a fresh attributed variable carrying the same value the module had on
+    /// the now-bound variable (snapshotted at <paramref name="attrValueIdx"/> before
+    /// the bind). <c>Value</c> is the term the variable was bound to.
+    ///
+    /// <para>Limitation: attribute WRITES the hook makes to ProxyVar do not stick
+    /// (the real variable is already bound) — the deferred-wakeup design cannot run
+    /// the hook before the bind. Hooks that only read attributes and return Goals
+    /// (the common case) work; ones that narrow the bound variable's own attributes
+    /// in-place do not.</para></summary>
+    private Cell BuildVerify3Goal(
+        int v3Functor, int moduleId, int attrValueIdx, int otherIdx, int goalsVarIdx)
+    {
+        int proxy = _engine.AllocateHeapUnbound();
+        _engine.PutAttr(proxy, moduleId, attrValueIdx);
+        int f = _engine.AllocateHeap(4);
+        _engine.SetHeap(f,     Cell.Functor(v3Functor));
+        _engine.SetHeap(f + 1, Cell.Ref(proxy));
+        _engine.SetHeap(f + 2, Cell.Ref(otherIdx));
+        _engine.SetHeap(f + 3, Cell.Ref(goalsVarIdx));
         return Cell.Str(f);
     }
 

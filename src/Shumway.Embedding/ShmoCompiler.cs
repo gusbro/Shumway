@@ -48,7 +48,7 @@ public static class ShmoCompiler
         "module", "public", "dynamic", "visible", "ensure_linked",
         "op", "set_prolog_flag", "char_conversion",
         "discontiguous", "multifile", "table", "mode", "native",
-        "c", "prolog", "meta_predicate", "use_module",
+        "c", "prolog", "meta_predicate", "non_counted_backtracking", "use_module",
         // ISO include/1 (expanded before this pass) + initialization/1
         // (collected by the consult path; carried as an entry goal here).
         "include", "initialization",

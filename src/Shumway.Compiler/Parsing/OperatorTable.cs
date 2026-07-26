@@ -134,6 +134,11 @@ public sealed class OperatorTable
         t.Define("multifile", 1150, OperatorType.Fx);
         t.Define("module_transparent", 1150, OperatorType.Fx);
         t.Define("volatile", 1150, OperatorType.Fx);
+        // Scryer directive — marks a predicate as not counting toward inference
+        // limits. Shumway has no inference-limit machinery, so it is a pure no-op;
+        // the operator exists only so `:- non_counted_backtracking foo/N.` parses
+        // (e.g. loading Scryer's library(iso_ext)).
+        t.Define("non_counted_backtracking", 1150, OperatorType.Fx);
         t.Define("table", 1150, OperatorType.Fx);
         t.Define("mode", 1150, OperatorType.Fx);
         t.Define("ensure_linked", 1150, OperatorType.Fx);

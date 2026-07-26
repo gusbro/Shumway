@@ -675,6 +675,14 @@ internal sealed class ConsultPipeline
                 // MetaTransform); acting on the declaration for module-transparency
                 // is future work.
             }
+            else if (body is CompoundTerm { Functor: "non_counted_backtracking", Args.Length: 1 })
+            {
+                // Scryer directive (library(iso_ext) et al.): a predicate whose
+                // backtracking does not count toward call_with_inference_limit/3.
+                // Shumway has no inference-limit machinery, so this is a pure no-op —
+                // recognised here only to stop the existence_error that running it as
+                // a goal would raise.
+            }
             else if (TryReadFunctorIndicatorDirective(body, "table", out var tableSpecs))
             {
                 tabledFunctors ??= new HashSet<int>();
