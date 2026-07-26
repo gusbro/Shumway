@@ -126,6 +126,37 @@ internal sealed class ConsultPipeline
         }
     }
 
+    /// <summary>A clause with a module-qualified head <c>M:Head</c> (a bound atom
+    /// <c>M</c>) defines <c>Head</c> in module <c>M</c> — e.g. atts.pl's
+    /// <c>user:term_expansion(...)</c>. Returns the module name and the clause with
+    /// the <c>M:</c> stripped from its head; <c>false</c> for an ordinary clause.</summary>
+    private static bool TryStripModuleQualifiedHead(
+        Clause clause, out string? module, out Clause stripped)
+    {
+        module = null;
+        stripped = clause;
+        Term term = clause.Term;
+        if (term is CompoundTerm { Functor: ":-", Args: [var head, var body] })
+        {
+            if (head is CompoundTerm { Functor: ":", Args: [AtomTerm m, var h0] })
+            {
+                module = m.Name;
+                stripped = new Clause(clause.Kind,
+                    new CompoundTerm(":-", new[] { h0, body }) { Position = term.Position },
+                    clause.Position);
+                return true;
+            }
+            return false;
+        }
+        if (term is CompoundTerm { Functor: ":", Args: [AtomTerm m2, var h1] })
+        {
+            module = m2.Name;
+            stripped = Clause.From(h1);
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>ADR-035 — the functor ids of the predicates a
     /// <c>:- disable_debug.</c> region covered. A predicate's name is mangled
     /// (<c>module$name</c>) if it is module-local and left bare if it is public or
@@ -447,6 +478,10 @@ internal sealed class ConsultPipeline
         var exports = new HashSet<int>();
         Dictionary<int, string>? pendingImports = null;
         var clauses = new List<Clause>();
+        // A clause whose head is module-qualified (`M:Head :- Body`, e.g. atts.pl's
+        // `user:term_expansion/2`) is routed to module M rather than this file's
+        // module. Collected here, merged into each M's manifest at consult end.
+        Dictionary<string, List<Clause>>? crossModuleClauses = null;
         HashSet<int>? pendingDiscontiguous = null;
         HashSet<int>? pendingMultifile = null;
         HashSet<int>? tabledFunctors = null;
@@ -511,6 +546,16 @@ internal sealed class ConsultPipeline
         {
             if (clause.Kind != ClauseKind.Directive)
             {
+                // Module-qualified head `M:Head` → define Head in module M
+                // (atts.pl's user:term_expansion/2, user:goal_expansion/2).
+                if (TryStripModuleQualifiedHead(clause, out string? qmod, out Clause stripped))
+                {
+                    crossModuleClauses ??= new();
+                    if (!crossModuleClauses.TryGetValue(qmod!, out var qlist))
+                        crossModuleClauses[qmod!] = qlist = new List<Clause>();
+                    qlist.Add(stripped);
+                    continue;
+                }
                 clauses.Add(clause);
                 if (!debuggableHere && TryReadClauseHead(clause, out var headSpec))
                     (nonDebuggable ??= new()).Add(headSpec);
@@ -1021,6 +1066,17 @@ internal sealed class ConsultPipeline
                         existing.ModeDeclarations[fid] = modes;
                 }
         }
+
+        // M:Head clauses → their target modules' manifests (create the module if
+        // absent). They compile under module M's context at the next query setup
+        // like any other clause of M.
+        if (crossModuleClauses is not null)
+            foreach (var (m, cls) in crossModuleClauses)
+            {
+                if (!E._modules.TryGetValue(m, out var mm))
+                    E._modules[m] = mm = new ModuleManifest(m);
+                mm.Clauses.AddRange(cls);
+            }
 
         // ADR-038 — record the module this consult defined so an enclosing
         // use_module(library(X)) learns which module X.pl actually declared.
