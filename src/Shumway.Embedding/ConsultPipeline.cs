@@ -533,6 +533,22 @@ internal sealed class ConsultPipeline
             var expandedRaw = new List<Clause>(rawClauses.Count);
             foreach (var rc in rawClauses)
             {
+                // `-->` is a CORE construct: DCG translation is owned by
+                // DcgTransform (ClausePipeline), which handles the full body
+                // grammar — including a bare `->` if-then — via our own
+                // translator. A loaded library's term_expansion must NOT intercept
+                // it: Scryer's dcgs.pl term_expansion throws
+                // representation_error(dcg_body) on a bare `->` in a DCG body, a
+                // construct its own core `-->` translation (like ours) handles.
+                // So leave a DCG rule for DcgTransform, exactly as when no
+                // term_expansion is loaded. (clpz's dual-accumulator DCG uses its
+                // own `++>` operator, which is NOT core and still runs through
+                // clpz's term_expansion below.)
+                if (rc.Kind == ClauseKind.DcgRule)
+                {
+                    expandedRaw.Add(rc);
+                    continue;
+                }
                 // term_expansion: rc → one-or-more clauses (or itself), applied to
                 // a fixpoint (C# + Prolog hooks) as SWI/Scryer do.
                 IReadOnlyList<Term>? repl = null;
