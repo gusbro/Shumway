@@ -88,6 +88,28 @@ public class ExpansionHooksTests
     }
 
     [Fact]
+    public void PrologGoalExpansion_RewritesBodyGoals_PreservingVariables()
+    {
+        var e = new PrologEngine();
+        // A shim rewrites old_api(X) body goals to new_api(X) — the shared X must
+        // survive the rewrite (the head's R and the rewritten goal's arg are one).
+        e.ConsultString("goal_expansion(old_api(X), new_api(X)).\nnew_api(ok).");
+        e.ConsultString("run(R) :- old_api(R).");
+        Assert.Equal("ok", Assert.IsType<AtomTerm>(e.Query("run(R).")["R"]).Name);
+    }
+
+    [Fact]
+    public void CsGoalExpansion_RewritesBodyGoals()
+    {
+        var e = new PrologEngine();
+        // Strip log(_) goals to true.
+        e.RegisterGoalExpansion(g =>
+            g is CompoundTerm { Functor: "log", Args.Length: 1 } ? new AtomTerm("true") : null);
+        e.ConsultString("go(X) :- log(before), X = done, log(after).");
+        Assert.Equal("done", Assert.IsType<AtomTerm>(e.Query("go(X).")["X"]).Name);
+    }
+
+    [Fact]
     public void CsTermExpansion_CanExpandADirective()
     {
         var e = new PrologEngine();

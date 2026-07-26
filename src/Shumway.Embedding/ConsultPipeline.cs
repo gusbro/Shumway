@@ -468,31 +468,41 @@ internal sealed class ConsultPipeline
         bool debuggableHere = true;
         HashSet<(string Name, int Arity)>? nonDebuggable = null;
 
-        // term_expansion — expand each raw term (a clause or a `:- Directive`)
-        // before the directive/clause loop below. A hook may turn one term into
-        // several, or drop it. C# hooks run first, then the Prolog `term_expansion/2`
-        // predicate (if defined and already compiled — i.e. loaded by a PRIOR
-        // consult; a hook defined LATER in this same file, e.g. via an in-file
-        // use_module, does not yet apply here — pre-load the shim). Pre-scan for the
-        // `:- module` name first so a hook / prolog_load_context sees the file's
-        // module (the loop sets it too, but only when it reaches the directive).
-        if (E.HasTermExpansions || E.HasPrologTermExpansion)
+        // term_expansion / goal_expansion — expand each raw term (a clause or a
+        // `:- Directive`) before the directive/clause loop below. term_expansion
+        // may turn one term into several (or drop it); goal_expansion rewrites each
+        // body goal. C# hooks run first, then the Prolog `term_expansion/2` /
+        // `goal_expansion/2` predicates (if defined and already compiled — i.e.
+        // loaded by a PRIOR consult; a hook defined LATER in this same file does not
+        // yet apply here — pre-load the shim). Pre-scan for the `:- module` name so
+        // a hook / prolog_load_context sees the file's module (the loop sets it too,
+        // but only when it reaches the directive).
+        bool hasTermExp = E.HasTermExpansions || E.HasPrologTermExpansion;
+        bool hasGoalExp = E.HasGoalExpansions || E.HasPrologGoalExpansion;
+        if (hasTermExp || hasGoalExp)
         {
             foreach (var rc in rawClauses)
                 if (rc.Kind == ClauseKind.Directive
                     && rc.Term is CompoundTerm { Functor: ":-", Args: [var mb] }
                     && TryReadModuleDirective(mb, out string? mn, out _))
                 { moduleName = mn; E._currentLoadModule = mn; break; }
-            bool hasProlog = E.HasPrologTermExpansion;
+            bool hasPrologTerm = E.HasPrologTermExpansion;
             var expandedRaw = new List<Clause>(rawClauses.Count);
             foreach (var rc in rawClauses)
             {
-                var repl = E.ApplyCsTermExpansion(rc.Term);
-                if (repl is null && hasProlog
+                // term_expansion: rc → one-or-more clauses (or itself).
+                IReadOnlyList<Term>? repl = hasTermExp ? E.ApplyCsTermExpansion(rc.Term) : null;
+                if (repl is null && hasPrologTerm
                     && E.TryPrologTermExpansion(rc.Term, out var pexp))
                     repl = pexp;
-                if (repl is null) { expandedRaw.Add(rc); continue; }
-                foreach (var t in repl) expandedRaw.Add(Clause.From(t));
+                if (repl is null)
+                    expandedRaw.Add(hasGoalExp ? E.ExpandClauseGoals(rc) : rc);
+                else
+                    foreach (var t in repl)
+                    {
+                        var cl = Clause.From(t);
+                        expandedRaw.Add(hasGoalExp ? E.ExpandClauseGoals(cl) : cl);
+                    }
             }
             rawClauses = expandedRaw;
         }

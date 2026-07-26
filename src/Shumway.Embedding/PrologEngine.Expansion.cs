@@ -81,15 +81,152 @@ public sealed partial class PrologEngine
     internal bool TryPrologTermExpansion(Term input, out List<Term> output)
     {
         output = new List<Term>();
+        var inputVars = new HashSet<string>();
+        CollectVarNames(input, inputVars);
         var expandedVar = new VarTerm("$TE_Expanded");
         var goal = new CompoundTerm("term_expansion", new Term[] { input, expandedVar });
         foreach (var sol in QueryAll(goal))
         {
             Term? expanded = sol["$TE_Expanded"];
             if (expanded is null) return false;
-            FlattenExpansion(expanded, output);
+            FlattenExpansion(RelinkInputVars(expanded, inputVars, sol), output);
             return true;
         }
+        return false;
+    }
+
+    // Running an expansion through QueryAll materialises the input's variables and
+    // reads the output back with fresh heap-address names (_G<addr>) — losing the
+    // sharing between the input's vars and the clause around it. This restores it:
+    // read each input var back too (same heap address → same _G<addr> name) and
+    // rename that name in the output to the input var's ORIGINAL name, so the
+    // expansion shares variables with the rest of the clause again.
+    private static Term RelinkInputVars(Term output, HashSet<string> inputVars, Solution sol)
+    {
+        Dictionary<string, Term>? rename = null;
+        foreach (string name in inputVars)
+        {
+            if (sol[name] is VarTerm rb && rb.Name != name)
+                (rename ??= new())[rb.Name] = new VarTerm(name);
+        }
+        return rename is null ? output : SubstituteVars(output, rename);
+    }
+
+    private static void CollectVarNames(Term t, HashSet<string> into)
+    {
+        switch (t)
+        {
+            case VarTerm v: into.Add(v.Name); break;
+            case CompoundTerm c:
+                foreach (var a in c.Args) CollectVarNames(a, into);
+                break;
+        }
+    }
+
+    private static Term SubstituteVars(Term t, Dictionary<string, Term> map)
+    {
+        switch (t)
+        {
+            case VarTerm v: return map.TryGetValue(v.Name, out var r) ? r : t;
+            case CompoundTerm c:
+            {
+                Term[]? args = null;
+                for (int i = 0; i < c.Args.Length; i++)
+                {
+                    Term s = SubstituteVars(c.Args[i], map);
+                    if (!ReferenceEquals(s, c.Args[i])) (args ??= (Term[])c.Args.Clone())[i] = s;
+                }
+                return args is null ? t : new CompoundTerm(c.Functor, args) { Position = c.Position };
+            }
+            default: return t;
+        }
+    }
+
+    private static readonly int GoalExpansionFid =
+        FunctorTable.Intern(AtomTable.Intern("goal_expansion", permanent: true).Id, 2);
+
+    internal bool HasPrologGoalExpansion => HasPredicate(GoalExpansionFid);
+
+    // Apply goal_expansion to every body goal of a clause (or a directive's goal).
+    // A fact has no body and is returned unchanged.
+    internal Clause ExpandClauseGoals(Clause clause)
+    {
+        switch (clause.Term)
+        {
+            case CompoundTerm { Functor: ":-", Args: [var head, var body] } rule:
+            {
+                Term nb = ExpandGoalTree(body);
+                return ReferenceEquals(nb, body) ? clause
+                    : new Clause(clause.Kind,
+                        new CompoundTerm(":-", new[] { head, nb }) { Position = rule.Position },
+                        clause.Position);
+            }
+            case CompoundTerm { Functor: ":-", Args: [var dbody] } dir:
+            {
+                Term nb = ExpandGoalTree(dbody);
+                return ReferenceEquals(nb, dbody) ? clause
+                    : new Clause(clause.Kind,
+                        new CompoundTerm(":-", new[] { nb }) { Position = dir.Position },
+                        clause.Position);
+            }
+            default:
+                return clause;   // fact
+        }
+    }
+
+    // Recurse through the cut-transparent control constructs and apply
+    // goal_expansion (C# then Prolog) to each plain body goal.
+    private Term ExpandGoalTree(Term goal)
+    {
+        if (goal is CompoundTerm c && IsGoalControl(c.Functor, c.Args.Length))
+        {
+            Term[]? args = null;
+            for (int i = 0; i < c.Args.Length; i++)
+            {
+                Term ex = ExpandGoalTree(c.Args[i]);
+                if (!ReferenceEquals(ex, c.Args[i]))
+                    (args ??= (Term[])c.Args.Clone())[i] = ex;
+            }
+            return args is null ? goal
+                : new CompoundTerm(c.Functor, args) { Position = c.Position };
+        }
+        // Plain goal — expand (bounded fixpoint so g→g' →g'' converges).
+        Term g = goal;
+        for (int i = 0; i < 8; i++)
+        {
+            Term? next = ApplyCsGoalExpansion(g)
+                ?? (HasPrologGoalExpansion && TryPrologGoalExpansion(g, out var pe) ? pe : null);
+            if (next is null || next.Equals(g)) break;
+            g = next;
+        }
+        return ReferenceEquals(g, goal) ? goal : g;
+    }
+
+    // The control constructs whose arguments are themselves goals (walked, not
+    // expanded as a unit). call/1 recurses into its goal too.
+    private static bool IsGoalControl(string functor, int arity) => (functor, arity) switch
+    {
+        (",", 2) or (";", 2) or ("->", 2) or ("*->", 2)
+            or ("\\+", 1) or ("not", 1) or ("call", 1) => true,
+        _ => false,
+    };
+
+    // The Prolog goal_expansion/2 hook, mirroring TryPrologTermExpansion but for a
+    // single replacement goal.
+    private bool TryPrologGoalExpansion(Term input, out Term expanded)
+    {
+        var inputVars = new HashSet<string>();
+        CollectVarNames(input, inputVars);
+        var v = new VarTerm("$GE_Expanded");
+        var goal = new CompoundTerm("goal_expansion", new Term[] { input, v });
+        foreach (var sol in QueryAll(goal))
+        {
+            Term? e = sol["$GE_Expanded"];
+            if (e is null) break;
+            expanded = RelinkInputVars(e, inputVars, sol);
+            return true;
+        }
+        expanded = input;
         return false;
     }
 
