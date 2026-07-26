@@ -533,10 +533,10 @@ internal sealed class ConsultPipeline
             var expandedRaw = new List<Clause>(rawClauses.Count);
             foreach (var rc in rawClauses)
             {
-                // term_expansion: rc → one-or-more clauses (or itself).
-                IReadOnlyList<Term>? repl = hasTermExp ? E.ApplyCsTermExpansion(rc.Term) : null;
-                if (repl is null && hasPrologTerm
-                    && E.TryPrologTermExpansion(rc.Term, out var pexp))
+                // term_expansion: rc → one-or-more clauses (or itself), applied to
+                // a fixpoint (C# + Prolog hooks) as SWI/Scryer do.
+                IReadOnlyList<Term>? repl = null;
+                if (hasTermExp && E.TryPrologTermExpansion(rc.Term, out var pexp))
                     repl = pexp;
                 if (repl is null)
                     expandedRaw.Add(hasGoalExp ? E.ExpandClauseGoals(rc) : rc);

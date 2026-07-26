@@ -81,6 +81,49 @@ public sealed partial class PrologEngine
     internal bool TryPrologTermExpansion(Term input, out List<Term> output)
     {
         output = new List<Term>();
+        return ExpandTermFixpoint(input, output, 64) && output.Count switch
+        {
+            // The fixpoint always adds the input itself when nothing expanded;
+            // report "no expansion" in that case so the caller keeps the original.
+            1 when ReferenceEquals(output[0], input) => Reset(output),
+            _ => true,
+        };
+
+        static bool Reset(List<Term> o) { o.Clear(); return false; }
+    }
+
+    // Applies term_expansion (C# then Prolog) repeatedly, to a fixpoint, matching
+    // SWI/Scryer: an expansion's output is itself re-expanded until it stops
+    // changing. Real libraries depend on this — Scryer's DCG expander emits a
+    // `throw_dcg_expansion_error(E)` marker for a deferred error and relies on a
+    // second expansion pass turning it back into `throw(E)`. `depth` bounds the
+    // recursion so a pathological hook cannot loop forever.
+    private bool ExpandTermFixpoint(Term term, List<Term> output, int depth)
+    {
+        IReadOnlyList<Term>? repl = HasTermExpansions ? ApplyCsTermExpansion(term) : null;
+        if (repl is null && HasPrologTermExpansion)
+        {
+            var one = new List<Term>();
+            if (TryPrologTermExpansionOnce(term, one)) repl = one;
+        }
+        // No hook fired, or the sole result is the term unchanged, or we've hit the
+        // depth bound → this term is final.
+        if (repl is null || depth <= 0
+            || (repl.Count == 1 && repl[0].Equals(term)))
+        {
+            output.Add(term);
+            return true;
+        }
+        foreach (var t in repl)
+            ExpandTermFixpoint(t, output, depth - 1);
+        return true;
+    }
+
+    // One term_expansion/2 pass over `input`; appends its flattened result to
+    // `output`. Returns false (leaving output untouched) when the hook is
+    // undefined or fails for this term.
+    private bool TryPrologTermExpansionOnce(Term input, List<Term> output)
+    {
         var inputVars = new HashSet<string>();
         CollectVarNames(input, inputVars);
         var expandedVar = new VarTerm("$TE_Expanded");
