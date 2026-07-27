@@ -167,6 +167,92 @@ internal sealed class ConsultPipeline
         && ((c.Functor == "term_expansion" && c.Args.Length is 2 or 6)
             || (c.Functor == "goal_expansion" && c.Args.Length == 2));
 
+    // A collected (M:-stripped) clause defining a term_expansion / goal_expansion
+    // hook — its head is one of those functors.
+    private static bool IsHookClauseHead(Clause c)
+    {
+        Term head = c.Kind == ClauseKind.Rule
+            && c.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
+            ? h : c.Term;
+        return IsHookHead(head);
+    }
+
+    // Wraps an in-file hook clause's body with the order guard '$te_after'(index),
+    // so the re-expansion pass fires it only for clauses AFTER position `index`
+    // (its own definition). Inert for every later consult (pos = -1).
+    private static Clause GuardHookClause(Clause c, int index)
+    {
+        Term guard = new CompoundTerm("$te_after", new Term[] { new IntTerm(index) });
+        if (c.Kind == ClauseKind.Rule
+            && c.Term is CompoundTerm { Functor: ":-", Args: [var head, var body] } rule)
+        {
+            Term newBody = new CompoundTerm(",", new[] { guard, body });
+            return new Clause(c.Kind,
+                new CompoundTerm(":-", new[] { head, newBody }) { Position = rule.Position },
+                c.Position);
+        }
+        // A fact hook (term_expansion(a, b).) becomes a rule guarded by the goal.
+        return new Clause(ClauseKind.Rule,
+            new CompoundTerm(":-", new[] { c.Term, guard }) { Position = c.Term.Position },
+            c.Position);
+    }
+
+    // The in-file re-expansion pass: re-applies term_expansion / goal_expansion to
+    // this consult's committed clauses (the slice [baseOffset, baseOffset+count) of
+    // the module's clause list), now that the file's own hooks are live. Each hook
+    // is order-guarded, so it fires only for clauses after its definition. The hook
+    // compiles ONCE (first QueryAll) and is dispatched per clause — no per-clause
+    // recompile. Only rebuilds + invalidates when something actually expanded.
+    private void ReExpandInFileHooks(ModuleManifest manifest, int baseOffset, int count,
+        HashSet<int>? pendingDiscontiguous)
+    {
+        bool hasTermExp = E.HasTermExpansions || E.HasPrologTermExpansion
+            || E.HasPrologTermExpansion6;
+        bool hasGoalExp = E.HasGoalExpansions || E.HasPrologGoalExpansion;
+        if (!hasTermExp && !hasGoalExp) return;
+
+        var rebuilt = new List<Clause>(count);
+        bool changed = false;
+        try
+        {
+            for (int local = 0; local < count; local++)
+            {
+                Clause c = manifest.Clauses[baseOffset + local];
+                if (c.Kind == ClauseKind.DcgRule)   // `-->` is core (DcgTransform)
+                {
+                    rebuilt.Add(c);
+                    continue;
+                }
+                E._consultExpandPos = local;
+                if (hasTermExp && E.TryPrologTermExpansion(c.Term, out var pexp))
+                {
+                    changed = true;
+                    foreach (var t in pexp)
+                        rebuilt.Add(hasGoalExp ? E.ExpandClauseGoals(Clause.From(t)) : Clause.From(t));
+                }
+                else
+                {
+                    rebuilt.Add(hasGoalExp ? E.ExpandClauseGoals(c) : c);
+                }
+            }
+        }
+        finally { E._consultExpandPos = -1; }
+
+        // Contiguity was deferred (unexpanded grammar clauses shared one head);
+        // check it now on the expanded clauses.
+        ValidateContiguity(rebuilt, pendingDiscontiguous);
+
+        if (!changed) return;
+        manifest.Clauses.RemoveRange(baseOffset, count);
+        manifest.Clauses.InsertRange(baseOffset, rebuilt);
+        // The clause set changed — recompile against it at the next query.
+        E._staticPredicateCache.Clear();
+        E._skipCompileMergedCache = null;
+        E._staticLink = null;
+        E._staticHeadFunctorsCache = null;
+        if (E._liveConsultEngine is null) E.InvalidatePersistent();
+    }
+
     /// <summary>ADR-035 — the functor ids of the predicates a
     /// <c>:- disable_debug.</c> region covered. A predicate's name is mangled
     /// (<c>module$name</c>) if it is module-local and left bare if it is public or
@@ -841,7 +927,15 @@ internal sealed class ConsultPipeline
                     $"warning: redefinition of builtin {name}/{arity} ignored (arity_compat)");
         }
 
-        ValidateContiguity(clauses, pendingDiscontiguous);
+        // In-file term_expansion hooks defined this consult: their unexpanded
+        // clauses (a grammar operator like clpz's `++>`, all sharing one head
+        // functor) look discontiguous now but become their real, contiguous heads
+        // after the re-expansion pass. Defer the contiguity check to then.
+        bool inFileHooks = false;
+        foreach (var c in clauses)
+            if (IsHookClauseHead(c)) { inFileHooks = true; break; }
+        if (!inFileHooks)
+            ValidateContiguity(clauses, pendingDiscontiguous);
 
         // ADR-022 — embedded native-code wiring. Rewrite each captured
         // `$native_goal(RawText)` body goal into a portable `'$native_run'('$nb$…',
@@ -1046,12 +1140,29 @@ internal sealed class ConsultPipeline
             E._nonDebuggableFunctors.UnionWith(
                 ResolveNonDebuggableFids(nonDebuggable, moduleName));
 
+        // In-file term_expansion / goal_expansion: a hook defined in THIS file must
+        // apply to the file's OWN later clauses (SWI/Scryer order-sensitivity),
+        // which the main loop could not do — the hook is not live until the
+        // manifest commits below. Guard each hook clause with '$te_after'(index)
+        // (index = its position among this consult's clauses) and re-expand the
+        // committed clauses once, after the commit, when the hook is compiled. The
+        // guard fires the hook only for clauses after its own definition during
+        // that pass, and always (pos = -1) for every later consult.
+        if (inFileHooks)
+            for (int i = 0; i < clauses.Count; i++)
+                if (IsHookClauseHead(clauses[i]))
+                    clauses[i] = GuardHookClause(clauses[i], i);
+        ModuleManifest committedManifest;
+        int consultBaseOffset;
+
         if (moduleDirectiveSeen || moduleName != PrologEngine.DefaultModuleName)
         {
             // Explicit module (or a per-file fallback module
             // from a source-carrying bundle entry): replace any previous
             // load of this module.
             var manifest = new ModuleManifest(moduleName);
+            committedManifest = manifest;
+            consultBaseOffset = 0;
             manifest.Clauses.AddRange(clauses);
             manifest.PublicFunctors.UnionWith(publics);
             // ADR-038 — export-qualified module: record the importable surface and
@@ -1072,6 +1183,8 @@ internal sealed class ConsultPipeline
             // a single rolling 'user' module — matches the historic behaviour
             // from before the module system landed.
             var existing = E._modules[PrologEngine.DefaultModuleName];
+            committedManifest = existing;
+            consultBaseOffset = existing.Clauses.Count;
             existing.Clauses.AddRange(clauses);
             existing.PublicFunctors.UnionWith(publics);
             // ADR-038 — a bare `user` program that use_module's an export-qualified
@@ -1159,6 +1272,16 @@ internal sealed class ConsultPipeline
         // BEFORE the initialization goals run — those goals ARE the program, and a breakpoint
         // bound after them is a breakpoint that never fires.
         E.RebindPendingBreakpoints();
+
+        // In-file term_expansion / goal_expansion re-expansion. Now that this
+        // file's hooks are committed and compilable — with all their in-file
+        // dependencies present — apply them to the file's OWN clauses,
+        // order-sensitively (the '$te_after' guard fires each hook only for
+        // clauses after its definition). Runs before the directive /
+        // initialization goals so they see the fully-expanded program.
+        if (inFileHooks)
+            ReExpandInFileHooks(committedManifest, consultBaseOffset, clauses.Count,
+                pendingDiscontiguous);
 
         // ISO §7.4.2 general goal directives run now, after the batch commit
         // and in source order — before initialization/1 (§7.4.2.7), which ISO

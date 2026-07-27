@@ -1245,6 +1245,21 @@ public static partial class MetaBuiltins
         return true;
     }
 
+    /// <summary><c>'$te_after'(HookIndex)</c> — the in-file term_expansion order
+    /// guard. An in-file hook's clause is committed as
+    /// <c>Head :- '$te_after'(HookIndex), Body</c>. It succeeds when
+    /// <see cref="PrologEngine._consultExpandPos"/> is -1 (any consult other than
+    /// the one that defined the hook — the hook always applies then) or greater
+    /// than HookIndex (during that consult's re-expansion pass — the hook applies
+    /// only to clauses AFTER its own definition, matching SWI/Scryer).</summary>
+    public static bool TeAfter(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host || host._consultExpandPos < 0)
+            return true;
+        return MaterializeRegister(engine, 0) is IntTerm n
+            && host._consultExpandPos > (int)n.Value;
+    }
+
     /// <summary><c>'$findall_record_s'(Template)</c> — the
     /// findall/3 record path. Snapshots the solution straight into a
     /// backtrack-safe <see cref="Cell"/> image (no per-node managed AST). A

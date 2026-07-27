@@ -40,6 +40,50 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void InFileTermExpansion_AppliesToLaterClausesInTheSameFile()
+    {
+        // A term_expansion defined in a file must expand that file's OWN later
+        // clauses — the in-file case (clpz's `++>` grammar depends on it).
+        var e = new PrologEngine();
+        e.ConsultString(
+            "term_expansion(macro(X), expanded(X)).\n" +
+            "macro(hi).");
+        Assert.True(e.Query("expanded(hi).").Success);
+    }
+
+    [Fact]
+    public void InFileTermExpansion_IsOrderSensitive_LikeSwiAndScryer()
+    {
+        // Verified identical on SWI 9.2.3 and Scryer: a hook applies ONLY to
+        // clauses AFTER its definition. A matching term before the definition
+        // survives unexpanded.
+        var e = new PrologEngine();
+        e.ConsultString(
+            "special(before).\n" +
+            "term_expansion(special(X), handled(X)).\n" +
+            "special(after).");
+        Assert.True(e.Query("special(before).").Success);   // before def: not expanded
+        Assert.False(e.Query("handled(before).").Success);  // never created
+        Assert.False(e.Query("special(after).").Success);   // after def: expanded away
+        Assert.True(e.Query("handled(after).").Success);     // its expansion
+    }
+
+    [Fact]
+    public void InFileTermExpansion6_DualAccumulatorGrammar()
+    {
+        // clpz's shape: a term_expansion/6 whose body calls file-local helpers to
+        // translate a custom `++>` grammar operator, defined and used in one file.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- op(1200, xfx, (++>)).\n" +
+            "user:term_expansion((H ++> B), _, Ids, (H :- Body), [], [d|Ids]) :- \\+ member(d, Ids), mk(B, Body).\n" +
+            "mk(G, call(G)).\n" +
+            "greet ++> hello.\n" +
+            "hello.");
+        Assert.True(e.Query("greet.").Success);
+    }
+
+    [Fact]
     public void OpDirective_StillAppliesToLaterClauses()
     {
         // The baseline the others generalise — a plain `:- op` from that point on.

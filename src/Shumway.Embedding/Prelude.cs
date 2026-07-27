@@ -46,6 +46,7 @@ internal static class Prelude
         :- public select/3.
         :- public permutation/2.
         :- public memberchk/2.
+        :- public nonmember/2.
         :- public subtract/3.
         :- public intersection/3.
         :- public union/3.
@@ -377,6 +378,9 @@ internal static class Prelude
 
         %! memberchk(?Elem, +List) | Lists | Like member/2 but succeeds at most once — no backtracking over further matches.
         memberchk(X, [Y|T]) :- ( X = Y -> true ; memberchk(X, T) ).
+
+        %! nonmember(?Elem, +List) | Lists | True when Elem does not unify with any element of List.
+        nonmember(X, L) :- \+ member(X, L).
 
         %! subtract(+Set, +Delete, -Rest) | Lists | Rest is Set without the elements that also occur in Delete.
         subtract([], _, []).

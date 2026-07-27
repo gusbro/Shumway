@@ -84,6 +84,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal string? _currentLoadModule;
     internal string? _currentLoadFile;
 
+    /// <summary>The clause index the in-file term_expansion re-expansion pass is
+    /// currently expanding, or -1 outside that pass. An in-file hook's clause is
+    /// committed guarded by <c>'$te_after'(HookIndex)</c>, which succeeds when this
+    /// is -1 (any later consult — the hook always applies then) or greater than
+    /// HookIndex (this consult — the hook applies only to clauses AFTER its own
+    /// definition, matching SWI/Scryer order-sensitivity).</summary>
+    internal int _consultExpandPos = -1;
+
     /// <summary>Arity-Prolog recorded database.
     /// Lazily constructed on first access so engines that never use it
     /// pay nothing.</summary>

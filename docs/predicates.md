@@ -212,6 +212,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `min_list(+List, -Min)` | Min is the smallest number in the non-empty list. |
 | `min_member(?Min, +List)` | Min is the smallest element of List in the standard order of terms. |
 | `msort(+List, -Sorted)` | Sorts a list into standard order, keeping duplicates. |
+| `nonmember(?Elem, +List)` | True when Elem does not unify with any element of List. |
 | `nth0(?Index, ?List, ?Elem)` | Relates a 0-based index to the list element at that position. |
 | `nth1(?Index, ?List, ?Elem)` | Relates a 1-based index to the list element at that position. |
 | `numlist(+Low, +High, -List)` | List is the consecutive integers from Low to High inclusive. |
