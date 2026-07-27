@@ -84,6 +84,26 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void MultifileTermExpansionHook_BodyCallsAModuleLocalInsideOnce()
+    {
+        // clpz's exact shape: a `:- multifile user:term_expansion/6` whose body
+        // calls a module-local helper inside once/1. A global hook declared
+        // multifile must stay on the static pipeline (where MetaTransform lowers
+        // once so the local mangles) — NOT be routed to the dynamic store, whose
+        // pre-mangle leaves the once-nested call bare.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- op(1200, xfx, (++>)).\n" +
+            ":- multifile user:term_expansion/6.\n" +
+            "user:term_expansion((H ++> B), _, Ids, (H :- Body), [], [d|Ids]) :- " +
+            "\\+ member(d, Ids), once(mk(B, Body)).\n" +
+            "mk(G, call(G)).\n" +
+            "greet ++> hello.\n" +
+            "hello.");
+        Assert.True(e.Query("greet.").Success);
+    }
+
+    [Fact]
     public void OpDirective_StillAppliesToLaterClauses()
     {
         // The baseline the others generalise — a plain `:- op` from that point on.

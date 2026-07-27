@@ -749,6 +749,16 @@ internal sealed class ConsultPipeline
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
+                    // term_expansion / goal_expansion are already global,
+                    // static, multifile-accumulating hooks (pinned by
+                    // IsGlobalHookFunctor). Marking one dynamic would route its
+                    // clauses to the dynamic store and pre-mangle them with
+                    // ModuleRewrite alone — which does not descend into once/1,
+                    // catch/3 etc. — leaving a module-local call inside such a goal
+                    // unmangled (clpz's `:- multifile user:term_expansion/6` whose
+                    // body calls `once(duodcg_body(..))`). Keep them on the static
+                    // pipeline, where MetaTransform lowers those goals first.
+                    if (PrologEngine.IsGlobalHookFunctor(fid)) continue;
                     pendingMultifile.Add(fid);
                     // A multifile predicate accumulates clauses from several
                     // sources (assert, other files) — so it is callable and
