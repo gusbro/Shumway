@@ -543,7 +543,7 @@ internal sealed class ConsultPipeline
         {
             rawClauses = cached;
         }
-        else if (preludeSource || source.Contains("include(", StringComparison.Ordinal))
+        else if (preludeSource || HasIncludeDirective(source))
         {
             var list = new ClauseReader(
                 new Lexer(source, E._flags.CharConversionEnabled ? E._flags.CharConversion : null)
@@ -1378,6 +1378,16 @@ internal sealed class ConsultPipeline
     // module-local generated_clauses/1). call('$mqual'(Module, Goal)) threads the
     // module through the meta-dispatch — the same mechanism a clause body's calls
     // get. The default `user` module needs no qualification (everything is bare).
+    // Whether the source has a `:- include(...)` textual-inclusion DIRECTIVE
+    // (which forces the eager consult path — IncludeExpander needs the whole
+    // clause list). Matched precisely so the ordinary include/3 LIST predicate
+    // (clpz calls it 6×) does not force clpz off the incremental path, where its
+    // `:- use_module(library(atts))` must activate the `attribute` operator before
+    // its later `:- attribute` line parses.
+    private static bool HasIncludeDirective(string source) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            source, @"(^|\n)\s*:-\s*include\s*\(");
+
     private static Term QualifyGoalForModule(Term goal, string moduleName)
         => moduleName == PrologEngine.DefaultModuleName
             ? goal

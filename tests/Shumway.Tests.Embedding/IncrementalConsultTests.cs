@@ -27,6 +27,21 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void IncludePredicateCall_DoesNotForceTheEagerPath()
+    {
+        // A source that CALLS include/3 (the list predicate — clpz does, 6×) must
+        // still get incremental consult: only a real `:- include(File)` DIRECTIVE
+        // forces the eager path. Here the use_module operators must reach the later
+        // clause even though the file also mentions include(.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- use_module(library(clpfd)).\n" +
+            "evens(Xs, Es) :- include([X]>>(0 is X mod 2), Xs, Es).\n" +
+            "solve(X) :- X in 1..3, X #> 2, label([X]).");
+        Assert.True(e.Query("solve(3).").Success);
+    }
+
+    [Fact]
     public void SetPrologFlag_AppliesToLaterClausesInTheSameFile()
     {
         // double_quotes set mid-file changes how a later clause's "..." reads.
