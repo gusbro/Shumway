@@ -1,0 +1,67 @@
+using Shumway.Embedding;
+using Xunit;
+
+namespace Shumway.Tests.Embedding;
+
+/// <summary>
+/// Incremental consult: a directive takes effect for every clause that follows it
+/// in the same source, exactly as `:- op` already does. The clause stream is
+/// consumed lazily so a `:- use_module` / `:- set_prolog_flag` executed mid-file
+/// affects the parsing of subsequent clauses — the correct behaviour of any Prolog
+/// engine, and what lets a source import a library and then use its operators.
+/// </summary>
+public class IncrementalConsultTests
+{
+    [Fact]
+    public void UseModuleOperators_ApplyToLaterClausesInTheSameFile()
+    {
+        // `:- use_module(library(clpfd))` brings the `in`/`#>`/`..` operators; the
+        // clause after it must parse with them. Before incremental consult the
+        // whole file was parsed before the directive ran, so `X in 1..5` was a
+        // syntax error.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- use_module(library(clpfd)).\n" +
+            "solve(Xs) :- [X,Y] = Xs, X in 1..3, Y in 1..3, X #> Y, label([X,Y]).");
+        Assert.True(e.Query("solve([X, Y]).").Success);
+    }
+
+    [Fact]
+    public void SetPrologFlag_AppliesToLaterClausesInTheSameFile()
+    {
+        // double_quotes set mid-file changes how a later clause's "..." reads.
+        var e = new PrologEngine();
+        e.ConsultString(
+            "before(X) :- X = \"ab\".\n" +
+            ":- set_prolog_flag(double_quotes, chars).\n" +
+            "after(X) :- X = \"ab\".");
+        // `after` reads "ab" as a char list under the flag set just before it.
+        Assert.Equal("[a,b]", RenderList(e.Query("after(X).")["X"]!));
+    }
+
+    [Fact]
+    public void OpDirective_StillAppliesToLaterClauses()
+    {
+        // The baseline the others generalise — a plain `:- op` from that point on.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- op(700, xfx, ===>).\n" +
+            "rule(a ===> b).");
+        Assert.True(e.Query("rule(a ===> b).").Success);
+    }
+
+    private static string RenderList(Shumway.Compiler.Ast.Term t)
+    {
+        var sb = new System.Text.StringBuilder("[");
+        bool first = true;
+        Shumway.Compiler.Ast.Term cur = t;
+        while (cur is Shumway.Compiler.Ast.CompoundTerm { Functor: ".", Args: [var h, var tl] })
+        {
+            if (!first) sb.Append(',');
+            sb.Append((h as Shumway.Compiler.Ast.AtomTerm)?.Name ?? h.ToString());
+            first = false;
+            cur = tl;
+        }
+        return sb.Append(']').ToString();
+    }
+}

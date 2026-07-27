@@ -426,46 +426,54 @@ internal sealed class ConsultPipeline
         E._skipCompileMergedCache = null;   // static cache cleared
         E._staticLink = null;
         E.InvalidatePersistent();
-        List<Clause> rawClauses;
-        if (ReferenceEquals(source, Prelude.Source) && s_preludeClauses is { } cached)
+        // The clause stream. INCREMENTAL consult — like `:- op`, a directive
+        // takes effect for every clause that follows it in the same source: the
+        // stream is consumed LAZILY (below) so a `:- use_module` /
+        // `:- set_prolog_flag` executed in the loop registers its operators /
+        // flags into E._operators before the NEXT clause is parsed. Two paths stay
+        // eager (materialised), neither of which needs mid-file operator ordering:
+        // the cached one-time prelude parse, and any source using `:- include`
+        // (whose textual splice, handled by IncludeExpander with its own op
+        // ordering, needs the whole list).
+        //
+        // ADR-035 — every position a consult produces knows which FILE it came
+        // from; the FileId travels with the position because compilation happens
+        // at query setup, long after this read.
+        bool preludeSource = ReferenceEquals(source, Prelude.Source);
+        IEnumerable<Clause> rawClauses;
+        if (preludeSource && s_preludeClauses is { } cached)
         {
-            rawClauses = cached;   // reuse the one-time prelude parse
+            rawClauses = cached;
+        }
+        else if (preludeSource || source.Contains("include(", StringComparison.Ordinal))
+        {
+            var list = new ClauseReader(
+                new Lexer(source, E._flags.CharConversionEnabled ? E._flags.CharConversion : null)
+                { FileId = E._debugFileId },
+                E._operators, E._flags).ReadAll().ToList();
+            if (preludeSource)
+                System.Threading.Volatile.Write(ref s_preludeClauses, list);
+            // ISO 7.4.2.7 `:- include(File)` — textual inclusion.
+            rawClauses = Shumway.Compiler.Parsing.IncludeExpander.Expand(
+                list, E._consultBaseDir, E._operators, E._flags);
         }
         else
         {
+            // Lazy: each clause is parsed on demand as the loop pulls it, so a
+            // directive executed mid-loop affects the parse of the clauses after it.
             rawClauses = new ClauseReader(
                 new Lexer(source, E._flags.CharConversionEnabled ? E._flags.CharConversion : null)
-                {
-                    // ADR-035 — every position this consult produces knows which FILE it came
-                    // from. It has to travel with the position, because the clause is not
-                    // compiled now: compilation happens at query setup, long after the consult
-                    // that read the file is over, and a compiler field saying "the file we are
-                    // reading" says nothing true by then.
-                    FileId = E._debugFileId,
-                },
-                E._operators, E._flags).ReadAll().ToList();
-            // First prelude consult in the process: cache its parse (computed
-            // with this engine's default operators/flags) for every later one.
-            if (ReferenceEquals(source, Prelude.Source))
-                System.Threading.Volatile.Write(ref s_preludeClauses, rawClauses);
+                { FileId = E._debugFileId },
+                E._operators, E._flags).ReadAll();
         }
 
-        // Record the prelude's predicates so predicate_property/2 reports them
-        // as built_in (they are library predicates written in Prolog, not
-        // user-defined). Every engine consults the prelude once at
-        // construction; the head fids are the bare (unmangled) functor ids a
-        // caller uses. Directives contribute no head.
-        if (ReferenceEquals(source, Prelude.Source))
-            foreach (var c in rawClauses)
+        // Record the prelude's predicates so predicate_property/2 reports them as
+        // built_in (they are library predicates in Prolog, not user-defined). Only
+        // the prelude reaches here as a materialised list; a directive has no head.
+        if (preludeSource)
+            foreach (var c in (List<Clause>)rawClauses)
                 if (c.Kind != ClauseKind.Directive)
                     E._preludeFunctors.Add(HeadFunctorIdOf(c));
-
-        // ISO 7.4.2.7 `:- include(File)` — textual inclusion (semantics in
-        // IncludeExpander). Paths resolve against the consulting file's
-        // directory (ConsultFile), else the process CWD. Returns the same
-        // list when nothing expands, keeping the cached prelude parse shared.
-        rawClauses = Shumway.Compiler.Parsing.IncludeExpander.Expand(
-            rawClauses, E._consultBaseDir, E._operators, E._flags);
 
         // a source-carrying bundle entry consults under the
         // entry's module name (the per-file fallback ShmoCompiler resolved
@@ -524,51 +532,37 @@ internal sealed class ConsultPipeline
         bool hasTermExp = E.HasTermExpansions || E.HasPrologTermExpansion
             || E.HasPrologTermExpansion6;
         bool hasGoalExp = E.HasGoalExpansions || E.HasPrologGoalExpansion;
-        if (hasTermExp || hasGoalExp)
+
+        // Per-clause term_expansion / goal_expansion — applied inline in the loop
+        // (not a pre-pass over the whole file) so it composes with incremental
+        // consult: a raw clause is expanded with whatever hooks are live by the
+        // time the loop reaches it. `-->` is a CORE construct owned by DcgTransform
+        // (ClausePipeline) — it handles the full body grammar including a bare `->`
+        // if-then — so a DCG rule is left untouched here even when a library's
+        // term_expansion is loaded (Scryer's dcgs.pl throws representation_error on
+        // a bare `->`; clpz's non-core `++>` still runs through its own hook).
+        List<Clause> ExpandRawClause(Clause rc)
         {
-            foreach (var rc in rawClauses)
-                if (rc.Kind == ClauseKind.Directive
-                    && rc.Term is CompoundTerm { Functor: ":-", Args: [var mb] }
-                    && TryReadModuleDirective(mb, out string? mn, out _))
-                { moduleName = mn; E._currentLoadModule = mn; break; }
-            bool hasPrologTerm = E.HasPrologTermExpansion;
-            var expandedRaw = new List<Clause>(rawClauses.Count);
-            foreach (var rc in rawClauses)
+            if (rc.Kind == ClauseKind.DcgRule || !(hasTermExp || hasGoalExp))
+                return SingletonClause(rc);
+            IReadOnlyList<Term>? repl = null;
+            if (hasTermExp && E.TryPrologTermExpansion(rc.Term, out var pexp))
+                repl = pexp;
+            if (repl is null)
+                return SingletonClause(hasGoalExp ? E.ExpandClauseGoals(rc) : rc);
+            var outl = new List<Clause>(repl.Count);
+            foreach (var t in repl)
             {
-                // `-->` is a CORE construct: DCG translation is owned by
-                // DcgTransform (ClausePipeline), which handles the full body
-                // grammar — including a bare `->` if-then — via our own
-                // translator. A loaded library's term_expansion must NOT intercept
-                // it: Scryer's dcgs.pl term_expansion throws
-                // representation_error(dcg_body) on a bare `->` in a DCG body, a
-                // construct its own core `-->` translation (like ours) handles.
-                // So leave a DCG rule for DcgTransform, exactly as when no
-                // term_expansion is loaded. (clpz's dual-accumulator DCG uses its
-                // own `++>` operator, which is NOT core and still runs through
-                // clpz's term_expansion below.)
-                if (rc.Kind == ClauseKind.DcgRule)
-                {
-                    expandedRaw.Add(rc);
-                    continue;
-                }
-                // term_expansion: rc → one-or-more clauses (or itself), applied to
-                // a fixpoint (C# + Prolog hooks) as SWI/Scryer do.
-                IReadOnlyList<Term>? repl = null;
-                if (hasTermExp && E.TryPrologTermExpansion(rc.Term, out var pexp))
-                    repl = pexp;
-                if (repl is null)
-                    expandedRaw.Add(hasGoalExp ? E.ExpandClauseGoals(rc) : rc);
-                else
-                    foreach (var t in repl)
-                    {
-                        var cl = Clause.From(t);
-                        expandedRaw.Add(hasGoalExp ? E.ExpandClauseGoals(cl) : cl);
-                    }
+                var cl = Clause.From(t);
+                outl.Add(hasGoalExp ? E.ExpandClauseGoals(cl) : cl);
             }
-            rawClauses = expandedRaw;
+            return outl;
+
+            static List<Clause> SingletonClause(Clause c) => new(1) { c };
         }
 
-        foreach (var rawClause in rawClauses)
+        foreach (var rawClause0 in rawClauses)
+        foreach (var rawClause in ExpandRawClause(rawClause0))
         {
             var clause = rawClause;
             if (clause.Kind != ClauseKind.Directive)
