@@ -179,6 +179,26 @@ public class RationalTests
             "findall(R, (member(N, [2, 3, 4]), R is 1 rdiv N), Rs), "
             + "Rs = [A, B, C], A =:= 1 rdiv 2, B =:= 1 rdiv 3, C =:= 1 rdiv 4."));
 
+    // ---- functor/3 and =.. treat a rational (and bigint) as atomic ----
+
+    [Fact]
+    public void Functor_OnRational()
+        => Assert.True(Holds("X is 1 rdiv 3, functor(X, F, A), F == X, A == 0."));
+
+    [Fact]
+    public void Univ_OnRational()
+        => Assert.True(Holds("X is 1 rdiv 3, X =.. L, L = [Y], Y == X."));
+
+    [Fact]
+    public void Functor_OnBigInt()
+        // Latent bug this surfaced: functor/3 failed on a BigInt (atomic check
+        // omitted BigInt). A big integer is atomic — functor(Big, Big, 0).
+        => Assert.True(Holds("X is 10 ^ 30, functor(X, F, A), F == X, A == 0."));
+
+    [Fact]
+    public void Univ_OnBigInt()
+        => Assert.True(Holds("X is 10 ^ 30, X =.. L, L = [Y], Y == X."));
+
     // ---- C# flag API round-trips through the engine ----
 
     [Fact]

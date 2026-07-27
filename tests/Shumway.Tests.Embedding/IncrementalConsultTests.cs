@@ -186,6 +186,50 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void GoalExpansion_AppliesToOwnClausesInAnExportQualifiedNestedLibrary()
+    {
+        // clpz's shape: an export-qualified `:- module(m, [...])` library, loaded
+        // via use_module, defines its OWN goal_expansion/2 macro and uses it in
+        // its own clause bodies (clpz's `cis_leq`). The hook must be applied to
+        // the library's clauses even though it is a nested consult — the
+        // re-expansion pass runs for nested libraries, not only top level.
+        string dir = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "shumway-gexp-" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "gexpm.pl"),
+                ":- module(gexpm, [test/1]).\n" +
+                ":- op(700, xfx, myleq).\n" +
+                "goal_expansion(A myleq B, leq(A, B)).\n" +
+                "leq(X, Y) :- X =< Y.\n" +
+                "test(R) :- ( 1 myleq 2 -> R = yes ; R = no ).");
+            var e = new PrologEngine();
+            e.AddLibraryDirectory(dir);
+            e.ConsultString(":- use_module(library(gexpm)).");
+            Assert.True(e.Query("test(yes).").Success);
+        }
+        finally { try { System.IO.Directory.Delete(dir, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void GoalExpansionClauses_NeedNotBeContiguous()
+    {
+        // goal_expansion/2 (and term_expansion) are hooks — implicitly
+        // discontiguous + multifile; a library (format.pl, clpz.pl) scatters
+        // their clauses among helpers. The contiguity check must not reject that.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- op(700, xfx, glt).\n" +
+            ":- op(700, xfx, ggt).\n" +
+            "goal_expansion(A glt B, lt(A, B)).\n" +
+            "lt(X, Y) :- X < Y.\n" +                    // a non-hook clause between the two hook clauses
+            "goal_expansion(A ggt B, B glt A).\n" +
+            "gt(X, Y) :- Y glt X.");
+        Assert.True(e.Query("gt(2, 1).").Success);
+    }
+
+    [Fact]
     public void InitializationGoal_RunsInItsOwnModuleContext()
     {
         // clpz's shape: `:- initialization` calls a module-local predicate. The

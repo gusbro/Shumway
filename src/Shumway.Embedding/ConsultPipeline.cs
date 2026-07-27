@@ -232,11 +232,24 @@ internal sealed class ConsultPipeline
                     foreach (var t in pexp)
                         rebuilt.Add(hasGoalExp ? E.ExpandClauseGoals(Clause.From(t)) : Clause.From(t));
                 }
+                else if (hasGoalExp)
+                {
+                    // Passed through term_expansion unchanged. Re-apply
+                    // goal_expansion: during a file's FIRST consult its OWN
+                    // goal_expansion/2 hooks were not live in the main loop
+                    // (clauses commit at consult end), so a body using an in-file
+                    // hook — clpz's `cis_leq`/`cis`/`get_attr` goal-expansion
+                    // macros — was left unexpanded there. goal_expansion is
+                    // idempotent at its fixpoint (a rewritten goal no longer
+                    // matches the hook that produced it: put_atts/3 -> M:put_atts,
+                    // cis_leq -> cis_geq), so re-applying a clause the main loop
+                    // already expanded (a pre-live hook) is a no-op.
+                    Clause ge = E.ExpandClauseGoals(c);
+                    if (!ReferenceEquals(ge, c)) changed = true;
+                    rebuilt.Add(ge);
+                }
                 else
                 {
-                    // Passed through unchanged — the main loop ALREADY applied
-                    // goal_expansion to it; re-applying here would double-expand a
-                    // non-idempotent hook (atts' put_atts -> M:put_atts -> M:M:...).
                     rebuilt.Add(c);
                 }
             }
@@ -1312,9 +1325,12 @@ internal sealed class ConsultPipeline
         // order-sensitively (the '$te_after' guard fires each hook only for
         // clauses after its definition). Runs before the directive /
         // initialization goals so they see the fully-expanded program.
-        // Only at top level — a nested library's re-expansion runs sub-queries
-        // that would corrupt the outer consult (and is a no-op for it anyway).
-        if (inFileHooks && E._consultDepth <= 1)
+        // Runs for nested library consults too (clpz, loaded via use_module,
+        // defines and uses its own cis_leq/cis goal_expansion macros): a nested
+        // library that defines AND uses an in-file hook needs it applied to its
+        // own clauses. The sub-queries this runs must not corrupt the outer
+        // consult — see ReExpandInFileHooks for how it isolates that state.
+        if (inFileHooks)
             ReExpandInFileHooks(committedManifest, consultBaseOffset, clauses.Count,
                 pendingDiscontiguous);
 
@@ -1458,7 +1474,11 @@ internal sealed class ConsultPipeline
             closed.Add(currentFid.Value);
             currentFid = fid;
             if (closed.Contains(fid)
-                && (discontiguous is null || !discontiguous.Contains(fid)))
+                && (discontiguous is null || !discontiguous.Contains(fid))
+                // term_expansion / goal_expansion are hooks — implicitly
+                // discontiguous + multifile in every Prolog; a library scatters
+                // their clauses among helpers (format.pl, clpz.pl).
+                && !PrologEngine.IsGlobalHookFunctor(fid))
             {
                 var (atomId, arity) = FunctorTable.Lookup(fid);
                 string functorName = AtomTable.GetById(atomId)?.Name ?? "?";
