@@ -133,6 +133,31 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void UseModuleHook_AppliesToLaterClausesInTheSameConsult()
+    {
+        // clpz's shape: a file `:- use_module`s a library that defines a
+        // term_expansion hook, then uses that hook LATER in the same file. The
+        // hook must be active for those later clauses — hasTermExp is re-checked
+        // as the loop advances, not fixed at the start (before the use_module ran).
+        string dir = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "shumway-samefile-" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "declmac.pl"),
+                ":- module(declmac, []).\n" +
+                ":- op(1150, fx, decl).\n" +
+                "user:term_expansion((:- decl X), marked(X)).");
+            var e = new PrologEngine();
+            e.AddLibraryDirectory(dir);
+            // use_module AND the hook's use in ONE consult.
+            e.ConsultString(":- use_module(library(declmac)).\n:- decl hi.");
+            Assert.True(e.Query("marked(hi).").Success);
+        }
+        finally { try { System.IO.Directory.Delete(dir, recursive: true); } catch { } }
+    }
+
+    [Fact]
     public void NestedLibraryWithHooks_DoesNotCorruptTheOuterConsult()
     {
         // The atts.pl regression: a library that both use_modules another library

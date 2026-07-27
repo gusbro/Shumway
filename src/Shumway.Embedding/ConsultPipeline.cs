@@ -641,6 +641,17 @@ internal sealed class ConsultPipeline
         // a bare `->`; clpz's non-core `++>` still runs through its own hook).
         List<Clause> ExpandRawClause(Clause rc)
         {
+            // A mid-consult `:- use_module` can define a hook AFTER this was first
+            // computed (clpz use_modules atts, whose term_expansion then expands
+            // clpz's own later `:- attribute`). Re-check while still false — once a
+            // hook exists it stays for the rest of the consult, so this settles to
+            // a no-op. (Cheap: a cached static-head lookup.)
+            if (!hasTermExp && !hasGoalExp)
+            {
+                hasTermExp = E.HasTermExpansions || E.HasPrologTermExpansion
+                    || E.HasPrologTermExpansion6;
+                hasGoalExp = E.HasGoalExpansions || E.HasPrologGoalExpansion;
+            }
             if (rc.Kind == ClauseKind.DcgRule || !(hasTermExp || hasGoalExp))
                 return SingletonClause(rc);
             IReadOnlyList<Term>? repl = null;
