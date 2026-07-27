@@ -92,6 +92,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// definition, matching SWI/Scryer order-sensitivity).</summary>
     internal int _consultExpandPos = -1;
 
+    /// <summary>Consult nesting depth (1 = top-level). A library loaded mid-consult
+    /// via <c>use_module</c> consults at depth &gt; 1 — the in-file term_expansion
+    /// re-expansion pass, which runs sub-queries, must not run there: those queries
+    /// mid-outer-consult corrupt the outer consult's compile state. Such a library's
+    /// re-expansion is a no-op anyway (its hooks target the OUTER file's clauses,
+    /// which the outer file's own consult expands).</summary>
+    internal int _consultDepth;
+
     /// <summary>Arity-Prolog recorded database.
     /// Lazily constructed on first access so engines that never use it
     /// pay nothing.</summary>

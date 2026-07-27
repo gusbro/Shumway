@@ -226,13 +226,18 @@ internal sealed class ConsultPipeline
                 E._consultExpandPos = local;
                 if (hasTermExp && E.TryPrologTermExpansion(c.Term, out var pexp))
                 {
+                    // Newly expanded content — goal_expansion applies to it (as in
+                    // the main loop). Its own goals have not been expanded yet.
                     changed = true;
                     foreach (var t in pexp)
                         rebuilt.Add(hasGoalExp ? E.ExpandClauseGoals(Clause.From(t)) : Clause.From(t));
                 }
                 else
                 {
-                    rebuilt.Add(hasGoalExp ? E.ExpandClauseGoals(c) : c);
+                    // Passed through unchanged — the main loop ALREADY applied
+                    // goal_expansion to it; re-applying here would double-expand a
+                    // non-idempotent hook (atts' put_atts -> M:put_atts -> M:M:...).
+                    rebuilt.Add(c);
                 }
             }
         }
@@ -242,10 +247,15 @@ internal sealed class ConsultPipeline
         // check it now on the expanded clauses.
         ValidateContiguity(rebuilt, pendingDiscontiguous);
 
-        if (!changed) return;
-        manifest.Clauses.RemoveRange(baseOffset, count);
-        manifest.Clauses.InsertRange(baseOffset, rebuilt);
-        // The clause set changed — recompile against it at the next query.
+        if (changed)
+        {
+            manifest.Clauses.RemoveRange(baseOffset, count);
+            manifest.Clauses.InsertRange(baseOffset, rebuilt);
+        }
+        // The re-expansion ran queries mid-consult, which compiled + cached the
+        // program against the (possibly still-crude, or now-expanded) manifest.
+        // Drop those caches unconditionally so the next real query recompiles
+        // against the final program — leaving them poisons a later consult's view.
         E._staticPredicateCache.Clear();
         E._skipCompileMergedCache = null;
         E._staticLink = null;
@@ -485,6 +495,7 @@ internal sealed class ConsultPipeline
             // prolog_load_context(module, _) — save/restore around (possibly
             // nested) consults so a hook always sees the module being loaded now.
             string? prevLoadModule = E._currentLoadModule;
+            E._consultDepth++;
             try
             {
                 ConsultStringLocked(source, recordInHistory, moduleNameFallback);
@@ -492,6 +503,7 @@ internal sealed class ConsultPipeline
             finally
             {
                 E._currentLoadModule = prevLoadModule;
+                E._consultDepth--;
             }
         }
     }
@@ -1289,7 +1301,9 @@ internal sealed class ConsultPipeline
         // order-sensitively (the '$te_after' guard fires each hook only for
         // clauses after its definition). Runs before the directive /
         // initialization goals so they see the fully-expanded program.
-        if (inFileHooks)
+        // Only at top level — a nested library's re-expansion runs sub-queries
+        // that would corrupt the outer consult (and is a no-op for it anyway).
+        if (inFileHooks && E._consultDepth <= 1)
             ReExpandInFileHooks(committedManifest, consultBaseOffset, clauses.Count,
                 pendingDiscontiguous);
 

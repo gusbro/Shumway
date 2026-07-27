@@ -104,6 +104,48 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void TermExpansionHook_WithPhraseDcgBody_UsableByALaterConsult()
+    {
+        // atts.pl's shape: a hook that builds its output via phrase of a local DCG.
+        // Its own (top-level) re-expansion pass must not corrupt it.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- op(1150, fx, decl).\n" +
+            "user:term_expansion((:- decl X), Clauses) :- phrase(gen(X), Clauses).\n" +
+            "gen(X) --> [marked(X)].");
+        e.ConsultString(":- decl hi.");
+        Assert.True(e.Query("marked(hi).").Success);
+    }
+
+    [Fact]
+    public void NestedLibraryWithHooks_DoesNotCorruptTheOuterConsult()
+    {
+        // The atts.pl regression: a library that both use_modules another library
+        // AND defines a term_expansion hook. The nested dep's re-expansion runs a
+        // sub-query mid-consult; it must not break the hook for a later consult.
+        string dir = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "shumway-nested-" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "helperlib.pl"),
+                ":- module(helperlib, [help/1]).\nhelp(ok).");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "declib.pl"),
+                ":- module(declib, []).\n" +
+                ":- use_module(library(helperlib)).\n" +
+                ":- op(1150, fx, decl).\n" +
+                "user:term_expansion((:- decl X), Clauses) :- help(_), phrase(gen(X), Clauses).\n" +
+                "gen(X) --> [marked(X)].");
+            var e = new PrologEngine();
+            e.AddLibraryDirectory(dir);
+            e.ConsultString(":- use_module(library(declib)).");   // loads helperlib nested
+            e.ConsultString(":- decl hi.");
+            Assert.True(e.Query("marked(hi).").Success);
+        }
+        finally { try { System.IO.Directory.Delete(dir, recursive: true); } catch { } }
+    }
+
+    [Fact]
     public void OpDirective_StillAppliesToLaterClauses()
     {
         // The baseline the others generalise — a plain `:- op` from that point on.
