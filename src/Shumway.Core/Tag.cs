@@ -30,4 +30,11 @@ public enum Tag : byte
     /// unaffected), and the one 60-bit slot (ViewGen) reads via
     /// <see cref="Cell.Payload"/>.</summary>
     RawInt = 0xD,
+
+    /// <summary>An exact rational <c>Num/Den</c> (ADR-039). Like
+    /// <see cref="BigInt"/>, the payload is an id into a per-activation side
+    /// table (<c>_rationalTable</c>); the value never lives in the cell. Every
+    /// rational cell is a genuine fraction (denominator &gt; 1) — an integral
+    /// value collapses to <see cref="Int"/> / <see cref="BigInt"/>.</summary>
+    Rational = 0xE,
 }

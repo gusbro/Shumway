@@ -77,6 +77,8 @@ public static class StandardBuiltins
             Types, "integer(@Term)", "Succeeds if the argument is an integer.");
         BuiltinsRegistry.Register("float",   1, TypeBuiltins.IsFloat,
             Types, "float(@Term)", "Succeeds if the argument is a float.");
+        BuiltinsRegistry.Register("rational", 1, TypeBuiltins.IsRational,
+            Types, "rational(@Term)", "Succeeds if the argument is a rational number (an integer is a rational with denominator 1).");
         BuiltinsRegistry.Register("number",  1, TypeBuiltins.IsNumber,
             Types, "number(@Term)", "Succeeds if the argument is a number.");
         BuiltinsRegistry.Register("atomic",  1, TypeBuiltins.IsAtomic,

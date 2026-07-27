@@ -189,6 +189,13 @@ public static class TermReader
                 results.Add(new BigIntTerm(engine.AsBigInt(cell)));
                 break;
 
+            case Tag.Rational:
+            {
+                var r = engine.AsRational(cell);
+                results.Add(new RationalTerm(r.Num, r.Den));
+                break;
+            }
+
             case Tag.Float:
                 results.Add(new FloatTerm(
                     Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))));

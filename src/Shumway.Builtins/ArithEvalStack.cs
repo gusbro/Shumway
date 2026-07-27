@@ -144,7 +144,7 @@ public static class ArithEvalStack
     /// operands are in the int lane and the op is integer-closed within 60
     /// bits; otherwise escalates to the <see cref="Number"/> path.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void Bin(int op)
+    public static void Bin(int op, bool preferRationals = false)
     {
         int ai = _top - 2, bi = _top - 1;
         if (!_b![ai] && !_b[bi] && TryFastBin(op, _i![ai], _i[bi], out long r))
@@ -153,15 +153,15 @@ public static class ArithEvalStack
             _top--;
             return;
         }
-        BinSlow(op, ai, bi);
+        BinSlow(op, ai, bi, preferRationals);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void BinSlow(int op, int ai, int bi)
+    private static void BinSlow(int op, int ai, int bi, bool preferRationals)
     {
         Escalate(ai);
         Escalate(bi);
-        try { _n![ai] = ArithmeticEvaluator.ApplyBin((ArithmeticEvaluator.BinOp)op, _n[ai], _n[bi]); }
+        try { _n![ai] = ArithmeticEvaluator.ApplyBin((ArithmeticEvaluator.BinOp)op, _n[ai], _n[bi], preferRationals); }
         catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
         _b![ai] = true;
         _top--;
@@ -285,7 +285,8 @@ public static class ArithEvalStack
                 result = Cell.Int(r);
             else
                 result = ArithmeticEvaluator.ApplyBin((ArithmeticEvaluator.BinOp)op,
-                    aInt ? new Number(ai) : an, bInt ? new Number(bi) : bn).ToCell(engine);
+                    aInt ? new Number(ai) : an, bInt ? new Number(bi) : bn,
+                    engine.PreferRationals).ToCell(engine);
         }
         catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
         return Deliver(engine, tKind, tVal, result);

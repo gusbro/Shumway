@@ -41,6 +41,7 @@ public readonly struct Cell : IEquatable<Cell>
     public int AsAtomId => (int)Data;
     public int AsFunctorId => (int)Data;
     public int AsBigIntId => (int)Data;
+    public int AsRationalId => (int)Data;
     public int AsStringId => (int)Data;
     public int AsForeignId => (int)Data;
 
@@ -115,6 +116,12 @@ public readonly struct Cell : IEquatable<Cell>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell String(int tableId)
         => new(((long)Tag.String << TagShift) | (uint)tableId);
+
+    /// <summary>An exact rational (ADR-039). Payload is an id into the
+    /// activation's rational side table — the <see cref="BigInt"/> pattern.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Cell Rational(int tableId)
+        => new(((long)Tag.Rational << TagShift) | (uint)tableId);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell Foreign(int tableId)

@@ -941,6 +941,7 @@ public sealed partial class Activation
             {
                 TrailType.CatchFrame => true,
                 TrailType.BigIntAlloc => true,
+                TrailType.RationalAlloc => true,   // side table, same contract as BigIntAlloc
                 TrailType.AttrModify => _attrTrailLog[entry.HeapIdx].Home < parentHeapTop,
                 _ => entry.HeapIdx < parentHeapTop,
             };

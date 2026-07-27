@@ -161,7 +161,7 @@ public static class AtomCharBuiltins
     {
         Cell numCell = Resolve(engine, engine.GetRegister(0));
         Cell strCell = Resolve(engine, engine.GetRegister(1));
-        bool numIsNumber = numCell.Tag is Tag.Int or Tag.Float or Tag.BigInt;
+        bool numIsNumber = numCell.Tag is Tag.Int or Tag.Float or Tag.BigInt or Tag.Rational;
 
         // ISO §8.16.7 / §8.16.8 precedence and direction.
         //  (a) both arguments unbound → instantiation_error.

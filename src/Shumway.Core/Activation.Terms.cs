@@ -50,6 +50,44 @@ public sealed partial class Activation
         return _bigIntTable[cell.AsBigIntId];
     }
 
+    /// <summary>
+    /// Stores an exact rational and returns a cell for it (ADR-039). An integral
+    /// value (reduced denominator 1) collapses to an integer cell — every
+    /// <see cref="Tag.Rational"/> cell is a genuine fraction, so unification /
+    /// equality never has to reconcile two representations of the same value.
+    /// The side-table slot is trailed like a BigInteger, freed on backtrack.
+    /// </summary>
+    public Cell MakeRational(Rational value)
+    {
+        if (value.IsInteger) return MakeBigInt(value.Num);
+        int id = _rationalTable.Count;
+        _rationalTable.Add(value);
+        EnsureExtraTrailCapacity(1);
+        _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
+        {
+            Type = TrailType.RationalAlloc,
+            HeapIdx = id,
+            OldValue = default,
+            BindingTrailMarker = _bindingTrailTop,
+        };
+        return Cell.Rational(id);
+    }
+
+    /// <summary>Convenience: build a rational from numerator/denominator
+    /// (reduces + normalises sign; collapses to integer when integral).</summary>
+    public Cell MakeRational(BigInteger num, BigInteger den)
+        => MakeRational(Rational.Create(num, den));
+
+    /// <summary>Returns the <see cref="Rational"/> referenced by a RATIONAL cell.</summary>
+    public Rational AsRational(Cell cell)
+    {
+        if (cell.Tag != Tag.Rational)
+            throw new InvalidOperationException($"Cell tag is {cell.Tag}, expected Rational.");
+        return _rationalTable[cell.AsRationalId];
+    }
+
+    internal int RationalTableCount => _rationalTable.Count;
+
     /// <summary>Stores <paramref name="value"/> in the engine's string table and returns
     /// a STRING cell whose payload is its id.</summary>
     public Cell MakeString(string value)
@@ -656,6 +694,10 @@ public sealed partial class Activation
                 if (_bigIntTable.Count > entry.HeapIdx)
                     _bigIntTable.RemoveRange(entry.HeapIdx, _bigIntTable.Count - entry.HeapIdx);
                 break;
+            case TrailType.RationalAlloc:
+                if (_rationalTable.Count > entry.HeapIdx)
+                    _rationalTable.RemoveRange(entry.HeapIdx, _rationalTable.Count - entry.HeapIdx);
+                break;
             case TrailType.AttrModify:
                 // entry.HeapIdx indexes _attrTrailLog, which records the
                 // (attvar home, module, previous value) of one attribute
@@ -779,6 +821,7 @@ public sealed partial class Activation
             Tag.Str => UnifyStr(aCell.AsHeapIndex, bCell.AsHeapIndex, depth, activePairs),
             Tag.Lis => UnifyLis(aCell.AsHeapIndex, bCell.AsHeapIndex, depth, activePairs),
             Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
+            Tag.Rational => _rationalTable[aCell.AsRationalId].Equals(_rationalTable[bCell.AsRationalId]),
             Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
             Tag.Float => UnifyFloat(aCell, bCell),
@@ -838,6 +881,7 @@ public sealed partial class Activation
             Tag.Str => UnifyStr(a.AsHeapIndex, b.AsHeapIndex),
             Tag.Lis => UnifyLis(a.AsHeapIndex, b.AsHeapIndex),
             Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
+            Tag.Rational => _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]),
             Tag.String => string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
             Tag.Float => UnifyFloat(a, b),
@@ -996,6 +1040,7 @@ public sealed partial class Activation
             Tag.Str => UnifyStrWithOccursCheck(a.AsHeapIndex, b.AsHeapIndex),
             Tag.Lis => UnifyLisWithOccursCheck(a.AsHeapIndex, b.AsHeapIndex),
             Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
+            Tag.Rational => _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]),
             Tag.String => string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
             Tag.Float => UnifyFloat(a, b),
@@ -1066,6 +1111,7 @@ public sealed partial class Activation
             Tag.Str => UnifyStrWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex, activePairs),
             Tag.Lis => UnifyLisWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex, activePairs),
             Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
+            Tag.Rational => _rationalTable[aCell.AsRationalId].Equals(_rationalTable[bCell.AsRationalId]),
             Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
             Tag.Float => UnifyFloat(aCell, bCell),

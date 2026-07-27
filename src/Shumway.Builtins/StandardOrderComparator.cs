@@ -145,7 +145,7 @@ public static class StandardOrderComparator
         // An attributed variable orders as a variable — by heap address,
         // alongside plain unbound REFs.
         Tag.Ref or Tag.AttVar => 0,
-        Tag.Int or Tag.Float or Tag.BigInt => 1,
+        Tag.Int or Tag.Float or Tag.BigInt or Tag.Rational => 1,
         Tag.Atom => 2,
         Tag.Str or Tag.Lis => 3,
         _ => 4,                                            // PSTR etc. — defer
@@ -167,9 +167,10 @@ public static class StandardOrderComparator
     {
         Tag.Int => new Number(c.AsInt),
         Tag.BigInt => new Number(engine.AsBigInt(c)),
+        Tag.Rational => new Number(engine.AsRational(c)),
         Tag.Float => new Number(Cell.DecodeFloat(c, engine.GetHeap(c.FloatPairedIndex))),
         _ => throw new InvalidOperationException(
-            $"StandardOrderComparator.ToNumber: cell has tag {c.Tag}, expected Int / BigInt / Float."),
+            $"StandardOrderComparator.ToNumber: cell has tag {c.Tag}, expected Int / BigInt / Float / Rational."),
     };
 
     private static int CompareAtoms(Cell a, Cell b)

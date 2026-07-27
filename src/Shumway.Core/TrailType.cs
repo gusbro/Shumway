@@ -17,6 +17,12 @@ public enum TrailType : byte
     /// side-table slot instead of leaving it dangling.</summary>
     BigIntAlloc = 2,
 
+    /// <summary>One slot was appended to the rational side table (ADR-039).
+    /// Same contract as <see cref="BigIntAlloc"/>: the entry's
+    /// <see cref="ExtraTrailEntry.HeapIdx"/> is the table size before the
+    /// append, so unwind truncates the table back and reclaims the slot.</summary>
+    RationalAlloc = 3,
+
     // 16..31 reserved for attributed-variable operations.
     AttrAdd = 16,
     AttrModify = 17,

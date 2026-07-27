@@ -187,6 +187,7 @@ public sealed class OperatorTable
         t.Define("*", 400, OperatorType.Yfx);
         t.Define("/", 400, OperatorType.Yfx);
         t.Define("//", 400, OperatorType.Yfx);
+        t.Define("rdiv", 400, OperatorType.Yfx);   // exact rational division (ADR-039)
         t.Define("mod", 400, OperatorType.Yfx);
         t.Define("rem", 400, OperatorType.Yfx);
         t.Define("div", 400, OperatorType.Yfx);

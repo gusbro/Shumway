@@ -28,6 +28,7 @@ public static class ArithmeticEvaluator
         {
             Tag.Int => new Number(cell.AsInt),
             Tag.BigInt => new Number(engine.AsBigInt(cell)),
+            Tag.Rational => new Number(engine.AsRational(cell)),
             Tag.Float => new Number(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
             Tag.Str => EvaluateCompound(engine, cell),
             Tag.Ref => throw new PrologRuntimeException("instantiation_error"),
@@ -111,7 +112,7 @@ public static class ArithmeticEvaluator
     {
         Number a = Evaluate(engine, aCell);
         Number b = Evaluate(engine, bCell);
-        if (TryBinOp(name, out BinOp op)) return ApplyBin(op, a, b);
+        if (TryBinOp(name, out BinOp op)) return ApplyBin(op, a, b, engine.PreferRationals);
         // Unknown binary arithmetic function — ISO type_error(evaluable, Name/2).
         throw new PrologRuntimeException("type_error", "evaluable");
     }
@@ -131,6 +132,7 @@ public static class ArithmeticEvaluator
         // Only append here — the numeric values are baked into bytecode.
         IntDivFloor,   // (div)/2 — integer division rounding toward -inf
         PowFloat,      // (**)/2 — ISO: result is ALWAYS a float (^ keeps IF)
+        Rdiv,          // (rdiv)/2 — exact rational division (ADR-039)
     }
 
     public enum UnOp : byte
@@ -138,6 +140,8 @@ public static class ArithmeticEvaluator
         Neg, Pos, Abs, Sign, BitNot, Sqrt, Sin, Cos, Tan, Asin, Acos, Atan,
         Exp, Log, Ceiling, Floor, Round, Truncate, Float, FloatIntPart,
         FloatFracPart, Integer,
+        // Append only.
+        Numerator, Denominator, Rationalize,
     }
 
     public enum RelOp : byte { Eq, Neq, Lt, Gt, Le, Ge }
@@ -168,6 +172,7 @@ public static class ArithmeticEvaluator
             case ">>": op = BinOp.Shr; return true;
             case "gcd": op = BinOp.Gcd; return true;
             case "atan2": op = BinOp.Atan2; return true;
+            case "rdiv": op = BinOp.Rdiv; return true;
             default: op = default; return false;
         }
     }
@@ -199,6 +204,9 @@ public static class ArithmeticEvaluator
             case "float_integer_part": op = UnOp.FloatIntPart; return true;
             case "float_fractional_part": op = UnOp.FloatFracPart; return true;
             case "integer": op = UnOp.Integer; return true;
+            case "numerator": op = UnOp.Numerator; return true;
+            case "denominator": op = UnOp.Denominator; return true;
+            case "rationalize": op = UnOp.Rationalize; return true;
             default: op = default; return false;
         }
     }
@@ -218,13 +226,16 @@ public static class ArithmeticEvaluator
         }
     }
 
-    /// <summary>Applies a binary op to two already-evaluated numbers.</summary>
-    public static Number ApplyBin(BinOp op, Number a, Number b) => op switch
+    /// <summary>Applies a binary op to two already-evaluated numbers.
+    /// <paramref name="preferRationals"/> is the <c>prefer_rationals</c> flag,
+    /// consulted only by <c>/</c> (ADR-039); the default false is the
+    /// ISO / GProlog behaviour and the compile-time constant-folding path.</summary>
+    public static Number ApplyBin(BinOp op, Number a, Number b, bool preferRationals = false) => op switch
     {
         BinOp.Add => Add(a, b),
         BinOp.Sub => Subtract(a, b),
         BinOp.Mul => Multiply(a, b),
-        BinOp.Div => Divide(a, b),
+        BinOp.Div => Divide(a, b, preferRationals),
         BinOp.IntDiv => IntegerDivide(a, b),
         BinOp.Mod => Modulo(a, b),
         BinOp.Rem => Remainder(a, b),
@@ -240,6 +251,7 @@ public static class ArithmeticEvaluator
         BinOp.Atan2 => new Number(Math.Atan2(a.AsDouble(), b.AsDouble())),
         BinOp.IntDivFloor => FloorDivide(a, b),
         BinOp.PowFloat => new Number(Math.Pow(a.AsDouble(), b.AsDouble())),
+        BinOp.Rdiv => RationalDivide(a, b),
         _ => throw new PrologRuntimeException("type_error", "evaluable"),
     };
 
@@ -291,8 +303,70 @@ public static class ArithmeticEvaluator
         UnOp.FloatIntPart => new Number(Math.Truncate(a.AsDouble())),
         UnOp.FloatFracPart => new Number(a.AsDouble() - Math.Truncate(a.AsDouble())),
         UnOp.Integer => a.IsFloat ? new Number((long)Math.Truncate(a.AsDouble())) : a,
+        UnOp.Numerator => Numerator(a),
+        UnOp.Denominator => Denominator(a),
+        UnOp.Rationalize => Rationalize(a),
         _ => throw new PrologRuntimeException("type_error", "evaluable"),
     };
+
+    /// <summary>Exact rational division <c>A rdiv B</c> (ADR-039). Both operands
+    /// must be integers or rationals; a float is a type error (rationals are
+    /// exact). Produces a reduced rational, collapsing to an integer when
+    /// exact.</summary>
+    private static Number RationalDivide(Number a, Number b)
+    {
+        if (a.IsFloat || b.IsFloat)
+            throw new PrologRuntimeException("type_error", "integer");
+        var (an, ad) = a.AsRationalParts();
+        var (bn, bd) = b.AsRationalParts();
+        // (an/ad) / (bn/bd) = (an*bd) / (ad*bn)
+        return new Number(Rational.Create(an * bd, ad * bn));
+    }
+
+    private static Number Numerator(Number a)
+    {
+        if (a.IsRat) return new Number(a.RatValue.Num);
+        if (a.IsInt || a.IsBig) return a;   // integer: numerator is itself
+        throw new PrologRuntimeException("type_error", "rational");
+    }
+
+    private static Number Denominator(Number a)
+    {
+        if (a.IsRat) return new Number(a.RatValue.Den);
+        if (a.IsInt || a.IsBig) return new Number(1L);   // integer: denominator 1
+        throw new PrologRuntimeException("type_error", "rational");
+    }
+
+    /// <summary>ISO/SWI <c>rationalize/1</c>: the simplest rational that equals
+    /// the argument. For an exact operand it is the value itself; a float is
+    /// converted to the exact rational with the shortest decimal expansion that
+    /// round-trips (here, the exact binary value reduced).</summary>
+    private static Number Rationalize(Number a)
+    {
+        if (!a.IsFloat) return a;
+        return new Number(FloatToRational(a.FloatValue));
+    }
+
+    /// <summary>Exact rational equal to a finite double (its precise binary
+    /// value as a fraction).</summary>
+    internal static Rational FloatToRational(double d)
+    {
+        if (double.IsNaN(d) || double.IsInfinity(d))
+            throw new PrologRuntimeException("evaluation_error", "undefined");
+        if (d == 0.0) return Rational.Create(BigInteger.Zero, BigInteger.One);
+        long bits = BitConverter.DoubleToInt64Bits(d);
+        bool negative = bits < 0;
+        int exponent = (int)((bits >> 52) & 0x7FF);
+        long mantissa = bits & 0xFFFFFFFFFFFFFL;
+        if (exponent == 0) exponent++;            // subnormal
+        else mantissa |= 0x10000000000000L;       // implicit leading 1
+        exponent -= 1075;                          // bias + mantissa width
+        BigInteger num = mantissa;
+        if (negative) num = -num;
+        return exponent >= 0
+            ? Rational.Create(num * BigInteger.Pow(2, exponent), BigInteger.One)
+            : Rational.Create(num, BigInteger.Pow(2, -exponent));
+    }
 
     /// <summary>Compares two already-evaluated numbers under a relation.</summary>
     public static bool ApplyRel(RelOp rel, Number a, Number b)
@@ -396,6 +470,7 @@ public static class ArithmeticEvaluator
     private static Number Negate(Number a)
     {
         if (a.IsFloat) return new Number(-a.FloatValue);
+        if (a.IsRat) return new Number(Rational.Create(-a.RatValue.Num, a.RatValue.Den));
         if (a.IsBig) return new Number(-a.BigValue);
         // long.MinValue: negation overflows long but fits in BigInteger.
         try { return new Number(checked(-a.IntValue)); }
@@ -405,6 +480,7 @@ public static class ArithmeticEvaluator
     private static Number Abs(Number a)
     {
         if (a.IsFloat) return new Number(Math.Abs(a.FloatValue));
+        if (a.IsRat) return new Number(Rational.Create(BigInteger.Abs(a.RatValue.Num), a.RatValue.Den));
         if (a.IsBig) return new Number(BigInteger.Abs(a.BigValue));
         if (a.IntValue >= 0) return a;
         try { return new Number(checked(-a.IntValue)); }
@@ -414,6 +490,12 @@ public static class ArithmeticEvaluator
     private static Number Add(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat) return new Number(a.AsDouble() + b.AsDouble());
+        if (a.IsRat || b.IsRat)
+        {
+            var (an, ad) = a.AsRationalParts();
+            var (bn, bd) = b.AsRationalParts();
+            return new Number(Rational.Create(an * bd + bn * ad, ad * bd));
+        }
         if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() + b.AsBigInteger());
         try { return new Number(checked(a.IntValue + b.IntValue)); }
         catch (OverflowException)
@@ -425,6 +507,12 @@ public static class ArithmeticEvaluator
     private static Number Subtract(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat) return new Number(a.AsDouble() - b.AsDouble());
+        if (a.IsRat || b.IsRat)
+        {
+            var (an, ad) = a.AsRationalParts();
+            var (bn, bd) = b.AsRationalParts();
+            return new Number(Rational.Create(an * bd - bn * ad, ad * bd));
+        }
         if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() - b.AsBigInteger());
         try { return new Number(checked(a.IntValue - b.IntValue)); }
         catch (OverflowException)
@@ -436,6 +524,12 @@ public static class ArithmeticEvaluator
     private static Number Multiply(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat) return new Number(a.AsDouble() * b.AsDouble());
+        if (a.IsRat || b.IsRat)
+        {
+            var (an, ad) = a.AsRationalParts();
+            var (bn, bd) = b.AsRationalParts();
+            return new Number(Rational.Create(an * bn, ad * bd));
+        }
         if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() * b.AsBigInteger());
         try { return new Number(checked(a.IntValue * b.IntValue)); }
         catch (OverflowException)
@@ -444,11 +538,20 @@ public static class ArithmeticEvaluator
         }
     }
 
-    private static Number Divide(Number a, Number b)
+    private static Number Divide(Number a, Number b, bool preferRationals)
     {
-        // ISO: '/' is always real division (yields a float when operands are
-        // both ints and the result isn't exact; for simplicity we treat it
-        // as float division throughout).
+        // A rational operand makes '/' exact regardless of the flag (it is
+        // already in the exact domain); two integers under the
+        // `prefer_rationals` flag also produce an exact rational when the
+        // quotient isn't integral. Otherwise '/' is float division (ISO /
+        // GProlog default).
+        if (!a.IsFloat && !b.IsFloat && (a.IsRat || b.IsRat || preferRationals))
+        {
+            var (an, ad) = a.AsRationalParts();
+            var (bn, bd) = b.AsRationalParts();
+            if ((bn * ad).IsZero) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
+            return new Number(Rational.Create(an * bd, ad * bn));
+        }
         double bv = b.AsDouble();
         if (bv == 0.0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
         return new Number(a.AsDouble() / bv);

@@ -1090,8 +1090,8 @@ public sealed partial class BytecodeInterpreter
                         Tag.Atom or Tag.Int or Tag.Float => constAddr,
                         Tag.Lis => listAddr,
                         Tag.Str => structAddr,
-                        // PSTR, BigInt, Foreign, String — fall back to the
-                        // var-arg chain. These rarely appear as a clause-head
+                        // PSTR, BigInt, Rational, Foreign, String — fall back to
+                        // the var-arg chain. These rarely appear as a clause-head
                         // first argument anyway.
                         _ => varAddr,
                     };
@@ -2253,7 +2253,7 @@ public sealed partial class BytecodeInterpreter
                 }
 
                 case Opcode.AEvalBin:
-                    Shumway.Builtins.ArithEvalStack.Bin(BytecodeIO.ReadInt32(code, pc + 1));
+                    Shumway.Builtins.ArithEvalStack.Bin(BytecodeIO.ReadInt32(code, pc + 1), _engine.PreferRationals);
                     _engine.SetPc(pc + 5); inClause = true;
                     break;
 

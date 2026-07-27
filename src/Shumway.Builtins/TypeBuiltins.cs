@@ -47,20 +47,28 @@ public static class TypeBuiltins
     /// <summary><c>float(X)</c> — X is a float cell.</summary>
     public static bool IsFloat(Activation engine) => Tag0(engine) == Tag.Float;
 
-    /// <summary><c>number(X)</c> — X is either an integer (inline or big) or
-    /// a float.</summary>
+    /// <summary><c>rational(X)</c> — X is a rational (ADR-039). An integer is a
+    /// rational with denominator 1, so integers satisfy it too (SWI/Scryer).</summary>
+    public static bool IsRational(Activation engine)
+    {
+        var t = Tag0(engine);
+        return t is Tag.Rational or Tag.Int or Tag.BigInt;
+    }
+
+    /// <summary><c>number(X)</c> — X is an integer (inline or big), a float,
+    /// or a rational.</summary>
     public static bool IsNumber(Activation engine)
     {
         var t = Tag0(engine);
-        return t is Tag.Int or Tag.BigInt or Tag.Float;
+        return t is Tag.Int or Tag.BigInt or Tag.Float or Tag.Rational;
     }
 
     /// <summary><c>atomic(X)</c> — X is a non-compound, non-variable term
-    /// (atom, integer, bigint, float, string, PSTR).</summary>
+    /// (atom, integer, bigint, rational, float, string, PSTR).</summary>
     public static bool IsAtomic(Activation engine)
     {
         var t = Tag0(engine);
-        return t is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Float or Tag.String or Tag.Pstr;
+        return t is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float or Tag.String or Tag.Pstr;
     }
 
     /// <summary><c>compound(X)</c> — X is a compound term (STR or non-empty
@@ -125,6 +133,7 @@ public static class TypeBuiltins
             case Tag.Atom:
             case Tag.Int:
             case Tag.BigInt:
+            case Tag.Rational:
             case Tag.Float:
             case Tag.Pstr:
             case Tag.String:

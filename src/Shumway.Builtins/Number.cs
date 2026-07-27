@@ -13,16 +13,53 @@ namespace Shumway.Builtins;
 /// </summary>
 public readonly struct Number : IEquatable<Number>
 {
-    public enum Kind : byte { Int, Big, Float }
+    public enum Kind : byte { Int, Big, Float, Rat }
 
     public Kind ValueKind { get; }
     public long IntValue { get; }
     public BigInteger BigValue { get; }
     public double FloatValue { get; }
+    public Rational RatValue { get; }
 
     public bool IsFloat => ValueKind == Kind.Float;
     public bool IsBig => ValueKind == Kind.Big;
     public bool IsInt => ValueKind == Kind.Int;
+    public bool IsRat => ValueKind == Kind.Rat;
+
+    /// <summary>An exact number viewed as a rational (num/den). Valid for Int,
+    /// Big and Rat — an integer is num/1. Throws for a float.</summary>
+    public (BigInteger Num, BigInteger Den) AsRationalParts() => ValueKind switch
+    {
+        Kind.Rat => (RatValue.Num, RatValue.Den),
+        Kind.Big => (BigValue, BigInteger.One),
+        Kind.Int => (new BigInteger(IntValue), BigInteger.One),
+        _ => throw new InvalidOperationException("Number is a float; no rational view."),
+    };
+
+    /// <summary>Builds a Number from a rational, collapsing an integral value to
+    /// Int/Big so a rational Number is always a genuine fraction.</summary>
+    public Number(Rational rat)
+    {
+        if (rat.IsInteger)
+        {
+            // Route through the BigInteger ctor so it collapses to inline int
+            // when it fits — one canonical form per value.
+            var asBig = new Number(rat.Num);
+            ValueKind = asBig.ValueKind;
+            IntValue = asBig.IntValue;
+            BigValue = asBig.BigValue;
+            FloatValue = asBig.FloatValue;
+            RatValue = default;
+        }
+        else
+        {
+            ValueKind = Kind.Rat;
+            IntValue = 0;
+            BigValue = default;
+            FloatValue = rat.ToDouble();
+            RatValue = rat;
+        }
+    }
 
     public Number(long intValue)
     {
@@ -43,6 +80,7 @@ public readonly struct Number : IEquatable<Number>
             BigValue = default;
             FloatValue = intValue;
         }
+        RatValue = default;
     }
 
     public Number(BigInteger bigValue)
@@ -64,6 +102,7 @@ public readonly struct Number : IEquatable<Number>
             BigValue = bigValue;
             FloatValue = (double)bigValue;
         }
+        RatValue = default;
     }
 
     public Number(double floatValue)
@@ -72,6 +111,7 @@ public readonly struct Number : IEquatable<Number>
         IntValue = 0;
         BigValue = default;
         FloatValue = floatValue;
+        RatValue = default;
     }
 
     /// <summary>The value as a double — exact for integers within
@@ -81,6 +121,7 @@ public readonly struct Number : IEquatable<Number>
     {
         Kind.Float => FloatValue,
         Kind.Big => (double)BigValue,
+        Kind.Rat => RatValue.ToDouble(),
         _ => IntValue,
     };
 
@@ -104,6 +145,7 @@ public readonly struct Number : IEquatable<Number>
     {
         Kind.Float => Cell.Ref(engine.MakeFloat(FloatValue)),
         Kind.Big => engine.MakeBigInt(BigValue),
+        Kind.Rat => engine.MakeRational(RatValue),
         _ => Cell.Int(IntValue),
     };
 
@@ -111,6 +153,7 @@ public readonly struct Number : IEquatable<Number>
     {
         Kind.Float => FloatValue == other.FloatValue,
         Kind.Big => BigValue.Equals(other.BigValue),
+        Kind.Rat => RatValue.Equals(other.RatValue),
         _ => IntValue == other.IntValue,
     };
 
@@ -119,6 +162,7 @@ public readonly struct Number : IEquatable<Number>
     {
         Kind.Float => FloatValue.GetHashCode(),
         Kind.Big => BigValue.GetHashCode(),
+        Kind.Rat => RatValue.GetHashCode(),
         _ => IntValue.GetHashCode(),
     };
 
@@ -126,6 +170,7 @@ public readonly struct Number : IEquatable<Number>
     {
         Kind.Float => FormatPrologFloat(FloatValue),
         Kind.Big => BigValue.ToString(CultureInfo.InvariantCulture),
+        Kind.Rat => RatValue.ToString(),
         _ => IntValue.ToString(CultureInfo.InvariantCulture),
     };
 
@@ -160,6 +205,15 @@ public readonly struct Number : IEquatable<Number>
     {
         if (a.IsFloat || b.IsFloat)
             return a.AsDouble().CompareTo(b.AsDouble());
+        if (a.IsRat || b.IsRat)
+        {
+            // Exact cross-multiplication; both denominators are positive
+            // (Rational canonical form, integers are num/1), so the sign of
+            // the product comparison is the sign of the value comparison.
+            var (an, ad) = a.AsRationalParts();
+            var (bn, bd) = b.AsRationalParts();
+            return (an * bd).CompareTo(bn * ad);
+        }
         if (a.IsBig || b.IsBig)
             return a.AsBigInteger().CompareTo(b.AsBigInteger());
         return a.IntValue.CompareTo(b.IntValue);

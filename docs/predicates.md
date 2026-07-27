@@ -33,6 +33,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `is_list(@Term)` | Succeeds if the argument is a proper list. |
 | `nonvar(@Term)` | Succeeds if the argument is not an unbound variable. |
 | `number(@Term)` | Succeeds if the argument is a number. |
+| `rational(@Term)` | Succeeds if the argument is a rational number (an integer is a rational with denominator 1). |
 | `var(@Term)` | Succeeds if the argument is an unbound variable. |
 
 ## Arithmetic

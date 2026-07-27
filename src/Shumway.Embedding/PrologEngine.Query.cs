@@ -1296,6 +1296,8 @@ public sealed partial class PrologEngine
             // ADR-035 — inert unless the program was compiled under
             // compile_mode=debug (only then does any debug_lastcall exist).
             LastCallOptimisation = _flags.DebugLco,
+            // ADR-039 — snapshot the prefer_rationals flag for '/' semantics.
+            PreferRationals = _flags.PreferRationals,
         };
         // Heap-buffer pool: seed the fresh activation with the recycled
         // buffer (if any) BEFORE anything materializes onto the heap.

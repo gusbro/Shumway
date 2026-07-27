@@ -1697,6 +1697,8 @@ public sealed partial class IlPredicateCompiler
             if (op == Opcode.AEvalBin)
             {
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
+                emit.LoadArgument(0);                 // engine
+                emit.Call(PreferRationalsGetter);     // → prefer_rationals flag
                 emit.Call(ArithBinMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;

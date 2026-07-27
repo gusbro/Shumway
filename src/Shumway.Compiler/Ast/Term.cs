@@ -107,6 +107,26 @@ public sealed class FloatTerm : Term
     public override string ToString() => Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
 }
 
+/// <summary>An exact rational <c>Num/Den</c> (ADR-039), always in canonical
+/// form (<c>Den &gt; 1</c>, reduced) — an integral value is an
+/// <see cref="IntTerm"/> / <see cref="BigIntTerm"/>, never this. Materialises
+/// to a <c>Tag.Rational</c> cell; surfaces here when the heap is read back and
+/// finds one.</summary>
+public sealed class RationalTerm : Term
+{
+    public System.Numerics.BigInteger Num { get; }
+    public System.Numerics.BigInteger Den { get; }
+    public RationalTerm(System.Numerics.BigInteger num, System.Numerics.BigInteger den)
+    {
+        Num = num;
+        Den = den;
+    }
+
+    public override bool Equals(object? obj) => obj is RationalTerm o && Num == o.Num && Den == o.Den;
+    public override int GetHashCode() => HashCode.Combine(typeof(RationalTerm), Num, Den);
+    public override string ToString() => $"{Num} rdiv {Den}";
+}
+
 public sealed class StringTerm : Term
 {
     public string Content { get; }

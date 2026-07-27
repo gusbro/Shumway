@@ -112,6 +112,13 @@ public sealed class PrologFlags
     /// programs written for other Prolog implementations.</para></summary>
     public bool ImplicitDynamic { get; set; } = true;
 
+    /// <summary>The <c>prefer_rationals</c> flag (ADR-039). When true, <c>/</c>
+    /// on two integers yields an exact rational instead of a float. Default
+    /// <c>false</c> — ISO / GProlog behaviour, so no conformance-output change.
+    /// SWI/Scryer default this on; a program or library sets it via
+    /// <c>set_prolog_flag(prefer_rationals, true)</c>.</summary>
+    public bool PreferRationals { get; set; } = false;
+
     /// <summary>ISO <c>debug</c> flag (§7.11.2.2), as a boolean
     /// (<c>on</c> → <c>true</c>). Shumway has no interactive debugger,
     /// but ISO requires the flag to exist and be settable; stored so

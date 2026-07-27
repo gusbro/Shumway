@@ -112,6 +112,7 @@ internal static class HeapTermCopy
                 return c;
             case Tag.Float:
             case Tag.BigInt:
+            case Tag.Rational:
             case Tag.Pstr:
                 // Ground side-table / buffer leaf: delegate this one node to the
                 // proven AST path (allocates a fresh side-table entry, exactly

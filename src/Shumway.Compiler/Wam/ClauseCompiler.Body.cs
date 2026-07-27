@@ -772,6 +772,11 @@ public sealed partial class ClauseCompiler
     {
         folded = null!;
         if (!TryEvalConst(expr, out Shumway.Builtins.Number n)) return false;
+        // A rational result (ADR-039) is left to the runtime eval path rather
+        // than baked as a literal: it needs no WAM rational-literal emission,
+        // and it keeps `/`'s prefer_rationals flag (a runtime property) out of
+        // the compile-time fold.
+        if (n.IsRat) return false;
         folded = n.IsFloat ? new FloatTerm(n.FloatValue)
             : n.IsBig ? new BigIntTerm(n.BigValue)
             : new IntTerm(n.IntValue);
@@ -789,6 +794,13 @@ public sealed partial class ClauseCompiler
             case CompoundTerm c when c.Args.Length == 2
                     && Shumway.Builtins.ArithmeticEvaluator.TryBinOp(c.Functor, out var bop):
                 if (!TryEvalConst(c.Args[0], out var a2) || !TryEvalConst(c.Args[1], out var b2))
+                    return false;
+                // `/` on two non-float operands is flag-dependent (ADR-039:
+                // prefer_rationals decides float vs rational, even for an exact
+                // quotient like 4/2 → 2.0 vs 2) and the flag is a runtime
+                // property — defer such a `/` to runtime rather than fold it.
+                if (bop == Shumway.Builtins.ArithmeticEvaluator.BinOp.Div
+                    && !a2.IsFloat && !b2.IsFloat)
                     return false;
                 try { result = Shumway.Builtins.ArithmeticEvaluator.ApplyBin(bop, a2, b2); return true; }
                 catch (Exception) { return false; }

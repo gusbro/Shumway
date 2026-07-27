@@ -68,7 +68,7 @@ public static partial class MetaBuiltins
     {
         Cell t = ResolveLocal(engine, engine.GetRegister(0));
 
-        if (t.Tag == Tag.Atom || t.Tag == Tag.Int || t.Tag == Tag.Float)
+        if (t.Tag is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float)
         {
             if (!engine.UnifyRegisterWithCell(1, t)) return false;
             return engine.UnifyRegisterWithCell(2, Cell.Int(0));
@@ -102,7 +102,7 @@ public static partial class MetaBuiltins
             if (arity == 0)
             {
                 // T becomes Name itself (atomic).
-                if (n.Tag != Tag.Atom && n.Tag != Tag.Int && n.Tag != Tag.Float)
+                if (n.Tag is not (Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float))
                     throw new ShumwayPrologException(
                         IsoError.TypeError("atomic", new VarTerm("_")));
                 return engine.UnifyRegisterWithCell(0, n);
@@ -177,7 +177,7 @@ public static partial class MetaBuiltins
 
         // Decompose modes — build the list directly in the heap with
         // a single allocation, no intermediate Cell[] buffer.
-        if (t.Tag == Tag.Atom || t.Tag == Tag.Int || t.Tag == Tag.Float)
+        if (t.Tag is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float)
         {
             // Single-element list: [t] = .(t, []).
             int idx = engine.AllocateHeap(3);
@@ -253,7 +253,7 @@ public static partial class MetaBuiltins
             Cell first = ResolveLocal(engine, engine.GetHeap(headIdx));
             if (count == 1)
             {
-                if (first.Tag != Tag.Atom && first.Tag != Tag.Int && first.Tag != Tag.Float)
+                if (first.Tag is not (Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float))
                     throw new ShumwayPrologException(
                         IsoError.TypeError("atomic", new VarTerm("_")));
                 return engine.UnifyRegisterWithCell(0, first);

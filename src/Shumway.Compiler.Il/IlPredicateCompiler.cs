@@ -230,7 +230,12 @@ public sealed partial class IlPredicateCompiler
             nameof(Shumway.Builtins.ArithEvalStack.PushY), new[] { typeof(Activation), typeof(int) })!;
     private static readonly MethodInfo ArithBinMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
-            nameof(Shumway.Builtins.ArithEvalStack.Bin), new[] { typeof(int) })!;
+            nameof(Shumway.Builtins.ArithEvalStack.Bin), new[] { typeof(int), typeof(bool) })!;
+    // ADR-039: the prefer_rationals flag threaded into the AEvalBin emit so a
+    // Tier-1-promoted `X is A/B` honours it exactly like Tier-0.
+    private static readonly MethodInfo PreferRationalsGetter =
+        typeof(Activation).GetProperty(
+            nameof(Activation.PreferRationals))!.GetGetMethod()!;
     private static readonly MethodInfo ArithUnMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.Un), new[] { typeof(int) })!;

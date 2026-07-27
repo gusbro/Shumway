@@ -173,6 +173,17 @@ public static partial class MetaBuiltins
             host.Flags.ImplicitDynamic = valueName == "true";
             return true;
         }
+        if (flagName == "prefer_rationals")
+        {
+            // ADR-039 — takes effect immediately on the running activation too,
+            // so `set_prolog_flag(prefer_rationals, true), X is 1/3` is rational
+            // within one query.
+            if (valueName != "true" && valueName != "false")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+            host.Flags.PreferRationals = engine.PreferRationals = valueName == "true";
+            return true;
+        }
         if (flagName == "compile_mode")
         {
             if (valueName != "debug" && valueName != "release")
@@ -311,6 +322,9 @@ public static partial class MetaBuiltins
             case "implicit_dynamic":
                 return UnifyAtom(engine, 1, host.Flags.ImplicitDynamic ? "true" : "false");
 
+            case "prefer_rationals":
+                return UnifyAtom(engine, 1, host.Flags.PreferRationals ? "true" : "false");
+
             case "arity_compat":
                 return UnifyAtom(engine, 1, host.Flags.ArityCompat ? "true" : "false");
 
@@ -346,7 +360,7 @@ public static partial class MetaBuiltins
         "bounded", "max_arity", "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
         "debug", "dialect", "argv", "implicit_dynamic", "arity_compat",
-        "compile_mode", "debug_lco",
+        "compile_mode", "debug_lco", "prefer_rationals",
     };
 
     private static bool PrologFlagUnify(Activation engine, PrologEngine host, int idx)

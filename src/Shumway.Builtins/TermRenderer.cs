@@ -59,6 +59,21 @@ public static class TermRenderer
             case Tag.BigInt:
                 output.Write(engine.AsBigInt(cell).ToString(CultureInfo.InvariantCulture));
                 break;
+            case Tag.Rational:
+            {
+                // Rendered as the operator term `Num rdiv Den` (re-readable —
+                // `rdiv` is a 400,yfx operator that re-evaluates to the value).
+                // Parenthesise where an enclosing operator's priority forbids
+                // a 400-priority operand.
+                var r = engine.AsRational(cell);
+                bool paren = maxPriority < 400;
+                if (paren) output.Write('(');
+                output.Write(r.Num.ToString(CultureInfo.InvariantCulture));
+                output.Write(" rdiv ");
+                output.Write(r.Den.ToString(CultureInfo.InvariantCulture));
+                if (paren) output.Write(')');
+                break;
+            }
             case Tag.Float:
             {
                 double v = Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex));
@@ -455,6 +470,9 @@ public static class TermRenderer
                 return cell.AsInt >= 0;
             case Tag.BigInt:
                 return engine.AsBigInt(cell).Sign >= 0;
+            case Tag.Rational:
+                // Renders as `Num rdiv Den`; leads with Num's sign.
+                return engine.AsRational(cell).Num.Sign >= 0;
             case Tag.Float:
                 return Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex)) >= 0;
             case Tag.Str:

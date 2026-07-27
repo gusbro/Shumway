@@ -431,8 +431,8 @@ public sealed partial class Activation
                 GcMarkCell(bufStart + bufCount);   // logical tail cell
                 break;
             }
-            // Atom, Int, Functor, BigInt, String, Foreign, PstrBuffer,
-            // RawInt (control words): leaves.
+            // Atom, Int, Functor, BigInt, Rational, String, Foreign,
+            // PstrBuffer, RawInt (control words): leaves.
         }
     }
 

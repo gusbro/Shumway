@@ -60,8 +60,16 @@ public sealed partial class Activation
 
     // ----- Per-engine auxiliary value tables (ADR-002) -----
     private readonly List<BigInteger> _bigIntTable = new();
+    private readonly List<Rational> _rationalTable = new();
     private readonly List<string> _stringTable = new();
     private readonly List<object?> _foreignTable = new();
+
+    /// <summary>The <c>prefer_rationals</c> prolog_flag snapshot for this
+    /// activation (ADR-039): when true, <c>/</c> on two integers yields an
+    /// exact rational. Set at query setup from the engine's flag; read on the
+    /// arithmetic path. A plain field — activation state is serialized per
+    /// thread, so no ThreadStatic (engines stay thread-agile).</summary>
+    public bool PreferRationals { get; set; }
 
     // ----- Attributed-variable storage -----
     // Maps the heap home index of an attributed variable to its
@@ -377,6 +385,8 @@ public sealed partial class Activation
                     _foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]);
             case Tag.BigInt:
                 return _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]);
+            case Tag.Rational:
+                return _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]);
             case Tag.String:
                 return string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]);
             // Compounds and PSTR descend: use an explicit work-stack (O(1) C#
@@ -542,6 +552,9 @@ public sealed partial class Activation
                 return true;
             case Tag.BigInt:
                 equal = _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]);
+                return true;
+            case Tag.Rational:
+                equal = _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]);
                 return true;
             case Tag.String:
                 equal = string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]);

@@ -133,6 +133,7 @@ internal static class FindallSnapshot
                 return c;
             case Tag.Float:
             case Tag.BigInt:
+            case Tag.Rational:
             case Tag.String:
             case Tag.Pstr:
             case Tag.Foreign:

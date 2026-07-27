@@ -101,6 +101,9 @@ public static class Materializer
                     return Cell.Int((long)bn.Value);
                 return engine.MakeBigInt(bn.Value);
 
+            case RationalTerm rt:
+                return engine.MakeRational(Rational.Create(rt.Num, rt.Den));
+
             case FloatTerm f:
                 return Cell.Ref(engine.MakeFloat(f.Value));
 

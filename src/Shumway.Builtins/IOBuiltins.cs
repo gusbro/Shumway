@@ -448,6 +448,8 @@ public static class IOBuiltins
                         d = deref.AsInt;
                     else if (deref.Tag == Tag.BigInt)
                         d = (double)engine.AsBigInt(deref);
+                    else if (deref.Tag == Tag.Rational)
+                        d = engine.AsRational(deref).ToDouble();
                     else if (deref.Tag == Tag.Ref)
                         throw new PrologRuntimeException("instantiation_error");
                     else

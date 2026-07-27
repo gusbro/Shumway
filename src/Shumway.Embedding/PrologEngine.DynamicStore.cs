@@ -1336,6 +1336,10 @@ public sealed partial class PrologEngine
                 if (valueName == "true") _flags.ImplicitDynamic = true;
                 else if (valueName == "false") _flags.ImplicitDynamic = false;
                 break;
+            case "prefer_rationals":
+                if (valueName == "true") _flags.PreferRationals = true;
+                else if (valueName == "false") _flags.PreferRationals = false;
+                break;
             case "arity_compat":
                 // consult-time directive form. The ClauseReader's
                 // pre-pass already flipped the live lexer for THIS file; this
