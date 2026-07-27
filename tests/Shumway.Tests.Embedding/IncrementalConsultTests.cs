@@ -146,6 +146,20 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void InitializationGoal_RunsInItsOwnModuleContext()
+    {
+        // clpz's shape: `:- initialization` calls a module-local predicate. The
+        // goal must run in the defining module's context so the local resolves
+        // (before this it ran in `user`, so a module-local was existence_error).
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- module(genlib, []).\n" +
+            ":- initialization((gen(C), assertz(C))).\n" +
+            "gen(fact(generated)).");
+        Assert.True(e.Query("fact(generated).").Success);
+    }
+
+    [Fact]
     public void OpDirective_StillAppliesToLaterClauses()
     {
         // The baseline the others generalise — a plain `:- op` from that point on.

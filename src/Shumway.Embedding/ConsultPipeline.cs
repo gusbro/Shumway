@@ -1312,7 +1312,7 @@ internal sealed class ConsultPipeline
         // defers to after the whole text is loaded.
         if (directiveGoals is not null)
             foreach (var g in directiveGoals)
-                RunConsultDirectiveGoal(g);
+                RunConsultDirectiveGoal(QualifyGoalForModule(g, moduleName));
 
         // `:- initialization(Goal)` goals run now, after the consult has
         // committed, in source order (SWI load-time semantics). A goal that
@@ -1327,7 +1327,8 @@ internal sealed class ConsultPipeline
                 {
                     E.LastHaltExitCode = null;
                     bool ok = false;
-                    foreach (var sol in E.QueryAll(g)) { ok = sol.Success; break; }
+                    foreach (var sol in E.QueryAll(QualifyGoalForModule(g, moduleName)))
+                    { ok = sol.Success; break; }
 
                     // halt/0-1 does NOT reach us as an exception: QueryAll catches it and
                     // reports the goal as failed, leaving the code behind in
@@ -1371,6 +1372,21 @@ internal sealed class ConsultPipeline
     /// handling above). The goal runs on the live engine, so an undefined
     /// predicate — the classic <c>:- use_module</c> typo — surfaces as an
     /// <c>existence_error</c> warning instead of being silently dropped.</summary>
+    // A `:- Goal` / `:- initialization(Goal)` in an export-qualified module runs
+    // in THAT module's context, so a call to one of its module-local predicates
+    // resolves (clpz's `:- initialization((generated_clauses(Cs), ...))` calls the
+    // module-local generated_clauses/1). call('$mqual'(Module, Goal)) threads the
+    // module through the meta-dispatch — the same mechanism a clause body's calls
+    // get. The default `user` module needs no qualification (everything is bare).
+    private static Term QualifyGoalForModule(Term goal, string moduleName)
+        => moduleName == PrologEngine.DefaultModuleName
+            ? goal
+            : new CompoundTerm("call", new Term[]
+            {
+                new CompoundTerm(ModuleRewrite.MqualFunctor,
+                    new[] { (Term)new AtomTerm(moduleName), goal }),
+            });
+
     private void RunConsultDirectiveGoal(Term goal)
     {
         try
