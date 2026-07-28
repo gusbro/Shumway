@@ -349,6 +349,32 @@ public sealed partial class IlPredicateCompiler
                 return SyncFail;
             }
 
+            // Module-relative resolution FIRST — before the builtin check (the
+            // interpreter's DispatchCall mirrors this): an export-qualified
+            // module may define its OWN version of a builtin-named predicate
+            // (Scryer's iso_ext defines copy_term/3, forall/2) — `M:goal` must
+            // run M$goal, not the engine builtin. A module with no such local
+            // (nor import) falls through to the builtin.
+            if (resolutionModule >= 0 && addresses is not null)
+            {
+                int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
+                if (addresses.TryGetValue(mangledFid, out int mangledAddr))
+                {
+                    engine.SetB0(cutBarrier);
+                    return mangledAddr;
+                }
+                // ADR-038 — the module's import table (Source$name) before bare.
+                var importMap = engine.CurrentImportMap;
+                if (importMap is not null
+                    && importMap.TryGetValue(
+                        ((long)resolutionModule << 32) | (uint)functorId, out int importedFid)
+                    && addresses.TryGetValue(importedFid, out int importedAddr))
+                {
+                    engine.SetB0(cutBarrier);
+                    return importedAddr;
+                }
+            }
+
             // Builtin-as-goal. The recursion case (call(call(...))) is
             // handled by re-entering Dispatch with the recovered arity
             // — the inner call's X[0] already holds its own inner goal.
@@ -381,21 +407,6 @@ public sealed partial class IlPredicateCompiler
             // caller threads Cp = resume_marker, Pc = target,
             // IlTailCallPending = true.
             engine.SetB0(cutBarrier);
-            // Module-relative resolution: a tagged goal resolves against the
-            // meta-caller's module locals (module$name) first.
-            if (resolutionModule >= 0 && addresses is not null)
-            {
-                int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
-                if (addresses.TryGetValue(mangledFid, out int mangledAddr))
-                    return mangledAddr;
-                // ADR-038 — the module's import table (Source$name) before bare.
-                var importMap = engine.CurrentImportMap;
-                if (importMap is not null
-                    && importMap.TryGetValue(
-                        ((long)resolutionModule << 32) | (uint)functorId, out int importedFid)
-                    && addresses.TryGetValue(importedFid, out int importedAddr))
-                    return importedAddr;
-            }
             if (addresses is null
                 || !addresses.TryGetValue(functorId, out int address))
             {

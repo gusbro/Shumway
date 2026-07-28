@@ -613,8 +613,8 @@ internal static class Prelude
         append([], []).
         append([L|Ls], As) :- append(L, Ws, As), append(Ls, Ws).
 
-        %! :(+Module, :Goal) | Control | Runtime module-qualified call. Shumway's public predicates share one flat global namespace, so a qualified call to an exported predicate is module-transparent — it simply calls Goal.
-        ':'(_Module, Goal) :- call(Goal).
+        %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038 — an export-qualified module's own version of a builtin-named predicate (Scryer iso_ext's copy_term/3) must win for M:Goal.
+        ':'(Module, Goal) :- call(Module:Goal).
 
         %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []) — succeeds when the DCG Body derives List.
         phrase(Body, List) :- phrase(Body, List, []).

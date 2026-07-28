@@ -97,7 +97,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 | Predicate | Description |
 | --- | --- |
-| `:(+Module, :Goal)` | Runtime module-qualified call. Shumway's public predicates share one flat global namespace, so a qualified call to an exported predicate is module-transparent — it simply calls Goal. |
+| `:(+Module, :Goal)` | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038 — an export-qualified module's own version of a builtin-named predicate (Scryer iso_ext's copy_term/3) must win for M:Goal. |
 | `apply(:Goal, +ExtraArgs)` | Calls Goal with the list of extra arguments appended. |
 | `call(:Goal)` | Calls a goal. |
 | `call(:Goal, +Extra1)` | Calls a goal extended with one extra argument. |

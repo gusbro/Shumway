@@ -408,6 +408,30 @@ public sealed partial class BytecodeInterpreter
             return TryBacktrack();
         }
 
+        // Module-relative resolution FIRST — before the builtin check: a tagged
+        // goal resolves against the meta-caller's module locals (module$name),
+        // so a runtime-variable meta-call reaches a module-local predicate the
+        // same way a compile-time one is mangled. Order matters: an
+        // export-qualified module may define its OWN version of a builtin-named
+        // predicate (Scryer's iso_ext defines copy_term/3, forall/2, succ/2) —
+        // `iso_ext:copy_term(...)` must run iso_ext$copy_term, not the engine
+        // builtin, exactly as its compile-time internal calls do. A module that
+        // defines no such local (nor imports one) falls through to the builtin.
+        if (resolutionModule >= 0 && addresses is not null)
+        {
+            int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
+            if (addresses.TryGetValue(mangledFid, out int mangledAddr))
+                return JumpToUserGoal(code, pc, mangledAddr);
+            // ADR-038 — the module's import table: a bare goal it doesn't define
+            // locally resolves to Source$name before the bare-global namespace.
+            var importMap = _engine.CurrentImportMap;
+            if (importMap is not null
+                && importMap.TryGetValue(
+                    ((long)resolutionModule << 32) | (uint)functorId, out int importedFid)
+                && addresses.TryGetValue(importedFid, out int importedAddr))
+                return JumpToUserGoal(code, pc, importedAddr);
+        }
+
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
         {
             var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
@@ -428,26 +452,6 @@ public sealed partial class BytecodeInterpreter
                         : Shumway.Core.MetaRouteKind.Builtin,
                     builtinId);
             return InvokeBuiltinGoal(builtinId);
-        }
-
-        // Module-relative resolution: a tagged goal resolves against the
-        // meta-caller's module locals (module$name) first, so a runtime-variable
-        // meta-call reaches a module-local predicate the same way a compile-time
-        // one is mangled. Falls through to the bare functor (public / global) when
-        // the module has no such local.
-        if (resolutionModule >= 0 && addresses is not null)
-        {
-            int mangledFid = MangleFunctorId(resolutionModule, atomId, totalArity);
-            if (addresses.TryGetValue(mangledFid, out int mangledAddr))
-                return JumpToUserGoal(code, pc, mangledAddr);
-            // ADR-038 — the module's import table: a bare goal it doesn't define
-            // locally resolves to Source$name before the bare-global namespace.
-            var importMap = _engine.CurrentImportMap;
-            if (importMap is not null
-                && importMap.TryGetValue(
-                    ((long)resolutionModule << 32) | (uint)functorId, out int importedFid)
-                && addresses.TryGetValue(importedFid, out int importedAddr))
-                return JumpToUserGoal(code, pc, importedAddr);
         }
 
         if (addresses is not null && addresses.TryGetValue(functorId, out int address))

@@ -36,11 +36,14 @@ internal static class CompatLibraries
             "dcgs"   => Dcgs,
             "format" => Format,
             "dif"    => Dif,
+            "$project_atts" => ProjectAtts,
             // Covered by Shumway's prelude / builtins — importing them is a
-            // no-op that just marks the module available.
+            // no-op that just marks the module available. `loader` is Scryer's
+            // bootstrap module; the one predicate real libraries import from it
+            // (strip_module/3 — dcgs.pl) is already in the prelude.
             "lists" or "charsio" or "error" or "iso_ext" or "between"
               or "apply" or "pio" or "si" or "debug" or "pairs"
-              or "ordsets" or "assoc" or "dcg" or "dcg_basics" => "",
+              or "ordsets" or "assoc" or "dcg" or "dcg_basics" or "loader" => "",
             _ => null!,
         };
         return source is not null;
@@ -66,6 +69,56 @@ internal static class CompatLibraries
     private const string Dif = """
         :- public dif/2.
         dif(X, Y) :- ( X \= Y -> true ; X == Y -> fail ; true ).
+        """;
+
+    // library('$project_atts') — Scryer's attribute-projection bootstrap
+    // module. Real libraries reach it module-qualified
+    // (`'$project_atts':term_residual_goals(Term, Rs)` — iso_ext.pl's
+    // copy_term/3); a bare-global definition resolves that call through the
+    // M:G fallback chain. Our implementation over the engine's attvar
+    // machinery: collect Term's attributed variables, and for each variable ×
+    // module project via the module's own attribute_goals//1 when it defines
+    // one (the Scryer/SICStus convention — freeze, clpz), else fall back to
+    // raw re-runnable put_atts/put_attr goals. A projection hook that
+    // CONSUMES attributes as it emits (freeze's `put_atts(V, -frozen(_))`)
+    // is safe: callers run this inside findall/3, whose backtracking undoes
+    // the trailed attribute mutations.
+    private const string ProjectAtts = """
+        :- public term_residual_goals/2.
+        term_residual_goals(Term, Goals) :-
+            '$term_attributed_variables'(Term, Vs),
+            '$prj_vars'(Vs, Goals, []).
+
+        '$prj_vars'([], Gs, Gs).
+        '$prj_vars'([V|Vs], Gs0, Gs) :-
+            (   var(V)
+            ->  '$attr_modules'(V, Ms), '$prj_mods'(Ms, V, Gs0, Gs1)
+            ;   Gs1 = Gs0
+            ),
+            '$prj_vars'(Vs, Gs1, Gs).
+
+        '$prj_mods'([], _, Gs, Gs).
+        '$prj_mods'([M|Ms], V, Gs0, Gs) :-
+            '$prj_one'(M, V, Gs0, Gs1),
+            '$prj_mods'(Ms, V, Gs1, Gs).
+
+        '$prj_one'(M, V, Gs0, Gs) :-
+            (   catch(call(M:attribute_goals(V, Gs0, Gs)), _, fail)
+            ->  true
+            ;   get_attr(V, M, As)
+            ->  '$prj_attr'(As, M, V, Gs0, Gs)
+            ;   Gs0 = Gs
+            ).
+
+        '$prj_attr'(As, M, V, Gs0, Gs) :-
+            (   is_list(As)
+            ->  '$prj_raw'(As, M, V, Gs0, Gs)
+            ;   Gs0 = [put_attr(V, M, As)|Gs]
+            ).
+
+        '$prj_raw'([], _, _, Gs, Gs).
+        '$prj_raw'([A|As], M, V, [put_atts(V, M, A)|Gs1], Gs) :-
+            '$prj_raw'(As, M, V, Gs1, Gs).
         """;
 
     // library(format) — the DCG-format non-terminal format_//2. Supports the
