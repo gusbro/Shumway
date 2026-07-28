@@ -53,7 +53,7 @@ public sealed partial class PrologEngine
 
     internal void InstallCallIlRewrites(
         Shumway.Interpreter.BytecodeInterpreter interp,
-        Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> queryPredicatesByAddress,
         byte[] queryBytes)
         => Bundles.InstallCallIlRewrites(

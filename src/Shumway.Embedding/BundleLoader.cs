@@ -436,7 +436,7 @@ internal sealed class BundleLoader
 
     internal void InstallCallIlRewrites(
         Shumway.Interpreter.BytecodeInterpreter interp,
-        Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> queryPredicatesByAddress,
         byte[] queryBytes)
     {

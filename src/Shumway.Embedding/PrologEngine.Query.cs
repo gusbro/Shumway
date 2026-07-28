@@ -1330,15 +1330,19 @@ public sealed partial class PrologEngine
         long profMg0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
 
         // Merge the three regions' link metadata; downstream code is
-        // region-agnostic and reads this combined view. seed
-        // from the cached persistent base, which already carries the
-        // persistent regions' bare-name aliases — a query-region REAL
-        // address overwrites a colliding alias here, preserving the old
-        // construction order (reals were always in the map before the
-        // alias loop ran). The only observable delta is that the
-        // profiler's diagnostic map now also contains those aliases.
-        var mergedAddresses = new Dictionary<int, int>(_persistentAddressBaseCache!);
-        foreach (var (fid, a) in queryLink.Addresses) mergedAddresses[fid] = a;
+        // region-agnostic and reads this combined view. The persistent base
+        // (which already carries the persistent regions' bare-name aliases)
+        // is shared BY REFERENCE under a small per-query overlay
+        // (LayeredIntMap) instead of being copied — the three O(program)
+        // dictionary copies here were the largest warm-setup cost on a
+        // clpz-sized program. The overlay holds the query region's links,
+        // its bare aliases, the IL/region markers, and any mid-query
+        // trampoline installs; overlay wins on lookup, preserving the old
+        // construction order (a query-region REAL address shadows a
+        // colliding persistent alias).
+        var queryAddrOverlay = new Dictionary<int, int>(queryLink.Addresses);
+        var mergedAddresses = new Shumway.Core.LayeredIntMap<int>(
+            queryAddrOverlay, _persistentAddressBaseCache!);
         // keep the functor→address map of the most recent
         // query so the profiler can resolve a recorded callee address
         // back to a Name/Arity. Only assembled when profiling is
@@ -1354,12 +1358,14 @@ public sealed partial class PrologEngine
             new List<Shumway.Core.SwitchTable>(staticLink.SwitchTables);
         mergedSwitchTables.AddRange(_dynamicLink!.SwitchTables);
         mergedSwitchTables.AddRange(queryLink.SwitchTables);
-        // persistent part pre-merged at rebuild time.
+        // persistent part pre-merged at rebuild time; query region layered
+        // on top (address spaces are disjoint — the query region lives above
+        // the split — but the layered lookup doesn't rely on that).
         var mergedPredicatesByAddress =
-            new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
+            new Shumway.Core.LayeredIntMap<Shumway.Compiler.Wam.CompiledPredicate>(
+                new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
+                    queryLink.PredicatesByAddress),
                 _persistentPredsByAddressCache!);
-        foreach (var (a, p) in queryLink.PredicatesByAddress)
-            mergedPredicatesByAddress[a] = p;
         // The "program" in the LinkResult is now a logical concept —
         // the live bytes live across two physical buffers. Downstream
         // consumers that don't access linkResult.Bytecode (most of
@@ -1396,11 +1402,15 @@ public sealed partial class PrologEngine
         // but a module-local predicate is linked under its mangled
         // "module$name" functor. Add a bare-functor alias for each so a
         // runtime call/N can resolve a local predicate by its plain name.
-        // the persistent regions' aliases are already in
-        // mergedAddresses (pre-computed at persistent rebuild — see
+        // the persistent regions' aliases are already in the layered base
+        // (pre-computed at persistent rebuild — see
         // _persistentAddressBaseCache); only the query region's handful
-        // of entries still need the per-query string walk.
-        var addressMap = new Dictionary<int, int>(mergedAddresses);
+        // of entries still need the per-query string walk. addressMap IS
+        // mergedAddresses — the aliases and markers land in the same
+        // per-query overlay (they were the only delta between the two maps,
+        // and the merged map's remaining consumers — the launcher patch and
+        // the profiler's diagnostic view — tolerate them).
+        var addressMap = mergedAddresses;
         AddBareLocalAliases(addressMap, queryLink.Addresses);
 
         // --strip-wam: a predicate whose WAM body was dropped from the bundle
@@ -1874,6 +1884,16 @@ public sealed partial class PrologEngine
     private void AddBareLocalAliases(
         Dictionary<int, int> map, IReadOnlyDictionary<int, int> entries,
         HashSet<int>? recordAdded = null)
+        => AddBareLocalAliasesCore(map.ContainsKey, (k, v) => map[k] = v, entries, recordAdded);
+
+    private void AddBareLocalAliases(
+        Shumway.Core.LayeredIntMap<int> map, IReadOnlyDictionary<int, int> entries,
+        HashSet<int>? recordAdded = null)
+        => AddBareLocalAliasesCore(map.ContainsKey, (k, v) => map[k] = v, entries, recordAdded);
+
+    private void AddBareLocalAliasesCore(
+        Func<int, bool> containsKey, Action<int, int> add,
+        IReadOnlyDictionary<int, int> entries, HashSet<int>? recordAdded)
     {
         foreach (var (mangledFunctorId, address) in entries)
         {
@@ -1885,9 +1905,9 @@ public sealed partial class PrologEngine
             int bareFunctorId = FunctorTable.Intern(
                 AtomTable.Intern(mangledName.Substring(dollar + 1), permanent: true).Id,
                 arity);
-            if (!map.ContainsKey(bareFunctorId))
+            if (!containsKey(bareFunctorId))
             {
-                map[bareFunctorId] = address;
+                add(bareFunctorId, address);
                 recordAdded?.Add(bareFunctorId);
             }
         }

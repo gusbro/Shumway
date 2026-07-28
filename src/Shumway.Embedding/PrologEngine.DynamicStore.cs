@@ -1070,12 +1070,10 @@ public sealed partial class PrologEngine
             Shumway.Core.BytecodeIO.WriteInt32(engine.CurrentProgram!, operandPos, target);
         }
 
-        // Register the trampoline in the address map. The map was
-        // created as a Dictionary<int,int> at SetupQueryFromTerm and
-        // assigned to the engine as IReadOnlyDictionary — cast back to
-        // mutate. If the host ever switches to an immutable
-        // implementation this path needs revisiting.
-        if (addrMap is not Dictionary<int, int> mutableMap)
+        // Register the trampoline in the address map. SetupQueryFromTerm
+        // always assigns a LayeredIntMap (per-query overlay over the shared
+        // persistent base); the write lands in this activation's overlay.
+        if (addrMap is not Shumway.Core.LayeredIntMap<int> mutableMap)
             throw new InvalidOperationException(
                 "implicit_dynamic mid-query trampoline materialise: "
                 + "CurrentFunctorAddresses is not a mutable Dictionary — "
@@ -1150,7 +1148,7 @@ public sealed partial class PrologEngine
         // mutable address map, and a mutable switch-table list. Absent any,
         // the predicates link normally at the next setup.
         if (engine.CurrentProgram is null
-            || engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap
+            || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap
             || engine.SwitchTables is not { } switchTables)
         {
             if (diagLive) Console.Error.WriteLine(
@@ -1289,7 +1287,7 @@ public sealed partial class PrologEngine
     /// </summary>
     internal void EnsureLiveDynamicTrampolines(Activation engine)
     {
-        if (engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap)
+        if (engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap)
             return;
         if (engine.CurrentProgram is null) return;
 
@@ -1572,7 +1570,7 @@ public sealed partial class PrologEngine
         Activation engine, IReadOnlyList<Clause> transformed)
     {
         if (engine.CurrentProgram is null
-            || engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap)
+            || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap)
             return;
         // Group by head fid, preserving clause order within each group.
         Dictionary<int, List<Clause>>? groups = null;
@@ -1759,7 +1757,7 @@ public sealed partial class PrologEngine
             _runtimeAssertHelperPreds[fid] = pred;
         }
         if (engine.CurrentProgram is null
-            || engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap)
+            || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap)
             return -1;
         if (addrMap.TryGetValue(fid, out int existing)
             && !Shumway.Core.CallTarget.IsUnresolved(existing)
@@ -1921,7 +1919,7 @@ public sealed partial class PrologEngine
         if (_inFidViewRebuild) return;
         if (target.CurrentProgram is null
             || target.DynamicFailStubAddr <= 0
-            || target.CurrentFunctorAddresses is not Dictionary<int, int> addrMap
+            || target.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap
             || !addrMap.TryGetValue(functorId, out int oldAddr)
             || Shumway.Core.CallTarget.IsUnresolved(oldAddr)
             || Activation.IsResumeMarker(oldAddr)
