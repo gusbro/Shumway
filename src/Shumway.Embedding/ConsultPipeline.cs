@@ -252,6 +252,26 @@ internal sealed class ConsultPipeline
     private void ReExpandInFileHooks(ModuleManifest manifest, int baseOffset, int count,
         HashSet<int>? pendingDiscontiguous, int firstHookIndex, bool inFileGoalHooks)
     {
+        long profT0 = PrologEngine.LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        try
+        {
+            ReExpandInFileHooksCore(manifest, baseOffset, count, pendingDiscontiguous,
+                firstHookIndex, inFileGoalHooks);
+        }
+        finally
+        {
+            if (PrologEngine.LoadProfEnabled)
+            {
+                PrologEngine.ProfReExpandTicks +=
+                    System.Diagnostics.Stopwatch.GetTimestamp() - profT0;
+                PrologEngine.ProfReExpandCalls++;
+            }
+        }
+    }
+
+    private void ReExpandInFileHooksCore(ModuleManifest manifest, int baseOffset, int count,
+        HashSet<int>? pendingDiscontiguous, int firstHookIndex, bool inFileGoalHooks)
+    {
         bool hasTermExp = E.HasTermExpansions || E.HasPrologTermExpansion
             || E.HasPrologTermExpansion6;
         // Re-applying goal_expansion is only needed when THIS file defined

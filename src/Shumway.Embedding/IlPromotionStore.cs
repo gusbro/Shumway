@@ -125,6 +125,7 @@ public sealed class IlPromotionStore
     /// delegates keep serving.</summary>
     public bool PromotionsSuspended { get; set; }
 
+
     /// <summary>ADR-023 — drops a dynamic predicate's IL snapshot after a mutation;
     /// the next call falls back to the in-place-patched Tier-0 chain and the
     /// predicate re-warms. Counts toward the churn limit only when a delegate was

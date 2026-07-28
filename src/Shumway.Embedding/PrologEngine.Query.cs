@@ -457,6 +457,25 @@ public sealed partial class PrologEngine
              Activation Activation,
              BytecodeInterpreter Interp) SetupQueryFromTermUnderGate(Term queryTerm)
     {
+        long profT0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        try
+        {
+            return SetupQueryFromTermUnderGateCore(queryTerm);
+        }
+        finally
+        {
+            if (LoadProfEnabled)
+            {
+                ProfSetupTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profT0;
+                ProfSetupCalls++;
+            }
+        }
+    }
+
+    private (Shumway.Core.ProgramView Program, List<string> VarNames, int[] VarHeapIndices,
+             Shumway.Core.Activation Engine,
+             BytecodeInterpreter Interp) SetupQueryFromTermUnderGateCore(Term queryTerm)
+    {
         // auto-compaction. When the accumulated
         // mutation count crosses the watermark, invalidate the
         // persistent buffer here at query setup (the safe point —
@@ -514,7 +533,9 @@ public sealed partial class PrologEngine
         // Validate public uniqueness across modules. The check raises before
         // any compilation so the error message points squarely at the user's
         // module declarations rather than at the bytecode that wouldn't link.
+        long profUq0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         ValidatePublicUniqueness();
+        if (LoadProfEnabled) ProfUniqTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profUq0;
 
         // JIT indexing: a dynamic predicate compiles
         // unindexed until its runtime call count crosses the JIT
@@ -580,6 +601,7 @@ public sealed partial class PrologEngine
             product = null;
         if (product is null)
         {
+        if (LoadProfEnabled) ProfProductBuilds++;
 
         // Apply DCG → clause and meta-call (\+ / not) transforms per module,
         // then mangle local functors so each module ends up with its own
@@ -998,6 +1020,7 @@ public sealed partial class PrologEngine
         }   // ---- end compiled-program-product build ----
 
         // ---- per-query small bootstrap ----
+        long profQc0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         // Synthetic query clause — rewrite in the user module's context, but
         // with the user locals (which don't include __query__) so the
         // head functor remains bare. the stub's synthesized helpers
@@ -1180,6 +1203,9 @@ public sealed partial class PrologEngine
                 staticLink.SwitchTables.Count + _dynamicLink!.SwitchTables.Count);
 
         byte[] queryBytes = queryLink.Bytecode;
+        if (LoadProfEnabled)
+            ProfQueryCompileTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profQc0;
+        long profMg0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
 
         // Merge the three regions' link metadata; downstream code is
         // region-agnostic and reads this combined view. seed
@@ -1308,6 +1334,9 @@ public sealed partial class PrologEngine
                 addressMap[bareFid] = marker;
         }
 
+        if (LoadProfEnabled)
+            ProfMergeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profMg0;
+        long profAc0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         var engine = new Activation
         {
             Out = Out,
@@ -1365,6 +1394,8 @@ public sealed partial class PrologEngine
             // ADR-039 — snapshot the prefer_rationals flag for '/' semantics.
             PreferRationals = _flags.PreferRationals,
         };
+        if (LoadProfEnabled)
+            ProfActCtorTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profAc0;
         // Heap-buffer pool: seed the fresh activation with the recycled
         // buffer (if any) BEFORE anything materializes onto the heap.
         _heapPool.Adopt(engine);
@@ -1415,7 +1446,11 @@ public sealed partial class PrologEngine
         // delegate invoke. Same byte width and operand layout as Call,
         // so the patch is one opcode-byte swap + one 4-byte operand
         // overwrite (target address → callee functor id).
-        InstallCallIlRewrites(interp, mergedPredicatesByAddress, queryBytes);
+        long profIn0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        InstallCallIlRewrites(
+            interp, mergedPredicatesByAddress, queryLink.PredicatesByAddress, queryBytes);
+        if (LoadProfEnabled)
+            ProfInstallTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profIn0;
 
         // ADR-015 chunk C step 4: refresh the interpreter's literal pools
         // after an incremental assertz/asserta interns a new literal.
@@ -1650,6 +1685,8 @@ public sealed partial class PrologEngine
         // otherwise local and discarded). Read-only diagnostic; does not
         // affect execution.
         _lastQueryEngine = engine;
+        if (LoadProfEnabled)
+            ProfActivationTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profAc0;
         return (programView, varNames, varHeapIndices, engine, interp);
     }
 

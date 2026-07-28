@@ -20,6 +20,12 @@ internal static class ReplTopLevel
 {
     private static int Main(string[] args)
     {
+        try { return MainCore(args); }
+        finally { Shumway.Embedding.PrologEngine.PrintLoadProfile(); }
+    }
+
+    private static int MainCore(string[] args)
+    {
         // -h / --help — only among the REPL's OWN arguments: anything after the `--`
         // separator belongs to the consulted program (the argv Prolog flag), including
         // a --help of its own.

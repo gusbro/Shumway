@@ -413,15 +413,34 @@ internal sealed class BundleLoader
     /// (skips sites whose opcode is no longer <c>Call</c>, e.g. when
     /// a re-link revisits a previously-rewritten persistent buffer).</summary>
     private int _diagCallIlCount;
+    // Per-program-state cache for InstallCallIlRewrites. The persistent
+    // buffer's call-site rewrites are IN-PLACE and idempotent — once walked,
+    // re-walking every predicate's sites per query is a pure no-op that
+    // dominated warm query setup (~2.7 ms per QueryAll on a clpz-sized
+    // program). Valid while the persistent buffer, the promotion set (installs
+    // via PromotedCount, evicts via EvictionStamp) and the program stamp are
+    // unchanged; a warm hit reuses the pending-site map, the fid-keyed
+    // predicate view and the IL dispatch-table template, and walks only the
+    // QUERY overlay's few predicates.
+    private sealed class CallSiteRewriteCache
+    {
+        public required byte[]? PersistentRef;
+        public required int EvictionStamp;
+        public required int PromotedCount;
+        public required int ProgramStamp;
+        public required Dictionary<int, List<(int AbsAddr, bool IsExecute)>>? PromotableCallSites;
+        public required Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> PredicateByFid;
+        public required Func<Shumway.Core.Activation, int, bool>?[]? IlTableTemplate;
+    }
+    private CallSiteRewriteCache? _callSiteCache;
+
     internal void InstallCallIlRewrites(
         Shumway.Interpreter.BytecodeInterpreter interp,
         Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> queryPredicatesByAddress,
         byte[] queryBytes)
     {
         _diagCallIlCount = 0;
-        // fresh per-query mid-run rewrite state, and the hook the
-        // promotion store fires when a delegate installs (sync or drained async).
-        _promotableCallSites?.Clear();
         _rewriteInterp = interp;
         // ADR-034 cross-activation variant: mutation-time IlByFunctorId slot
         // clearing must reach EVERY live interpreter, not just the current one
@@ -432,6 +451,35 @@ internal sealed class BundleLoader
             if (!E._liveInterps[i].TryGetTarget(out _)) E._liveInterps.RemoveAt(i);
         E._liveInterps.Add(new WeakReference<Shumway.Interpreter.BytecodeInterpreter>(interp));
         E.IlPromotion.OnPromotionInstalled = OnCalleePromoted;
+
+        var cache = _callSiteCache;
+        bool warm = cache is not null
+            && ReferenceEquals(cache.PersistentRef, E._persistentProgram)
+            && cache.EvictionStamp == E.IlPromotion.EvictionStamp
+            && cache.PromotedCount == E.IlPromotion.PromotedCount
+            && cache.ProgramStamp == E._programStamp;
+
+        Func<Shumway.Core.Activation, int, bool>?[]? ilTable;
+        Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicateByFid;
+        if (warm)
+        {
+            // The template is cloned per interpreter: live tables get slots
+            // nulled by dynamic-mutation invalidation and grown by mid-query
+            // installs — neither may leak into the shared template.
+            var tpl = cache!.IlTableTemplate;
+            ilTable = tpl is null ? null : (Func<Shumway.Core.Activation, int, bool>?[])tpl.Clone();
+            predicateByFid = cache.PredicateByFid;
+            _promotableCallSites = cache.PromotableCallSites;
+            interp.IlByFunctorId = ilTable;
+            DiagIlTable(ilTable);
+            // Only the query overlay's predicates need their sites classified —
+            // the persistent buffer's were rewritten in place on the cold walk.
+            RewriteCallSites(queryPredicatesByAddress, ilTable, predicateByFid, queryBytes);
+            DiagIlRewriteTotal();
+            return;
+        }
+
+        _promotableCallSites?.Clear();
         // Snapshot every currently-promoted IL delegate, indexed by
         // functor id. The PredicateDelegate -> Func<Activation,int,bool>
         // bridge allocates one wrapper per IL predicate, here at link
@@ -439,7 +487,7 @@ internal sealed class BundleLoader
         int maxFid = -1;
         foreach (int fid in E.IlPromotion.PromotedFunctorIds())
             if (fid > maxFid) maxFid = fid;
-        Func<Shumway.Core.Activation, int, bool>?[]? ilTable = null;
+        ilTable = null;
         if (maxFid >= 0)
         {
             ilTable = new Func<Shumway.Core.Activation, int, bool>?[maxFid + 1];
@@ -452,8 +500,10 @@ internal sealed class BundleLoader
                 ilTable[fid] = del.Invoke;
             }
         }
-        interp.IlByFunctorId = ilTable;
-        DiagIlTable(ilTable);
+        // The interp gets its own copy; the pristine array is the template.
+        interp.IlByFunctorId = ilTable is null
+            ? null : (Func<Shumway.Core.Activation, int, bool>?[])ilTable.Clone();
+        DiagIlTable(interp.IlByFunctorId);
 
         // Stage B.2 — build a fid-keyed view of
         // predicatesByAddress so we can look up the callee's
@@ -462,11 +512,31 @@ internal sealed class BundleLoader
         // multiple addresses (the enter_dynamic trampoline
         // is at the entry address but the chain bodies sit at later
         // addresses); the functor id is unique.
-        var predicateByFid = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
+        predicateByFid = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
             predicatesByAddress.Count);
         foreach (var (_, p) in predicatesByAddress)
             predicateByFid[p.FunctorId] = p;
 
+        RewriteCallSites(predicatesByAddress, interp.IlByFunctorId, predicateByFid, queryBytes);
+        _callSiteCache = new CallSiteRewriteCache
+        {
+            PersistentRef = E._persistentProgram,
+            EvictionStamp = E.IlPromotion.EvictionStamp,
+            PromotedCount = E.IlPromotion.PromotedCount,
+            ProgramStamp = E._programStamp,
+            PromotableCallSites = _promotableCallSites,
+            PredicateByFid = predicateByFid,
+            IlTableTemplate = ilTable,
+        };
+        DiagIlRewriteTotal();
+    }
+
+    private void RewriteCallSites(
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
+        Func<Shumway.Core.Activation, int, bool>?[]? ilTable,
+        Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicateByFid,
+        byte[] queryBytes)
+    {
         // Rewrite every Call whose callee state is decided at link time.
         // Three opcodes today (B.3 will add ExecuteIl / ExecuteBytecode):
         //   - CallIl: callee already has a bundle-IL delegate. Operand
@@ -576,7 +646,6 @@ internal sealed class BundleLoader
                 }
             }
         }
-        DiagIlRewriteTotal();
     }
 
     // generic Call/Execute sites whose callee may promote later,

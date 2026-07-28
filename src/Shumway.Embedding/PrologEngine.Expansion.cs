@@ -269,17 +269,29 @@ public sealed partial class PrologEngine
         {
             input, new VarTerm("$TE6_L0"), ids, termVar, new VarTerm("$TE6_L1"), idsVar,
         });
-        foreach (var sol in QueryAll(goal))
+        long t0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        try
         {
-            Term? t = sol["$TE6_Term"];
-            if (t is null) break;
-            output = RelinkInputVars(t, inputVars, sol);
-            newIds = sol["$TE6_Ids"] ?? ids;
-            return true;
+            foreach (var sol in QueryAll(goal))
+            {
+                Term? t = sol["$TE6_Term"];
+                if (t is null) break;
+                output = RelinkInputVars(t, inputVars, sol);
+                newIds = sol["$TE6_Ids"] ?? ids;
+                return true;
+            }
+            output = input;
+            newIds = ids;
+            return false;
         }
-        output = input;
-        newIds = ids;
-        return false;
+        finally
+        {
+            if (LoadProfEnabled)
+            {
+                ProfTeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                ProfTeCalls++;
+            }
+        }
     }
 
     // One term_expansion/2 pass over `input`; appends its flattened result to
@@ -294,20 +306,58 @@ public sealed partial class PrologEngine
         var goal = new CompoundTerm("term_expansion", new Term[] { input, expandedVar });
         bool diag = TeDiagEnabled;
         if (diag) System.Console.Error.WriteLine($"[TE] try (expandPos={_consultExpandPos}, loadmod={_currentLoadModule}): {input}");
-        foreach (var sol in QueryAll(goal))
+        long t0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        try
         {
-            Term? expanded = sol["$TE_Expanded"];
-            if (expanded is null) return false;
-            if (diag) System.Console.Error.WriteLine($"[TE] fired -> {expanded}");
-            FlattenExpansion(RelinkInputVars(expanded, inputVars, sol), output);
-            return true;
+            foreach (var sol in QueryAll(goal))
+            {
+                Term? expanded = sol["$TE_Expanded"];
+                if (expanded is null) return false;
+                if (diag) System.Console.Error.WriteLine($"[TE] fired -> {expanded}");
+                FlattenExpansion(RelinkInputVars(expanded, inputVars, sol), output);
+                return true;
+            }
+            if (diag) System.Console.Error.WriteLine($"[TE] no solution (hook failed) for: {input}");
+            return false;
         }
-        if (diag) System.Console.Error.WriteLine($"[TE] no solution (hook failed) for: {input}");
-        return false;
+        finally
+        {
+            if (LoadProfEnabled)
+            {
+                ProfTeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                ProfTeCalls++;
+            }
+        }
     }
 
     private static readonly bool TeDiagEnabled =
         System.Environment.GetEnvironmentVariable("SHUMWAY_TE_DIAG") == "1";
+
+    // ---- load-profiling counters (SHUMWAY_LOAD_PROF=1) ----
+    // Wall time + call counts of the consult-time hot paths, printed by the
+    // REPL at exit. Static (per-process) — the load profile is per-run anyway.
+    internal static readonly bool LoadProfEnabled =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_LOAD_PROF") == "1";
+    internal static long ProfTeTicks, ProfTeCalls;
+    internal static long ProfGeTicks, ProfGeCalls;
+    internal static long ProfSetupTicks, ProfSetupCalls, ProfProductBuilds;
+    internal static long ProfReExpandTicks, ProfReExpandCalls;
+    // Warm-setup sub-phases.
+    internal static long ProfMergeTicks, ProfQueryCompileTicks, ProfUniqTicks, ProfActivationTicks;
+    internal static long ProfActCtorTicks, ProfInstallTicks;
+
+    internal static void PrintLoadProfile()
+    {
+        if (!LoadProfEnabled) return;
+        static double Ms(long t) => t * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        System.Console.Error.WriteLine(
+            $"[PROF] te-QueryAll: {ProfTeCalls} calls, {Ms(ProfTeTicks):F0} ms\n" +
+            $"[PROF] ge-QueryAll: {ProfGeCalls} calls, {Ms(ProfGeTicks):F0} ms\n" +
+            $"[PROF] query-setup: {ProfSetupCalls} setups ({ProfProductBuilds} product builds), {Ms(ProfSetupTicks):F0} ms\n" +
+            $"[PROF]   merge-maps: {Ms(ProfMergeTicks):F0} ms | query-compile+link: {Ms(ProfQueryCompileTicks):F0} ms | uniqueness: {Ms(ProfUniqTicks):F0} ms | activation: {Ms(ProfActivationTicks):F0} ms\n" +
+            $"[PROF]   act-ctor: {Ms(ProfActCtorTicks):F0} ms | install-callil: {Ms(ProfInstallTicks):F0} ms\n" +
+            $"[PROF] re-expand passes: {ProfReExpandCalls}, {Ms(ProfReExpandTicks):F0} ms");
+    }
 
     // Running an expansion through QueryAll materialises the input's variables and
     // reads the output back with fresh heap-address names (_G<addr>) — losing the
@@ -485,15 +535,27 @@ public sealed partial class PrologEngine
         CollectVarNames(input, inputVars);
         var v = new VarTerm("$GE_Expanded");
         var goal = new CompoundTerm("goal_expansion", new Term[] { input, v });
-        foreach (var sol in QueryAll(goal))
+        long t0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        try
         {
-            Term? e = sol["$GE_Expanded"];
-            if (e is null) break;
-            expanded = RelinkInputVars(e, inputVars, sol);
-            return true;
+            foreach (var sol in QueryAll(goal))
+            {
+                Term? e = sol["$GE_Expanded"];
+                if (e is null) break;
+                expanded = RelinkInputVars(e, inputVars, sol);
+                return true;
+            }
+            expanded = input;
+            return false;
         }
-        expanded = input;
-        return false;
+        finally
+        {
+            if (LoadProfEnabled)
+            {
+                ProfGeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                ProfGeCalls++;
+            }
+        }
     }
 
     // A proper list [a,b,…] → its elements (each a clause); [] → nothing (drop);
