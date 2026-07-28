@@ -81,6 +81,118 @@ public sealed partial class PrologEngine
 
     internal bool HasPrologTermExpansion6 => HasPredicate(TermExpansion6Fid);
 
+    // ---- hook discriminator index ----
+    //
+    // Every consulted term (and, for goal_expansion, every body GOAL of every
+    // clause) pays one QueryAll per live hook family — the dominant cost of
+    // loading a large library under active hooks (~2 ms per no-match QueryAll).
+    // Most hook clauses discriminate their input by a principal functor, either
+    // in the head (`term_expansion(marker(E), _)`) or via the Scryer idiom of a
+    // var head narrowed by a body unification
+    // (`goal_expansion(T, ...) :- nonvar(T), T = put_atts(V, M, A)`). This
+    // index extracts those discriminators once per program change; a QueryAll
+    // is skipped entirely when no hook clause could match the input's shape.
+    // A clause the analysis can't see through (dcgs's DCG translator calls
+    // `dcg_rule` inside catch/3) makes its family AnyMatch — always queried,
+    // never wrong.
+    private sealed class HookDiscriminators
+    {
+        public bool AnyMatch;
+        public HashSet<(string Name, int Arity)>? Keys;
+
+        public bool CouldMatch(Term input)
+        {
+            if (AnyMatch) return true;
+            if (Keys is null) return false;          // hook has no clauses
+            return input switch
+            {
+                CompoundTerm c => Keys.Contains((c.Functor, c.Args.Length)),
+                AtomTerm a => Keys.Contains((a.Name, 0)),
+                VarTerm => true,                     // unbound input: anything could match
+                _ => false,                          // number/string: no functor to match
+            };
+        }
+    }
+
+    private HookDiscriminators? _teIdx, _te6Idx, _geIdx;
+    internal bool _hookIndexValid;
+
+    private HookDiscriminators HookIndex(int hookFid, ref HookDiscriminators? slot)
+    {
+        if (!_hookIndexValid) { _teIdx = _te6Idx = _geIdx = null; _hookIndexValid = true; }
+        if (slot is not null) return slot;
+        var idx = new HookDiscriminators();
+        // A hook living in the DYNAMIC store (asserted, no static clauses) can
+        // change without a consult — don't reason about its clauses.
+        if (_dynStore.IsDynamic(hookFid)) { idx.AnyMatch = true; return slot = idx; }
+        var (atomId, arity) = FunctorTable.Lookup(hookFid);
+        string hookName = AtomTable.GetById(atomId)?.Name ?? "";
+        foreach (var manifest in _modules.Values)
+        foreach (var c in manifest.Clauses)
+        {
+            (Term head, Term? body) = c.Term is CompoundTerm { Functor: ":-", Args.Length: 2 } r
+                ? (r.Args[0], r.Args[1]) : (c.Term, null);
+            // An M:head that escaped the consult-time strip still contributes.
+            if (head is CompoundTerm { Functor: ":", Args.Length: 2 } q) head = q.Args[1];
+            if (head is not CompoundTerm h || h.Functor != hookName || h.Args.Length != arity)
+                continue;
+            AddClauseKey(idx, h.Args[0], body);
+            if (idx.AnyMatch) return slot = idx;
+        }
+        return slot = idx;
+    }
+
+    private static void AddClauseKey(HookDiscriminators idx, Term firstArg, Term? body)
+    {
+        switch (firstArg)
+        {
+            case CompoundTerm p:
+                (idx.Keys ??= new()).Add((p.Functor, p.Args.Length));
+                return;
+            case AtomTerm a:
+                (idx.Keys ??= new()).Add((a.Name, 0));
+                return;
+            case VarTerm v:
+                // Walk the body's top-level conjunction: skip guards that cannot
+                // bind the head var, take the discriminator from the first
+                // `V = Pattern` / `Pattern = V`. Anything else → AnyMatch.
+                Term? cur = body;
+                while (cur is CompoundTerm { Functor: ",", Args.Length: 2 } conj)
+                {
+                    if (!Step(conj.Args[0])) return;
+                    cur = conj.Args[1];
+                }
+                if (cur is not null && !Step(cur)) return;
+                idx.AnyMatch = true;   // ran out of body without a discriminator
+                return;
+
+                bool Step(Term g)
+                {
+                    switch (g)
+                    {
+                        case CompoundTerm { Functor: "$te_after" or "nonvar" or "callable", Args.Length: 1 }:
+                            return true;   // transparent guard — keep walking
+                        case CompoundTerm { Functor: "=", Args.Length: 2 } eq:
+                            Term pat = eq.Args[0] is VarTerm pv && pv.Name == v.Name ? eq.Args[1]
+                                : eq.Args[1] is VarTerm pv2 && pv2.Name == v.Name ? eq.Args[0]
+                                : null!;
+                            if (pat is CompoundTerm pc)
+                                (idx.Keys ??= new()).Add((pc.Functor, pc.Args.Length));
+                            else if (pat is AtomTerm pa)
+                                (idx.Keys ??= new()).Add((pa.Name, 0));
+                            else idx.AnyMatch = true;   // `V = OtherVar` or not our var
+                            return false;               // decided (key or AnyMatch)
+                        default:
+                            idx.AnyMatch = true;        // opaque goal before the pattern
+                            return false;
+                    }
+                }
+            default:
+                idx.AnyMatch = true;   // exotic first arg (number literal, ...)
+                return;
+        }
+    }
+
     // The Prolog term_expansion/2 hook: call the user predicate
     // `term_expansion(Input, Expanded)` in the live engine (works mid-consult) and
     // return its expansion. A term_expansion result that is a PROPER LIST is a list
@@ -143,6 +255,12 @@ public sealed partial class PrologEngine
     // inputs) when the hook is undefined or fails for this term.
     private bool TryPrologTermExpansion6(Term input, Term ids, out Term output, out Term newIds)
     {
+        if (!HookIndex(TermExpansion6Fid, ref _te6Idx).CouldMatch(input))
+        {
+            output = input;
+            newIds = ids;
+            return false;
+        }
         var inputVars = new HashSet<string>();
         CollectVarNames(input, inputVars);
         var termVar = new VarTerm("$TE6_Term");
@@ -169,6 +287,7 @@ public sealed partial class PrologEngine
     // undefined or fails for this term.
     private bool TryPrologTermExpansionOnce(Term input, List<Term> output)
     {
+        if (!HookIndex(TermExpansionFid, ref _teIdx).CouldMatch(input)) return false;
         var inputVars = new HashSet<string>();
         CollectVarNames(input, inputVars);
         var expandedVar = new VarTerm("$TE_Expanded");
@@ -319,6 +438,11 @@ public sealed partial class PrologEngine
     // single replacement goal.
     private bool TryPrologGoalExpansion(Term input, out Term expanded)
     {
+        if (!HookIndex(GoalExpansionFid, ref _geIdx).CouldMatch(input))
+        {
+            expanded = input;
+            return false;
+        }
         var inputVars = new HashSet<string>();
         CollectVarNames(input, inputVars);
         var v = new VarTerm("$GE_Expanded");

@@ -204,11 +204,16 @@ internal sealed class ConsultPipeline
     // compiles ONCE (first QueryAll) and is dispatched per clause — no per-clause
     // recompile. Only rebuilds + invalidates when something actually expanded.
     private void ReExpandInFileHooks(ModuleManifest manifest, int baseOffset, int count,
-        HashSet<int>? pendingDiscontiguous)
+        HashSet<int>? pendingDiscontiguous, int firstHookIndex, bool inFileGoalHooks)
     {
         bool hasTermExp = E.HasTermExpansions || E.HasPrologTermExpansion
             || E.HasPrologTermExpansion6;
-        bool hasGoalExp = E.HasGoalExpansions || E.HasPrologGoalExpansion;
+        // Re-applying goal_expansion is only needed when THIS file defined
+        // goal_expansion clauses: for a pass-through clause the main loop
+        // already applied every hook that was live then, and no new goal hook
+        // means the re-apply is a no-op by construction — skip its QueryAlls.
+        bool hasGoalExp = inFileGoalHooks
+            && (E.HasGoalExpansions || E.HasPrologGoalExpansion);
         if (!hasTermExp && !hasGoalExp) return;
 
         var rebuilt = new List<Clause>(count);
@@ -218,7 +223,11 @@ internal sealed class ConsultPipeline
             for (int local = 0; local < count; local++)
             {
                 Clause c = manifest.Clauses[baseOffset + local];
-                if (c.Kind == ClauseKind.DcgRule)   // `-->` is core (DcgTransform)
+                // A clause at or before the FIRST in-file hook cannot be
+                // affected: every in-file hook is order-guarded to fire only
+                // for clauses after its own position.
+                if (local <= firstHookIndex
+                    || c.Kind == ClauseKind.DcgRule)   // `-->` is core (DcgTransform)
                 {
                     rebuilt.Add(c);
                     continue;
@@ -273,6 +282,7 @@ internal sealed class ConsultPipeline
         E._skipCompileMergedCache = null;
         E._staticLink = null;
         E._staticHeadFunctorsCache = null;
+        E._hookIndexValid = false;   // hook discriminator index reads the same clauses
         if (E._liveConsultEngine is null) E.InvalidatePersistent();
     }
 
@@ -983,9 +993,22 @@ internal sealed class ConsultPipeline
         // clauses (a grammar operator like clpz's `++>`, all sharing one head
         // functor) look discontiguous now but become their real, contiguous heads
         // after the re-expansion pass. Defer the contiguity check to then.
-        bool inFileHooks = false;
-        foreach (var c in clauses)
-            if (IsHookClauseHead(c)) { inFileHooks = true; break; }
+        // firstHookIndex / goal-hook split feed the re-expansion pass: clauses
+        // BEFORE the first in-file hook can't be affected by it (order guard),
+        // and the goal_expansion re-apply is needed only when THIS file added
+        // goal_expansion clauses.
+        bool inFileHooks = false, inFileGoalHooks = false;
+        int firstHookIndex = int.MaxValue;
+        for (int ci = 0; ci < clauses.Count; ci++)
+        {
+            if (!IsHookClauseHead(clauses[ci])) continue;
+            inFileHooks = true;
+            if (ci < firstHookIndex) firstHookIndex = ci;
+            Term hh = clauses[ci].Kind == ClauseKind.Rule
+                && clauses[ci].Term is CompoundTerm { Functor: ":-", Args: [var hcHead, _] }
+                ? hcHead : clauses[ci].Term;
+            if (hh is CompoundTerm { Functor: "goal_expansion" }) inFileGoalHooks = true;
+        }
         if (!inFileHooks)
             ValidateContiguity(clauses, pendingDiscontiguous);
 
@@ -1270,6 +1293,7 @@ internal sealed class ConsultPipeline
         // New static clauses just landed in E._modules — drop the head-functor
         // cache so HasPredicate / predicate_property/2 sees them.
         E._staticHeadFunctorsCache = null;
+        E._hookIndexValid = false;   // hook discriminator index reads the same clauses
 
         // Consult-cache invalidation. A directive that runs as a goal (an
         // unrecognised `:- G`, e.g. `:- meta_predicate(...)`) or a NESTED
@@ -1351,7 +1375,7 @@ internal sealed class ConsultPipeline
         // consult — see ReExpandInFileHooks for how it isolates that state.
         if (inFileHooks)
             ReExpandInFileHooks(committedManifest, consultBaseOffset, clauses.Count,
-                pendingDiscontiguous);
+                pendingDiscontiguous, firstHookIndex, inFileGoalHooks);
 
         // ISO §7.4.2 general goal directives run now, after the batch commit
         // and in source order — before initialization/1 (§7.4.2.7), which ISO

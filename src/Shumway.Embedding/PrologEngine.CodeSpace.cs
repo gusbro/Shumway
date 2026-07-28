@@ -255,6 +255,9 @@ public sealed partial class PrologEngine
         // reads this host-lifetime set (shared into every per-query engine),
         // so the fallback path takes over from the very next clause entry.
         _mutatedDynamicFids.Add(functorId);
+        // An asserted/retracted expansion hook changes what the discriminator
+        // index may skip.
+        if (IsGlobalHookFunctor(functorId)) _hookIndexValid = false;
         // the functor's clause list changed, so its cached
         // transformed/rewritten clauses are stale too.
         _dynamicRewriteCache.Remove(functorId);

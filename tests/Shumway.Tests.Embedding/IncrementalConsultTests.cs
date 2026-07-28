@@ -299,6 +299,44 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void BodyUnificationHook_StillFires_UnderTheDiscriminatorIndex()
+    {
+        // The Scryer hook idiom: a var head narrowed by a body unification.
+        // The discriminator index extracts `special/1` from `T0 = special(A)`
+        // and must still RUN the hook for a matching term (and keep, unharmed,
+        // terms the index skips — the numeric fact and other(b)).
+        var e = new PrologEngine();
+        e.ConsultString(
+            "term_expansion(T0, done(A)) :- nonvar(T0), T0 = special(A).\n" +
+            "special(a).\n" +
+            "other(b).\n" +
+            "num(42).");
+        Assert.True(e.Query("done(a).").Success);       // matched + expanded
+        // Expanded away entirely: special/1 no longer exists (a bare call
+        // would raise existence_error under the default unknown=error).
+        Assert.False(e.Query("current_predicate(special/1).").Success);
+        Assert.True(e.Query("other(b).").Success);      // skipped by index, kept
+        Assert.True(e.Query("num(42).").Success);       // number arg, kept
+    }
+
+    [Fact]
+    public void OpaqueHookClause_MakesTheFamilyAnyMatch_NothingIsWronglySkipped()
+    {
+        // One analyzable clause + one the analysis can't see through (its body
+        // starts with an opaque call). The family must fall back to always-try:
+        // the opaque hook still fires for the shape only IT accepts.
+        var e = new PrologEngine();
+        e.ConsultString(
+            "term_expansion(T0, done1(A)) :- nonvar(T0), T0 = alpha(A).\n" +
+            "term_expansion(T0, done2(A)) :- match_beta(T0, A).\n" +
+            "match_beta(beta(A), A).\n" +
+            "alpha(x).\n" +
+            "beta(y).");
+        Assert.True(e.Query("done1(x).").Success);
+        Assert.True(e.Query("done2(y).").Success);
+    }
+
+    [Fact]
     public void OpDirective_StillAppliesToLaterClauses()
     {
         // The baseline the others generalise — a plain `:- op` from that point on.
