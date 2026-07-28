@@ -1428,8 +1428,10 @@ public sealed partial class PrologEngine
         // interpreter; the new-key assertz path swaps entries in place
         // and the interpreter sees the update on the next dispatch
         // because it reads through the list reference each time.
-        var mutableSwitchTables =
-            new List<Shumway.Core.SwitchTable>(linkResult.SwitchTables);
+        // mergedSwitchTables is already a fresh per-query list (built in the
+        // merge step above and aliased into linkResult) — reuse it instead of
+        // copying it a second time.
+        var mutableSwitchTables = mergedSwitchTables;
         engine.SwitchTables = mutableSwitchTables;
         engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
         // ISO number_chars/number_codes fall back to the full term reader for the
@@ -1784,8 +1786,16 @@ public sealed partial class PrologEngine
     internal static long PackImportKey(int moduleAtomId, int bareFunctorId) =>
         ((long)moduleAtomId << 32) | (uint)bareFunctorId;
 
+    // Cached per derivation generation — imports only change with a consult,
+    // but this ran per QUERY, string-interning module + "$" + name for every
+    // import of every module each time (a visible slice of warm setup on a
+    // many-module load like the Scryer clpz chain).
+    private IReadOnlyDictionary<long, int>? _runtimeImportMapCache;
+    private int _runtimeImportMapGen = -1;
+
     private IReadOnlyDictionary<long, int>? BuildRuntimeImportMap()
     {
+        if (_runtimeImportMapGen == _derivationGen) return _runtimeImportMapCache;
         Dictionary<long, int>? map = null;
         foreach (var (name, manifest) in _modules)
         {
@@ -1801,6 +1811,8 @@ public sealed partial class PrologEngine
                 (map ??= new())[PackImportKey(moduleAtomId, bareFid)] = mangledSourceFid;
             }
         }
+        _runtimeImportMapCache = map;
+        _runtimeImportMapGen = _derivationGen;
         return map;
     }
 
