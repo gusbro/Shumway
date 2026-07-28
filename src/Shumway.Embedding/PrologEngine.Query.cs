@@ -516,6 +516,71 @@ public sealed partial class PrologEngine
         // module declarations rather than at the bytecode that wouldn't link.
         ValidatePublicUniqueness();
 
+        // JIT indexing: a dynamic predicate compiles
+        // unindexed until its runtime call count crosses the JIT
+        // threshold. A cold-but-now-hot predicate (or vice versa) has
+        // a stale cached compile at the wrong indexing level — drop it
+        // so ModuleCompiler rebuilds it (the drop bumps _programStamp,
+        // so the compiled program product below rebuilds too — which is
+        // why this loop runs BEFORE the product validity check). The
+        // unindexed set then names every dynamic functor still below
+        // the threshold.
+        var unindexedFunctors = new HashSet<int>();
+        bool anyHotnessFlip = false;
+        foreach (int fid in _dynStore.Functors)
+        {
+            if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
+            {
+                // route through the drop helper so the merged
+                // skip-compile cache stays in step.
+                DropDynamicPredicateCacheEntry(fid);
+                anyHotnessFlip = true;
+            }
+            if (!_jitIndexProfile.IsHot(fid))
+                unindexedFunctors.Add(fid);
+        }
+        foreach (int fid in _dynStore.ClauseFunctors)
+        {
+            if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
+            {
+                DropDynamicPredicateCacheEntry(fid);
+                anyHotnessFlip = true;
+            }
+            if (!_jitIndexProfile.IsHot(fid))
+                unindexedFunctors.Add(fid);
+        }
+        // a cold→hot transition needs the persistent buffer
+        // rebuilt so the JIT-promoted indexed compilation actually
+        // takes effect at runtime — without this the cache holds the
+        // indexed form but the live dispatch still runs the chain
+        // emitted at predicate-cold time.
+        if (anyHotnessFlip) InvalidatePersistent();
+
+        // Pre-compute the fail-stub address — it sits at the end of the
+        // launcher prefix, at offset Call(9) + Halt(1) = 10. Both compiles
+        // below (program product and query overlay) need it so dynamic
+        // predicates emit their last-clause chain instruction with the
+        // absolute target.
+        int failStubAddr =
+            OpcodeTable.Get(Opcode.Call).Size + OpcodeTable.Get(Opcode.Halt).Size;
+
+        // ---- compiled program product ----
+        // Everything below up to (and including) the region partition is a
+        // pure function of the PROGRAM (static + dynamic clauses), not of the
+        // query: compile it once and reuse it until the program changes. The
+        // per-query work is then only the synthetic __query__ clause — the
+        // "small bootstrap" — instead of an O(program) re-walk per query.
+        var product = _programProduct;
+        if (product is not null
+            && (product.DerivationGen != _derivationGen
+                || product.ProgramStamp != _programStamp
+                || !ReferenceEquals(product.StaticLinkRef, _staticLink)
+                || product.EmitDebugInfo != _flags.EmitDebugInfo
+                || product.DebugCodegen != _flags.DebugCodegen))
+            product = null;
+        if (product is null)
+        {
+
         // Apply DCG → clause and meta-call (\+ / not) transforms per module,
         // then mangle local functors so each module ends up with its own
         // private namespace. The synthetic query clause is transformed and
@@ -754,79 +819,6 @@ public sealed partial class PrologEngine
         // head fids of allRewritten at this point, stubs included.)
         var cacheableFunctors = rewrittenHeadFids;
 
-        // Synthetic query clause — rewrite in the user module's context, but
-        // with userLocalsCache (which doesn't include __query__) so the
-        // head functor remains bare. the stub's synthesized helpers
-        // use the reserved `$q` namespace: they are rewritten under the SAME
-        // user-module mangling as the consulted clauses' helpers, so without
-        // the prefix a stub `$disj_1` collides with a consulted `$disj_1`
-        // (the helper-name-collision latent bug). `$q` names are reused
-        // query-to-query, keeping the atom space bounded.
-        {
-            var prevPrefix = Shumway.Compiler.Parsing.MetaTransform.HelperPrefix;
-            Shumway.Compiler.Parsing.MetaTransform.HelperPrefix = "$q";
-            List<Clause> queryTransformed;
-            try
-            {
-                queryTransformed = PhraseTransform.Apply(
-                    MetaTransform.Apply(
-                        DcgTransform.Apply(new[] { syntheticClause })));
-            }
-            finally
-            {
-                Shumway.Compiler.Parsing.MetaTransform.HelperPrefix = prevPrefix;
-            }
-            // ADR-038 — resolve the query goal through the user module's import
-            // table too, so a REPL `?- use_module(library(X))` then a bare call
-            // to an imported predicate resolves to Source$name.
-            var ctx = _modules.TryGetValue(DefaultModuleName, out var userManifest)
-                ? new ModuleRewrite.Context(
-                    DefaultModuleName, userLocalsCache ?? new HashSet<int>(),
-                    _dynStore.Functors, userManifest.Imports)
-                : new ModuleRewrite.Context(
-                    DefaultModuleName, userLocalsCache ?? new HashSet<int>(),
-                    _dynStore.Functors);
-            foreach (var clause in queryTransformed)
-                allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
-        }
-
-        // JIT indexing: a dynamic predicate compiles
-        // unindexed until its runtime call count crosses the JIT
-        // threshold. A cold-but-now-hot predicate (or vice versa) has
-        // a stale cached compile at the wrong indexing level — drop it
-        // so ModuleCompiler rebuilds it. The unindexed set then names
-        // every dynamic functor still below the threshold.
-        var unindexedFunctors = new HashSet<int>();
-        bool anyHotnessFlip = false;
-        foreach (int fid in _dynStore.Functors)
-        {
-            if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
-            {
-                // route through the drop helper so the merged
-                // skip-compile cache stays in step.
-                DropDynamicPredicateCacheEntry(fid);
-                anyHotnessFlip = true;
-            }
-            if (!_jitIndexProfile.IsHot(fid))
-                unindexedFunctors.Add(fid);
-        }
-        foreach (int fid in _dynStore.ClauseFunctors)
-        {
-            if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
-            {
-                DropDynamicPredicateCacheEntry(fid);
-                anyHotnessFlip = true;
-            }
-            if (!_jitIndexProfile.IsHot(fid))
-                unindexedFunctors.Add(fid);
-        }
-        // a cold→hot transition needs the persistent buffer
-        // rebuilt so the JIT-promoted indexed compilation actually
-        // takes effect at runtime — without this the cache holds the
-        // indexed form but the live dispatch still runs the chain
-        // emitted at predicate-cold time.
-        if (anyHotnessFlip) InvalidatePersistent();
-
         // Skip-compile cache. Two contributors live here:
         //   - Bundle skip-compile: populated by LoadBundle from
         //     a bundle's compiled bytecode blob.
@@ -861,8 +853,6 @@ public sealed partial class PrologEngine
         // launcher prefix, at offset Call(9) + Halt(1) = 10. We need it
         // available to the compiler so dynamic predicates emit their
         // last-clause chain instruction with the absolute target.
-        int failStubAddr =
-            OpcodeTable.Get(Opcode.Call).Size + OpcodeTable.Get(Opcode.Halt).Size;
         var module = new ModuleCompiler
         {
             EmitDebugInfo = _flags.EmitDebugInfo,
@@ -908,55 +898,25 @@ public sealed partial class PrologEngine
             }
         }
 
-        var launcher = new BytecodeEmitter();
-        int callPos = launcher.Position;
-        launcher.EmitCall(targetAddress: 0, numLivePermanents: 0);
-        launcher.EmitHalt();
-        // ADR-015 chunk C step 4: a fail-stub at a known offset in the
-        // prefix. Dynamic predicates' last-clause chain instructions point
-        // here via `retry_me_else <fail-stub>` (instead of trust_me) so a
-        // future assertz can patch the operand in place. retry_me_else
-        // does not remove the CP, so the stub itself runs trust_me first
-        // to pop the dynamic predicate's chain CP — otherwise backtracking
-        // would loop right back to this fail-stub forever. Then
-        // call_builtin fail/0 returns false and the interpreter resumes
-        // backtracking at whatever caller-side CP survives.
-        // The compiler was already told this address (Compile call above);
-        // assert the launcher's position agrees.
-        if (launcher.Position != failStubAddr)
-            throw new InvalidOperationException(
-                $"launcher position {launcher.Position} != pre-computed fail-stub addr {failStubAddr}");
-        launcher.EmitTrustMe();
-        int failFunctorId = FunctorTable.Intern(
-            AtomTable.Intern("fail", permanent: true).Id, 0);
-        if (!Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(
-            failFunctorId, out int failBuiltinId))
-            throw new InvalidOperationException(
-                "fail/0 builtin must be registered for ADR-015 dynamic dispatch.");
-        launcher.EmitCallBuiltin(failBuiltinId, numLivePermanents: 0);
-        byte[] prefix = launcher.ToBytes();
-
         // --- ADR-015 chunk B + persistent code space -------
-        // Partition the compiled predicates into three regions:
+        // Partition the compiled PROGRAM predicates into two regions:
         //   * static  — cacheable + non-dynamic, linked once.
         //   * dynamic — cacheable + dynamic, linked once into the
         //     persistent buffer; mutated in place by
         //     assertz / retract / abolish across queries.
-        //   * query   — non-cacheable (the synthetic __query__ clause
-        //     plus catch/disjunction/negation helpers). Linked per
-        //     query at a high-address overlay so persistent can grow
-        //     mid-query without colliding with query addresses.
-        var staticPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
-        var dynamicPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
-        var queryPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
+        // (The query overlay — the synthetic __query__ clause plus its $q
+        // helpers — is compiled per query, after this product block.)
+        var pStatic = new List<Shumway.Compiler.Wam.CompiledPredicate>();
+        var pDynamic = new List<Shumway.Compiler.Wam.CompiledPredicate>();
+        var pExtraQuery = new List<Shumway.Compiler.Wam.CompiledPredicate>();
         var addedFids = new HashSet<int>();
         foreach (var pred in module.Predicates)
         {
             bool isCacheable = cacheableFunctors.Contains(pred.FunctorId);
             bool isDynamic = _dynStore.IsDynamic(pred.FunctorId);
-            if (isCacheable && !isDynamic) staticPreds.Add(pred);
-            else if (isCacheable && isDynamic) dynamicPreds.Add(pred);
-            else queryPreds.Add(pred);
+            if (isCacheable && !isDynamic) pStatic.Add(pred);
+            else if (isCacheable && isDynamic) pDynamic.Add(pred);
+            else pExtraQuery.Add(pred);
             addedFids.Add(pred.FunctorId);
         }
         // source-less bundle predicates are already
@@ -973,14 +933,10 @@ public sealed partial class PrologEngine
         {
             if (!addedFids.Add(fid)) continue;
             bool isDynamic = _dynStore.IsDynamic(fid);
-            if (!isDynamic) staticPreds.Add(pred);
-            else dynamicPreds.Add(pred);
+            if (!isDynamic) pStatic.Add(pred);
+            else pDynamic.Add(pred);
         }
 
-        // The static region links once at a fixed load offset (the prefix
-        // length never varies) and is reused until the static program
-        // changes — ConsultString / a bundle load null _staticLink.
-        //
         // A compiled predicate must NEVER be silently dropped: when the static
         // link is REUSED, any static-classified predicate absent from it (a
         // MetaTransform helper freshly minted by a dynamic recompile — the
@@ -993,16 +949,149 @@ public sealed partial class PrologEngine
         // under IL promotion.
         if (_staticLink is { } cachedStatic)
         {
-            for (int i = staticPreds.Count - 1; i >= 0; i--)
+            for (int i = pStatic.Count - 1; i >= 0; i--)
             {
-                if (cachedStatic.Addresses.ContainsKey(staticPreds[i].FunctorId))
+                if (cachedStatic.Addresses.ContainsKey(pStatic[i].FunctorId))
                     continue;
-                queryPreds.Add(staticPreds[i]);
-                staticPreds.RemoveAt(i);
+                pExtraQuery.Add(pStatic[i]);
+                pStatic.RemoveAt(i);
             }
         }
+
+        // Cache freshly-compiled static predicates. A predicate
+        // is cacheable only if its functor headed a clause in the static +
+        // dynamic program (cacheableFunctors) — that excludes every
+        // query-derived auxiliary — and it is not dynamic. The literal-pool
+        // reusability guard is the same one the dynamic cache uses.
+        foreach (var pred in module.Predicates)
+        {
+            int fid = pred.FunctorId;
+            if (!cacheableFunctors.Contains(fid) || _dynStore.IsDynamic(fid)) continue;
+            if (_staticPredicateCache.ContainsKey(fid)) continue;
+            if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
+            {
+                _staticPredicateCache[fid] = pred;
+                // mirror into the merged skip-compile cache.
+                // Dynamic entries take precedence in the merge; a fid here
+                // is never in the dynamic cache (it isn't in
+                // _dynStore.Functors, and abolish drops cache entries when
+                // a functor leaves the dynamic set), but keep the guard
+                // so the precedence is structural rather than assumed.
+                if (_skipCompileMergedCache is not null
+                    && !_dynamicPredicateCache.ContainsKey(fid))
+                    _skipCompileMergedCache[fid] = pred;
+            }
+        }
+
+        product = _programProduct = new CompiledProgramProduct
+        {
+            DerivationGen = _derivationGen,
+            ProgramStamp = _programStamp,
+            EmitDebugInfo = _flags.EmitDebugInfo,
+            DebugCodegen = _flags.DebugCodegen,
+            StaticLinkRef = _staticLink,
+            StaticPreds = pStatic,
+            DynamicPreds = pDynamic,
+            ExtraQueryPreds = pExtraQuery,
+            CacheableFunctors = cacheableFunctors,
+        };
+        }   // ---- end compiled-program-product build ----
+
+        // ---- per-query small bootstrap ----
+        // Synthetic query clause — rewrite in the user module's context, but
+        // with the user locals (which don't include __query__) so the
+        // head functor remains bare. the stub's synthesized helpers
+        // use the reserved `$q` namespace: they are rewritten under the SAME
+        // user-module mangling as the consulted clauses' helpers, so without
+        // the prefix a stub `$disj_1` collides with a consulted `$disj_1`
+        // (the helper-name-collision latent bug). `$q` names are reused
+        // query-to-query, keeping the atom space bounded.
+        List<Clause> queryClauses;
+        {
+            var prevPrefix = Shumway.Compiler.Parsing.MetaTransform.HelperPrefix;
+            Shumway.Compiler.Parsing.MetaTransform.HelperPrefix = "$q";
+            List<Clause> queryTransformed;
+            try
+            {
+                queryTransformed = PhraseTransform.Apply(
+                    MetaTransform.Apply(
+                        DcgTransform.Apply(new[] { syntheticClause })));
+            }
+            finally
+            {
+                Shumway.Compiler.Parsing.MetaTransform.HelperPrefix = prevPrefix;
+            }
+            // ADR-038 — resolve the query goal through the user module's import
+            // table too, so a REPL `?- use_module(library(X))` then a bare call
+            // to an imported predicate resolves to Source$name.
+            var userLocals = _staticRewriteUserLocals ?? new HashSet<int>();
+            var ctx = _modules.TryGetValue(DefaultModuleName, out var userManifest)
+                ? new ModuleRewrite.Context(
+                    DefaultModuleName, userLocals,
+                    _dynStore.Functors, userManifest.Imports)
+                : new ModuleRewrite.Context(
+                    DefaultModuleName, userLocals,
+                    _dynStore.Functors);
+            queryClauses = new List<Clause>(queryTransformed.Count);
+            foreach (var clause in queryTransformed)
+                queryClauses.Add(ModuleRewrite.Rewrite(clause, ctx));
+        }
+
+        // Compile ONLY the query clauses (against the shared literal pools and
+        // the same fail-stub address); everything else comes from the product.
+        var queryModule = new ModuleCompiler
+        {
+            EmitDebugInfo = _flags.EmitDebugInfo,
+            DebugCodegen = _flags.DebugCodegen,               // ADR-035
+            DebugFileId = _debugFileId,                      // ADR-035
+            NonDebuggableFunctors = _nonDebuggableFunctors,  // ADR-035
+            ElideRedundantCuts = _flags.ElideRedundantCuts,   // ADR-030
+        }.Compile(
+            queryClauses, cache: null, unindexedFunctors, _literalPools,
+            dynamicFunctors: _dynStore.Functors, failStubAddr: failStubAddr);
+        RegisterLateHelpers(queryModule.Predicates);
+
+        var staticPreds = product.StaticPreds;
+        var dynamicPreds = product.DynamicPreds;
+        var queryPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>(
+            product.ExtraQueryPreds.Count + queryModule.Predicates.Count);
+        queryPreds.AddRange(product.ExtraQueryPreds);
+        queryPreds.AddRange(queryModule.Predicates);
+
+        var launcher = new BytecodeEmitter();
+        int callPos = launcher.Position;
+        launcher.EmitCall(targetAddress: 0, numLivePermanents: 0);
+        launcher.EmitHalt();
+        // ADR-015 chunk C step 4: a fail-stub at a known offset in the
+        // prefix. Dynamic predicates' last-clause chain instructions point
+        // here via `retry_me_else <fail-stub>` (instead of trust_me) so a
+        // future assertz can patch the operand in place. retry_me_else
+        // does not remove the CP, so the stub itself runs trust_me first
+        // to pop the dynamic predicate's chain CP — otherwise backtracking
+        // would loop right back to this fail-stub forever. Then
+        // call_builtin fail/0 returns false and the interpreter resumes
+        // backtracking at whatever caller-side CP survives.
+        // The compilers were already told this address (failStubAddr above);
+        // assert the launcher's position agrees.
+        if (launcher.Position != failStubAddr)
+            throw new InvalidOperationException(
+                $"launcher position {launcher.Position} != pre-computed fail-stub addr {failStubAddr}");
+        launcher.EmitTrustMe();
+        int failFunctorId = FunctorTable.Intern(
+            AtomTable.Intern("fail", permanent: true).Id, 0);
+        if (!Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(
+            failFunctorId, out int failBuiltinId))
+            throw new InvalidOperationException(
+                "fail/0 builtin must be registered for ADR-015 dynamic dispatch.");
+        launcher.EmitCallBuiltin(failBuiltinId, numLivePermanents: 0);
+        byte[] prefix = launcher.ToBytes();
+
         var staticLink = _staticLink
             ?? (_staticLink = GetOrLinkStatic(staticPreds, prefix.Length));
+        // The product built before any static link existed patches its
+        // reference to the one just built — they are consistent by
+        // construction (the link was made from the product's StaticPreds).
+        product.StaticLinkRef ??= _staticLink;
 
         // Dynamic region: linked once into the persistent buffer.
         // Mid-query assertz extends in place; only a change to the
@@ -1152,31 +1241,8 @@ public sealed partial class PrologEngine
         var programView = new Shumway.Core.ProgramView(
             _persistentProgram!, queryBytes, _querySplit);
 
-        // Cache freshly-compiled static predicates. A predicate
-        // is cacheable only if its functor headed a clause in the static +
-        // dynamic program (cacheableFunctors) — that excludes the
-        // __query__ clause and every query-derived auxiliary — and it is
-        // not dynamic. The literal-pool reusability guard is the same one
-        // the dynamic cache uses.
-        foreach (var pred in module.Predicates)
-        {
-            int fid = pred.FunctorId;
-            if (!cacheableFunctors.Contains(fid) || _dynStore.IsDynamic(fid)) continue;
-            if (_staticPredicateCache.ContainsKey(fid)) continue;
-            if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
-            {
-                _staticPredicateCache[fid] = pred;
-                // mirror into the merged skip-compile cache.
-                // Dynamic entries take precedence in the merge; a fid here
-                // is never in the dynamic cache (it isn't in
-                // _dynStore.Functors, and abolish drops cache entries when
-                // a functor leaves the dynamic set), but keep the guard
-                // so the precedence is structural rather than assumed.
-                if (_skipCompileMergedCache is not null
-                    && !_dynamicPredicateCache.ContainsKey(fid))
-                    _skipCompileMergedCache[fid] = pred;
-            }
-        }
+        // (Static-predicate caching runs at product build, inside the
+        // compiled-program-product block above.)
 
         // Runtime call/1 dispatches a goal by its bare functor,
         // but a module-local predicate is linked under its mangled
@@ -1268,7 +1334,7 @@ public sealed partial class PrologEngine
             // String literal pool for IL-emitted get_pstr/put_pstr
             // and the linked program byte array for the
             // IL Call re-entry helper.
-            CurrentStringLiterals = module.StringLiterals,
+            CurrentStringLiterals = queryModule.StringLiterals,
             CurrentProgram = program,
             // ADR-015 — bytecode-level dynamic dispatch reads the
             // host's generation at every enter_dynamic opcode
@@ -1328,8 +1394,8 @@ public sealed partial class PrologEngine
         MetaBuiltins.WireNumberFromChars(engine);
 
         var interp = new BytecodeInterpreter(
-            engine, module.StringLiterals, module.FloatLiterals,
-            mutableSwitchTables, module.BigIntLiterals);
+            engine, queryModule.StringLiterals, queryModule.FloatLiterals,
+            mutableSwitchTables, queryModule.BigIntLiterals);
 
         // --strip-wam: register each persisted dispatch graph onto this query's
         // fresh engine, so a stripped indexed predicate resolves its entry clause
@@ -1365,9 +1431,9 @@ public sealed partial class PrologEngine
         // engine (see _interpPoolCounts).
         _interpPoolCounts.AddOrUpdate(engine, new[]
         {
-            module.StringLiterals.Count,
-            module.FloatLiterals.Count,
-            module.BigIntLiterals.Count,
+            queryModule.StringLiterals.Count,
+            queryModule.FloatLiterals.Count,
+            queryModule.BigIntLiterals.Count,
         });
 
         // lets a PrologRuntimeException thrown from a

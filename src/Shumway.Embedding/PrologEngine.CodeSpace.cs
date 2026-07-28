@@ -297,6 +297,8 @@ public sealed partial class PrologEngine
     /// JIT hotness-flip drops at query setup.</summary>
     internal void DropDynamicPredicateCacheEntry(int functorId)
     {
+        // The compiled program product embeds this functor's compile.
+        _programStamp++;
         _dynamicPredicateCache.Remove(functorId);
         var merged = _skipCompileMergedCache;
         if (merged is null) return;
@@ -429,6 +431,47 @@ public sealed partial class PrologEngine
     /// static bytecode, which ShmoCompiler mangled under the per-file
     /// module name.</summary>
     internal Dictionary<string, HashSet<int>>? _staticRewriteModuleLocals;
+
+    /// <summary>The compiled PROGRAM product: everything query setup derives
+    /// from the static + dynamic program alone — compiled predicates
+    /// partitioned into the ADR-015 static / dynamic regions, the rerouted
+    /// leftovers for the query overlay, and the cacheable-head set. A query
+    /// only ever ADDS the synthetic <c>__query__</c> clause (plus its
+    /// <c>$q</c> helpers) on top, so between program changes every query
+    /// reuses this instead of re-compiling / re-partitioning / re-probing
+    /// the whole program (the per-query cost scaled linearly with program
+    /// size — ~32 ms per trivial query at 5000 clauses). Validity:
+    /// <see cref="DerivationGen"/> (consults, abolish, functor-set changes),
+    /// <see cref="ProgramStamp"/> (per-functor dynamic mutations, JIT
+    /// hotness flips), reference-equality of the static link (every external
+    /// invalidation site nulls <c>_staticLink</c>), and the debug-codegen
+    /// flags.</summary>
+    internal sealed class CompiledProgramProduct
+    {
+        public required int DerivationGen;
+        public required int ProgramStamp;
+        public required bool EmitDebugInfo;
+        public required bool DebugCodegen;
+        /// <summary>The static link the reroute ran against (null when the
+        /// product was built before any static link existed; patched to the
+        /// freshly-built link by the setup that builds it).</summary>
+        public Shumway.Compiler.Wam.Linker.LinkResult? StaticLinkRef;
+        public required List<Shumway.Compiler.Wam.CompiledPredicate> StaticPreds;
+        public required List<Shumway.Compiler.Wam.CompiledPredicate> DynamicPreds;
+        /// <summary>Static-classified predicates absent from the cached
+        /// static link (fresh MetaTransform helpers of a recompiled dynamic
+        /// predicate) — linked into every query's overlay instead.</summary>
+        public required List<Shumway.Compiler.Wam.CompiledPredicate> ExtraQueryPreds;
+        public required HashSet<int> CacheableFunctors;
+    }
+
+    internal CompiledProgramProduct? _programProduct;
+
+    /// <summary>Bumped by every per-functor invalidation that does NOT move
+    /// <see cref="_derivationGen"/> (assertz / asserta / retract on an
+    /// existing dynamic functor, JIT hotness flips) — the compiled program
+    /// product contains that functor's compile and must rebuild.</summary>
+    internal int _programStamp;
 
     /// <summary>module attribution for dynamic predicates whose
     /// clauses came from a named module: bundle dynamic-seed rehydration
