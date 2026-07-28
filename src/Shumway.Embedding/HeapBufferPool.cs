@@ -30,24 +30,45 @@ namespace Shumway.Embedding;
 internal sealed class HeapBufferPool
 {
     private Cell[]? _pooledHeap;
+    private Cell[]? _pooledStack;
     private long _recentHeapUseCells;
     private const long FloorCells = 1L << 20;   // 8 MB — always OK to keep
 
-    /// <summary>Hands the pooled heap buffer (if any) to a fresh activation.
-    /// Must run before query setup materializes anything onto the heap.</summary>
+    // Match ActivationConfig's defaults: the query-setup path constructs its
+    // activations with TINY initial buffers (see PooledActivationConfig) and
+    // relies on Adopt to supply real ones — recycled when available, freshly
+    // allocated here otherwise. Allocating in Adopt instead of the activation
+    // constructor is the whole point: the constructor's 512 KB heap + 64 KB
+    // stack were zeroed per query and thrown away the moment a pooled buffer
+    // adopted over them.
+    private const int DefaultHeapCells = 65536;
+    private const int DefaultStackCells = 8192;
+    private const long StackKeepCapCells = 1L << 20;   // 8 MB stack cap
+
+    /// <summary>Hands the pooled heap + stack buffers to a fresh activation,
+    /// allocating defaults when the pool is empty. Must run before query setup
+    /// materializes anything onto the heap.</summary>
     public void Adopt(Activation activation)
     {
-        var buffer = _pooledHeap;
-        if (buffer is null) return;
+        var heap = _pooledHeap ?? new Cell[DefaultHeapCells];
         _pooledHeap = null;
-        activation.AdoptHeapBuffer(buffer);
+        activation.AdoptHeapBuffer(heap);
+        var stack = _pooledStack ?? new Cell[DefaultStackCells];
+        _pooledStack = null;
+        activation.AdoptStackBuffer(stack);
     }
 
-    /// <summary>Takes a dead activation's heap buffer back into the pool,
-    /// applying the decayed-peak retention policy. CellsAllocated (cumulative
-    /// allocations, capped at capacity) proxies the activation's usage.</summary>
+    /// <summary>Takes a dead activation's heap + stack buffers back into the
+    /// pool, applying the decayed-peak retention policy to the heap.
+    /// CellsAllocated (cumulative allocations, capped at capacity) proxies the
+    /// activation's usage.</summary>
     public void Return(Activation activation)
     {
+        var stack = activation.DetachStackBuffer();
+        if (stack.LongLength <= StackKeepCapCells
+            && (_pooledStack is null || _pooledStack.Length < stack.Length))
+            _pooledStack = stack;
+
         var buffer = activation.DetachHeapBuffer();
         long used = Math.Min(activation.CellsAllocated, buffer.LongLength);
         _recentHeapUseCells = Math.Max(used, _recentHeapUseCells / 2);

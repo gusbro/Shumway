@@ -104,6 +104,24 @@ public sealed partial class Activation
         return buffer;
     }
 
+    /// <summary>Stack-buffer pooling, mirroring <see cref="AdoptHeapBuffer"/>:
+    /// replaces the (deliberately tiny, see the pooled query-setup config)
+    /// constructor stack with a recycled buffer. Must run before the first
+    /// frame is pushed; a smaller-than-current buffer is ignored.</summary>
+    public void AdoptStackBuffer(Cell[] buffer)
+    {
+        if (buffer.Length < _stack.Length) return;
+        _stack = buffer;
+    }
+
+    /// <summary>Mirror of <see cref="DetachHeapBuffer"/> for the stack.</summary>
+    public Cell[] DetachStackBuffer()
+    {
+        var buffer = _stack;
+        _stack = System.Array.Empty<Cell>();
+        return buffer;
+    }
+
     // ----- Meta-call route cache -----
     //
     // Shared by the bytecode interpreter's DispatchCall and Tier-1's

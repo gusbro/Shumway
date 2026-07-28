@@ -472,6 +472,18 @@ public sealed partial class PrologEngine
         }
     }
 
+    /// <summary>Config for query-setup activations: TINY initial heap/stack —
+    /// <see cref="HeapBufferPool.Adopt"/> (called right after construction)
+    /// supplies the real buffers, recycled across activations or allocated at
+    /// default size when the pool is empty. The constructor's default-size
+    /// buffers were zeroed per query and immediately discarded on adoption
+    /// (~600 KB of pure allocation churn per QueryAll).</summary>
+    private static readonly Shumway.Core.ActivationConfig PooledActivationConfig = new()
+    {
+        InitialHeapSize = 16,
+        InitialStackSize = 16,
+    };
+
     private (Shumway.Core.ProgramView Program, List<string> VarNames, int[] VarHeapIndices,
              Shumway.Core.Activation Engine,
              BytecodeInterpreter Interp) SetupQueryFromTermUnderGateCore(Term queryTerm)
@@ -1337,7 +1349,7 @@ public sealed partial class PrologEngine
         if (LoadProfEnabled)
             ProfMergeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profMg0;
         long profAc0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
-        var engine = new Activation
+        var engine = new Activation(PooledActivationConfig)
         {
             Out = Out,
             Host = this,
