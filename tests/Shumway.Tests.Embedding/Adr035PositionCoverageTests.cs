@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Shumway.Embedding;
 using Xunit;
@@ -24,27 +25,41 @@ public class Adr035PositionCoverageTests
     private readonly ITestOutputHelper _log;
     public Adr035PositionCoverageTests(ITestOutputHelper log) => _log = log;
 
-    /// <summary>Consults <paramref name="program"/> in debug mode (the "&lt;string&gt;"
-    /// pseudo-file; line 1 is the flag directive, so the program's own lines start at 2)
-    /// and asserts each of <paramref name="stoppableLines"/> owns at least one stop site
-    /// ON that very line — no snapping, which is exactly how a dropped position hides.</summary>
+    /// <summary>Consults <paramref name="program"/> in debug mode (line 1 is the flag
+    /// directive, so the program's own lines start at 2) and asserts each of
+    /// <paramref name="stoppableLines"/> owns at least one stop site ON that very line —
+    /// no snapping, which is exactly how a dropped position hides. The program goes
+    /// through a UNIQUE temp file, never the shared "&lt;string&gt;" pseudo-file: the
+    /// site table is global and keyed (file, line), so with every test on
+    /// "&lt;string&gt;" a sibling's goal on the same line satisfied the assert and a
+    /// genuinely dropped position only surfaced when the test ran alone.</summary>
     private void AssertStoppable(string program, params int[] stoppableLines)
     {
-        var engine = new PrologEngine();
-        engine.ConsultString(":- set_prolog_flag(compile_mode, debug).\n" + program);
-        // Sites are interned into the global table when a query first links the compiled
-        // code; a trivial one forces it.
-        engine.QueryAll("true.").ToList();
+        string path = Path.Combine(Path.GetTempPath(),
+            "shumway_poscov_" + Guid.NewGuid().ToString("N") + ".pl");
+        File.WriteAllText(path, ":- set_prolog_flag(compile_mode, debug).\n" + program);
+        try
+        {
+            var engine = new PrologEngine();
+            engine.ConsultFile(path);
+            // Sites are interned into the global table when a query first links the
+            // compiled code; a trivial one forces it.
+            engine.QueryAll("true.").ToList();
 
-        int fileId = Shumway.Core.DebugSiteTable.InternFile("<string>");
-        var missing = new List<int>();
-        foreach (int line in stoppableLines)
-            if (Shumway.Core.DebugSiteTable.SitesOnLine(fileId, line).Count == 0)
-                missing.Add(line);
+            int fileId = Shumway.Core.DebugSiteTable.InternFile(path);
+            var missing = new List<int>();
+            foreach (int line in stoppableLines)
+                if (Shumway.Core.DebugSiteTable.SitesOnLine(fileId, line).Count == 0)
+                    missing.Add(line);
 
-        if (missing.Count > 0)
-            _log.WriteLine("lines without a stop site: " + string.Join(", ", missing));
-        Assert.Empty(missing);
+            if (missing.Count > 0)
+                _log.WriteLine("lines without a stop site: " + string.Join(", ", missing));
+            Assert.Empty(missing);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]
@@ -82,16 +97,18 @@ public class Adr035PositionCoverageTests
         3, 4, 5, 6, 7);
 
     [Fact]
-    public void DcgHeadArgDefers_LandOnTheHeadLine() => AssertStoppable(
-        // A compound head arg is deferred into a body `=` goal: it belongs to the head's
-        // line (2), where the user wrote it. The body goals sit on OTHER lines, so line 2
-        // is stoppable only if the defer goal kept the head's position.
+    public void DcgCompoundHeadArg_BodyLinesStayStoppable() => AssertStoppable(
+        // Under debug codegen the fail-fast lowering (leading-terminal hoist +
+        // compound-head-arg defer) is OFF: the compound arg stays in the head
+        // (no body goal, so line 2 binds forward like any rule head — see
+        // AHitNamesTheBreakpointTheUserDrew) and the first terminal keeps its
+        // own body goal ON line 3 — the site the hoist used to erase.
         //  2: g(f(X)) -->
         //  3:     [a],
         //  4:     nt(X).
         //  5: nt(1) --> [n].
         "g(f(X)) -->\n    [a],\n    nt(X).\nnt(1) --> [n].\n",
-        2, 3, 4);
+        3, 4);
 
     [Fact]
     public void DcgPushback_KeepsALineForTheLink() => AssertStoppable(

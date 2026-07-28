@@ -32,8 +32,12 @@ public static class ClausePipeline
     /// <param name="helperPrefix">Reserved namespace for the QUERY
     /// stub's helpers (<c>$q</c>): names are reused query-to-query (bounded atom
     /// space) and can never collide with consult-time helper names.</param>
+    /// <param name="dcgFailFast">Enables the DCG leading-terminal hoist. Debug
+    /// codegen passes false — the hoist erases the first terminal's body goal
+    /// and with it that line's debug stop site (ADR-035 position coverage).</param>
     public static List<Clause> Apply(IEnumerable<Clause> clauses, ModeTable modes,
-        bool inlineIte = false, Func<int>? helperIdProvider = null, string? helperPrefix = null)
+        bool inlineIte = false, Func<int>? helperIdProvider = null, string? helperPrefix = null,
+        bool dcgFailFast = true)
     {
         ArgumentNullException.ThrowIfNull(clauses);
         ArgumentNullException.ThrowIfNull(modes);
@@ -48,7 +52,7 @@ public static class ClausePipeline
             return ModeSpecializationTransform.Apply(
                 PhraseTransform.Apply(
                     MetaTransform.Apply(
-                        DcgTransform.Apply(clauses))),
+                        DcgTransform.Apply(clauses, dcgFailFast))),
                 modes);
         }
         finally

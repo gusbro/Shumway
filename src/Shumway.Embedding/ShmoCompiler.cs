@@ -571,7 +571,8 @@ public static class ShmoCompiler
         // helper bodies). The DIRECT-vs-META edge marking walks
         // preMeta; the call-graph EDGES still walk the fully
         // transformed clauses below, unchanged.
-        var preMeta = DcgTransform.Apply(MetaWrapperUnfold.Apply(staticInput));
+        var preMeta = DcgTransform.Apply(MetaWrapperUnfold.Apply(staticInput),
+            failFast: buildMode != ShmoBuildMode.Debuggable);
         var clauses = PhraseTransform.Apply(MetaTransform.Apply(preMeta));
 
         // module-wide DIRECT / META reference sets. A

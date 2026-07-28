@@ -1175,7 +1175,7 @@ public sealed partial class PrologEngine
             : MetaWrapperUnfold.Apply(newStaticClauses);
         var transformed = ClausePipeline.Apply(
             unfolded, Modes, inlineIte: EnableInlineIte,
-            helperIdProvider: NextMetaHelperId);
+            helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
         // Body-call mangling locals: the batch's own head functors. For a
         // self-contained consulted file (a Logtalk entity's scratch code)
         // these are exactly the predicates it defines; cross-batch calls
@@ -1528,7 +1528,7 @@ public sealed partial class PrologEngine
             // transformed clause is the asserted one; any MetaTransform
             // helper clauses (a body catch/3 → '$catchgoal_N'/'$catchrec_N',
             // a nested control construct → '$disj_N', ...) follow it.
-            var transformed = ClausePipeline.Apply(new[] { newClause }, Modes, helperIdProvider: NextMetaHelperId);
+            var transformed = ClausePipeline.Apply(new[] { newClause }, Modes, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
             if (transformed.Count == 0) return null;
             _assertDynCtx ??= new ModuleRewrite.Context(
                 DefaultModuleName, new HashSet<int>(), _dynStore.Functors);

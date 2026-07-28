@@ -710,7 +710,7 @@ public sealed partial class PrologEngine
                 var unfolded = (_flags.DebugCodegen && !opaqueModule)
                     ? manifest.Clauses
                     : MetaWrapperUnfold.Apply(manifest.Clauses);
-                var transformed = ClausePipeline.Apply(unfolded, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId);
+                var transformed = ClausePipeline.Apply(unfolded, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
 
                 var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
                 // fold in the bare local fids contributed by a
@@ -815,7 +815,7 @@ public sealed partial class PrologEngine
                             namedDynCtx[seedModule] = fidCtx;
                         }
                     }
-                    var transformed = ClausePipeline.Apply(clauses, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId);
+                    var transformed = ClausePipeline.Apply(clauses, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
                     var rewritten = new List<Clause>(transformed.Count);
                     foreach (var clause in transformed)
                         rewritten.Add(ModuleRewrite.Rewrite(clause, fidCtx));

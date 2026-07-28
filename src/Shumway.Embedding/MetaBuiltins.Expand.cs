@@ -22,7 +22,10 @@ public static partial class MetaBuiltins
             var clause = new Shumway.Compiler.Ast.Clause(
                 Shumway.Compiler.Ast.ClauseKind.DcgRule, input,
                 new Shumway.Compiler.Lexer.SourcePosition(0, 0, 0));
-            var transformed = Shumway.Compiler.Parsing.DcgTransform.Apply(new[] { clause });
+            // Mirror what a consult into THIS engine would produce (the
+            // fail-fast hoist is off under debug codegen).
+            bool failFast = (engine.Host as PrologEngine)?.Flags.DebugCodegen != true;
+            var transformed = Shumway.Compiler.Parsing.DcgTransform.Apply(new[] { clause }, failFast);
             result = transformed[0].Term;
         }
         else

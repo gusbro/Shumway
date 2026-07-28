@@ -37,7 +37,12 @@ namespace Shumway.Compiler.Parsing;
 /// </summary>
 public static class DcgTransform
 {
-    public static List<Clause> Apply(IEnumerable<Clause> clauses)
+    /// <summary><paramref name="failFast"/> gates the leading-terminal hoist +
+    /// compound-head-arg defer below. Debug codegen passes false: the hoist
+    /// ERASES the first terminal's body goal (it becomes head unification), so
+    /// its source line loses its debug stop site — the one transform outcome
+    /// ADR-035's position-coverage invariant forbids.</summary>
+    public static List<Clause> Apply(IEnumerable<Clause> clauses, bool failFast = true)
     {
         ArgumentNullException.ThrowIfNull(clauses);
         var result = new List<Clause>();
@@ -47,7 +52,7 @@ public static class DcgTransform
                 && clause.Term is CompoundTerm { Functor: "-->" } dcgTerm
                 && dcgTerm.Args.Length == 2)
             {
-                result.Add(TransformRule(dcgTerm.Args[0], dcgTerm.Args[1], clause.Position));
+                result.Add(TransformRule(dcgTerm.Args[0], dcgTerm.Args[1], clause.Position, failFast));
             }
             else
             {
@@ -57,7 +62,8 @@ public static class DcgTransform
         return result;
     }
 
-    private static Clause TransformRule(Term head, Term body, Shumway.Compiler.Lexer.SourcePosition position)
+    private static Clause TransformRule(Term head, Term body, Shumway.Compiler.Lexer.SourcePosition position,
+        bool failFast)
     {
         int counter = 0;
         var sStart = new VarTerm("$S0");
@@ -106,7 +112,8 @@ public static class DcgTransform
         // begin with a `{ }` goal, NOT a terminal, so neither move fires and
         // their first-argument indexing on the bound AST node is preserved.
         (Term inputArg, Term residualBody, VarTerm residualStart, bool peeled) =
-            PeelLeadingTerminals(body, sStart, ref counter);
+            failFast ? PeelLeadingTerminals(body, sStart, ref counter)
+                     : (sStart, body, sStart, false);
 
         Term effectiveHead = head;
         var deferGoals = new List<Term>();
