@@ -244,6 +244,61 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void PromotedHook_EvictedWhenALaterConsultAddsHookClauses()
+    {
+        // The dcgs→atts silent failure: term_expansion/2 promoted to Tier-1 IL
+        // (here: forced by calling it between consults, threshold 2, sync
+        // compile), then a LATER consult appends its own hook clause to the same
+        // global predicate. The consult commit must evict the promoted delegate,
+        // or the stale IL silently hides the new clause.
+        var e = new PrologEngine();
+        e.IlPromotion.Threshold = 2;
+        e.IlPromotion.BackgroundCompilation = false;
+        e.ConsultString("term_expansion(first(X), got_first(X)).");
+        // Cross the threshold OUTSIDE any consult so the promotion installs.
+        for (int i = 0; i < 4; i++) e.Query("\\+ term_expansion(nomatch, _).");
+        // A later consult adds a second hook clause AND uses it.
+        e.ConsultString(
+            "term_expansion(second(X), got_second(X)).\n" +
+            "second(a).");
+        Assert.True(e.Query("got_second(a).").Success);
+    }
+
+    [Fact]
+    public void NoNewPromotionsDuringConsult_HookStaysLiveAcrossLibraries()
+    {
+        // Promotions are suspended while program text loads: a first library
+        // whose consult calls term_expansion once per clause (crossing the
+        // threshold) must NOT freeze the hook predicate mid-load — a second
+        // library's hook clauses, added later in the same load, must fire.
+        string dir = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "shumway-promo-" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            var lib1 = new System.Text.StringBuilder(
+                ":- module(promolib1, []).\n" +
+                "user:term_expansion(marker1(X), got1(X)).\n");
+            for (int i = 0; i < 12; i++) lib1.Append($"filler{i}(x).\n");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "promolib1.pl"),
+                lib1.ToString());
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "promolib2.pl"),
+                ":- module(promolib2, []).\n" +
+                ":- use_module(library(promolib1)).\n" +
+                "user:term_expansion(marker2(X), got2(X)).\n");
+            var e = new PrologEngine();
+            e.IlPromotion.Threshold = 2;
+            e.IlPromotion.BackgroundCompilation = false;
+            e.AddLibraryDirectory(dir);
+            e.ConsultString(
+                ":- use_module(library(promolib2)).\n" +
+                "marker2(b).");
+            Assert.True(e.Query("got2(b).").Success);
+        }
+        finally { try { System.IO.Directory.Delete(dir, recursive: true); } catch { } }
+    }
+
+    [Fact]
     public void OpDirective_StillAppliesToLaterClauses()
     {
         // The baseline the others generalise — a plain `:- op` from that point on.

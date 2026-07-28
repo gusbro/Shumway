@@ -509,6 +509,11 @@ internal sealed class ConsultPipeline
             // nested) consults so a hook always sees the module being loaded now.
             string? prevLoadModule = E._currentLoadModule;
             E._consultDepth++;
+            // No new Tier-1 promotions while program text is loading — a
+            // predicate the load is still extending (the expansion hooks above
+            // all) must not be snapshotted mid-consult. Nested consults keep it
+            // suspended until the OUTERMOST one finishes.
+            E.IlPromotion.PromotionsSuspended = true;
             try
             {
                 ConsultStringLocked(source, recordInHistory, moduleNameFallback);
@@ -516,7 +521,8 @@ internal sealed class ConsultPipeline
             finally
             {
                 E._currentLoadModule = prevLoadModule;
-                E._consultDepth--;
+                if (--E._consultDepth == 0)
+                    E.IlPromotion.PromotionsSuspended = false;
             }
         }
     }
@@ -1312,6 +1318,19 @@ internal sealed class ConsultPipeline
                         E.LinkConsultedStaticPredicatesLive(other, clauses, moduleName);
                     }
             }
+        }
+
+        // Evict any promoted Tier-1 IL for the predicates this consult just
+        // (re)defined or EXTENDED. The global expansion hooks are the live case:
+        // term_expansion/2 promoted during a big library's consult (dcgs crosses
+        // the call threshold on its own ~50 clauses) kept serving the pre-append
+        // IL, so a later library's hook clauses (atts' `:- attribute`) were
+        // silently invisible. Cheap for the common never-promoted functor.
+        foreach (var cl in clauses)
+        {
+            if (!PrologEngine.TryExtractHead(cl, out string hn, out int ha)) continue;
+            E.InvalidateIlForFunctor(FunctorTable.Intern(
+                AtomTable.Intern(hn, permanent: true).Id, ha));
         }
 
         // The code the debugger's breakpoints were waiting for has just arrived. Bind them

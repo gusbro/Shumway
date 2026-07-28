@@ -242,19 +242,37 @@ public sealed partial class PrologEngine
         _persistentMutationsSinceCompact++;
         DropDynamicPredicateCacheEntry(functorId);
         // ADR-023 — the predicate changed, so any cached Tier-1 IL snapshot of it
-        // is stale: evict it. The next call falls back to the in-place-patched
-        // Tier-0 bytecode (the current database); the predicate re-warms before
-        // re-snapshotting, and past the churn limit stays on Tier 0.
+        // is stale: evict it, and clear every LIVE query interpreter's direct
+        // fid-table slot so the very next dispatch re-resolves live (falling
+        // back to the Tier-0 enter_dynamic chain — the logical update view).
+        // ALL live interps, not just the current one: a SUSPENDED outer
+        // activation resumes with its own table, and a stale slot there
+        // dispatched an evicted dynamic snapshot (the Logtalk-under-promotion
+        // silent failure).
+        InvalidateIlForFunctor(functorId);
+        // ADR-034 — and any CALLER whose IL embeds this predicate's inlined
+        // snapshot must stop using it: the emitted clause-entry staleness test
+        // reads this host-lifetime set (shared into every per-query engine),
+        // so the fallback path takes over from the very next clause entry.
+        _mutatedDynamicFids.Add(functorId);
+        // the functor's clause list changed, so its cached
+        // transformed/rewritten clauses are stale too.
+        _dynamicRewriteCache.Remove(functorId);
+    }
+
+    /// <summary>Drops a functor's promoted Tier-1 IL delegate and clears every
+    /// live interpreter's direct-dispatch slot for it. For a STATIC predicate
+    /// whose clause set changed at consult time — the global expansion hooks
+    /// (term_expansion/goal_expansion) are the sanctioned case: each library
+    /// consult appends its hook clauses to the same global predicate. A hook
+    /// promoted mid-consult (dcgs's ~50 clauses cross the call threshold) kept
+    /// serving the pre-append IL, silently hiding every later library's hook
+    /// clause (atts' `:- attribute` never fired). Dynamic mutations get this
+    /// via <see cref="InvalidateDynamicCache"/>; consult-time static commits
+    /// call it directly.</summary>
+    internal void InvalidateIlForFunctor(int functorId)
+    {
         IlPromotion.EvictDelegate(functorId);
-        // ADR-023/034 — every LIVE query's interpreter snapshotted the
-        // delegate into its direct fid table at setup (IL callers dispatch
-        // every callee by fid through it via resume markers). Clear the slot
-        // in ALL of them so the very next dispatch re-resolves live — TryGet
-        // misses, and the call falls back to the Tier-0 enter_dynamic chain
-        // (the logical update view). ALL, not just the current one: a
-        // SUSPENDED outer activation resumes with its own table, and a stale
-        // slot there dispatched an evicted dynamic snapshot (the
-        // Logtalk-under-promotion silent failure).
         for (int i = _liveInterps.Count - 1; i >= 0; i--)
         {
             if (!_liveInterps[i].TryGetTarget(out var li))
@@ -266,14 +284,6 @@ public sealed partial class PrologEngine
             if (ilTable is not null && (uint)functorId < (uint)ilTable.Length)
                 ilTable[functorId] = null;
         }
-        // ADR-034 — and any CALLER whose IL embeds this predicate's inlined
-        // snapshot must stop using it: the emitted clause-entry staleness test
-        // reads this host-lifetime set (shared into every per-query engine),
-        // so the fallback path takes over from the very next clause entry.
-        _mutatedDynamicFids.Add(functorId);
-        // the functor's clause list changed, so its cached
-        // transformed/rewritten clauses are stale too.
-        _dynamicRewriteCache.Remove(functorId);
     }
 
     /// <summary>removes a dynamic predicate's compiled-bytecode

@@ -173,15 +173,22 @@ public sealed partial class PrologEngine
         CollectVarNames(input, inputVars);
         var expandedVar = new VarTerm("$TE_Expanded");
         var goal = new CompoundTerm("term_expansion", new Term[] { input, expandedVar });
+        bool diag = TeDiagEnabled;
+        if (diag) System.Console.Error.WriteLine($"[TE] try (expandPos={_consultExpandPos}, loadmod={_currentLoadModule}): {input}");
         foreach (var sol in QueryAll(goal))
         {
             Term? expanded = sol["$TE_Expanded"];
             if (expanded is null) return false;
+            if (diag) System.Console.Error.WriteLine($"[TE] fired -> {expanded}");
             FlattenExpansion(RelinkInputVars(expanded, inputVars, sol), output);
             return true;
         }
+        if (diag) System.Console.Error.WriteLine($"[TE] no solution (hook failed) for: {input}");
         return false;
     }
+
+    private static readonly bool TeDiagEnabled =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_TE_DIAG") == "1";
 
     // Running an expansion through QueryAll materialises the input's variables and
     // reads the output back with fresh heap-address names (_G<addr>) — losing the

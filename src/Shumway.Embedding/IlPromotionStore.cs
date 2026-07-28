@@ -119,6 +119,12 @@ public sealed class IlPromotionStore
     /// view (wrong answers, not errors).</summary>
     public int EvictionStamp { get; private set; }
 
+    /// <summary>True while a consult is loading program text (set by the engine
+    /// around the outermost consult): new Tier-1 promotions are deferred so a
+    /// still-growing predicate is never snapshotted mid-load. Existing
+    /// delegates keep serving.</summary>
+    public bool PromotionsSuspended { get; set; }
+
     /// <summary>ADR-023 — drops a dynamic predicate's IL snapshot after a mutation;
     /// the next call falls back to the in-place-patched Tier-0 chain and the
     /// predicate re-warms. Counts toward the churn limit only when a delegate was
@@ -246,6 +252,13 @@ public sealed class IlPromotionStore
         if (Threshold <= 0 || !DynamicCodeSupported) return null;
         if (!_completedCompiles.IsEmpty) DrainCompletedCompiles();
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
+        // Mid-consult, no NEW promotions: the program is still growing — a
+        // predicate promoted now (the expansion hooks are the hot case: one
+        // term_expansion call per consulted clause) would snapshot a clause set
+        // a later file in the same load extends. Already-promoted delegates
+        // keep serving (consult-commit eviction drops any this load extends);
+        // counting resumes when the outermost consult finishes.
+        if (PromotionsSuspended) return null;
         if (_unpromotable.Contains(functorId)) return null;
         if (_pendingCompiles.Contains(functorId)) return null;   // compile in flight
         if (IsExcludedFromPromotion(functorId)) { MarkUnpromotable(functorId, "query"); return null; }
