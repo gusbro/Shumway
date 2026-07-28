@@ -87,6 +87,7 @@ public class Chunk340Tests
     // propagation now makes leftmost feasible. (ff is the fast order; this test
     // uses leftmost precisely because it exercises the propagation strength.)
     [Fact]
+    [Trait("Category", "Slow")]   // ~26 s brute-force pin; routine gate filters Category!=Slow, full run pre-phase-close
     public void Donald_SolvesUnderLeftmostLabeling()
     {
         // donald's solution is unique, so leftmost label binds LD to it; the

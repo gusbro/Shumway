@@ -19,6 +19,7 @@ namespace Shumway.Tests.Embedding;
 public class Chunk111Tests
 {
     [Fact]
+    [Trait("Category", "Slow")]   // ~28 s, 2500-round fixpoint pinning the overflow depth; routine gate filters Category!=Slow
     public void DeepTabledChain_DoesNotOverflow()
     {
         // ~2500 fixpoint rounds; each builds on a '$tbl_ans' dynamic

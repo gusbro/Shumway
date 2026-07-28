@@ -132,16 +132,19 @@ public class Adr035LazyDebugTests
         // at its next safe point — later iterations stop at the breakpoint.
         //  2: :- dynamic(log/1).
         //  3: loop :-
-        //  4:     between(1, 200000, I),
+        //  4:     between(1, 40000, I),
         //  5:     tick(I),
         //  6:     fail.
         //  7: loop.
-        //  8: tick(150000) :- !, assertz(log(seen)).
+        //  8: tick(30000) :- !, assertz(log(seen)).
         //  9: tick(_).
+        // (Trigger at I = 30000 ≈ hundreds of ms of debug-mode iterations —
+        // ~25× the armer's 30 ms sleep, same guarantee as the original 150000
+        // at a fraction of the wall time.)
         var engine = DebugCompiledEngine(
             ":- dynamic(log/1).\n" +
-            "loop :-\n    between(1, 200000, I),\n    tick(I),\n    fail.\nloop.\n" +
-            "tick(150000) :- !, assertz(log(seen)).\ntick(_).\n");
+            "loop :-\n    between(1, 40000, I),\n    tick(I),\n    fail.\nloop.\n" +
+            "tick(30000) :- !, assertz(log(seen)).\ntick(_).\n");
         int stops = 0;
         ChannelDebugSession? session = null;
         session = new ChannelDebugSession(engine, _ =>
@@ -152,7 +155,7 @@ public class Adr035LazyDebugTests
         engine.DebugFullyArmed = false;
         engine.DebugLcoWhenArmed = false;
         engine.SetDebugLastCall(true);
-        // Inside the cut clause — reached exactly once, at I = 150000, long after the
+        // Inside the cut clause — reached exactly once, at I = 30000, long after the
         // arm lands.
         Assert.True(engine.AddBreakpoint("<string>", 8) > 0);
 

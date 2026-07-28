@@ -196,8 +196,11 @@ public class Adr036DapTests
     [Fact]
     public void Pause_StopsARunningQuery_AtAPort()
     {
+        // 60k debug-mode iterations ≈ seconds of runway; the pause lands ~250 ms
+        // in (Sleep(200) + socket round-trip), leaving ~5/6 of the loop still to
+        // run — same guarantee as the original 300k at a fifth of the wall time.
         var (engine, session, server) = StartDebuggee(
-            "loop :- between(1, 300000, I), tick(I), fail.\nloop.\ntick(_).\n");
+            "loop :- between(1, 60000, I), tick(I), fail.\nloop.\ntick(_).\n");
         using (session)
         using (server)
         using (var client = new DapTestClient(server.Port))

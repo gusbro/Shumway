@@ -214,18 +214,20 @@ public class Adr035ConditionalBreakpointTests
         var engine = DebugEngine(
             ":- dynamic(d/1).\n" +
             "run :-\n" +
-            "    between(1, 2000, X),\n" +
+            "    between(1, 1200, X),\n" +
             "    assertz(d(X)),\n" +
             "    use(X),\n" +
             "    fail.\n" +
             "run.\n" +
             "use(_).\n");
-        // 2000 mutations cross the default watermark (1000) mid-query, guaranteed.
-        Assert.True(engine.AddBreakpoint("<string>", 6, "X > 1995") > 0);
+        // 1200 mutations cross the default watermark (1000) mid-query, guaranteed
+        // (the per-port condition eval makes each iteration expensive — 1200 keeps
+        // the crossing + margin at ~half the wall time of the original 2000).
+        Assert.True(engine.AddBreakpoint("<string>", 6, "X > 1195") > 0);
 
         var stops = Run(engine);   // asserts the query still yields its solution
 
-        Assert.Equal(5, stops.Count);   // X = 1996..2000 — and nothing crashed
+        Assert.Equal(5, stops.Count);   // X = 1196..1200 — and nothing crashed
         Assert.All(stops, s => Assert.Equal("", s.ConditionError));
     }
 

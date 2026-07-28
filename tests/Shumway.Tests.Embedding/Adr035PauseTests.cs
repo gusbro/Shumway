@@ -33,10 +33,12 @@ public partial class Adr035PauseTests
 
     // A program that runs long enough to be paused: a plain counting loop, deep enough
     // that the engine passes far more than one poll interval's worth of goals.
+    // (20k debug-mode iterations ≈ hundreds of ms — still orders of magnitude more
+    // goals than one poll interval; 200k only made the suite slow.)
     private const string Program = @"
 loop(0) :- !.
 loop(N) :- N1 is N - 1, loop(N1).
-go :- loop(200000).
+go :- loop(20000).
 ";
 
     private static PrologEngine DebugEngine()

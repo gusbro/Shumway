@@ -128,6 +128,11 @@ dotnet build
 # Run all tests
 dotnet test
 
+# Routine gate: skip the handful of Category=Slow pins (Donald leftmost labeling,
+# the 2500-round tabled fixpoint — ~1 min). Run the FULL suite (no filter) before
+# closing a phase.
+dotnet test tests/Shumway.Tests.Embedding/ --filter "Category!=Slow"
+
 # Run ISO conformance suite specifically
 dotnet test tests/Shumway.Tests.IsoConformance/
 
