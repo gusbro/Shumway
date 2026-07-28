@@ -315,6 +315,15 @@ public sealed partial class PrologEngine
     // read each input var back too (same heap address → same _G<addr> name) and
     // rename that name in the output to the input var's ORIGINAL name, so the
     // expansion shares variables with the rest of the clause again.
+    //
+    // Any variable the HOOK introduced (not an input var) then gets a globally
+    // UNIQUE name: heap-address names repeat across materialisations (a later
+    // expansion's _G<addr> can equal a _G<addr> already in the surrounding
+    // clause from an earlier expansion — clpz's ++>-expanded clauses meet their
+    // brace-goal expansions), and a colliding name silently ALIASES two
+    // unrelated variables in the rebuilt clause.
+    private static int _freshExpansionVar;
+
     private static Term RelinkInputVars(Term output, HashSet<string> inputVars, Solution sol)
     {
         Dictionary<string, Term>? rename = null;
@@ -322,6 +331,18 @@ public sealed partial class PrologEngine
         {
             if (sol[name] is VarTerm rb && rb.Name != name)
                 (rename ??= new())[rb.Name] = new VarTerm(name);
+        }
+        // Uniquify hook-introduced variables. Collect the output's var names;
+        // anything that is neither an input var nor an input's read-back alias
+        // is hook-fresh.
+        var outVars = new HashSet<string>();
+        CollectVarNames(output, outVars);
+        foreach (string name in outVars)
+        {
+            if (name == "_" || inputVars.Contains(name)) continue;
+            if (rename is not null && rename.ContainsKey(name)) continue;
+            int n = System.Threading.Interlocked.Increment(ref _freshExpansionVar);
+            (rename ??= new())[name] = new VarTerm("_Uexp" + n);
         }
         return rename is null ? output : SubstituteVars(output, rename);
     }
@@ -409,6 +430,12 @@ public sealed partial class PrologEngine
 
     private Term ExpandGoalTree(Term goal)
     {
+        // A VARIABLE goal is a runtime meta-call — goal_expansion must not
+        // touch it: a hook's head pattern would UNIFY into the variable
+        // (dcgs's `goal_expansion(phrase(B,S), phrase(B,S,[]))` turned clpz's
+        // `( Repeat -> ... )` condition into an orphaned `phrase(_,_,[])`,
+        // destroying the goal). Scryer's expand_goal skips vars the same way.
+        if (goal is VarTerm) return goal;
         if (goal is CompoundTerm c && IsGoalControl(c.Functor, c.Args.Length))
         {
             Term[]? args = null;

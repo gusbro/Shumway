@@ -356,6 +356,37 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void GoalExpansion_NeverTouchesAVariableGoal()
+    {
+        // A VARIABLE goal is a runtime meta-call. A hook with an unguarded
+        // head pattern (dcgs's `goal_expansion(phrase(B,S), phrase(B,S,[]))`
+        // is a fact) must NOT unify its pattern INTO the variable — that
+        // replaced clpz's `( Repeat -> ... )` condition with an orphaned
+        // phrase/3 and destroyed the goal.
+        var e = new PrologEngine();
+        e.ConsultString(
+            "goal_expansion(phr(B, S), phr(B, S, [])).\n" +
+            "phr(_, _, _).\n" +
+            "t(Cond, R) :- ( Cond -> R = yes ; R = no ).");
+        Assert.True(e.Query("t(true, R), R == yes.").Success);
+        Assert.True(e.Query("t(fail, R), R == no.").Success);
+    }
+
+    [Fact]
+    public void GoalExpansion_HookFreshVariables_GetUniqueNames()
+    {
+        // Hook-introduced variables must not capture same-named variables
+        // elsewhere in the clause (heap-address _G names repeat across
+        // materialisations): each expansion's fresh vars are uniquified.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- op(700, xfx, gets).\n" +
+            "goal_expansion(X gets E, (T = E, X = f(T))).\n" +
+            "use(A, B, Out) :- A gets one, B gets two, Out = A-B.");
+        Assert.True(e.Query("use(A, B, Out), Out == f(one)-f(two).").Success);
+    }
+
+    [Fact]
     public void OpDirective_StillAppliesToLaterClauses()
     {
         // The baseline the others generalise — a plain `:- op` from that point on.
