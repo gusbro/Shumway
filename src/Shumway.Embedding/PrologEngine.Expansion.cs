@@ -344,7 +344,9 @@ public sealed partial class PrologEngine
     internal static long ProfReExpandTicks, ProfReExpandCalls;
     // Warm-setup sub-phases.
     internal static long ProfMergeTicks, ProfQueryCompileTicks, ProfUniqTicks, ProfActivationTicks;
-    internal static long ProfActCtorTicks, ProfInstallTicks;
+    internal static long ProfActCtorTicks, ProfInstallTicks, ProfHotnessTicks;
+    internal static long ProfPrologTicks, ProfProductCheckTicks;
+    internal static long ProfPbRewriteTicks, ProfPbCompileTicks, ProfPbPartitionTicks;
 
     internal static void PrintLoadProfile()
     {
@@ -355,7 +357,10 @@ public sealed partial class PrologEngine
             $"[PROF] ge-QueryAll: {ProfGeCalls} calls, {Ms(ProfGeTicks):F0} ms\n" +
             $"[PROF] query-setup: {ProfSetupCalls} setups ({ProfProductBuilds} product builds), {Ms(ProfSetupTicks):F0} ms\n" +
             $"[PROF]   merge-maps: {Ms(ProfMergeTicks):F0} ms | query-compile+link: {Ms(ProfQueryCompileTicks):F0} ms | uniqueness: {Ms(ProfUniqTicks):F0} ms | activation: {Ms(ProfActivationTicks):F0} ms\n" +
-            $"[PROF]   act-ctor: {Ms(ProfActCtorTicks):F0} ms | install-callil: {Ms(ProfInstallTicks):F0} ms\n" +
+            $"[PROF]   act-ctor: {Ms(ProfActCtorTicks):F0} ms | install-callil: {Ms(ProfInstallTicks):F0} ms | hotness: {Ms(ProfHotnessTicks):F0} ms\n" +
+            $"[PROF]   prolog: {Ms(ProfPrologTicks):F0} ms | product-check: {Ms(ProfProductCheckTicks):F0} ms\n" +
+            $"[PROF]   pb-rewrite: {Ms(ProfPbRewriteTicks):F0} ms | pb-compile: {Ms(ProfPbCompileTicks):F0} ms | pb-partition: {Ms(ProfPbPartitionTicks):F0} ms\n" +
+            $"[PROF]   elide-cuts (all Compile calls): {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfElideTicks):F0} ms | pred-compile: {Shumway.Compiler.Wam.ModuleCompiler.ProfCompiledPreds} compiled / {Shumway.Compiler.Wam.ModuleCompiler.ProfSkippedPreds} skipped, {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfPredTicks):F0} ms\n" +
             $"[PROF] re-expand passes: {ProfReExpandCalls}, {Ms(ProfReExpandTicks):F0} ms");
     }
 

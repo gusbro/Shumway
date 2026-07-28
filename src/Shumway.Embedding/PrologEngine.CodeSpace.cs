@@ -432,6 +432,77 @@ public sealed partial class PrologEngine
     /// module name.</summary>
     internal Dictionary<string, HashSet<int>>? _staticRewriteModuleLocals;
 
+    /// <summary>Per-module transform cache underneath the whole-program
+    /// <see cref="_staticRewriteClauses"/> snapshot. When a derivation bump
+    /// forces the regenerate branch, only the modules whose manifest actually
+    /// CHANGED re-run the transform chain — the rest reuse their previous
+    /// rewritten clause lists verbatim (same Clause objects, same MetaTransform
+    /// helper ids), which also keeps their compiled-predicate cache entries
+    /// valid. The key fingerprints every transform input that varies per
+    /// module: the clause list identity (reference + element-wise reference
+    /// snapshot — append-only growth, reconsult AND in-place hook re-expansion
+    /// all change it), the public/import/export surface sizes, the mode-table
+    /// version, opaqueness, and the codegen flags. A module that regenerates
+    /// (or vanishes) drops its old head fids from the static compiled cache —
+    /// the targeted version of the old blanket Clear, preserving the
+    /// "nothing compiled outlives its clauses' derivation" invariant.</summary>
+    internal sealed class ModuleTransformEntry
+    {
+        public required object ClausesRef;
+        /// <summary>Element-wise reference snapshot of the manifest's clause
+        /// list at build time. Compared by reference per element: an in-place
+        /// INTERIOR replacement (the in-file hook re-expansion pass rewrites
+        /// clauses without changing count or endpoints) must invalidate.</summary>
+        public required Clause[] ClauseSnapshot;
+        public required int PublicCount;
+        public required int ImportCount;
+        public required int ExportCount;
+        public required int ModesVersion;
+        public required bool Opaque;
+        public required bool DebugCodegen;
+        public required bool InlineIte;
+        public required int BundleLocalsCount;
+        public required List<Clause> Rewritten;
+        public required HashSet<int> Locals;
+        public required HashSet<int> HeadFids;
+    }
+    internal readonly Dictionary<string, ModuleTransformEntry> _moduleTransformCache = new();
+
+    internal static bool ClauseSnapshotMatches(Clause[] snapshot, List<Clause> live)
+    {
+        if (snapshot.Length != live.Count) return false;
+        for (int i = 0; i < snapshot.Length; i++)
+            if (!ReferenceEquals(snapshot[i], live[i])) return false;
+        return true;
+    }
+
+    /// <summary>ADR-030 staleness guard for the per-module reuse above: the
+    /// head fids whose LAST clause had its redundant trailing cut elided in the
+    /// previous product build. Elision is a WHOLE-program analysis, so a
+    /// reused module's compiled predicate can go stale when a DIFFERENT
+    /// module's regeneration flips its callees' det-ness — the build compares
+    /// the fresh elided set against this one and drops the flipped fids.</summary>
+    internal HashSet<int>? _lastElidedStaticFids;
+
+    /// <summary>Drops compiled static-cache entries for <paramref name="fids"/>,
+    /// keeping the merged skip-compile cache in step (same fallback precedence
+    /// as <see cref="DropDynamicPredicateCacheEntry"/>).</summary>
+    internal void DropStaticCompiledFids(IEnumerable<int> fids)
+    {
+        foreach (int fid in fids)
+        {
+            if (!_staticPredicateCache.Remove(fid)) continue;
+            var merged = _skipCompileMergedCache;
+            if (merged is null) continue;
+            if (_dynamicPredicateCache.TryGetValue(fid, out var dyn))
+                merged[fid] = dyn;
+            else if (_precompiledClauseCache.TryGetValue(fid, out var pre))
+                merged[fid] = pre;
+            else
+                merged.Remove(fid);
+        }
+    }
+
     /// <summary>The compiled PROGRAM product: everything query setup derives
     /// from the static + dynamic program alone — compiled predicates
     /// partitioned into the ADR-015 static / dynamic regions, the rerouted

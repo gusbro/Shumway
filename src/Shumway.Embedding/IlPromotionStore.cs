@@ -404,6 +404,11 @@ public sealed class IlPromotionStore
     /// <summary>Phase-2 PGO: recompiles every instrumented predicate whose profile
     /// reached <see cref="PgoSampleThreshold"/> to its optimised form and swaps the
     /// delegate. Called once per query setup, off the hot path.</summary>
+    /// <summary>True when a PGO recompile could actually run — lets query setup
+    /// skip building the O(all-predicates) functor-keyed lookup in the common
+    /// no-pending-profiles case.</summary>
+    public bool HasPgoWork => _pgoProfileKeys.Count > 0 && DynamicCodeSupported;
+
     public void ConsiderPgoRecompiles(
         IReadOnlyDictionary<int, CompiledPredicate> predicateLookup,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)

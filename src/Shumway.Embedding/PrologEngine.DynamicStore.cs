@@ -929,14 +929,18 @@ public sealed partial class PrologEngine
             _dynStore.MarkDynamic(fid);
             if (!_dynStore.HasClauses(fid))
                 _dynStore[fid] = new List<Clause>();
-            // the dynamic-functor set feeds the ModuleRewrite
-            // contexts; this is the one mutation path that doesn't run
-            // through InvalidatePersistent, so advance the derivation
-            // generation explicitly. (Auto-promotion can't actually change
-            // a static rewrite — the promoted functor has no static
-            // clauses, so it was never module-local — but a one-time
-            // re-transform per promotion is cheap insurance.)
-            _derivationGen++;
+            // NO derivation bump. Auto-promotion cannot change any static
+            // rewrite: the promoted functor has no static clauses, so it was
+            // never module-local, and MangleIfLocal leaves its callers bare
+            // both before and after (rewrite contexts read the live
+            // _dynStore.Functors set anyway). A derivation bump here cleared
+            // the whole-program transform + compiled-predicate caches per
+            // promotion — during a hook-heavy library load that recompiled
+            // every predicate dozens of times. The assert that triggered the
+            // promotion bumps _programStamp (DropDynamicPredicateCacheEntry),
+            // which is exactly the invalidation the compiled-program product
+            // needs to re-link with the new trampoline.
+            _programStamp++;
             return;
         }
 

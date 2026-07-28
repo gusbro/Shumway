@@ -18,12 +18,17 @@ public sealed class ModeTable
 {
     private readonly Dictionary<int, List<ModeDeclaration>> _byFunctor = new();
 
+    /// <summary>Bumped on every <see cref="Add"/> — a cheap fingerprint for
+    /// caches whose output depends on the table's contents.</summary>
+    public int Version { get; private set; }
+
     /// <summary>Records one mode declaration. Multiple declarations for
     /// the same functor accumulate; the analysis treats each as a
     /// distinct callable mode.</summary>
     public void Add(ModeDeclaration declaration)
     {
         ArgumentNullException.ThrowIfNull(declaration);
+        Version++;
         if (!_byFunctor.TryGetValue(declaration.FunctorId, out var list))
         {
             list = new List<ModeDeclaration>();

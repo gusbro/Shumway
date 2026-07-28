@@ -488,6 +488,7 @@ public sealed partial class PrologEngine
              Shumway.Core.Activation Engine,
              BytecodeInterpreter Interp) SetupQueryFromTermUnderGateCore(Term queryTerm)
     {
+        long profPl0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         // auto-compaction. When the accumulated
         // mutation count crosses the watermark, invalidate the
         // persistent buffer here at query setup (the safe point —
@@ -546,6 +547,7 @@ public sealed partial class PrologEngine
         // any compilation so the error message points squarely at the user's
         // module declarations rather than at the bytecode that wouldn't link.
         long profUq0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        if (LoadProfEnabled) ProfPrologTicks += profUq0 - profPl0;
         ValidatePublicUniqueness();
         if (LoadProfEnabled) ProfUniqTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profUq0;
 
@@ -558,6 +560,7 @@ public sealed partial class PrologEngine
         // why this loop runs BEFORE the product validity check). The
         // unindexed set then names every dynamic functor still below
         // the threshold.
+        long profHt0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         var unindexedFunctors = new HashSet<int>();
         bool anyHotnessFlip = false;
         foreach (int fid in _dynStore.Functors)
@@ -588,6 +591,8 @@ public sealed partial class PrologEngine
         // indexed form but the live dispatch still runs the chain
         // emitted at predicate-cold time.
         if (anyHotnessFlip) InvalidatePersistent();
+        long profPc0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        if (LoadProfEnabled) ProfHotnessTicks += profPc0 - profHt0;
 
         // Pre-compute the fail-stub address — it sits at the end of the
         // launcher prefix, at offset Call(9) + Halt(1) = 10. Both compiles
@@ -614,6 +619,7 @@ public sealed partial class PrologEngine
         if (product is null)
         {
         if (LoadProfEnabled) ProfProductBuilds++;
+        long profPb0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
 
         // Apply DCG → clause and meta-call (\+ / not) transforms per module,
         // then mangle local functors so each module ends up with its own
@@ -664,16 +670,20 @@ public sealed partial class PrologEngine
             // ('$disj_N'/K — the long-standing Logtalk '$disj_95' gap; hit
             // reliably by lgtunit's runtime send-cache asserta, which bumps
             // the derivation between queries). Nothing compiled may outlive
-            // the derivation that produced its call sites:
-            //  * the per-predicate bytecode caches, and
-            //  * the linked STATIC REGION (_staticLink) — a dynamic clause
-            //    recompiled under the new derivation calls new '$disj_N'
-            //    helpers, and those helper predicates are STATIC: they only
-            //    reach the code space through a fresh static link. Reusing
-            //    the old region would silently drop them (observed as
-            //    existence_error('$disj_N'/K) on the first call after a
-            //    runtime assert bumped the derivation).
-            _staticPredicateCache.Clear();
+            // the derivation that produced its call sites — but that is a
+            // PER-MODULE property, not a whole-program one: a module whose
+            // transform is reused verbatim below keeps its helper clauses in
+            // allRewritten, so its compiled predicates stay linkable. Only a
+            // module that actually REGENERATES mints fresh helper ids, and
+            // only ITS compiled predicates are dropped (DropStaticCompiledFids
+            // in the loop below — the targeted version of the old blanket
+            // _staticPredicateCache.Clear()). The dynamic tier still clears
+            // wholesale: _dynamicRewriteCache resets per derivation, so every
+            // dynamic recompile references fresh helper ids.
+            //  * the linked STATIC REGION (_staticLink) is still dropped — a
+            //    dynamic clause recompiled under the new derivation calls new
+            //    '$disj_N' helpers, and those helper predicates are STATIC:
+            //    they only reach the code space through a fresh static link.
             _dynamicPredicateCache.Clear();
             _skipCompileMergedCache = null;
             _staticLink = null;
@@ -700,6 +710,31 @@ public sealed partial class PrologEngine
                 // (prelude, :- disable_debug) run without stop sites anyway, so they
                 // still get the optimization.
                 bool opaqueModule = _nonDebuggableModules.Contains(name);
+                int bundleLocalsCount =
+                    _precompiledModuleLocals.TryGetValue(name, out var bundleLocals)
+                        ? bundleLocals.Count : 0;
+                // Per-module reuse: an unchanged manifest keeps its previous
+                // transform verbatim (see ModuleTransformEntry).
+                if (_moduleTransformCache.TryGetValue(name, out var mte)
+                    && ReferenceEquals(mte.ClausesRef, manifest.Clauses)
+                    && ClauseSnapshotMatches(mte.ClauseSnapshot, manifest.Clauses)
+                    && mte.PublicCount == manifest.PublicFunctors.Count
+                    && mte.ImportCount == manifest.Imports.Count
+                    && mte.ExportCount == manifest.ExportFunctors.Count
+                    && mte.ModesVersion == modeTable.Version
+                    && mte.Opaque == opaqueModule
+                    && mte.DebugCodegen == _flags.DebugCodegen
+                    && mte.InlineIte == EnableInlineIte
+                    && mte.BundleLocalsCount == bundleLocalsCount)
+                {
+                    allRewritten.AddRange(mte.Rewritten);
+                    if (name == DefaultModuleName) userLocalsCache = mte.Locals;
+                    moduleLocalsCache[name] = mte.Locals;
+                    continue;
+                }
+                // This module regenerates: its previous compiled predicates
+                // reference helper ids that are about to be re-minted.
+                if (mte is not null) DropStaticCompiledFids(mte.HeadFids);
                 // module-local meta-wrapper unfold (ifthen/2-style user
                 // control wrappers called with statically-known goals become inline
                 // if-then-else, eliminating the goal-term build + wrapper frame +
@@ -717,7 +752,7 @@ public sealed partial class PrologEngine
                 // bundled (precompiled) version of this module — those
                 // predicates aren't in manifest.Clauses, so the line above
                 // can't see them.
-                if (_precompiledModuleLocals.TryGetValue(name, out var bundleLocals))
+                if (bundleLocals is not null)
                     locals.UnionWith(bundleLocals);
                 if (name == DefaultModuleName) userLocalsCache = locals;
                 moduleLocalsCache[name] = locals;
@@ -731,14 +766,53 @@ public sealed partial class PrologEngine
                 // stop sites at the library's line numbers and attribute them to the
                 // user's file. Compiling a module is what makes its predicates; if the
                 // module is not debuggable, neither is anything it made.
+                var moduleRewritten = new List<Clause>(transformed.Count);
+                var moduleHeadFids = new HashSet<int>();
                 foreach (var clause in transformed)
                 {
                     var rewritten = ModuleRewrite.Rewrite(clause, ctx);
                     allRewritten.Add(rewritten);
+                    moduleRewritten.Add(rewritten);
+                    moduleHeadFids.Add(HeadFunctorIdOf(rewritten));
                     if (opaqueModule && TryReadClauseHead(rewritten, out var spec))
                         _nonDebuggableFunctors.Add(FunctorTable.Intern(
                             AtomTable.Intern(spec.Name, permanent: true).Id, spec.Arity));
                 }
+                // The freshly-minted head fids may also carry stale compiled
+                // entries (a previous shape of this module under an old name
+                // split, or a fid migrating between modules).
+                DropStaticCompiledFids(moduleHeadFids);
+                _moduleTransformCache[name] = new ModuleTransformEntry
+                {
+                    ClausesRef = manifest.Clauses,
+                    ClauseSnapshot = manifest.Clauses.ToArray(),
+                    PublicCount = manifest.PublicFunctors.Count,
+                    ImportCount = manifest.Imports.Count,
+                    ExportCount = manifest.ExportFunctors.Count,
+                    ModesVersion = modeTable.Version,
+                    Opaque = opaqueModule,
+                    DebugCodegen = _flags.DebugCodegen,
+                    InlineIte = EnableInlineIte,
+                    BundleLocalsCount = bundleLocalsCount,
+                    Rewritten = moduleRewritten,
+                    Locals = locals,
+                    HeadFids = moduleHeadFids,
+                };
+            }
+            // Modules that vanished (reconsult trim, abolish of a whole file)
+            // leave stale compiled entries behind — drop them with their cache
+            // rows.
+            if (_moduleTransformCache.Count > _modules.Count)
+            {
+                List<string>? dead = null;
+                foreach (var key in _moduleTransformCache.Keys)
+                    if (!_modules.ContainsKey(key)) (dead ??= new()).Add(key);
+                if (dead is not null)
+                    foreach (var key in dead)
+                    {
+                        DropStaticCompiledFids(_moduleTransformCache[key].HeadFids);
+                        _moduleTransformCache.Remove(key);
+                    }
             }
             rewrittenHeadFids = new HashSet<int>();
             foreach (var c in allRewritten)
@@ -870,6 +944,8 @@ public sealed partial class PrologEngine
         //, static, then dynamic —
         // dynamic last so a predicate that turned dynamic wins over a
         // stale static entry (a consult clears the static cache anyway).
+        long profPb1 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        if (LoadProfEnabled) ProfPbRewriteTicks += profPb1 - profPb0;
         var mergedSkip = _skipCompileMergedCache;
         if (mergedSkip is null)
         {
@@ -887,13 +963,43 @@ public sealed partial class PrologEngine
         // launcher prefix, at offset Call(9) + Halt(1) = 10. We need it
         // available to the compiler so dynamic predicates emit their
         // last-clause chain instruction with the absolute target.
+        // ADR-030 cut elision, hoisted OUT of ModuleCompiler for this call site
+        // (ElideRedundantCuts: false below). Elision is a WHOLE-program
+        // analysis, so a module reused verbatim by the per-module transform
+        // cache can still change its elision outcome when a DIFFERENT module's
+        // regeneration flips a callee's det-ness — and its skip-cached compiled
+        // predicate would silently keep the old decision (an un-elided cut is
+        // harmless; a stale ELIDED cut re-exposes choice points). Running the
+        // elision here lets us diff the elided-fid set against the previous
+        // build's and drop exactly the flipped predicates from the skip cache.
+        if (_flags.ElideRedundantCuts)
+        {
+            var preElide = allRewritten;
+            allRewritten = Shumway.Compiler.Wam.DeterminismAnalysis
+                .EliminateRedundantTrailingCuts(
+                    preElide, c => !_dynStore.Functors.Contains(HeadFunctorIdOf(c)));
+            var elidedNow = new HashSet<int>();
+            for (int i = 0; i < allRewritten.Count; i++)
+                if (!ReferenceEquals(allRewritten[i], preElide[i]))
+                    elidedNow.Add(HeadFunctorIdOf(allRewritten[i]));
+            if (_lastElidedStaticFids is { } prevElided)
+            {
+                List<int>? flipped = null;
+                foreach (int fid in elidedNow)
+                    if (!prevElided.Contains(fid)) (flipped ??= new()).Add(fid);
+                foreach (int fid in prevElided)
+                    if (!elidedNow.Contains(fid)) (flipped ??= new()).Add(fid);
+                if (flipped is not null) DropStaticCompiledFids(flipped);
+            }
+            _lastElidedStaticFids = elidedNow;
+        }
         var module = new ModuleCompiler
         {
             EmitDebugInfo = _flags.EmitDebugInfo,
             DebugCodegen = _flags.DebugCodegen,               // ADR-035
             DebugFileId = _debugFileId,                      // ADR-035
             NonDebuggableFunctors = _nonDebuggableFunctors,  // ADR-035
-            ElideRedundantCuts = _flags.ElideRedundantCuts,   // ADR-030
+            ElideRedundantCuts = false,   // ADR-030 — pre-elided above
         }.Compile(
             allRewritten, skipCompileCache, unindexedFunctors, _literalPools,
             dynamicFunctors: _dynStore.Functors, failStubAddr: failStubAddr);
@@ -932,6 +1038,8 @@ public sealed partial class PrologEngine
             }
         }
 
+        long profPb2 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        if (LoadProfEnabled) ProfPbCompileTicks += profPb2 - profPb1;
         // --- ADR-015 chunk B + persistent code space -------
         // Partition the compiled PROGRAM predicates into two regions:
         //   * static  — cacheable + non-dynamic, linked once.
@@ -1029,10 +1137,12 @@ public sealed partial class PrologEngine
             ExtraQueryPreds = pExtraQuery,
             CacheableFunctors = cacheableFunctors,
         };
+        if (LoadProfEnabled) ProfPbPartitionTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profPb2;
         }   // ---- end compiled-program-product build ----
 
         // ---- per-query small bootstrap ----
         long profQc0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        if (LoadProfEnabled) ProfProductCheckTicks += profQc0 - profPc0;
         // Synthetic query clause — rewrite in the user module's context, but
         // with the user locals (which don't include __query__) so the
         // head functor remains bare. the stub's synthesized helpers
@@ -1509,9 +1619,13 @@ public sealed partial class PrologEngine
         // unbound arg.
         {
             var resolverMap = mergedPredicatesByAddress;
-            int[] sortedAddrs = resolverMap.Keys.OrderBy(a => a).ToArray();
+            // Diagnostic / error-path only: sort lazily on first resolve. Eagerly
+            // sorting every merged predicate address cost O(N log N) at EVERY
+            // query setup, dominating warm setups on large programs.
+            int[]? sortedAddrs = null;
             engine.ResolveAddressToLabel = addr =>
             {
+                sortedAddrs ??= resolverMap.Keys.OrderBy(a => a).ToArray();
                 if (sortedAddrs.Length == 0) return null;
                 int idx = Array.BinarySearch(sortedAddrs, addr);
                 if (idx < 0) idx = ~idx - 1;
@@ -1580,12 +1694,16 @@ public sealed partial class PrologEngine
         // PGO phase-2 pass. Once per query setup, off the
         // hot path: any promoted, instrumented predicate that has
         // accumulated enough profile samples is recompiled to its
-        // optimised (dispatch-reordered) form. Build a functor-keyed
-        // view of this query's program for the recompile to read.
-        var functorToPredicate = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>();
-        foreach (var (_, pred) in linkResult.PredicatesByAddress)
-            functorToPredicate[pred.FunctorId] = pred;
-        IlPromotion.ConsiderPgoRecompiles(functorToPredicate, functorToPredicate);
+        // optimised (dispatch-reordered) form. The functor-keyed view of
+        // this query's program is O(all predicates) — build it only when
+        // there is actually PGO work pending (there almost never is).
+        if (IlPromotion.HasPgoWork)
+        {
+            var functorToPredicate = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>();
+            foreach (var (_, pred) in linkResult.PredicatesByAddress)
+                functorToPredicate[pred.FunctorId] = pred;
+            IlPromotion.ConsiderPgoRecompiles(functorToPredicate, functorToPredicate);
+        }
         // IlSubroutineRunner / BacktrackRunner /
         // SetBacktrackFloor wirings deleted. The IL Call /
         // meta-CP backtrack-driver / floor pin

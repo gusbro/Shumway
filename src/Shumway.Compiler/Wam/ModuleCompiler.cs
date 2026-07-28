@@ -19,6 +19,12 @@ namespace Shumway.Compiler.Wam;
 /// </summary>
 public sealed class ModuleCompiler
 {
+    /// <summary>Load-profiling counters (SHUMWAY_LOAD_PROF): ticks spent in the
+    /// ADR-030 cut-elision fixpoint, predicates actually compiled vs reused from
+    /// the skip cache, and ticks inside PredicateCompiler — across all Compile
+    /// calls this process.</summary>
+    public static long ProfElideTicks, ProfCompiledPreds, ProfSkippedPreds, ProfPredTicks;
+
     /// <summary>propagated to
     /// <see cref="PredicateCompiler.EmitDebugInfo"/>. <c>false</c> drops
     /// the per-clause Meta/DbgInfo markers from the emitted bytecode —
@@ -135,12 +141,14 @@ public sealed class ModuleCompiler
         // bundle-build site opts in.
         if (ElideRedundantCuts)
         {
+            long profEl0 = System.Diagnostics.Stopwatch.GetTimestamp();
             var materialised = clauses as IReadOnlyList<Clause> ?? clauses.ToList();
             clauses = DeterminismAnalysis.EliminateRedundantTrailingCuts(
                 materialised,
                 dynamicFunctors is null
                     ? null
                     : c => !dynamicFunctors.Contains(GetFunctorId(c)));
+            ProfElideTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profEl0;
         }
 
         // Group by functor in first-occurrence order. The order matters: when
@@ -186,6 +194,7 @@ public sealed class ModuleCompiler
                 && IsCachedPredicateReusable(cached))
             {
                 predicates.Add(cached);
+                ProfSkippedPreds++;
                 continue;
             }
             bool enableIndexing = unindexedFunctors is null
@@ -195,9 +204,12 @@ public sealed class ModuleCompiler
             // `:- disable_debug.` / `:- enable_debug.` directives are positional.
             predicateCompiler.DebugCodegen =
                 DebugCodegen && NonDebuggableFunctors?.Contains(fid) != true;
+            long profPd0 = System.Diagnostics.Stopwatch.GetTimestamp();
             predicates.Add(predicateCompiler.Compile(
                 groups[fid], stringLiterals, floatLiterals, bigIntLiterals,
                 enableIndexing, isDynamic, failStubAddr));
+            ProfPredTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profPd0;
+            ProfCompiledPreds++;
         }
 
         return new CompiledModule(
