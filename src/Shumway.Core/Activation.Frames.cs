@@ -942,6 +942,10 @@ public sealed partial class Activation
                 TrailType.CatchFrame => true,
                 TrailType.BigIntAlloc => true,
                 TrailType.RationalAlloc => true,   // side table, same contract as BigIntAlloc
+                // External-state restore (b_setval): HeapIdx indexes the
+                // external trail log, not the heap — a backtrack to an ancestor
+                // above the cut must still restore the host-level value.
+                TrailType.MutableSet => true,
                 TrailType.AttrModify => _attrTrailLog[entry.HeapIdx].Home < parentHeapTop,
                 _ => entry.HeapIdx < parentHeapTop,
             };

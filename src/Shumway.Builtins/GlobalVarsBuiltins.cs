@@ -79,7 +79,13 @@ public static class GlobalVarsBuiltins
     {
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         Cell value = Resolve(engine, engine.GetRegister(1));
-        Globals(engine).Set(nameId, value, backtrackable: true);
+        var store = Globals(engine);
+        // Trail the previous value FIRST so unwinding past this write puts it
+        // back (Scryer's bb_b_put contract — clpz rewinds its propagation
+        // state through exactly this on labeling backtracks).
+        bool had = store.TryGet(nameId, out Cell old);
+        engine.TrailExternal(store, nameId, old, had);
+        store.Set(nameId, value, backtrackable: true);
         return true;
     }
 
@@ -88,6 +94,18 @@ public static class GlobalVarsBuiltins
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         if (!Globals(engine).TryGet(nameId, out Cell stored))
             throw new PrologRuntimeException("existence_error", "variable");
+        return engine.UnifyRegisterWithCell(1, stored);
+    }
+
+    /// <summary><c>'$fetch_global_var'(+Key, -Value)</c> — Scryer's global-var
+    /// read primitive (iso_ext's <c>bb_get/2</c> lowers to it): FAILS for an
+    /// unset key instead of throwing — clpz probes
+    /// <c>( bb_get(K, C), C == S -&gt; ... ; ... )</c> and relies on the clean
+    /// failure branch.</summary>
+    public static bool FetchGlobalVar(Activation engine)
+    {
+        int nameId = ResolveAtomId(engine, engine.GetRegister(0));
+        if (!Globals(engine).TryGet(nameId, out Cell stored)) return false;
         return engine.UnifyRegisterWithCell(1, stored);
     }
 

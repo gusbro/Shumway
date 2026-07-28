@@ -274,6 +274,8 @@ public sealed partial class Activation
         _gcOldTop = oldTop;
 
         MarkRoots(oldTop);
+        // Pending b_setval restores hold old-value cells (possibly compounds).
+        MarkExternalTrailRoots(GcMarkReferents);
         OnGcMark?.Invoke(GcMarkCell, GcMarkReferents);
 
         // Trace to fixpoint. (_gcWork can be resized by GcMarkCell, so
@@ -313,6 +315,7 @@ public sealed partial class Activation
 
         // ---- relocate every external holder of a heap index. ----
         RelocateRoots(forward, oldTop);
+        RelocateExternalTrail(c => RelocateCell(c, forward));
         OnGcRelocate?.Invoke(
             idx => RelocIndex(idx, forward),
             c => RelocateCell(c, forward),

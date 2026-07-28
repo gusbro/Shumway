@@ -10,10 +10,11 @@ namespace Shumway.Builtins;
 /// <item><b>Non-backtrackable</b> (<c>nb_setval/2</c>): the write
 ///   persists across backtracking. The store just records the
 ///   latest cell value.</item>
-/// <item><b>Backtrackable</b> (<c>b_setval/2</c>): should revert on
-///   backtrack, but is currently recorded non-backtrackably (the
-///   ExtraTrail integration is pending; most programs use
-///   <c>nb_setval/2</c>).</item>
+/// <item><b>Backtrackable</b> (<c>b_setval/2</c> / Scryer's
+///   <c>bb_b_put/2</c>): the builtin trails the previous value via
+///   <c>Activation.TrailExternal</c> before writing; unwinding calls
+///   <see cref="RestoreExternal"/> to put it back (or remove the key
+///   the write created).</item>
 /// </list>
 ///
 /// <para>Cells stored here are snapshots taken at write time —
@@ -29,16 +30,15 @@ namespace Shumway.Builtins;
 /// can't be collected (and its id reused) while a global var is keyed
 /// by it.</para>
 /// </summary>
-public sealed class GlobalVarStore
+public sealed class GlobalVarStore : IExternalTrailTarget
 {
     private readonly Dictionary<int, Cell> _byAtomId = new();
     private readonly Dictionary<int, object> _retained = new();
 
     public void Set(int atomId, Cell value, bool backtrackable)
     {
-        // Backtrackable storage is treated as non-backtrackable for now —
-        // see the class remarks. Reverting on backtrack would need the
-        // previous value plumbed through the engine's ExtraTrail.
+        // Backtrackability is the CALLER's concern: b_setval trails the
+        // previous value (Activation.TrailExternal) before calling here.
         _ = backtrackable;
         if (!_retained.ContainsKey(atomId))
         {
@@ -46,6 +46,13 @@ public sealed class GlobalVarStore
             if (entry is not null) _retained[atomId] = entry;
         }
         _byAtomId[atomId] = value;
+    }
+
+    /// <summary>Backtracking undo for a trailed <c>b_setval</c> write.</summary>
+    public void RestoreExternal(int key, Cell oldValue, bool hadOldValue)
+    {
+        if (hadOldValue) _byAtomId[key] = oldValue;
+        else _byAtomId.Remove(key);
     }
 
     public bool TryGet(int atomId, out Cell value) =>

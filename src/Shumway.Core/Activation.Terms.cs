@@ -78,6 +78,50 @@ public sealed partial class Activation
     public Cell MakeRational(BigInteger num, BigInteger den)
         => MakeRational(Rational.Create(num, den));
 
+    // Backtrackable external state (b_setval / Scryer bb_b_put): each trailed
+    // write logs (target, key, old value) here; the ExtraTrail entry's HeapIdx
+    // indexes this log, and unwinding invokes the target's restore. LIFO with
+    // the extra trail, so truncation at the entry's index is exact.
+    private List<(IExternalTrailTarget Target, int Key, Cell Old, bool Had)>? _externalTrailLog;
+
+    /// <summary>Records a backtrackable external-state write: unwinding past
+    /// this point calls <paramref name="target"/>.RestoreExternal with the
+    /// captured previous value. The old value cell participates in heap GC
+    /// (marked + relocated) so a compound previous value survives a mid-query
+    /// collection.</summary>
+    public void TrailExternal(IExternalTrailTarget target, int key, Cell oldValue, bool hadOldValue)
+    {
+        _externalTrailLog ??= new List<(IExternalTrailTarget, int, Cell, bool)>();
+        int idx = _externalTrailLog.Count;
+        _externalTrailLog.Add((target, key, oldValue, hadOldValue));
+        EnsureExtraTrailCapacity(1);
+        _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
+        {
+            Type = TrailType.MutableSet,
+            HeapIdx = idx,
+            OldValue = default,
+            BindingTrailMarker = _bindingTrailTop,
+        };
+    }
+
+    // Heap-GC participation for the external trail log's old-value cells.
+    internal void MarkExternalTrailRoots(Action<Cell> markReferents)
+    {
+        if (_externalTrailLog is null) return;
+        foreach (var (_, _, old, had) in _externalTrailLog)
+            if (had) markReferents(old);
+    }
+
+    internal void RelocateExternalTrail(Func<Cell, Cell> reloc)
+    {
+        if (_externalTrailLog is null) return;
+        for (int i = 0; i < _externalTrailLog.Count; i++)
+        {
+            var e = _externalTrailLog[i];
+            if (e.Had) _externalTrailLog[i] = (e.Target, e.Key, reloc(e.Old), e.Had);
+        }
+    }
+
     /// <summary>Returns the <see cref="Rational"/> referenced by a RATIONAL cell.</summary>
     public Rational AsRational(Cell cell)
     {
@@ -698,6 +742,16 @@ public sealed partial class Activation
                 if (_rationalTable.Count > entry.HeapIdx)
                     _rationalTable.RemoveRange(entry.HeapIdx, _rationalTable.Count - entry.HeapIdx);
                 break;
+            case TrailType.MutableSet:
+            {
+                // entry.HeapIdx indexes _externalTrailLog. Unwind order is
+                // LIFO, so this entry is the log's top; restore and truncate.
+                var xlog = _externalTrailLog!;
+                var (target, key, old, had) = xlog[entry.HeapIdx];
+                target.RestoreExternal(key, old, had);
+                xlog.RemoveRange(entry.HeapIdx, xlog.Count - entry.HeapIdx);
+                break;
+            }
             case TrailType.AttrModify:
                 // entry.HeapIdx indexes _attrTrailLog, which records the
                 // (attvar home, module, previous value) of one attribute

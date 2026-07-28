@@ -436,7 +436,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | Predicate | Description |
 | --- | --- |
 | `b_getval(+Key, -Value)` | Reads a backtrackable global variable; existence_error if unset. |
-| `b_setval(+Key, +Value)` | Backtrackable global variable assignment (Phase-10 stub stores non-backtrackably). |
+| `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. |
 | `nb_current(?Key, ?Value)` | Enumerates global variables; fails for an unset Key (no throw). |
 | `nb_getval(+Key, -Value)` | Reads a non-backtrackable global variable; existence_error if unset. |
 | `nb_setval(+Key, +Value)` | Non-backtrackable global variable assignment. |

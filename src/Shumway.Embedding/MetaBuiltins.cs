@@ -276,10 +276,26 @@ public static partial class MetaBuiltins
             "Enumerates global variables; fails for an unset Key (no throw).");
         BuiltinsRegistry.Register("b_setval", 2, Shumway.Builtins.GlobalVarsBuiltins.BSetval,
             Globals, "b_setval(+Key, +Value)",
-            "Backtrackable global variable assignment (Phase-10 stub stores non-backtrackably).");
+            "Backtrackable global variable assignment: the previous value is restored on backtracking.");
         BuiltinsRegistry.Register("b_getval", 2, Shumway.Builtins.GlobalVarsBuiltins.BGetval,
             Globals, "b_getval(+Key, -Value)",
             "Reads a backtrackable global variable; existence_error if unset.");
+        // Scryer's global-variable primitives — what iso_ext.pl's bb_put/2,
+        // bb_b_put/2 and bb_get/2 lower to (clpz drives its propagation-queue
+        // state through them). Same store as nb_/b_ above; the backtrackable
+        // flavor shares b_setval's current non-trailed stub.
+        BuiltinsRegistry.Register("$store_global_var", 2,
+            Shumway.Builtins.GlobalVarsBuiltins.NbSetval,
+            Globals, "'$store_global_var'(+Key, +Value)",
+            "Scryer primitive behind bb_put/2: non-backtrackable global assignment.");
+        BuiltinsRegistry.Register("$store_backtrackable_global_var", 2,
+            Shumway.Builtins.GlobalVarsBuiltins.BSetval,
+            Globals, "'$store_backtrackable_global_var'(+Key, +Value)",
+            "Scryer primitive behind bb_b_put/2: backtrackable global assignment.");
+        BuiltinsRegistry.Register("$fetch_global_var", 2,
+            Shumway.Builtins.GlobalVarsBuiltins.FetchGlobalVar,
+            Globals, "'$fetch_global_var'(+Key, -Value)",
+            "Scryer primitive behind bb_get/2: reads a global variable, failing (not throwing) when unset.");
 
         // SWI time builtins (minimal — get_time as float
         // epoch seconds, stamp_date_time as a single date_time
