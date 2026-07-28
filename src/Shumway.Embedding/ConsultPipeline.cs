@@ -177,6 +177,52 @@ internal sealed class ConsultPipeline
         return IsHookHead(head);
     }
 
+    // Applies goal_expansion to the `{ Goal }` braces of a DCG rule, leaving the
+    // grammar structure (nonterminals, terminal lists, pushbacks) untouched.
+    // Descends the DCG control constructs only; anything else is grammar-speak.
+    private Clause ExpandDcgBraceGoals(Clause c)
+    {
+        if (c.Term is not CompoundTerm { Functor: "-->", Args: [var head, var body] } rule)
+            return c;
+        Term newBody = WalkDcgBody(body);
+        return ReferenceEquals(newBody, body)
+            ? c
+            : new Clause(c.Kind,
+                new CompoundTerm("-->", new[] { head, newBody }) { Position = rule.Position },
+                c.Position);
+    }
+
+    private Term WalkDcgBody(Term b)
+    {
+        switch (b)
+        {
+            case CompoundTerm { Functor: "," or ";" or "->" or "*->" or "|", Args.Length: 2 } c2:
+            {
+                Term a0 = WalkDcgBody(c2.Args[0]);
+                Term a1 = WalkDcgBody(c2.Args[1]);
+                return ReferenceEquals(a0, c2.Args[0]) && ReferenceEquals(a1, c2.Args[1])
+                    ? b
+                    : new CompoundTerm(c2.Functor, new[] { a0, a1 }) { Position = c2.Position };
+            }
+            case CompoundTerm { Functor: "\\+", Args.Length: 1 } n1:
+            {
+                Term a0 = WalkDcgBody(n1.Args[0]);
+                return ReferenceEquals(a0, n1.Args[0])
+                    ? b
+                    : new CompoundTerm("\\+", new[] { a0 }) { Position = n1.Position };
+            }
+            case CompoundTerm { Functor: "{}", Args.Length: 1 } br:
+            {
+                Term g = E.ExpandGoalTreeIn(br.Args[0]);
+                return ReferenceEquals(g, br.Args[0])
+                    ? b
+                    : new CompoundTerm("{}", new[] { g }) { Position = br.Position };
+            }
+            default:
+                return b;   // nonterminal / terminal list / var — grammar, not goals
+        }
+    }
+
     // Wraps an in-file hook clause's body with the order guard '$te_after'(index),
     // so the re-expansion pass fires it only for clauses AFTER position `index`
     // (its own definition). Inert for every later consult (pos = -1).
@@ -226,10 +272,26 @@ internal sealed class ConsultPipeline
                 // A clause at or before the FIRST in-file hook cannot be
                 // affected: every in-file hook is order-guarded to fire only
                 // for clauses after its own position.
-                if (local <= firstHookIndex
-                    || c.Kind == ClauseKind.DcgRule)   // `-->` is core (DcgTransform)
+                if (local <= firstHookIndex)
                 {
                     rebuilt.Add(c);
+                    continue;
+                }
+                if (c.Kind == ClauseKind.DcgRule)
+                {
+                    // `-->` itself is core (DcgTransform) — no term_expansion.
+                    // But the rule's `{ Goal }` braces hold PLAIN goals that the
+                    // in-file goal_expansion must rewrite (clpz's DCG bodies are
+                    // full of `{ A cis_leq B }` macro goals); the grammar part
+                    // (nonterminals, terminal lists) stays opaque.
+                    if (hasGoalExp)
+                    {
+                        E._consultExpandPos = local;
+                        Clause dcgGe = ExpandDcgBraceGoals(c);
+                        if (!ReferenceEquals(dcgGe, c)) changed = true;
+                        rebuilt.Add(dcgGe);
+                    }
+                    else rebuilt.Add(c);
                     continue;
                 }
                 E._consultExpandPos = local;
@@ -993,22 +1055,13 @@ internal sealed class ConsultPipeline
         // clauses (a grammar operator like clpz's `++>`, all sharing one head
         // functor) look discontiguous now but become their real, contiguous heads
         // after the re-expansion pass. Defer the contiguity check to then.
-        // firstHookIndex / goal-hook split feed the re-expansion pass: clauses
-        // BEFORE the first in-file hook can't be affected by it (order guard),
-        // and the goal_expansion re-apply is needed only when THIS file added
-        // goal_expansion clauses.
-        bool inFileHooks = false, inFileGoalHooks = false;
-        int firstHookIndex = int.MaxValue;
-        for (int ci = 0; ci < clauses.Count; ci++)
-        {
-            if (!IsHookClauseHead(clauses[ci])) continue;
-            inFileHooks = true;
-            if (ci < firstHookIndex) firstHookIndex = ci;
-            Term hh = clauses[ci].Kind == ClauseKind.Rule
-                && clauses[ci].Term is CompoundTerm { Functor: ":-", Args: [var hcHead, _] }
-                ? hcHead : clauses[ci].Term;
-            if (hh is CompoundTerm { Functor: "goal_expansion" }) inFileGoalHooks = true;
-        }
+        // (Only the BOOLEAN is computed here — clause indices for the order
+        // guard are assigned later, at the guard site, because the list is
+        // still mutated between here and there: native transform, dynamic-head
+        // routing, tabled transform all replace/remove entries.)
+        bool inFileHooks = false;
+        foreach (var c0 in clauses)
+            if (IsHookClauseHead(c0)) { inFileHooks = true; break; }
         if (!inFileHooks)
             ValidateContiguity(clauses, pendingDiscontiguous);
 
@@ -1223,10 +1276,24 @@ internal sealed class ConsultPipeline
         // committed clauses once, after the commit, when the hook is compiled. The
         // guard fires the hook only for clauses after its own definition during
         // that pass, and always (pos = -1) for every later consult.
+        // The guard indices and the re-expansion metadata (first hook position,
+        // whether goal_expansion hooks exist) are assigned HERE, over the FINAL
+        // clause list — the same indices the committed manifest slice and the
+        // re-expansion pass use. Computing them earlier was a latent bug: the
+        // list shrinks between (dynamic-head routing), shifting positions.
+        int firstHookIndex = int.MaxValue;
+        bool inFileGoalHooks = false;
         if (inFileHooks)
             for (int i = 0; i < clauses.Count; i++)
                 if (IsHookClauseHead(clauses[i]))
+                {
+                    if (i < firstHookIndex) firstHookIndex = i;
+                    Term hh = clauses[i].Kind == ClauseKind.Rule
+                        && clauses[i].Term is CompoundTerm { Functor: ":-", Args: [var hcHead, _] }
+                        ? hcHead : clauses[i].Term;
+                    if (hh is CompoundTerm { Functor: "goal_expansion" }) inFileGoalHooks = true;
                     clauses[i] = GuardHookClause(clauses[i], i);
+                }
         ModuleManifest committedManifest;
         int consultBaseOffset;
 

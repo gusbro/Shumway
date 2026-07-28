@@ -337,6 +337,25 @@ public class IncrementalConsultTests
     }
 
     [Fact]
+    public void GoalExpansion_RewritesGoalsInsideDcgBraces()
+    {
+        // clpz's shape: an in-file goal_expansion macro (`cis_leq` -> a real
+        // predicate) used inside DCG `{ }` braces. The re-expansion pass must
+        // rewrite brace goals — the DCG rule itself is core-transformed later,
+        // and skipping it wholesale left the macro as a runtime
+        // existence_error (clpz$$disj/cis_leq).
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- op(700, xfx, mleq).\n" +
+            "goal_expansion(A mleq B, leq(A, B)).\n" +
+            "leq(X, Y) :- X =< Y.\n" +
+            "check(N) --> { N mleq 5 }, [ok].\n" +
+            "run(N, L) :- phrase(check(N), L).");
+        Assert.True(e.Query("run(3, [ok]).").Success);
+        Assert.False(e.Query("run(9, [ok]).").Success);
+    }
+
+    [Fact]
     public void OpDirective_StillAppliesToLaterClauses()
     {
         // The baseline the others generalise — a plain `:- op` from that point on.

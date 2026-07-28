@@ -399,6 +399,14 @@ public sealed partial class PrologEngine
 
     // Recurse through the cut-transparent control constructs and apply
     // goal_expansion (C# then Prolog) to each plain body goal.
+    /// <summary>Applies goal_expansion to one goal tree (control constructs
+    /// descended, plain goals expanded to a bounded fixpoint). The entry the
+    /// consult re-expansion pass uses for goals inside DCG <c>{ }</c> braces —
+    /// a DCG rule's body is grammar-speak the clause-level expansion must not
+    /// touch, but its brace goals are plain goals (clpz's <c>{ A cis_leq B }</c>
+    /// must rewrite like any body goal).</summary>
+    internal Term ExpandGoalTreeIn(Term goal) => ExpandGoalTree(goal);
+
     private Term ExpandGoalTree(Term goal)
     {
         if (goal is CompoundTerm c && IsGoalControl(c.Functor, c.Args.Length))
@@ -440,9 +448,12 @@ public sealed partial class PrologEngine
     {
         if (!HookIndex(GoalExpansionFid, ref _geIdx).CouldMatch(input))
         {
+            if (TeDiagEnabled)
+                System.Console.Error.WriteLine($"[GE] index-skip: {input}");
             expanded = input;
             return false;
         }
+        if (TeDiagEnabled) System.Console.Error.WriteLine($"[GE] try: {input}");
         var inputVars = new HashSet<string>();
         CollectVarNames(input, inputVars);
         var v = new VarTerm("$GE_Expanded");
