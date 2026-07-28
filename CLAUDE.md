@@ -133,6 +133,14 @@ dotnet test
 # closing a phase.
 dotnet test tests/Shumway.Tests.Embedding/ --filter "Category!=Slow"
 
+# FASTER Embedding gate (~2.5 min vs ~13): one build + 4 concurrent test
+# PROCESSES over disjoint class-prefix filters. Process-level parallelism is
+# safe here by construction (each process gets its own AtomTable/FunctorTable
+# statics — the reason in-process xUnit parallelism is disabled). This script
+# is the sanctioned exception to the one-`dotnet test`-at-a-time rule.
+powershell -File tests/test-embedding-parallel.ps1          # routine (Category!=Slow)
+powershell -File tests/test-embedding-parallel.ps1 -Full    # pre-phase-close
+
 # Run ISO conformance suite specifically
 dotnet test tests/Shumway.Tests.IsoConformance/
 

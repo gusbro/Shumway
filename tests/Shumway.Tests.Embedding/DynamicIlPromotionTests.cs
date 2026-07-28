@@ -18,6 +18,13 @@ public sealed class DynamicIlPromotionTests
     {
         var e = new PrologEngine();
         e.IlPromotion.Threshold = threshold;
+        // Deterministic promotion: with the background worker, whether a
+        // delegate is INSTALLED by the time a mutation evicts depends on
+        // compile timing — and EvictDelegate counts churn only when a delegate
+        // was actually present. Under a cold JIT (standalone run) or CPU
+        // contention (parallel gate) the install could miss the round, the
+        // eviction went uncounted, and the churn-pin assertions flaked.
+        e.IlPromotion.BackgroundCompilation = false;
         e.ConsultString(program);
         return e;
     }

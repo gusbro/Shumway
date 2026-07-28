@@ -116,7 +116,18 @@ public class Adr035ControlTests
 
         DebugSnapshot? seen = null;
         ChannelDebugSession? session = null;
-        session = new ChannelDebugSession(engine, notify: _ => seen = ReadFromMemory(session!.Channel));
+        session = new ChannelDebugSession(engine, notify: _ =>
+        {
+            if (seen is not null) return;
+            seen = ReadFromMemory(session!.Channel);
+            // One hit proves the point. Clear the breakpoint from inside the stop
+            // (the drain right after notify applies it) so the remaining ~2000
+            // iterations run free — with debug_lco off each later hit pays a
+            // stop + frame walk over an ever-deeper stack, and under a loaded
+            // machine the full run blew past the gate's hang timeout.
+            WriteCommandsToMemory(session.Channel,
+                new DebugWireCommand { Kind = DebugCommandKind.ClearBreakpoints });
+        });
 
         using (session)
         {
