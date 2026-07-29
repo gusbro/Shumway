@@ -629,10 +629,22 @@ public sealed partial class Activation
     /// <see cref="B"/> points at the new CP and <see cref="Hb"/> is bumped to the current
     /// <see cref="HeapTop"/> so that subsequent bindings of pre-CP heap cells get trailed.
     /// </summary>
+    // SHUMWAY_PC_RING=1 forensics: every CP push / BP update records
+    // (current P, bp) so a backtrack landing on garbage can be traced to the
+    // exact push. Null (and JIT-eliminated at the record sites) by default.
+    public const int CpPushRingSize = 1 << 20;
+    public static readonly long[]? CpPushRing =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_PC_RING") == "1"
+            ? new long[CpPushRingSize] : null;
+    public static int CpPushRingPos;
+
     public void PushChoicePoint(int arity, int nextClauseAddr)
     {
         if (arity < 0)
             throw new ArgumentOutOfRangeException(nameof(arity));
+        if (CpPushRing is { } cpRing)
+            cpRing[CpPushRingPos++ & (CpPushRingSize - 1)] =
+                ((long)P << 32) | (uint)nextClauseAddr;
         if (arity > _registers.Length) EnsureRegisterCapacity(arity);
 
         Profiler.ChoicePoint();
@@ -687,6 +699,9 @@ public sealed partial class Activation
             throw new InvalidOperationException("RetryMeElse called without an active choice point.");
         int arity = RestoreCommonFromCurrentCp();
         AssignHb(_heapTop);
+        if (CpPushRing is { } cpRing)
+            cpRing[CpPushRingPos++ & (CpPushRingSize - 1)] =
+                ((long)P << 32) | (uint)nextClauseAddr;
         _stack[_b + CpBpOffset(arity)] = Cell.RawInt(nextClauseAddr);
     }
 

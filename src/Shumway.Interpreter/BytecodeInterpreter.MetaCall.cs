@@ -211,11 +211,18 @@ public sealed partial class BytecodeInterpreter
 
         var addrs = _engine.CurrentFunctorAddresses;
         if (addrs is not null && addrs.TryGetValue(functorId, out int addr))
+        {
+            if (JumpDiag) CheckJumpTarget(code, addr, functorId, "meta_call");
             return RunGoalInEngine(code, addr);
+        }
 
         // Last chance: materialize a cross-activation runtime-assert helper.
         int lateAddr = _engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
-        if (lateAddr >= 0) return RunGoalInEngine(code, lateAddr);
+        if (lateAddr >= 0)
+        {
+            if (JumpDiag) CheckJumpTarget(code, lateAddr, functorId, "late_helper");
+            return RunGoalInEngine(code, lateAddr);
+        }
 
         // honour the `unknown` flag (throws on error).
         return !Shumway.Core.UnknownProcedure.Fails(_engine, functorId);
@@ -509,6 +516,9 @@ public sealed partial class BytecodeInterpreter
         // Cp untouched (Deallocate / Proceed follows) => the goal returns
         // straight to our caller: a tail call, for the debug ports (ADR-035).
         bool tail = following == Opcode.Deallocate || following == Opcode.Proceed;
+        if (Activation.CpPushRing is { } jr)
+            jr[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
+                = ((long)-4 << 32) | (uint)address;
         DispatchToTier1OrBytecode(address, tail);
         return true;
     }
@@ -718,6 +728,9 @@ public sealed partial class BytecodeInterpreter
         _backtrackFloor = savedB;
         _engine.SetB0(savedB);               // a cut inside the goal stops here
         _engine.SetCp(SubroutineSentinelCp); // the goal's final proceed → Halted
+        if (Activation.CpPushRing is { } gr)
+            gr[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
+                = ((long)-5 << 32) | (uint)target;
         _engine.SetPc(target);
 
         InterpreterResult result;
@@ -752,6 +765,23 @@ public sealed partial class BytecodeInterpreter
             return true;
         }
         return false;
+    }
+
+    internal static readonly bool JumpDiag =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_JUMP_DIAG") == "1";
+
+    /// <summary>SHUMWAY_JUMP_DIAG=1 tripwire: a resolved goal address about
+    /// to be jumped to must hold a real opcode, not padding/mid-instruction
+    /// bytes. Names the functor and resolution path when it doesn't.</summary>
+    private void CheckJumpTarget(ProgramView code, int addr, int functorId, string via)
+    {
+        if (Activation.IsResumeMarker(addr)) return;
+        if (addr >= 0 && addr < code.Length && code[addr] != 0) return;
+        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        System.Console.Error.WriteLine(
+            $"[JUMP-DIAG] {via}: {AtomTable.GetById(atomId)?.Name}/{arity}"
+            + $" -> 0x{addr:X} byte={(addr >= 0 && addr < code.Length ? code[addr] : -1)}"
+            + $" ({_engine.ResolveAddressToLabel?.Invoke(addr) ?? "?"}) len=0x{code.Length:X}");
     }
 
     /// <summary>Exception-filter helper for <see cref="RunGoalInEngine"/>:

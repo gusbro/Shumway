@@ -622,15 +622,34 @@ public sealed partial class Activation
     /// process without InternalsVisibleTo) can call it from emitted IL.</summary>
     public void SetCp(int cp) => _cp = cp;
 
+    // SHUMWAY_TRAP_PC=<hex> forensics: print the C# stack the moment P is set
+    // to the trapped address. -1 (and JIT-eliminated checks) by default.
+    public static readonly int TrapPc =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_TRAP_PC") is { } s
+            ? System.Convert.ToInt32(s, 16) : -1;
+    private void TrapPcHit(int pc)
+        => System.Console.Error.WriteLine(
+            $"[TRAP-PC] P set to 0x{pc:X} (from P=0x{_p:X}, gen={ProgramGeneration},"
+            + $" srcByte={(CurrentProgram is { } cp && _p >= 0 && _p < cp.Length ? cp[_p] : -1):X2})"
+            + $"\n{System.Environment.StackTrace}");
+
     /// <summary>Sets <c>PC</c> directly. Used by the interpreter for jumps
     /// (<c>execute</c>, <c>proceed</c>) and by Run for the initial entry point.
     /// public so persisted-IL assemblies (loaded into the
     /// process without InternalsVisibleTo) can call it from emitted IL.</summary>
-    public void SetPc(int pc) => _p = pc;
+    public void SetPc(int pc)
+    {
+        if (TrapPc >= 0 && pc == TrapPc) TrapPcHit(pc);
+        _p = pc;
+    }
 
     /// <summary>Advances <c>PC</c> by <paramref name="delta"/> bytes. Used by the
     /// interpreter to step past straight-line instructions.</summary>
-    internal void AdvancePc(int delta) => _p += delta;
+    internal void AdvancePc(int delta)
+    {
+        _p += delta;
+        if (TrapPc >= 0 && _p == TrapPc) TrapPcHit(_p);
+    }
 
     /// <summary>the address a backtrackable builtin's CP
     /// resume should jump to after a successful retry. Set by the caller

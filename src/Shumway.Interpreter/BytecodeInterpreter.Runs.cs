@@ -398,9 +398,19 @@ public sealed partial class BytecodeInterpreter
                     // tail-call target. Otherwise resume at the caller's
                     // continuation, just like bytecode proceed would.
                     if (_engine.IlTailCallPending)
+                    {
                         _engine.IlTailCallPending = false;
+                        if (Activation.CpPushRing is { } r1)
+                            r1[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
+                                = ((long)-3 << 32) | (uint)_engine.P;
+                    }
                     else
+                    {
+                        if (Activation.CpPushRing is { } r2)
+                            r2[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
+                                = ((long)-2 << 32) | (uint)_engine.Cp;
                         _engine.SetPc(_engine.Cp);
+                    }
                     return true;
                 }
                 // The IL clause that cursor selected didn't unify — try
@@ -423,6 +433,9 @@ public sealed partial class BytecodeInterpreter
             // the choice point being resumed — the session identifies which
             // goals died (those called after this CP was pushed) from it.
             _engine.Debug?.OnRedo(_engine, bp);
+            if (Activation.CpPushRing is { } r3)
+                r3[Activation.CpPushRingPos++ & (Activation.CpPushRingSize - 1)]
+                    = ((long)-1 << 32) | (uint)bp;
             _engine.SetPc(bp);
             return true;
         }

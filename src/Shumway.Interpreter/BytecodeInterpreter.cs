@@ -26,6 +26,15 @@ public sealed partial class BytecodeInterpreter
     private static readonly bool _dispatchTrace =
         System.Environment.GetEnvironmentVariable("ITE_TRACE") == "1";
 #endif
+    // SHUMWAY_PC_RING=1 forensics: record the last PcRingSize dispatched PCs
+    // and dump them (with labels) when dispatch lands on reserved_invalid —
+    // shows the exact control path into a corrupt jump. Off (null) by default.
+    internal const int PcRingSize = 64;
+    internal static readonly int[]? PcRing =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_PC_RING") == "1"
+            ? new int[PcRingSize] : null;
+    private static int _pcRingPos;
+
     // Not readonly: ADR-015 recompiles a dynamic predicate
     // mid-query, which may intern new literals into the persistent pools;
     // RefreshLiteralPools swaps in the grown snapshots.
@@ -215,6 +224,78 @@ public sealed partial class BytecodeInterpreter
         _engine.SetPc(startPc);
         try { return Dispatch(code); }
         catch (TopLevelFailure) { return InterpreterResult.Failed; }
+        catch (System.Exception ex) when (PcRing is not null
+            && ex is not Shumway.Core.PrologRuntimeException
+            // Prolog-level control flow (thrown balls, halt/2), not corruption.
+            && ex.GetType().Name is not "ShumwayPrologException"
+                and not "PrologHaltException")
+        {
+            DumpPcRing(code, _engine.P, ex.GetType().Name);
+            throw;
+        }
+    }
+
+    /// <summary>SHUMWAY_PC_RING=1 forensics dump — the recent-PC ring with labels
+    /// plus hex windows around the jump source and the current pc.</summary>
+    private void DumpPcRing(ProgramView code, int pc, string why)
+    {
+        var ring = PcRing!;
+        var sb = new System.Text.StringBuilder($"[PC-RING:{why}] last PCs: ");
+        for (int r = PcRingSize; r >= 1; r--)
+        {
+            int rp = ring[(_pcRingPos - r) & (PcRingSize - 1)];
+            sb.Append($"0x{rp:X}({_engine.ResolveAddressToLabel?.Invoke(rp) ?? "?"}) ");
+        }
+        System.Console.Error.WriteLine(sb.ToString());
+        int prevPc = ring[(_pcRingPos - 2) & (PcRingSize - 1)];
+        foreach (int center in new[] { prevPc, pc })
+        {
+            if (center < 0 || center >= code.Length) continue;
+            int lo = System.Math.Max(0, center - 0x80);
+            int hi = System.Math.Min(code.Length, center + 0x40);
+            var hx = new System.Text.StringBuilder(
+                $"[PC-RING] bytes 0x{lo:X}..0x{hi:X} (around 0x{center:X}): ");
+            for (int b = lo; b < hi; b++)
+                hx.Append(b == center ? $"|{code[b]:X2}| " : $"{code[b]:X2} ");
+            System.Console.Error.WriteLine(hx.ToString());
+        }
+        var cp = new System.Text.StringBuilder("[PC-RING] CP chain: ");
+        int depth = 0;
+        foreach (var (stackB, savedBp, arity) in _engine.EnumerateChoicePoints())
+        {
+            cp.Append($"#{depth}(B={stackB},arity={arity},bp=0x{savedBp:X}="
+                + $"{_engine.ResolveAddressToLabel?.Invoke(savedBp) ?? "?"}) ");
+            if (++depth > 24) { cp.Append("..."); break; }
+        }
+        System.Console.Error.WriteLine(cp.ToString());
+        if (Activation.CpPushRing is { } pushes)
+        {
+            // Most recent pushes whose bp equals the crash pc — the likely
+            // origin of the bad resume address.
+            var pr = new System.Text.StringBuilder(
+                $"[PC-RING] pushes with bp=0x{pc:X} (most recent first): ");
+            int found = 0;
+            int total = System.Math.Min(Activation.CpPushRingPos, Activation.CpPushRingSize);
+            for (int r = 1; r <= total && found < 8; r++)
+            {
+                long packed = pushes[(Activation.CpPushRingPos - r) & (Activation.CpPushRingSize - 1)];
+                if ((int)packed != pc) continue;
+                int pusher = (int)(packed >> 32);
+                string kind = pusher switch
+                {
+                    -1 => "resume-bp",
+                    -2 => "il-resume-cp",
+                    -3 => "il-resume-tail",
+                    -4 => "jump-to-user-goal",
+                    -5 => "run-goal-in-engine",
+                    _ => _engine.ResolveAddressToLabel?.Invoke(pusher) ?? "?",
+                };
+                pr.Append($"[-{r}] P=0x{pusher:X}({kind}) ");
+                found++;
+            }
+            if (found == 0) pr.Append("(none in ring)");
+            System.Console.Error.WriteLine(pr.ToString());
+        }
     }
 
     // The old recursive RunSubroutine + floor-pin machinery is gone. The
@@ -400,6 +481,7 @@ public sealed partial class BytecodeInterpreter
             // per-tick Split branch entirely.
             byte opByte = code.Overflow is null ? codeArr[pc] : code[pc];
             Shumway.Core.Profiler.Opcode(opByte);
+            if (PcRing is { } ring) { ring[_pcRingPos++ & (PcRingSize - 1)] = pc; }
 #if SHUMWAY_PROFILE
             // Dispatch trace (profile builds only, ITE_TRACE=1): one line per
             // dispatched opcode with pc / B / Cp. Added for the ADR-025
@@ -412,8 +494,12 @@ public sealed partial class BytecodeInterpreter
             switch ((Opcode)opByte)
             {
                 case Opcode.ReservedInvalid:
+                    if (PcRing is not null) DumpPcRing(code, pc, "reserved_invalid");
                     throw new InvalidOperationException(
-                        $"Encountered reserved_invalid opcode at PC=0x{pc:X4} — bytecode corruption.");
+                        $"Encountered reserved_invalid opcode at PC=0x{pc:X4}"
+                        + $" ({_engine.ResolveAddressToLabel?.Invoke(pc) ?? "?"})"
+                        + $" Cp=0x{_engine.Cp:X4} ({_engine.ResolveAddressToLabel?.Invoke(_engine.Cp) ?? "?"})"
+                        + " — bytecode corruption.");
 
                 case Opcode.Halt:
                     return InterpreterResult.Halted;
@@ -449,13 +535,19 @@ public sealed partial class BytecodeInterpreter
 
                 case Opcode.Call:
                 {
+                    // Operands BEFORE the wakeup flush: the flush runs arbitrary
+                    // goals, and a background IL install draining inside them
+                    // (OnCalleePromoted) may rewrite THIS site in place to
+                    // CallIl <fid>. Reading the operand after the flush would
+                    // pair the already-dispatched Call opcode with the fid and
+                    // jump to it as an address (the clpz cross-query crash).
+                    int target = ReadI32(code, codeArr, pc + 1);
+                    int numLivePerms = ReadI32(code, codeArr, pc + 5);
                     if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int target = ReadI32(code, codeArr, pc + 1);
-                    int numLivePerms = ReadI32(code, codeArr, pc + 5);
                     target = ResolveTargetMaybeAutoPromoted(target);
                     if (target == UnknownFailTarget)   // unknown=fail
                     {
@@ -554,12 +646,14 @@ public sealed partial class BytecodeInterpreter
 
                 case Opcode.Execute:
                 {
+                    // Operand BEFORE the wakeup flush — same in-place
+                    // Execute→ExecuteIl repatch hazard as the Call case above.
+                    int target = ReadI32(code, codeArr, pc + 1);
                     if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    int target = ReadI32(code, codeArr, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
                     if (target == UnknownFailTarget)   // unknown=fail
                     {
@@ -2065,6 +2159,11 @@ public sealed partial class BytecodeInterpreter
                     // capture and here, so the mechanical substitution's
                     // "P still equals pc" precondition can't be verified
                     // per-site for every builtin.
+                    if (PcRing is not null && _engine.P != pc)
+                        System.Console.Error.WriteLine(
+                            $"[PC-RING] builtin '{entry.Name}/{entry.Arity}' (id {builtinId})"
+                            + $" succeeded with P moved: pc=0x{pc:X} P=0x{_engine.P:X}"
+                            + $" IlTailCallPending={_engine.IlTailCallPending}");
                     _engine.AdvancePc(9);
                     break;
                 }

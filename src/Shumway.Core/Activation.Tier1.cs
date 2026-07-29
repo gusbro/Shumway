@@ -1002,6 +1002,7 @@ public sealed partial class Activation
     /// after the <c>call_builtin</c> that pushed the CP.</summary>
     public void ResumeAtReturnPc(int returnPc)
     {
+        if (TrapPc >= 0 && returnPc == TrapPc) SetPc(returnPc);
         _p = returnPc;
         IlTailCallPending = true;
     }

@@ -120,6 +120,9 @@ public sealed partial class PrologEngine
             {
                 int addr = TryCatch(engine, ex.Term, out _);
                 if (addr < 0) throw;
+                if (CatchDiag)
+                    Console.Error.WriteLine(
+                        $"[CATCH-RESUME] ball={ex.Term} addr=0x{addr:X}");
                 step = () => interp.Run(program, addr);
             }
             catch (PrologRuntimeException ex)
@@ -148,6 +151,9 @@ public sealed partial class PrologEngine
     /// <paramref name="hadActiveFrame"/> then reports whether any active
     /// catch frame was seen at all (it was just a catcher mismatch) — used
     /// to decide whether an uncaught runtime error keeps its raw form.</summary>
+    internal static readonly bool CatchDiag =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_CATCH_DIAG") == "1";
+
     private static int TryCatch(Activation engine, Term ballTerm, out bool hadActiveFrame)
         => TryCatchFrom(engine, ballTerm, 0, out hadActiveFrame);
 
