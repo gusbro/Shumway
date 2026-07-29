@@ -102,6 +102,15 @@ public sealed class CompiledPredicate
     /// shared across engines via the global caches.</summary>
     internal int PoolFreeMemo;
 
+    /// <summary>The <see cref="LiteralPools"/> instance this predicate's
+    /// bytecode was compiled against, when the caller supplied a persistent
+    /// (engine-lifetime, append-only) pool set — literal ids are stable
+    /// there, so the predicate is skip-cache-reusable against the SAME pools
+    /// even when its bytecode references pool literals (the pool-free test
+    /// is only needed for a foreign-pool predicate, e.g. one decoded from a
+    /// bundle). Null when compiled against a method-local pool set.</summary>
+    public object? PoolsRef;
+
     /// <summary>memoized Tier-1 IL shape analyses (the
     /// <see cref="PoolFreeMemo"/> precedent). Each slot holds the IL
     /// compiler's <c>IlShapeMemo</c> for one shape recogniser

@@ -42,6 +42,14 @@ public sealed class Clause
     public Term Term { get; }
     public SourcePosition Position { get; }
 
+    /// <summary>Head-functor-id memo (+1, so 0 means unset). A pure function
+    /// of the immutable term and the global atom/functor tables (ids are
+    /// stable for an atom's lifetime), so caching is safe — a race writes the
+    /// same value. The per-build grouping walks used to re-intern every
+    /// clause head's name at every product build. DCG rules are never
+    /// memoized: their expanded (+2) arity differs between callers.</summary>
+    public int HeadFidMemo;
+
     public Clause(ClauseKind kind, Term term, SourcePosition position)
     {
         Kind = kind;

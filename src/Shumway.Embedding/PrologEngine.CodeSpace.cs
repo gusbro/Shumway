@@ -560,12 +560,34 @@ public sealed partial class PrologEngine
     /// user-module dynamic context, including any MetaTransform helper
     /// clauses the pipeline synthesised, whose head fids are recorded
     /// alongside). An entry drops when its functor's clause list mutates
-    /// (<see cref="InvalidateDynamicCache"/>); the whole table drops when
-    /// <see cref="_derivationGen"/> moves (the rewrite context's inputs —
-    /// user locals, dynamic-functor set, mode table — may have changed).</summary>
-    internal readonly Dictionary<int, (List<Clause> Clauses, List<int> HeadFids)>
+    /// (<see cref="InvalidateDynamicCache"/>) or when the rewrite-context
+    /// inputs it was built under changed — recorded per entry as the
+    /// LOCALS SET INSTANCE (the per-module transform cache reuses the same
+    /// HashSet while its module is unchanged, so reference equality is an
+    /// exact fingerprint) plus the mode-table version. Entries survive
+    /// derivation bumps whose regeneration didn't touch their module —
+    /// the old whole-table clear per derivation recompiled every dynamic
+    /// predicate at every product build of a library load.</summary>
+    internal readonly Dictionary<int, (List<Clause> Clauses, List<int> HeadFids,
+            object LocalsRef, int ModesVersion)>
         _dynamicRewriteCache = new();
-    internal int _dynamicRewriteGen = -1;
+
+    /// <summary>Stable empty-locals sentinel for dynamic rewrite contexts —
+    /// a fresh <c>new HashSet&lt;int&gt;()</c> per build would defeat the
+    /// reference-equality validity check above.</summary>
+    internal static readonly HashSet<int> EmptyLocalsSentinel = new();
+
+    /// <summary>ADR-030 elision-result cache across product builds. The
+    /// elision DECISIONS are a pure function of the eligible (static) clause
+    /// content, the defined-indicator set, and the per-indicator eligibility
+    /// (dynamic-ness) — dynamic clause BODIES are never analyzed (ineligible
+    /// predicates never enter the det set). So when no module re-transformed
+    /// and both fid sets match, the previous build's substitution map
+    /// (original clause → elided clause) replays in O(N) reference probes
+    /// instead of re-running the whole-program fixpoint.</summary>
+    internal Dictionary<Clause, Clause>? _elideSubstitutions;
+    internal HashSet<int>? _elideKeyHeadFids;
+    internal HashSet<int>? _elideKeyDynFids;
 
     /// <summary>merged skip-compile cache (the per-query merge
     /// of <see cref="_precompiledClauseCache"/> +

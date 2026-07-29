@@ -646,6 +646,10 @@ public sealed partial class PrologEngine
         // final plain-rule body.
         var modeTable = Modes;
 
+        // Whether any module's transform actually re-ran this build (vs every
+        // module reusing its cached rewrite). Keys the elision-replay cache:
+        // unchanged static content + unchanged fid sets ⇒ unchanged decisions.
+        bool staticContentChanged = false;
         if (_staticRewriteGen == _derivationGen && _staticRewriteClauses is not null)
         {
             // the static program hasn't changed since the
@@ -677,13 +681,19 @@ public sealed partial class PrologEngine
             // module that actually REGENERATES mints fresh helper ids, and
             // only ITS compiled predicates are dropped (DropStaticCompiledFids
             // in the loop below — the targeted version of the old blanket
-            // _staticPredicateCache.Clear()). The dynamic tier still clears
-            // wholesale: _dynamicRewriteCache resets per derivation, so every
-            // dynamic recompile references fresh helper ids.
+            // _staticPredicateCache.Clear()).
             //  * the linked STATIC REGION (_staticLink) is still dropped — a
             //    dynamic clause recompiled under the new derivation calls new
             //    '$disj_N' helpers, and those helper predicates are STATIC:
             //    they only reach the code space through a fresh static link.
+            // The dynamic COMPILED cache still clears wholesale. DO NOT relax
+            // this to the rewrite entries' per-entry fingerprint: reusing a
+            // dynamic predicate's compiled bytecode across a derivation bump
+            // broke clpz's propagators at runtime (constraints silently
+            // stopped firing) even though every unit gate stayed green — the
+            // rewrite ASTs are safely reusable, the compiled form is not.
+            // Recompiling the handful of dynamic predicates from their kept
+            // ASTs is cheap.
             _dynamicPredicateCache.Clear();
             _skipCompileMergedCache = null;
             _staticLink = null;
@@ -734,6 +744,11 @@ public sealed partial class PrologEngine
                 }
                 // This module regenerates: its previous compiled predicates
                 // reference helper ids that are about to be re-minted.
+                staticContentChanged = true;
+                if (LoadProfEnabled)
+                    Console.Error.WriteLine(
+                        $"[PROF-REGEN] build={ProfProductBuilds} module={name} clauses={manifest.Clauses.Count}"
+                        + (mte is null ? " (first)" : $" (was {mte.ClauseSnapshot.Length})"));
                 if (mte is not null) DropStaticCompiledFids(mte.HeadFids);
                 // module-local meta-wrapper unfold (ifthen/2-style user
                 // control wrappers called with statically-known goals become inline
@@ -810,6 +825,7 @@ public sealed partial class PrologEngine
                 if (dead is not null)
                     foreach (var key in dead)
                     {
+                        staticContentChanged = true;
                         DropStaticCompiledFids(_moduleTransformCache[key].HeadFids);
                         _moduleTransformCache.Remove(key);
                     }
@@ -850,20 +866,17 @@ public sealed partial class PrologEngine
         {
             // per-functor transform cache. A functor's entry
             // is dropped by InvalidateDynamicCache when its clause list
-            // mutates; the whole table is dropped when the derivation
-            // generation moves (the dynamic rewrite context's inputs —
-            // user locals, dynamic-functor set, mode table — may have
-            // changed). So a query after N asserts re-transforms only
-            // the asserted functors, not every dynamic predicate.
-            if (_dynamicRewriteGen != _derivationGen)
-            {
-                _dynamicRewriteCache.Clear();
-                _dynamicRewriteGen = _derivationGen;
-            }
+            // mutates; validity against the rewrite-context inputs is
+            // PER ENTRY (the locals-set instance it was built under +
+            // the mode-table version) — the per-module transform cache
+            // hands back the same locals HashSet while a module is
+            // unchanged, so reference equality is exact. So a query after
+            // N asserts re-transforms only the asserted functors, and a
+            // derivation bump re-transforms only entries whose module's
+            // locals actually changed.
+            var userLocals = userLocalsCache ?? EmptyLocalsSentinel;
             var dynCtx = new ModuleRewrite.Context(
-                DefaultModuleName,
-                userLocalsCache ?? new HashSet<int>(),
-                _dynStore.Functors);
+                DefaultModuleName, userLocals, _dynStore.Functors);
             // per-module contexts for dynamic predicates whose
             // clauses came from a named module (bundle seeds / source-
             // carrying entries). Built lazily; everything unattributed
@@ -872,22 +885,31 @@ public sealed partial class PrologEngine
             foreach (var (fid, clauses) in _dynStore.Slots)
             {
                 if (clauses.Count == 0) continue;
-                if (!_dynamicRewriteCache.TryGetValue(fid, out var entry))
+                var fidCtx = dynCtx;
+                if (_dynamicSeedModule.TryGetValue(fid, out var seedModule))
                 {
-                    var fidCtx = dynCtx;
-                    if (_dynamicSeedModule.TryGetValue(fid, out var seedModule))
+                    namedDynCtx ??= new Dictionary<string, ModuleRewrite.Context>();
+                    if (!namedDynCtx.TryGetValue(seedModule, out fidCtx))
                     {
-                        namedDynCtx ??= new Dictionary<string, ModuleRewrite.Context>();
-                        if (!namedDynCtx.TryGetValue(seedModule, out fidCtx))
-                        {
-                            HashSet<int>? seedLocals = null;
-                            moduleLocalsCache?.TryGetValue(seedModule, out seedLocals);
-                            fidCtx = new ModuleRewrite.Context(
-                                seedModule,
-                                seedLocals ?? new HashSet<int>(),
-                                _dynStore.Functors);
-                            namedDynCtx[seedModule] = fidCtx;
-                        }
+                        HashSet<int>? seedLocals = null;
+                        moduleLocalsCache?.TryGetValue(seedModule, out seedLocals);
+                        fidCtx = new ModuleRewrite.Context(
+                            seedModule,
+                            seedLocals ?? EmptyLocalsSentinel,
+                            _dynStore.Functors);
+                        namedDynCtx[seedModule] = fidCtx;
+                    }
+                }
+                if (!_dynamicRewriteCache.TryGetValue(fid, out var entry)
+                    || !ReferenceEquals(entry.LocalsRef, fidCtx.LocalFunctors)
+                    || entry.ModesVersion != modeTable.Version)
+                {
+                    if (entry.Clauses is not null)
+                    {
+                        // Stale context: the re-transform below mints fresh
+                        // helper ids, so the compiled entry (which calls the
+                        // old ones) must go with it.
+                        DropDynamicPredicateCacheEntry(fid);
                     }
                     var transformed = ClausePipeline.Apply(clauses, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
                     var rewritten = new List<Clause>(transformed.Count);
@@ -899,7 +921,7 @@ public sealed partial class PrologEngine
                     var headFids = new List<int>(rewritten.Count);
                     foreach (var c in rewritten)
                         headFids.Add(HeadFunctorIdOf(c));
-                    entry = (rewritten, headFids);
+                    entry = (rewritten, headFids, fidCtx.LocalFunctors, modeTable.Version);
                     _dynamicRewriteCache[fid] = entry;
                 }
                 allRewritten.AddRange(entry.Clauses);
@@ -972,27 +994,73 @@ public sealed partial class PrologEngine
         // harmless; a stale ELIDED cut re-exposes choice points). Running the
         // elision here lets us diff the elided-fid set against the previous
         // build's and drop exactly the flipped predicates from the skip cache.
+        long profPe0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         if (_flags.ElideRedundantCuts)
         {
-            var preElide = allRewritten;
-            allRewritten = Shumway.Compiler.Wam.DeterminismAnalysis
-                .EliminateRedundantTrailingCuts(
-                    preElide, c => !_dynStore.Functors.Contains(HeadFunctorIdOf(c)));
-            var elidedNow = new HashSet<int>();
-            for (int i = 0; i < allRewritten.Count; i++)
-                if (!ReferenceEquals(allRewritten[i], preElide[i]))
-                    elidedNow.Add(HeadFunctorIdOf(allRewritten[i]));
-            if (_lastElidedStaticFids is { } prevElided)
+            // Replay fast path: the elision decisions are a pure function of
+            // the eligible (static) clause content, the defined-indicator set
+            // and the per-indicator eligibility — a dynamic clause's BODY is
+            // never analyzed (ineligible predicates never enter the det set).
+            // When no module re-transformed and both fid sets match the
+            // previous build's, replay the cached substitution map (original
+            // clause → its elided form; same objects each build) instead of
+            // re-running the whole-program fixpoint.
+            var dynFidsNow = new HashSet<int>();
+            foreach (int f in rewrittenHeadFids)
+                if (_dynStore.Functors.Contains(f)) dynFidsNow.Add(f);
+            if (!staticContentChanged
+                && _elideSubstitutions is { } subst
+                && _elideKeyHeadFids!.SetEquals(rewrittenHeadFids)
+                && _elideKeyDynFids!.SetEquals(dynFidsNow))
             {
-                List<int>? flipped = null;
-                foreach (int fid in elidedNow)
-                    if (!prevElided.Contains(fid)) (flipped ??= new()).Add(fid);
-                foreach (int fid in prevElided)
-                    if (!elidedNow.Contains(fid)) (flipped ??= new()).Add(fid);
-                if (flipped is not null) DropStaticCompiledFids(flipped);
+                if (subst.Count > 0)
+                {
+                    var replayed = new List<Clause>(allRewritten.Count);
+                    foreach (var c in allRewritten)
+                        replayed.Add(subst.TryGetValue(c, out var e) ? e : c);
+                    allRewritten = replayed;
+                }
+                // decisions unchanged ⇒ elided set unchanged ⇒ no flip drops.
             }
-            _lastElidedStaticFids = elidedNow;
+            else
+            {
+                var preElide = allRewritten;
+                allRewritten = Shumway.Compiler.Wam.DeterminismAnalysis
+                    .EliminateRedundantTrailingCuts(
+                        preElide, c => !_dynStore.Functors.Contains(HeadFunctorIdOf(c)));
+                var elidedNow = new HashSet<int>();
+                var substNew = new Dictionary<Clause, Clause>();
+                for (int i = 0; i < allRewritten.Count; i++)
+                    if (!ReferenceEquals(allRewritten[i], preElide[i]))
+                    {
+                        elidedNow.Add(HeadFunctorIdOf(allRewritten[i]));
+                        substNew[preElide[i]] = allRewritten[i];
+                    }
+                if (_lastElidedStaticFids is { } prevElided)
+                {
+                    List<int>? flipped = null;
+                    foreach (int fid in elidedNow)
+                        if (!prevElided.Contains(fid)) (flipped ??= new()).Add(fid);
+                    foreach (int fid in prevElided)
+                        if (!elidedNow.Contains(fid)) (flipped ??= new()).Add(fid);
+                    if (flipped is not null)
+                    {
+                        if (LoadProfEnabled)
+                            Console.Error.WriteLine(
+                                $"[PROF-DROP] elide-flip: {flipped.Count} fids"
+                                + $" (e.g. {DescribeFid(flipped[0])})");
+                        DropStaticCompiledFids(flipped);
+                    }
+                }
+                _lastElidedStaticFids = elidedNow;
+                _elideSubstitutions = substNew;
+                _elideKeyHeadFids = new HashSet<int>(rewrittenHeadFids);
+                _elideKeyDynFids = dynFidsNow;
+            }
         }
+        long profPe1 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        if (LoadProfEnabled) ProfPbElideTicks += profPe1 - profPe0;
+        long profPbC0 = Shumway.Compiler.Wam.ModuleCompiler.ProfCompiledPreds;
         var module = new ModuleCompiler
         {
             EmitDebugInfo = _flags.EmitDebugInfo,
@@ -1007,7 +1075,21 @@ public sealed partial class PrologEngine
         // Cross-activation helper visibility (the Logtalk-under-promotion fix):
         // every helper compiled by this setup stays materializable on demand
         // into any OTHER live activation (see TryMaterializeAssertHelper).
+        long profPe2 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        if (LoadProfEnabled)
+        {
+            ProfPbModCompileTicks += profPe2 - profPe1;
+            long pbCompiled =
+                Shumway.Compiler.Wam.ModuleCompiler.ProfCompiledPreds - profPbC0;
+            ProfPbCompiledPreds += pbCompiled;
+            Console.Error.WriteLine(
+                $"[PROF-BUILD] compiled={pbCompiled} staticCache={_staticPredicateCache.Count}"
+                + $" dynCache={_dynamicPredicateCache.Count}"
+                + $" missNoEntry={Shumway.Compiler.Wam.ModuleCompiler.ProfMissNoEntry}"
+                + $" missRejected={Shumway.Compiler.Wam.ModuleCompiler.ProfMissRejected}");
+        }
         RegisterLateHelpers(module.Predicates);
+        if (LoadProfEnabled) ProfPbLateHelpersTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profPe2;
 
         // Populate the dynamic cache with any newly-compiled dynamic
         // predicate whose bytecode is safe to reuse next query (no
@@ -1027,7 +1109,8 @@ public sealed partial class PrologEngine
                 _jitIndexProfile.RecordCompileDecision(
                     pred.FunctorId, _jitIndexProfile.IsHot(pred.FunctorId));
                 if (_dynamicPredicateCache.ContainsKey(pred.FunctorId)) continue;
-                if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
+                if (ReferenceEquals(pred.PoolsRef, _literalPools)
+                    || Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
                 {
                     _dynamicPredicateCache[pred.FunctorId] = pred;
                     // mirror into the merged skip-compile
@@ -1110,7 +1193,8 @@ public sealed partial class PrologEngine
             int fid = pred.FunctorId;
             if (!cacheableFunctors.Contains(fid) || _dynStore.IsDynamic(fid)) continue;
             if (_staticPredicateCache.ContainsKey(fid)) continue;
-            if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
+            if (ReferenceEquals(pred.PoolsRef, _literalPools)
+                    || Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
             {
                 _staticPredicateCache[fid] = pred;
                 // mirror into the merged skip-compile cache.
@@ -1881,6 +1965,12 @@ public sealed partial class PrologEngine
     /// <c>name/arity → address</c> to <paramref name="map"/> unless the
     /// bare functor already resolves (a real definition or an earlier
     /// alias wins, preserving the original first-wins semantics).</summary>
+    private static string DescribeFid(int fid)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        return $"{AtomTable.GetById(atomId)?.Name}/{arity}";
+    }
+
     private void AddBareLocalAliases(
         Dictionary<int, int> map, IReadOnlyDictionary<int, int> entries,
         HashSet<int>? recordAdded = null)

@@ -24,6 +24,9 @@ public sealed class ModuleCompiler
     /// the skip cache, and ticks inside PredicateCompiler — across all Compile
     /// calls this process.</summary>
     public static long ProfElideTicks, ProfCompiledPreds, ProfSkippedPreds, ProfPredTicks;
+    public static long ProfGroupTicks, ProfSnapshotTicks, ProfCompileCalls;
+    public static long ProfMissNoEntry, ProfMissRejected;
+    public static System.Collections.Generic.Dictionary<int, int>? ProfCompiledByFid;
 
     /// <summary>propagated to
     /// <see cref="PredicateCompiler.EmitDebugInfo"/>. <c>false</c> drops
@@ -154,6 +157,8 @@ public sealed class ModuleCompiler
         // Group by functor in first-occurrence order. The order matters: when
         // we emit the program, predicates appear in the order the source
         // introduced them, which is the natural debugging-friendly order.
+        ProfCompileCalls++;
+        long profGr0 = System.Diagnostics.Stopwatch.GetTimestamp();
         var groups = new Dictionary<int, List<Clause>>();
         var order = new List<int>();
 
@@ -171,10 +176,12 @@ public sealed class ModuleCompiler
             }
             list.Add(clause);
         }
+        ProfGroupTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profGr0;
 
         // Persistent pools (ADR-015) accumulate across compilations so
         // literal ids stay stable query to query; absent them, a fresh
         // per-module set — the original behaviour.
+        bool callerSuppliedPools = pools is not null;
         pools ??= new LiteralPools();
         var stringLiterals = pools.Strings;
         var floatLiterals = pools.Floats;
@@ -189,13 +196,23 @@ public sealed class ModuleCompiler
         };
         foreach (int fid in order)
         {
-            if (cache is not null
-                && cache.TryGetValue(fid, out var cached)
-                && IsCachedPredicateReusable(cached))
+            // Reusable when compiled against THESE pools (persistent,
+            // append-only — literal ids stable), or pool-free (safe against
+            // any pools; covers bundle-decoded entries).
+            if (cache is not null && cache.TryGetValue(fid, out var cached))
             {
-                predicates.Add(cached);
-                ProfSkippedPreds++;
-                continue;
+                if (ReferenceEquals(cached.PoolsRef, pools)
+                    || IsCachedPredicateReusable(cached))
+                {
+                    predicates.Add(cached);
+                    ProfSkippedPreds++;
+                    continue;
+                }
+                ProfMissRejected++;
+            }
+            else
+            {
+                ProfMissNoEntry++;
             }
             bool enableIndexing = unindexedFunctors is null
                 || !unindexedFunctors.Contains(fid);
@@ -205,18 +222,25 @@ public sealed class ModuleCompiler
             predicateCompiler.DebugCodegen =
                 DebugCodegen && NonDebuggableFunctors?.Contains(fid) != true;
             long profPd0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            predicates.Add(predicateCompiler.Compile(
+            var compiled = predicateCompiler.Compile(
                 groups[fid], stringLiterals, floatLiterals, bigIntLiterals,
-                enableIndexing, isDynamic, failStubAddr));
+                enableIndexing, isDynamic, failStubAddr);
+            if (callerSuppliedPools) compiled.PoolsRef = pools;
+            predicates.Add(compiled);
             ProfPredTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profPd0;
             ProfCompiledPreds++;
+            if (ProfCompiledByFid is { } pcf)
+                pcf[fid] = pcf.TryGetValue(fid, out int n) ? n + 1 : 1;
         }
 
-        return new CompiledModule(
+        long profSn0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        var result = new CompiledModule(
             predicates,
             stringLiterals.Snapshot(),
             floatLiterals.Snapshot(),
             bigIntLiterals.Snapshot());
+        ProfSnapshotTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profSn0;
+        return result;
     }
 
     /// <summary>True iff <paramref name="pred"/>'s bytecode references no
@@ -284,20 +308,23 @@ public sealed class ModuleCompiler
 
     private static int GetFunctorId(Clause clause)
     {
+        if (clause.Kind != ClauseKind.DcgRule && clause.HeadFidMemo != 0)
+            return clause.HeadFidMemo - 1;
         // For facts and rules the head is the term (or the :-/2's first arg).
         Term head = clause.Kind == ClauseKind.Rule
             ? ((CompoundTerm)clause.Term).Args[0]
             : clause.Term;
 
-        switch (head)
+        int fid = head switch
         {
-            case AtomTerm a:
-                return FunctorTable.Intern(AtomTable.Intern(a.Name, permanent: true).Id, 0);
-            case CompoundTerm c:
-                return FunctorTable.Intern(AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length);
-            default:
-                throw new InvalidOperationException(
-                    $"Clause head must be an atom or compound, got {head.GetType().Name}.");
-        }
+            AtomTerm a =>
+                FunctorTable.Intern(AtomTable.Intern(a.Name, permanent: true).Id, 0),
+            CompoundTerm c =>
+                FunctorTable.Intern(AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
+            _ => throw new InvalidOperationException(
+                $"Clause head must be an atom or compound, got {head.GetType().Name}."),
+        };
+        if (clause.Kind != ClauseKind.DcgRule) clause.HeadFidMemo = fid + 1;
+        return fid;
     }
 }

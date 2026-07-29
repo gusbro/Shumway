@@ -32,13 +32,19 @@ public class Chunk82Tests
     }
 
     [Fact]
-    public void Consult_InvalidatesTheCache()
+    public void Consult_KeepsUnchangedEntries_AndPicksUpTheNewClause()
     {
+        // Invalidation is TARGETED, not wholesale: a consult leaves compiled
+        // predicates of unchanged modules (the prelude's) in the cache — the
+        // per-module transform fingerprint drops exactly the changed modules'
+        // entries at the next query's product build — and the newly consulted
+        // predicate is live from that same build.
         var engine = new PrologEngine();
         engine.Query("true.");
         Assert.NotEmpty(engine.StaticPredicateCache);
         engine.ConsultString(":- public p/1.\np(1).");
-        Assert.Empty(engine.StaticPredicateCache);
+        Assert.NotEmpty(engine.StaticPredicateCache);   // prelude entries survive
+        Assert.True(engine.Query("p(1).").Success);      // new clause is live
     }
 
     [Fact]

@@ -338,6 +338,11 @@ public sealed partial class PrologEngine
     // REPL at exit. Static (per-process) — the load profile is per-run anyway.
     internal static readonly bool LoadProfEnabled =
         System.Environment.GetEnvironmentVariable("SHUMWAY_LOAD_PROF") == "1";
+    static PrologEngine()
+    {
+        if (LoadProfEnabled)
+            Shumway.Compiler.Wam.ModuleCompiler.ProfCompiledByFid = new();
+    }
     internal static long ProfTeTicks, ProfTeCalls;
     internal static long ProfGeTicks, ProfGeCalls;
     internal static long ProfSetupTicks, ProfSetupCalls, ProfProductBuilds;
@@ -347,6 +352,8 @@ public sealed partial class PrologEngine
     internal static long ProfActCtorTicks, ProfInstallTicks, ProfHotnessTicks;
     internal static long ProfPrologTicks, ProfProductCheckTicks;
     internal static long ProfPbRewriteTicks, ProfPbCompileTicks, ProfPbPartitionTicks;
+    internal static long ProfPbElideTicks, ProfPbModCompileTicks, ProfPbLateHelpersTicks;
+    internal static long ProfPbCompiledPreds;
 
     internal static void PrintLoadProfile()
     {
@@ -361,7 +368,25 @@ public sealed partial class PrologEngine
             $"[PROF]   prolog: {Ms(ProfPrologTicks):F0} ms | product-check: {Ms(ProfProductCheckTicks):F0} ms\n" +
             $"[PROF]   pb-rewrite: {Ms(ProfPbRewriteTicks):F0} ms | pb-compile: {Ms(ProfPbCompileTicks):F0} ms | pb-partition: {Ms(ProfPbPartitionTicks):F0} ms\n" +
             $"[PROF]   elide-cuts (all Compile calls): {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfElideTicks):F0} ms | pred-compile: {Shumway.Compiler.Wam.ModuleCompiler.ProfCompiledPreds} compiled / {Shumway.Compiler.Wam.ModuleCompiler.ProfSkippedPreds} skipped, {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfPredTicks):F0} ms\n" +
+            $"[PROF]   pb-elide: {Ms(ProfPbElideTicks):F0} ms | pb-modcompile: {Ms(ProfPbModCompileTicks):F0} ms | pb-latehelpers: {Ms(ProfPbLateHelpersTicks):F0} ms\n" +
+            $"[PROF]   product-compiled: {ProfPbCompiledPreds} | compile-calls: {Shumway.Compiler.Wam.ModuleCompiler.ProfCompileCalls} | grouping: {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfGroupTicks):F0} ms | pool-snapshots: {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfSnapshotTicks):F0} ms\n" +
             $"[PROF] re-expand passes: {ProfReExpandCalls}, {Ms(ProfReExpandTicks):F0} ms");
+        if (Shumway.Compiler.Wam.ModuleCompiler.ProfCompiledByFid is { } pcf)
+        {
+            var top = new List<KeyValuePair<int, int>>(pcf);
+            top.Sort((a, b) => b.Value.CompareTo(a.Value));
+            var sb = new System.Text.StringBuilder("[PROF] top recompiled fids (non-query): ");
+            int shown = 0;
+            for (int i = 0; i < top.Count && shown < 15; i++)
+            {
+                var (atomId, arity) = FunctorTable.Lookup(top[i].Key);
+                string nm = AtomTable.GetById(atomId)?.Name ?? "?";
+                if (nm.StartsWith("__query__") || nm.StartsWith("$q")) continue;
+                sb.Append($"{nm}/{arity}×{top[i].Value} ");
+                shown++;
+            }
+            System.Console.Error.WriteLine(sb.ToString());
+        }
     }
 
     // Running an expansion through QueryAll materialises the input's variables and

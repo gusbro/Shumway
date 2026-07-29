@@ -358,9 +358,11 @@ internal sealed class ConsultPipeline
         }
         // The re-expansion ran queries mid-consult, which compiled + cached the
         // program against the (possibly still-crude, or now-expanded) manifest.
-        // Drop those caches unconditionally so the next real query recompiles
-        // against the final program — leaving them poisons a later consult's view.
-        E._staticPredicateCache.Clear();
+        // The per-module transform cache detects the in-place clause
+        // replacements (element-wise reference snapshot) at the next product
+        // build and drops exactly the changed modules' compiled predicates —
+        // no wholesale static-cache clear needed. The merged view and the
+        // static link do describe the superseded program, so they drop.
         E._skipCompileMergedCache = null;
         E._staticLink = null;
         E._staticHeadFunctorsCache = null;
@@ -560,10 +562,11 @@ internal sealed class ConsultPipeline
         if (E._dynStore.IsDynamic(fid) || E._dynStore.HasClauses(fid))
             E.AbolishDynamic(fid);
 
-        // Compiled-code caches must be dropped so the next query
-        // recompiles against the trimmed manifest.
-        E._staticPredicateCache.Clear();
-        E._skipCompileMergedCache = null;   // static cache cleared
+        // The trimmed manifest is caught by the per-module transform cache's
+        // fingerprint at the next product build (the regenerating module
+        // drops its old head fids, trimmed ones included) — only the merged
+        // view and the static link need to drop here.
+        E._skipCompileMergedCache = null;
         E._staticLink = null;
         E.InvalidatePersistent();
     }
@@ -628,11 +631,13 @@ internal sealed class ConsultPipeline
         // private path with recordInHistory=false to stay out of the
         // snapshot.
         if (recordInHistory) E._consultHistory.Add(source);
-        // The static program is about to change — drop the
-        // compiled-static-predicate cache so the next query recompiles,
-        // and the ADR-015 cached static linked region with it.
-        E._staticPredicateCache.Clear();
-        E._skipCompileMergedCache = null;   // static cache cleared
+        // The static program is about to change. The compiled-predicate cache
+        // is NOT cleared wholesale: the per-module transform cache fingerprints
+        // each manifest at the next product build and drops exactly the
+        // changed modules' predicates — an unchanged library keeps its
+        // compiled code across another file's consult. The merged view and
+        // the ADR-015 cached static linked region do go stale.
+        E._skipCompileMergedCache = null;
         E._staticLink = null;
         E.InvalidatePersistent();
         // The clause stream. INCREMENTAL consult — like `:- op`, a directive
@@ -1371,12 +1376,10 @@ internal sealed class ConsultPipeline
         // use_module(library(X)) learns which module X.pl actually declared.
         E._lastConsultedModuleName = moduleName;
 
-        // Consulting may have added source clauses for an already-cached
-        // dynamic predicate. Drop the cache wholesale — the
-        // next query will recompile each dynamic predicate against the
-        // updated clause set. Consult is one-shot at engine setup in the
-        // common case, so this is amortised away.
-        E._dynamicPredicateCache.Clear();
+        // Source clauses added to an already-cached dynamic predicate were
+        // invalidated PER FID as they were routed into the store (the
+        // consult-borne InvalidateDynamicCache call above) — no wholesale
+        // dynamic-cache clear needed.
         // New static clauses just landed in E._modules — drop the head-functor
         // cache so HasPredicate / predicate_property/2 sees them.
         E._staticHeadFunctorsCache = null;
@@ -1640,6 +1643,8 @@ internal sealed class ConsultPipeline
 
     internal static int HeadFunctorIdOf(Clause clause)
     {
+        if (clause.Kind != ClauseKind.DcgRule && clause.HeadFidMemo != 0)
+            return clause.HeadFidMemo - 1;
         // Rule and DcgRule both encode (head, body) under args[0] /
         // args[1] of their wrapping compound. For DcgRule the
         // contiguity comparison must use the *expanded* arity
@@ -1659,7 +1664,7 @@ internal sealed class ConsultPipeline
         {
             head = clause.Term;
         }
-        return head switch
+        int fid = head switch
         {
             AtomTerm a => FunctorTable.Intern(
                 AtomTable.Intern(a.Name, permanent: true).Id, arityOffset),
@@ -1668,6 +1673,8 @@ internal sealed class ConsultPipeline
             _ => throw new InvalidOperationException(
                 $"Clause head must be an atom or compound, got {head.GetType().Name}."),
         };
+        if (clause.Kind != ClauseKind.DcgRule) clause.HeadFidMemo = fid + 1;
+        return fid;
     }
 
     /// <summary>Matches the shape used by <c>:- discontiguous</c> and
