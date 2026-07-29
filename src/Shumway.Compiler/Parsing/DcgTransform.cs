@@ -308,10 +308,38 @@ public static class DcgTransform
                 var (then, sOutA) = TransformBody(itc.Args[1], sMid, ref counter);
                 var (elseBody, sOutB) = TransformBody(disj.Args[1], sIn, ref counter);
                 var sOutMerged = FreshState(ref counter);
-                Term thenWithMerge = MergeBranchEndpoint(then, sOutA, sOutMerged, sIn);
+                // The then-branch's endpoint may have been minted by the
+                // CONDITION (a state-consuming nonterminal condition with a
+                // then part that consumes nothing, e.g. `( nt(X) -> [] ; …)`):
+                // the endpoint variable then occurs only in `cond`, so the
+                // merge substitution must cover the (cond, then) PAIR. Renaming
+                // the then part alone silently no-opped and left the shared
+                // endpoint UNBOUND — every goal after the if-then-else ran on a
+                // dangling, freshly-invented state (clpz's propagator queue
+                // vanished this way: enable_queue re-enabled a phantom queue).
+                Term condFinal, thenFinal;
+                if (sOutA is VarTerm thenOut
+                    && (sIn is not VarTerm sInV || thenOut.Name != sInV.Name))
+                {
+                    condFinal = RenameVar(cond, thenOut.Name, sOutMerged);
+                    thenFinal = RenameVar(then, thenOut.Name, sOutMerged);
+                }
+                else
+                {
+                    // Nothing consumed by cond+then: reconcile explicitly,
+                    // INSIDE the then arm (sIn is used outside the branch and
+                    // cannot be renamed).
+                    condFinal = cond;
+                    thenFinal = new CompoundTerm(",", new[]
+                    {
+                        then,
+                        new CompoundTerm("=", new[] { (Term)sOutMerged, sOutA })
+                        { Position = then.Position },
+                    }) { Position = then.Position };
+                }
                 Term elseWithMerge = MergeBranchEndpoint(elseBody, sOutB, sOutMerged, sIn);
                 Term newIte = new CompoundTerm(";", new[] {
-                    new CompoundTerm("->", new[] { cond, thenWithMerge }),
+                    new CompoundTerm("->", new[] { condFinal, thenFinal }),
                     elseWithMerge
                 }) { Position = body.Position };
                 return (newIte, sOutMerged);
