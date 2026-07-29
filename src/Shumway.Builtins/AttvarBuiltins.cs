@@ -29,8 +29,79 @@ public static class AttvarBuiltins
         int varAddr = RegisterToHeap(engine, 0);
         int moduleId = ModuleId(engine, 1);
         int valueAddr = RegisterToHeap(engine, 2);
+        if (AttrVerify) VerifyTerm(engine, valueAddr, "put_attr", varAddr, moduleId);
         engine.PutAttr(varAddr, moduleId, valueAddr);
         return true;
+    }
+
+    // ---- SHUMWAY_ATTR_VERIFY=1 tripwire (debug aid) ----
+    private static readonly bool AttrVerify =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_ATTR_VERIFY") == "1";
+
+    /// <summary>Walks the term rooted at <paramref name="rootIdx"/> checking
+    /// cell well-formedness (a Str payload must address a Functor cell; list
+    /// pairs recurse; indices must be in range). Throws a catchable
+    /// system_error naming the offending address so the REPL prints the
+    /// Prolog stack of the writer/reader.</summary>
+    private static void VerifyTerm(
+        Activation engine, int rootIdx, string site, int varAddr, int moduleId)
+    {
+        var seen = new System.Collections.Generic.HashSet<int>();
+        var stack = new System.Collections.Generic.Stack<int>();
+        stack.Push(rootIdx);
+        while (stack.Count > 0)
+        {
+            int idx = stack.Pop();
+            if (idx < 0 || idx >= engine.HeapTop)
+                Fail(engine, site, varAddr, moduleId, idx, "index out of range");
+            if (!seen.Add(idx)) continue;
+            Cell c = engine.GetHeap(idx);
+            switch (c.Tag)
+            {
+                case Tag.Ref:
+                case Tag.AttVar:
+                    if (c.AsHeapIndex != idx) stack.Push(c.AsHeapIndex);
+                    break;
+                case Tag.Str:
+                {
+                    int f = c.AsHeapIndex;
+                    if (f < 0 || f >= engine.HeapTop
+                        || engine.GetHeap(f).Tag != Tag.Functor
+                        || !Shumway.Core.FunctorTable.TryLookup(
+                               engine.GetHeap(f).AsFunctorId, out var fe))
+                    {
+                        Fail(engine, site, varAddr, moduleId, idx,
+                            $"Str -> heap[{f}] tag={(f >= 0 && f < engine.HeapTop ? engine.GetHeap(f).Tag.ToString() : "?")}");
+                        break;
+                    }
+                    else
+                    {
+                        for (int a = 1; a <= fe.Arity; a++) stack.Push(f + a);
+                    }
+                    break;
+                }
+                case Tag.Lis:
+                {
+                    int p = c.AsHeapIndex;
+                    if (p < 0 || p + 1 >= engine.HeapTop)
+                        Fail(engine, site, varAddr, moduleId, idx, $"Lis -> heap[{p}] out of range");
+                    stack.Push(p);
+                    stack.Push(p + 1);
+                    break;
+                }
+                default:
+                    break;   // atoms/ints/floats/functor-in-place: fine as leaves
+            }
+        }
+    }
+
+    private static void Fail(
+        Activation engine, string site, int varAddr, int moduleId, int idx, string what)
+    {
+        string mod = Shumway.Core.AtomTable.GetById(moduleId)?.Name ?? "?";
+        System.Console.Error.WriteLine(
+            $"[ATTR-VERIFY] {site}: malformed term at heap[{idx}] ({what}) var@{varAddr} module={mod} heapTop={engine.HeapTop}");
+        throw new PrologRuntimeException("system_error", $"attr_verify_{site}");
     }
 
     /// <summary><c>get_attr(+Var, +Module, -Value)</c> — unifies
@@ -42,6 +113,8 @@ public static class AttvarBuiltins
         int varAddr = RegisterToHeap(engine, 0);
         int moduleId = ModuleId(engine, 1);
         int valueAddr = engine.GetAttr(varAddr, moduleId);
+        if (AttrVerify && valueAddr >= 0)
+            VerifyTerm(engine, valueAddr, "get_attr", varAddr, moduleId);
         return valueAddr >= 0 && engine.UnifyRegisterWithHeapAt(2, valueAddr);
     }
 

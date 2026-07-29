@@ -339,12 +339,50 @@ public sealed partial class Activation
     /// continuation. The extra-trail unwind also discards that frame and
     /// every frame above it. Used by the throw handler after a catcher has
     /// matched; the caller then runs the recovery goal.</summary>
+    /// <summary>SHUMWAY_ATTR_VERIFY=1 debug sweep: reports any live attvar
+    /// whose stored attribute index dangles above the current heap top —
+    /// i.e. a truncation that outran the attr trail. The first site that
+    /// logs is the truncation that lost the restore.</summary>
+    public void DebugSweepAttrTable(string site)
+    {
+        foreach (var kv in _attrTable)
+        {
+            int home = kv.Key;
+            if (home >= _heapTop || _heap[home].Tag != Tag.AttVar) continue;
+            foreach (var rec in kv.Value)
+                if (rec.Value >= _heapTop)
+                    System.Console.Error.WriteLine(
+                        $"[ATTR-SWEEP] {site}: var@{home} module={AtomTable.GetById(rec.Key)?.Name}"
+                        + $" attr->heap[{rec.Value}] >= heapTop={_heapTop}");
+        }
+    }
+
+    public static readonly bool AttrSweepEnabled =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_ATTR_VERIFY") == "1";
+
     public void UnwindToCatchFrame(int index)
     {
         CatchFrame f = _catchFrames[index];
+        if (AttrSweepEnabled)
+        {
+            int attrEntries = 0, oldHomeEntries = 0;
+            for (int i = f.SnapExtraTrailTop; i < _extraTrailTop; i++)
+                if (_extraTrail[i].Type == TrailType.AttrModify)
+                {
+                    attrEntries++;
+                    if (_attrTrailLog[_extraTrail[i].HeapIdx].Home < 100) oldHomeEntries++;
+                }
+            System.Console.Error.WriteLine(
+                $"[ATTR-SWEEP] pre_catch_unwind frame={index}/{_catchFrames.Count}"
+                + $" snapX={f.SnapExtraTrailTop} xTop={_extraTrailTop}"
+                + $" snapH={f.SnapHeapTop} hTop={_heapTop}"
+                + $" attrEntriesAbove={attrEntries} queryVarHomes={oldHomeEntries}"
+                + $" attrLogCount={_attrTrailLog.Count}");
+        }
         UnwindTrails(f.SnapBindingTrailTop, f.SnapExtraTrailTop);
         _heapTop = f.SnapHeapTop;
         AssignHb(f.SnapHb);
+        if (AttrSweepEnabled) DebugSweepAttrTable("catch_unwind");
         // Wakeups queued by the guarded goal reference heap cells the
         // truncation above just discarded — drop them with it.
         if (_pendingWakeups.Count > f.SnapPendingWakeups)
@@ -693,6 +731,7 @@ public sealed partial class Activation
         UnwindTrails(bindingTarget, extraTarget);
 
         _heapTop = (int)ctl[6].Data;               // CpHeapTopOffset
+        if (AttrSweepEnabled) DebugSweepAttrTable("cp_restore");
         // ViewGen is a 60-bit value; read via Payload to strip the RawInt tag.
         CurrentViewGen = ctl[8].Payload;           // CpViewGenOffset
         // Restore the cut barrier in effect when this CP was pushed
@@ -897,6 +936,28 @@ public sealed partial class Activation
         if (parentBindingTop == _bindingTrailTop && parentExtraTop == _extraTrailTop)
             return;
 
+        // A cut's "young entry" drop reasons about BACKTRACKING: anything
+        // above the parent CP's heap top is truncated by any outer
+        // backtrack, so restoring it is moot. But an ACTIVE CATCH FRAME is
+        // a second unwind consumer: its throw truncates the heap only to
+        // ITS SnapHeapTop, and every mutation of an OLDER cell / attvar
+        // made inside the guarded goal must still be restored then. With
+        // no parent CP at all (barrier -1 → parentHeapTop 0) the old rule
+        // emptied the trails wholesale while a catch frame was live —
+        // clpz's with_local_attributes (mutate attrs → throw to undo) then
+        // found nothing to undo, leaving every fd variable's attribute
+        // pointing at heap the throw had truncated (the send_more_money
+        // phantom-functor crash). Raise the survival floor to the highest
+        // active frame's snapshot: entries whose target is below it must
+        // survive for that frame's unwind.
+        int effectiveFloor = parentHeapTop;
+        for (int fi = 0; fi < _catchFrames.Count; fi++)
+        {
+            CatchFrame cf = _catchFrames[fi];
+            if (cf.Active && cf.SnapHeapTop > effectiveFloor)
+                effectiveFloor = cf.SnapHeapTop;
+        }
+
         int bindingRead = parentBindingTop;
         int bindingWrite = parentBindingTop;
         int extraRead = parentExtraTop;
@@ -912,7 +973,7 @@ public sealed partial class Activation
             while (bindingRead < stop)
             {
                 int idx = _bindingTrail[bindingRead];
-                if (idx < parentHeapTop)
+                if (idx < effectiveFloor)
                     _bindingTrail[bindingWrite++] = idx;
                 bindingRead++;
             }
@@ -952,8 +1013,8 @@ public sealed partial class Activation
                 // external trail log, not the heap — a backtrack to an ancestor
                 // above the cut must still restore the host-level value.
                 TrailType.MutableSet => true,
-                TrailType.AttrModify => _attrTrailLog[entry.HeapIdx].Home < parentHeapTop,
-                _ => entry.HeapIdx < parentHeapTop,
+                TrailType.AttrModify => _attrTrailLog[entry.HeapIdx].Home < effectiveFloor,
+                _ => entry.HeapIdx < effectiveFloor,
             };
             if (survives)
             {
@@ -967,7 +1028,7 @@ public sealed partial class Activation
         while (bindingRead < _bindingTrailTop)
         {
             int idx = _bindingTrail[bindingRead];
-            if (idx < parentHeapTop)
+            if (idx < effectiveFloor)
                 _bindingTrail[bindingWrite++] = idx;
             bindingRead++;
         }

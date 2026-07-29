@@ -96,6 +96,40 @@ public class NestedCatchWakeupTests
     }
 
     [Fact]
+    public void CutUnderActiveCatch_KeepsTheTrailForTheThrow()
+    {
+        // The clpz with_local_attributes idiom: mutate attributes inside a
+        // catch, then THROW to undo them wholesale. A cut between the
+        // mutation and the throw (here once/1's commit; in clpz the wakeup
+        // flusher's once-semantics cut) used to compact the trails against
+        // the parent CHOICE POINT only — with no parent CP that emptied
+        // them — even though the ACTIVE CATCH FRAME still needed every
+        // entry for its unwind. The throw then had nothing to undo: the
+        // attribute kept pointing at heap the unwind truncated (the
+        // send_more_money phantom-functor crash), and plain bindings
+        // survived the rollback too.
+        var e = new PrologEngine();
+        e.ConsultString(
+            "t1(R) :- put_attr(V, m, orig),\n" +
+            "         catch(( put_attr(V, m, scratch(V)),\n" +
+            "                 once(member(_, [a, b])),\n" +
+            "                 throw(ball) ),\n" +
+            "               ball, true),\n" +
+            "         ( get_attr(V, m, X) -> R = X ; R = none ).\n" +
+            "t2(R) :- catch(( Y = bound_inside,\n" +
+            "                 once(member(_, [a, b])),\n" +
+            "                 throw(ball) ),\n" +
+            "               ball, true),\n" +
+            "         ( var(Y) -> R = still_var ; R = leaked(Y) ).");
+        var s1 = e.Query("t1(R).");
+        Assert.True(s1.Success);
+        Assert.Equal("orig", Assert.IsType<AtomTerm>(s1["R"]).Name);
+        var s2 = e.Query("t2(R).");
+        Assert.True(s2.Success);
+        Assert.Equal("still_var", Assert.IsType<AtomTerm>(s2["R"]).Name);
+    }
+
+    [Fact]
     public void PlainHookPaths_Unchanged()
     {
         var e = new PrologEngine();
