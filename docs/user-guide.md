@@ -683,6 +683,90 @@ link-time meaning:
 Other directives (`op/3`, `set_prolog_flag/2`, etc.) are honoured at
 consult time but do not affect link-time decisions.
 
+### How a goal resolves (the name-lookup algorithm)
+
+Resolution happens in three stages. Stages 1 and 3 are **identical**
+everywhere — REPL consults, embedding `ConsultString`/`ConsultFile`,
+`shumway-compile` — and a query you type at the REPL is treated as a clause
+of the `user` module. Only stage 2 (binding the names nothing resolved
+earlier) differs between the interactive engine and `shumway-link`.
+
+**Stage 1 — compile time.** Each body goal of a clause in module *M*
+(*M* = `user` for non-module files and REPL queries) is resolved in this
+order; the **first match wins**:
+
+1. **Control constructs** (`,` `;` `->` `*->` `\+` `call/1` …) are
+   transparent: resolution recurses into their sub-goals.
+2. A **variable goal** — a bare variable body goal, or a variable in a
+   goal argument of a meta-predicate (`findall/3`, `call/N`, …) — is
+   tagged with *M* and deferred to stage 3, which resolves it with *M*'s
+   context when it runs.
+3. A predicate declared **`:- dynamic`** is referenced bare: dynamic
+   predicates live in one flat global namespace, **even inside an
+   export-qualified `:- module/2`** (their clauses can be asserted from
+   anywhere).
+4. **M's own predicates** — anything *defined in the same file*, exported
+   or not — resolve module-locally. Locals shadow everything: imports,
+   other modules' publics, the prelude, **and C# builtins** (a file that
+   defines `length/2` calls its own `length/2`; other modules are
+   unaffected).
+5. **M's import table** — entries added by `use_module/1,2` (and, for
+   `user`, by the auto-import of a directly consulted `:- module/2`
+   file) — resolve to the exporting module's definition.
+   First-import-wins on name collisions between imports.
+6. Anything else is left as a **bare name** for stage 2.
+
+**Stage 2 — binding bare names.**
+
+*Interactive / embedding* (at query setup, against everything consulted so
+far): a bare name binds to — a **C# builtin** first; else the **global
+namespace** (legacy modules' `:- public` predicates, all dynamics, the
+prelude); else it stays unresolved and, if the call is reached, the
+`unknown` prolog_flag decides: `error` (default, ISO
+`existence_error(procedure, N/A)`), `fail`, or `warning`.
+
+*Compiled (`shumway-link` → `.shum`/`--exe`)*: the same binding is done
+once, at link time, by the reachability walk. Each call edge resolves in
+order: **module-local → the module's imports → global public → global
+dynamic → builtin → prelude**. An edge that resolves nowhere is a
+`missing_predicate` **error** (`--allow-undefined` downgrades it to a
+warning and leaves the runtime `unknown`-flag behaviour). Modules nothing
+reaches are dropped (dead-code elimination) — entry points,
+`:- ensure_linked` and imports are the roots, and `.shum` library archives
+are pulled member-by-member, first-provider-wins, only when an edge needs
+them. The behaviour of a resolvable goal is therefore the same as in the
+REPL; the difference is *when* you find out about an unresolvable one
+(link error vs runtime error) and that unreachable code is not shipped.
+
+**Stage 3 — runtime meta-calls.** A goal built at runtime — `call/N`, a
+variable body goal, a goal from `assert`-ed clauses, an explicit
+`M:Goal` — resolves the same way in the REPL and inside a linked
+executable (bundles carry every module's import table):
+
+1. Module qualification is unwrapped (`M:G`, innermost wins); on a control
+   construct the module distributes into the branch goals.
+2. Control constructs route to their cut-transparent helpers; `!`, `true`,
+   `fail` are handled inline.
+3. If the goal carries a module *M* (an `M:G`, or a variable goal that
+   originated in *M*'s code): **M's own predicates** (including
+   non-exported locals — `call(mymod:internal(X))` works, SWI-style) →
+   **M's import table** → fall through.
+4. The **C# builtin** registry.
+5. The **global namespace**: bare names of `user` and legacy-module
+   predicates, publics, dynamics, the prelude.
+6. Still nothing → the `unknown` flag, as above.
+
+One asymmetry to be aware of: a *runtime* `M:Goal` reaches `M`'s
+non-exported locals, while a `Module:goal(...)` written *statically* in a
+compiled module is checked by the linker against the target module's
+public surface.
+
+**Rules of thumb.** Nearest context wins: own module > imports > global.
+Dynamics are always global. Builtins are shadowed only by a module that
+*defines* the name itself. The prelude is always visible without imports.
+Consulting a `:- module/2` file directly auto-imports its exports into
+`user`; loading it as a `use_module` dependency does not.
+
 ### Invariants the linker enforces
 
 - **Public predicates are globally unique.** Two modules cannot both
