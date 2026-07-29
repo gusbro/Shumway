@@ -149,26 +149,42 @@ public sealed partial class PrologEngine
     /// catch frame was seen at all (it was just a catcher mismatch) — used
     /// to decide whether an uncaught runtime error keeps its raw form.</summary>
     private static int TryCatch(Activation engine, Term ballTerm, out bool hadActiveFrame)
+        => TryCatchFrom(engine, ballTerm, 0, out hadActiveFrame);
+
+    /// <summary>The <see cref="TryCatch"/> walk restricted to frames at or
+    /// above <paramref name="minFrameIndex"/> — the nested in-engine goal
+    /// driver (a wakeup, a findall body) may only resolve balls against
+    /// frames opened INSIDE itself; anything older belongs to an outer
+    /// driver's scope.</summary>
+    private static int TryCatchFrom(
+        Activation engine, Term ballTerm, int minFrameIndex, out bool hadActiveFrame)
     {
         hadActiveFrame = false;
-        for (int i = engine.CatchFrameCount - 1; i >= 0; i--)
+        for (int i = engine.CatchFrameCount - 1; i >= minFrameIndex; i--)
         {
             CatchFrame frame = engine.GetCatchFrame(i);
             if (!frame.Active) continue;
             hadActiveFrame = true;
 
             // Speculatively unify the ball with the catcher, then undo —
-            // testing the match must not disturb the machine.
+            // testing the match must not disturb the machine. That includes
+            // the WAKEUP QUEUE: a catcher containing attributed variables
+            // queues verify_attributes wakeups during the trial, and their
+            // recorded heap indices point into the trial region truncated
+            // right below — flushing them later read garbage cells (clpz's
+            // all_distinct crashed on a phantom functor id).
             int savedHeapTop = engine.HeapTop;
             int savedBindingTrail = engine.BindingTrailTop;
             int savedExtraTrail = engine.ExtraTrailTop;
             int savedHb = engine.Hb;
+            int savedWakeups = engine.PendingWakeupCount;
             engine.SetHb(engine.HeapTop);
             Cell trialBall = Materializer.MaterializeAsCell(engine, ballTerm);
             bool matched = engine.UnifyHeapWithCell(frame.CatcherHeapIdx, trialBall);
             engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
             engine.SetHeapTop(savedHeapTop);
             engine.SetHb(savedHb);
+            engine.TruncatePendingWakeups(savedWakeups);
             if (!matched) continue;
 
             // Commit: roll back everything the guarded goal did, then bind
@@ -1695,6 +1711,23 @@ public sealed partial class PrologEngine
         // Eager materialisation here means the term survives sub-engine
         // teardown — the per-query Activation is gone by the time the
         // parent's catch/3 handler translates the runtime exception.
+        // Nested catch/3 resolution for in-engine sub-goal drivers (wakeups,
+        // findall): resolves the ball against frames opened inside the nested
+        // goal only, so the driver's own C# frame — which owns the interrupted
+        // caller's continuation — survives a caught throw. See
+        // Activation.NestedCatchResolver.
+        engine.NestedCatchResolver = (ex, minFrameIndex) =>
+        {
+            Term? nestedBall = ex switch
+            {
+                ShumwayPrologException spe => spe.Term,
+                Shumway.Core.PrologRuntimeException pre =>
+                    MetaBuiltins.TranslateRuntimeError(pre),
+                _ => null,
+            };
+            if (nestedBall is null) return -1;
+            return TryCatchFrom(engine, nestedBall, minFrameIndex, out _);
+        };
         engine.MaterializeCellToTerm = cell =>
         {
             // Snapshot to a heap slot so the standard "read by heap

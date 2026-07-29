@@ -712,6 +712,7 @@ public sealed partial class BytecodeInterpreter
         int savedB0    = _engine.B0;
         int savedB     = _engine.B;
         int savedFloor = _backtrackFloor;
+        int entryCatchFrames = _engine.CatchFrameCount;
 
         // Inner backtracking may not unwind past the entry CP level.
         _backtrackFloor = savedB;
@@ -720,8 +721,23 @@ public sealed partial class BytecodeInterpreter
         _engine.SetPc(target);
 
         InterpreterResult result;
-        try { result = Dispatch(code); }
-        catch (TopLevelFailure) { result = InterpreterResult.Failed; }
+        while (true)
+        {
+            try { result = Dispatch(code); break; }
+            catch (TopLevelFailure) { result = InterpreterResult.Failed; break; }
+            catch (Exception ex) when (ResolveNestedCatch(ex, entryCatchFrames, out int recovery))
+            {
+                // A catch/3 frame opened INSIDE this nested goal caught the
+                // ball. The C# unwinding already destroyed the inner Dispatch
+                // frames, but THIS driver frame — which owns the interrupted
+                // caller's continuation (saved Pc/Cp/B0 below) — must survive:
+                // resume the recovery in our own loop. A ball whose matching
+                // frame is OUTSIDE the nested goal (or matches nothing)
+                // rethrows via the filter and unwinds this driver too, which
+                // is then correct — the outer rollback discards us wholesale.
+                _engine.SetPc(recovery);
+            }
+        }
 
         _backtrackFloor = savedFloor;
         _engine.SetPc(savedPc);
@@ -738,4 +754,17 @@ public sealed partial class BytecodeInterpreter
         return false;
     }
 
+    /// <summary>Exception-filter helper for <see cref="RunGoalInEngine"/>:
+    /// true (with the recovery address) iff the host's
+    /// <see cref="Activation.NestedCatchResolver"/> matched the ball against a
+    /// catch frame at or above <paramref name="minFrameIndex"/> — the resolver
+    /// rolls the machine back to the frame as a side effect of matching.</summary>
+    private bool ResolveNestedCatch(Exception ex, int minFrameIndex, out int recovery)
+    {
+        recovery = -1;
+        var resolver = _engine.NestedCatchResolver;
+        if (resolver is null) return false;
+        recovery = resolver(ex, minFrameIndex);
+        return recovery >= 0;
+    }
 }

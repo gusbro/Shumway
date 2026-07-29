@@ -421,6 +421,20 @@ public sealed partial class Activation
     /// uses.</summary>
     public Func<int, string?>? ResolveAddressToLabel { get; set; }
 
+    /// <summary>Resolves a thrown ball against catch/3 frames opened INSIDE a
+    /// nested in-engine goal (a verify_attributes wakeup, a findall driver):
+    /// given the C# exception and the frame-stack depth at the nested goal's
+    /// entry, returns the recovery address after rolling the machine back to
+    /// the matching frame, or -1 (frame outside the nested goal, or no match)
+    /// to let the exception unwind to the outer driver. Installed by the host
+    /// at query setup — the ball exception type lives above Core. Without
+    /// this, a caught throw inside a wakeup unwound the nested C# dispatch
+    /// frame itself: the recovery resumed in the OUTER loop and the
+    /// interrupted unification's continuation was silently lost (clpz's
+    /// with_local_attributes made the whole query "succeed" doing
+    /// nothing).</summary>
+    public Func<Exception, int, int>? NestedCatchResolver { get; set; }
+
     /// <summary>Last-chance resolution of a functor the address map does not hold:
     /// the host materializes a runtime-assert MetaTransform helper (compiled by a
     /// DIFFERENT activation's assert — see PrologEngine.TryMaterializeAssertHelper)

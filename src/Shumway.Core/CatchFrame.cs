@@ -41,6 +41,13 @@ public struct CatchFrame
     /// entries; the catch restore truncates them.</summary>
     public int SnapGuardContTop;
 
+    /// <summary>The pending attribute-wakeup queue depth at frame creation: a
+    /// throw mid-propagation leaves queued wakeups whose heap indices point
+    /// into the region the catch restore truncates — flushing them later read
+    /// garbage cells (clpz's with_local_attributes crashed on a phantom
+    /// functor id). The restore truncates the queue back to this depth.</summary>
+    public int SnapPendingWakeups;
+
     // ----- Recovery continuation: where the enclosing clause resumes -----
     public int RecoveryE;
     public int RecoveryCp;

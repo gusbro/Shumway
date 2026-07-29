@@ -2118,6 +2118,20 @@ internal sealed class ConsultPipeline
                 return true;
             }
         }
+        // DCG nonterminal indicator `Name//A` (Scryer/SWI: module exports like
+        // dcgs' seq//1, and dynamic/discontiguous declarations): the predicate
+        // it denotes is the grammar-expanded Name/(A+2).
+        if (term is CompoundTerm dslash && dslash.Functor == "//" && dslash.Args.Length == 2)
+        {
+            Term nameSlot = dslash.Args[0];
+            if (nameSlot is CompoundTerm { Functor: ":", Args: [_, var inner2] })
+                nameSlot = inner2;
+            if (nameSlot is AtomTerm dcgName && dslash.Args[1] is IntTerm dcgArity)
+            {
+                spec = (dcgName.Name, (int)dcgArity.Value + 2);
+                return true;
+            }
+        }
         spec = ("", 0);
         return false;
     }

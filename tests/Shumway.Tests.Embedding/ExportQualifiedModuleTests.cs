@@ -183,4 +183,40 @@ public class ExportQualifiedModuleTests
         // liba was imported first; foo resolves to liba$foo.
         Assert.Equal("from_a", e.QueryFirst<string>("get(X).", "X"));
     }
+
+    [Fact]
+    public void DcgNonterminalExports_ResolveAsExpandedPredicates()
+    {
+        // Scryer's dcgs exports its nonterminals as `seq//1`-style indicators:
+        // Name//A denotes the grammar-expanded Name/(A+2). Before the `//`
+        // indicator was understood, clpz's imported seq//1 raised
+        // existence_error(seq/3) from inside every reification propagator.
+        using var libs = new LibSet().Add("grams",
+            ":- module(grams, [seq//1, greeting//0]).\n" +
+            "seq([]) --> [].\n" +
+            "seq([E|Es]) --> [E], seq(Es).\n" +
+            "greeting --> [h, i].\n");
+        var e = EngineWith(libs);
+        e.ConsultString(
+            ":- use_module(library(grams)).\n" +
+            "roundtrip(L) :- phrase(seq(L), [a, b, c]).\n" +
+            "greets :- phrase(greeting, [h, i]).");
+        Assert.True(Holds(e, "roundtrip([a,b,c])"));
+        Assert.True(Holds(e, "greets"));
+    }
+
+    [Fact]
+    public void CopyTermWithoutAttrVars_IsCopyTermWithPlainVars()
+    {
+        // The Scryer system builtin behind iso_ext's copy_term_nat/2.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "'$copy_term_without_attr_vars'(f(X, g(X), 7), C), C = f(A, g(B), 7), A == B.")
+            .Success);
+        // An attributed variable copies as a fresh PLAIN variable.
+        e.ConsultString(
+            "t :- put_attr(V, m, 1), '$copy_term_without_attr_vars'(h(V), h(C)),\n" +
+            "     var(C), \\+ attvar(C), V \\== C.");
+        Assert.True(e.Query("t.").Success);
+    }
 }

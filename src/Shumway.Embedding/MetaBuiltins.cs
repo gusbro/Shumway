@@ -56,6 +56,10 @@ public static partial class MetaBuiltins
         // goals' side effects. See Prelude forall/2.
         BuiltinsRegistry.Register("copy_term", 2, CopyTerm,
             Term, "copy_term(+Term, -Copy)", "Copies a term with fresh variables.");
+        // Scryer system builtin (iso_ext's copy_term_nat/2 wraps it): a copy
+        // where attributed variables come out as fresh PLAIN variables — which
+        // is exactly what HeapTermCopy-backed copy_term/2 produces.
+        BuiltinsRegistry.Register("$copy_term_without_attr_vars", 2, CopyTerm);
         BuiltinsRegistry.Register("$copy_term_3_prep", 3, CopyTerm3Prep);
         BuiltinsRegistry.Register("term_attvars", 2, TermAttvars,
             Term, "term_attvars(+Term, -Vars)",

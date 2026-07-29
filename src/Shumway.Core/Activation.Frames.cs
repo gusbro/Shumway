@@ -289,6 +289,7 @@ public sealed partial class Activation
             SnapBindingTrailTop = _bindingTrailTop,
             SnapExtraTrailTop = _extraTrailTop,
             SnapGuardContTop = _guardContTop,
+            SnapPendingWakeups = _pendingWakeups.Count,
             RecoveryE = (int)_stack[_e + EnvCeOffset].Data,
             RecoveryCp = (int)_stack[_e + EnvCpOffset].Data,
         });
@@ -344,6 +345,11 @@ public sealed partial class Activation
         UnwindTrails(f.SnapBindingTrailTop, f.SnapExtraTrailTop);
         _heapTop = f.SnapHeapTop;
         AssignHb(f.SnapHb);
+        // Wakeups queued by the guarded goal reference heap cells the
+        // truncation above just discarded — drop them with it.
+        if (_pendingWakeups.Count > f.SnapPendingWakeups)
+            _pendingWakeups.RemoveRange(
+                f.SnapPendingWakeups, _pendingWakeups.Count - f.SnapPendingWakeups);
         _b = f.SnapB;
         // ADR-033 — drop guard-continuation entries the guarded goal pushed.
         _guardContTop = f.SnapGuardContTop;
