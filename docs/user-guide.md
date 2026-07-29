@@ -272,6 +272,13 @@ name without colliding, and a library freely calls prelude predicates
 (`member/2`, `append/3`, …) without importing them. Importing a name a module
 does not export is an error.
 
+Consulting a module file **directly** (on the REPL command line, via
+`consult/1`, or through the embedding `ConsultFile`/`ConsultString`) imports
+its whole export surface into the top level automatically — the SWI
+convention — so `hello(X)` is callable right after loading the file above. A
+module loaded as a *dependency* (via another module's `use_module`) feeds only
+the importer's table and stays invisible at the top level.
+
 ### Catching runtime exceptions
 
 A Prolog `throw(Ball)` that the engine does not catch surfaces as a

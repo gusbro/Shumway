@@ -102,9 +102,10 @@ public class CompatLibrariesTests
     public void ModuleDirective_TwoArg_IsExportQualified_NotBareGlobal()
     {
         // ADR-038: `:- module(Name, [Exports])` is EXPORT-QUALIFIED — every
-        // predicate is mangled Name$x (nothing bare-global) and the exports are
-        // reachable only via use_module. So neither the export nor a private
-        // predicate is callable bare from the top-level (user) context.
+        // predicate is mangled Name$x (nothing bare-global). A DIRECTLY
+        // consulted module auto-imports its exports into `user` (SWI
+        // behaviour), so the export resolves through the import table — but a
+        // private predicate stays invisible, proving nothing went bare-global.
         var engine = new PrologEngine();
         engine.ConsultString(
             ":- module(mymod, [pub/1]).\n" +
@@ -112,8 +113,7 @@ public class CompatLibrariesTests
             "priv(secret).\n");
         Assert.True(engine.Modules.ContainsKey("mymod"));
         Assert.True(engine.Modules["mymod"].IsExportQualified);
-        // Not bare-global: an un-importing caller sees neither name.
-        Assert.False(engine.Query("catch(pub(hello), _, fail).").Success);
+        Assert.True(engine.Query("pub(hello).").Success);
         Assert.False(engine.Query("catch(priv(secret), _, fail).").Success);
     }
 

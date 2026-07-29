@@ -206,6 +206,41 @@ public class ExportQualifiedModuleTests
     }
 
     [Fact]
+    public void DirectlyConsultedModule_AutoImportsExportsIntoUser()
+    {
+        // SWI behaviour: loading a module file DIRECTLY (consult, not as a
+        // use_module dependency) imports its exports into `user`, so they
+        // are callable bare right after loading.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- module(direct, [hello/1]).\n" +
+            "hello(world).\n" +
+            "secret(x).\n");
+        Assert.True(Holds(e, "hello(world)"));
+        // Non-exported predicates stay module-local.
+        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+            () => e.Query("secret(_)."));
+    }
+
+    [Fact]
+    public void UseModuleDependency_DoesNotLeakExportsIntoUser()
+    {
+        // A module pulled in as a DEPENDENCY of a use_module load feeds only
+        // the importer's table — its exports must not appear in `user`.
+        using var libs = new LibSet()
+            .Add("depb", ":- module(depb, [pb/1]).\npb(from_b).\n")
+            .Add("depa",
+                ":- module(depa, [pa/1]).\n" +
+                ":- use_module(library(depb)).\n" +
+                "pa(X) :- pb(X).\n");
+        var e = EngineWith(libs);
+        e.ConsultString(":- use_module(library(depa)).");
+        Assert.True(Holds(e, "pa(from_b)"));
+        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+            () => e.Query("pb(_)."));
+    }
+
+    [Fact]
     public void CopyTermWithoutAttrVars_IsCopyTermWithPlainVars()
     {
         // The Scryer system builtin behind iso_ext's copy_term_nat/2.

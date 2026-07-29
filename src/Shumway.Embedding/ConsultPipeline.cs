@@ -1343,6 +1343,12 @@ internal sealed class ConsultPipeline
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
             E._modules[moduleName] = manifest;
+            // SWI-style auto-import: a module file loaded DIRECTLY (REPL
+            // command line, consult/1, embedding ConsultFile/ConsultString —
+            // not as a use_module dependency) imports its exports into `user`,
+            // so they are callable bare right after loading.
+            if (isExportQualified && E._useModuleLoadDepth == 0)
+                E.ImportAllExportsIntoUser(moduleName);
         }
         else
         {

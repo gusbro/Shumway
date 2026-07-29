@@ -215,7 +215,21 @@ public sealed partial class PrologEngine
     /// selects behaviour for an unknown library / missing file: the consult-time
     /// directive path warns and continues (<c>false</c>); the goal-form
     /// <c>use_module/1</c> builtin raises an ISO error (<c>true</c>).</summary>
+    // Depth of use_module-driven loads in progress. A module file consulted
+    // DIRECTLY (depth 0 — REPL command line, consult/1, embedding
+    // ConsultFile/ConsultString) auto-imports its exports into `user`
+    // (SWI behaviour); a dependency loaded via use_module only feeds the
+    // IMPORTER's table.
+    internal int _useModuleLoadDepth;
+
     internal string? ExecuteUseModuleDirective(Term spec, bool throwOnUnresolved = false)
+    {
+        _useModuleLoadDepth++;
+        try { return ExecuteUseModuleDirectiveCore(spec, throwOnUnresolved); }
+        finally { _useModuleLoadDepth--; }
+    }
+
+    private string? ExecuteUseModuleDirectiveCore(Term spec, bool throwOnUnresolved)
     {
         if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
         {
