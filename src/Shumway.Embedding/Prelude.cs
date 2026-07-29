@@ -356,14 +356,33 @@ internal static class Prelude
         % triples; attribute_goals/4 is pre-declared dynamic so user
         % clauses simply join it and a hook-less program still links.
         %! copy_term(+Term, -Copy, -Goals) | Term inspection & construction | Copies a term with fresh variables and collects the residual attribute goals.
+        % Scryer-style projection in three phases. (1) re-attach EVERY copied
+        % attribute value to its copy variable first — a module's
+        % attribute_goals//1 may read a SIBLING variable's attribute (clpz's
+        % rel_tuple reads the relation variable's clpz_relation), so all
+        % attachments must exist before any hook runs. (2) run the hooks.
+        % (3) strip whatever attachments the hooks left, so a hookless
+        % module's attribute never leaks onto the copy.
         copy_term(Term, Copy, Goals) :-
             '$copy_term_3_prep'(Term, Copy, AttrInfo),
-            '$attr_goals_of'(AttrInfo, Goals).
+            '$attr_reattach'(AttrInfo),
+            '$attr_goals_of'(AttrInfo, Goals),
+            '$attr_strip'(AttrInfo).
+
+        '$attr_reattach'([]).
+        '$attr_reattach'([ag(M, A, V)|R]) :- put_attr(V, M, A), '$attr_reattach'(R).
+
+        % A hook may have bound a helper variable (clpz marks propagator
+        % states processed) or already stripped its own module — both fine.
+        '$attr_strip'([]).
+        '$attr_strip'([ag(M, _, V)|R]) :-
+            ( var(V) -> del_attr(V, M) ; true ),
+            '$attr_strip'(R).
 
         '$attr_goals_of'([], []).
         '$attr_goals_of'([ag(M, A, V)|Rest], Goals) :-
             ( attribute_goals(M, A, V, G) -> true
-            ; '$module_attr_goals'(M, A, V, G) -> true
+            ; '$module_attr_goals'(M, V, G) -> true
             ; G = []
             ),
             '$attr_goals_of'(Rest, RestGoals),
@@ -372,20 +391,16 @@ internal static class Prelude
         % Scryer/SWI projection protocol: the attribute module defines a
         % module-local attribute_goals//1 that reads the attributes off the
         % variable itself and strips them as it projects (clpz ends in
-        % del_attr — it expects to run on a copy). Re-attach the COPIED
-        % attribute value to the copy's variable and run the module's DCG
-        % on it, so the residual goals come out over the copy's variables.
-        % The catch goal is built at runtime (Goal is a variable at the call
-        % site) so MetaTransform takes the runtime catch/3 clause instead of
-        % inlining catch helpers — the baked prelude carries no addresses for
-        % clause-generated '$catchrec' helpers.
-        '$module_attr_goals'(M, A, V, G) :-
-            put_attr(V, M, A),
+        % del_attr — it expects to run on a copy; the attachment happened in
+        % '$attr_reattach'). The catch goal is built at runtime (Goal is a
+        % variable at the call site) so MetaTransform takes the runtime
+        % catch/3 clause instead of inlining catch helpers — the baked
+        % prelude carries no addresses for clause-generated '$catchrec'
+        % helpers.
+        '$module_attr_goals'(M, V, G) :-
+            var(V),
             Goal = call(M:attribute_goals(V, G, [])),
-            (   catch(Goal, error(existence_error(_, _), _), fail)
-            ->  true
-            ;   del_attr(V, M), fail
-            ).
+            catch(Goal, error(existence_error(_, _), _), fail).
 
         % ===== common list-library predicates =====
 

@@ -628,6 +628,15 @@ public sealed partial class Activation
         if (!record.TryGetValue(moduleId, out int oldValue)) return;
         TrailAttrChange(addr, moduleId, oldValue);
         record.Remove(moduleId);
+        if (record.Count == 0)
+        {
+            // Last attribute gone → demote back to a plain unbound variable
+            // (SWI semantics: attvar/1 is false again). Trailed like PutAttr's
+            // promotion, so backtracking restores the AttVar cell — and with
+            // it the record the trailed AttrChange entries repopulate.
+            TrailValueChange(addr, _heap[addr]);
+            _heap[addr] = Cell.UnboundVar(addr);
+        }
     }
 
     /// <summary>The module ids that carry an attribute on the variable

@@ -992,7 +992,12 @@ public static partial class MetaBuiltins
     /// <c>Copy</c>'s variables.</summary>
     public static bool CopyTerm3Prep(Activation engine)
     {
-        // Distinct attributed variables reachable from the term at X[0].
+        // Distinct attributed variables reachable from the term at X[0] —
+        // TRANSITIVELY: an attribute value can reference further attributed
+        // variables (a clpz propagator's partner variable, tuples_in's
+        // relation variable carrying clpz_relation), and projecting a hook
+        // over the copy needs THEIR copied attributes too. The list is a
+        // worklist: scanning a value may append more variables.
         var attvars = new System.Collections.Generic.List<int>();
         var seen = new System.Collections.Generic.HashSet<int>();
         CollectAttvars(engine, engine.GetRegister(0), attvars, seen);
@@ -1000,8 +1005,9 @@ public static partial class MetaBuiltins
         Term original = MaterializeRegister(engine, 0);
 
         var infos = new System.Collections.Generic.List<Term>();
-        foreach (int vAddr in attvars)
+        for (int i = 0; i < attvars.Count; i++)
         {
+            int vAddr = attvars[i];
             // The same _G<addr> name TermReader.Materialize gives this
             // attributed variable, so the shared-var-map join lands it on
             // the copy's variable.
@@ -1009,6 +1015,7 @@ public static partial class MetaBuiltins
             foreach (int moduleId in engine.AttrModules(vAddr))
             {
                 int attrValueIdx = engine.GetAttr(vAddr, moduleId);
+                CollectAttvars(engine, Cell.Ref(attrValueIdx), attvars, seen);
                 Term attrValue = TermReader.Materialize(engine, attrValueIdx);
                 string moduleName = AtomTable.GetById(moduleId)?.Name
                     ?? throw new InvalidOperationException(

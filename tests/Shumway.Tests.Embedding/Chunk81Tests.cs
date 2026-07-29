@@ -111,6 +111,49 @@ public class Chunk81Tests
     }
 
     [Fact]
+    public void CopyTerm3_HookReadsASiblingVariablesAttribute()
+    {
+        // The clpz rel_tuple shape: projecting X's attribute reads ANOTHER
+        // variable's attribute (the relation var R lives inside X's attribute
+        // value and carries its own module). The prep collects attributed
+        // variables TRANSITIVELY and re-attaches everything before any hook
+        // runs, so the hook's get_attr on the sibling copy succeeds.
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            "constrain(X, R) :- put_attr(R, meta, rel([a, b])),\n" +
+            "                   put_attr(X, dom, linked(R)).\n" +
+            "attribute_goals(V) -->\n" +
+            "    { get_attr(V, dom, linked(R)), get_attr(R, meta, rel(Rel)) },\n" +
+            "    [in_rel(V, Rel)],\n" +
+            "    { del_attr(V, dom) }.\n");
+        var sol = engine.Query(
+            "constrain(X, _), copy_term(X, C, Gs)," +
+            " Gs = [in_rel(V, [a, b])], ( V == C -> R = ok ; R = wrong ).");
+        Assert.True(sol.Success);
+        Assert.Equal("ok", Assert.IsType<AtomTerm>(sol["R"]).Name);
+        // The helper attachments are scratch: nothing leaks onto the copy.
+        Assert.True(engine.Query(
+            "constrain(X, _), copy_term(X, C, _), var(C), \\+ attvar(C).").Success);
+    }
+
+    [Fact]
+    public void CopyTerm3_PartialTerm_ProjectsReachablePartnerConstraints()
+    {
+        // Copying only X still projects the partner variable a shared
+        // propagator references (Scryer parity: copy_term(A, C, Gs) with
+        // A #< B emits B's copy's domain too). Legacy-hook shape.
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            "attribute_goals(dom, D, V, [in(V, D)]).\n" +
+            "link(X, Y) :- put_attr(Y, dom, [1, 2]),\n" +
+            "              put_attr(X, dom, [pair_with(Y)]).");
+        var sol = engine.Query(
+            "link(X, _), copy_term(X, _, Gs), Gs = [_, _], R = ok.");
+        Assert.True(sol.Success);
+        Assert.Equal("ok", Assert.IsType<AtomTerm>(sol["R"]).Name);
+    }
+
+    [Fact]
     public void CopyTerm3_ModuleLocalAttributeGoalsDcg_ScryerProtocol()
     {
         // The Scryer/SWI projection protocol: the attribute's module defines

@@ -276,6 +276,30 @@ public class Chunk77Tests
             "catch(put_attr(concrete, m, 1), error(type_error(var, _), _), true).").Success);
     }
 
+    [Fact]
+    public void DelAttr_LastAttribute_DemotesToPlainVariable()
+    {
+        // SWI semantics: removing the last attribute makes attvar/1 false
+        // again (the cell demotes to a plain unbound variable).
+        var engine = NewEngine();
+        Assert.True(engine.Query(
+            "put_attr(X, m, 1), del_attr(X, m), \\+ attvar(X), var(X).").Success);
+        // With another module still attached, the variable stays attributed.
+        Assert.True(engine.Query(
+            "put_attr(X, m, 1), put_attr(X, n, 2), del_attr(X, m),"
+            + " attvar(X), get_attr(X, n, 2).").Success);
+    }
+
+    [Fact]
+    public void DelAttr_Demotion_RevertsOnBacktracking()
+    {
+        var engine = NewEngine();
+        Assert.True(engine.Query(
+            "put_attr(X, m, 1),"
+            + " ( del_attr(X, m), \\+ attvar(X), fail ; true ),"
+            + " attvar(X), get_attr(X, m, 1).").Success);
+    }
+
     // ---- term inspection -----------------------------------------------
 
     [Fact]
