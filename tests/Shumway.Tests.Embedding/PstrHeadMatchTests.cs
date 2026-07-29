@@ -1,0 +1,69 @@
+using Shumway.Compiler.Ast;
+using Shumway.Embedding;
+using Xunit;
+
+namespace Shumway.Tests.Embedding;
+
+/// <summary>
+/// A partial string IS the code list it represents, so a callee that
+/// head-matches <c>[H|T]</c> must accept a PSTR argument (GetListSlow's lazy
+/// uncons). Inline <c>=/2</c> always handled it (UnifyPstrLis); the head-match
+/// path returned false — which broke every Scryer-style string DCG
+/// (<c>phrase(nt(X), "text")</c>) and inline-ITE guards over string-bound
+/// variables. Also covers the compile-time <c>phrase(M:NT, L, R)</c>
+/// expansion: the two DCG arguments belong to the nonterminal INSIDE the
+/// qualification, not to <c>':'</c> itself.
+/// </summary>
+public class PstrHeadMatchTests
+{
+    [Fact]
+    public void HeadListMatch_AcceptsPstrArgument()
+    {
+        var e = new PrologEngine();
+        e.ConsultString("h([H|T], H, T).");
+        var s = e.Query("h(\"ab\", H, T).");
+        Assert.True(s.Success);
+        Assert.Equal(97L, Assert.IsType<IntTerm>(s["H"]).Value);
+        // The tail stays a (lazy) partial string representing "b".
+        Assert.True(e.Query("h(\"ab\", _, T), T = [0'b].").Success);
+    }
+
+    [Fact]
+    public void DcgOverDoubleQuotedString_Matches()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(
+            "digits([D|T]) --> digit(D), digits(T).\n" +
+            "digits([D]) --> digit(D).\n" +
+            "digit(D) --> [D], { D >= 0'0, D =< 0'9 }.\n");
+        var s = e.Query("phrase(digits(L), \"123\", R), R == [].");
+        Assert.True(s.Success);
+        Assert.Equal(".(49, .(50, .(51, [])))", s["L"]!.ToString());
+    }
+
+    [Fact]
+    public void InlineIteGuard_ListMatchOnStringBoundVariable()
+    {
+        var e = new PrologEngine();
+        var s = e.Query("X = \"ab\", ( X = [H|_] -> R = H ; R = no ).");
+        Assert.True(s.Success);
+        Assert.Equal(97L, Assert.IsType<IntTerm>(s["R"]).Value);
+    }
+
+    [Fact]
+    public void PhraseWithModuleQualifiedNonterminal_ExpandsInsideTheQualification()
+    {
+        // phrase(M:NT, L, R) → M:NT'(…, L, R) — appending to ':' itself
+        // raised existence_error(':'/4).
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- module(gm, []).\n" +
+            "letters([C|T]) --> [C], letters(T).\n" +
+            "letters([]) --> [].\n");
+        e.ConsultString(
+            "use_it(L, R) :- phrase(gm:letters(L), [a, b], R).");
+        var s = e.Query("use_it(L, []).");
+        Assert.True(s.Success);
+        Assert.Equal(".(a, .(b, []))", s["L"]!.ToString());
+    }
+}

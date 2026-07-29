@@ -818,6 +818,32 @@ public sealed partial class Activation
             _unifyPointer = finalCell.AsHeapIndex;
             return true;
         }
+        if (finalCell.Tag == Tag.Pstr && finalCell.AsPstrLength > 0)
+        {
+            // A partial string IS the code list it represents: lazily uncons
+            // the first [Code|Tail] pair for the following unify-run
+            // (mirrors UnifyPstrLis — heads are UTF-16 code units). Without
+            // this, a callee head-matching [H|T] failed on a PSTR argument
+            // even though inline =/2 unified it fine.
+            int pair = AllocateHeap(2);
+            _heap[pair] = Cell.Int(GetPstrCodeUnit(finalCell, 0));
+            if (finalCell.AsPstrLength == 1)
+            {
+                _heap[pair + 1] = Cell.Ref(ComputePstrTailIndex(finalCell));
+            }
+            else
+            {
+                int absoluteStart = finalCell.AsPstrOffset + 1;
+                _heap[pair + 1] = Cell.Pstr(
+                    finalCell.AsPstrLength - 1,
+                    finalCell.AsPstrBufferIndex
+                        + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
+                    absoluteStart % Cell.PstrCodeUnitsPerBuffer);
+            }
+            _writeMode = false;
+            _unifyPointer = pair;
+            return true;
+        }
         return false;
     }
 

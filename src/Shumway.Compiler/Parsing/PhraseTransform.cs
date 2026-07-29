@@ -112,6 +112,20 @@ public static class PhraseTransform
                 // phrase/2,3 call intact so the runtime '$phrase' interpreter
                 // (prelude) handles it correctly.
                 return null;
+            case CompoundTerm bc when bc.Functor == ":" && bc.Args.Length == 2:
+            {
+                // phrase(M:NT, L, R) → M:NT'(…, L, R): the extra args belong to
+                // the NONTERMINAL, inside the qualification (appending to ':'
+                // itself built an undefined ':'/4). ':'/2 then resolves the
+                // expanded goal module-relative at runtime. A non-expandable
+                // inner body (variable, control construct) keeps the phrase
+                // call for the runtime interpreter.
+                Term? inner = ExpandPhrase(bc.Args[1], list, rest, origin);
+                return inner is null
+                    ? null
+                    : new CompoundTerm(":", new[] { bc.Args[0], inner })
+                    { Position = origin.Position };
+            }
             case CompoundTerm bc when !(bc.Functor == "." && bc.Args.Length == 2):
                 // phrase(foo(X), L, R) → foo(X, L, R). List-shaped compounds
                 // (`./2`) and lookalikes are not callable goals — skip them.
