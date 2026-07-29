@@ -362,9 +362,30 @@ internal static class Prelude
 
         '$attr_goals_of'([], []).
         '$attr_goals_of'([ag(M, A, V)|Rest], Goals) :-
-            ( attribute_goals(M, A, V, G) -> true ; G = [] ),
+            ( attribute_goals(M, A, V, G) -> true
+            ; '$module_attr_goals'(M, A, V, G) -> true
+            ; G = []
+            ),
             '$attr_goals_of'(Rest, RestGoals),
             append(G, RestGoals, Goals).
+
+        % Scryer/SWI projection protocol: the attribute module defines a
+        % module-local attribute_goals//1 that reads the attributes off the
+        % variable itself and strips them as it projects (clpz ends in
+        % del_attr — it expects to run on a copy). Re-attach the COPIED
+        % attribute value to the copy's variable and run the module's DCG
+        % on it, so the residual goals come out over the copy's variables.
+        % The catch goal is built at runtime (Goal is a variable at the call
+        % site) so MetaTransform takes the runtime catch/3 clause instead of
+        % inlining catch helpers — the baked prelude carries no addresses for
+        % clause-generated '$catchrec' helpers.
+        '$module_attr_goals'(M, A, V, G) :-
+            put_attr(V, M, A),
+            Goal = call(M:attribute_goals(V, G, [])),
+            (   catch(Goal, error(existence_error(_, _), _), fail)
+            ->  true
+            ;   del_attr(V, M), fail
+            ).
 
         % ===== common list-library predicates =====
 

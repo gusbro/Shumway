@@ -70,7 +70,7 @@ public class DcgIteEndpointTests
             "t(Ts, Rest) :- phrase(tags([1,2,3], Ts), [keep], Rest).");
         var sol = e.Query("t(Ts, Rest).");
         Assert.True(sol.Success);
-        Assert.Equal(".(odd, .(even, .(odd, [])))", sol["Ts"].ToString());
-        Assert.Equal(".(keep, [])", sol["Rest"].ToString());   // nothing consumed
+        Assert.Equal(".(odd, .(even, .(odd, [])))", sol["Ts"]!.ToString());
+        Assert.Equal(".(keep, [])", sol["Rest"]!.ToString());   // nothing consumed
     }
 }

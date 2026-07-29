@@ -1,3 +1,4 @@
+using Shumway.Compiler.Ast;
 using Shumway.Embedding;
 using Xunit;
 
@@ -107,5 +108,30 @@ public class Chunk81Tests
             "put_attr(X, dom, [1,2,3]), copy_term(X, Copy, [G]), Copy = 2, call(G).").Success);
         Assert.False(engine.Query(
             "put_attr(X, dom, [1,2,3]), copy_term(X, Copy, [G]), Copy = 9, call(G).").Success);
+    }
+
+    [Fact]
+    public void CopyTerm3_ModuleLocalAttributeGoalsDcg_ScryerProtocol()
+    {
+        // The Scryer/SWI projection protocol: the attribute's module defines
+        // attribute_goals//1, which reads the attribute off the variable
+        // itself and strips it as it projects. copy_term/3 re-attaches the
+        // copied attribute value to the copy's variable and runs the module's
+        // DCG on it, so the goals come out over the copy's variables.
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            "constrain(X) :- put_attr(X, mylib, level(3)).\n" +
+            "attribute_goals(V) -->\n" +
+            "    { get_attr(V, mylib, level(N)) },\n" +
+            "    [mylib_level(V, N)],\n" +
+            "    { del_attr(V, mylib) }.\n");
+        var sol = engine.Query(
+            "constrain(X), copy_term(X, C, Gs)," +
+            " Gs = [mylib_level(V, 3)], ( V == C -> R = ok ; R = wrong ).");
+        Assert.True(sol.Success);
+        Assert.Equal("ok", Assert.IsType<AtomTerm>(sol["R"]).Name);
+        // The original keeps its attribute; the projection ran on the copy.
+        Assert.True(engine.Query(
+            "constrain(X), copy_term(X, _, _), get_attr(X, mylib, level(3)).").Success);
     }
 }
