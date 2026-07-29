@@ -321,9 +321,133 @@ public sealed partial class PrologEngine
         if (!_modules.TryGetValue(sourceModule, out ModuleManifest? srcManifest)) return;
         if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest)) return;
         bool changed = false;
+        List<int>? added = null;
+        Dictionary<string, List<int>>? kept = null;
         foreach (int fid in srcManifest.ExportFunctors)
-            if (userManifest.Imports.TryAdd(fid, sourceModule)) changed = true;
+        {
+            if (userManifest.Imports.TryAdd(fid, sourceModule))
+            {
+                changed = true;
+                (added ??= new List<int>()).Add(fid);
+            }
+            else if (userManifest.Imports[fid] is { } existing && existing != sourceModule)
+            {
+                kept ??= new Dictionary<string, List<int>>();
+                if (!kept.TryGetValue(existing, out var list))
+                    kept[existing] = list = new List<int>();
+                list.Add(fid);
+            }
+        }
+        if (kept is not null)
+            foreach (var (winner, fids) in kept)
+                Console.Error.WriteLine(
+                    $"warning: {IndicatorList(fids)} already imported from "
+                    + $"'{winner}' — keeping '{winner}', ignoring '{sourceModule}'.");
+        if (added is not null) WarnImportsShadowGlobals(added, sourceModule);
         if (changed) InvalidatePersistent();
+    }
+
+    // The prelude is exempt from shadow warnings — importing a name it also
+    // defines is the libc analogy, routine and intentional.
+    private const string PreludeModuleName = "$prelude";
+
+    /// <summary>Top-level imports win over bare-global publics, so loading two
+    /// libraries with overlapping surfaces (the clpfd + clpz coexistence
+    /// surprise) silently reroutes bare calls. Warn, aggregated per shadowed
+    /// module, when freshly added `user` imports hide an already-loaded
+    /// module's public predicates.</summary>
+    private void WarnImportsShadowGlobals(List<int> addedFids, string sourceModule)
+    {
+        Dictionary<string, List<int>>? shadowed = null;
+        foreach (int fid in addedFids)
+        {
+            foreach (var (modName, m) in _modules)
+            {
+                if (modName == DefaultModuleName || modName == PreludeModuleName
+                    || modName == sourceModule) continue;
+                if (!m.PublicFunctors.Contains(fid)) continue;
+                shadowed ??= new Dictionary<string, List<int>>();
+                if (!shadowed.TryGetValue(modName, out var list))
+                    shadowed[modName] = list = new List<int>();
+                list.Add(fid);
+                break;
+            }
+        }
+        if (shadowed is null) return;
+        foreach (var (owner, fids) in shadowed)
+            Console.Error.WriteLine(
+                $"warning: importing {IndicatorList(fids)} from '{sourceModule}' "
+                + $"shadows the global definition(s) from '{owner}' at the top level.");
+    }
+
+    /// <summary>The reverse load order: a module's bare-global publics landing
+    /// while `user` already imports those names — the imports keep winning, so
+    /// the newly loaded module's definitions are unreachable bare. Aggregated
+    /// per import source.</summary>
+    internal void WarnPublicShadowedByUserImports(string moduleName, ModuleManifest manifest)
+    {
+        if (moduleName == DefaultModuleName || moduleName == PreludeModuleName) return;
+        if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? user)) return;
+        if (user.Imports.Count == 0) return;
+        Dictionary<string, List<int>>? bySource = null;
+        foreach (int fid in manifest.PublicFunctors)
+        {
+            if (!user.Imports.TryGetValue(fid, out var src) || src == moduleName) continue;
+            bySource ??= new Dictionary<string, List<int>>();
+            if (!bySource.TryGetValue(src, out var list))
+                bySource[src] = list = new List<int>();
+            list.Add(fid);
+        }
+        if (bySource is null) return;
+        foreach (var (src, fids) in bySource)
+            Console.Error.WriteLine(
+                $"warning: the global {IndicatorList(fids)} from '{moduleName}' "
+                + $"is shadowed at the top level by the existing import(s) from '{src}'.");
+    }
+
+    /// <summary>Consult-path recording of `user`-level imports (a
+    /// <c>:- use_module</c> in a plain non-module file). Directive semantics
+    /// keep the LAST import on a collision (unchanged); emits the same
+    /// user-level shadow warnings as the goal-form import.</summary>
+    internal void RecordUserImports(
+        ModuleManifest userManifest, IEnumerable<KeyValuePair<int, string>> imports)
+    {
+        Dictionary<string, List<int>>? addedBySource = null;
+        foreach (var (fid, src) in imports)
+        {
+            if (userManifest.Imports.TryGetValue(fid, out var existing))
+            {
+                if (existing != src)
+                {
+                    Console.Error.WriteLine(
+                        $"warning: {IndicatorList(new List<int> { fid })} import from "
+                        + $"'{src}' replaces the earlier import from '{existing}'.");
+                    userManifest.Imports[fid] = src;
+                }
+                continue;
+            }
+            userManifest.Imports[fid] = src;
+            addedBySource ??= new Dictionary<string, List<int>>();
+            if (!addedBySource.TryGetValue(src, out var list))
+                addedBySource[src] = list = new List<int>();
+            list.Add(fid);
+        }
+        if (addedBySource is not null)
+            foreach (var (src, fids) in addedBySource)
+                WarnImportsShadowGlobals(fids, src);
+    }
+
+    private static string IndicatorList(List<int> fids)
+    {
+        const int cap = 8;
+        var parts = new List<string>(Math.Min(fids.Count, cap));
+        for (int i = 0; i < fids.Count && i < cap; i++)
+        {
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fids[i]);
+            parts.Add($"{Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "?"}/{arity}");
+        }
+        string joined = string.Join(", ", parts);
+        return fids.Count > cap ? $"{joined} (+{fids.Count - cap} more)" : joined;
     }
 
     // The module name if it names an export-qualified module (ADR-038), else null

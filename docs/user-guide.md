@@ -768,6 +768,15 @@ Dynamics are always global. Builtins are shadowed only by a module that
 Consulting a `:- module/2` file directly auto-imports its exports into
 `user`; loading it as a `use_module` dependency does not.
 
+Because top-level imports beat bare-global publics, loading two libraries
+with overlapping surfaces (say `clpfd` and `clpz`, which share `#=`, `in`,
+…) silently reroutes the bare names to the imported one. The engine warns
+on stderr — aggregated per module, in either load order — when an import
+hides an already-loaded module's publics, when a module's publics land
+under an existing import, or when two imports collide (first import wins;
+the prelude is exempt). To reach the shadowed side explicitly, qualify the
+call: `clpfd:sum(...)`.
+
 ### Invariants the linker enforces
 
 - **Public predicates are globally unique.** Two modules cannot both

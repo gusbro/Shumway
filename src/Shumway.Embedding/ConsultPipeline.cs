@@ -1343,6 +1343,10 @@ internal sealed class ConsultPipeline
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
             E._modules[moduleName] = manifest;
+            // A bare-global public landing under an existing top-level import
+            // stays unreachable bare (imports win) — tell the user (the
+            // clpz-then-clpfd load order).
+            E.WarnPublicShadowedByUserImports(moduleName, manifest);
             // SWI-style auto-import: a module file loaded DIRECTLY (REPL
             // command line, consult/1, embedding ConsultFile/ConsultString —
             // not as a use_module dependency) imports its exports into `user`,
@@ -1362,8 +1366,10 @@ internal sealed class ConsultPipeline
             existing.PublicFunctors.UnionWith(publics);
             // ADR-038 — a bare `user` program that use_module's an export-qualified
             // library still needs an import table so its calls resolve Source$p.
+            // Recorded through the warning-emitting helper: a top-level import
+            // hides same-named bare-global publics (clpfd + clpz coexistence).
             if (pendingImports is not null)
-                foreach (var (fid, src) in pendingImports) existing.Imports[fid] = src;
+                E.RecordUserImports(existing, pendingImports);
             if (pendingDiscontiguous is not null) existing.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
             if (pendingMultifile is not null) existing.MultifileFunctors.UnionWith(pendingMultifile);
             if (pendingModes is not null)
