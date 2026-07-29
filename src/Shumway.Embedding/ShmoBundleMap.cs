@@ -107,6 +107,36 @@ public static class ShmoBundleMap
             sb.AppendLine();
         }
 
+        // Local predicates shadowing another linked module's public — the C
+        // `static`-shadows-global shape. Legal (the local wins inside its own
+        // module); always listed here, opt-in console warning via --warn-shadow.
+        var publicOwner = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var obj in objects)
+            if (reached.Contains(obj.ModuleName))
+                foreach (var d in obj.Defined)
+                    if (d.Visibility == PredicateVisibility.Public)
+                        publicOwner[d.Indicator.ToString()] = obj.ModuleName;
+        var shadowLines = new List<string>();
+        foreach (var obj in objects)
+        {
+            if (!reached.Contains(obj.ModuleName)) continue;
+            foreach (var d in obj.Defined)
+            {
+                if (d.Visibility != PredicateVisibility.Local) continue;
+                string key = d.Indicator.ToString();
+                if (publicOwner.TryGetValue(key, out var owner) && owner != obj.ModuleName)
+                    shadowLines.Add(
+                        $"  {key}  local in '{obj.ModuleName}' shadows public from '{owner}'");
+            }
+        }
+        if (shadowLines.Count > 0)
+        {
+            sb.AppendLine("## Local predicates shadowing a public (inside their module the local wins)");
+            foreach (var line in shadowLines.OrderBy(s => s, StringComparer.Ordinal))
+                sb.AppendLine(line);
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Reached predicates");
         sb.AppendLine($"  count: {result.ReachedPredicates.Count}");
         sb.AppendLine();

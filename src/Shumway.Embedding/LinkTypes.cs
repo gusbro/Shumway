@@ -119,6 +119,14 @@ public sealed class LinkConfig
     /// region build is not free).</summary>
     public bool RegionPruneReport { get; init; }
 
+    /// <summary>When <c>true</c>, the linker emits a
+    /// <c>local_shadows_public</c> WARNING for each linked module whose LOCAL
+    /// predicate shares an indicator with another linked module's public —
+    /// the C <c>static</c>-shadows-global shape. Legal either way (the local
+    /// wins inside its own module); the <c>--map</c> file always lists these
+    /// regardless of the flag. Defaults to <c>false</c>.</summary>
+    public bool WarnShadow { get; init; }
+
     /// <summary>Stage 9b-3 — the APPLIED dead-region prune. When the bundle builds
     /// compiled IL (<see cref="IncludeCompiledIl"/>), it is region-compiled (absorbed
     /// members live inside region methods) and each ABSORBED-ONLY predicate (reached only

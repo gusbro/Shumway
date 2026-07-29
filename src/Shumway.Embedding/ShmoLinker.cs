@@ -658,6 +658,28 @@ public static class ShmoLinker
                 obj.ModuleName);
         }
 
+        // ----- 7b. Opt-in shadow report (--warn-shadow) -----
+        // A linked module's LOCAL predicate sharing an indicator with another
+        // linked module's public — the C `static`-shadows-global shape. Legal
+        // (the local wins inside its own module), so a warning only on
+        // request; the --map file always lists these (ShmoBundleMap).
+        if (config.WarnShadow)
+        {
+            foreach (string mod in reachedModules)
+            {
+                if (!moduleDefined.TryGetValue(mod, out var defs)) continue;
+                foreach (var (pred, vis) in defs)
+                {
+                    if (vis != PredicateVisibility.Local) continue;
+                    if (globalPublic.TryGetValue(pred, out string? owner) && owner != mod)
+                        Emit(LinkSeverity.Warning, "local_shadows_public",
+                            $"local {pred} in '{mod}' shadows the public {pred} "
+                            + $"exported by '{owner}' (inside '{mod}' the local wins).",
+                            mod);
+                }
+            }
+        }
+
         // ----- 8. Decide success and build bundle -----
         bool hasErrors = diagnostics.Any(d => d.Severity == LinkSeverity.Error);
         bool success = !hasErrors;

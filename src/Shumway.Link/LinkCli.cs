@@ -120,6 +120,7 @@ internal static class LinkCli
             GoalCallRefs = goalCallRefs,
             GoalTermRefs = goalTermRefs,
             AllowUndefined = opts.AllowUndefined,
+            WarnShadow = opts.WarnShadow,
             Libraries = libraries,
             // ADR-038 — --library-dir flags plus SHUMWAY_LIBRARY_PATH.
             LibraryDirs = CollectLibraryDirs(opts.LibraryDirs),
@@ -308,6 +309,7 @@ internal static class LinkCli
         public string OutputPath { get; set; } = "";
         public bool Verbose { get; set; }
         public bool AllowUndefined { get; set; }
+        public bool WarnShadow { get; set; }
         public bool StripSource { get; set; }
         public bool IncludeCompiledIl { get; set; }
         public bool StripWam { get; set; }
@@ -384,6 +386,10 @@ internal static class LinkCli
                 case "--allow-undefined":
                 case "-u":
                     opts.AllowUndefined = true;
+                    break;
+
+                case "--warn-shadow":
+                    opts.WarnShadow = true;
                     break;
 
                 case "--library-dir":
@@ -730,6 +736,11 @@ internal static class LinkCli
             + "  -u, --allow-undefined    Turn missing-predicate errors into warnings and\n"
             + "                           produce the bundle anyway. Calling a missing\n"
             + "                           predicate at runtime raises an existence_error.\n"
+            + "      --warn-shadow        Warn when a module's LOCAL predicate shares an\n"
+            + "                           indicator with another module's public (inside\n"
+            + "                           its module the local wins — like a C `static`\n"
+            + "                           shadowing a global). The --map file always\n"
+            + "                           lists these regardless of this flag.\n"
             + "  -L, --library-dir <dir>  Directory searched to resolve a\n"
             + "                           use_module(library(X)) dependency not passed\n"
             + "                           explicitly (X.pl / X.shmo). Repeatable; also reads\n"
