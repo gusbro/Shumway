@@ -427,6 +427,7 @@ public static partial class MetaBuiltins
         switch (cell.Tag)
         {
             case Tag.Ref:
+            case Tag.AttVar:   // an attributed variable IS a variable (ISO/SWI)
                 vars.Add(addr);
                 break;
             case Tag.Str:

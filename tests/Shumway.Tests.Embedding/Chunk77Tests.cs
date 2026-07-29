@@ -275,4 +275,21 @@ public class Chunk77Tests
         Assert.True(engine.Query(
             "catch(put_attr(concrete, m, 1), error(type_error(var, _), _), true).").Success);
     }
+
+    // ---- term inspection -----------------------------------------------
+
+    [Fact]
+    public void TermVariables_IncludesAttributedVariables()
+    {
+        // An attvar IS a variable (ISO/SWI/Scryer). clpz builds a
+        // propagator's attachment list with term_variables over a term of
+        // attvars — skipping them detached every propagator posted that way
+        // (reified negation never fired).
+        var engine = NewEngine();
+        var sol = engine.Query(
+            "put_attr(V, m, a), term_variables(f(V, W, V), Vs)," +
+            " Vs = [V1, V2], V1 == V, V2 == W, R = ok.");
+        Assert.True(sol.Success);
+        Assert.Equal(new AtomTerm("ok"), sol["R"]);
+    }
 }
