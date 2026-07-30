@@ -31,13 +31,11 @@ public sealed partial class BytecodeInterpreter
     private bool FlushPendingWakeupsSlow(ProgramView code)
     {
         Shumway.Core.Profiler.Note("wakeup_flush");
-        var addrs = _engine.CurrentFunctorAddresses;
-        bool has4 = addrs is not null && addrs.ContainsKey(VerifyAttributesFunctorId);
-        if (!has4 && !_engine.HasAnyVerify3Hook)
+        if (!_engine.HasAnyAttributeHook)
         {
-            // Neither our verify_attributes/4 nor any Scryer-style
-            // verify_attributes/3 is linked — attributed variables stay hookless
-            // (the foundation).
+            // No attribute-unification hook of any shape is linked — neither a
+            // per-module verify_attributes/3 or /4 nor a bare one — so attributed
+            // variables stay hookless (the foundation).
             _engine.ClearPendingWakeups();
             return true;
         }
@@ -64,8 +62,6 @@ public sealed partial class BytecodeInterpreter
     /// queue is drained in a loop.</summary>
     private bool RunWakeups(ProgramView code)
     {
-        bool hasVerify4 = _engine.CurrentFunctorAddresses?.ContainsKey(
-            VerifyAttributesFunctorId) ?? false;
         while (_engine.HasPendingWakeups)
         {
             var batch = _engine.TakePendingWakeups();
@@ -78,13 +74,17 @@ public sealed partial class BytecodeInterpreter
             for (int i = 0; i < batch.Count; i++)
             {
                 var (moduleId, attrValueIdx, otherIdx) = batch[i];
+                // ADR-040 — resolve THIS module's hook per module: its own
+                // verify_attributes/3 (Scryer style) or /4 (module-local first,
+                // bare fallback). Two dialects' libraries each own their hook.
                 int v3 = _engine.Verify3FunctorId(moduleId);
+                int v4 = v3 >= 0 ? -1 : _engine.Verify4FunctorId(moduleId);
                 int goalsVarIdx = _engine.AllocateHeapUnbound();
                 Cell verifyGoal;
                 if (v3 >= 0)
                     verifyGoal = BuildVerify3Goal(v3, moduleId, attrValueIdx, otherIdx, goalsVarIdx);
-                else if (hasVerify4)
-                    verifyGoal = BuildVerifyGoal(moduleId, attrValueIdx, otherIdx, goalsVarIdx);
+                else if (v4 >= 0)
+                    verifyGoal = BuildVerifyGoal(v4, moduleId, attrValueIdx, otherIdx, goalsVarIdx);
                 else
                 {
                     // This module is hookless — nothing to run; the bind already
@@ -105,10 +105,10 @@ public sealed partial class BytecodeInterpreter
     /// Goals)</c> on the heap and returns the goal cell. <c>Goals</c> is
     /// the fresh variable at <paramref name="goalsVarIdx"/> the hook
     /// binds to its returned goal list.</summary>
-    private Cell BuildVerifyGoal(int moduleId, int attrValueIdx, int otherIdx, int goalsVarIdx)
+    private Cell BuildVerifyGoal(int v4Functor, int moduleId, int attrValueIdx, int otherIdx, int goalsVarIdx)
     {
         int f = _engine.AllocateHeap(5);
-        _engine.SetHeap(f,     Cell.Functor(VerifyAttributesFunctorId));
+        _engine.SetHeap(f,     Cell.Functor(v4Functor));
         _engine.SetHeap(f + 1, Cell.Atom(moduleId));
         _engine.SetHeap(f + 2, Cell.Ref(attrValueIdx));
         _engine.SetHeap(f + 3, Cell.Ref(otherIdx));

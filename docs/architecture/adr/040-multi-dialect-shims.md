@@ -1,9 +1,40 @@
 # ADR-040: Multi-dialect library shims + per-module attribute hook (uniting Prolog worlds)
 
-**Status:** Proposed.
+**Status:** Accepted — core implemented. D5.2 per-search-path dialect threading,
+D5.3 content sniff, and a fuller SWI pack are deferred (see below).
 
 **Supersedes/extends:** [ADR-038](038-library-loading.md) (library loading +
 export-qualified modules) and the flat, Scryer-only `CompatLibraries` shim.
+
+## Implementation status
+
+- **Component 3 — per-module attribute hook (done).** `Activation.Verify4FunctorId`
+  mirrors the existing `Verify3FunctorId`: a module's `Module$verify_attributes/4`
+  (module-local) is resolved and dispatched per attribute module, with the
+  bare-global `verify_attributes/4` as a fallback. `HasAnyAttributeHook` (replacing
+  the /3-only scan) gates the wakeup flush over both arities, mangled or bare.
+  `ModuleHasHook` is per-module. Result: two libraries with module-local `/4` hooks
+  coexist (no `:- public` collision), and a variable carrying attributes from two
+  modules runs both hooks. The baked clpfd/clpr/coroutining keep their bare-global
+  multifile `/4` and are unchanged (they already coexisted via multifile — so the
+  old CLAUDE.md "CLP(R)/CLP(FD) cannot share an engine" note was already stale and
+  is corrected). Tested: `PerModuleAttributeHookTests`.
+- **Component 1 — DialectRegistry (done).** `DialectRegistry` replaces the flat
+  `CompatLibraries` switch: dialect packs (`scryer` = the former data, `double_quotes
+  = chars`; `swi` = a starter no-op set, `double_quotes = codes`), extensible by
+  adding a pack. Resolution prefers the active dialect, then falls back to every
+  pack — coexistence is the default.
+- **Component 2 — dialect selection, explicit layer (done).** `engine.SetLibraryDialect`
+  + the writable `library_dialect` prolog flag (distinct from the read-only ISO
+  `dialect`, which still reports `shumway`). The active dialect only disambiguates a
+  name two packs define; a name unique to one dialect always resolves.
+- **Component 4 — per-load `double_quotes` scoping (done).** `UseCompatLibrary`
+  parses each pack's shim source with that pack's `double_quotes`, restoring after,
+  so a Scryer (chars) and an SWI (codes) library parse correctly in one engine.
+- **Deferred:** D5.2 full per-search-path dialect threading (the subtree inheriting
+  a dir's dialect end-to-end), D5.3 content sniff, and a real (non-stub) SWI pack.
+
+Tests: `PerModuleAttributeHookTests`, `DialectRegistryTests`.
 
 ## Motivation
 

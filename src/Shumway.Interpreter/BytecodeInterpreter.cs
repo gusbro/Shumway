@@ -97,12 +97,9 @@ public sealed partial class BytecodeInterpreter
     /// backtracking stays contained at its entry level.</summary>
     private int _backtrackFloor = -1;
 
-    // Functor ids the attributed-variable wakeup driver needs,
-    // interned once: the verify_attributes/4 user hook (its presence in
-    // the linked program is what enables wakeups at all) and the few
-    // control-construct functors the in-engine meta-call recognises.
-    private static readonly int VerifyAttributesFunctorId =
-        FunctorTable.Intern(AtomTable.Intern("verify_attributes", permanent: true).Id, 4);
+    // Functor ids the in-engine meta-call recognises (the control-construct
+    // functors). The attribute-hook functor ids are resolved per module on the
+    // Activation (ADR-040 Verify3FunctorId / Verify4FunctorId).
     private static readonly int ConjFunctorId =
         FunctorTable.Intern(AtomTable.Intern(",", permanent: true).Id, 2);
     private static readonly int TrueFunctorId =

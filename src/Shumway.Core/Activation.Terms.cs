@@ -1516,7 +1516,7 @@ public sealed partial class Activation
     /// <para>FUTURE (deferred, kept on purpose): this runtime guard costs
     /// ~1-2.5 ns per IL cut even when no attribute hook exists. It could be
     /// elided entirely by gating the IL EMISSION on
-    /// <see cref="HasVerifyAttributesHook"/> at promotion time (zero cost for
+    /// <see cref="HasAnyAttributeHook"/> at promotion time (zero cost for
     /// non-attvar IL programs). That was NOT done because it needs a
     /// soundness-critical invariant — the IL promotion cache must be
     /// invalidated whenever ANY consult first defines

@@ -1,0 +1,83 @@
+using Shumway.Compiler.Parsing;
+
+namespace Shumway.Embedding;
+
+/// <summary>ADR-040 — the multi-dialect shim registry. Each Prolog system whose
+/// libraries we can host is a "dialect pack": the library names it provides (as
+/// Shumway-equivalent source, or <c>""</c> for a prelude-covered no-op) plus the
+/// parse defaults its sources assume (notably <c>double_quotes</c>). Replaces the
+/// flat, Scryer-only <see cref="CompatLibraries"/> switch — that data is now the
+/// <c>scryer</c> pack.
+///
+/// <para>Resolution prefers the ACTIVE dialect (ADR-040 selection), then falls
+/// back to every pack. So an undeclared dialect still resolves a name unique to
+/// one system, and <b>coexistence is the default</b>: a Scryer library and an SWI
+/// library load side by side, each parsed with its own <c>double_quotes</c>. The
+/// active dialect only disambiguates a name that two packs both define.</para></summary>
+internal static class DialectRegistry
+{
+    /// <summary>A dialect's shim: its name, the parse-time <c>double_quotes</c> its
+    /// sources assume, and a resolver from a library name to its shim source
+    /// (<c>Found=false</c> when this pack does not provide the name).</summary>
+    internal sealed record Pack(
+        string Name,
+        DoubleQuotesMode DoubleQuotes,
+        System.Func<string, (bool Found, string Source)> Resolve);
+
+    // The scryer pack IS the existing CompatLibraries data; Scryer's default is
+    // double_quotes = chars.
+    private static readonly Pack Scryer = new(
+        "scryer", DoubleQuotesMode.Chars,
+        name => CompatLibraries.TryGet(name, out string s) ? (true, s) : (false, ""));
+
+    // The swi pack — SWI's double_quotes default is codes. The list-oriented
+    // libraries SWI programs import (apply, lists, pairs, …) are covered by our
+    // prelude, so importing them is a no-op that just marks them available. A
+    // fuller SWI shim (yall lambdas, assoc, …) is future data added right here.
+    private static readonly Pack Swi = new(
+        "swi", DoubleQuotesMode.Codes,
+        name => name switch
+        {
+            "apply" or "lists" or "pairs" or "apply_macros" or "ordsets"
+                or "error" or "debug" or "yall" => (true, ""),
+            _ => (false, ""),
+        });
+
+    private static readonly Pack[] Packs = { Scryer, Swi };
+
+    /// <summary>True when <paramref name="name"/> is a registered dialect.</summary>
+    internal static bool IsKnownDialect(string name) =>
+        System.Array.Exists(Packs, p => p.Name == name);
+
+    /// <summary>Resolves library <paramref name="name"/>. If
+    /// <paramref name="activeDialect"/> names a pack it is tried first; then every
+    /// pack, so coexistence is the default. On success <paramref name="source"/> is
+    /// the shim source (<c>""</c> for a prelude no-op), <paramref
+    /// name="doubleQuotes"/> the dialect's parse default (for scoping the consult),
+    /// and <paramref name="dialect"/> the pack that matched.</summary>
+    internal static bool TryResolve(string? activeDialect, string name,
+        out string source, out DoubleQuotesMode doubleQuotes, out string dialect)
+    {
+        if (activeDialect is not null)
+            foreach (var p in Packs)
+                if (p.Name == activeDialect && TryPack(p, name, out source, out doubleQuotes, out dialect))
+                    return true;
+        foreach (var p in Packs)
+        {
+            if (p.Name == activeDialect) continue;   // already tried above
+            if (TryPack(p, name, out source, out doubleQuotes, out dialect))
+                return true;
+        }
+        source = ""; doubleQuotes = DoubleQuotesMode.Chars; dialect = "";
+        return false;
+    }
+
+    private static bool TryPack(Pack p, string name,
+        out string source, out DoubleQuotesMode doubleQuotes, out string dialect)
+    {
+        var (found, src) = p.Resolve(name);
+        if (found) { source = src; doubleQuotes = p.DoubleQuotes; dialect = p.Name; return true; }
+        source = ""; doubleQuotes = p.DoubleQuotes; dialect = p.Name;
+        return false;
+    }
+}

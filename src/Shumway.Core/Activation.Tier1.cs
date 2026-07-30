@@ -151,16 +151,6 @@ public sealed partial class Activation
     private static readonly int VerifyAttributesFunctorId =
         FunctorTable.Intern(AtomTable.Intern("verify_attributes", permanent: true).Id, 4);
 
-    /// <summary>True when the linked program defines a
-    /// <c>verify_attributes/4</c> hook. When set, that hook owns the
-    /// merge of a shared module's attribute values on an attvar+attvar
-    /// unification — the engine no longer applies the hookless
-    /// "values must unify" rule, which would fail before the hook could
-    /// run (fatal for constraint libraries like CLP(FD), whose two
-    /// variables carry deliberately different domains).</summary>
-    private bool HasVerifyAttributesHook =>
-        CurrentFunctorAddresses?.ContainsKey(VerifyAttributesFunctorId) ?? false;
-
     /// <summary>Functor id of the bare SICStus/Scryer hook
     /// <c>verify_attributes/3</c> — the per-module attribute-unification hook
     /// (<c>M:verify_attributes(Var, Value, Goals)</c>) that Scryer libraries
@@ -187,43 +177,69 @@ public sealed partial class Activation
         return addrs.ContainsKey(BareVerify3FunctorId) ? BareVerify3FunctorId : -1;
     }
 
-    private IReadOnlyDictionary<int, int>? _verify3ScanFor;
-    private bool _hasAnyVerify3;
+    /// <summary>Resolves module <paramref name="moduleId"/>'s
+    /// <c>verify_attributes/4</c> hook (<c>M:verify_attributes(M, AttrValue,
+    /// Value, Goals)</c>) to a linked functor id, or -1 if the module has none.
+    /// Per-module (ADR-040): the module-local <c>Module$verify_attributes/4</c>
+    /// first, so two dialects' constraint libraries each own their own hook and
+    /// coexist. Falls back to the bare-global <c>verify_attributes/4</c> — the
+    /// legacy shared multifile form a single library may still declare.</summary>
+    internal int Verify4FunctorId(int moduleId)
+    {
+        var addrs = CurrentFunctorAddresses;
+        if (addrs is null) return -1;
+        string? mod = AtomTable.GetById(moduleId)?.Name;
+        if (mod is not null)
+        {
+            int mangled = FunctorTable.Intern(
+                AtomTable.Intern(mod + "$verify_attributes", permanent: true).Id, 4);
+            if (addrs.ContainsKey(mangled)) return mangled;
+        }
+        return addrs.ContainsKey(VerifyAttributesFunctorId) ? VerifyAttributesFunctorId : -1;
+    }
 
-    /// <summary>True when SOME module defines a <c>verify_attributes/3</c> hook.
-    /// Scanned once per distinct <see cref="CurrentFunctorAddresses"/> (attribute
-    /// hooks are static, so it is stable for the query) and cached — gates the
-    /// wakeup fast path so a hookless attributed-variable program pays nothing.</summary>
-    internal bool HasAnyVerify3Hook
+    private IReadOnlyDictionary<int, int>? _attrHookScanFor;
+    private bool _hasAnyAttrHook;
+
+    /// <summary>True when SOME module defines an attribute-unification hook —
+    /// a bare or module-local <c>verify_attributes/3</c> OR <c>/4</c> (ADR-040:
+    /// the module-local <c>Module$verify_attributes/N</c> forms let two dialects'
+    /// libraries coexist). Scanned once per distinct
+    /// <see cref="CurrentFunctorAddresses"/> (attribute hooks are static, so it is
+    /// stable for the query) and cached — gates the wakeup fast path so a hookless
+    /// attributed-variable program pays nothing. This gate MUST see the
+    /// module-local forms, or a real hook's wakeups would be silently cleared.</summary>
+    internal bool HasAnyAttributeHook
     {
         get
         {
             var addrs = CurrentFunctorAddresses;
             if (addrs is null) return false;
-            if (!ReferenceEquals(addrs, _verify3ScanFor))
+            if (!ReferenceEquals(addrs, _attrHookScanFor))
             {
-                _hasAnyVerify3 = addrs.ContainsKey(BareVerify3FunctorId);
-                if (!_hasAnyVerify3)
+                _hasAnyAttrHook = addrs.ContainsKey(BareVerify3FunctorId)
+                    || addrs.ContainsKey(VerifyAttributesFunctorId);
+                if (!_hasAnyAttrHook)
                     foreach (int fid in addrs.Keys)
                     {
                         var (nameId, arity) = FunctorTable.Lookup(fid);
-                        if (arity == 3
+                        if ((arity == 3 || arity == 4)
                             && (AtomTable.GetById(nameId)?.Name.EndsWith(
                                     "$verify_attributes", System.StringComparison.Ordinal) ?? false))
-                        { _hasAnyVerify3 = true; break; }
+                        { _hasAnyAttrHook = true; break; }
                     }
-                _verify3ScanFor = addrs;
+                _attrHookScanFor = addrs;
             }
-            return _hasAnyVerify3;
+            return _hasAnyAttrHook;
         }
     }
 
     /// <summary>Whether attribute module <paramref name="moduleId"/> has any
-    /// unification hook — our <c>verify_attributes/4</c> or its own Scryer-style
+    /// unification hook — a per-module <c>verify_attributes/4</c> or a Scryer-style
     /// <c>verify_attributes/3</c>. Used by the merge rule to decide whether a shared
     /// module's values must be pre-unified (no hook) or left for the hook.</summary>
     internal bool ModuleHasHook(int moduleId) =>
-        HasVerifyAttributesHook || Verify3FunctorId(moduleId) >= 0;
+        Verify4FunctorId(moduleId) >= 0 || Verify3FunctorId(moduleId) >= 0;
 
     /// <summary>Per-query string literal pool. Set by the embedding
     /// layer at query setup so IL-emitted <c>get_pstr</c> / <c>put_pstr</c>

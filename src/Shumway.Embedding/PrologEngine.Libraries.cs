@@ -58,16 +58,47 @@ public sealed partial class PrologEngine
     /// if <paramref name="name"/> is a known compatibility library (whether it
     /// carries Prolog source or is a prelude-covered no-op), <c>false</c> for
     /// an unknown library name.</summary>
+    // ADR-040 — the preferred dialect for resolving an ambiguous library name.
+    // null = auto (no preference); coexistence still works because the registry
+    // falls back to every pack, so a name unique to one dialect always resolves.
+    private string? _activeLibraryDialect;
+
+    /// <summary>Selects the preferred dialect (<c>scryer</c>, <c>swi</c>, …) for
+    /// resolving a <c>use_module(library(X))</c> whose name two dialects both
+    /// provide (ADR-040 explicit selection). Does NOT restrict loading: a library
+    /// unique to another dialect still resolves (coexistence is the default), so
+    /// a Scryer <c>clpz</c> and an SWI <c>http</c> load together regardless. Also
+    /// settable from Prolog with <c>set_prolog_flag(library_dialect, swi)</c>.</summary>
+    public void SetLibraryDialect(string dialect)
+    {
+        if (!DialectRegistry.IsKnownDialect(dialect))
+            throw new System.ArgumentException($"unknown library dialect '{dialect}'");
+        _activeLibraryDialect = dialect;
+    }
+
+    /// <summary>The active library dialect, or null for auto. Read by the
+    /// <c>library_dialect</c> prolog flag.</summary>
+    internal string? ActiveLibraryDialect => _activeLibraryDialect;
+
     internal bool UseCompatLibrary(string name)
     {
-        if (!CompatLibraries.TryGet(name, out string source))
+        if (!DialectRegistry.TryResolve(_activeLibraryDialect, name,
+                out string source, out var doubleQuotes, out _))
             return false;
         // recordInHistory:false — the importing program's own source (which
         // carries the use_module directive) is what SaveState replays; the
         // directive re-loads the library on restore, so recording the library
         // body too would double-consult it (and trip public uniqueness).
         if (_loadedCompatLibraries.Add(name) && source.Length > 0)
-            ConsultStringInner(source, recordInHistory: false);
+        {
+            // ADR-040 Component 4 — parse the shim with its dialect's
+            // double_quotes (Scryer = chars, SWI = codes), then restore, so two
+            // dialects' libraries parse correctly in the same engine.
+            var savedDq = Flags.DoubleQuotes;
+            Flags.DoubleQuotes = doubleQuotes;
+            try { ConsultStringInner(source, recordInHistory: false); }
+            finally { Flags.DoubleQuotes = savedDq; }
+        }
         return true;
     }
 

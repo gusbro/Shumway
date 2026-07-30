@@ -129,6 +129,19 @@ public static partial class MetaBuiltins
             };
             return true;
         }
+        if (flagName == "library_dialect")
+        {
+            // ADR-040 — the preferred dialect for resolving an ambiguous
+            // use_module(library(X)). Distinct from the read-only ISO `dialect`
+            // flag (which reports our identity, "shumway").
+            try { host.SetLibraryDialect(valueName); }
+            catch (System.ArgumentException)
+            {
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+            }
+            return true;
+        }
         if (flagName == "unknown")
         {
             if (valueName != "error" && valueName != "fail" && valueName != "warning")
@@ -307,6 +320,9 @@ public static partial class MetaBuiltins
             case "dialect":
                 return UnifyAtom(engine, 1, "shumway");
 
+            case "library_dialect":   // ADR-040 — preferred shim dialect
+                return UnifyAtom(engine, 1, host.ActiveLibraryDialect ?? "auto");
+
             case "bounded":
                 return UnifyAtom(engine, 1, "false");
 
@@ -359,7 +375,7 @@ public static partial class MetaBuiltins
     {
         "bounded", "max_arity", "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
-        "debug", "dialect", "argv", "implicit_dynamic", "arity_compat",
+        "debug", "dialect", "library_dialect", "argv", "implicit_dynamic", "arity_compat",
         "compile_mode", "debug_lco", "prefer_rationals",
     };
 
