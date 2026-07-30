@@ -30,6 +30,7 @@ public sealed partial class BytecodeInterpreter
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private bool FlushPendingWakeupsSlow(ProgramView code)
     {
+        Shumway.Core.Profiler.Note("wakeup_flush");
         var addrs = _engine.CurrentFunctorAddresses;
         bool has4 = addrs is not null && addrs.ContainsKey(VerifyAttributesFunctorId);
         if (!has4 && !_engine.HasAnyVerify3Hook)
@@ -68,6 +69,8 @@ public sealed partial class BytecodeInterpreter
         while (_engine.HasPendingWakeups)
         {
             var batch = _engine.TakePendingWakeups();
+            for (int n = 0; n < batch.Count; n++)
+                Shumway.Core.Profiler.Note("wakeup_hook_run");
             // All modules' hooks run first, then every returned goal —
             // the SICStus/Scryer ordering, so each hook sees the
             // pre-goal state.
