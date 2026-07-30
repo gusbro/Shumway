@@ -462,6 +462,12 @@ public sealed partial class PrologEngine
         public required bool DebugCodegen;
         public required bool InlineIte;
         public required int BundleLocalsCount;
+        /// <summary>The distinct static Module:Goal resolutions this transform
+        /// performed (null when it had none). Revalidated per reuse against
+        /// the live resolver — a module load only re-transforms the modules
+        /// whose qualified goals now resolve differently.</summary>
+        public required Dictionary<(string Mod, string Name, int Arity), string?>?
+            QualifiedResolutions;
         public required List<Clause> Rewritten;
         public required HashSet<int> Locals;
         public required HashSet<int> HeadFids;

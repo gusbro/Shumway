@@ -1,4 +1,5 @@
 using System.IO;
+using Shumway.Compiler.Ast;
 using Shumway.Embedding;
 using Xunit;
 
@@ -238,6 +239,52 @@ public class ExportQualifiedModuleTests
         Assert.True(Holds(e, "pa(from_b)"));
         Assert.Throws<Shumway.Core.PrologRuntimeException>(
             () => e.Query("pb(_)."));
+    }
+
+    [Fact]
+    public void StaticQualifiedCall_ResolvesModuleLocalAtCompileTime()
+    {
+        // A statically written Module:Goal body goal resolves at compile time
+        // (no runtime ':'/2 dispatch), reaching module-locals like the
+        // runtime chain does.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- module(qm, [entry/1]).\n" +
+            "entry(X) :- hidden(X).\n" +
+            "hidden(inner_value).\n");
+        e.ConsultString("probe(X) :- qm:hidden(X).");
+        var sol = e.Query("probe(X).");
+        Assert.True(sol.Success);
+        Assert.Equal("inner_value", Assert.IsType<AtomTerm>(sol["X"]).Name);
+    }
+
+    [Fact]
+    public void StaticQualifiedCall_ModuleLoadedLater_StillResolves()
+    {
+        // The caller consults BEFORE the target module exists: the qualified
+        // goal stays on the runtime path, and once the module loads the
+        // transform cache re-keys (_modulesVersion) so a later query
+        // resolves statically. Either way the call must succeed.
+        var e = new PrologEngine();
+        e.ConsultString("probe2(X) :- lateqm:answer(X).");
+        e.ConsultString(":- module(lateqm, []).\nanswer(late_value).\n");
+        var sol = e.Query("probe2(X).");
+        Assert.True(sol.Success);
+        Assert.Equal("late_value", Assert.IsType<AtomTerm>(sol["X"]).Name);
+    }
+
+    [Fact]
+    public void StaticQualifiedCall_UnknownModule_FallsBackToBareGlobal()
+    {
+        // Runtime semantics for an unknown module: mangled miss → imports
+        // miss → bare-global. The static path must preserve that.
+        var e = new PrologEngine();
+        e.ConsultString(
+            "shared_pred(bare_one).\n" +
+            "probe3(X) :- nosuchmod:shared_pred(X).");
+        var sol = e.Query("probe3(X).");
+        Assert.True(sol.Success);
+        Assert.Equal("bare_one", Assert.IsType<AtomTerm>(sol["X"]).Name);
     }
 
     [Fact]

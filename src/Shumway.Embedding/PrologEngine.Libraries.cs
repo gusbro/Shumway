@@ -433,8 +433,77 @@ public sealed partial class PrologEngine
             list.Add(fid);
         }
         if (addedBySource is not null)
+        {
             foreach (var (src, fids) in addedBySource)
                 WarnImportsShadowGlobals(fids, src);
+        }
+    }
+
+    private readonly Dictionary<string,
+        (object ClausesRef, int ClauseCount, int PublicCount, int ExportCount,
+         HashSet<int> Mangled)> _moduleMangledCache = new();
+
+    /// <summary>True when every recorded static Module:Goal resolution of a
+    /// cached transform still resolves the same today — the per-entry
+    /// revalidation that lets an unrelated module load reuse the transform
+    /// verbatim (a version-counter key re-transformed every qualified-goal
+    /// user per consult of the clpz load chain).</summary>
+    internal bool QualifiedResolutionsStillValid(
+        Dictionary<(string Mod, string Name, int Arity), string?>? resolutions)
+    {
+        if (resolutions is null) return true;
+        foreach (var (key, resolved) in resolutions)
+            if (ResolveQualifiedStatic(key.Mod, key.Name, key.Arity) != resolved)
+                return false;
+        return true;
+    }
+
+    /// <summary>Compile-time resolution of a statically written
+    /// <c>Module:Goal</c> body goal — mirrors the runtime PrepareMqualGoal
+    /// chain exactly: the module's mangled definitions → its import table →
+    /// the bare name (own legacy publics, globals, builtins, prelude,
+    /// dynamics). Returns <c>null</c> when the module isn't loaded (keep the
+    /// runtime ':'/2 dispatch; a later load makes
+    /// <see cref="QualifiedResolutionsStillValid"/> re-transform the
+    /// caller).</summary>
+    internal string? ResolveQualifiedStatic(string module, string name, int arity)
+    {
+        if (!_modules.TryGetValue(module, out ModuleManifest? m)) return null;
+        int fid = Shumway.Core.FunctorTable.Intern(
+            Shumway.Core.AtomTable.Intern(name, permanent: true).Id, arity);
+        if (_dynStore.IsDynamic(fid)) return name;   // dynamics are flat-global
+        if (GetModuleMangledSet(module, m).Contains(fid)) return module + "$" + name;
+        if (m.Imports.TryGetValue(fid, out string? src)) return src + "$" + name;
+        return name;
+    }
+
+    // The functors module `m` links under its mangled name: clause heads
+    // (minus legacy publics — those stay bare) plus an export-qualified
+    // module's exports, plus a precompiled bundle's locals. A dynamic fid in
+    // the set is harmless: ResolveQualifiedStatic's dynamic check runs FIRST,
+    // so the fingerprint doesn't need to track dynamic promotions.
+    private HashSet<int> GetModuleMangledSet(string moduleName, ModuleManifest m)
+    {
+        if (_moduleMangledCache.TryGetValue(moduleName, out var e)
+            && ReferenceEquals(e.ClausesRef, m.Clauses)
+            && e.ClauseCount == m.Clauses.Count
+            && e.PublicCount == m.PublicFunctors.Count
+            && e.ExportCount == m.ExportFunctors.Count)
+            return e.Mangled;
+        var set = new HashSet<int>();
+        foreach (var c in m.Clauses)
+        {
+            if (c.Kind is Shumway.Compiler.Ast.ClauseKind.Directive) continue;
+            set.Add(ConsultPipeline.HeadFunctorIdOf(c));
+        }
+        if (m.IsExportQualified) set.UnionWith(m.ExportFunctors);
+        else set.ExceptWith(m.PublicFunctors);
+        if (_precompiledModuleLocals.TryGetValue(moduleName, out var bundleLocals))
+            set.UnionWith(bundleLocals);
+        _moduleMangledCache[moduleName] =
+            (m.Clauses, m.Clauses.Count, m.PublicFunctors.Count,
+             m.ExportFunctors.Count, set);
+        return set;
     }
 
     private static string IndicatorList(List<int> fids)

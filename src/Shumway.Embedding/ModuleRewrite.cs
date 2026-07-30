@@ -33,6 +33,34 @@ public static class ModuleRewrite
         /// module that imports nothing.</summary>
         public IReadOnlyDictionary<int, string> Imports { get; }
 
+        /// <summary>Resolves a statically written <c>Module:Goal</c> body goal
+        /// at compile time: (module, name, arity) → the final functor name
+        /// (mangled <c>Module$name</c>, an import's <c>Source$name</c>, or the
+        /// bare name for the global/builtin fallback), or <c>null</c> to keep
+        /// the runtime <c>':'/2</c> dispatch (module not loaded yet). Must
+        /// mirror the runtime PrepareMqualGoal chain exactly. When unset,
+        /// every qualified goal stays on the runtime path.</summary>
+        public Func<string, string, int, string?>? QualifiedStaticResolver { get; init; }
+
+        /// <summary>The distinct qualified resolutions this rewrite performed:
+        /// (module, name, arity) → resolved functor name (or null for
+        /// left-on-runtime). The caller's transform cache revalidates each
+        /// against the live resolver instead of invalidating wholesale —
+        /// loading an unrelated module must not re-transform every
+        /// qualified-goal user (the clpz load chain regression).</summary>
+        public Dictionary<(string Mod, string Name, int Arity), string?>?
+            QualifiedResolutions { get; private set; }
+
+        internal string? ResolveQualified(string mod, string name, int arity)
+        {
+            var key = (mod, name, arity);
+            QualifiedResolutions ??= new Dictionary<(string, string, int), string?>();
+            if (QualifiedResolutions.TryGetValue(key, out string? memo)) return memo;
+            string? resolved = QualifiedStaticResolver!(mod, name, arity);
+            QualifiedResolutions[key] = resolved;
+            return resolved;
+        }
+
         public Context(string moduleName, HashSet<int> localFunctors)
             : this(moduleName, localFunctors, new HashSet<int>())
         {
@@ -136,6 +164,53 @@ public static class ModuleRewrite
 
         if (goal is CompoundTerm c)
         {
+            // A statically written Module:Goal resolves at COMPILE time when
+            // the resolver is available — the runtime ':'/2 path costs a full
+            // meta-dispatch per call (the atts goal_expansion emits one per
+            // get_atts/put_atts, ~112k per queens(12) solve). Nested
+            // qualifications collapse innermost-first, mirroring
+            // PrepareMqualGoal.
+            if (c.Functor == ":" && c.Args.Length == 2
+                && c.Args[0] is AtomTerm qualMod
+                && ctx.QualifiedStaticResolver is { } qualResolve)
+            {
+                string mod = qualMod.Name;
+                Term inner = c.Args[1];
+                while (inner is CompoundTerm { Functor: ":", Args.Length: 2 } nested
+                       && nested.Args[0] is AtomTerm innerMod)
+                {
+                    mod = innerMod.Name;
+                    inner = nested.Args[1];
+                }
+                if (inner is VarTerm)
+                {
+                    // Runtime-variable goal: tag with the qualifying module so
+                    // the meta-dispatch resolves it module-relative — one hop
+                    // cheaper than the ':'/2 predicate, same semantics.
+                    return new CompoundTerm("call", new[]
+                    {
+                        (Term)new CompoundTerm(MqualFunctor,
+                            new[] { (Term)new AtomTerm(mod), inner }),
+                    });
+                }
+                string? innerName = inner switch
+                {
+                    AtomTerm a2 => a2.Name,
+                    CompoundTerm c2 => c2.Functor,
+                    _ => null,
+                };
+                int innerArity = inner is CompoundTerm ic ? ic.Args.Length : 0;
+                if (innerName is not null && !IsControlFlow(innerName, innerArity))
+                {
+                    string? resolved = ctx.ResolveQualified(mod, innerName, innerArity);
+                    if (resolved is not null)
+                        return inner is CompoundTerm icc
+                            ? new CompoundTerm(resolved, icc.Args) { Position = c.Position }
+                            : new AtomTerm(resolved) { Position = c.Position };
+                }
+                return goal;   // control construct / unknown module → runtime ':'/2
+            }
+
             // Control-flow constructors are syntactic, not callable predicates;
             // recurse into their sub-goals but never mangle the constructor
             // itself.

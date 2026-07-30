@@ -757,7 +757,8 @@ public sealed partial class PrologEngine
                     && mte.Opaque == opaqueModule
                     && mte.DebugCodegen == _flags.DebugCodegen
                     && mte.InlineIte == EnableInlineIte
-                    && mte.BundleLocalsCount == bundleLocalsCount)
+                    && mte.BundleLocalsCount == bundleLocalsCount
+                    && QualifiedResolutionsStillValid(mte.QualifiedResolutions))
                 {
                     allRewritten.AddRange(mte.Rewritten);
                     if (name == DefaultModuleName) userLocalsCache = mte.Locals;
@@ -794,7 +795,8 @@ public sealed partial class PrologEngine
                 if (name == DefaultModuleName) userLocalsCache = locals;
                 moduleLocalsCache[name] = locals;
 
-                var ctx = new ModuleRewrite.Context(name, locals, _dynStore.Functors, manifest.Imports);
+                var ctx = new ModuleRewrite.Context(name, locals, _dynStore.Functors, manifest.Imports)
+                { QualifiedStaticResolver = ResolveQualifiedStatic };
                 // ADR-035 — a library's HELPERS are library code too. MetaTransform
                 // lowers control constructs into generated predicates ('$call_conj' and
                 // friends), which are not in manifest.Clauses and so cannot be marked at
@@ -831,6 +833,7 @@ public sealed partial class PrologEngine
                     DebugCodegen = _flags.DebugCodegen,
                     InlineIte = EnableInlineIte,
                     BundleLocalsCount = bundleLocalsCount,
+                    QualifiedResolutions = ctx.QualifiedResolutions,
                     Rewritten = moduleRewritten,
                     Locals = locals,
                     HeadFids = moduleHeadFids,
@@ -1280,9 +1283,11 @@ public sealed partial class PrologEngine
                 ? new ModuleRewrite.Context(
                     DefaultModuleName, userLocals,
                     _dynStore.Functors, userManifest.Imports)
+                { QualifiedStaticResolver = ResolveQualifiedStatic }
                 : new ModuleRewrite.Context(
                     DefaultModuleName, userLocals,
-                    _dynStore.Functors);
+                    _dynStore.Functors)
+                { QualifiedStaticResolver = ResolveQualifiedStatic };
             queryClauses = new List<Clause>(queryTransformed.Count);
             foreach (var clause in queryTransformed)
                 queryClauses.Add(ModuleRewrite.Rewrite(clause, ctx));
