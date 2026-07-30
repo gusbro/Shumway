@@ -140,6 +140,15 @@ false.
   exit code), or with Ctrl-D / Ctrl-Z+Enter (end of input).
 - `true` is printed for variable-less success, `false` for failure,
   otherwise `X = …, Y = …` for the binding set.
+- Loading a `.shum` bundle whose program is a single **bare** module (no
+  `:- module(Name, [Exports])`) makes that module's predicates callable
+  from the prompt, just as consulting the source would — the REPL aliases
+  them into the top-level `user` module and prints which module it
+  promoted (`%   promoted 'prog' to user: …`). Library modules
+  (export-qualified) are never promoted: their names stay namespaced, so
+  reach them by importing (`use_module(library(X))`). This convenience is
+  REPL-only; an embedded `PrologEngine.LoadBundle` leaves the namespaces
+  exactly as linked.
 
 The REPL is also AOT-publishable — see
 [Native AOT publishing](#native-aot-publishing).

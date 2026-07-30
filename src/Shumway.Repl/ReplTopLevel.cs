@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading;
 using Shumway.Compiler.Ast;
 using Shumway.Core;
@@ -464,6 +465,26 @@ internal static class ReplTopLevel
             {
                 engine.LoadBundle(path);
                 Console.WriteLine($"% loaded bundle {path}");
+                // REPL usability: standing in `user`, the bundle's module-local
+                // predicates would be invisible — unlike consulting the source.
+                // Alias a single bare (non-library) module's locals into `user`
+                // so `?- pred(...)` works, and say which module was promoted.
+                if (engine.PromoteSingleBareBundleModuleToUser() is { } promoted)
+                {
+                    // Report only user-facing predicates — hide the compiler's
+                    // internal `$`-helpers (lowered control constructs, etc.),
+                    // which are aliased too but are noise in the summary.
+                    var preds = promoted.Predicates
+                        .Where(p => !p.Name.StartsWith('$')).ToList();
+                    if (preds.Count > 0)
+                    {
+                        const int cap = 8;
+                        string list = string.Join(", ",
+                            preds.Take(cap).Select(p => $"{p.Name}/{p.Arity}"));
+                        if (preds.Count > cap) list += $" (+{preds.Count - cap} more)";
+                        Console.WriteLine($"%   promoted '{promoted.Module}' to user: {list}");
+                    }
+                }
             }
             else
             {

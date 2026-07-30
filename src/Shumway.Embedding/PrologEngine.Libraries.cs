@@ -311,6 +311,48 @@ public sealed partial class PrologEngine
         }
     }
 
+    /// <summary>REPL usability (ADR-038, version a): a bundle loaded
+    /// interactively leaves the top level standing in <c>user</c>, so the
+    /// bundle's module-local predicates are invisible — unlike consulting the
+    /// equivalent source, where you stand in the file's module and can call
+    /// its predicates. When the bundle contributes EXACTLY ONE "bare" module
+    /// (not export-qualified — i.e. not a <c>:- module(Name, [Exports])</c>
+    /// library, whose names are deliberately namespaced), alias that module's
+    /// local predicates into <c>user</c>'s import table (<c>name → module</c>,
+    /// resolving to <c>module$name</c>) so the top level can call them.
+    /// Returns the module name and the aliased indicators for the caller to
+    /// report, or <c>null</c> when there is no bare module, or more than one
+    /// (the multi-module heuristic is deferred). Libraries are never touched;
+    /// a bare module's public and dynamic predicates are already bare-global,
+    /// so only its locals need the alias.</summary>
+    internal (string Module, List<(string Name, int Arity)> Predicates)?
+        PromoteSingleBareBundleModuleToUser()
+    {
+        string? only = null;
+        foreach (var (name, m) in _modules)
+        {
+            if (name == DefaultModuleName || name == PreludeModuleName) continue;
+            if (m.IsExportQualified) continue;   // library — never promote
+            if (!_precompiledModuleLocals.TryGetValue(name, out var locals)
+                || locals.Count == 0)
+                continue;   // no aliasable locals (or a source-consulted module)
+            if (only is not null) return null;   // >1 bare module — defer (escalation)
+            only = name;
+        }
+        if (only is null) return null;
+        if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest))
+            return null;
+        var aliased = new List<(string, int)>();
+        foreach (int fid in _precompiledModuleLocals[only])
+            if (userManifest.Imports.TryAdd(fid, only))
+            {
+                var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+                aliased.Add((Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "?", arity));
+            }
+        if (aliased.Count > 0) InvalidatePersistent();
+        return (only, aliased);
+    }
+
     /// <summary>ADR-038 — imports the whole export surface of
     /// <paramref name="sourceModule"/> into the top-level <c>user</c> module's
     /// import table (first-import-wins), so an interactive query following a
