@@ -116,9 +116,6 @@ internal static class Prelude
         :- public '$tbl_dispatch'/3.
         :- public '$tbl_consume'/3.
         :- public '$tbl_negate'/1.
-        :- public '$put_to_attr_list'/3.
-        :- public '$get_from_attr_list'/3.
-        :- public '$del_from_attr_list'/3.
         :- public '$get_attr_list'/2.
         :- public '$term_attributed_variables'/2.
         :- public put_atts/3.
@@ -1019,23 +1016,10 @@ internal static class Prelude
         % put_atts/get_atts shim (the C# half is '$attr_modules'/2). Each module M
         % keeps a LIST of its attribute terms on the variable via put_attr/get_attr;
         % '$get_attr_list' flattens every module's list into [M:Attr, ...].
+        % '$put_to_attr_list'/'$get_from_attr_list'/'$del_from_attr_list' are
+        % C# builtins (AttvarBuiltins) — the Prolog walks were the hottest
+        % predicates of a clpz solve.
         '$term_attributed_variables'(T, Vs) :- term_attvars(T, Vs).
-        '$put_to_attr_list'(V, M, Attr) :-
-            ( get_attr(V, M, L0) -> true ; L0 = [] ),
-            functor(Attr, F, A),
-            '$attr_exclude'(L0, F, A, L1),
-            put_attr(V, M, [Attr|L1]).
-        '$get_from_attr_list'(V, M, Attr) :-
-            get_attr(V, M, L),
-            functor(Attr, F, A),
-            '$attr_find'(L, F, A, Attr).
-        '$del_from_attr_list'(V, M, Attr) :-
-            (   get_attr(V, M, L0)
-            ->  functor(Attr, F, A),
-                '$attr_exclude'(L0, F, A, L1),
-                ( L1 == [] -> del_attr(V, M) ; put_attr(V, M, L1) )
-            ;   true
-            ).
         '$get_attr_list'(V, Ls) :- '$attr_modules'(V, Ms), '$attr_collect'(Ms, V, Ls).
         '$attr_collect'([], _, []).
         '$attr_collect'([M|Ms], V, Ls) :-
@@ -1043,12 +1027,6 @@ internal static class Prelude
             '$attr_collect'(Ms, V, Ls1).
         '$attr_pairs'([], _, Ls, Ls).
         '$attr_pairs'([A|As], M, [M:A|Ls0], Ls) :- '$attr_pairs'(As, M, Ls0, Ls).
-        '$attr_exclude'([], _, _, []).
-        '$attr_exclude'([X|Xs], F, A, Out) :-
-            ( functor(X, F, A) -> Out = Out1 ; Out = [X|Out1] ),
-            '$attr_exclude'(Xs, F, A, Out1).
-        '$attr_find'([X|Xs], F, A, Attr) :-
-            ( functor(X, F, A) -> Attr = X ; '$attr_find'(Xs, F, A, Attr) ).
 
         % Direct put_atts/3 & get_atts/3 (explicit module) — the usable SICStus/
         % Scryer attribute API without loading library(atts). The +Attr / -Attr /

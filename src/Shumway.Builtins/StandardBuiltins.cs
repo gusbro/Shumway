@@ -108,6 +108,11 @@ public static class StandardBuiltins
             Attr, "'$attr_modules'(+Var, -Modules)",
             "The module atoms under which Var carries an attribute (SICStus/Scryer "
             + "library(atts) compatibility primitive).");
+        // library(atts) list primitives — the native replacements for the
+        // prelude's Prolog walks (the hottest predicates of a clpz solve).
+        BuiltinsRegistry.Register("$put_to_attr_list", 3, AttvarBuiltins.PutToAttrList);
+        BuiltinsRegistry.Register("$get_from_attr_list", 3, AttvarBuiltins.GetFromAttrList);
+        BuiltinsRegistry.Register("$del_from_attr_list", 3, AttvarBuiltins.DelFromAttrList);
 
         // I/O.
         const string Io = "Input / output";

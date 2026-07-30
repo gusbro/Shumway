@@ -34,6 +34,148 @@ public static class AttvarBuiltins
         return true;
     }
 
+    // ---- library(atts) storage primitives (native) --------------------
+    // Each atts module keeps a LIST of its attribute terms as the variable's
+    // put_attr/get_attr value; these three walk/rebuild that list in C#. The
+    // Prolog shim's walks ($attr_find/$attr_exclude + functor/3 per element)
+    // were the hottest predicates of a clpz solve. Representation unchanged:
+    // list cells on the heap, mutation through PutAttr/DelAttr (trailed).
+
+    /// <summary><c>'$put_to_attr_list'(V, Module, Attr)</c> — replaces (or
+    /// adds) the attribute term with <c>Attr</c>'s functor in <c>Module</c>'s
+    /// list on <c>V</c>.</summary>
+    public static bool PutToAttrList(Activation engine)
+    {
+        int varAddr = RegisterToHeap(engine, 0);
+        int moduleId = ModuleId(engine, 1);
+        var (kind, key) = AttrTermKey(engine, engine.GetRegister(2));
+        int listIdx = engine.GetAttr(varAddr, moduleId);
+        var kept = CollectNonMatching(engine, listIdx, kind, key, out _);
+        Cell regCell = engine.GetRegister(2);
+        Cell headCell = regCell.Tag is Tag.Ref or Tag.AttVar
+            ? Cell.Ref(RegisterToHeap(engine, 2)) : regCell;
+        engine.PutAttr(varAddr, moduleId,
+            BuildAttrList(engine, headCell, kept));
+        return true;
+    }
+
+    /// <summary><c>'$get_from_attr_list'(V, Module, Attr)</c> — finds the
+    /// list element sharing <c>Attr</c>'s functor and unifies. Semidet: the
+    /// first functor match decides.</summary>
+    public static bool GetFromAttrList(Activation engine)
+    {
+        int varAddr = RegisterToHeap(engine, 0);
+        int moduleId = ModuleId(engine, 1);
+        int listIdx = engine.GetAttr(varAddr, moduleId);
+        if (listIdx < 0) return false;
+        var (kind, key) = AttrTermKey(engine, engine.GetRegister(2));
+        int cursor = engine.Deref(listIdx);
+        Cell cell = engine.GetHeap(cursor);
+        while (cell.Tag == Tag.Lis)
+        {
+            int pair = cell.AsHeapIndex;
+            if (MatchesKey(engine, engine.GetHeap(pair), kind, key))
+                return engine.UnifyRegisterWithHeapAt(2, pair);
+            cell = engine.GetHeap(pair + 1);
+            if (cell.Tag == Tag.Ref) cell = engine.GetHeap(engine.Deref(cell.AsHeapIndex));
+        }
+        return false;
+    }
+
+    /// <summary><c>'$del_from_attr_list'(V, Module, Attr)</c> — removes the
+    /// element sharing <c>Attr</c>'s functor. Always succeeds; a miss (or a
+    /// non-attributed <c>V</c>) is a no-op, and removing the last element
+    /// drops the module's attribute entirely.</summary>
+    public static bool DelFromAttrList(Activation engine)
+    {
+        int varAddr = RegisterToHeap(engine, 0);
+        int moduleId = ModuleId(engine, 1);
+        int listIdx = engine.GetAttr(varAddr, moduleId);
+        if (listIdx < 0) return true;
+        var (kind, key) = AttrTermKey(engine, engine.GetRegister(2));
+        var kept = CollectNonMatching(engine, listIdx, kind, key, out bool removedAny);
+        if (!removedAny) return true;
+        if (kept.Count == 0) engine.DelAttr(varAddr, moduleId);
+        else engine.PutAttr(varAddr, moduleId, BuildAttrList(engine, null, kept));
+        return true;
+    }
+
+    // The functor identity an atts operation keys on: (1, functorId) for
+    // compounds and atoms, (2, raw cell) for other constants — mirroring what
+    // functor/3-based matching distinguished. An unbound Attr is an error,
+    // exactly like the shim's functor(Attr, F, A).
+    private static (int Kind, long Key) AttrTermKey(Activation engine, Cell c)
+    {
+        if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        return c.Tag switch
+        {
+            Tag.Ref or Tag.AttVar =>
+                throw new PrologRuntimeException("instantiation_error"),
+            Tag.Str => (1, engine.GetHeap(c.AsHeapIndex).AsFunctorId),
+            Tag.Atom => (1, FunctorTable.Intern(c.AsAtomId, 0)),
+            _ => (2, unchecked((long)c.Data ^ ((long)c.Tag << 56))),
+        };
+    }
+
+    private static bool MatchesKey(Activation engine, Cell head, int kind, long key)
+    {
+        if (head.Tag == Tag.Ref)
+            head = engine.GetHeap(engine.Deref(head.AsHeapIndex));
+        return head.Tag switch
+        {
+            Tag.Str => kind == 1 && engine.GetHeap(head.AsHeapIndex).AsFunctorId == key,
+            Tag.Atom => kind == 1 && FunctorTable.Intern(head.AsAtomId, 0) == key,
+            Tag.Ref or Tag.AttVar => false,
+            _ => kind == 2 && unchecked((long)head.Data ^ ((long)head.Tag << 56)) == key,
+        };
+    }
+
+    // Walks the module's list collecting the head CELLS whose functor does
+    // not match — the kept elements share structure with the old list.
+    private static System.Collections.Generic.List<Cell> CollectNonMatching(
+        Activation engine, int listIdx, int kind, long key, out bool removedAny)
+    {
+        var kept = new System.Collections.Generic.List<Cell>();
+        removedAny = false;
+        if (listIdx < 0) return kept;
+        Cell cell = engine.GetHeap(engine.Deref(listIdx));
+        while (cell.Tag == Tag.Lis)
+        {
+            int pair = cell.AsHeapIndex;
+            Cell head = engine.GetHeap(pair);
+            if (MatchesKey(engine, head, kind, key)) removedAny = true;
+            else kept.Add(head.Tag is Tag.Ref or Tag.AttVar ? Cell.Ref(pair) : head);
+            cell = engine.GetHeap(pair + 1);
+            if (cell.Tag == Tag.Ref) cell = engine.GetHeap(engine.Deref(cell.AsHeapIndex));
+        }
+        return kept;
+    }
+
+    // Builds [newHead? | kept...] bottom-up (ADR-017 inline cons) and returns
+    // the heap index of a cell holding the list root.
+    private static int BuildAttrList(
+        Activation engine, Cell? newHead, System.Collections.Generic.List<Cell> kept)
+    {
+        Cell tail = Cell.Atom(AtomTable.EmptyListId);
+        for (int i = kept.Count - 1; i >= 0; i--)
+        {
+            int pair = engine.AllocateHeap(2);
+            engine.SetHeap(pair, kept[i]);
+            engine.SetHeap(pair + 1, tail);
+            tail = Cell.Lis(pair);
+        }
+        if (newHead is { } h)
+        {
+            int pair = engine.AllocateHeap(2);
+            engine.SetHeap(pair, h);
+            engine.SetHeap(pair + 1, tail);
+            tail = Cell.Lis(pair);
+        }
+        int root = engine.AllocateHeap(1);
+        engine.SetHeap(root, tail);
+        return root;
+    }
+
     // ---- SHUMWAY_ATTR_VERIFY=1 tripwire (debug aid) ----
     private static readonly bool AttrVerify =
         System.Environment.GetEnvironmentVariable("SHUMWAY_ATTR_VERIFY") == "1";
