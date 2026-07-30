@@ -50,10 +50,12 @@ public class SubArgIndexingTests
         var e = new PrologEngine();
         e.LoadBundle(BundleReader.FromBytes(bytes));
         // Guarantee the IL path is actually what runs (otherwise a silent Tier-0
-        // fallback would mask a Tier-1 bug).
-        Assert.True(e.IlPromotion.IsPromoted(Fid("w", 2)), "w/2 must be Tier-1 IL");
-        Assert.True(e.IlPromotion.IsPromoted(Fid("pc", 2)), "pc/2 must be Tier-1 IL");
-        Assert.True(e.IlPromotion.IsPromoted(Fid("eo", 2)), "eo/2 must be Tier-1 IL");
+        // fallback would mask a Tier-1 bug). A region-compiled bundle covers an
+        // absorbed member through its region method (no standalone delegate), so
+        // ask "dispatches through Tier-1" rather than "has its own delegate".
+        Assert.True(e.IsTier1Dispatched(Fid("w", 2)), "w/2 must be Tier-1 IL");
+        Assert.True(e.IsTier1Dispatched(Fid("pc", 2)), "pc/2 must be Tier-1 IL");
+        Assert.True(e.IsTier1Dispatched(Fid("eo", 2)), "eo/2 must be Tier-1 IL");
         return e;
     }
 

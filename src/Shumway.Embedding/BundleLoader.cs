@@ -310,53 +310,21 @@ internal sealed class BundleLoader
             }
         }
 
-        // Decode each entry's CompiledModule and stash the predicates
-        // for diagnostics. The source-carrying entries also feed
-        // IL warmup from here (their PrecompiledClauseCache
-        // substitution remains active — made the .shmo
-        // bytecode byte-identical to what SetupQueryFromTerm would
-        // produce, so the warmed IL delegates' call sites now
-        // resolve correctly).
-        // load persisted IL FIRST (before the Sigil warm
-        // path below) so RegisterBoundDelegate's first-wins
-        // semantics actually let the pre-compiled IL take effect.
-        // Pre-the order was reversed and E.IlPromotion.Warm
-        // had already invoked Sigil for every promotable predicate
-        // by the time the persisted bind ran — the persisted IL was
-        // technically loaded but never used.
+        // Bind persisted Tier-1 IL. RegisterBoundDelegate is first-wins, so this
+        // must precede any Sigil warm — else warm compiles a region root
+        // standalone and blocks the persisted delegate. A source-STRIPPED entry
+        // warms inside LoadEntryFromBytecode (the entry loop above), which is why
+        // that path binds its OWN persisted IL first (BindPersistedIlForEntry at
+        // the top of LoadEntryFromBytecode); this loop is the idempotent
+        // whole-bundle pass (cached, first-wins) that also covers source-carrying
+        // entries, whose warm runs in the loop below.
         foreach (var entry in effectiveEntries)
-        {
-            // A persisted-IL blob is JIT-able IL — loading and running it
-            // is runtime code generation, so under Native AOT the entry's
-            // bytecode (decoded above) is used instead.
-            if (entry.CompiledIl is null || entry.CompiledIl.Length == 0
-                || !System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
-                continue;
+            BindPersistedIlForEntry(entry);
 
-            // clone + patch + Assembly.Load + delegate binding
-            // happen ONCE per IL content for the whole process
-            // (GetOrLoadPersistedIl, mirroring _loadedNativeLibraries); this
-            // engine only replays the per-engine registrations from the cache.
-            var module = GetOrLoadPersistedIl(entry);
-            if (module is null) continue;
-            foreach (var (_, functorId, del) in module.Bound)
-                E.IlPromotion.RegisterBoundDelegate(functorId, del);
-            // A stripped indexed predicate carries its dispatch graph in the
-            // bundle. Stash it by runtime functor id; each query's fresh
-            // engine gets it registered at setup (the engine is per-query, so
-            // we can't register here). Without a WAM body the delegate would
-            // otherwise have nothing to rebuild the switch model from.
-            if (module.IndexGraphs is not null)
-                foreach (var kv in module.IndexGraphs)
-                    E._persistedIndexGraphs[kv.Key] = kv.Value;
-            // a region method publishes its members' entry cursors.
-            // The alias marker dispatches the region delegate at the member's
-            // entry. Consumed (lowest priority) by the query address map.
-            if (module.RegionAliases is not null)
-                foreach (var kv in module.RegionAliases)
-                    E._regionMemberAliases[kv.Key] = kv.Value;
-        }
-
+        // Decode each source-carrying entry's CompiledModule and feed IL warmup
+        // (its PrecompiledClauseCache substitution remains active — made the
+        // .shmo bytecode byte-identical to what SetupQueryFromTerm would
+        // produce, so the warmed IL delegates' call sites resolve correctly).
         foreach (var entry in effectiveEntries)
         {
             if (entry.CompiledBytecode is null) continue;
@@ -1117,6 +1085,37 @@ internal sealed class BundleLoader
     /// goes into <see cref="E._precompiledStaticPredicates"/>. For a source-carrying
     /// entry the source consult is the truth and the bytecode is only an IL-warm /
     /// skip-compile cache, so it is NOT registered there.</para></summary>
+    /// <summary>Binds one entry's persisted Tier-1 IL into this engine — clone +
+    /// patch + Assembly.Load + delegate binding, done ONCE per IL content for the
+    /// whole process (GetOrLoadPersistedIl, cached like the native libraries); a
+    /// second call replays only the per-engine registrations. First-wins, so it
+    /// is idempotent and safe to call both from LoadEntryFromBytecode (before its
+    /// warm) and the whole-bundle pass. No-op for an entry without persisted IL
+    /// or under Native AOT (the bytecode is used instead).</summary>
+    private void BindPersistedIlForEntry(BundleEntry entry)
+    {
+        if (entry.CompiledIl is null || entry.CompiledIl.Length == 0
+            || !System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
+            return;
+        var module = GetOrLoadPersistedIl(entry);
+        if (module is null) return;
+        foreach (var (_, functorId, del) in module.Bound)
+            E.IlPromotion.RegisterBoundDelegate(functorId, del);
+        // A stripped indexed predicate carries its dispatch graph in the bundle.
+        // Stash it by runtime functor id; each query's fresh engine gets it
+        // registered at setup. Without a WAM body the delegate would otherwise
+        // have nothing to rebuild the switch model from.
+        if (module.IndexGraphs is not null)
+            foreach (var kv in module.IndexGraphs)
+                E._persistedIndexGraphs[kv.Key] = kv.Value;
+        // A region method publishes its members' entry cursors; the alias marker
+        // dispatches the region delegate at the member's entry. Consulted by the
+        // warm below to skip a member the region already covers.
+        if (module.RegionAliases is not null)
+            foreach (var kv in module.RegionAliases)
+                E._regionMemberAliases[kv.Key] = kv.Value;
+    }
+
     private Shumway.Compiler.Wam.CompiledModule DecodeAndRegisterPrecompiledModule(
         BundleEntry entry, bool registerStaticPredicates)
     {
@@ -1137,7 +1136,13 @@ internal sealed class BundleLoader
         {
             if (registerStaticPredicates)
                 E._precompiledStaticPredicates[pred.FunctorId] = pred;
-            if (warmIl)
+            // Skip warm for a predicate a persisted-IL region method already
+            // covers: it has no standalone delegate (so Warm wouldn't be a
+            // no-op) but its region alias dispatches it. Re-Sigil-compiling it
+            // standalone is pure waste (measured ~335 clpz predicates), and the
+            // standalone delegate would shadow the region dispatch. Bound
+            // delegates are already skipped inside Warm (first-wins _delegates).
+            if (warmIl && !E._regionMemberAliases.ContainsKey(pred.FunctorId))
                 E.IlPromotion.Warm(pred.FunctorId, pred);
         }
         return module;
@@ -1260,6 +1265,14 @@ internal sealed class BundleLoader
             E.RegisterNativePrototypes(
                 Shumway.Compiler.NativeC.CParser.ParseDeclarations(entry.NativeDecls));
 
+        // Bind this entry's persisted Tier-1 IL BEFORE the warm below. A
+        // source-stripped IL bundle warms here, and RegisterBoundDelegate is
+        // first-wins: if warm ran first it would Sigil-compile the region roots
+        // standalone and block the persisted delegates (measured: 692 of 1644
+        // persisted delegates lost on a clpz bundle at threshold 32). Binding
+        // here also publishes _regionMemberAliases so the warm skips region
+        // members. Idempotent — the whole-bundle pass re-runs it (cached).
+        BindPersistedIlForEntry(entry);
         // Decode + literal-remap + record + warm IL (the bytecode IS the definition
         // here, so register the static predicates).
         DecodeAndRegisterPrecompiledModule(entry, registerStaticPredicates: true);

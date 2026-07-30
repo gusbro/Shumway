@@ -351,6 +351,15 @@ public sealed partial class PrologEngine
     /// region method at the member's entry cursor.</summary>
     internal readonly Dictionary<int, int> _regionMemberAliases = new();
 
+    /// <summary>True when a call to <paramref name="fid"/> dispatches through
+    /// Tier-1 IL: it has its own promoted delegate, OR a persisted-IL region
+    /// method covers it as an absorbed member (region alias). Region members
+    /// have no standalone delegate by design, so
+    /// <see cref="IlPromotionStore.IsPromoted"/> alone understates Tier-1
+    /// coverage of a region-compiled bundle.</summary>
+    internal bool IsTier1Dispatched(int fid) =>
+        IlPromotion.IsPromoted(fid) || _regionMemberAliases.ContainsKey(fid);
+
     /// <summary>read-only view of
     /// <see cref="_precompiledStaticPredicates"/>. Lets
     /// <see cref="BundleWriter.CompileEntryToIl"/> see the predicates
