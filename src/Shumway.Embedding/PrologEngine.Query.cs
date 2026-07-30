@@ -1739,6 +1739,15 @@ public sealed partial class PrologEngine
             if (nestedBall is null) return -1;
             return TryCatchFrom(engine, nestedBall, minFrameIndex, out _);
         };
+        // Cheap throw: a throw/1 whose catcher was opened in the SAME dispatch
+        // invocation resolves to a PC jump — no .NET exception construction or
+        // EH unwinding (clpz's with_local_attributes throws per propagation).
+        engine.InlineThrowResolver = (ballIdx, minFrameIndex) =>
+        {
+            Term ball = TermReader.Materialize(engine, ballIdx);
+            if (ball is Shumway.Compiler.Ast.VarTerm) return -1;   // ISO error path
+            return TryCatchFrom(engine, ball, minFrameIndex, out _);
+        };
         engine.MaterializeCellToTerm = cell =>
         {
             // Snapshot to a heap slot so the standard "read by heap

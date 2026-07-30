@@ -26,6 +26,53 @@ public sealed partial class BytecodeInterpreter
     private static readonly bool _dispatchTrace =
         System.Environment.GetEnvironmentVariable("ITE_TRACE") == "1";
 #endif
+    // throw/1's builtin id, for the cheap-throw intercept in the CallBuiltin /
+    // ExecuteBuiltin cases. Resolved lazily on first use (the registry is
+    // populated by the embedding layer's static initialization).
+    private static int _throwBuiltinId = -2;
+    private static int ThrowBuiltinId
+    {
+        get
+        {
+            if (_throwBuiltinId == -2)
+            {
+                int fid = Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern("throw", permanent: true).Id, 1);
+                _throwBuiltinId = Shumway.Builtins.BuiltinsRegistry
+                    .TryGetByFunctor(fid, out int id) ? id : -1;
+            }
+            return _throwBuiltinId;
+        }
+    }
+
+    /// <summary>Cheap throw: when the ball is caught by a catch frame opened
+    /// in THIS dispatch invocation (index ≥ <paramref name="frameFloor"/> —
+    /// no nested C# driver frames to unwind), resolve it to the recovery's
+    /// address and jump, skipping .NET exception construction + EH dispatch.
+    /// Returns true when handled (Pc set to the recovery).</summary>
+    private bool TryInlineThrow(int frameFloor)
+    {
+        if (_engine.InlineThrowResolver is not { } resolve) return false;
+        if (_engine.CatchFrameCount <= frameFloor) return false;
+        Cell ball = _engine.GetRegister(0);
+        int ballIdx;
+        if (ball.Tag is Tag.Ref or Tag.AttVar) ballIdx = ball.AsHeapIndex;
+        else
+        {
+            ballIdx = _engine.AllocateHeap(1);
+            _engine.SetHeap(ballIdx, ball);
+        }
+        int recovery = resolve(ballIdx, frameFloor);
+        if (recovery < 0)
+        {
+            Shumway.Core.Profiler.Note("throw_inline_miss");
+            return false;
+        }
+        Shumway.Core.Profiler.Note("throw_inline_hit");
+        _engine.SetPc(recovery);
+        return true;
+    }
+
     // SHUMWAY_PC_RING=1 forensics: record the last PcRingSize dispatched PCs
     // and dump them (with labels) when dispatch lands on reserved_invalid —
     // shows the exact control path into a corrupt jump. Off (null) by default.
@@ -348,6 +395,11 @@ public sealed partial class BytecodeInterpreter
         bool engineDriven = _engine.CurrentProgram is not null;
         byte[] codeArr = code.IsSingleBuffer ? code.Primary : System.Array.Empty<byte>();
         int codeLen = code.Length;
+        // Catch frames below this index belong to OUTER drivers (their C#
+        // frames sit between us and them) — a throw resolving to one of THOSE
+        // must unwind via the .NET exception; frames at/above it were opened
+        // by this invocation and take the cheap PC-jump path (TryInlineThrow).
+        int dispatchCatchFloor = _engine.CatchFrameCount;
         bool inClause = false;   // I1: set by a straight-line op so the next
                                  // iteration skips the gen/marker/bounds checks.
         while (true)
@@ -859,6 +911,10 @@ public sealed partial class BytecodeInterpreter
                         break;
                     }
                     int builtinId = ReadI32(code, codeArr, pc + 1);
+                    // Cheap throw (see CallBuiltin).
+                    if (builtinId == ThrowBuiltinId
+                        && TryInlineThrow(dispatchCatchFloor))
+                        break;
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
                     _engine.CurrentBuiltinName = entry.Name;
                     _engine.CurrentBuiltinArity = entry.Arity;
@@ -2103,6 +2159,12 @@ public sealed partial class BytecodeInterpreter
                             return InterpreterResult.Failed;
                         break;
                     }
+                    // Cheap throw — same-dispatch catcher resolves with a PC
+                    // jump instead of a .NET exception (clpz's
+                    // with_local_attributes throws once per propagation).
+                    if (builtinId == ThrowBuiltinId
+                        && TryInlineThrow(dispatchCatchFloor))
+                        break;
                     // thread the offending builtin's identity
                     // so a thrown error term reports the right culprit.
                     //   * engine.CurrentBuiltinName for direct

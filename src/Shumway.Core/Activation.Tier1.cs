@@ -421,6 +421,14 @@ public sealed partial class Activation
     /// uses.</summary>
     public Func<int, string?>? ResolveAddressToLabel { get; set; }
 
+    /// <summary>Cheap-throw resolver: (ball heap index, min catch-frame
+    /// index) → the recovery's code address, or −1 when no frame at/above
+    /// the floor catches. Installed by the embedding layer (it owns the
+    /// catch-frame matching); the interpreter uses it to handle a
+    /// <c>throw/1</c> whose catcher lives in the SAME dispatch invocation
+    /// with a plain PC jump instead of a .NET exception.</summary>
+    public Func<int, int, int>? InlineThrowResolver { get; set; }
+
     /// <summary>Resolves a thrown ball against catch/3 frames opened INSIDE a
     /// nested in-engine goal (a verify_attributes wakeup, a findall driver):
     /// given the C# exception and the frame-stack depth at the nested goal's
