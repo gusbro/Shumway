@@ -50,9 +50,12 @@ internal static class CompileCli
         if (opts is null) return ExitUsageError;
 
         bool multi = opts.InputPaths.Count > 1;
-        if (multi && !string.IsNullOrEmpty(opts.OutputPath))
+        // -o names an output DIRECTORY under multi-input, and under --consult
+        // (which always emits one .shmo per module in the loaded graph — it is
+        // inherently multi-output even from a single input file).
+        bool outputIsDir = multi || opts.Consult;
+        if (outputIsDir && !string.IsNullOrEmpty(opts.OutputPath))
         {
-            // -o is interpreted as a directory under multi-input.
             try { Directory.CreateDirectory(opts.OutputPath); }
             catch (IOException ex)
             {
@@ -74,9 +77,11 @@ internal static class CompileCli
 
     /// <summary>--consult: compile THROUGH the consult pipeline (an ephemeral
     /// engine loads the file, so directives and term/goal-expansion hooks
-    /// actually run), emitting one .shmo per module the load brought in —
-    /// the root module to <paramref name="output"/>, dependencies alongside
-    /// it as &lt;module&gt;.shmo.</summary>
+    /// actually run), emitting one .shmo per module the load brought in.
+    /// Every module — the root and each dependency — is written as
+    /// &lt;module&gt;.shmo into the output directory (<c>-o &lt;dir&gt;</c>, or
+    /// the source file's own directory when <c>-o</c> is omitted). Consult is
+    /// inherently multi-output, so <c>-o</c> is a directory, never a file.</summary>
     private static int CompileViaConsult(string input, string output, Options opts)
     {
         Console.Error.WriteLine(
@@ -103,13 +108,19 @@ internal static class CompileCli
             RemoveStaleOutput(output);
             return ExitCompileError;
         }
-        string dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(output)) ?? ".";
+        // Consult emits a SET of objects (root + every dependency), so the
+        // output is a directory and each module is named by its module name —
+        // never the single -o filename (that would collide root over deps).
+        // -o <dir> when given (already created in Main); else the source's dir.
+        string dir = !string.IsNullOrEmpty(opts.OutputPath)
+            ? opts.OutputPath
+            : System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(input)) ?? ".";
+        try { System.IO.Directory.CreateDirectory(dir); }
+        catch (System.IO.IOException) { /* surfaced by the write below */ }
         for (int i = 0; i < objects.Count; i++)
         {
             var (moduleName, obj) = objects[i];
-            string path = i == 0
-                ? output
-                : System.IO.Path.Combine(dir, SanitizeFileName(moduleName) + ".shmo");
+            string path = System.IO.Path.Combine(dir, SanitizeFileName(moduleName) + ".shmo");
             ShmoWriter.WriteToFile(obj, path);
             Console.Error.WriteLine($"shumway-compile:   {moduleName} -> {path}");
         }
@@ -715,13 +726,16 @@ internal static class CompileCli
             + "                       loads it (directives execute, term_expansion /\n"
             + "                       goal_expansion hooks run, use_module dependencies\n"
             + "                       load from -L), then every module the load brought in\n"
-            + "                       is written as its own .shmo. Required for libraries\n"
+            + "                       is written as <module>.shmo. Required for libraries\n"
             + "                       that GENERATE clauses at load time (Scryer's atts /\n"
             + "                       clpz / dcgs style) or that need operators defined by\n"
-            + "                       their dependencies. Note: the file's directives DO\n"
-            + "                       run during compilation in this mode. The file's own\n"
-            + "                       directory is searched for its library dependencies\n"
-            + "                       automatically (siblings resolve with no flags).\n"
+            + "                       their dependencies. Consult is inherently multi-\n"
+            + "                       output, so -o names an output DIRECTORY (created if\n"
+            + "                       missing); without -o the objects land next to the\n"
+            + "                       source. Note: the file's directives DO run during\n"
+            + "                       compilation in this mode. The file's own directory is\n"
+            + "                       searched for its library dependencies automatically\n"
+            + "                       (siblings resolve with no flags).\n"
             + "  -L, --library-dir <dir>  (with --consult) Extra directory searched to\n"
             + "                       resolve use_module(library(X)) when a dependency is\n"
             + "                       NOT next to the compiled file; repeatable, also\n"

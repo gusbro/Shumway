@@ -358,6 +358,8 @@ Flags:
 | `--dump-wam <file>` | Append a readable disassembly of each predicate's WAM bytecode to `<file>` (analysis aid; see below). |
 | `--dump-il <file>` | Append the Tier-1 IL the compiler generates for each predicate to `<file>` (analysis aid; see below). |
 | `--regions` | With `--dump-il`, enable **region compilation** so the IL dump shows region methods (flat local code space) instead of one method per predicate. |
+| `-c, --consult` | Compile by **consulting** the file in an ephemeral engine (directives execute, `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) and emit one `.shmo` per module the load brought in. Required for libraries that *generate clauses at load time* or need operators defined by their dependencies — the file-at-a-time compile above cannot run those hooks. See [Packaging a third-party library](#packaging-a-third-party-library-into-a-bundle---consult). |
+| `-L, --library-dir <dir>` | With `--consult`: an extra directory searched to resolve `use_module(library(X))` when a dependency is not next to the compiled file. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. (The compiled file's *own* directory is always searched, so siblings resolve with no flag.) |
 | `-h, --help` | Usage summary. |
 
 **Error handling**: the compiler is C-style — on a parse or directive
@@ -408,6 +410,85 @@ members of another region).
 > `Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath` (and
 > `.RegionCompile`) before compiling, or use the `SHUMWAY_IL_DUMP` /
 > `SHUMWAY_REGION` environment variables when running the REPL.
+
+#### Packaging a third-party library into a bundle (`--consult`)
+
+The per-file compile above reads each `.pl` **without running it**. That is
+fine for ordinary Prolog, but a real third-party library — a constraint
+solver, an attributed-variable package, a DCG-heavy grammar — often does
+work *at load time* that its own clauses then depend on:
+
+- **`term_expansion` / `goal_expansion`** that generate clauses by
+  *executing* a predicate defined earlier in the same file (Scryer's
+  `clpz`, `dcgs`, the `atts` machinery all do this);
+- **operators** (`:- op(...)`) declared by a *dependency* that the
+  importing file's clauses need in order to parse;
+- **`:- initialization`** or other directives whose effects are part of
+  the compiled program.
+
+A file-at-a-time compile cannot see any of that (the hooks never run), so
+it either fails to parse or silently drops the generated clauses. **`--consult`
+compiles by actually loading the file** in a throwaway engine — directives
+execute, hooks run, `use_module` dependencies are pulled in — and then writes
+**one `.shmo` per module** the load brought into memory. This is how you take
+a library written for another engine (SICStus, Scryer, SWI) and turn it into a
+Shumway bundle *without editing its source*.
+
+**Worked recipe — a program using Scryer's `clpz`, from an unpatched
+checkout.** Point Shumway at your own copy of the library (nothing
+third-party is shipped in Shumway; you supply the sources). Say `app.pl` is:
+
+```prolog
+:- use_module(library(clpz)).
+main :- X #> 2, X #< 6, label([X]), write(x(X)), nl, fail ; write(done), nl.
+```
+
+`app.pl` itself cannot be compiled file-at-a-time — it uses `clpz`'s
+operators (`#>`, `#<`), which only exist once `clpz` is loaded. So the whole
+thing goes through **one `--consult` pass over `app.pl`**: the ephemeral
+engine loads `app.pl`, which pulls in `clpz` (its operators, its
+load-generated clauses) and `clpz`'s own dependency graph — and every module
+that ends up in memory is emitted as its own `.shmo`.
+
+```bash
+# 1. One consult pass over your program. -L points at your Scryer lib dir so
+#    use_module(library(clpz)) resolves; -o names an output directory.
+shumway-compile --consult -o out/ -L /path/to/scryer/lib app.pl
+#   → out/app.shmo, out/clpz.shmo, out/atts.shmo, out/lists.shmo, … (19 objects)
+
+# 2. Link them into a bundle. --allow-undefined is needed here (see below).
+shumway-link -o app.shum --entry main/0 --allow-undefined out/*.shmo
+
+# 3. Run it — no source, no Scryer present.
+echo 'main, halt.' | shumway app.shum        # → x(3) x(4) x(5) done
+```
+
+**Why `--allow-undefined`.** A library written for another engine references
+*that* engine's internal builtins — Scryer's `lists` calls `$unattributed_var/1`
+and `$det_length_rundown/2`, which are Scryer primitives Shumway does not
+provide. Those references sit on library branches the reachable runtime path
+never takes (Shumway's own prelude `length/2` wins), so the program runs
+correctly; but the linker's default strict check would refuse the bundle over
+them. `--allow-undefined` downgrades those to warnings and still produces the
+bundle — the engine only raises `existence_error/2` if such a predicate is
+*actually called*. If your workload genuinely reaches one, that error tells
+you exactly which primitive to supply (as a `[PrologPredicate]` foreign, or by
+providing a `.pl` definition on the library path).
+
+The resulting `app.shum` is a normal bundle: load it in the REPL, embed it
+(`PrologEngine.FromBundle`), or turn it into a native executable with `--exe`
+(below). You can add `--with-compiled-il` for a Tier-1 IL bundle, but whether
+it pays off is library-dependent (for `clpz` the hot predicates are dynamic,
+so IL helps less than for ordinary static code — measure your own workload).
+
+Two things to know going in:
+
+- **The directives DO run during compilation.** `--consult` executes the
+  file. Only consult sources you trust, exactly as you would only *run* a
+  program you trust.
+- **You do not have to know the flag in advance.** `shumway-compile` prints a
+  hint pointing at `--consult` whenever a file compiled the ordinary way
+  relies on load-time hooks or dependency-defined operators.
 
 ### Step 2 — `shumway-link` (linker)
 
