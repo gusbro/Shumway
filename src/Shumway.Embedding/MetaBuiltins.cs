@@ -180,6 +180,21 @@ public static partial class MetaBuiltins
             "Mark-compacts the heap, reclaiming cells unreachable from the live "
             + "machine state (ADR-016). Always succeeds.");
 
+        // Opt-in Tier-1 warm-up. Bundle load is lazy — a predicate promotes to
+        // IL once its invocation counter crosses the threshold. compile_all
+        // front-loads that for a program that will run enough to want it.
+        BuiltinsRegistry.Register("compile_all", 0, CompileAll0,
+            Control, "compile_all",
+            "Eagerly compiles every compilable static predicate to Tier-1 IL "
+            + "now, instead of waiting for each to promote lazily on use. For a "
+            + "program that will do enough queries to want the whole set hot up "
+            + "front (a server warming up). No-op when Tier-1 is disabled or "
+            + "under Native AOT. Always succeeds.");
+        BuiltinsRegistry.Register("compile_all", 1, CompileAll1,
+            Control, "compile_all(-Count)",
+            "As compile_all/0, unifying Count with the number of predicates "
+            + "newly compiled to Tier-1 IL by this call.");
+
         // ADR-035 — the four-port tracer.
         BuiltinsRegistry.Register("trace", 0, Trace,
             Control, "trace",

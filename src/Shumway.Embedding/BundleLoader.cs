@@ -1127,24 +1127,17 @@ internal sealed class BundleLoader
         // so IL float value-baking reads E._literalPools.Floats directly.
         E.RemapPrecompiledLiterals(module);
         E._precompiledModules[entry.ModuleName] = module;
-        // Warm IL only when the host opted into Tier 1 (Threshold > 0). Warming under
-        // the default threshold=0 would force Sigil over every eligible predicate at
-        // load — wasteful when the user wanted Tier 0, and it hits IL
-        // corner cases the runtime promotion path avoids under threshold 0.
-        bool warmIl = E.IlPromotion.Threshold > 0;
-        foreach (var pred in module.Predicates)
-        {
-            if (registerStaticPredicates)
+        // Register the predicates but do NOT eagerly Sigil-compile them here.
+        // A t0 bundle (no persisted IL) has nothing bound, so a load-time
+        // warm-all would Sigil-compile every static predicate — ~900 on a clpz
+        // bundle, ~1.5 s of load — most of which never run hot. Lazy is the
+        // default: a predicate promotes at runtime once its invocation counter
+        // crosses the threshold (background compile). A program that wants the
+        // whole set hot up front calls compile_all/0 explicitly. (Persisted IL
+        // is already bound by BindPersistedIlForEntry, independent of this.)
+        if (registerStaticPredicates)
+            foreach (var pred in module.Predicates)
                 E._precompiledStaticPredicates[pred.FunctorId] = pred;
-            // Skip warm for a predicate a persisted-IL region method already
-            // covers: it has no standalone delegate (so Warm wouldn't be a
-            // no-op) but its region alias dispatches it. Re-Sigil-compiling it
-            // standalone is pure waste (measured ~335 clpz predicates), and the
-            // standalone delegate would shadow the region dispatch. Bound
-            // delegates are already skipped inside Warm (first-wins _delegates).
-            if (warmIl && !E._regionMemberAliases.ContainsKey(pred.FunctorId))
-                E.IlPromotion.Warm(pred.FunctorId, pred);
-        }
         return module;
     }
 

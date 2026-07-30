@@ -86,6 +86,50 @@ public sealed class BundleModulePromotionTests
     }
 
     [Fact]
+    public void BundleLoad_IsLazy_AndCompileAllWarmsTheSet()
+    {
+        // A t0 bundle (no persisted IL) must not eagerly Sigil-compile its
+        // predicates at load; compile_all front-loads them on demand.
+        using var t = new TempDir();
+        string root = t.Add("arith.pl",
+            ":- public add/3.\n" +
+            "add(0, Y, Y).\n" +
+            "add(s(X), Y, s(Z)) :- add(X, Y, Z).\n");
+        var bundle = ViaConsultBundle(root, new PredicateRef("add", 3));
+
+        var e = new PrologEngine();
+        e.IlPromotion.Threshold = 32;                 // enable Tier-1
+        int before = e.IlPromotion.PromotedCount;
+        e.LoadBundle(bundle);
+        // Lazy: load compiled nothing (no persisted IL, no eager warm).
+        Assert.Equal(before, e.IlPromotion.PromotedCount);
+
+        int n = e.WarmAllCompilable();
+        Assert.True(n >= 1, "compile_all should promote at least one predicate");
+        Assert.True(e.IlPromotion.PromotedCount > before);
+        // Still correct after warming.
+        Assert.True(e.Query("add(s(0), s(0), R), R == s(s(0)).").Success);
+    }
+
+    [Fact]
+    public void CompileAll1_Builtin_UnifiesTheCount()
+    {
+        using var t = new TempDir();
+        string root = t.Add("arith.pl",
+            ":- public add/3.\n" +
+            "add(0, Y, Y).\n" +
+            "add(s(X), Y, s(Z)) :- add(X, Y, Z).\n");
+        var bundle = ViaConsultBundle(root, new PredicateRef("add", 3));
+
+        var e = new PrologEngine();
+        e.IlPromotion.Threshold = 32;
+        e.LoadBundle(bundle);
+        var sol = e.Query("compile_all(N).");
+        Assert.True(sol.Success);
+        Assert.True(sol.Get<int>("N") >= 1);
+    }
+
+    [Fact]
     public void BareModuleLocals_PromotedToUser_SoTopLevelMetaCallResolves()
     {
         // A module-less file: the consult pipeline names it after the file

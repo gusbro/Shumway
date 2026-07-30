@@ -313,9 +313,16 @@ engine.LoadBundle("app.shum");
 var sol = engine.Query("main(Arg).");
 ```
 
-`LoadBundle` consults every module in the bundle and (when present)
-warms up Tier-1 IL / persisted assemblies so the first query already
-runs on the optimised path.
+`LoadBundle` consults every module in the bundle. A **persisted** Tier-1 IL
+assembly (`shumway-link --with-compiled-il`) is bound at load, so those
+predicates run as compiled IL from the first query. Predicates that ship as
+WAM bytecode (a plain bundle) are **not** compiled at load — that would Sigil-
+compile the whole program up front (~1.5 s on a large one) for code that may
+never run hot. Instead each promotes to Tier-1 IL lazily once its call counter
+crosses the threshold. To front-load the whole set anyway — a server that will
+serve many queries and wants steady-state speed from the first — call
+`compile_all/0` (or `compile_all(-Count)` for how many it compiled), or the C#
+`engine.WarmAllCompilable()`.
 
 ---
 

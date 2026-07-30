@@ -109,6 +109,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `call(:Goal, +Extra1, ..., +Extra7)` | Calls a goal extended with seven extra arguments (ISO requires call/2..8). |
 | `call_det(:Goal, -Deterministic)` | Calls Goal once and unifies Deterministic with true if Goal succeeded without leaving a choice point, false otherwise. |
 | `catch(:Goal, ?Catcher, :Recovery)` | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
+| `compile_all` | Eagerly compiles every compilable static predicate to Tier-1 IL now, instead of waiting for each to promote lazily on use. For a program that will do enough queries to want the whole set hot up front (a server warming up). No-op when Tier-1 is disabled or under Native AOT. Always succeeds. |
+| `compile_all(-Count)` | As compile_all/0, unifying Count with the number of predicates newly compiled to Tier-1 IL by this call. |
 | `debugger_break` | Stops in the attached source-level debugger, here, with this clause's stack and variables. Succeeds without doing anything if no debugger is attached, so it is safe to leave in a program. Requires the code to have been compiled for debugging (shumway --debug). |
 | `fail` | Always fails. |
 | `false` | Always fails — ISO synonym of fail/0. |

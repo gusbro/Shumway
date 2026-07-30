@@ -328,6 +328,22 @@ public static partial class MetaBuiltins
         return true;
     }
 
+    /// <summary><c>compile_all/0</c> — eagerly compile every compilable static
+    /// predicate to Tier-1 IL now (opt-in warm-up; the load default is lazy).</summary>
+    public static bool CompileAll0(Activation engine)
+    {
+        if (engine.Host is PrologEngine host) host.WarmAllCompilable();
+        return true;
+    }
+
+    /// <summary><c>compile_all(-Count)</c> — as <c>compile_all/0</c>, unifying
+    /// Count with the number of predicates newly compiled.</summary>
+    public static bool CompileAll1(Activation engine)
+    {
+        int n = engine.Host is PrologEngine host ? host.WarmAllCompilable() : 0;
+        return engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(n));
+    }
+
     /// <summary><c>trace/0</c> (ADR-035) — attaches the four-port tracer. It is
     /// attached to the running activation as well as to the engine, so tracing
     /// starts with the very next goal of the query that called <c>trace</c>

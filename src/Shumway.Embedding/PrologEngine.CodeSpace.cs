@@ -360,6 +360,34 @@ public sealed partial class PrologEngine
     internal bool IsTier1Dispatched(int fid) =>
         IlPromotion.IsPromoted(fid) || _regionMemberAliases.ContainsKey(fid);
 
+    /// <summary>Eagerly Sigil-compiles every compilable static predicate to
+    /// Tier-1 IL now — the opt-in counterpart to the lazy default, for a program
+    /// that will do enough queries to want the whole set hot before the first
+    /// (a server warming up before it serves). Returns the number newly promoted.
+    /// No-op when Tier-1 is disabled (Threshold ≤ 0 — the dispatch would keep
+    /// call sites on bytecode, so a delegate would never run) or under Native AOT
+    /// (no runtime codegen). Predicates already bound (persisted IL / prior
+    /// promotion), region members (covered by their region method), and
+    /// unpromotable shapes (dynamics, oversized) are skipped inside Warm.</summary>
+    public int WarmAllCompilable()
+    {
+        if (IlPromotion.Threshold <= 0) return 0;
+        int before = IlPromotion.PromotedCount;
+        // Every predicate the engine has already compiled to WAM: each loaded
+        // bundle module's decoded predicates (source-stripped AND the bytecode
+        // blob of a source-carrying entry), plus the consulted-source static
+        // cache. A freshly consulted source that has not run a query yet has no
+        // compiled predicates to warm — those promote lazily on first use.
+        foreach (var module in _precompiledModules.Values)
+            foreach (var pred in module.Predicates)
+                if (!_regionMemberAliases.ContainsKey(pred.FunctorId))
+                    IlPromotion.Warm(pred.FunctorId, pred);
+        foreach (var (fid, pred) in StaticPredicateCache)
+            if (!_regionMemberAliases.ContainsKey(fid))
+                IlPromotion.Warm(fid, pred);
+        return IlPromotion.PromotedCount - before;
+    }
+
     /// <summary>read-only view of
     /// <see cref="_precompiledStaticPredicates"/>. Lets
     /// <see cref="BundleWriter.CompileEntryToIl"/> see the predicates

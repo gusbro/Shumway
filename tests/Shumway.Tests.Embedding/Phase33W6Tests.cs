@@ -49,8 +49,11 @@ public class Phase33W6Tests
                 new PredicateRef(predName, arity), PredicateVisibility.Public) });
 
         var e = new PrologEngine();
-        e.IlPromotion.Threshold = ilThreshold;   // >0 → LoadBundle warms IL
+        e.IlPromotion.Threshold = ilThreshold;
         e.LoadBundle(new Bundle(new[] { entry }));
+        // Bundle load is lazy; front-load the IL explicitly so these tests
+        // exercise the Tier-1 path (the opt-in that replaced load-time warm).
+        if (ilThreshold > 0) e.WarmAllCompilable();
         return (e, predFid);
     }
 

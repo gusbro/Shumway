@@ -45,14 +45,15 @@ public class Chunk45Tests
         var loaded = BundleReader.FromBytes(bytes);
 
         var engine = new PrologEngine();
-        // Phase 18 chunk 202: LoadBundle only pre-warms when the host has
-        // opted into Tier 1 by raising Threshold above 0.
         engine.IlPromotion.Threshold = 1;
         engine.LoadBundle(loaded);
+        // Bundle load is lazy; pre-warm is now opt-in via compile_all /
+        // WarmAllCompilable (front-loading what used to run at load).
+        engine.WarmAllCompilable();
 
         int fid = FunctorId("color", 1);
         Assert.True(engine.IlPromotion.IsPromoted(fid),
-            "color/1 should have been IL-promoted at LoadBundle time.");
+            "color/1 should be IL-promoted after an explicit compile_all.");
     }
 
     [Fact]
@@ -117,10 +118,10 @@ public class Chunk45Tests
         });
         byte[] bytes = BundleWriter.ToBytes(bundle, includeCompiledBytecode: true);
         var engine = new PrologEngine();
-        // Phase 18 chunk 202: LoadBundle only pre-warms when the host has
-        // opted into Tier 1 by raising Threshold above 0.
         engine.IlPromotion.Threshold = 1;
         engine.LoadBundle(BundleReader.FromBytes(bytes));
+        // Pre-warm is opt-in now (compile_all / WarmAllCompilable), not at load.
+        engine.WarmAllCompilable();
 
         // bar/0 IS promotable (single-clause fact, no body).
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("bar", 0)));
@@ -146,10 +147,10 @@ public class Chunk45Tests
         {
             BundleWriter.WriteToFile(bundle, path, includeCompiledBytecode: true);
             var engine = new PrologEngine();
-            // Phase 18 chunk 202: LoadBundle only pre-warms when the host
-            // has opted into Tier 1 by raising Threshold above 0.
             engine.IlPromotion.Threshold = 1;
             engine.LoadBundle(path);
+            // Pre-warm is opt-in now (compile_all / WarmAllCompilable).
+            engine.WarmAllCompilable();
             Assert.True(engine.IlPromotion.IsPromoted(FunctorId("greet", 1)));
             Assert.True(engine.Query("greet(world).").Success);
             Assert.True(engine.Query("greet(prolog).").Success);
