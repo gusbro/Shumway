@@ -311,46 +311,117 @@ public sealed partial class PrologEngine
         }
     }
 
-    /// <summary>REPL usability (ADR-038, version a): a bundle loaded
-    /// interactively leaves the top level standing in <c>user</c>, so the
-    /// bundle's module-local predicates are invisible — unlike consulting the
-    /// equivalent source, where you stand in the file's module and can call
-    /// its predicates. When the bundle contributes EXACTLY ONE "bare" module
-    /// (not export-qualified — i.e. not a <c>:- module(Name, [Exports])</c>
-    /// library, whose names are deliberately namespaced), alias that module's
-    /// local predicates into <c>user</c>'s import table (<c>name → module</c>,
-    /// resolving to <c>module$name</c>) so the top level can call them.
-    /// Returns the module name and the aliased indicators for the caller to
-    /// report, or <c>null</c> when there is no bare module, or more than one
-    /// (the multi-module heuristic is deferred). Libraries are never touched;
-    /// a bare module's public and dynamic predicates are already bare-global,
-    /// so only its locals need the alias.</summary>
-    internal (string Module, List<(string Name, int Arity)> Predicates)?
-        PromoteSingleBareBundleModuleToUser()
+    /// <summary>One bare module aliased into <c>user</c> (or, for a collision
+    /// skip, the indicators that collided).</summary>
+    internal readonly record struct BareModulePromotion(
+        string Module, List<(string Name, int Arity)> Predicates);
+
+    /// <summary>The outcome of <see cref="PromoteBareBundleModulesToUser"/>:
+    /// modules whose locals were aliased into <c>user</c>, and modules skipped
+    /// wholesale because a predicate name collided.</summary>
+    internal readonly record struct BundlePromotionResult(
+        List<BareModulePromotion> Promoted,
+        List<BareModulePromotion> SkippedForCollision);
+
+    /// <summary>REPL usability (ADR-038): a bundle loaded interactively leaves
+    /// the top level standing in <c>user</c>, so the bundle's module-local
+    /// predicates are invisible — unlike consulting the equivalent source,
+    /// where you stand in the file's module and can call its predicates. Alias
+    /// each "bare" (non-export-qualified) module's local predicates into
+    /// <c>user</c>'s import table (<c>name → module</c>, resolving to
+    /// <c>module$name</c>) so the top level can call them. Libraries
+    /// (<c>:- module(Name, [Exports])</c>) are never touched — their names are
+    /// deliberately namespaced.
+    ///
+    /// <para>Full fidelity to "standing in the module": <c>user</c> also
+    /// inherits each promoted module's IMPORT table, so a raw goal using a name
+    /// the module imported from a library (e.g. <c>X in 1..3</c> when it did
+    /// <c>use_module(library(clpz))</c>) resolves the same way the module's own
+    /// clauses do.</para>
+    ///
+    /// <para>Collisions are handled ALL-OR-NOTHING per module: if any name a
+    /// module would contribute to <c>user</c> (a local alias or an inherited
+    /// import) would land under two different targets — another bare module's,
+    /// or one already claimed in <c>user</c> — that whole module is skipped, so
+    /// <c>user</c> never sees a module half-promoted. The decision is computed
+    /// over all candidates at once, so a name shared by two modules skips both.
+    /// Public/dynamic predicates are already bare-global and need no alias.</para></summary>
+    internal BundlePromotionResult PromoteBareBundleModulesToUser()
     {
-        string? only = null;
+        var promoted = new List<BareModulePromotion>();
+        var skipped = new List<BareModulePromotion>();
+        if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest))
+            return new BundlePromotionResult(promoted, skipped);
+
+        // Bare candidates: non-library modules carrying aliasable locals.
+        var candidates = new List<string>();
         foreach (var (name, m) in _modules)
         {
             if (name == DefaultModuleName || name == PreludeModuleName) continue;
             if (m.IsExportQualified) continue;   // library — never promote
-            if (!_precompiledModuleLocals.TryGetValue(name, out var locals)
-                || locals.Count == 0)
-                continue;   // no aliasable locals (or a source-consulted module)
-            if (only is not null) return null;   // >1 bare module — defer (escalation)
-            only = name;
+            if (_precompiledModuleLocals.TryGetValue(name, out var locals)
+                && locals.Count > 0)
+                candidates.Add(name);
         }
-        if (only is null) return null;
-        if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest))
-            return null;
-        var aliased = new List<(string, int)>();
-        foreach (int fid in _precompiledModuleLocals[only])
-            if (userManifest.Imports.TryAdd(fid, only))
+        if (candidates.Count == 0)
+            return new BundlePromotionResult(promoted, skipped);
+
+        // Each candidate contributes name→target entries: a local fid targets
+        // its own module (module$name); an imported fid targets its source.
+        List<(int Fid, string Target)> Contributions(string mod)
+        {
+            var list = new List<(int, string)>();
+            foreach (int fid in _precompiledModuleLocals[mod]) list.Add((fid, mod));
+            foreach (var (fid, src) in _modules[mod].Imports) list.Add((fid, src));
+            return list;
+        }
+
+        // Global fid → distinct targets, seeded with what user already resolves,
+        // so >1 target on a fid means a genuine disagreement (a collision).
+        var targets = new Dictionary<int, HashSet<string>>();
+        foreach (var (fid, src) in userManifest.Imports)
+            (targets[fid] = new HashSet<string>()).Add(src);
+        foreach (string mod in candidates)
+            foreach (var (fid, tgt) in Contributions(mod))
             {
-                var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
-                aliased.Add((Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "?", arity));
+                if (!targets.TryGetValue(fid, out var set))
+                    targets[fid] = set = new HashSet<string>();
+                set.Add(tgt);
             }
-        if (aliased.Count > 0) InvalidatePersistent();
-        return (only, aliased);
+
+        bool changed = false;
+        foreach (string mod in candidates)
+        {
+            var contrib = Contributions(mod);
+            // Collision = any contributed fid whose global target set disagrees.
+            var colliding = new List<(string Name, int Arity)>();
+            foreach (var (fid, _) in contrib)
+                if (targets[fid].Count > 1)
+                {
+                    var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+                    colliding.Add((Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "?", arity));
+                }
+            if (colliding.Count > 0)
+            {
+                skipped.Add(new BareModulePromotion(mod, colliding));
+                continue;   // all-or-nothing: promote none of this module
+            }
+            // Clean — commit its locals (reported) and inherited imports (silent).
+            var aliased = new List<(string, int)>();
+            foreach (int fid in _precompiledModuleLocals[mod])
+                if (userManifest.Imports.TryAdd(fid, mod))
+                {
+                    changed = true;
+                    var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+                    aliased.Add((Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "?", arity));
+                }
+            foreach (var (fid, src) in _modules[mod].Imports)
+                if (userManifest.Imports.TryAdd(fid, src))
+                    changed = true;
+            promoted.Add(new BareModulePromotion(mod, aliased));
+        }
+        if (changed) InvalidatePersistent();
+        return new BundlePromotionResult(promoted, skipped);
     }
 
     /// <summary>ADR-038 — imports the whole export surface of

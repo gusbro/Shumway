@@ -140,13 +140,18 @@ false.
   exit code), or with Ctrl-D / Ctrl-Z+Enter (end of input).
 - `true` is printed for variable-less success, `false` for failure,
   otherwise `X = …, Y = …` for the binding set.
-- Loading a `.shum` bundle whose program is a single **bare** module (no
-  `:- module(Name, [Exports])`) makes that module's predicates callable
-  from the prompt, just as consulting the source would — the REPL aliases
-  them into the top-level `user` module and prints which module it
-  promoted (`%   promoted 'prog' to user: …`). Library modules
-  (export-qualified) are never promoted: their names stay namespaced, so
-  reach them by importing (`use_module(library(X))`). This convenience is
+- Loading a `.shum` bundle makes its program's predicates callable from the
+  prompt, just as consulting the source would. For each **bare** module (one
+  *without* `:- module(Name, [Exports])`) the REPL aliases the module's
+  predicates into the top-level `user` module and also inherits what that
+  module imported — so if it did `use_module(library(clpz))`, you can pose
+  raw `X in 1..3` goals at the prompt too. It prints what it promoted
+  (`%   promoted 'prog' to user: …`). Library modules (export-qualified) are
+  never promoted — their names stay namespaced; reach them by importing
+  (`use_module(library(X))`). If two bare modules would define the same name,
+  **neither** is promoted (all-or-nothing per module, so `user` is never left
+  half-populated); the REPL says so (`%   NOT promoted 'a' - name clash …`)
+  and you call those by qualifying (`a:pred(…)`). This convenience is
   REPL-only; an embedded `PrologEngine.LoadBundle` leaves the namespaces
   exactly as linked.
 

@@ -467,23 +467,33 @@ internal static class ReplTopLevel
                 Console.WriteLine($"% loaded bundle {path}");
                 // REPL usability: standing in `user`, the bundle's module-local
                 // predicates would be invisible — unlike consulting the source.
-                // Alias a single bare (non-library) module's locals into `user`
-                // so `?- pred(...)` works, and say which module was promoted.
-                if (engine.PromoteSingleBareBundleModuleToUser() is { } promoted)
+                // Alias each bare (non-library) module's locals into `user` so
+                // `?- pred(...)` works, and say which modules were promoted.
+                var outcome = engine.PromoteBareBundleModulesToUser();
+                static string Indicators(
+                    System.Collections.Generic.List<(string Name, int Arity)> ps)
                 {
-                    // Report only user-facing predicates — hide the compiler's
-                    // internal `$`-helpers (lowered control constructs, etc.),
-                    // which are aliased too but are noise in the summary.
-                    var preds = promoted.Predicates
-                        .Where(p => !p.Name.StartsWith('$')).ToList();
+                    const int cap = 8;
+                    string s = string.Join(", ",
+                        ps.Take(cap).Select(p => $"{p.Name}/{p.Arity}"));
+                    return ps.Count > cap ? $"{s} (+{ps.Count - cap} more)" : s;
+                }
+                foreach (var pm in outcome.Promoted)
+                {
+                    // Hide the compiler's internal `$`-helpers (aliased too, but
+                    // noise); report only the module's user-facing predicates.
+                    var preds = pm.Predicates.Where(p => !p.Name.StartsWith('$')).ToList();
                     if (preds.Count > 0)
-                    {
-                        const int cap = 8;
-                        string list = string.Join(", ",
-                            preds.Take(cap).Select(p => $"{p.Name}/{p.Arity}"));
-                        if (preds.Count > cap) list += $" (+{preds.Count - cap} more)";
-                        Console.WriteLine($"%   promoted '{promoted.Module}' to user: {list}");
-                    }
+                        Console.WriteLine(
+                            $"%   promoted '{pm.Module}' to user: {Indicators(preds)}");
+                }
+                foreach (var sk in outcome.SkippedForCollision)
+                {
+                    var names = sk.Predicates.Where(p => !p.Name.StartsWith('$')).ToList();
+                    Console.WriteLine(
+                        $"%   NOT promoted '{sk.Module}' — name clash on "
+                        + $"{Indicators(names.Count > 0 ? names : sk.Predicates)}; "
+                        + $"call as {sk.Module}:Pred");
                 }
             }
             else
