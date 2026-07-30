@@ -29,8 +29,8 @@ public class DcgIteEndpointTests
             "t(R, Rest) :- phrase(rule(R), [a, b, c], Rest).");
         var sol = e.Query("t(R, Rest).");
         Assert.True(sol.Success);
-        Assert.Equal("seen(a, b)", sol["R"].ToString());
-        Assert.Equal(".(c, [])", sol["Rest"].ToString());
+        Assert.Equal("seen(a, b)", sol["R"]!.ToString());
+        Assert.Equal(".(c, [])", sol["Rest"]!.ToString());
     }
 
     [Fact]

@@ -162,6 +162,7 @@ dotnet publish src/Shumway.Repl/ -r win-x64 -c Release
 
 ## Coding Conventions
 
+- **Zero warnings — invariant.** The build compiles with no warnings, enforced mechanically by `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>` in the root `Directory.Build.props` (covers `src/` and `tests/`; the `vs/` debugger projects have their own props). A warning fails the build. Fix it at the source; never suppress wholesale. A genuinely unavoidable, understood case is silenced narrowly and locally (a targeted `#pragma warning disable <code>` with a comment, or per-project `NoWarn`), never by relaxing the invariant.
 - **Naming**: standard .NET conventions (PascalCase types/methods, camelCase locals, `_camelCase` private fields).
 - **Avoid LINQ in hot paths.** It allocates. Use plain loops with explicit indices in the interpreter dispatch, unification, trail unwind, etc.
 - **Use `Span<T>` and `ref struct` where appropriate** for zero-allocation slices.

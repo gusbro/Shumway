@@ -9,6 +9,17 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
 
     <!--
+      INVARIANT: our code compiles with ZERO warnings. Enforced mechanically —
+      any warning (from src/ or tests/) fails the build, so it cannot be
+      ignored and accumulate. Fix the warning at its source; do not suppress it
+      wholesale. A genuinely unavoidable, understood case is silenced narrowly
+      and locally (a targeted `#pragma warning disable <code>` with a comment,
+      or `NoWarn` for one project), never by relaxing this. The vs/ debugger
+      projects have their own Directory.Build.props and are not covered here.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!--
       ONE output tree per configuration, whatever the Platform. Historically
       `dotnet build` (AnyCPU) wrote bin\<cfg> while Visual Studio and the
       -p:Platform=x64 command line wrote bin\x64\<cfg> — two trees, each
