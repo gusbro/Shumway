@@ -80,6 +80,52 @@ public sealed partial class PrologEngine
     /// <c>library_dialect</c> prolog flag.</summary>
     internal string? ActiveLibraryDialect => _activeLibraryDialect;
 
+    // ADR-040 D5.2 — a search directory tagged with the dialect its libraries
+    // are written in. Resolving library(X) from a tagged dir loads X (and its
+    // pack-resolved dependency subtree) in that dialect, parsed with the
+    // dialect's double_quotes. Keyed by normalised full directory path.
+    private System.Collections.Generic.Dictionary<string, string>? _libraryDirDialect;
+
+    /// <summary>Adds <paramref name="path"/> to the library search path AND tags
+    /// it with a dialect (ADR-040 D5.2): a <c>use_module(library(X))</c> that
+    /// resolves <c>X</c> from here loads it in <paramref name="dialect"/> — the
+    /// dir's dialect becomes active (name resolution + double_quotes) for that
+    /// load. Pointing <c>-L</c> at a Scryer checkout as <c>scryer</c> and an SWI
+    /// one as <c>swi</c> lets both systems' libraries load, each correctly.</summary>
+    public void AddLibraryDirectory(string path, string dialect)
+    {
+        if (!DialectRegistry.IsKnownDialect(dialect))
+            throw new System.ArgumentException($"unknown library dialect '{dialect}'");
+        AddLibraryDirectory(path);
+        string full;
+        try { full = System.IO.Path.GetFullPath(path); } catch { full = path; }
+        (_libraryDirDialect ??= new(System.StringComparer.OrdinalIgnoreCase))[full] = dialect;
+    }
+
+    // The dialect a resolved library path belongs to (its directory's tag), or
+    // null when the directory is untagged.
+    private string? DialectForResolvedPath(string resolvedPath)
+    {
+        if (_libraryDirDialect is null) return null;
+        string? dir = System.IO.Path.GetDirectoryName(resolvedPath);
+        if (dir is null) return null;
+        try { dir = System.IO.Path.GetFullPath(dir); } catch { /* use as-is */ }
+        return _libraryDirDialect.TryGetValue(dir, out string? d) ? d : null;
+    }
+
+    // Runs <paramref name="body"/> with <paramref name="dialect"/> active — its
+    // name resolution preferred and its double_quotes in force — restoring both
+    // after. The subtree a library pulls in inherits the dialect for the load.
+    private T WithDialect<T>(string dialect, System.Func<T> body)
+    {
+        string? savedDialect = _activeLibraryDialect;
+        var savedDq = Flags.DoubleQuotes;
+        _activeLibraryDialect = dialect;
+        Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(dialect);
+        try { return body(); }
+        finally { _activeLibraryDialect = savedDialect; Flags.DoubleQuotes = savedDq; }
+    }
+
     internal bool UseCompatLibrary(string name)
     {
         if (!DialectRegistry.TryResolve(_activeLibraryDialect, name,
@@ -274,7 +320,15 @@ public sealed partial class PrologEngine
                 default:
                     // (2) ADR-038 — a .pl/.shum on the library search path.
                     if (TryResolveLibrary(lib.Name, out string libPath))
-                        return LoadResolvedLibrary(lib.Name, libPath);
+                    {
+                        // ADR-040 D5.2 — a dir tagged with a dialect loads its
+                        // libraries in that dialect (name resolution +
+                        // double_quotes) for the whole subtree.
+                        string? dirDialect = DialectForResolvedPath(libPath);
+                        return dirDialect is not null
+                            ? WithDialect(dirDialect, () => LoadResolvedLibrary(lib.Name, libPath))
+                            : LoadResolvedLibrary(lib.Name, libPath);
+                    }
                     // (3) built-in Scryer/Trealla compatibility table.
                     if (UseCompatLibrary(lib.Name)) return null;
                     // (4) genuinely unknown.

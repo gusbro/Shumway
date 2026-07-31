@@ -31,15 +31,18 @@ internal static class DialectRegistry
         name => CompatLibraries.TryGet(name, out string s) ? (true, s) : (false, ""));
 
     // The swi pack — SWI's double_quotes default is codes. The list-oriented
-    // libraries SWI programs import (apply, lists, pairs, …) are covered by our
-    // prelude, so importing them is a no-op that just marks them available. A
-    // fuller SWI shim (yall lambdas, assoc, …) is future data added right here.
+    // libraries SWI programs import are covered by our prelude, so importing them
+    // is a no-op that just marks them available (a real SWI .pl on the search path
+    // resolves from the FILE first — this pack is the fallback for names we cover
+    // natively). apply_macros is a compile-time optimiser: a pure no-op for us.
+    // A fuller SWI shim (yall lambdas, real assoc, …) is future data here.
     private static readonly Pack Swi = new(
         "swi", DoubleQuotesMode.Codes,
         name => name switch
         {
-            "apply" or "lists" or "pairs" or "apply_macros" or "ordsets"
-                or "error" or "debug" or "yall" => (true, ""),
+            "apply" or "apply_macros" or "lists" or "pairs" or "ordsets"
+                or "error" or "debug" or "aggregate" or "assoc"
+                or "yall" => (true, ""),
             _ => (false, ""),
         });
 
@@ -48,6 +51,16 @@ internal static class DialectRegistry
     /// <summary>True when <paramref name="name"/> is a registered dialect.</summary>
     internal static bool IsKnownDialect(string name) =>
         System.Array.Exists(Packs, p => p.Name == name);
+
+    /// <summary>The <c>double_quotes</c> a dialect's sources are parsed with —
+    /// used to scope the flag while loading a library tagged with that dialect
+    /// (D5.2). Chars for an unknown name (the conservative Scryer default).</summary>
+    internal static DoubleQuotesMode DoubleQuotesOf(string dialect)
+    {
+        foreach (var p in Packs)
+            if (p.Name == dialect) return p.DoubleQuotes;
+        return DoubleQuotesMode.Chars;
+    }
 
     /// <summary>Resolves library <paramref name="name"/>. If
     /// <paramref name="activeDialect"/> names a pack it is tried first; then every
