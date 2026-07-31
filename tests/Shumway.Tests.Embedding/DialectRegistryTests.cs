@@ -80,6 +80,40 @@ public sealed class DialectRegistryTests
     }
 
     [Fact]
+    public void DirectorySpec_ParsesTrailingDialectTag_DriveLetterSafe()
+    {
+        string dir = Path.Combine(Path.GetTempPath(),
+            "shumway-spec-" + System.Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // "ab" → [a,b] only if the dir was tagged scryer (chars). The spec
+            // form "<dir>:scryer" must parse the tag off the END, not confuse the
+            // Windows drive-letter colon in the path.
+            File.WriteAllText(Path.Combine(dir, "slib.pl"),
+                ":- module(slib, [sval/1]).\nsval(\"ab\").\n");
+            var e = new PrologEngine();
+            e.SetLibraryDialect("swi");                 // default would be codes
+            e.AddLibraryDirectorySpec(dir + ":scryer"); // trailing tag wins
+            e.ConsultString(":- use_module(library(slib)).");
+            Assert.True(e.Query("slib:sval([a, b]).").Success);   // parsed as chars
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void DirectorySpec_PlainPath_NoDialect_IsUnaffected()
+    {
+        // A path with no known-dialect suffix (incl. a bare Windows drive path)
+        // is added verbatim — the last colon is not a dialect.
+        var e = new PrologEngine();
+        e.AddLibraryDirectorySpec(@"C:/some/plain/path");   // no throw, no tag
+        e.AddLibraryDirectorySpec("/unix/plain/path");
+        // A trailing :notadialect is part of the path, not a tag.
+        e.AddLibraryDirectorySpec("/dir/ending:notadialect");
+    }
+
+    [Fact]
     public void PerSearchPathDialect_LoadsEachLibraryInItsDirsDialect()
     {
         // D5.2 — two search dirs tagged with different dialects. A library that

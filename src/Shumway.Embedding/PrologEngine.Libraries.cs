@@ -163,7 +163,8 @@ public sealed partial class PrologEngine
         if (!string.IsNullOrEmpty(env))
             foreach (string d in env.Split(System.IO.Path.PathSeparator,
                          StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                AddLibraryDirNormalized(d);
+                // Each entry may carry a :dialect tag (ADR-040 D5.2).
+                AddLibraryDirectorySpec(d);
     }
 
     private void AddLibraryDirNormalized(string path)
@@ -183,6 +184,29 @@ public sealed partial class PrologEngine
     {
         EnsureLibraryDirs();
         AddLibraryDirNormalized(path);
+    }
+
+    /// <summary>Adds a library directory from a CLI/env spec that MAY carry a
+    /// dialect tag as a trailing <c>:dialect</c> (ADR-040 D5.2) — e.g.
+    /// <c>C:/Scryer/lib:scryer</c> or <c>/opt/swipl/library:swi</c>. The tag is
+    /// recognised only when the text after the LAST colon is a known dialect, so
+    /// a plain Windows path (<c>C:/foo</c>) or an untagged dir is unaffected. The
+    /// same spec form is accepted in <c>SHUMWAY_LIBRARY_PATH</c> entries and the
+    /// REPL/CLI <c>-L</c> flag.</summary>
+    public void AddLibraryDirectorySpec(string spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec)) return;
+        int colon = spec.LastIndexOf(':');
+        if (colon > 0)
+        {
+            string suffix = spec[(colon + 1)..];
+            if (DialectRegistry.IsKnownDialect(suffix))
+            {
+                AddLibraryDirectory(spec[..colon], suffix);
+                return;
+            }
+        }
+        AddLibraryDirectory(spec);
     }
 
     /// <summary>Adds Shumway's shipped default library directories to the search

@@ -132,7 +132,7 @@ internal static class ReplTopLevel
         engine.AddDefaultLibraryDirectories();
         // -L / --library-dir: extra directories searched by use_module(library(X)).
         foreach (string dir in libraryDirs)
-            engine.AddLibraryDirectory(dir);
+            engine.AddLibraryDirectorySpec(dir);   // dir or dir:dialect (ADR-040)
         // Point the engine's Out directly at the column tracker (Console.Out is the
         // synchronized wrapper SetOut installed, which hides ILineStartAware). Set
         // before the stream registry is built so user_output writes and time/1's
@@ -855,6 +855,12 @@ internal static class ReplTopLevel
             + "                        methods become foreign predicates. Repeatable.\n"
             + "  --native-dll <path>   Load a native C library for `:- native` functions.\n"
             + "                        Repeatable. Same flag names as shumway-link.\n"
+            + "  -L, --library-dir <dir[:dialect]>\n"
+            + "                        Add a directory searched by use_module(library(X)).\n"
+            + "                        An optional :dialect tag (scryer / swi) loads that\n"
+            + "                        dir's libraries in that dialect — name resolution +\n"
+            + "                        double_quotes (ADR-040). Repeatable; also read from\n"
+            + "                        SHUMWAY_LIBRARY_PATH (per entry).\n"
             + "  --debug               Compile debuggable and open a debug session; prints\n"
             + "                        the pid so a debugger (VS + the Shumway extension)\n"
             + "                        can attach.\n"

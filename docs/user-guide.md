@@ -259,6 +259,28 @@ fed by all of:
 :- use_module(library(lists_ext), [take/3, drop/3]).  % only these
 ```
 
+**Libraries from another Prolog system (ADR-040).** Shumway can host libraries
+written for Scryer or SWI *side by side in one engine* — "uniting worlds". Tag a
+search directory with the dialect its libraries are written in, and the
+libraries loaded from it parse in that dialect (name resolution + `double_quotes`
+— Scryer `chars`, SWI `codes`):
+
+```bash
+# CLI / REPL: a :dialect suffix on -L (or on a SHUMWAY_LIBRARY_PATH entry).
+shumway -L C:/Scryer/lib:scryer -L C:/swipl/library:swi
+```
+```csharp
+// Embedding:
+engine.AddLibraryDirectory("/path/to/scryer/lib", "scryer");
+engine.AddLibraryDirectory("/path/to/swipl/library", "swi");
+// or the preferred dialect for an ambiguous name:  set_prolog_flag(library_dialect, swi).
+```
+
+Coexistence is the default: a name unique to one system always resolves; the
+dialect only disambiguates a name two systems both define. (The
+`Shumway.Tests.DialectInterop` opt-in test project exercises this against a real
+Scryer / SWI checkout — see its project header for how to run it.)
+
 At the REPL you load a library the same way, as a goal:
 
 ```
