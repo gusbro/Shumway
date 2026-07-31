@@ -326,7 +326,10 @@ public static class AtomListBuiltins
             return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
         }
 
-        // First arg bound to something other than an atom.
+        // First arg bound to something other than an atom. SWI coerces a
+        // number/string to its text and yields its codes.
+        if (SwiLenient.TryCoerce(engine, atomCell, out string coerced))
+            return engine.UnifyRegisterWithHeapAt(1, BuildIntCodesList(engine, coerced));
         throw new PrologRuntimeException("type_error", "atom");
     }
 
@@ -410,11 +413,10 @@ public static class AtomListBuiltins
         // any atomic to text. Honour that ONLY when the caller lives in an SWI
         // module — and only here, on the path that was going to raise anyway, so
         // the strict case pays nothing.
-        if (IsBoundAtomic(aCell) && IsBoundAtomic(bCell)
-            && engine.Host is IDialectAwareHost dh
-            && dh.CallerModuleHasDialect(engine, "swi")
-            && TryAtomicText(engine, aCell, out string at)
-            && TryAtomicText(engine, bCell, out string bt))
+        if (SwiLenient.IsBoundAtomic(aCell) && SwiLenient.IsBoundAtomic(bCell)
+            && SwiLenient.CallerIsSwi(engine)
+            && SwiLenient.TryAtomicText(engine, aCell, out string at)
+            && SwiLenient.TryAtomicText(engine, bCell, out string bt))
         {
             int id = AtomTable.Intern(at + bt, permanent: false).Id;
             return engine.UnifyRegisterWithCell(2, Cell.Atom(id));
@@ -442,29 +444,6 @@ public static class AtomListBuiltins
         string cName = AtomTable.GetById(cCell.AsAtomId)?.Name ?? "";
         int returnPc = engine.BuiltinReturnPc;
         return new AtomConcatSplitCursor(cName, returnPc).Start(engine);
-    }
-
-    private static bool IsBoundAtomic(Cell c) =>
-        c.Tag is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Float or Tag.Rational
-            or Tag.String or Tag.Pstr;
-
-    /// <summary>Renders a bound atomic cell to its text for the SWI concat
-    /// coercion. Returns false for a shape we cannot render (falls back to the
-    /// strict type_error).</summary>
-    private static bool TryAtomicText(Activation engine, Cell c, out string text)
-    {
-        switch (c.Tag)
-        {
-            case Tag.Atom: text = AtomTable.GetById(c.AsAtomId)?.Name ?? ""; return true;
-            case Tag.Int: text = c.AsInt.ToString(System.Globalization.CultureInfo.InvariantCulture); return true;
-            case Tag.BigInt: text = engine.AsBigInt(c).ToString(System.Globalization.CultureInfo.InvariantCulture); return true;
-            case Tag.Float:
-                text = Number.FormatPrologFloat(
-                    Cell.DecodeFloat(c, engine.GetHeap(c.FloatPairedIndex)));
-                return true;
-            case Tag.String or Tag.Pstr: text = engine.AsString(c); return true;
-            default: text = ""; return false;
-        }
     }
 
     /// <summary>Resume state for the non-deterministic <c>atom_concat/3</c>

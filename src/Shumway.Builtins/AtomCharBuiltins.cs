@@ -32,7 +32,13 @@ public static class AtomCharBuiltins
         if (atomCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (atomCell.Tag != Tag.Atom)
+        {
+            // SWI accepts any atomic (a number/string) and returns the length of
+            // its text; ISO raises type_error(atom). Only for an SWI caller.
+            if (SwiLenient.TryCoerce(engine, atomCell, out string coerced))
+                return engine.UnifyRegisterWithCell(1, Cell.Int(coerced.Length));
             throw new PrologRuntimeException("type_error", "atom");
+        }
         string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         return engine.UnifyRegisterWithCell(1, Cell.Int(name.Length));
     }
@@ -97,6 +103,9 @@ public static class AtomCharBuiltins
         }
 
         // Atom is bound but to something other than an atom — ISO §8.16.4.
+        // SWI coerces a number/string to its text and yields its chars.
+        if (SwiLenient.TryCoerce(engine, atomCell, out string coercedChars))
+            return engine.UnifyRegisterWithHeapAt(1, BuildCharAtomList(engine, coercedChars));
         throw new PrologRuntimeException("type_error", "atom");
     }
 

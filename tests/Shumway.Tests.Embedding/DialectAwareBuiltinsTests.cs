@@ -88,6 +88,36 @@ public sealed class DialectAwareBuiltinsTests
     }
 
     [Fact]
+    public void OtherBuiltins_NumericArg_StrictByDefault()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query("catch(atom_length(42, _), error(type_error(atom, 42), _), true).").Success);
+        Assert.True(e.Query("catch(atom_chars(42, _), error(type_error(atom, _), _), true).").Success);
+        Assert.True(e.Query("catch(atom_codes(42, _), error(type_error(atom, _), _), true).").Success);
+        Assert.True(e.Query("catch(upcase_atom(42, _), error(type_error(atom, _), _), true).").Success);
+    }
+
+    [Fact]
+    public void OtherBuiltins_NumericArg_CoercedInSwiModule()
+    {
+        string tmp = "";
+        try
+        {
+            var e = EngineWithSwiModule(
+                ":- module(swimod, [alen/2, achars/2, acodes/2, aup/2]).\n"
+                + "alen(X, N) :- atom_length(X, N).\n"
+                + "achars(X, Cs) :- atom_chars(X, Cs).\n"
+                + "acodes(X, Cs) :- atom_codes(X, Cs).\n"
+                + "aup(X, U) :- upcase_atom(X, U).\n", out tmp);
+            Assert.True(e.Query("alen(12345, N), N == 5.").Success);
+            Assert.True(e.Query("achars(42, Cs), Cs == ['4','2'].").Success);
+            Assert.True(e.Query("acodes(42, Cs), Cs == [0'4, 0'2].").Success);
+            Assert.True(e.Query("aup(1.5, U), U == '1.5'.").Success);          // number has no case
+        }
+        finally { try { Directory.Delete(tmp, true); } catch { } }
+    }
+
+    [Fact]
     public void ShmoObject_Dialect_RoundTrips()
     {
         var obj = ShmoCompiler.CompileSource(

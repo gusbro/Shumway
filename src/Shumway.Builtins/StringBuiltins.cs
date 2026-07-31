@@ -210,9 +210,10 @@ public static class StringBuiltins
     public static bool UpcaseAtom(Activation engine)
     {
         Cell src = Resolve(engine, engine.GetRegister(0));
-        if (src.Tag != Tag.Atom)
+        string name;
+        if (src.Tag == Tag.Atom) name = AtomTable.GetById(src.AsAtomId)?.Name ?? "";
+        else if (!SwiLenient.TryCoerce(engine, src, out name))   // SWI: accept atomic
             throw new PrologRuntimeException("type_error", "atom");
-        string name = AtomTable.GetById(src.AsAtomId)?.Name ?? "";
         int atomId = AtomTable.Intern(
             name.ToUpper(System.Globalization.CultureInfo.InvariantCulture),
             permanent: false).Id;
@@ -224,9 +225,10 @@ public static class StringBuiltins
     public static bool DowncaseAtom(Activation engine)
     {
         Cell src = Resolve(engine, engine.GetRegister(0));
-        if (src.Tag != Tag.Atom)
+        string name;
+        if (src.Tag == Tag.Atom) name = AtomTable.GetById(src.AsAtomId)?.Name ?? "";
+        else if (!SwiLenient.TryCoerce(engine, src, out name))   // SWI: accept atomic
             throw new PrologRuntimeException("type_error", "atom");
-        string name = AtomTable.GetById(src.AsAtomId)?.Name ?? "";
         int atomId = AtomTable.Intern(
             name.ToLower(System.Globalization.CultureInfo.InvariantCulture),
             permanent: false).Id;
