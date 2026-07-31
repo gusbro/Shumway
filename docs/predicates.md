@@ -109,6 +109,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `call(:Goal, +Extra1, ..., +Extra5)` | Calls a goal extended with five extra arguments. |
 | `call(:Goal, +Extra1, ..., +Extra6)` | Calls a goal extended with six extra arguments. |
 | `call(:Goal, +Extra1, ..., +Extra7)` | Calls a goal extended with seven extra arguments (ISO requires call/2..8). |
+| `call_cleanup(:Goal, :Cleanup)` | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes. |
 | `call_det(:Goal, -Deterministic)` | Calls Goal once and unifies Deterministic with true if Goal succeeded without leaving a choice point, false otherwise. |
 | `catch(:Goal, ?Catcher, :Recovery)` | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
 | `compile_all` | Eagerly compiles every compilable static predicate to Tier-1 IL now, instead of waiting for each to promote lazily on use. For a program that will do enough queries to want the whole set hot up front (a server warming up). No-op when Tier-1 is disabled or under Native AOT. Always succeeds. |
@@ -125,6 +126,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `notrace` | Turns the four-port tracer off. |
 | `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |
 | `repeat` | Succeeds, and succeeds again on every backtrack — an unbounded choice point. |
+| `setup_call_cleanup(:Setup, :Goal, :Cleanup)` | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, or error (re-raised). |
 | `throw(+Exception)` | Throws an exception term, unwinding to the nearest catch/3. |
 | `time(:Goal)` | Calls Goal like call/1 and prints a per-answer resource report (SWI-style): inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers. |
 | `trace` | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. |
@@ -427,6 +429,14 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `#\(+Constraint)` | The constraint does not hold (negation). |
 | `#\/(+Constraint1, +Constraint2)` | At least one constraint holds (disjunction). |
 
+## Atoms
+
+| Predicate | Description |
+| --- | --- |
+| `gensym(+Base, -Unique)` | Generates a fresh atom Base1, Base2, … from a per-Base counter that survives backtracking. |
+| `reset_gensym` | Resets every gensym/2 counter to 0. |
+| `reset_gensym(+Base)` | Resets the gensym/2 counter for Base to 0. |
+
 ## Coroutining
 
 | Predicate | Description |
@@ -442,9 +452,12 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | --- | --- |
 | `b_getval(+Key, -Value)` | Reads a backtrackable global variable; existence_error if unset. |
 | `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. |
+| `flag(+Key, ?Old, +New)` | Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked. |
+| `get_flag(+Key, -Value)` | Reads a flag's value (0 if never set). |
 | `nb_current(?Key, ?Value)` | Enumerates global variables; fails for an unset Key (no throw). |
 | `nb_getval(+Key, -Value)` | Reads a non-backtrackable global variable; existence_error if unset. |
 | `nb_setval(+Key, +Value)` | Non-backtrackable global variable assignment. |
+| `set_flag(+Key, +Value)` | Sets a flag to Value (an arithmetic expression is evaluated), discarding the old value. |
 
 ## Grammar
 

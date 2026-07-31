@@ -303,6 +303,82 @@ internal static class Prelude
             ( B1 > B0 -> Deterministic = false ; Deterministic = true ),
             !.
 
+        %! setup_call_cleanup(:Setup, :Goal, :Cleanup) | Control | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, or error (re-raised).
+        % Limitation vs the ISO/SWI builtin: Cleanup fires on deterministic
+        % success, failure, backtracking-exhaustion, and error — but NOT when a
+        % caller commits to a NON-deterministic Goal's first solution and simply
+        % abandons the leftover choice points (no engine cut-hook here). The
+        % overwhelming case (a deterministic Goal, e.g. open→process→close) is
+        % exact: Cleanup runs immediately and the call stays deterministic.
+        % Cleanup fires exactly once: on deterministic success it runs
+        % immediately (and the call stays deterministic — the cut below removes
+        % the fallback choice point); a NON-deterministic Goal keeps its choice
+        % points and Cleanup is deferred until the goal is exhausted (the
+        % fallback clause) or an error unwinds (the catch recovery). Determinism
+        % is detected by sampling the choice-point pointer around Goal (as
+        % call_det/2 does). '$scc_cleanup'/2 guards on a shared token so a
+        % double entry (e.g. error after a partial run) cleans at most once.
+        % Uses the '$catch_begin'/'$catch_end' catch-frame primitives DIRECTLY
+        % (as catch/3 itself does), NOT a `catch(...)` literal: MetaTransform
+        % would lower an inline catch into a '$catchrec_N' helper whose per-Apply
+        % counter collides with the query's own catch helpers, so the prelude
+        % helper resolves to no address at runtime. Passing a stable-address
+        % recovery predicate ('$scc_recover'/3, sharing Error with the Catcher)
+        % mirrors catch/3's '$catch_run' and sidesteps the whole mechanism.
+        :- public setup_call_cleanup/3.
+        setup_call_cleanup(Setup, Goal, Cleanup) :-
+            once(Setup),
+            '$catch_begin'(Error, '$scc_recover'(Cleanup, Done, Error)),
+            '$scc'(Goal, Cleanup, Done),
+            '$catch_end'.
+
+        '$scc'(Goal, Cleanup, Done) :-
+            '$choice_level'(B0),
+            call(Goal),
+            '$choice_level'(B1),
+            ( B1 =< B0 -> '$scc_cleanup'(Cleanup, Done), ! ; true ).
+        '$scc'(_, Cleanup, Done) :-
+            '$scc_cleanup'(Cleanup, Done),
+            fail.
+
+        % Public so the catch-frame recovery dispatch ('$catch_begin') can
+        % resolve its address by functor, as '$catch_run'/1 is.
+        :- public '$scc_recover'/3.
+        '$scc_recover'(Cleanup, Done, Error) :-
+            '$scc_cleanup'(Cleanup, Done),
+            throw(Error).
+
+        '$scc_cleanup'(_, Done) :- Done == done, !.
+        '$scc_cleanup'(Cleanup, Done) :- Done = done, ignore(Cleanup).
+
+        %! call_cleanup(:Goal, :Cleanup) | Control | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes.
+        :- public call_cleanup/2.
+        call_cleanup(Goal, Cleanup) :- setup_call_cleanup(true, Goal, Cleanup).
+
+        %! gensym(+Base, -Unique) | Atoms | Generates a fresh atom Base1, Base2, … from a per-Base counter that survives backtracking.
+        % Base + a monotonically increasing sequence number. The counter is a
+        % flag/3 (not backtracked, so a failure-driven loop keeps advancing).
+        % The number is converted to an atom BEFORE concatenation — atom_concat/3
+        % is ISO-strict (rejects a numeric argument, as GProlog does).
+        :- dynamic('$gensym_base'/1).
+        :- public gensym/2.
+        gensym(Base, Unique) :-
+            must_be(atom, Base),
+            ( '$gensym_base'(Base) -> true ; assertz('$gensym_base'(Base)) ),
+            flag('$gensym'(Base), N0, N0 + 1),
+            N is N0 + 1,
+            number_codes(N, Codes),
+            atom_codes(Suffix, Codes),
+            atom_concat(Base, Suffix, Unique).
+
+        %! reset_gensym | Atoms | Resets every gensym/2 counter to 0.
+        :- public reset_gensym/0.
+        reset_gensym :- forall('$gensym_base'(Base), set_flag('$gensym'(Base), 0)).
+
+        %! reset_gensym(+Base) | Atoms | Resets the gensym/2 counter for Base to 0.
+        :- public reset_gensym/1.
+        reset_gensym(Base) :- set_flag('$gensym'(Base), 0).
+
         %! maplist(:Goal, ?List) | Lists | Succeeds if Goal holds for every element of List.
         maplist(_, []).
         maplist(G, [X|Xs]) :- call(G, X), maplist(G, Xs).

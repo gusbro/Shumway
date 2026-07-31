@@ -20,7 +20,7 @@ namespace Shumway.Embedding;
 /// named module — re-consulting the same module overwrites the previous
 /// contents, matching ADR-008.</para>
 /// </summary>
-public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
+public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shumway.Builtins.IFlagHost
 {
     public const string DefaultModuleName = "user";
 
@@ -29,6 +29,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// Survives across queries on this engine.</summary>
     public Shumway.Builtins.GlobalVarStore GlobalVars { get; } =
         new Shumway.Builtins.GlobalVarStore();
+
+    /// <summary>Per-engine <c>flag/3</c> store (SWI). A global,
+    /// non-backtrackable key → value map, distinct from
+    /// <see cref="GlobalVars"/>. Survives across queries — a flag counter
+    /// persists through a failure-driven loop (library(gensym)).</summary>
+    public Shumway.Builtins.FlagStore FlagStore { get; } =
+        new Shumway.Builtins.FlagStore();
 
     internal readonly Dictionary<string, ModuleManifest> _modules = new()
     {

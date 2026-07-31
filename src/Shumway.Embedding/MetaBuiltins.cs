@@ -299,6 +299,17 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("b_getval", 2, Shumway.Builtins.GlobalVarsBuiltins.BGetval,
             Globals, "b_getval(+Key, -Value)",
             "Reads a backtrackable global variable; existence_error if unset.");
+        // flag/3 — a separate namespace from the global-variable store, with an
+        // integer default of 0 and an atomic read-modify-write.
+        BuiltinsRegistry.Register("flag", 3, Shumway.Builtins.FlagBuiltins.Flag3,
+            Globals, "flag(+Key, ?Old, +New)",
+            "Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked.");
+        BuiltinsRegistry.Register("set_flag", 2, Shumway.Builtins.FlagBuiltins.SetFlag2,
+            Globals, "set_flag(+Key, +Value)",
+            "Sets a flag to Value (an arithmetic expression is evaluated), discarding the old value.");
+        BuiltinsRegistry.Register("get_flag", 2, Shumway.Builtins.FlagBuiltins.GetFlag2,
+            Globals, "get_flag(+Key, -Value)",
+            "Reads a flag's value (0 if never set).");
         // Scryer's global-variable primitives — what iso_ext.pl's bb_put/2,
         // bb_b_put/2 and bb_get/2 lower to (clpz drives its propagation-queue
         // state through them). Same store as nb_/b_ above; the backtrackable
