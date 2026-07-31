@@ -109,6 +109,29 @@ public sealed class FlagAndCleanupTests
     }
 
     [Fact]
+    public void Cleanup_RunsWhenCallerCutsNondetGoal()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(":- dynamic(closed/0).\n");
+        // Nondet goal, caller commits to the first solution with a cut: the
+        // engine fires the cleanup when the leftover choice points are pruned.
+        Assert.True(e.Query(
+            "setup_call_cleanup(true, member(X,[1,2,3]), assertz(closed)), X == 1, !.").Success);
+        Assert.Single(e.QueryAll("closed."));
+    }
+
+    [Fact]
+    public void Cleanup_RunsWhenOnceCommitsNondetGoal()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(":- dynamic(oc/0).\n");
+        // once/1 around a nondet setup_call_cleanup: the once-cut fires cleanup.
+        Assert.True(e.Query(
+            "once(setup_call_cleanup(true, member(_,[1,2,3]), assertz(oc))).").Success);
+        Assert.Single(e.QueryAll("oc."));
+    }
+
+    [Fact]
     public void Cleanup_NondetGoal_IsTransparent_CleanupAfterExhaustion()
     {
         var e = new PrologEngine();

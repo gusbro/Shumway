@@ -568,6 +568,9 @@ public sealed partial class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
+                    // setup_call_cleanup: run any cleanup the engine enqueued from
+                    // a teardown path (external cut, etc.) at this goal boundary.
+                    FlushPendingCleanups(code);
                     if (_engine.Debug is { } dbgProceed)
                     {
                         dbgProceed.OnExit(_engine);            // ADR-035 exit port
@@ -1040,6 +1043,7 @@ public sealed partial class BytecodeInterpreter
                     }
                     int cutSlot = ReadI32(code, codeArr, pc + 1);
                     _engine.Cut((int)_engine.GetY(cutSlot).Data);
+                    FlushPendingCleanups(code);   // setup_call_cleanup on cut
                     _engine.Deallocate();
                     _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
@@ -1060,6 +1064,7 @@ public sealed partial class BytecodeInterpreter
                     }
                     int cpSlot = ReadI32(code, codeArr, pc + 1);
                     _engine.Cut((int)_engine.GetY(cpSlot).Data);
+                    FlushPendingCleanups(code);   // setup_call_cleanup on cut
                     _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     int rpc = _engine.Cp;
@@ -1458,6 +1463,7 @@ public sealed partial class BytecodeInterpreter
                         break;
                     }
                     _engine.NeckCut();
+                    FlushPendingCleanups(code);   // setup_call_cleanup on cut
                     _engine.SetPc(pc + 1); inClause = true;
                     break;
 
@@ -1491,6 +1497,7 @@ public sealed partial class BytecodeInterpreter
                     int slot = ReadI32(code, codeArr, pc + 1);
                     int barrier = (int)_engine.GetY(slot).Data;
                     _engine.Cut(barrier);
+                    FlushPendingCleanups(code);   // setup_call_cleanup on cut
                     _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }

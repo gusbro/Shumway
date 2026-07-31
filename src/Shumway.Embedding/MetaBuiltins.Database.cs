@@ -344,6 +344,28 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(n));
     }
 
+    /// <summary><c>'$scc_register'(-Ref)</c> — registers a setup_call_cleanup
+    /// cleanup handler at the current choice-point level; Ref keys the stored
+    /// Cleanup goal.</summary>
+    public static bool SccRegister(Activation engine) =>
+        engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(engine.RegisterCleanupHandler()));
+
+    /// <summary><c>'$scc_forget'(+Ref)</c> — drops a handler the prelude fired
+    /// synchronously so it can never fire again asynchronously.</summary>
+    public static bool SccForget(Activation engine)
+    {
+        Term r = MaterializeRegister(engine, 0);
+        if (r is IntTerm it) engine.ForgetCleanupHandler((int)it.Value);
+        return true;
+    }
+
+    /// <summary><c>'$pop_pending_cleanup'(-Ref)</c> — pops one Ref enqueued by an
+    /// engine teardown path (cut / exception unwind / query end); fails when the
+    /// queue is empty. The prelude's '$drain_cleanups'/0 loops on it.</summary>
+    public static bool PopPendingCleanup(Activation engine) =>
+        engine.TryPopPendingCleanup(out int refId)
+        && engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(refId));
+
     /// <summary><c>module_property(?Module, ?Property)</c> — introspects a loaded
     /// module. Supports <c>exports(List)</c> (the <c>Name/Arity</c> indicators the
     /// module exports — non-empty only for an export-qualified <c>:- module(Name,

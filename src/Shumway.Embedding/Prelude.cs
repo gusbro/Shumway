@@ -303,53 +303,66 @@ internal static class Prelude
             ( B1 > B0 -> Deterministic = false ; Deterministic = true ),
             !.
 
-        %! setup_call_cleanup(:Setup, :Goal, :Cleanup) | Control | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, or error (re-raised).
-        % Limitation vs the ISO/SWI builtin: Cleanup fires on deterministic
-        % success, failure, backtracking-exhaustion, and error — but NOT when a
-        % caller commits to a NON-deterministic Goal's first solution and simply
-        % abandons the leftover choice points (no engine cut-hook here). The
-        % overwhelming case (a deterministic Goal, e.g. open→process→close) is
-        % exact: Cleanup runs immediately and the call stays deterministic.
-        % Cleanup fires exactly once: on deterministic success it runs
-        % immediately (and the call stays deterministic — the cut below removes
-        % the fallback choice point); a NON-deterministic Goal keeps its choice
-        % points and Cleanup is deferred until the goal is exhausted (the
-        % fallback clause) or an error unwinds (the catch recovery). Determinism
-        % is detected by sampling the choice-point pointer around Goal (as
-        % call_det/2 does). '$scc_cleanup'/2 guards on a shared token so a
-        % double entry (e.g. error after a partial run) cleans at most once.
-        % Uses the '$catch_begin'/'$catch_end' catch-frame primitives DIRECTLY
-        % (as catch/3 itself does), NOT a `catch(...)` literal: MetaTransform
-        % would lower an inline catch into a '$catchrec_N' helper whose per-Apply
-        % counter collides with the query's own catch helpers, so the prelude
-        % helper resolves to no address at runtime. Passing a stable-address
-        % recovery predicate ('$scc_recover'/3, sharing Error with the Catcher)
-        % mirrors catch/3's '$catch_run' and sidesteps the whole mechanism.
+        %! setup_call_cleanup(:Setup, :Goal, :Cleanup) | Control | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown.
+        % Cleanup runs with once/1 semantics — its choice points are destroyed and
+        % its success/failure ignored, but an exception it raises propagates (that
+        % is exactly ignore/1). It fires exactly once, guarded by the retract of
+        % the '$cleanup_pending'/2 fact that stably stores the goal:
+        %   - deterministic success: fired synchronously, then the cut keeps the
+        %     call deterministic (determinism sampled via '$choice_level', as
+        %     call_det/2 does);
+        %   - failure / backtracking-exhaustion: the fallback clause fires it;
+        %   - error in Goal: the catch recovery fires it, then re-raises;
+        %   - a caller cutting past a NON-deterministic Goal's leftover choice
+        %     points, an exception unwinding from BELOW, or the query being torn
+        %     down: the engine enqueues the handler (Activation cleanup registry)
+        %     and the interpreter runs '$drain_cleanups'/0 at its next safe point.
+        % The synchronous paths '$scc_forget' the handler first, so only a
+        % genuinely-abandoned scope ever fires asynchronously. Uses
+        % '$catch_begin'/'$catch_end' directly (an inline catch(...) in a prelude
+        % clause lowers to a '$catchrec_N' helper whose per-Apply counter collides
+        % with the query's own — no compiled address); the recovery is the
+        % stable-address public '$scc_recover'/2.
+        :- dynamic('$cleanup_pending'/2).
         :- public setup_call_cleanup/3.
         setup_call_cleanup(Setup, Goal, Cleanup) :-
             once(Setup),
-            '$catch_begin'(Error, '$scc_recover'(Cleanup, Done, Error)),
-            '$scc'(Goal, Cleanup, Done),
+            '$scc_register'(Ref),
+            assertz('$cleanup_pending'(Ref, Cleanup)),
+            '$catch_begin'(Error, '$scc_recover'(Ref, Error)),
+            '$scc'(Goal, Ref),
             '$catch_end'.
 
-        '$scc'(Goal, Cleanup, Done) :-
+        '$scc'(Goal, Ref) :-
             '$choice_level'(B0),
             call(Goal),
             '$choice_level'(B1),
-            ( B1 =< B0 -> '$scc_cleanup'(Cleanup, Done), ! ; true ).
-        '$scc'(_, Cleanup, Done) :-
-            '$scc_cleanup'(Cleanup, Done),
+            ( B1 =< B0 -> '$scc_fire'(Ref), ! ; true ).
+        '$scc'(_, Ref) :-
+            '$scc_fire'(Ref),
             fail.
 
         % Public so the catch-frame recovery dispatch ('$catch_begin') can
         % resolve its address by functor, as '$catch_run'/1 is.
-        :- public '$scc_recover'/3.
-        '$scc_recover'(Cleanup, Done, Error) :-
-            '$scc_cleanup'(Cleanup, Done),
+        :- public '$scc_recover'/2.
+        '$scc_recover'(Ref, Error) :-
+            '$scc_fire'(Ref),
             throw(Error).
 
-        '$scc_cleanup'(_, Done) :- Done == done, !.
-        '$scc_cleanup'(Cleanup, Done) :- Done = done, ignore(Cleanup).
+        % Exactly-once: the retract is the atomic guard. Forget the handler first
+        % so a concurrent engine teardown can't also enqueue it, then run Cleanup
+        % with once/1 semantics (ignore/1: CPs destroyed, success/failure ignored,
+        % exception propagated).
+        '$scc_fire'(Ref) :-
+            '$scc_forget'(Ref),
+            ( retract('$cleanup_pending'(Ref, Cleanup)) -> ignore(Cleanup) ; true ).
+
+        % Run by the interpreter at a safe point when the engine enqueued cleanups
+        % from a teardown path. A Cleanup exception propagates out of the drain as
+        % a normal exception.
+        :- public '$drain_cleanups'/0.
+        '$drain_cleanups' :-
+            ( '$pop_pending_cleanup'(Ref) -> '$scc_fire'(Ref), '$drain_cleanups' ; true ).
 
         %! call_cleanup(:Goal, :Cleanup) | Control | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes.
         :- public call_cleanup/2.

@@ -787,6 +787,11 @@ public sealed partial class Activation
         if (_b == barrier)
             return;
 
+        // setup_call_cleanup/3: a cut past a registered scope discards it without
+        // a backtrack into its cleanup — enqueue the cleanup for the next safe
+        // point. Cheap no-op when nothing is registered.
+        if (HasCleanupHandlers) FireCleanupsAbove(barrier);
+
         // Drop IL CP stack entries above the
         // barrier BEFORE _b moves. Each entry's Key is its frame's
         // stack-B position; the entries are pushed in monotonic _b

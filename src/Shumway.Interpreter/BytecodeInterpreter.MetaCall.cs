@@ -24,6 +24,42 @@ public sealed partial class BytecodeInterpreter
     private bool FlushPendingWakeups(ProgramView code)
         => !_engine.HasPendingWakeups || FlushPendingWakeupsSlow(code);
 
+    private int _drainCleanupsFid = -1;
+
+    /// <summary>Runs the setup_call_cleanup drain (<c>'$drain_cleanups'/0</c>)
+    /// when the engine has enqueued cleanups from a teardown path (an external
+    /// cut, an exception unwinding from below, query end). Modelled on
+    /// <see cref="FlushPendingWakeups"/>: a nested once-driver over a fixed goal,
+    /// registers + B snapshotted and restored. A Cleanup exception propagates out
+    /// as a normal exception (SWI semantics). Cheap no-op when nothing pends.</summary>
+    private void FlushPendingCleanups(ProgramView code)
+    {
+        if (!_engine.HasPendingCleanups) return;
+        FlushPendingCleanupsSlow(code);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void FlushPendingCleanupsSlow(ProgramView code)
+    {
+        if (_drainCleanupsFid < 0)
+            _drainCleanupsFid = Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern("$drain_cleanups", permanent: true).Id, 0);
+        var addrs = _engine.CurrentFunctorAddresses;
+        if (addrs is null || !addrs.TryGetValue(_drainCleanupsFid, out int drainAddr))
+            return;   // prelude not linked into this query — leave pending
+
+        int regCount = _engine.RegisterCount;
+        Cell[] savedRegs = new Cell[regCount];
+        for (int i = 0; i < regCount; i++) savedRegs[i] = _engine.GetRegister(i);
+        int savedB = _engine.B;
+
+        bool ok = RunGoalInEngine(code, drainAddr);
+
+        if (ok && _engine.B > savedB) _engine.Cut(savedB);   // once-semantics
+        for (int i = 0; i < regCount; i++) _engine.SetRegister(i, savedRegs[i]);
+    }
+
     /// <summary>Cold body of <see cref="FlushPendingWakeups"/> — only reached
     /// when wakeups are actually queued.</summary>
     [System.Runtime.CompilerServices.MethodImpl(

@@ -220,6 +220,10 @@ public static partial class MetaBuiltins
         // prelude clause is the runtime fallback for a variable Goal/Recovery.
         BuiltinsRegistry.Register("$catch_begin", 2, CatchBegin);
         BuiltinsRegistry.Register("$catch_end",   0, CatchEnd);
+        // setup_call_cleanup/3 cleanup-handler primitives.
+        BuiltinsRegistry.Register("$scc_register", 1, SccRegister);
+        BuiltinsRegistry.Register("$scc_forget", 1, SccForget);
+        BuiltinsRegistry.Register("$pop_pending_cleanup", 1, PopPendingCleanup);
 
         // clause/2 and current_predicate/1 are now Prolog-level predicates
         // defined in the prelude. They call these helpers to
