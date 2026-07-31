@@ -21,9 +21,23 @@ predicate one library defines (e.g. `gensym/2` from `library(gensym)`) is not a
 gap even when another references it without importing — 81 such names were
 filtered out. Ranked by how many libraries reference each gap.
 
-**Snapshot: 226 real gaps, 0 parse-blocked** (every library now compiles through
-`ShmoViaConsult` — the `SsuTransform`-in-`CompileFromParts` fix below). 2182
-distinct predicates are defined across the 129 libraries.
+**Original snapshot: 226 real gaps, 0 parse-blocked** (every library compiles
+through `ShmoViaConsult` — the `SsuTransform`-in-`CompileFromParts` fix below).
+
+**After the dialect-aware builtins + Tier-1 + SWI shim work: 210 real gaps, 45
+libraries fully unblocked** (no remaining gap), 84 with ≥1 gap. −16 distinct gap
+predicates: 10 added as bare-global builtins (`setup_call_cleanup/3`,
+`call_cleanup/2`, `numbervars/4`, `is_stream/1`, `term_string/2,3`,
+`compound_name_arity/3`, `cyclic_term/1`, `sub_string/5`), 6 provided by the
+runtime SWI shim (`nb_setarg/3`, `nb_linkarg/3`, `copy_term_nat/2`,
+`duplicate_term/2`, `same_term/2`, `current_arithmetic_function/1` — the survey
+counts these as available since the shim auto-loads for an swi module). The
+dialect-aware builtin coercions (`atom_concat/3` numeric args, etc.) don't reduce
+the gap COUNT — those predicates were always defined — but fix runtime correctness
+for SWI-module callers. Biggest remaining levers: `sub_atom_icasechk/3` (30),
+`translate_message/3`/`backtrace/1` (message system, 28), `sequence/5` (23),
+`$skip_list/3` (14), `code_type/2` (10), the `error`-library `$is_char*`/`error$*`
+system-internal cluster (6 each — shim candidates).
 
 ## Tier 1 — standard, high-impact, straightforward (recommended shim targets)
 

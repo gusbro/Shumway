@@ -126,9 +126,20 @@ public sealed class SwiMissingPredicateSurvey
                 }
             }
 
-            // Real gaps: referenced-but-undefined AND not defined by any library.
+            // Predicates the SWI compat shim (library(swi)) provides at runtime —
+            // it is not in the linker's static builtin/prelude snapshot, so the
+            // survey would otherwise count them as gaps though they resolve when
+            // the shim auto-loads for an swi-dialect module.
+            var shimProvided = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "nb_setarg/3", "nb_linkarg/3", "copy_term_nat/2", "duplicate_term/2",
+                "same_term/2", "current_arithmetic_function/1",
+            };
+
+            // Real gaps: referenced-but-undefined AND not defined by any library
+            // AND not provided by the runtime shim.
             var gaps = missingRefs
-                .Where(kv => !definedByAny.Contains(kv.Key))
+                .Where(kv => !definedByAny.Contains(kv.Key) && !shimProvided.Contains(kv.Key))
                 .OrderByDescending(kv => kv.Value.Count)
                 .ThenBy(kv => kv.Key, StringComparer.Ordinal)
                 .ToList();
@@ -138,11 +149,21 @@ public sealed class SwiMissingPredicateSurvey
                 .Select(kv => kv.Key)
                 .ToList();
 
+            // Libraries fully unblocked: those referenced by NO real gap (every
+            // predicate they reference is defined, provided by another library,
+            // or provided by the runtime shim).
+            var libsWithGap = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var kv in gaps)
+                foreach (string l in kv.Value) libsWithGap.Add(l);
+            int fullyUnblocked = libs.Count - parseBlocked.Count - libsWithGap.Count;
+
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("=== SWI missing-predicate survey (per-library) ===");
             sb.AppendLine($"libraries: {libs.Count}   parse/load-blocked: {parseBlocked.Count}");
             sb.AppendLine($"distinct predicates defined across all libraries: {definedByAny.Count}");
-            sb.AppendLine($"REAL GAPS (referenced, undefined, not provided by any library): {gaps.Count}");
+            sb.AppendLine($"LIBRARIES FULLY UNBLOCKED (no real gap, shim counted): {fullyUnblocked}");
+            sb.AppendLine($"libraries with at least one real gap: {libsWithGap.Count}");
+            sb.AppendLine($"REAL GAPS (referenced, undefined, not provided by any library or the shim): {gaps.Count}");
             sb.AppendLine();
             sb.AppendLine("gap predicate                #libs  referencing libraries");
             foreach (var kv in gaps)
