@@ -57,6 +57,22 @@ public sealed class DialectRegistryTests
     }
 
     [Fact]
+    public void SwiDirectives_MetaPredicate_And_Autoload_ParseAsNoOps()
+    {
+        // ADR-040 — SWI-style :- meta_predicate (needs the fx 1150 prefix
+        // operator to parse) and :- autoload (a no-op directive) previously
+        // blocked an SWI library from loading as the first library (before any
+        // op-defining consult). Both are now accepted; the predicate works.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- meta_predicate mymap(1, ?), mymap(2, ?, ?).\n"
+            + ":- autoload(library(lists), [append/3]).\n"
+            + ":- autoload(library(apply)).\n"
+            + "mymap(_, []).\n");
+        Assert.True(e.Query("mymap(_, []).").Success);
+    }
+
+    [Fact]
     public void CompatLibraryLoad_ScopesAndRestoresDoubleQuotes()
     {
         // Component 4 — a pack library is consulted with its dialect's
@@ -88,13 +104,13 @@ public sealed class DialectRegistryTests
         try
         {
             // "ab" → [a,b] only if the dir was tagged scryer (chars). The spec
-            // form "<dir>:scryer" must parse the tag off the END, not confuse the
-            // Windows drive-letter colon in the path.
+            // form "scryer:<dir>" is a LEADING dialect prefix — drive-letter safe
+            // (the "C" of a Windows path is never a dialect).
             File.WriteAllText(Path.Combine(dir, "slib.pl"),
                 ":- module(slib, [sval/1]).\nsval(\"ab\").\n");
             var e = new PrologEngine();
             e.SetLibraryDialect("swi");                 // default would be codes
-            e.AddLibraryDirectorySpec(dir + ":scryer"); // trailing tag wins
+            e.AddLibraryDirectorySpec("scryer:" + dir); // leading tag wins
             e.ConsultString(":- use_module(library(slib)).");
             Assert.True(e.Query("slib:sval([a, b]).").Success);   // parsed as chars
         }
@@ -104,13 +120,13 @@ public sealed class DialectRegistryTests
     [Fact]
     public void DirectorySpec_PlainPath_NoDialect_IsUnaffected()
     {
-        // A path with no known-dialect suffix (incl. a bare Windows drive path)
-        // is added verbatim — the last colon is not a dialect.
+        // A spec whose leading token (before the first colon) is not a known
+        // dialect is added verbatim — a Windows drive letter is never a dialect.
         var e = new PrologEngine();
-        e.AddLibraryDirectorySpec(@"C:/some/plain/path");   // no throw, no tag
+        e.AddLibraryDirectorySpec(@"C:/some/plain/path");   // "C" not a dialect
         e.AddLibraryDirectorySpec("/unix/plain/path");
-        // A trailing :notadialect is part of the path, not a tag.
-        e.AddLibraryDirectorySpec("/dir/ending:notadialect");
+        // A leading notadialect: is part of the path, not a tag.
+        e.AddLibraryDirectorySpec("notadialect:/dir");
     }
 
     [Fact]

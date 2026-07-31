@@ -187,22 +187,23 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>Adds a library directory from a CLI/env spec that MAY carry a
-    /// dialect tag as a trailing <c>:dialect</c> (ADR-040 D5.2) — e.g.
-    /// <c>C:/Scryer/lib:scryer</c> or <c>/opt/swipl/library:swi</c>. The tag is
-    /// recognised only when the text after the LAST colon is a known dialect, so
-    /// a plain Windows path (<c>C:/foo</c>) or an untagged dir is unaffected. The
-    /// same spec form is accepted in <c>SHUMWAY_LIBRARY_PATH</c> entries and the
-    /// REPL/CLI <c>-L</c> flag.</summary>
+    /// dialect tag as a leading <c>dialect:</c> prefix (ADR-040 D5.2) — e.g.
+    /// <c>scryer:C:/Scryer/lib</c> or <c>swi:/opt/swipl/library</c>. Leading is
+    /// drive-letter-safe by construction: the prefix (before the FIRST colon) is
+    /// a dialect only when it is a known one, and a Windows drive letter
+    /// (<c>C</c>, <c>D</c>) never is — so a plain path (<c>C:/foo</c>) or an
+    /// untagged dir is unaffected. Accepted in <c>SHUMWAY_LIBRARY_PATH</c> entries
+    /// and the REPL/CLI <c>-L</c> flag alike.</summary>
     public void AddLibraryDirectorySpec(string spec)
     {
         if (string.IsNullOrWhiteSpace(spec)) return;
-        int colon = spec.LastIndexOf(':');
+        int colon = spec.IndexOf(':');
         if (colon > 0)
         {
-            string suffix = spec[(colon + 1)..];
-            if (DialectRegistry.IsKnownDialect(suffix))
+            string prefix = spec[..colon];
+            if (DialectRegistry.IsKnownDialect(prefix))
             {
-                AddLibraryDirectory(spec[..colon], suffix);
+                AddLibraryDirectory(spec[(colon + 1)..], prefix);
                 return;
             }
         }

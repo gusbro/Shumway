@@ -134,6 +134,11 @@ public sealed class OperatorTable
         t.Define("multifile", 1150, OperatorType.Fx);
         t.Define("module_transparent", 1150, OperatorType.Fx);
         t.Define("volatile", 1150, OperatorType.Fx);
+        // SWI/SICStus `:- meta_predicate foo(0,?), bar(:,+).` — the prefix
+        // operator so it parses (the directive is no-op'd at consult time).
+        // Without it, a library declaring meta_predicate before any op-defining
+        // load (SWI's library(assoc), …) fails to parse. ADR-040.
+        t.Define("meta_predicate", 1150, OperatorType.Fx);
         // Scryer directive — marks a predicate as not counting toward inference
         // limits. Shumway has no inference-limit machinery, so it is a pure no-op;
         // the operator exists only so `:- non_counted_backtracking foo/N.` parses

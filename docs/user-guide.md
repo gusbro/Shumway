@@ -266,8 +266,8 @@ libraries loaded from it parse in that dialect (name resolution + `double_quotes
 — Scryer `chars`, SWI `codes`):
 
 ```bash
-# CLI / REPL: a :dialect suffix on -L (or on a SHUMWAY_LIBRARY_PATH entry).
-shumway -L C:/Scryer/lib:scryer -L C:/swipl/library:swi
+# CLI / REPL: a leading dialect: prefix on -L (or a SHUMWAY_LIBRARY_PATH entry).
+shumway -L scryer:C:/Scryer/lib -L swi:C:/swipl/library
 ```
 ```csharp
 // Embedding:

@@ -922,6 +922,16 @@ internal sealed class ConsultPipeline
                 // MetaTransform); acting on the declaration for module-transparency
                 // is future work.
             }
+            else if (body is CompoundTerm { Functor: "autoload" } autoDir
+                     && (autoDir.Args.Length == 1 || autoDir.Args.Length == 2))
+            {
+                // SWI `:- autoload(library(X)[, Imports])` — a lazy-load hint (the
+                // predicates load on first use in SWI). Shumway has no autoload;
+                // no-op it and rely on the prelude / dialect-pack coverage of the
+                // named predicates. A genuinely uncovered one surfaces a clear
+                // existence_error at its call site rather than a load-time abort.
+                // ADR-040 — lets SWI libraries that declare autoload deps parse.
+            }
             else if (body is CompoundTerm { Functor: "non_counted_backtracking", Args.Length: 1 })
             {
                 // Scryer directive (library(iso_ext) et al.): a predicate whose

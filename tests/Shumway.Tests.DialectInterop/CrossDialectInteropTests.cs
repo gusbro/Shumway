@@ -51,34 +51,29 @@ public sealed class CrossDialectInteropTests
         Assert.False(e.Query("Z in 1..3, Z #> 5, indomain(Z).").Success);
     }
 
-    // KNOWN LIMITATION (surfaced by this opt-in project): an SWI export-qualified
-    // library loaded as the FIRST library whose surface is plain predicates (not
-    // operators) does not link those predicates until another library is loaded —
-    // list_to_assoc/2 is unresolved standalone, but works once clpz is loaded (see
-    // UniteWorlds below). clpz standalone works because its surface is operators.
-    // Tracked as a follow-up in the module link-timing; skipped, not deleted, so it
-    // stays visible.
-    [Fact(Skip = "Known limitation: SWI export-qualified library loaded first "
-        + "does not link plain predicates until another library loads (see UniteWorlds).")]
-    public void Swi_Assoc_Standalone_Loads_And_Works()
+    [Fact]
+    public void Swi_Heaps_Standalone_Loads_And_Works()
     {
+        // A real SWI library (priority queues), loaded on its own — parses past
+        // SWI's :- meta_predicate (now a known prefix operator) and works.
         string? swi = Dir(SwiEnv);
         if (swi is null) return;
 
         var e = new PrologEngine();
         e.AddLibraryDirectory(swi, "swi");
-        e.ConsultString(":- use_module(library(assoc)).");
+        e.ConsultString(":- use_module(library(heaps)).");
+        // Min-heap: the smallest key comes out first.
         Assert.True(e.Query(
-            "list_to_assoc([a-1, b-2, c-3], A), get_assoc(b, A, 2).").Success);
+            "list_to_heap([3-c, 1-a, 2-b], H), get_from_heap(H, 1, a, _).").Success);
     }
 
     [Fact]
-    public void UniteWorlds_ScryerClpz_And_SwiAssoc_InOneEngine()
+    public void UniteWorlds_ScryerClpz_And_SwiHeaps_InOneEngine()
     {
         // The headline ADR-040 property: a Scryer library and an SWI library,
         // each from its own system's checkout, loaded and working side by side
-        // in ONE engine — attribute-variable constraints (clpz) next to AVL
-        // trees (SWI assoc), each parsed in its own dialect.
+        // in ONE engine — attribute-variable constraints (clpz) next to a
+        // priority queue (SWI heaps), each parsed in its own dialect.
         string? scryer = Dir(ScryerEnv);
         string? swi = Dir(SwiEnv);
         if (scryer is null || swi is null) return;
@@ -87,14 +82,14 @@ public sealed class CrossDialectInteropTests
         e.AddLibraryDirectory(scryer, "scryer");
         e.AddLibraryDirectory(swi, "swi");
         e.ConsultString(":- use_module(library(clpz)).");
-        e.ConsultString(":- use_module(library(assoc)).");
+        e.ConsultString(":- use_module(library(heaps)).");
 
-        Assert.True(e.Query("X in 5..7, indomain(X), X == 5.").Success);       // clpz
+        Assert.True(e.Query("X in 5..7, indomain(X), X == 5.").Success);        // clpz
         Assert.True(e.Query(
-            "list_to_assoc([k-9], A), get_assoc(k, A, 9).").Success);           // SWI
+            "list_to_heap([2-b, 1-a], H), get_from_heap(H, 1, a, _).").Success); // SWI
         // Both in a single conjunction, one engine, one query.
         Assert.True(e.Query(
             "V in 1..9, indomain(V), V == 1, "
-            + "list_to_assoc([v-V], A), get_assoc(v, A, 1).").Success);
+            + "list_to_heap([V-a], H), get_from_heap(H, V, a, _).").Success);
     }
 }
