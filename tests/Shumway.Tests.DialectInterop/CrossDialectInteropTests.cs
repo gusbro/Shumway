@@ -110,4 +110,112 @@ public sealed class CrossDialectInteropTests
             "V in 1..9, indomain(V), V == 1, "
             + "list_to_assoc([v-V], A), get_assoc(v, A, 1).").Success);
     }
+
+    /// <summary>A load-sweep over every SWI library: a fresh engine per library,
+    /// record whether <c>use_module(library(X))</c> loads cleanly, and if not,
+    /// the error class. Prints a triage summary — feeds docs/library-triage-swi.md.
+    /// Not an assertion sweep (it never fails); run with SHUMWAY_SWI_LIB set and
+    /// read the test output.</summary>
+    [Fact]
+    public void Swi_Triage_Sweep()
+    {
+        string? swi = Dir(SwiEnv);
+        if (swi is null) return;
+        SweepLibraries(swi, "swi");
+    }
+
+    [Fact]
+    public void Scryer_Triage_Sweep()
+    {
+        string? scryer = Dir(ScryerEnv);
+        if (scryer is null) return;
+        SweepLibraries(scryer, "scryer");
+    }
+
+    private void SweepLibraries(string dir, string dialect)
+    {
+        var files = System.IO.Directory.GetFiles(dir, "*.pl");
+        System.Array.Sort(files);
+        int ok = 0, attempted = 0;
+        var buckets = new System.Collections.Generic.SortedDictionary<
+            string, System.Collections.Generic.List<string>>();
+        foreach (string f in files)
+        {
+            string name = System.IO.Path.GetFileNameWithoutExtension(f);
+            if (name == "INDEX") continue;
+            attempted++;
+            var e = new PrologEngine();
+            e.AddLibraryDirectory(dir, dialect);
+            string outcome;
+            // A library that fails to load is NOT thrown — the directive handler
+            // catches it and prints `warning: use_module(...) failed: <msg>` to
+            // Console.Error, then use_module returns null. So capture stderr and
+            // treat any such warning as a failure.
+            var errCapture = new System.IO.StringWriter();
+            var prevErr = System.Console.Error;
+            System.Console.SetError(errCapture);
+            try
+            {
+                e.ConsultString($":- use_module(library({name})).");
+            }
+            catch (System.Exception ex)
+            {
+                errCapture.Write("\nEXC: " + ex.Message);
+            }
+            finally { System.Console.SetError(prevErr); }
+
+            string err = errCapture.ToString();
+            int fi = err.IndexOf("failed:", System.StringComparison.Ordinal);
+            if (fi < 0 && !err.Contains("EXC:"))
+            {
+                outcome = "OK";
+                ok++;
+            }
+            else
+            {
+                string msg = fi >= 0 ? err.Substring(fi + "failed:".Length).Trim() : err.Trim();
+                if (msg.Contains("existence_error")) outcome = "MISSING: " + ExtractPI(msg);
+                else if (System.Text.RegularExpressions.Regex.IsMatch(msg, @"\d+:\d+"))
+                    outcome = "PARSE: " + FirstLine(msg);
+                else outcome = "OTHER: " + FirstLine(msg);
+            }
+            string key = outcome == "OK" ? "OK" : outcome;
+            if (!buckets.TryGetValue(key, out var list))
+                buckets[key] = list = new System.Collections.Generic.List<string>();
+            list.Add(name);
+        }
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"=== {dialect} triage: {ok}/{attempted} load cleanly ===");
+        if (buckets.TryGetValue("OK", out var okList))
+            sb.AppendLine("OK: " + string.Join(", ", okList));
+        foreach (var kv in buckets)
+        {
+            if (kv.Key == "OK") continue;
+            sb.AppendLine($"[{kv.Value.Count}] {kv.Key}");
+            sb.AppendLine("     " + string.Join(", ", kv.Value));
+        }
+        string report = sb.ToString();
+        _out.WriteLine(report);
+        string? outFile = System.Environment.GetEnvironmentVariable("SHUMWAY_TRIAGE_OUT");
+        if (!string.IsNullOrWhiteSpace(outFile))
+            System.IO.File.WriteAllText(outFile, report);
+    }
+
+    private static string FirstLine(string s)
+    {
+        int nl = s.IndexOfAny(new[] { '\r', '\n' });
+        s = nl >= 0 ? s.Substring(0, nl) : s;
+        return s.Length > 120 ? s.Substring(0, 120) : s;
+    }
+
+    // Pull the predicate indicator out of an existence_error message so the
+    // MISSING bucket groups by the actual missing predicate.
+    private static string ExtractPI(string s)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(
+            s, @"existence_error\(\s*procedure\s*,\s*([^\)]+/\d+)");
+        if (m.Success) return m.Groups[1].Value.Trim();
+        var m2 = System.Text.RegularExpressions.Regex.Match(s, @"[\w$]+/\d+");
+        return m2.Success ? m2.Value : FirstLine(s);
+    }
 }
