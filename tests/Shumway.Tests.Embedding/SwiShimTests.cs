@@ -129,6 +129,30 @@ public sealed class SwiShimTests
     }
 
     [Fact]
+    public void TranslateMessage_And_PrintMessageLines()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(":- use_module(library(swi)).");
+        // translate_message//1 yields message elements; print_message_lines renders.
+        Assert.True(e.Query(
+            "phrase(translate_message(error(type_error(integer, foo), _)), L), L = [_-_].").Success);
+        // Module-qualified call ('$messages':...) resolves to the bare-global shim.
+        Assert.True(e.Query(
+            "'$messages':translate_message(error(instantiation_error, _), L, []), L = [_-_].").Success);
+        // End-to-end: the rendered text contains the error description.
+        Assert.True(e.Query(
+            "with_output_to(atom(A), (phrase(translate_message(error(type_error(integer, foo), _)), L), "
+            + "print_message_lines(current_output, k, L))), sub_atom(A, _, _, _, 'Type error').").Success);
+        Assert.True(e.Query(
+            "with_output_to(atom(A), (phrase(translate_message(error(existence_error(procedure, foo/1), _)), L), "
+            + "print_message_lines(current_output, k, L))), sub_atom(A, _, _, _, 'Unknown procedure').").Success);
+        // message_to_codes/3.
+        Assert.True(e.Query(
+            "message_to_codes(error, error(domain_error(list, foo), _), Cs), atom_codes(A, Cs), "
+            + "sub_atom(A, _, _, _, 'Domain error').").Success);
+    }
+
+    [Fact]
     public void SubString_IsAlwaysAvailable()
     {
         var e = new PrologEngine();

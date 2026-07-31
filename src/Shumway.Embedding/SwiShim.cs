@@ -49,6 +49,65 @@ internal static class SwiShim
         :- public backtrace/1.
         backtrace(_).
 
+        % ----- message system (translate_message//1 + print_message_lines/3) -----
+        % A pragmatic subset of SWI's $messages: translate a message term into a
+        % list of message elements (Format-Args, nl, atoms), and render such a list
+        % to a stream. Libraries call '$messages':translate_message(...) (module-
+        % qualified, resolved to this bare-global definition) and print_message_lines.
+        :- public translate_message/3.
+        translate_message(Term) --> { var(Term) }, !, [ '~w'-[Term] ].
+        translate_message(error(Formal, _Context)) --> !, translate_formal(Formal).
+        translate_message(debug(Fmt, Args)) --> !, [ Fmt-Args ].
+        translate_message(format(Fmt, Args)) --> !, [ Fmt-Args ].
+        translate_message(Fmt-Args) --> { is_list(Args) }, !, [ Fmt-Args ].
+        translate_message(Term) --> [ '~w'-[Term] ].
+
+        translate_formal(type_error(Type, Culprit)) --> !,
+            [ 'Type error: `~w'' expected, found `~w'''-[Type, Culprit] ].
+        translate_formal(domain_error(Domain, Culprit)) --> !,
+            [ 'Domain error: `~w'' expected, found `~w'''-[Domain, Culprit] ].
+        translate_formal(existence_error(Type, Culprit)) --> !,
+            [ 'Unknown ~w: ~w'-[Type, Culprit] ].
+        translate_formal(instantiation_error) --> !,
+            [ 'Arguments are not sufficiently instantiated'-[] ].
+        translate_formal(permission_error(Op, Type, Culprit)) --> !,
+            [ 'No permission to ~w ~w `~w'''-[Op, Type, Culprit] ].
+        translate_formal(evaluation_error(What)) --> !,
+            [ 'Arithmetic: evaluation error: `~w'''-[What] ].
+        translate_formal(representation_error(What)) --> !,
+            [ 'Cannot represent due to `~w'''-[What] ].
+        translate_formal(syntax_error(What)) --> !,
+            [ 'Syntax error: ~w'-[What] ].
+        translate_formal(Formal) --> [ '~w'-[Formal] ].
+
+        :- public print_message_lines/3.
+        print_message_lines(Stream0, _Kind, Lines) :-
+            ( Stream0 == current_output -> current_output(Stream)
+            ; Stream0 == current_input -> current_input(Stream)
+            ; Stream = Stream0
+            ),
+            '$pml'(Lines, Stream).
+        '$pml'([], _).
+        '$pml'([E|Es], S) :- '$pml_elem'(E, S), '$pml'(Es, S).
+        '$pml_elem'(Fmt-Args, S) :- !, format(S, Fmt, Args).
+        '$pml_elem'(nl, S) :- !, nl(S).
+        '$pml_elem'(flush, S) :- !, flush_output(S).
+        '$pml_elem'(ansi(_, Fmt, Args), S) :- !, format(S, Fmt, Args).
+        '$pml_elem'(ansi(_, Fmt, Args, _), S) :- !, format(S, Fmt, Args).
+        '$pml_elem'(url(URL), S) :- !, write(S, URL).
+        '$pml_elem'(url(_, Label), S) :- !, write(S, Label).
+        '$pml_elem'(at_same_line, _) :- !.
+        '$pml_elem'(A, S) :- atom(A), !, write(S, A).
+        '$pml_elem'(A, S) :- string(A), !, write(S, A).
+        '$pml_elem'(_, _).
+
+        % message_to_codes(+Kind, +Term, -Codes) — the codes of a translated message.
+        :- public message_to_codes/3.
+        message_to_codes(_Kind, Term, Codes) :-
+            phrase(translate_message(Term), Lines),
+            with_output_to(atom(A), print_message_lines(current_output, kind(_), Lines)),
+            atom_codes(A, Codes).
+
         % ----- term copying / identity -----
         :- public copy_term_nat/2.
         copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).
