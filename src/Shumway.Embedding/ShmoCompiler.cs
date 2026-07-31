@@ -583,7 +583,15 @@ public static class ShmoCompiler
         // helper bodies). The DIRECT-vs-META edge marking walks
         // preMeta; the call-graph EDGES still walk the fully
         // transformed clauses below, unchanged.
-        var preMeta = DcgTransform.Apply(MetaWrapperUnfold.Apply(staticInput),
+        // ADR-037 — lower `Head => Body` (SsuRule) FIRST, mirroring
+        // ClausePipeline's SSU→DCG→Meta order. The consult path stores raw
+        // SsuRule/DcgRule clauses in the manifest (lowering happens only for the
+        // engine's own bytecode), so a re-compile from those parts (ShmoViaConsult,
+        // the linker) must re-run the lowering or ClauseCompiler hits an
+        // `Unknown clause kind: SsuRule`. SsuTransform is a no-op on non-`=>`
+        // clauses, so this is safe for already-lowered input too.
+        var lowered = SsuTransform.Apply(staticInput).ToList();
+        var preMeta = DcgTransform.Apply(MetaWrapperUnfold.Apply(lowered),
             failFast: buildMode != ShmoBuildMode.Debuggable);
         var clauses = PhraseTransform.Apply(MetaTransform.Apply(preMeta));
 
