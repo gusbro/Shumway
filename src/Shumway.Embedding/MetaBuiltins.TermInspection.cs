@@ -124,6 +124,57 @@ public static partial class MetaBuiltins
         return false;
     }
 
+    /// <summary><c>compound_name_arity(?Compound, ?Name, ?Arity)</c> (SWI) —
+    /// like <c>functor/3</c> but restricted to compound terms (arity ≥ 1). A
+    /// bound compound decomposes into its name and arity; a bound non-compound
+    /// (an atomic) is a <c>type_error(compound, _)</c>. With <c>Compound</c>
+    /// unbound, <c>Name</c> (an atom) and <c>Arity</c> (an integer ≥ 1) construct
+    /// a fresh compound with unbound arguments.</summary>
+    public static bool CompoundNameArity(Activation engine)
+    {
+        Cell t = ResolveLocal(engine, engine.GetRegister(0));
+        if (t.Tag == Tag.Str)
+        {
+            int functorIdx = t.AsHeapIndex;
+            var (atomId, arity) = FunctorTable.Lookup(engine.GetHeap(functorIdx).AsFunctorId);
+            if (!engine.UnifyRegisterWithCell(1, Cell.Atom(atomId))) return false;
+            return engine.UnifyRegisterWithCell(2, Cell.Int(arity));
+        }
+        if (t.Tag == Tag.Lis)
+        {
+            int dotId = AtomTable.Intern(".", permanent: true).Id;
+            if (!engine.UnifyRegisterWithCell(1, Cell.Atom(dotId))) return false;
+            return engine.UnifyRegisterWithCell(2, Cell.Int(2));
+        }
+        if (t.Tag == Tag.Ref)
+        {
+            Cell n = ResolveLocal(engine, engine.GetRegister(1));
+            Cell a = ResolveLocal(engine, engine.GetRegister(2));
+            if (n.Tag == Tag.Ref || a.Tag == Tag.Ref)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
+            if (a.Tag != Tag.Int)
+                throw new ShumwayPrologException(IsoError.TypeError("integer", new VarTerm("_")));
+            long arity = a.AsInt;
+            // A compound has arity ≥ 1; arity 0 would be atomic, not a compound.
+            if (arity < 1)
+                throw new ShumwayPrologException(IsoError.TypeError("compound", new VarTerm("_")));
+            if (n.Tag != Tag.Atom)
+                throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
+            int functorId = FunctorTable.Intern(n.AsAtomId, (int)arity);
+            int strBase = engine.AllocateHeap(2 + (int)arity);
+            engine.SetHeap(strBase, Cell.Str(strBase + 1));
+            engine.SetHeap(strBase + 1, Cell.Functor(functorId));
+            for (int i = 0; i < arity; i++)
+            {
+                int slot = strBase + 2 + i;
+                engine.SetHeap(slot, Cell.UnboundVar(slot));
+            }
+            return engine.UnifyRegisterWithCell(0, Cell.Ref(strBase));
+        }
+        // Bound to an atomic — not a compound.
+        throw new ShumwayPrologException(IsoError.TypeError("compound", new VarTerm("_")));
+    }
+
     /// <summary><c>arg(N, Term, Arg)</c> — the N-th argument (1-indexed)
     /// of a compound term. Fails when N is out of range or <c>Term</c>
     /// isn't a compound.</summary>
@@ -346,6 +397,39 @@ public static partial class MetaBuiltins
         int newAtomId = AtomTable.Intern(rendered, permanent: false).Id;
         return engine.UnifyRegisterWithCell(1, Cell.Atom(newAtomId));
     }
+
+    /// <summary><c>term_string(?Term, ?String[, +Options])</c> (SWI) — the
+    /// string counterpart of <c>term_to_atom/2</c>: with <c>String</c> bound the
+    /// text is parsed as a term; otherwise <c>Term</c> is rendered (operator
+    /// notation, quoted) and unified with a fresh string. Options are accepted
+    /// and currently ignored.</summary>
+    public static bool TermString(Activation engine)
+    {
+        Cell strCell = ResolveLocal(engine, engine.GetRegister(1));
+        if (strCell.Tag is Tag.String or Tag.Pstr)
+        {
+            // String → Term: read the text (Pstr is the string type the string
+            // builtins use — atom_string/string_chars/…) and parse it.
+            string text = strCell.Tag == Tag.Pstr
+                ? engine.AsPstrString(engine.Deref(engine.GetRegister(1).AsHeapIndex))
+                : engine.AsString(strCell);
+            string source = text.TrimEnd().EndsWith(".", StringComparison.Ordinal) ? text : text + ".";
+            Term parsed = ParseClauseText(engine, source);
+            Cell newCell = Materializer.MaterializeAsCell(engine, parsed);
+            return engine.UnifyRegisterWithCell(0, newCell);
+        }
+        using var sw = new System.IO.StringWriter();
+        Shumway.Builtins.TermRenderer.Render(engine, engine.GetRegister(0), sw,
+            new Shumway.Builtins.TermRenderOptions { Operators = engine.Operators, Quoted = true });
+        // Produce a PSTR — the string representation the string builtins consume.
+        return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(sw.ToString())));
+    }
+
+    /// <summary><c>numbervars(+Term, +Start, -End, +Options)</c> (SWI) — as
+    /// <c>numbervars/3</c> (arguments 1-3 identical); the option list is accepted
+    /// and currently ignored (the default <c>'$VAR'(N)</c> numbering of every
+    /// variable). Enough for the common <c>numbervars(T, 0, E, [])</c> call.</summary>
+    public static bool NumberVars4(Activation engine) => NumberVars(engine);
 
     private static Cell ResolveLocal(Activation engine, Cell c)
     {

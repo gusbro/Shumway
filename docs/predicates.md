@@ -27,6 +27,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `attvar(@Term)` | Succeeds if the argument is an attributed variable. |
 | `callable(@Term)` | Succeeds if the argument is an atom or a compound term. |
 | `compound(@Term)` | Succeeds if the argument is a compound term. |
+| `cyclic_term(@Term)` | Succeeds if the argument is a cyclic (infinite/rational) term. |
 | `float(@Term)` | Succeeds if the argument is a float. |
 | `ground(@Term)` | Succeeds if the argument contains no unbound variables. |
 | `integer(@Term)` | Succeeds if the argument is an integer. |
@@ -71,6 +72,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `?=(@X, @Y)` | Succeeds if the (in)equality of X and Y is already decided (identical, or cannot unify). |
 | `arg(+N, +Term, ?Arg)` | Unifies Arg with the Nth argument of the compound term. |
 | `atom_to_term(+Atom, -Term, -Bindings)` | Parses an atom into a term plus its variable bindings. |
+| `compound_name_arity(?Compound, ?Name, ?Arity)` | Like functor/3 but restricted to compound terms (arity >= 1) (SWI). |
 | `copy_term(+Term, -Copy)` | Copies a term with fresh variables. |
 | `copy_term(+Term, -Copy, -Goals)` | Copies a term with fresh variables and collects the residual attribute goals. |
 | `expand_term(+Term, -Expanded)` | If Term has the form Head --> Body, expands it via the DCG transformation Shumway applies internally on consult. Non-DCG terms pass through unchanged. |
@@ -79,6 +81,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `is_digit(+Char)` | True when Char is a one-character atom representing an ASCII digit. |
 | `name(?AtomOrNumber, ?Codes)` | Bidirectional conversion between an atom/number and its character-code list. |
 | `numbervars(+Term, +Start, -End)` | Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start. |
+| `numbervars(+Term, +Start, -End, +Options)` | As numbervars/3 with an (accepted, ignored) SWI option list. |
 | `random(-X)` | Unifies X with a fresh pseudo-random float in [0.0, 1.0). |
 | `random_between(+Low, +High, -X)` | Unifies X with a fresh pseudo-random integer in [Low, High] (inclusive on both ends, matching SWI semantics). |
 | `randomize(+Seed)` | Reseeds the engine's random generator. Seed is an integer. |
@@ -91,6 +94,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `string_termq(?Atom, ?Term)` | writeq-style variant of string_term/2: atoms / functors are quoted when needed so the rendered atom re-parses to the same term. Equivalent to term_to_atom/2. |
 | `subsumes_term(@General, @Specific)` | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term. |
 | `term_attvars(+Term, -Vars)` | Unifies Vars with the attributed variables reachable from Term. |
+| `term_string(?Term, ?String)` | Converts between a term and its textual string representation (SWI). |
+| `term_string(?Term, ?String, +Options)` | As term_string/2 with an (accepted, ignored) SWI option list. |
 | `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
 | `term_variables(+Term, -Variables)` | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5). |
 | `unifiable(@X, @Y, -Unifier)` | If X and Y unify, Unifier is the list of V=Value bindings that make them equal; else fails. |
@@ -378,6 +383,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `char_conversion(+InChar, +OutChar)` | Registers a one-character-to-one-character mapping the lexer applies to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry. |
 | `current_char_conversion(?InChar, ?OutChar)` | Enumerates the active char-conversion table (ISO §8.14.10). |
 | `current_prolog_flag(?Flag, ?Value)` | Reads the value of a Prolog flag. |
+| `is_stream(@Term)` | Succeeds if Term is a stream handle or a registered stream alias (SWI). |
 | `module_property(?Module, ?Property)` | Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound. |
 | `op(+Priority, +Type, +Name)` | Declares an operator of the given priority and type. |
 | `predicate_property(+Head, ?Property)` | Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate. |

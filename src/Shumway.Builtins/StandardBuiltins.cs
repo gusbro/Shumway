@@ -97,6 +97,8 @@ public static class StandardBuiltins
             Types, "ground(@Term)", "Succeeds if the argument contains no unbound variables.");
         BuiltinsRegistry.Register("acyclic_term", 1, TypeBuiltins.AcyclicTerm,
             Types, "acyclic_term(@Term)", "Succeeds if the argument is a finite (acyclic) term.");
+        BuiltinsRegistry.Register("cyclic_term", 1, TypeBuiltins.CyclicTerm,
+            Types, "cyclic_term(@Term)", "Succeeds if the argument is a cyclic (infinite/rational) term.");
         BuiltinsRegistry.Register("attvar",  1, TypeBuiltins.IsAttVar,
             Types, "attvar(@Term)", "Succeeds if the argument is an attributed variable.");
 

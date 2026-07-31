@@ -259,16 +259,26 @@ public static partial class MetaBuiltins
 
         BuiltinsRegistry.Register("numbervars",        3, NumberVars,
             Term, "numbervars(+Term, +Start, -End)", "Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start.");
+        BuiltinsRegistry.Register("numbervars",        4, NumberVars4,
+            Term, "numbervars(+Term, +Start, -End, +Options)", "As numbervars/3 with an (accepted, ignored) SWI option list.");
         BuiltinsRegistry.Register("term_variables",    2, TermVariables,
             Term, "term_variables(+Term, -Variables)",
             "Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5).");
         BuiltinsRegistry.Register("term_to_atom",      2, TermToAtom,
             Term, "term_to_atom(?Term, ?Atom)", "Converts between a term and its textual atom representation.");
+        BuiltinsRegistry.Register("term_string",       2, TermString,
+            Term, "term_string(?Term, ?String)", "Converts between a term and its textual string representation (SWI).");
+        BuiltinsRegistry.Register("term_string",       3, TermString,
+            Term, "term_string(?Term, ?String, +Options)", "As term_string/2 with an (accepted, ignored) SWI option list.");
 
         BuiltinsRegistry.Register("functor", 3, Functor,
             Term, "functor(?Term, ?Name, ?Arity)", "Relates a term to its functor name and arity.");
+        BuiltinsRegistry.Register("compound_name_arity", 3, CompoundNameArity,
+            Term, "compound_name_arity(?Compound, ?Name, ?Arity)", "Like functor/3 but restricted to compound terms (arity >= 1) (SWI).");
         BuiltinsRegistry.Register("arg",     3, Arg,
             Term, "arg(+N, +Term, ?Arg)", "Unifies Arg with the Nth argument of the compound term.");
+        BuiltinsRegistry.Register("is_stream", 1, IsStream,
+            Reflect, "is_stream(@Term)", "Succeeds if Term is a stream handle or a registered stream alias (SWI).");
         BuiltinsRegistry.Register("=..",     2, Univ,
             Term, "=..(?Term, ?List)", "Relates a term to the list of its functor and arguments.");
 

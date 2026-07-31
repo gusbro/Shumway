@@ -182,6 +182,11 @@ public static class TypeBuiltins
     public static bool AcyclicTerm(Activation engine) =>
         IsAcyclicCell(engine, engine.GetRegister(0), new HashSet<int>());
 
+    /// <summary><c>cyclic_term(X)</c> (SWI) — X contains a cycle (a rational /
+    /// infinite term). The exact complement of <see cref="AcyclicTerm"/>.</summary>
+    public static bool CyclicTerm(Activation engine) =>
+        !IsAcyclicCell(engine, engine.GetRegister(0), new HashSet<int>());
+
     private static bool IsAcyclicCell(Activation engine, Cell cell, HashSet<int> onPath)
     {
         if (cell.Tag == Tag.Ref)

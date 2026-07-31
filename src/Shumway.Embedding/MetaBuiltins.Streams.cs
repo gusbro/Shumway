@@ -6,6 +6,20 @@ namespace Shumway.Embedding;
 
 public static partial class MetaBuiltins
 {
+    /// <summary><c>is_stream(@Term)</c> (SWI) — succeeds iff Term is a stream
+    /// handle (a Foreign cell wrapping a <see cref="Shumway.Core.StreamHandle"/>)
+    /// or a registered stream alias atom. Never throws — a non-stream fails.</summary>
+    public static bool IsStream(Activation engine)
+    {
+        Cell d = engine.GetRegister(0);
+        if (d.Tag == Tag.Ref) d = engine.GetHeap(engine.Deref(d.AsHeapIndex));
+        if (d.Tag == Tag.Foreign)
+            return engine.AsForeign<Shumway.Core.StreamHandle>(d) is not null;
+        if (d.Tag == Tag.Atom)
+            return engine.Streams?.GetByAlias(AtomTable.GetById(d.AsAtomId)?.Name ?? "") is not null;
+        return false;
+    }
+
     /// <summary><c>current_stream(?Filename, ?Mode, ?Stream)</c> —
     /// ISO §8.11.8.1. Enumerates every registered stream on
     /// backtracking. Filename and Mode arguments unify against each
