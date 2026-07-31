@@ -275,6 +275,16 @@ internal static class Prelude
         sub_atom(Atom, Before, Length, After, Sub) :-
             '$sub_atom_enum'(Atom, Before, Length, After, Sub).
 
+        %! sub_string(+String, ?Before, ?Length, ?After, ?SubString) | Atoms & strings | Backtracks over every substring decomposition of String; the parts are strings (SWI).
+        % The string counterpart of sub_atom/5: enumerate over the text (a string
+        % arg is converted to an atom first) and hand each substring back as a
+        % string.
+        :- public sub_string/5.
+        sub_string(String, Before, Length, After, Sub) :-
+            ( string(String) -> atom_string(A, String) ; A = String ),
+            sub_atom(A, Before, Length, After, SubA),
+            atom_string(SubA, Sub).
+
         %! subsumes_term(@General, @Specific) | Term inspection & construction | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term.
         % ISO §8.2.4. A pure test: the double negation undoes the trial
         % unification's bindings. After General = Specific, Specific's

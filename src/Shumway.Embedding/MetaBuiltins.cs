@@ -61,6 +61,10 @@ public static partial class MetaBuiltins
         // is exactly what HeapTermCopy-backed copy_term/2 produces.
         BuiltinsRegistry.Register("$copy_term_without_attr_vars", 2, CopyTerm);
         BuiltinsRegistry.Register("$copy_term_3_prep", 3, CopyTerm3Prep);
+        // SWI-shim helper builtins (bare-global internals; the public SWI names
+        // nb_setarg/nb_linkarg/same_term live in the swi shim library).
+        BuiltinsRegistry.Register("$nb_setarg", 3, NbSetArg);
+        BuiltinsRegistry.Register("$same_term", 2, SameTerm);
         BuiltinsRegistry.Register("term_attvars", 2, TermAttvars,
             Term, "term_attvars(+Term, -Vars)",
             "Unifies Vars with the attributed variables reachable from Term.");

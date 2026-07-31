@@ -265,6 +265,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `string_concat(?String1, ?String2, ?String)` | Concatenates String1 and String2 into String. |
 | `string_length(+String, ?Length)` | Relates a string to its length in characters. |
 | `sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom)` | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom. |
+| `sub_string(+String, ?Before, ?Length, ?After, ?SubString)` | Backtracks over every substring decomposition of String; the parts are strings (SWI). |
 | `upcase_atom(+Atom, -Upper)` | Relates an atom to its upper-cased form. |
 
 ## Attributed variables

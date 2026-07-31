@@ -425,6 +425,63 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(sw.ToString())));
     }
 
+    /// <summary><c>'$nb_setarg'(+Arg, +Term, +Value)</c> — the C# helper behind
+    /// the SWI shim's <c>nb_setarg/3</c> / <c>nb_linkarg/3</c>: destructively
+    /// links Term's Arg-th argument to Value, NOT trailed (survives
+    /// backtracking). An atomic Value (the common mutable-counter case) is
+    /// self-contained; a compound Value is linked as-is (it must outlive any
+    /// backtrack that would reclaim it — the caller's responsibility, as in SWI's
+    /// nb_linkarg).</summary>
+    public static bool NbSetArg(Activation engine)
+    {
+        Cell iC = ResolveLocal(engine, engine.GetRegister(0));
+        Cell tC = ResolveLocal(engine, engine.GetRegister(1));
+        Cell vC = ResolveLocal(engine, engine.GetRegister(2));
+        if (iC.Tag == Tag.Ref || tC.Tag == Tag.Ref)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (iC.Tag != Tag.Int)
+            throw new ShumwayPrologException(IsoError.TypeError("integer", new VarTerm("_")));
+        long i = iC.AsInt;
+        int argSlot;
+        int arity;
+        if (tC.Tag == Tag.Str)
+        {
+            int functorIdx = tC.AsHeapIndex;
+            (_, arity) = FunctorTable.Lookup(engine.GetHeap(functorIdx).AsFunctorId);
+            argSlot = functorIdx + (int)i;   // args at functorIdx+1 … functorIdx+arity
+        }
+        else if (tC.Tag == Tag.Lis)
+        {
+            arity = 2;                       // '[|]'(Head, Tail)
+            argSlot = tC.AsHeapIndex + (int)i - 1;
+        }
+        else
+        {
+            throw new ShumwayPrologException(IsoError.TypeError("compound", new VarTerm("_")));
+        }
+        if (i < 1 || i > arity) return false;
+        engine.SetHeap(argSlot, vC);
+        return true;
+    }
+
+    /// <summary><c>'$same_term'(@A, @B)</c> — the C# helper behind the SWI shim's
+    /// <c>same_term/2</c>: A and B are the SAME term — the identical variable, the
+    /// identical compound (same heap storage), or equal atomics. Distinct
+    /// compounds with equal structure are NOT the same term.</summary>
+    public static bool SameTerm(Activation engine)
+    {
+        Cell a = ResolveLocal(engine, engine.GetRegister(0));
+        Cell b = ResolveLocal(engine, engine.GetRegister(1));
+        if (a.Tag != b.Tag) return false;
+        return a.Tag switch
+        {
+            Tag.Ref or Tag.AttVar or Tag.Str or Tag.Lis => a.AsHeapIndex == b.AsHeapIndex,
+            Tag.Atom => a.AsAtomId == b.AsAtomId,
+            Tag.Int => a.AsInt == b.AsInt,
+            _ => Shumway.Builtins.StandardOrderComparator.Compare(engine, a, b) == 0,
+        };
+    }
+
     /// <summary><c>numbervars(+Term, +Start, -End, +Options)</c> (SWI) — as
     /// <c>numbervars/3</c> (arguments 1-3 identical); the option list is accepted
     /// and currently ignored (the default <c>'$VAR'(N)</c> numbering of every

@@ -179,12 +179,35 @@ public sealed partial class PrologEngine
         var savedDq = Flags.DoubleQuotes;
         _activeLibraryDialect = dialect;
         Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(dialect);
+        // ADR-040 — loading an SWI-dialect module auto-loads the SWI compat shim
+        // (nb_setarg, copy_term_nat, …) so the module's system-predicate uses
+        // resolve, exactly as SWI's own system predicates are always present.
+        if (dialect == SwiShim.LibraryName) EnsureSwiShim();
         try { return body(); }
         finally { _activeLibraryDialect = savedDialect; Flags.DoubleQuotes = savedDq; }
     }
 
+    private bool _swiShimLoaded;
+
+    /// <summary>Consults the SWI compat shim once. Triggered automatically when an
+    /// SWI-dialect module loads (<see cref="WithDialect"/>) and explicitly by
+    /// <c>use_module(library(swi))</c>.</summary>
+    internal void EnsureSwiShim()
+    {
+        if (_swiShimLoaded) return;
+        _swiShimLoaded = true;
+        var savedDq = Flags.DoubleQuotes;
+        Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(SwiShim.LibraryName);
+        try { ConsultStringInner(SwiShim.Source, recordInHistory: false); }
+        finally { Flags.DoubleQuotes = savedDq; }
+    }
+
     internal bool UseCompatLibrary(string name)
     {
+        // Explicit `use_module(library(swi))` — load the SWI compat shim (like
+        // SWI's own library(sicstus)). Routes through the same one-shot loader
+        // the swi-dialect auto-load uses.
+        if (name == SwiShim.LibraryName) { EnsureSwiShim(); return true; }
         if (!DialectRegistry.TryResolve(_activeLibraryDialect, name,
                 out string source, out var doubleQuotes, out _))
             return false;
