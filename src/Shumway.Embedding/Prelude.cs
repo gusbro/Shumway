@@ -399,6 +399,21 @@ internal static class Prelude
             Goal = call(M:attribute_goals(V, G, [])),
             catch(Goal, error(existence_error(_, _), _), fail).
 
+        % ===== variant (structural) equivalence =====
+        % A =@= B iff A and B are equal up to a consistent renaming of their
+        % variables. Number a fresh copy of each (variables become '$VAR'(N) in
+        % first-occurrence order); the terms are variants iff the numbered copies
+        % are identical and used the same number of variables.
+        :- public (=@=)/2.
+        :- public (\=@=)/2.
+        %! =@=(@Term1, @Term2) | Term comparison | Term1 and Term2 are variants (structurally equal up to variable renaming).
+        A =@= B :-
+            copy_term(A, A1), numbervars(A1, 0, N),
+            copy_term(B, B1), numbervars(B1, 0, M),
+            N == M, A1 == B1.
+        %! \=@=(@Term1, @Term2) | Term comparison | Term1 and Term2 are NOT variants.
+        A \=@= B :- \+ (A =@= B).
+
         % ===== common list-library predicates =====
 
         %! select(?Elem, ?List, ?Rest) | Lists | Rest is List with one occurrence of Elem removed; backtracks over occurrences.

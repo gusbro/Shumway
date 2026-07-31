@@ -456,6 +456,13 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | --- | --- |
 | `current_op(?Priority, ?Type, ?Name)` | Enumerates the operator table; backtracks over every operator (ISO §8.17.3). |
 
+## Term comparison
+
+| Predicate | Description |
+| --- | --- |
+| `=@=(@Term1, @Term2)` | Term1 and Term2 are variants (structurally equal up to variable renaming). |
+| `\=@=(@Term1, @Term2)` | Term1 and Term2 are NOT variants. |
+
 ## Time
 
 | Predicate | Description |

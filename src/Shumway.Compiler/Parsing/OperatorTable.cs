@@ -176,6 +176,10 @@ public sealed class OperatorTable
         t.Define("@>", 700, OperatorType.Xfx);
         t.Define("@=<", 700, OperatorType.Xfx);
         t.Define("@>=", 700, OperatorType.Xfx);
+        // Variant (structural) equivalence — X and Y equal up to a consistent
+        // variable renaming. A first-class comparison operator/predicate.
+        t.Define("=@=", 700, OperatorType.Xfx);
+        t.Define("\\=@=", 700, OperatorType.Xfx);
         t.Define("=..", 700, OperatorType.Xfx);
         t.Define("is", 700, OperatorType.Xfx);
         t.Define("=:=", 700, OperatorType.Xfx);

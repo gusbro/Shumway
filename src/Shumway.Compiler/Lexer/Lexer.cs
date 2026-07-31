@@ -661,6 +661,20 @@ public sealed class Lexer
             return EscapeContinuation;
         }
 
+        // SWI `\c` — line continuation that removes ALL following layout (spaces,
+        // tabs, newlines) up to the next non-layout character. Not ISO; a pure
+        // extension (a previously-invalid sequence), so it does not affect an
+        // ISO-valid program. Lets SWI library sources with `\c`-joined strings
+        // lex (ADR-040 SWI triage).
+        if (c == 'c')
+        {
+            Advance();   // consume 'c'
+            while (_offset < _source.Length
+                   && _source[_offset] is ' ' or '\t' or '\n' or '\r')
+                Advance();
+            return EscapeContinuation;
+        }
+
         // Hex escape (ISO / SWI / Scryer): `\x` followed by one or more hex
         // digits and a terminating backslash, e.g. `\x1b\`. The terminator is
         // mandatory — it disambiguates `"\x1b\["` (ESC then `[`).
@@ -669,6 +683,12 @@ public sealed class Lexer
             Advance();   // consume 'x'
             return ReadNumericEscape(pos, radix: 16, name: "hexadecimal");
         }
+        // \uXXXX (4 hex) / \UXXXXXXXX (8 hex) — a Unicode code point, SWI/Java
+        // style: a FIXED-width hex escape with NO terminating backslash. Not ISO;
+        // a pure extension over a previously-invalid sequence, so it does not
+        // affect an ISO-valid program. Many SWI library sources use `\u` (ADR-040).
+        if (c == 'u') { Advance(); return ReadFixedHexEscape(pos, 4); }
+        if (c == 'U') { Advance(); return ReadFixedHexEscape(pos, 8); }
         // Octal escape (ISO): `\` followed by octal digits and a terminating
         // backslash, e.g. `\33\`. A bare `\0` (no digits, no terminator) is
         // kept below as the NUL shorthand for backward compatibility, so the
@@ -686,6 +706,7 @@ public sealed class Lexer
             'r' => 13,
             't' => 9,
             'v' => 11,
+            'e' => 27,    // escape (ESC) — SWI/GNU extension, not ISO
             '0' => 0,
             's' => 32,    // space — Quintus extension
             '\\' => '\\',
@@ -700,6 +721,27 @@ public sealed class Lexer
     /// <summary>Reads the digits of a numeric character escape (hex after
     /// <c>\x</c>, or octal after <c>\</c>) and its mandatory terminating
     /// backslash. The offset is positioned at the first digit on entry.</summary>
+    // Reads exactly <paramref name="digits"/> hex digits (no terminator) — the
+    // \uXXXX / \UXXXXXXXX Unicode escapes.
+    private int ReadFixedHexEscape(SourcePosition pos, int digits)
+    {
+        long value = 0;
+        for (int i = 0; i < digits; i++)
+        {
+            if (_offset >= _source.Length)
+                throw new LexerException($"Unterminated \\u/\\U escape at {pos}.", pos);
+            int d = DigitValue(_source[_offset]);
+            if (d < 0 || d >= 16)
+                throw new LexerException(
+                    $"\\u/\\U escape needs {digits} hex digits at {pos}.", pos);
+            value = value * 16 + d;
+            Advance();
+        }
+        if (value > 0x10FFFF)
+            throw new LexerException($"code point out of range at {pos}.", pos);
+        return (int)value;
+    }
+
     private int ReadNumericEscape(SourcePosition pos, int radix, string name)
     {
         int start = _offset;

@@ -47,11 +47,23 @@ C# builtin is straightforward.
 | `builtins` | `1424:59: Unexpected Bar '|'` | a `|` where a term was expected — reader edge case; investigate the exact construct |
 | `simplex` | `Clauses for ,/4 are not contiguous` | clauses grouping under `,/4` — likely an operator/quoting shape the reader mis-splits; investigate |
 
-## Structurally incompatible
+## Libraries with a C / native backend — analyse by hand
 
-None found outright. `ffi`/`crypto` need native backends for their full function
-(the `.pl` shim aside), which is the `:- native` / foreign-interop story, not a
-Prolog-level shim.
+These load their `.pl` layer (all 45 parse/load), but their real function is
+native — a decision per library on whether to reimplement in the C# layer of the
+scryer shim, or leave to `:- native` / foreign interop (ADR-024):
+
+- `crypto` — hashes, HMAC, elliptic-curve / ed25519 crypto. Native crypto backend.
+- `ffi` — C foreign-function interface. This IS the native-interop story
+  (`:- native`, ADR-024) — the `.pl` is a thin front.
+- `tls` — TLS sockets. Native TLS.
+- `sockets` — TCP sockets. Native networking.
+- `os`, `process` — OS / subprocess primitives (partly covered: `process` loads;
+  the deeper OS calls are native).
+
+None are *structurally* impossible — they are "how much of the native surface do
+we want in C#". `os`/`process`/`sockets` have the clearest value; `crypto`/`tls`
+are large.
 
 ## Suggested order of attack
 

@@ -820,8 +820,35 @@ internal sealed class ConsultPipeline
             CompoundTerm { Functor: ";", Args: [var a, var b] } => EvalCond(a) || EvalCond(b),
             CompoundTerm { Functor: "\\+" or "not", Args: [var a] } => !EvalCond(a),
             CompoundTerm { Functor: "current_predicate", Args: [var pi] } => CondPredExists(pi),
+            CompoundTerm { Functor: "exists_source", Args: [var spec] } => CondExistsSource(spec),
+            CompoundTerm { Functor: "current_prolog_flag", Args: [AtomTerm f, var v] } => CondFlagIs(f.Name, v),
             _ => CondWarnFalse(cond),
         };
+        // exists_source(library(X)) / exists_source(File): does the source resolve?
+        bool CondExistsSource(Term spec)
+        {
+            if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
+                return E.TryResolveLibrary(lib.Name, out _)
+                    || CompatLibraries.TryGet(lib.Name, out _)
+                    || lib.Name is "clpfd" or "clpr" or "coroutining";
+            if (spec is AtomTerm f)
+                return System.IO.File.Exists(f.Name) || System.IO.File.Exists(f.Name + ".pl");
+            return false;
+        }
+        // current_prolog_flag(Flag, Value): compare against the engine's flag.
+        bool CondFlagIs(string flag, Term valueTerm)
+        {
+            string? actual = flag switch
+            {
+                "bounded" => "false",
+                "dialect" => "shumway",
+                "double_quotes" => E._flags.DoubleQuotes.ToString().ToLowerInvariant(),
+                "unknown" => E._flags.Unknown,
+                "occurs_check" => E._flags.OccursCheck,
+                _ => null,   // unknown flag → the condition cannot hold
+            };
+            return actual is not null && valueTerm is AtomTerm v && v.Name == actual;
+        }
         static bool CondWarnFalse(Term cond)
         {
             Console.Error.WriteLine(

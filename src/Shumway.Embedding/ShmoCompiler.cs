@@ -70,6 +70,18 @@ public static class ShmoCompiler
     public static readonly HashSet<string> SilentlyIgnoredDirectives = new()
     {
         "extrn",
+        // SWI/SICStus declaration directives with no Shumway meaning — no-op'd so
+        // a library that declares them loads (ADR-040 SWI triage). Semantics we do
+        // not (yet) act on: predicate_options (option documentation),
+        // module_transparent (module transparency — our $mqual threads modules),
+        // create_prolog_flag (user flags), current_arithmetic_function (custom
+        // eval), reexport (re-export — the importer sees the source module's
+        // exports), redefine_system_predicate, det (determinism doc), at_halt
+        // (halt hooks), '$hide', format_predicate (custom ~ directives), encoding
+        // (we are UTF-8).
+        "predicate_options", "module_transparent", "create_prolog_flag",
+        "current_arithmetic_function", "reexport", "redefine_system_predicate",
+        "det", "at_halt", "$hide", "format_predicate", "encoding", "volatile",
     };
 
     /// <summary>Compiles <paramref name="path"/> to a <see cref="ShmoObject"/>.
