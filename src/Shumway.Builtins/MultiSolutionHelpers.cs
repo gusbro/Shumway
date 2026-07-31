@@ -183,9 +183,10 @@ public static class MultiSolutionHelpers
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
         if (atomCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
-        if (atomCell.Tag != Tag.Atom)
+        string name;
+        if (atomCell.Tag == Tag.Atom) name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+        else if (!SwiLenient.TryCoerce(engine, atomCell, out name))
             throw new PrologRuntimeException("type_error", "atom");
-        string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         int len = name.Length;
         int total = (len + 1) * (len + 2) / 2;   // Σ_{before=0..len} (len-before+1)
 

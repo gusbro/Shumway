@@ -26,6 +26,23 @@ public sealed class DialectAwareBuiltinsTests
         return e;
     }
 
+    // Loads an swi-dialect module (the temp dir is deleted after the clauses are
+    // in memory) and runs a query; returns whether it succeeded.
+    private static bool QueryInSwiModule(string moduleBody, string query)
+    {
+        string tmp = Path.Combine(Path.GetTempPath(), "swidialect-" + Guid.NewGuid());
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            File.WriteAllText(Path.Combine(tmp, "swimod.pl"), moduleBody);
+            var e = new PrologEngine();
+            e.AddLibraryDirectory(tmp, "swi");
+            e.ConsultString(":- use_module(library(swimod)).");
+            return e.Query(query).Success;
+        }
+        finally { try { Directory.Delete(tmp, true); } catch { } }
+    }
+
     [Fact]
     public void AtomConcat_NumericArg_StrictByDefault()
     {
@@ -94,6 +111,7 @@ public sealed class DialectAwareBuiltinsTests
         Assert.True(e.Query("catch(atom_length(42, _), error(type_error(atom, 42), _), true).").Success);
         Assert.True(e.Query("catch(atom_chars(42, _), error(type_error(atom, _), _), true).").Success);
         Assert.True(e.Query("catch(atom_codes(42, _), error(type_error(atom, _), _), true).").Success);
+        Assert.True(e.Query("catch(sub_atom(42, _, _, _, _), error(type_error(atom, _), _), true).").Success);
         Assert.True(e.Query("catch(upcase_atom(42, _), error(type_error(atom, _), _), true).").Success);
     }
 
@@ -115,6 +133,33 @@ public sealed class DialectAwareBuiltinsTests
             Assert.True(e.Query("aup(1.5, U), U == '1.5'.").Success);          // number has no case
         }
         finally { try { Directory.Delete(tmp, true); } catch { } }
+    }
+
+    [Fact]
+    public void SubAtom_Coercion_DependsOnSurvivingSwiFrame()
+    {
+        // sub_atom/5 is a PRELUDE wrapper over the $sub_atom_enum builtin, so —
+        // unlike the direct builtins where engine.P is in the SWI caller's code —
+        // the SWI caller is reached only via the call-return chain. The chain-walk
+        // follows CONTINUATION (return) addresses, which survive last-call
+        // optimisation, so an SWI module IS found whenever some SWI predicate
+        // above the wrapper keeps a live frame (i.e. it is not a pure tail-call).
+        //
+        // (a) the SWI predicate does work after sub_atom → its own frame survives.
+        Assert.True(QueryInSwiModule(
+            ":- module(swimod, [go/2]).\ngo(X, S) :- sub_atom(X, 1, 2, _, R), S = R.\n",
+            "go(123456, S), S == '23'."));
+        // (b) an SWI ancestor calls the helper non-last → the ancestor's frame
+        //     survives even though every call below it is a tail-call.
+        Assert.True(QueryInSwiModule(
+            ":- module(swimod, [go/2]).\n"
+            + "go(X, S) :- helper(X, R), S = R.\nhelper(X, S) :- sub_atom(X, 1, 2, _, S).\n",
+            "go(123456, S), S == '23'."));
+        // (c) a pure tail-call chain from a non-SWI query leaves no live SWI frame
+        //     on the continuation chain → strict (type_error), same as no coercion.
+        Assert.True(QueryInSwiModule(
+            ":- module(swimod, [go/2]).\ngo(X, S) :- sub_atom(X, 1, 2, _, S).\n",
+            "catch(go(123456, _), error(type_error(atom, _), _), true)."));
     }
 
     [Fact]

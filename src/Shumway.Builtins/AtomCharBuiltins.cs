@@ -565,9 +565,10 @@ public static class AtomCharBuiltins
         // ISO §8.16.10.3: Atom var → instantiation_error; not atom → type_error.
         if (atomC.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
-        if (atomC.Tag != Tag.Atom)
+        string atomName;
+        if (atomC.Tag == Tag.Atom) atomName = AtomTable.GetById(atomC.AsAtomId)?.Name ?? "";
+        else if (!SwiLenient.TryCoerce(engine, atomC, out atomName))   // SWI: accept atomic
             throw new PrologRuntimeException("type_error", "atom");
-        string atomName = AtomTable.GetById(atomC.AsAtomId)?.Name ?? "";
 
         Cell beforeC = Resolve(engine, engine.GetRegister(1));
         Cell lengthC = Resolve(engine, engine.GetRegister(2));
