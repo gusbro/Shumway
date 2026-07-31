@@ -1443,6 +1443,11 @@ internal sealed class ConsultPipeline
             consultBaseOffset = 0;
             manifest.Clauses.AddRange(clauses);
             manifest.PublicFunctors.UnionWith(publics);
+            // ADR-040 — stamp the dialect this module is being loaded under (a
+            // library pulled in under the swi/scryer dialect), for the runtime
+            // dialect-sensitive builtin path.
+            manifest.Dialect = E.ActiveLibraryDialect;
+            if (manifest.Dialect is not null) E.NoteDialectedModule();
             // ADR-038 — export-qualified module: record the importable surface and
             // this consult's imports.
             manifest.IsExportQualified = isExportQualified;

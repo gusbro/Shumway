@@ -28,6 +28,15 @@ public sealed class ModuleManifest
     public List<Clause> Clauses { get; }
     public HashSet<int> PublicFunctors { get; }
 
+    /// <summary>ADR-040 — the source dialect this module was loaded as
+    /// (<c>"swi"</c>, <c>"scryer"</c>, …), or <c>null</c> for Shumway/ISO. Set
+    /// from the active library dialect at consult time. Consulted at runtime by
+    /// dialect-sensitive builtins (e.g. <c>atom_concat/3</c> coercing a numeric
+    /// argument when its caller lives in an SWI module) — only on the path where
+    /// the strict behaviour would otherwise raise, so the common case pays
+    /// nothing.</summary>
+    public string? Dialect { get; set; }
+
     /// <summary>ADR-038 — set when the module was declared with the two-arg
     /// <c>:- module(Name, [Exports])</c> directive. An export-qualified module
     /// contributes NOTHING to the bare-global namespace: every one of its

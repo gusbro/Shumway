@@ -56,3 +56,14 @@ public interface IFlagHost
 {
     FlagStore FlagStore { get; }
 }
+
+/// <summary>Host-side interface for dialect-sensitive builtins (ADR-040). A
+/// builtin whose STRICT ISO behaviour is about to raise consults this to learn
+/// whether its caller lives in a module loaded as a particular dialect (SWI,
+/// Scryer, …) and, if so, applies that dialect's more permissive behaviour.
+/// Implemented by <c>PrologEngine</c>; only reached on the would-raise path, so
+/// the common case pays nothing.</summary>
+public interface IDialectAwareHost
+{
+    bool CallerModuleHasDialect(Activation engine, string dialect);
+}

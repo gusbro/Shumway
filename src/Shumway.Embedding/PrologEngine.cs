@@ -20,7 +20,7 @@ namespace Shumway.Embedding;
 /// named module — re-consulting the same module overwrites the previous
 /// contents, matching ADR-008.</para>
 /// </summary>
-public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shumway.Builtins.IFlagHost
+public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shumway.Builtins.IFlagHost, Shumway.Builtins.IDialectAwareHost
 {
     public const string DefaultModuleName = "user";
 

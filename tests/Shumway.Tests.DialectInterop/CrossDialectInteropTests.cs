@@ -52,6 +52,23 @@ public sealed class CrossDialectInteropTests
     }
 
     [Fact]
+    public void Swi_Gensym_Runs_Via_AtomConcat_Coercion()
+    {
+        // SWI's own library(gensym) calls atom_concat(Base, Integer, Atom) — an
+        // ISO type_error, but SWI coerces the number. Because gensym's module is
+        // loaded as the swi dialect, the dialect-sensitive atom_concat/3 applies
+        // the coercion, so SWI's unmodified gensym.pl runs. (ADR-040.)
+        string? swi = Dir(SwiEnv);
+        if (swi is null) return;
+
+        var e = new PrologEngine();
+        e.AddLibraryDirectory(swi, "swi");
+        e.ConsultString(":- use_module(library(gensym)).");
+        Assert.Equal("foo1", e.Query("gensym(foo, X).").Get<string>("X"));
+        Assert.Equal("foo2", e.Query("gensym(foo, X).").Get<string>("X"));
+    }
+
+    [Fact]
     public void Swi_Heaps_Standalone_Loads_And_Works()
     {
         // A real SWI library (priority queues), loaded on its own.

@@ -113,6 +113,63 @@ public sealed partial class PrologEngine
         return _libraryDirDialect.TryGetValue(dir, out string? d) ? d : null;
     }
 
+    // ADR-040 — true once any module with a non-null dialect has been loaded. The
+    // fast exit for an all-Shumway engine: the dialect-sensitive builtin path is a
+    // no-op, so a strict program keeps ISO behaviour at zero cost.
+    private bool _anyDialectedModule;
+    internal void NoteDialectedModule() => _anyDialectedModule = true;
+
+    // Sorted snapshot of the current query's predicate addresses, rebuilt when
+    // the address map changes (once per query setup). Binary-searched to map a
+    // code address back to its predicate.
+    private int[]? _sortedPredAddrs;
+    private object? _sortedPredAddrsFor;
+
+    /// <summary>ADR-040 — the source dialect of the nearest caller (the running
+    /// goal, else an ancestor on the call-return chain) that lives in a dialected
+    /// module, or null. Only meaningful cost when a dialect-sensitive builtin is
+    /// on its would-raise path.</summary>
+    internal string? CallerDialect(Activation engine)
+    {
+        if (!_anyDialectedModule || _currentPredicatesByAddress is null) return null;
+        string? d = DialectAtAddress(engine.P);
+        if (d is not null) return d;
+        foreach (int addr in engine.EnumerateCallReturnAddresses())
+        {
+            d = DialectAtAddress(addr);
+            if (d is not null) return d;
+        }
+        return null;
+    }
+
+    private string? DialectAtAddress(int addr)
+    {
+        var map = _currentPredicatesByAddress;
+        if (map is null) return null;
+        if (!ReferenceEquals(_sortedPredAddrsFor, map))
+        {
+            _sortedPredAddrs = System.Linq.Enumerable.ToArray(map.Keys);
+            System.Array.Sort(_sortedPredAddrs);
+            _sortedPredAddrsFor = map;
+        }
+        int[] keys = _sortedPredAddrs!;
+        int idx = System.Array.BinarySearch(keys, addr);
+        if (idx < 0) idx = ~idx - 1;   // nearest entry at or below addr
+        if (idx < 0) return null;
+        int fid = map[keys[idx]].FunctorId;
+        var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
+        string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
+        int dollar = name.IndexOf('$');
+        if (dollar <= 0) return null;   // bare-global (not Module$name-mangled)
+        string module = name.Substring(0, dollar);
+        return _modules.TryGetValue(module, out var m) ? m.Dialect : null;
+    }
+
+    /// <summary>Whether the caller's module was loaded as <paramref name="dialect"/>.
+    /// Used by dialect-sensitive builtins (<see cref="Shumway.Builtins.IDialectAwareHost"/>).</summary>
+    public bool CallerModuleHasDialect(Activation engine, string dialect)
+        => CallerDialect(engine) == dialect;
+
     // Runs <paramref name="body"/> with <paramref name="dialect"/> active — its
     // name resolution preferred and its double_quotes in force — restoring both
     // after. The subtree a library pulls in inherits the dialect for the load.
