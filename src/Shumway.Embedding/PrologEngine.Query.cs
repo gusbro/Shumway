@@ -93,6 +93,12 @@ public sealed partial class PrologEngine
         {
             // The activation is dead — the query failed, ran out of solutions, or the
             // caller stopped asking. Same as a yield, and more final.
+            // setup_call_cleanup/3: fire any cleanup whose scope is abandoned by
+            // the teardown (a caller that stopped with choice points still live —
+            // the SWI toplevel-cancel case). Runs BEFORE the heap buffer is
+            // surrendered so the cleanup goal still has its heap.
+            if (engine.HasCleanupHandlers || engine.HasPendingCleanups)
+                interp.RunTeardownCleanups(program);
             host.DebugSession?.OnLeaveProlog(engine);
             host._heapPool.Return(engine);
         }

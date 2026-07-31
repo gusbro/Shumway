@@ -363,6 +363,11 @@ public sealed partial class Activation
     public void UnwindToCatchFrame(int index)
     {
         CatchFrame f = _catchFrames[index];
+        // setup_call_cleanup/3: an exception unwinding to this frame discards
+        // every choice-point scope above it — fire the cleanup of any registered
+        // scope that is being abandoned (its Goal's CPs sit above the frame's
+        // snapshot level). The drain runs at the recovery goal's first safe point.
+        if (HasCleanupHandlers) FireCleanupsAbove(f.SnapB);
         if (AttrSweepEnabled)
         {
             int attrEntries = 0, oldHomeEntries = 0;

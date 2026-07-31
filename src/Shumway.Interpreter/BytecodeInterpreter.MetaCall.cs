@@ -38,6 +38,17 @@ public sealed partial class BytecodeInterpreter
         FlushPendingCleanupsSlow(code);
     }
 
+    /// <summary>setup_call_cleanup/3 teardown: enqueue every still-live handler
+    /// (the query is over, or the caller stopped asking with choice points still
+    /// live) and run their cleanups. Called from the query driver's finally. A
+    /// Cleanup exception propagates out as a normal exception (SWI).</summary>
+    public void RunTeardownCleanups(ProgramView code)
+    {
+        if (!_engine.HasCleanupHandlers && !_engine.HasPendingCleanups) return;
+        _engine.FireAllRemainingCleanups();
+        FlushPendingCleanups(code);
+    }
+
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private void FlushPendingCleanupsSlow(ProgramView code)

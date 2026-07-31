@@ -188,6 +188,78 @@ public sealed class FlagAndCleanupTests
     }
 
     [Fact]
+    public void Cleanup_RunsOnExceptionFromBelow_CaughtByOuter()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(":- dynamic(closed/0).\n");
+        // A nondet Goal succeeds leaving choice points, then an exception is
+        // thrown AFTER it and caught by an outer catch — unwinding past the
+        // leftover scope must fire cleanup.
+        Assert.True(e.Query(
+            "catch((setup_call_cleanup(true, member(_,[1,2,3]), assertz(closed)), throw(boom)), boom, true).").Success);
+        Assert.Single(e.QueryAll("closed."));
+    }
+
+    [Fact]
+    public void Cleanup_RunsOnExceptionFromDeeperPredicate()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- dynamic(cl/0).\n"
+            + "boom_below :- throw(deep).\n"
+            + "p :- setup_call_cleanup(true, member(_,[1,2,3]), assertz(cl)), boom_below.\n");
+        Assert.True(e.Query("catch(p, deep, true).").Success);
+        Assert.Single(e.QueryAll("cl."));
+    }
+
+    [Fact]
+    public void Cleanup_RunsOnUncaughtException()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(":- dynamic(cl/0).\n");
+        // The exception is uncaught (propagates out of the query); cleanup still
+        // fires during teardown and the ball still propagates.
+        var ex = Assert.ThrowsAny<System.Exception>(() =>
+            e.Query("setup_call_cleanup(true, member(_,[1,2,3]), assertz(cl)), throw(boom)."));
+        Assert.Contains("boom", ex.Message);
+        Assert.Single(e.QueryAll("cl."));
+    }
+
+    [Fact]
+    public void Cleanup_RunsWhenCallerStopsAtFirstSolution()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(":- dynamic(closed/0).\n");
+        // The caller takes the FIRST solution and stops (no cut) — the leftover
+        // choice points are abandoned at query teardown, firing cleanup (the SWI
+        // toplevel-cancel case).
+        Assert.True(e.Query(
+            "setup_call_cleanup(true, member(X,[1,2,3]), assertz(closed)), X == 1.").Success);
+        Assert.Single(e.QueryAll("closed."));
+    }
+
+    [Fact]
+    public void Cleanup_HasOnceSemantics_ChoicePointsDestroyed()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(":- dynamic(k/1).\n");
+        // A non-deterministic Cleanup runs with once/1 semantics: only its first
+        // solution, choice points destroyed.
+        e.Query("setup_call_cleanup(true, true, (member(V,[a,b,c]), assertz(k(V)))).");
+        Assert.Single(e.QueryAll("k(_)."));
+    }
+
+    [Fact]
+    public void Cleanup_ExceptionPropagates()
+    {
+        var e = new PrologEngine();
+        // An exception raised by Cleanup propagates (SWI: not swallowed by the
+        // once/ignore wrapper).
+        Assert.True(e.Query(
+            "catch(setup_call_cleanup(true, true, throw(cleanerr)), cleanerr, true).").Success);
+    }
+
+    [Fact]
     public void CallCleanup_IsSetupCallCleanupWithoutSetup()
     {
         var e = new PrologEngine();
