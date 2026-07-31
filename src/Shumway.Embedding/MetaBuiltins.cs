@@ -346,6 +346,9 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("predicate_property", 2, PredicateProperty,
             Reflect, "predicate_property(+Head, ?Property)",
             "Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate.");
+        BuiltinsRegistry.Register("module_property", 2, ModuleProperty,
+            Reflect, "module_property(?Module, ?Property)",
+            "Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound.");
         BuiltinsRegistry.Register("with_output_to", 2, WithOutputTo,
             Io, "with_output_to(+Sink, :Goal)", "Runs a goal, capturing its output into an atom, string or code list.");
         BuiltinsRegistry.Register("atom_to_term",   3, AtomToTerm,

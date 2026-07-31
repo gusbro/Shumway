@@ -89,6 +89,8 @@ public static class StandardBuiltins
             Types, "callable(@Term)", "Succeeds if the argument is an atom or a compound term.");
         BuiltinsRegistry.Register("is_list", 1, TypeBuiltins.IsList,
             Types, "is_list(@Term)", "Succeeds if the argument is a proper list.");
+        BuiltinsRegistry.Register("string", 1, TypeBuiltins.IsString,
+            Types, "string(@Term)", "Succeeds if the argument is a string.");
         // Scryer internal fast-path predicate (library error/iso_ext/crypto/…).
         BuiltinsRegistry.Register("$is_partial_string", 1, TypeBuiltins.IsPartialString);
         BuiltinsRegistry.Register("ground",  1, TypeBuiltins.IsGround,

@@ -63,6 +63,15 @@ public static class TypeBuiltins
         return t is Tag.Int or Tag.BigInt or Tag.Float or Tag.Rational;
     }
 
+    /// <summary><c>string(X)</c> — X is a string cell (SWI). Shumway has a
+    /// distinct string representation (Tag.String / PSTR); an atom is not a
+    /// string.</summary>
+    public static bool IsString(Activation engine)
+    {
+        var t = Tag0(engine);
+        return t is Tag.String or Tag.Pstr;
+    }
+
     /// <summary><c>'$is_partial_string'(X)</c> — Scryer's fast test for the
     /// compact char-sequence representation (a partial string). True for a PSTR or
     /// string cell; a plain cons-list of chars is not one (callers fall back to a

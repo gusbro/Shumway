@@ -31,9 +31,11 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `ground(@Term)` | Succeeds if the argument contains no unbound variables. |
 | `integer(@Term)` | Succeeds if the argument is an integer. |
 | `is_list(@Term)` | Succeeds if the argument is a proper list. |
+| `must_be(+Type, @Value)` | Throws instantiation_error if Value is unbound (unless Type is var), or type_error(Type, Value) if it is not of Type. |
 | `nonvar(@Term)` | Succeeds if the argument is not an unbound variable. |
 | `number(@Term)` | Succeeds if the argument is a number. |
 | `rational(@Term)` | Succeeds if the argument is a rational number (an integer is a rational with denominator 1). |
+| `string(@Term)` | Succeeds if the argument is a string. |
 | `var(@Term)` | Succeeds if the argument is an unbound variable. |
 
 ## Arithmetic
@@ -374,6 +376,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `char_conversion(+InChar, +OutChar)` | Registers a one-character-to-one-character mapping the lexer applies to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry. |
 | `current_char_conversion(?InChar, ?OutChar)` | Enumerates the active char-conversion table (ISO §8.14.10). |
 | `current_prolog_flag(?Flag, ?Value)` | Reads the value of a Prolog flag. |
+| `module_property(?Module, ?Property)` | Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound. |
 | `op(+Priority, +Type, +Name)` | Declares an operator of the given priority and type. |
 | `predicate_property(+Head, ?Property)` | Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate. |
 | `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
@@ -450,6 +453,12 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `phrase(:Body, ?List)` | phrase(Body, List, []) — succeeds when the DCG Body derives List. |
 | `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime. |
 
+## Messages
+
+| Predicate | Description |
+| --- | --- |
+| `print_message(+Kind, +Message)` | Prints a message of the given kind (error/warning/informational/silent) to user_error. A best-effort renderer (no message//1 hooks). |
+
 ## Reflection
 
 | Predicate | Description |
@@ -462,6 +471,15 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | --- | --- |
 | `=@=(@Term1, @Term2)` | Term1 and Term2 are variants (structurally equal up to variable renaming). |
 | `\=@=(@Term1, @Term2)` | Term1 and Term2 are NOT variants. |
+
+## Threads
+
+| Predicate | Description |
+| --- | --- |
+| `message_queue_create(?Queue)` | Creates (or names) a FIFO message queue. Single-threaded buffer. |
+| `thread_get_message(+Queue, ?Message)` | Removes the oldest matching message; FAILS if none (single-threaded, no blocking). |
+| `thread_send_message(+Queue, +Message)` | Appends Message to the queue (FIFO). |
+| `with_mutex(+Mutex, :Goal)` | Runs Goal (once). Single-threaded: the mutex is a no-op. |
 
 ## Time
 

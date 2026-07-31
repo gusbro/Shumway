@@ -414,6 +414,80 @@ internal static class Prelude
         %! \=@=(@Term1, @Term2) | Term comparison | Term1 and Term2 are NOT variants.
         A \=@= B :- \+ (A =@= B).
 
+        % ===== single-threaded mutex + message queues (SWI compat) =====
+        % Shumway is single-threaded, so a mutex is a no-op and with_mutex/2 just
+        % runs the goal, committing to its first solution (as SWI does). A message
+        % queue is a FIFO buffer backed by dynamic facts — assertz appends,
+        % retract removes the oldest match. thread_get_message/2 FAILS on an empty
+        % queue (there is no other thread to wait for) rather than blocking.
+        :- public with_mutex/2.
+        %! with_mutex(+Mutex, :Goal) | Threads | Runs Goal (once). Single-threaded: the mutex is a no-op.
+        with_mutex(_Mutex, Goal) :- once(Goal).
+        :- public mutex_create/1.
+        mutex_create(_).
+        :- public mutex_create/2.
+        mutex_create(_, _).
+        :- public mutex_lock/1.
+        mutex_lock(_).
+        :- public mutex_unlock/1.
+        mutex_unlock(_).
+        :- public mutex_destroy/1.
+        mutex_destroy(_).
+
+        :- dynamic('$mq_msg'/2).
+        :- dynamic('$mq_ctr'/1).
+        :- public message_queue_create/1.
+        %! message_queue_create(?Queue) | Threads | Creates (or names) a FIFO message queue. Single-threaded buffer.
+        message_queue_create(Q) :- ( var(Q) -> '$mq_fresh_id'(Q) ; true ).
+        :- public message_queue_create/2.
+        message_queue_create(Q, _Options) :- message_queue_create(Q).
+        '$mq_fresh_id'(Q) :-
+            ( retract('$mq_ctr'(N0)) -> N is N0 + 1 ; N = 1 ),
+            assertz('$mq_ctr'(N)),
+            number_codes(N, Cs), atom_codes(A, Cs), atom_concat('$mq_q_', A, Q).
+        :- public thread_send_message/2.
+        %! thread_send_message(+Queue, +Message) | Threads | Appends Message to the queue (FIFO).
+        thread_send_message(Q, M) :- assertz('$mq_msg'(Q, M)).
+        :- public thread_send_message/3.
+        thread_send_message(Q, M, _Opts) :- assertz('$mq_msg'(Q, M)).
+        :- public thread_get_message/2.
+        %! thread_get_message(+Queue, ?Message) | Threads | Removes the oldest matching message; FAILS if none (single-threaded, no blocking).
+        thread_get_message(Q, M) :- retract('$mq_msg'(Q, M)).
+        :- public thread_peek_message/2.
+        thread_peek_message(Q, M) :- '$mq_msg'(Q, M), !.
+        :- public message_queue_destroy/1.
+        message_queue_destroy(Q) :- retractall('$mq_msg'(Q, _)).
+
+        % ===== must_be/2, print_message/2 (SWI/SICStus compat) =====
+        :- public must_be/2.
+        %! must_be(+Type, @Value) | Type checking | Throws instantiation_error if Value is unbound (unless Type is var), or type_error(Type, Value) if it is not of Type.
+        must_be(Type, X) :-
+            ( var(X), Type \== var -> throw(error(instantiation_error, must_be/2))
+            ; '$must_be_ok'(Type, X) -> true
+            ; throw(error(type_error(Type, X), must_be/2)) ).
+        '$must_be_ok'(integer, X) :- integer(X).
+        '$must_be_ok'(atom, X) :- atom(X).
+        '$must_be_ok'(atomic, X) :- atomic(X).
+        '$must_be_ok'(number, X) :- number(X).
+        '$must_be_ok'(callable, X) :- callable(X).
+        '$must_be_ok'(list, X) :- is_list(X).
+        '$must_be_ok'(boolean, X) :- ( X == true ; X == false ).
+        '$must_be_ok'(var, X) :- var(X).
+        '$must_be_ok'(nonvar, X) :- nonvar(X).
+        '$must_be_ok'(ground, X) :- ground(X).
+        '$must_be_ok'(positive_integer, X) :- integer(X), X > 0.
+        '$must_be_ok'(nonneg, X) :- integer(X), X >= 0.
+        '$must_be_ok'(float, X) :- float(X).
+        '$must_be_ok'(string, X) :- string(X).
+        '$must_be_ok'(text, X) :- ( atom(X) ; string(X) ).
+
+        :- public print_message/2.
+        %! print_message(+Kind, +Message) | Messages | Prints a message of the given kind (error/warning/informational/silent) to user_error. A best-effort renderer (no message//1 hooks).
+        print_message(silent, _) :- !.
+        print_message(Kind, format(F, A)) :- !,
+            format(user_error, '~w: ', [Kind]), format(user_error, F, A), nl(user_error).
+        print_message(Kind, Message) :- format(user_error, '~w: ~q~n', [Kind, Message]).
+
         % ===== common list-library predicates =====
 
         %! select(?Elem, ?List, ?Rest) | Lists | Rest is List with one occurrence of Elem removed; backtracks over occurrences.

@@ -344,6 +344,117 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(n));
     }
 
+    /// <summary><c>module_property(?Module, ?Property)</c> — introspects a loaded
+    /// module. Supports <c>exports(List)</c> (the <c>Name/Arity</c> indicators the
+    /// module exports — non-empty only for an export-qualified <c>:- module(Name,
+    /// [Exports])</c> module) and <c>class(Class)</c> (<c>user</c> for the default
+    /// module, <c>system</c> for the prelude host, else <c>library</c>). With an
+    /// unbound <c>Module</c> it enumerates the loaded modules on backtracking.
+    /// A minimal SWI-compatible surface — enough for library introspection.</summary>
+    public static bool ModuleProperty(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "module_property/2 requires a PrologEngine host.");
+
+        Term m = MaterializeRegister(engine, 0);
+        if (m is AtomTerm mAtom)
+        {
+            if (!host.Modules.TryGetValue(mAtom.Name, out var manifest))
+                return false;
+            return UnifyModuleProperty(engine, mAtom.Name, manifest);
+        }
+        if (m is not VarTerm)
+            throw new ShumwayPrologException(IsoError.TypeError("atom", m));
+
+        // Unbound module — enumerate every loaded module, binding arg 0 to each
+        // name and re-testing arg 1 against that module's properties.
+        var names = new List<string>(host.Modules.Keys);
+        int returnPc = engine.BuiltinReturnPc;
+        return Shumway.Core.IndexEnumCursor.Start(engine, names.Count, 2, returnPc,
+            (e, i) =>
+                e.UnifyRegisterWithCell(0,
+                    Shumway.Core.Cell.Atom(AtomTable.Intern(names[i], permanent: true).Id))
+                && UnifyModuleProperty(e, names[i], host.Modules[names[i]]));
+    }
+
+    /// <summary>Unifies register 1 against one property of <paramref name="manifest"/>.
+    /// The property term is already in the register (bound = filter, unbound =
+    /// take the first — <c>exports</c>).</summary>
+    private static bool UnifyModuleProperty(Activation engine, string name, ModuleManifest manifest)
+    {
+        Term prop = MaterializeRegister(engine, 1);
+        if (prop is CompoundTerm c && c.Args.Length == 1)
+        {
+            switch (c.Functor)
+            {
+                case "class":
+                {
+                    string cls = name == "user" ? "user"
+                        : name == "system" ? "system" : "library";
+                    int strBase = engine.AllocateHeap(3);
+                    engine.SetHeap(strBase, Shumway.Core.Cell.Str(strBase + 1));
+                    engine.SetHeap(strBase + 1,
+                        Shumway.Core.Cell.Functor(FunctorTable.Intern(
+                            AtomTable.Intern("class", permanent: true).Id, 1)));
+                    engine.SetHeap(strBase + 2,
+                        Shumway.Core.Cell.Atom(AtomTable.Intern(cls, permanent: true).Id));
+                    return engine.UnifyRegisterWithHeapAt(1, strBase);
+                }
+                case "exports":
+                {
+                    // Build each Name/Arity structure, then the [ ... ] spine.
+                    int slashFid = FunctorTable.Intern(
+                        AtomTable.Intern("/", permanent: true).Id, 2);
+                    var elems = new List<Shumway.Core.Cell>(manifest.ExportFunctors.Count);
+                    foreach (int fid in manifest.ExportFunctors)
+                    {
+                        var (atomId, arity) = FunctorTable.Lookup(fid);
+                        // Name/Arity: functor-then-args, contiguous.
+                        int strBase = engine.AllocateHeap(3);
+                        engine.SetHeap(strBase, Shumway.Core.Cell.Functor(slashFid));
+                        engine.SetHeap(strBase + 1, Shumway.Core.Cell.Atom(atomId));
+                        engine.SetHeap(strBase + 2, Shumway.Core.Cell.Int(arity));
+                        elems.Add(Shumway.Core.Cell.Str(strBase));
+                    }
+                    int listStart = BuildCellList(engine, elems);
+                    Shumway.Core.Cell listCell = engine.GetHeap(listStart);
+                    int es = engine.AllocateHeap(2);
+                    engine.SetHeap(es, Shumway.Core.Cell.Functor(FunctorTable.Intern(
+                        AtomTable.Intern("exports", permanent: true).Id, 1)));
+                    engine.SetHeap(es + 1, listCell);
+                    return engine.UnifyRegisterWithCell(1, Shumway.Core.Cell.Str(es));
+                }
+            }
+        }
+        // Unrecognised property → fail (unknown property).
+        return false;
+    }
+
+    /// <summary>Builds a fresh cons-list from a set of element cells, terminated
+    /// by <c>[]</c>. Returns the heap index whose cell is the list value
+    /// (a <c>Lis</c>, or the lone <c>[]</c> atom when empty). Layout matches the
+    /// standard contiguous spine: <c>[Lis→h0][h0][Lis→h1][h1]…[nil]</c>.</summary>
+    private static int BuildCellList(Activation engine, IReadOnlyList<Shumway.Core.Cell> elements)
+    {
+        if (elements.Count == 0)
+        {
+            int nil = engine.AllocateHeap(1);
+            engine.SetHeap(nil, Shumway.Core.Cell.Atom(AtomTable.EmptyListId));
+            return nil;
+        }
+        int start = engine.AllocateHeap(2 * elements.Count + 1);
+        for (int i = 0; i < elements.Count; i++)
+        {
+            int lisIdx = start + 2 * i;
+            int headIdx = lisIdx + 1;
+            engine.SetHeap(lisIdx, Shumway.Core.Cell.Lis(headIdx));
+            engine.SetHeap(headIdx, elements[i]);
+        }
+        engine.SetHeap(start + 2 * elements.Count, Shumway.Core.Cell.Atom(AtomTable.EmptyListId));
+        return start;
+    }
+
     /// <summary><c>trace/0</c> (ADR-035) — attaches the four-port tracer. It is
     /// attached to the running activation as well as to the engine, so tracing
     /// starts with the very next goal of the query that called <c>trace</c>
