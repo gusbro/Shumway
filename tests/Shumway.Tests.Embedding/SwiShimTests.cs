@@ -63,6 +63,36 @@ public sealed class SwiShimTests
     }
 
     [Fact]
+    public void ErrorKernelTypeChecks_AreAvailable()
+    {
+        var e = new PrologEngine();
+        // '$is_char*' are bare-global kernel internals (library(error) uses them).
+        Assert.True(e.Query("'$is_char'(a).").Success);
+        Assert.False(e.Query("'$is_char'(ab).").Success);
+        Assert.False(e.Query("'$is_char'(1).").Success);
+        Assert.True(e.Query("'$is_char_code'(65).").Success);
+        Assert.False(e.Query("'$is_char_code'(-1).").Success);
+        Assert.True(e.Query("'$is_char_list'([a,b,c], N), N == 3.").Success);
+        Assert.False(e.Query("'$is_char_list'([a,bb], _).").Success);
+        Assert.True(e.Query("'$is_code_list'([65,66], N), N == 2.").Success);
+        Assert.False(e.Query("'$is_code_list'([65,x], _).").Success);
+    }
+
+    [Fact]
+    public void SubAtomICaseChk_IsInTheShim()
+    {
+        var e = new PrologEngine();
+        // Not available without the shim (SWI-specific).
+        Assert.True(e.Query(
+            "catch(sub_atom_icasechk(abc, _, b), error(existence_error(procedure, _), _), true).").Success);
+        e.ConsultString(":- use_module(library(swi)).");
+        // Case-insensitive first-match offset.
+        Assert.True(e.Query("sub_atom_icasechk('Hello World', B, world), B == 6.").Success);
+        Assert.True(e.Query("sub_atom_icasechk(abcABC, B, 'BC'), B == 1.").Success);
+        Assert.False(e.Query("sub_atom_icasechk(abc, _, z).").Success);
+    }
+
+    [Fact]
     public void SubString_IsAlwaysAvailable()
     {
         var e = new PrologEngine();

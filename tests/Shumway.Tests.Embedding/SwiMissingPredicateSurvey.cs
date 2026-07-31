@@ -133,7 +133,7 @@ public sealed class SwiMissingPredicateSurvey
             var shimProvided = new HashSet<string>(StringComparer.Ordinal)
             {
                 "nb_setarg/3", "nb_linkarg/3", "copy_term_nat/2", "duplicate_term/2",
-                "same_term/2", "current_arithmetic_function/1",
+                "same_term/2", "current_arithmetic_function/1", "sub_atom_icasechk/3",
             };
 
             // Real gaps: referenced-but-undefined AND not defined by any library

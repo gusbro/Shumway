@@ -187,6 +187,53 @@ public static class TypeBuiltins
     public static bool CyclicTerm(Activation engine) =>
         !IsAcyclicCell(engine, engine.GetRegister(0), new HashSet<int>());
 
+    // SWI kernel type-check builtins ('$'-prefixed system predicates that
+    // library(error)'s has_type/2 dispatches to). Bare-global internals.
+
+    /// <summary><c>'$is_char'(X)</c> — X is a one-character atom.</summary>
+    public static bool IsCharAtom(Activation engine)
+    {
+        Cell d = Resolve(engine, engine.GetRegister(0));
+        return d.Tag == Tag.Atom && (AtomTable.GetById(d.AsAtomId)?.Name?.Length == 1);
+    }
+
+    /// <summary><c>'$is_char_code'(X)</c> — X is a character code (an integer in
+    /// the Unicode range).</summary>
+    public static bool IsCharCode(Activation engine)
+    {
+        Cell d = Resolve(engine, engine.GetRegister(0));
+        return d.Tag == Tag.Int && d.AsInt >= 0 && d.AsInt <= 0x10FFFF;
+    }
+
+    /// <summary><c>'$is_char_list'(X, Len)</c> — X is a proper list of one-char
+    /// atoms; Len unifies with its length.</summary>
+    public static bool IsCharList(Activation engine) => IsTypedList(engine, chars: true);
+
+    /// <summary><c>'$is_code_list'(X, Len)</c> — X is a proper list of character
+    /// codes; Len unifies with its length.</summary>
+    public static bool IsCodeList(Activation engine) => IsTypedList(engine, chars: false);
+
+    private static bool IsTypedList(Activation engine, bool chars)
+    {
+        Cell cell = engine.GetRegister(0);
+        long len = 0;
+        while (true)
+        {
+            cell = Resolve(engine, cell);
+            if (cell.Tag == Tag.Atom && cell.AsAtomId == AtomTable.EmptyListId) break;
+            if (cell.Tag != Tag.Lis) return false;
+            int headIdx = cell.AsHeapIndex;
+            Cell head = Resolve(engine, engine.GetHeap(headIdx));
+            bool ok = chars
+                ? head.Tag == Tag.Atom && (AtomTable.GetById(head.AsAtomId)?.Name?.Length == 1)
+                : head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= 0x10FFFF;
+            if (!ok) return false;
+            len++;
+            cell = engine.GetHeap(headIdx + 1);
+        }
+        return engine.UnifyRegisterWithCell(1, Cell.Int(len));
+    }
+
     private static bool IsAcyclicCell(Activation engine, Cell cell, HashSet<int> onPath)
     {
         if (cell.Tag == Tag.Ref)

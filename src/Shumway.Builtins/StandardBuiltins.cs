@@ -99,6 +99,13 @@ public static class StandardBuiltins
             Types, "acyclic_term(@Term)", "Succeeds if the argument is a finite (acyclic) term.");
         BuiltinsRegistry.Register("cyclic_term", 1, TypeBuiltins.CyclicTerm,
             Types, "cyclic_term(@Term)", "Succeeds if the argument is a cyclic (infinite/rational) term.");
+        // SWI kernel type-check internals (library(error)'s has_type/2 uses them).
+        BuiltinsRegistry.Register("$is_char", 1, TypeBuiltins.IsCharAtom);
+        BuiltinsRegistry.Register("$is_char_code", 1, TypeBuiltins.IsCharCode);
+        BuiltinsRegistry.Register("$is_char_list", 2, TypeBuiltins.IsCharList);
+        BuiltinsRegistry.Register("$is_code_list", 2, TypeBuiltins.IsCodeList);
+        // SWI shim helper (public sub_atom_icasechk/3 lives in the swi shim).
+        BuiltinsRegistry.Register("$sub_atom_icasechk", 3, AtomCharBuiltins.SubAtomICaseChk);
         BuiltinsRegistry.Register("attvar",  1, TypeBuiltins.IsAttVar,
             Types, "attvar(@Term)", "Succeeds if the argument is an attributed variable.");
 

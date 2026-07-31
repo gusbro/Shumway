@@ -25,6 +25,11 @@ internal static class SwiShim
         :- public nb_linkarg/3.
         nb_linkarg(Arg, Term, Value) :- '$nb_setarg'(Arg, Term, Value).
 
+        % ----- string / atom (case-insensitive substring) -----
+        :- public sub_atom_icasechk/3.
+        sub_atom_icasechk(Haystack, Before, Needle) :-
+            '$sub_atom_icasechk'(Haystack, Before, Needle).
+
         % ----- term copying / identity -----
         :- public copy_term_nat/2.
         copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).

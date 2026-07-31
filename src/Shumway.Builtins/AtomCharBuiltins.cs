@@ -109,6 +109,25 @@ public static class AtomCharBuiltins
         throw new PrologRuntimeException("type_error", "atom");
     }
 
+    /// <summary><c>'$sub_atom_icasechk'(+Haystack, ?Before, +Needle)</c> — the C#
+    /// helper behind the SWI shim's <c>sub_atom_icasechk/3</c>: deterministically
+    /// finds the first case-insensitive occurrence of Needle in Haystack and
+    /// unifies Before with its 0-based offset; fails if absent.</summary>
+    public static bool SubAtomICaseChk(Activation engine)
+    {
+        Cell h = Resolve(engine, engine.GetRegister(0));
+        Cell nCell = Resolve(engine, engine.GetRegister(2));
+        if (h.Tag == Tag.Ref || nCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        if (h.Tag != Tag.Atom || nCell.Tag != Tag.Atom)
+            throw new PrologRuntimeException("type_error", "atom");
+        string haystack = AtomTable.GetById(h.AsAtomId)?.Name ?? "";
+        string needle = AtomTable.GetById(nCell.AsAtomId)?.Name ?? "";
+        int idx = haystack.IndexOf(needle, System.StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return false;
+        return engine.UnifyRegisterWithCell(1, Cell.Int(idx));
+    }
+
     // ---------- char_code/2 ----------
 
     public static bool CharCode(Activation engine)
