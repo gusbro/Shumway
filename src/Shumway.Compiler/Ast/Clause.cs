@@ -27,6 +27,13 @@ public enum ClauseKind
     /// by the DCG-translation pass; carried through as a separate kind until
     /// then.</summary>
     DcgRule,
+
+    /// <summary>A single-sided-unification rule, encoded as <c>=&gt;/2</c>: a
+    /// committed, pattern-matching clause. Grouped by its ACTUAL head (the left of
+    /// <c>=&gt;</c>, minus any leading guard), and rewritten to a normal rule with
+    /// a neck cut by <see cref="Shumway.Compiler.Parsing.SsuTransform"/>; carried
+    /// as a separate kind until then.</summary>
+    SsuRule,
 }
 
 /// <summary>
@@ -77,6 +84,7 @@ public sealed class Clause
                 (":-", 2) => ClauseKind.Rule,
                 (":-", 1) => ClauseKind.Directive,
                 ("-->", 2) => ClauseKind.DcgRule,
+                ("=>", 2) => ClauseKind.SsuRule,
                 _ => ClauseKind.Fact,
             };
         }

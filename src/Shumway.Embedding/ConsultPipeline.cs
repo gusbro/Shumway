@@ -768,7 +768,8 @@ internal sealed class ConsultPipeline
                     || E.HasPrologTermExpansion6;
                 hasGoalExp = E.HasGoalExpansions || E.HasPrologGoalExpansion;
             }
-            if (rc.Kind == ClauseKind.DcgRule || !(hasTermExp || hasGoalExp))
+            if (rc.Kind is ClauseKind.DcgRule or ClauseKind.SsuRule
+                || !(hasTermExp || hasGoalExp))
                 return SingletonClause(rc);
             IReadOnlyList<Term>? repl = null;
             if (hasTermExp && E.TryPrologTermExpansion(rc.Term, out var pexp))
@@ -1676,11 +1677,18 @@ internal sealed class ConsultPipeline
         // the same name/arity ends up flagged.
         Term head;
         int arityOffset = 0;
-        if ((clause.Kind == ClauseKind.Rule || clause.Kind == ClauseKind.DcgRule)
+        if ((clause.Kind == ClauseKind.Rule || clause.Kind == ClauseKind.DcgRule
+                || clause.Kind == ClauseKind.SsuRule)
             && clause.Term is CompoundTerm wrap && wrap.Args.Length == 2)
         {
             head = wrap.Args[0];
             if (clause.Kind == ClauseKind.DcgRule) arityOffset = 2;
+            // An SSU rule's head is the left of `=>`, minus any leading guard:
+            // `(Head, Guard) => Body` groups under Head, so its clauses stay
+            // contiguous with each other (and never as one `=>/2` predicate).
+            if (clause.Kind == ClauseKind.SsuRule
+                && head is CompoundTerm { Functor: ",", Args: [var ssuHead, _] })
+                head = ssuHead;
         }
         else
         {

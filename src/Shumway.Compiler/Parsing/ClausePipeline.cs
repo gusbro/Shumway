@@ -52,7 +52,8 @@ public static class ClausePipeline
             return ModeSpecializationTransform.Apply(
                 PhraseTransform.Apply(
                     MetaTransform.Apply(
-                        DcgTransform.Apply(clauses, dcgFailFast))),
+                        DcgTransform.Apply(
+                            SsuTransform.Apply(clauses), dcgFailFast))),
                 modes);
         }
         finally

@@ -139,6 +139,10 @@ public sealed class OperatorTable
         // Without it, a library declaring meta_predicate before any op-defining
         // load (SWI's library(assoc), …) fails to parse. ADR-040.
         t.Define("meta_predicate", 1150, OperatorType.Fx);
+        // Single-sided-unification (SSU) rule `Head => Body` — a clause form of
+        // the engine, like DCG `-->`. The operator lets it parse; SsuTransform
+        // rewrites the clause.
+        t.Define("=>", 1200, OperatorType.Xfx);
         // Scryer directive — marks a predicate as not counting toward inference
         // limits. Shumway has no inference-limit machinery, so it is a pure no-op;
         // the operator exists only so `:- non_counted_backtracking foo/N.` parses
