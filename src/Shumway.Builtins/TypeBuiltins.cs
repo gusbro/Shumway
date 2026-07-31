@@ -63,6 +63,16 @@ public static class TypeBuiltins
         return t is Tag.Int or Tag.BigInt or Tag.Float or Tag.Rational;
     }
 
+    /// <summary><c>'$is_partial_string'(X)</c> — Scryer's fast test for the
+    /// compact char-sequence representation (a partial string). True for a PSTR or
+    /// string cell; a plain cons-list of chars is not one (callers fall back to a
+    /// full character check). Used by Scryer's error/iso_ext/crypto/ffi/uuid.</summary>
+    public static bool IsPartialString(Activation engine)
+    {
+        var t = Tag0(engine);
+        return t is Tag.Pstr or Tag.String;
+    }
+
     /// <summary><c>atomic(X)</c> — X is a non-compound, non-variable term
     /// (atom, integer, bigint, rational, float, string, PSTR).</summary>
     public static bool IsAtomic(Activation engine)

@@ -584,6 +584,12 @@ public sealed class Parser
                             $"Compound term '{sepName}' requires at least one argument.", pos);
                     return new CompoundTerm(sepName, sepArgs.ToArray()) { Position = pos };
                 }
+                // `|` in primary position is the ATOM '|' (ISO: the bar is an
+                // atom). `(|)` — Scryer's builtins.pl op/3 permission-error term —
+                // relies on it. The list-tail `[H|T]` bar is consumed by list
+                // parsing before it reaches here, so this never shadows it.
+                if (tok.Kind == TokenKind.Bar)
+                    return new AtomTerm("|") { Position = pos };
                 goto default;
 
             default:

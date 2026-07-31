@@ -1755,7 +1755,15 @@ internal sealed class ConsultPipeline
             && clause.Term is CompoundTerm wrap && wrap.Args.Length == 2)
         {
             head = wrap.Args[0];
-            if (clause.Kind == ClauseKind.DcgRule) arityOffset = 2;
+            if (clause.Kind == ClauseKind.DcgRule)
+            {
+                arityOffset = 2;
+                // A pushback (semicontext) DCG head `RealHead, PushBack --> Body`
+                // groups under RealHead, not `,/4` (else a DCG with pushback
+                // clauses is wrongly flagged non-contiguous — Scryer's simplex).
+                if (head is CompoundTerm { Functor: ",", Args: [var dcgHead, _] })
+                    head = dcgHead;
+            }
             // An SSU rule's head is the left of `=>`, minus any leading guard:
             // `(Head, Guard) => Body` groups under Head, so its clauses stay
             // contiguous with each other (and never as one `=>/2` predicate).
