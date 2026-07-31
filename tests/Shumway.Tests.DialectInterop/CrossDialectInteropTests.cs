@@ -54,8 +54,7 @@ public sealed class CrossDialectInteropTests
     [Fact]
     public void Swi_Heaps_Standalone_Loads_And_Works()
     {
-        // A real SWI library (priority queues), loaded on its own — parses past
-        // SWI's :- meta_predicate (now a known prefix operator) and works.
+        // A real SWI library (priority queues), loaded on its own.
         string? swi = Dir(SwiEnv);
         if (swi is null) return;
 
@@ -68,12 +67,31 @@ public sealed class CrossDialectInteropTests
     }
 
     [Fact]
-    public void UniteWorlds_ScryerClpz_And_SwiHeaps_InOneEngine()
+    public void Swi_Assoc_Standalone_Loads_And_Works()
+    {
+        // AVL-tree library — loads standalone, exercising the full chain of
+        // engine features it needs: :- meta_predicate, :- autoload, `=>` (SSU),
+        // and :- if/else/endif conditional compilation.
+        string? swi = Dir(SwiEnv);
+        if (swi is null) return;
+
+        var e = new PrologEngine();
+        e.AddLibraryDirectory(swi, "swi");
+        e.ConsultString(":- use_module(library(assoc)).");
+        Assert.True(e.Query(
+            "list_to_assoc([a-1, b-2, c-3], A), get_assoc(b, A, 2).").Success);
+        Assert.True(e.Query(
+            "list_to_assoc([x-1], A0), put_assoc(y, A0, 2, A), get_assoc(y, A, 2).").Success);
+    }
+
+    [Fact]
+    public void UniteWorlds_ScryerClpz_And_SwiAssoc_InOneEngine()
     {
         // The headline ADR-040 property: a Scryer library and an SWI library,
         // each from its own system's checkout, loaded and working side by side
-        // in ONE engine — attribute-variable constraints (clpz) next to a
-        // priority queue (SWI heaps), each parsed in its own dialect.
+        // in ONE engine — attribute-variable constraints (clpz) next to AVL trees
+        // (SWI assoc, which needed meta_predicate + autoload + => + if/else/endif
+        // to load), each parsed in its own dialect.
         string? scryer = Dir(ScryerEnv);
         string? swi = Dir(SwiEnv);
         if (scryer is null || swi is null) return;
@@ -82,14 +100,14 @@ public sealed class CrossDialectInteropTests
         e.AddLibraryDirectory(scryer, "scryer");
         e.AddLibraryDirectory(swi, "swi");
         e.ConsultString(":- use_module(library(clpz)).");
-        e.ConsultString(":- use_module(library(heaps)).");
+        e.ConsultString(":- use_module(library(assoc)).");
 
-        Assert.True(e.Query("X in 5..7, indomain(X), X == 5.").Success);        // clpz
+        Assert.True(e.Query("X in 5..7, indomain(X), X == 5.").Success);         // clpz
         Assert.True(e.Query(
-            "list_to_heap([2-b, 1-a], H), get_from_heap(H, 1, a, _).").Success); // SWI
+            "list_to_assoc([k-9], A), get_assoc(k, A, 9).").Success);            // SWI
         // Both in a single conjunction, one engine, one query.
         Assert.True(e.Query(
             "V in 1..9, indomain(V), V == 1, "
-            + "list_to_heap([V-a], H), get_from_heap(H, V, a, _).").Success);
+            + "list_to_assoc([v-V], A), get_assoc(v, A, 1).").Success);
     }
 }

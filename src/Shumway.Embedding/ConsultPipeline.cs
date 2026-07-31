@@ -787,7 +787,79 @@ internal sealed class ConsultPipeline
             static List<Clause> SingletonClause(Clause c) => new(1) { c };
         }
 
+        // Conditional compilation — `:- if(Cond) / :- elif(Cond) / :- else /
+        // :- endif`. A first-class feature (SWI, GProlog, SICStus): clauses in an
+        // inactive branch are dropped at load. A stack of (Active, AnyTaken)
+        // frames; "including" iff the top frame is active (a frame is active only
+        // when its parent was, so the top's flag suffices). Conditions are
+        // evaluated by a small evaluator against the CURRENT engine state — not a
+        // query, which cannot run mid-scan — covering the forms real programs use;
+        // anything else warns and is treated as false (the branch is skipped).
+        // Limitation: a `:- op` inside a skipped branch is still applied (the
+        // reader applies ops eagerly at parse time).
+        var condStack = new List<(bool Active, bool AnyTaken)>();
+        bool CondIncluding() => condStack.Count == 0 || condStack[^1].Active;
+        bool CondOuter() => condStack.Count <= 1 || condStack[^2].Active;
+        bool CondPredExists(Term pi)
+        {
+            if (pi is not CompoundTerm { Functor: "/", Args: [AtomTerm n, IntTerm a] }) return false;
+            int fid = FunctorTable.Intern(
+                AtomTable.Intern(n.Name, permanent: true).Id, (int)a.Value);
+            if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)) return true;
+            if (E._preludeFunctors.Contains(fid)) return true;
+            if (E._dynStore.IsDynamic(fid) || E._dynStore.HasClauses(fid)) return true;
+            if (E._precompiledStaticPredicates.ContainsKey(fid)) return true;
+            foreach (var cl in clauses) if (HeadFunctorIdOf(cl) == fid) return true;
+            return false;
+        }
+        bool EvalCond(Term cond) => cond switch
+        {
+            AtomTerm { Name: "true" } => true,
+            AtomTerm { Name: "fail" or "false" } => false,
+            CompoundTerm { Functor: ",", Args: [var a, var b] } => EvalCond(a) && EvalCond(b),
+            CompoundTerm { Functor: ";", Args: [var a, var b] } => EvalCond(a) || EvalCond(b),
+            CompoundTerm { Functor: "\\+" or "not", Args: [var a] } => !EvalCond(a),
+            CompoundTerm { Functor: "current_predicate", Args: [var pi] } => CondPredExists(pi),
+            _ => CondWarnFalse(cond),
+        };
+        static bool CondWarnFalse(Term cond)
+        {
+            Console.Error.WriteLine(
+                $"warning: unsupported :- if/elif condition ({cond}) — treated as false");
+            return false;
+        }
+        // Handles an if/elif/else/endif directive body, returning true if it was
+        // one (and thus consumed). Everything else returns false to fall through.
+        bool TryCondCompile(Term cbody)
+        {
+            switch (cbody)
+            {
+                case CompoundTerm { Functor: "if", Args: [var g] }:
+                    { bool on = CondIncluding() && EvalCond(g); condStack.Add((on, on)); return true; }
+                case CompoundTerm { Functor: "elif", Args: [var g] }:
+                    if (condStack.Count == 0) return true;
+                    { var t = condStack[^1]; bool on = CondOuter() && !t.AnyTaken && EvalCond(g);
+                      condStack[^1] = (on, t.AnyTaken || on); return true; }
+                case AtomTerm { Name: "else" }:
+                    if (condStack.Count == 0) return true;
+                    { var t = condStack[^1]; bool on = CondOuter() && !t.AnyTaken;
+                      condStack[^1] = (on, true); return true; }
+                case AtomTerm { Name: "endif" }:
+                    if (condStack.Count > 0) condStack.RemoveAt(condStack.Count - 1);
+                    return true;
+                default: return false;
+            }
+        }
+
         foreach (var rawClause0 in rawClauses)
+        {
+            // Conditional-compilation directives update the include state and are
+            // consumed; a clause in an inactive branch is dropped before expansion.
+            if (rawClause0.Kind == ClauseKind.Directive
+                && rawClause0.Term is CompoundTerm { Args.Length: 1 } condWrap
+                && TryCondCompile(condWrap.Args[0]))
+                continue;
+            if (!CondIncluding()) continue;
         foreach (var rawClause in ExpandRawClause(rawClause0))
         {
             var clause = rawClause;
@@ -1061,6 +1133,7 @@ internal sealed class ConsultPipeline
                 // A recognised declaration reaching here (op/3, char_conversion,
                 // …) is already handled at its own site — nothing to do.
             }
+        }
         }
 
         // Discontiguous enforcement: clauses for a given
