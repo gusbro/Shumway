@@ -93,6 +93,42 @@ public sealed class SwiShimTests
     }
 
     [Fact]
+    public void SkipList_CountsProperAndPartialLists()
+    {
+        var e = new PrologEngine();
+        // '$skip_list' is a bare-global SWI system primitive.
+        Assert.True(e.Query("'$skip_list'(N, [a,b,c], T), N == 3, T == [].").Success);
+        Assert.True(e.Query("'$skip_list'(N, [a,b|_], T), N == 2, var(T).").Success);   // partial
+        Assert.True(e.Query("'$skip_list'(N, foo, T), N == 0, T == foo.").Success);      // not a list
+        Assert.True(e.Query("'$skip_list'(N, [], T), N == 0, T == [].").Success);
+    }
+
+    [Fact]
+    public void CodeType_IsInTheShim_AndClassifies()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(code_type(0'a, alpha), error(existence_error(procedure, _), _), true).").Success);
+        e.ConsultString(":- use_module(library(swi)).");
+        Assert.True(e.Query("code_type(0'a, alpha).").Success);
+        Assert.True(e.Query("code_type(0'5, digit(W)), W == 5.").Success);
+        Assert.True(e.Query("code_type(0' , space).").Success);
+        Assert.False(e.Query("code_type(0'a, digit(_)).").Success);
+        // Case conversions yield CODES (not chars, as char_type does).
+        Assert.True(e.Query("code_type(0'A, to_lower(L)), L == 0'a.").Success);
+        Assert.True(e.Query("code_type(0'A, upper(Lower)), Lower == 0'a.").Success);
+        Assert.False(e.Query("code_type(0'A, lower(_)).").Success);
+    }
+
+    [Fact]
+    public void Backtrace_IsANoOpInTheShim()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(":- use_module(library(swi)).");
+        Assert.True(e.Query("backtrace(10).").Success);
+    }
+
+    [Fact]
     public void SubString_IsAlwaysAvailable()
     {
         var e = new PrologEngine();

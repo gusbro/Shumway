@@ -106,6 +106,8 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("$is_code_list", 2, TypeBuiltins.IsCodeList);
         // SWI shim helper (public sub_atom_icasechk/3 lives in the swi shim).
         BuiltinsRegistry.Register("$sub_atom_icasechk", 3, AtomCharBuiltins.SubAtomICaseChk);
+        // SWI internal robust list-length primitive (system predicate).
+        BuiltinsRegistry.Register("$skip_list", 3, TypeBuiltins.SkipList);
         BuiltinsRegistry.Register("attvar",  1, TypeBuiltins.IsAttVar,
             Types, "attvar(@Term)", "Succeeds if the argument is an attributed variable.");
 

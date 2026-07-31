@@ -30,6 +30,25 @@ internal static class SwiShim
         sub_atom_icasechk(Haystack, Before, Needle) :-
             '$sub_atom_icasechk'(Haystack, Before, Needle).
 
+        % ----- code classification (the code counterpart of char_type/2) -----
+        % The case-conversion types yield CODES (not chars, as char_type does);
+        % everything else delegates to char_type on the corresponding character.
+        :- public code_type/2.
+        code_type(Code, Type) :- '$code_type_dispatch'(Type, Code).
+        '$code_type_dispatch'(upper(Lower), Code) :- !, Code >= 0'A, Code =< 0'Z, Lower is Code + 32.
+        '$code_type_dispatch'(lower(Upper), Code) :- !, Code >= 0'a, Code =< 0'z, Upper is Code - 32.
+        '$code_type_dispatch'(to_lower(Lower), Code) :- !,
+            ( Code >= 0'A, Code =< 0'Z -> Lower is Code + 32 ; Lower = Code ).
+        '$code_type_dispatch'(to_upper(Upper), Code) :- !,
+            ( Code >= 0'a, Code =< 0'z -> Upper is Code - 32 ; Upper = Code ).
+        '$code_type_dispatch'(Type, Code) :- char_code(Char, Code), char_type(Char, Type).
+
+        % ----- debugging (no-op) -----
+        % We keep no interpreter backtrace to print here; succeed so libraries that
+        % call it for diagnostics keep running.
+        :- public backtrace/1.
+        backtrace(_).
+
         % ----- term copying / identity -----
         :- public copy_term_nat/2.
         copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).

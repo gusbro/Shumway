@@ -213,6 +213,26 @@ public static class TypeBuiltins
     /// codes; Len unifies with its length.</summary>
     public static bool IsCodeList(Activation engine) => IsTypedList(engine, chars: false);
 
+    /// <summary><c>'$skip_list'(-Length, ?List, -Tail)</c> — SWI's robust
+    /// list-length primitive: counts the cons cells of List (a proper OR partial
+    /// list), unifying Length with the count and Tail with the remainder — <c>[]</c>
+    /// for a proper list, or the unbound variable / non-list atom that terminates
+    /// a partial / improper one. Never fails on a bad list (unlike length/2).</summary>
+    public static bool SkipList(Activation engine)
+    {
+        Cell cell = engine.GetRegister(1);
+        long len = 0;
+        while (true)
+        {
+            cell = Resolve(engine, cell);
+            if (cell.Tag != Tag.Lis) break;
+            len++;
+            cell = engine.GetHeap(cell.AsHeapIndex + 1);
+        }
+        if (!engine.UnifyRegisterWithCell(0, Cell.Int(len))) return false;
+        return engine.UnifyRegisterWithCell(2, cell);
+    }
+
     private static bool IsTypedList(Activation engine, bool chars)
     {
         Cell cell = engine.GetRegister(0);
