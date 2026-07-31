@@ -26,7 +26,8 @@ public static class ShmoViaConsult
         string rootPath,
         IReadOnlyList<string> libraryDirs,
         ShmoBuildMode buildMode,
-        List<ShmoCompileError> errors)
+        List<ShmoCompileError> errors,
+        string? dialect = null)
     {
         // Operator baseline: a fresh engine's table, so the diff below is
         // exactly what this consult chain defined.
@@ -34,7 +35,12 @@ public static class ShmoViaConsult
             new PrologEngine().Operators.Enumerate());
 
         var e = new PrologEngine();
-        foreach (string d in libraryDirs) e.AddLibraryDirectory(d);
+        // ADR-040: a whole library collection may be a single non-shumway
+        // dialect (Scryer, SWI, …). Tag every provided dir with it so the
+        // consult applies that dialect's double_quotes + name map.
+        foreach (string d in libraryDirs)
+            if (dialect is { Length: > 0 }) e.AddLibraryDirectory(d, dialect);
+            else e.AddLibraryDirectory(d);
         // The compiled file's own directory is an implicit library dir (the
         // C `#include "..."` rule): a library collection's dependencies are
         // its siblings. Added last — explicit -L / SHUMWAY_LIBRARY_PATH win.
