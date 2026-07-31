@@ -203,7 +203,8 @@ internal sealed class BundleLoader
                     operators: shmo.Operators,
                     isExportQualified: shmo.IsExportQualified,
                     exports: shmo.Exports,
-                    imports: shmo.Imports));
+                    imports: shmo.Imports,
+                    dialect: shmo.Dialect));
             }
             effectiveEntries = combined;
         }
@@ -1158,6 +1159,14 @@ internal sealed class BundleLoader
         {
             manifest = new ModuleManifest(entry.ModuleName);
             E._modules[entry.ModuleName] = manifest;
+        }
+
+        // ADR-040 — restore the module's source dialect so a source-stripped
+        // linked library keeps its dialect-sensitive builtin behaviour at runtime.
+        if (entry.Dialect is not null)
+        {
+            manifest.Dialect = entry.Dialect;
+            E.NoteDialectedModule();
         }
 
         // ADR-038 — reconstruct the export-qualification + import table so runtime

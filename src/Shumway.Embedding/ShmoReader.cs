@@ -252,12 +252,15 @@ public static class ShmoReader
             libraryDeps[i] = new ShmoLibraryDep(libName, filter, baked);
         }
 
+        // ADR-040 — the source dialect (null = Shumway/ISO).
+        string? dialect = br.ReadBoolean() ? ReadLengthPrefixedUtf8(br) : null;
+
         return new ShmoObject(moduleName, source, bytecode,
             defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds,
             clauseTerms, arityCompat, nativeBlocks, nativeFunctions, nativeDecls,
             operators,
             isExportQualified: isExportQualified, exports: exports,
-            imports: imports, libraryDeps: libraryDeps);
+            imports: imports, libraryDeps: libraryDeps, dialect: dialect);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

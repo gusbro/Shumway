@@ -237,7 +237,8 @@ public sealed class ShmoObject
         bool isExportQualified = false,
         IReadOnlyList<PredicateRef>? exports = null,
         IReadOnlyList<ShmoImportEntry>? imports = null,
-        IReadOnlyList<ShmoLibraryDep>? libraryDeps = null)
+        IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
+        string? dialect = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -258,7 +259,15 @@ public sealed class ShmoObject
         Exports = exports ?? System.Array.Empty<PredicateRef>();
         Imports = imports ?? System.Array.Empty<ShmoImportEntry>();
         LibraryDeps = libraryDeps ?? System.Array.Empty<ShmoLibraryDep>();
+        Dialect = dialect;
     }
+
+    /// <summary>ADR-040 — the source dialect this module was compiled under
+    /// (<c>"swi"</c>, <c>"scryer"</c>, …), or <c>null</c> for Shumway/ISO. Travels
+    /// into the bundle so a source-stripped load restores it onto the runtime
+    /// manifest, and dialect-sensitive builtins (e.g. <c>atom_concat/3</c>) keep
+    /// working for a linked SWI library.</summary>
+    public string? Dialect { get; }
 
     /// <summary>ADR-038 — true when compiled from a two-arg
     /// <c>:- module(Name, [Exports])</c>: every predicate is mangled

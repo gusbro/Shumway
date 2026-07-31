@@ -914,7 +914,8 @@ public static class ShmoLinker
                     operators: obj.Operators,
                     isExportQualified: obj.IsExportQualified,
                     exports: obj.Exports,
-                    imports: obj.Imports));
+                    imports: obj.Imports,
+                    dialect: obj.Dialect));
             }
             // Bake the precompiled prelude so a bare-loaded engine
             // (PrologEngine.FromBundle / the generated --exe) gets it without

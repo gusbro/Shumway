@@ -122,7 +122,8 @@ public static class ShmoViaConsult
                 operatorDefs: isRoot ? newOps : null,
                 isExportQualified: manifest.IsExportQualified,
                 exports: exports,
-                imports: imports);
+                imports: imports,
+                dialect: manifest.Dialect);
             if (res.Object is null)
             {
                 foreach (var err in localErrors)

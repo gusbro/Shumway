@@ -60,9 +60,14 @@ public class Chunk164Tests
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
         using var proc = Process.Start(psi)!;
-        stdout = proc.StandardOutput.ReadToEnd();
-        stderr = proc.StandardError.ReadToEnd();
+        // Drain both pipes CONCURRENTLY: a sequential ReadToEnd of stdout then
+        // stderr deadlocks when the child fills the other pipe's OS buffer
+        // (~4 KB) before exiting — e.g. the ~4 KB usage text goes to stderr.
+        var outTask = proc.StandardOutput.ReadToEndAsync();
+        var errTask = proc.StandardError.ReadToEndAsync();
         proc.WaitForExit(30_000);
+        stdout = outTask.GetAwaiter().GetResult();
+        stderr = errTask.GetAwaiter().GetResult();
         return proc.ExitCode;
     }
 

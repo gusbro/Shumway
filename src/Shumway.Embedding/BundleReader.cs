@@ -166,10 +166,13 @@ public static class BundleReader
                 string impSrc = ReadLengthPrefixedUtf8(br);
                 imports.Add(new ShmoImportEntry(new PredicateRef(impName, impArity), impSrc));
             }
+            // ADR-040 — the module's source dialect (null = Shumway/ISO).
+            string? dialect = br.ReadBoolean() ? ReadLengthPrefixedUtf8(br) : null;
             entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined,
                 compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks,
                 nativeFunctions, nativeDecls, operators,
-                isExportQualified: isExportQualified, exports: exports, imports: imports);
+                isExportQualified: isExportQualified, exports: exports, imports: imports,
+                dialect: dialect);
         }
         // Foreign-assemblies trailer.
         uint asmCount = br.ReadUInt32();

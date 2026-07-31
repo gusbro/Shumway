@@ -190,7 +190,8 @@ public sealed class BundleEntry
         IReadOnlyList<ShmoOperatorDef>? operators = null,
         bool isExportQualified = false,
         IReadOnlyList<PredicateRef>? exports = null,
-        IReadOnlyList<ShmoImportEntry>? imports = null)
+        IReadOnlyList<ShmoImportEntry>? imports = null,
+        string? dialect = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -207,7 +208,14 @@ public sealed class BundleEntry
         IsExportQualified = isExportQualified;
         Exports = exports ?? Array.Empty<PredicateRef>();
         Imports = imports ?? Array.Empty<ShmoImportEntry>();
+        Dialect = dialect;
     }
+
+    /// <summary>ADR-040 — the source dialect this module was compiled under
+    /// (<c>"swi"</c>, …), or null for Shumway/ISO. Restored onto the runtime
+    /// manifest at <c>LoadBundle</c> so dialect-sensitive builtins keep working
+    /// for a linked, source-stripped library.</summary>
+    public string? Dialect { get; }
 
     /// <summary>ADR-038 — the module was compiled export-qualified
     /// (<c>:- module(Name, [Exports])</c>): its predicates are mangled and only

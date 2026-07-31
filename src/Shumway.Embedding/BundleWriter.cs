@@ -157,7 +157,8 @@ public static class BundleWriter
                     // ADR-038 — carry export-qualification + import table too.
                     isExportQualified: effective[i].IsExportQualified,
                     exports: effective[i].Exports,
-                    imports: effective[i].Imports);
+                    imports: effective[i].Imports,
+                    dialect: effective[i].Dialect);
             }
         }
 
@@ -304,7 +305,10 @@ public static class BundleWriter
                     nativeBlocks: e.NativeBlocks,
                     nativeFunctions: e.NativeFunctions,
                     nativeDecls: e.NativeDecls,
-                    operators: e.Operators));
+                    operators: e.Operators,
+                    isExportQualified: e.IsExportQualified,
+                    exports: e.Exports, imports: e.Imports,
+                    dialect: e.Dialect));
             else if (!string.IsNullOrEmpty(e.Source))
                 sources.Add(e.Source);
         }
@@ -754,6 +758,9 @@ public static class BundleWriter
             bw.Write((uint)imp.Pred.Arity);
             WriteLengthPrefixedUtf8(bw, imp.Source);
         }
+        // ADR-040 — the module's source dialect (null = Shumway/ISO).
+        bw.Write(entry.Dialect is not null);
+        if (entry.Dialect is not null) WriteLengthPrefixedUtf8(bw, entry.Dialect);
     }
 
     /// <summary>Per-entry <c>:- op/3</c> definitions,

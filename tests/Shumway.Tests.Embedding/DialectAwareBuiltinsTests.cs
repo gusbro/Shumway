@@ -86,4 +86,55 @@ public sealed class DialectAwareBuiltinsTests
         // split mode still works too.
         Assert.Equal(4, e.QueryAll("atom_concat(X, Y, abc).").Count());  // ""+abc … abc+""
     }
+
+    [Fact]
+    public void ShmoObject_Dialect_RoundTrips()
+    {
+        var obj = ShmoCompiler.CompileSource(
+            ":- module(m, [p/0]).\np.\n", "m");   // dialect defaults null
+        Assert.Null(ShmoReader.FromBytes(ShmoWriter.ToBytes(obj)).Dialect);
+    }
+
+    [Fact]
+    public void AtomConcat_Coercion_SurvivesSourceStrippedBundle()
+    {
+        // The limitation fix: a linked, SOURCE-STRIPPED bundle carries the module
+        // dialect, so atom_concat coercion still applies after a bare load (no
+        // use_module at runtime).
+        string tmp = Path.Combine(Path.GetTempPath(), "swidialbundle-" + Guid.NewGuid());
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            File.WriteAllText(Path.Combine(tmp, "swimod.pl"),
+                ":- module(swimod, [cat/2]).\ncat(X, R) :- atom_concat(foo, X, R).\n");
+            string driver = Path.Combine(tmp, "driver.pl");
+            File.WriteAllText(driver,
+                ":- use_module(library(swimod)).\n:- public go/2.\ngo(X, R) :- cat(X, R).\n");
+
+            var errors = new System.Collections.Generic.List<ShmoCompileError>();
+            // Release build mode → source stripped from the .shmo; swimod is pulled
+            // under the swi dialect, so its ShmoObject carries Dialect="swi".
+            var objs = ShmoViaConsult.Compile(
+                driver, new[] { tmp }, ShmoBuildMode.Release, errors, dialect: "swi");
+            Assert.Empty(errors);
+
+            var r = ShmoLinker.Link(new LinkConfig
+            {
+                Objects = System.Linq.Enumerable.ToList(
+                    System.Linq.Enumerable.Select(objs, o => o.Object)),
+                EntryPoints = new[] { new PredicateRef("go", 2) },
+            });
+            Assert.True(r.Success, string.Join(", ", r.Diagnostics.Select(d => d.Message)));
+
+            // Cross-process shape: serialize then read back, then bare-load.
+            var bundle = BundleReader.FromBytes(r.Bytes!);
+            var e = new PrologEngine();
+            e.LoadBundle(bundle);
+
+            // go/2 reaches swimod$cat → atom_concat(foo, 42, R); swimod is swi, so
+            // the numeric arg coerces — with NO source and NO use_module at runtime.
+            Assert.True(e.Query("go(42, R), R == foo42.").Success);
+        }
+        finally { try { Directory.Delete(tmp, true); } catch { } }
+    }
 }

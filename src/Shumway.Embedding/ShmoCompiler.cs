@@ -417,7 +417,8 @@ public static class ShmoCompiler
         bool isExportQualified = false,
         IReadOnlyCollection<PredicateRef>? exports = null,
         IReadOnlyList<ShmoImportEntry>? imports = null,
-        IReadOnlyList<ShmoLibraryDep>? libraryDeps = null)
+        IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
+        string? dialect = null)
     {
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
@@ -857,7 +858,8 @@ public static class ShmoCompiler
             isExportQualified: isExportQualified,
             exports: exports?.ToList(),
             imports: imports,
-            libraryDeps: libraryDeps);
+            libraryDeps: libraryDeps,
+            dialect: dialect);
         obj.DynamicSnapshotBytecode = dynamicSnapshotBytecode;
         return new ShmoCompileResult(obj, errors, warnings);
     }

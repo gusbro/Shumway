@@ -173,6 +173,10 @@ public static class ShmoWriter
             }
         }
 
+        // ADR-040 — the source dialect (null = Shumway/ISO).
+        bw.Write(obj.Dialect is not null);
+        if (obj.Dialect is not null) WriteLengthPrefixedUtf8(bw, obj.Dialect);
+
         bw.Flush();
         return BundleFormat.FinalizeImage(ms.ToArray());
     }
