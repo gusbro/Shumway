@@ -41,6 +41,25 @@ internal static class SwiShim
             ( Code >= 0'A, Code =< 0'Z -> Lower is Code + 32 ; Lower = Code ).
         '$code_type_dispatch'(to_upper(Upper), Code) :- !,
             ( Code >= 0'a, Code =< 0'z -> Upper is Code - 32 ; Upper = Code ).
+        % SWI ctype names with no weight argument (dcg/basics tests digits via
+        % code_type(C, digit)); our char_type only knows the digit(W) form.
+        '$code_type_dispatch'(digit, Code) :- !, Code >= 0'0, Code =< 0'9.
+        '$code_type_dispatch'(xdigit(W), Code) :- !,
+            (   Code >= 0'0, Code =< 0'9 -> W is Code - 0'0
+            ;   Code >= 0'a, Code =< 0'f -> W is Code - 0'a + 10
+            ;   Code >= 0'A, Code =< 0'F,   W is Code - 0'A + 10
+            ).
+        '$code_type_dispatch'(csym, Code) :- !,
+            (   Code >= 0'a, Code =< 0'z -> true
+            ;   Code >= 0'A, Code =< 0'Z -> true
+            ;   Code >= 0'0, Code =< 0'9 -> true
+            ;   Code =:= 0'_
+            ).
+        '$code_type_dispatch'(csymf, Code) :- !,
+            (   Code >= 0'a, Code =< 0'z -> true
+            ;   Code >= 0'A, Code =< 0'Z -> true
+            ;   Code =:= 0'_
+            ).
         '$code_type_dispatch'(Type, Code) :- char_code(Char, Code), char_type(Char, Type).
 
         % ----- ansi terminal (colour ignored) -----
@@ -54,6 +73,33 @@ internal static class SwiShim
         % call it for diagnostics keep running.
         :- public backtrace/1.
         backtrace(_).
+
+        % ----- kernel directives accepted as no-ops -----
+        % '$clausable'(PI): SWI marks a static predicate as clause/2-inspectable
+        % (library(error) does it for has_type/2). No such gate here.
+        :- public '$clausable'/1.
+        '$clausable'(_).
+        % noprofile(PI): profiler exclusion hint (library(exceptions)). No profiler.
+        :- public noprofile/1.
+        noprofile(_).
+        % '$hide'(PI): tracer exclusion hint. No SWI tracer.
+        :- public '$hide'/1.
+        '$hide'(_).
+        % '$notransact'(PIs): transaction exclusion hint. No transactions.
+        :- public '$notransact'/1.
+        '$notransact'(_).
+        % record.pl's expansion emits `(:- record('<compiled>'))` as an xref
+        % marker; accept EXACTLY that atom so it no-ops instead of raising.
+        % Any real (mis)use of record/1 as a goal still errors.
+        :- public record/1.
+        record('<compiled>').
+
+        % create_prolog_flag(Flag, Value, Options): registers an application
+        % flag (ansi_term's color_term, settings). Accepted, not stored — a
+        % later current_prolog_flag on it fails (= flag unset), which the
+        % callers treat as the conservative default.
+        :- public create_prolog_flag/3.
+        create_prolog_flag(_, _, _).
 
         % ----- message system (translate_message//1 + print_message_lines/3) -----
         % A pragmatic subset of SWI's $messages: translate a message term into a
@@ -122,13 +168,47 @@ internal static class SwiShim
         :- public same_term/2.
         same_term(A, B) :- '$same_term'(A, B).
 
+        % ----- tries (minimal shim over the dynamic store) -----
+        % SWI's solution_sequences (distinct/1,2) dedups via kernel tries. This
+        % shim gives the variant-set behaviour those callers need: trie_insert/2
+        % succeeds only the FIRST time a variant of Term is added. Keys are the
+        % written form of the numbervar'd copy. Not backtrackable (like SWI's).
+        :- dynamic('$shim_trie_kv'/2).
+        :- public trie_new/1.
+        trie_new('$shim_trie'(Ref)) :- gensym('$trie', Ref).
+        :- public trie_insert/2.
+        trie_insert('$shim_trie'(Ref), Term) :-
+            copy_term(Term, C),
+            numbervars(C, 0, _),
+            term_to_atom(C, Key),
+            ( '$shim_trie_kv'(Ref, Key) -> fail ; assertz('$shim_trie_kv'(Ref, Key)) ).
+        :- public trie_destroy/1.
+        trie_destroy('$shim_trie'(Ref)) :- retractall('$shim_trie_kv'(Ref, _)).
+
+        % ----- library(arithmetic) native-override stubs -----
+        % User-defined evaluable functions need SWI's global goal_expansion +
+        % module introspection — unsupported. The declaration is accepted (and
+        % ignored); runtime evaluation covers the BUILTIN evaluables only.
+        :- public arithmetic_function/1.
+        arithmetic_function(_).
+        :- public arithmetic_expression_value/2.
+        arithmetic_expression_value(QExpr, Value) :-
+            ( QExpr = _:Expr -> true ; Expr = QExpr ),
+            Value is Expr.
+
         % ----- arithmetic-function introspection -----
         % We do not support user-defined arithmetic functions, so this reports the
         % built-in evaluable functors only.
         :- public current_arithmetic_function/1.
         current_arithmetic_function(Head) :-
-            functor(Head, Name, Arity),
-            '$arith_function'(Name, Arity).
+            ( nonvar(Head) ->
+                functor(Head, Name, Arity),
+                '$arith_function'(Name, Arity)
+            ;   % enumeration mode (library(arithmetic) generates its eval
+                % clauses from it): yield each evaluable as a most-general term
+                '$arith_function'(Name, Arity),
+                functor(Head, Name, Arity)
+            ).
         '$arith_function'(+, 2). '$arith_function'(-, 2). '$arith_function'(*, 2).
         '$arith_function'(/, 2). '$arith_function'(//, 2). '$arith_function'(mod, 2).
         '$arith_function'(rem, 2). '$arith_function'(div, 2). '$arith_function'(gcd, 2).

@@ -139,6 +139,10 @@ public sealed class OperatorTable
         // Without it, a library declaring meta_predicate before any op-defining
         // load (SWI's library(assoc), …) fails to parse. ADR-040.
         t.Define("meta_predicate", 1150, OperatorType.Fx);
+        // NOTE: SWI's `as` (xfx 700) and `thread_local` (fx 1150) are NOT in the
+        // default table — `as` in particular breaks programs using `as` as a
+        // predicate/nonterminal head. The swi dialect load scope defines them
+        // for the duration of an SWI library consult (PrologEngine.WithDialect).
         // Single-sided-unification (SSU) rule `Head => Body` — a clause form of
         // the engine, like DCG `-->`. The operator lets it parse; SsuTransform
         // rewrites the clause.

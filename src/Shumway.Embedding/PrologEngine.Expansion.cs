@@ -246,7 +246,18 @@ public sealed partial class PrologEngine
             return true;
         }
         foreach (var t in repl)
-            ExpandTermFixpoint(t, output, depth - 1, ids);
+        {
+            // A DIRECTIVE in a hook's output is an instruction to the compiler,
+            // final as emitted — never re-expanded (SWI single-pass semantics).
+            // record.pl's expansion opens with an xref marker directive
+            // `(:- record('<compiled>'))`; re-running the hook on it generated
+            // spurious `default_<compiled>` clauses. The fixpoint stays for
+            // non-directive outputs (Scryer's dcgs error-marker second pass).
+            if (t is CompoundTerm { Functor: ":-", Args.Length: 1 })
+                output.Add(t);
+            else
+                ExpandTermFixpoint(t, output, depth - 1, ids);
+        }
         return true;
     }
 

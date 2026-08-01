@@ -953,6 +953,12 @@ internal sealed class ConsultPipeline
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
+                    // term_expansion / goal_expansion stay on the static hook
+                    // pipeline (same exemption as the multifile branch): SWI's
+                    // record.pl declares `:- dynamic system:term_expansion/2.`,
+                    // and routing its hook clauses to the dynamic store hides
+                    // them from the hook runner — `:- record` then ran as a goal.
+                    if (PrologEngine.IsGlobalHookFunctor(fid)) continue;
                     E._dynStore.MarkDynamic(fid);
                     // Reserve an entry so retract on a never-asserted dynamic
                     // predicate fails cleanly instead of throwing.
@@ -1025,12 +1031,22 @@ internal sealed class ConsultPipeline
             else if (body is CompoundTerm { Functor: "autoload" } autoDir
                      && (autoDir.Args.Length == 1 || autoDir.Args.Length == 2))
             {
-                // SWI `:- autoload(library(X)[, Imports])` — a lazy-load hint (the
-                // predicates load on first use in SWI). Shumway has no autoload;
-                // no-op it and rely on the prelude / dialect-pack coverage of the
-                // named predicates. A genuinely uncovered one surfaces a clear
-                // existence_error at its call site rather than a load-time abort.
-                // ADR-040 — lets SWI libraries that declare autoload deps parse.
+                // SWI `:- autoload(library(X)[, Imports])` — lazy use_module.
+                // Loaded eagerly (SWI itself behaves as use_module/1,2 when
+                // autoloading is off), and crucially the IMPORT LIST is honoured:
+                // no-op'ing it dropped the import table entry, so a bare call to
+                // an autoloaded name died with existence_error when it finally ran
+                // (record.pl autoloads current_type/3 from library(error); its
+                // `:- record` expansion hook then killed the importer's consult).
+                string? src = E.ExecuteUseModuleDirective(autoDir.Args[0]);
+                if (autoDir.Args.Length == 2)
+                {
+                    var filter = new List<(string, int)>();
+                    TryReadFunctorSpecList(autoDir.Args[1], filter);
+                    RecordImports(src, filter);
+                }
+                else
+                    RecordImports(src, filter: null);
             }
             else if (body is CompoundTerm { Functor: "non_counted_backtracking", Args.Length: 1 })
             {
@@ -1725,11 +1741,18 @@ internal sealed class ConsultPipeline
     private static void ValidateContiguity(
         IReadOnlyList<Clause> clauses, HashSet<int>? discontiguous)
     {
+        // A module-qualified head (`prolog:message(X) --> …`) is a multifile
+        // contribution to ANOTHER module's predicate — inherently scattered
+        // among a file's own clauses (SWI hook idiom). All of them share the
+        // head functor `:/2`, so keying contiguity on it produces spurious
+        // "clauses for :/2 not contiguous" errors; exempt it.
+        int colonFid = FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
         int? currentFid = null;
         var closed = new HashSet<int>();
         foreach (var clause in clauses)
         {
             int fid = HeadFunctorIdOf(clause);
+            if (fid == colonFid) continue;
             if (currentFid is null)
             {
                 currentFid = fid;
@@ -2192,12 +2215,19 @@ internal sealed class ConsultPipeline
         // clauses stays ISO-mutable (assert/retract allowed), but — when it has
         // clauses — also gets a build-time WAM/IL snapshot that runs from the
         // first call and is evicted the instant it is mutated (ADR-023 priming).
+        // `thread_local` is SWI's per-thread dynamic — Shumway activations are
+        // single-threaded, so thread-local IS engine-local: plain dynamic.
         if (body is not CompoundTerm c
-            || (c.Functor != "dynamic" && c.Functor != "visible")
+            || (c.Functor != "dynamic" && c.Functor != "visible"
+                && c.Functor != "thread_local")
             || c.Args.Length != 1)
             return false;
 
         Term arg = c.Args[0];
+        // SWI decoration over the WHOLE group: `:- dynamic (a/1, b/2) as
+        // volatile.` — strip it here; per-indicator `as` strips in
+        // TryReadFunctorSpec.
+        while (arg is CompoundTerm { Functor: "as", Args: [var g, _] }) arg = g;
         if (TryReadFunctorSpec(arg, out var single))
         {
             specs.Add(single);
@@ -2239,6 +2269,10 @@ internal sealed class ConsultPipeline
 
     private static bool TryReadFunctorSpec(Term term, out (string Name, int Arity) spec)
     {
+        // SWI decoration: `foo/2 as volatile` / `p/1 as incremental` — the
+        // property after `as` has no Shumway meaning; read the indicator.
+        while (term is CompoundTerm { Functor: "as", Args: [var decorated, _] })
+            term = decorated;
         if (term is CompoundTerm slash && slash.Functor == "/" && slash.Args.Length == 2)
         {
             // A module-qualified indicator `Module:Name/Arity` (Scryer/SICStus,

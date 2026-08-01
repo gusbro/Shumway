@@ -47,6 +47,8 @@ public sealed class ClauseReader
         // so the lexer adopts the caller's setting up front; the
         // set_prolog_flag directive (below) can also flip it mid-file.
         lexer.ArityCompat = flags.ArityCompat;
+        lexer.DigitSeparators = flags.DigitSeparators;
+        lexer.LenientQuoteCharLiteral = flags.LenientQuoteCharLiteral;
         if (flags.ArityCompat) DefineArityCompatOperators(operators);
         _parser = new Parser(lexer, operators, flags);
     }

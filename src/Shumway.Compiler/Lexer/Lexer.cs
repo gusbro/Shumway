@@ -67,6 +67,20 @@ public sealed class Lexer
     /// atom <c>=$</c>).</summary>
     public bool ArityCompat { get; set; }
 
+    /// <summary>SWI digit-group separators (<c>10_000</c>): accept <c>_</c>
+    /// inside a number when surrounded by digits, in decimal / float / radix
+    /// literals. Off by default — ISO tokenizes <c>10_000</c> as the integer
+    /// <c>10</c> followed by the variable <c>_000</c> — and enabled by the
+    /// swi dialect load scope (library sources use it; <c>10_000</c> in a term
+    /// context is a syntax error under ISO, so this only accepts programs ISO
+    /// rejects).</summary>
+    public bool DigitSeparators { get; set; }
+
+    /// <summary>SWI leniency: <c>0''</c> not followed by a third quote is the
+    /// quote character (ISO requires <c>0'''</c> or <c>0'\'</c>). Enabled by
+    /// the swi dialect load scope.</summary>
+    public bool LenientQuoteCharLiteral { get; set; }
+
     public Lexer(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -520,7 +534,15 @@ public sealed class Lexer
                     System.Numerics.BigInteger acc = 0;
                     while (_offset < _source.Length)
                     {
-                        int d = RadixDigitValue(_source[_offset]);
+                        char rc = _source[_offset];
+                        if (rc == '_' && DigitSeparators
+                            && IsRadixDigit(Peek(1), radix)
+                            && IsRadixDigit(_source[_offset - 1], radix))
+                        {
+                            Advance();
+                            continue;
+                        }
+                        int d = RadixDigitValue(rc);
                         if (d < 0 || d >= radix) break;
                         acc = acc * radix + d;
                         Advance();
@@ -536,7 +558,7 @@ public sealed class Lexer
         }
 
         // Decimal integer part.
-        while (_offset < _source.Length && char.IsDigit(_source[_offset])) Advance();
+        ScanDecimalDigits();
 
         // Float continuation: '.' followed by a digit.
         if (_offset < _source.Length
@@ -545,7 +567,7 @@ public sealed class Lexer
             && char.IsDigit(_source[_offset + 1]))
         {
             Advance();   // '.'
-            while (_offset < _source.Length && char.IsDigit(_source[_offset])) Advance();
+            ScanDecimalDigits();
 
             if (_offset < _source.Length && (_source[_offset] == 'e' || _source[_offset] == 'E'))
             {
@@ -553,24 +575,52 @@ public sealed class Lexer
                 if (_offset < _source.Length && (_source[_offset] == '+' || _source[_offset] == '-'))
                     Advance();
                 int expStart = _offset;
-                while (_offset < _source.Length && char.IsDigit(_source[_offset])) Advance();
+                ScanDecimalDigits();
                 if (_offset == expStart)
                     throw new LexerException(
                         $"Expected exponent digits at {CurrentPosition()}.", CurrentPosition());
             }
 
-            string floatSource = _source[start.._offset];
+            string floatSource = StripSeparators(_source[start.._offset]);
             double f = double.Parse(floatSource, CultureInfo.InvariantCulture);
             return new Token(TokenKind.Float, pos, floatSource) { FloatValue = f };
         }
 
-        string intSource = _source[start.._offset];
+        string intSource = StripSeparators(_source[start.._offset]);
         // Try the narrow path first (the overwhelming common case); fall back
         // to BigInteger only when the literal genuinely exceeds long range.
         if (long.TryParse(intSource, NumberStyles.Integer, CultureInfo.InvariantCulture, out long i))
             return new Token(TokenKind.Integer, pos, intSource) { IntValue = i };
         var big = System.Numerics.BigInteger.Parse(intSource, CultureInfo.InvariantCulture);
         return new Token(TokenKind.Integer, pos, intSource) { BigValue = big, HasBigValue = true };
+    }
+
+    /// <summary>Advances over decimal digits; with <see cref="DigitSeparators"/>
+    /// also over a <c>_</c> that sits strictly between two digits.</summary>
+    private void ScanDecimalDigits()
+    {
+        while (_offset < _source.Length)
+        {
+            char ch = _source[_offset];
+            if (char.IsDigit(ch)) { Advance(); continue; }
+            if (ch == '_' && DigitSeparators
+                && char.IsDigit(_source[_offset - 1])
+                && _offset + 1 < _source.Length && char.IsDigit(_source[_offset + 1]))
+            {
+                Advance();
+                continue;
+            }
+            break;
+        }
+    }
+
+    private string StripSeparators(string text) =>
+        DigitSeparators && text.Contains('_') ? text.Replace("_", "") : text;
+
+    private static bool IsRadixDigit(char c, int radix)
+    {
+        int d = RadixDigitValue(c);
+        return d >= 0 && d < radix;
     }
 
     /// <summary>Arity backquote char-code
@@ -625,6 +675,10 @@ public sealed class Lexer
             // valid single-quoted character — `0''` is `0'` followed by the
             // opening of a quoted atom, not the code of the quote.
             if (Peek(1) == '\'') { Advance(); Advance(); return '\''; }
+            // SWI leniency (swi dialect loads only): `0''` NOT followed by a
+            // third quote is the quote character itself — url.pl's
+            // `sub_delim(0'').` — where ISO requires 0''' or 0'\'.
+            if (LenientQuoteCharLiteral) { Advance(); return '\''; }
             throw new LexerException(
                 $"0' quote must be written '' or \\' at {pos}.", pos);
         }

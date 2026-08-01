@@ -106,14 +106,21 @@ public sealed partial class PrologEngine
     }
 
     // The dialect a resolved library path belongs to (its directory's tag), or
-    // null when the directory is untagged.
+    // null when no ancestor directory is tagged. Walks up so a SUBDIRECTORY
+    // library (library(dcg/basics) → <tagged>/dcg/basics.pl) inherits the
+    // tagged root's dialect.
     private string? DialectForResolvedPath(string resolvedPath)
     {
         if (_libraryDirDialect is null) return null;
         string? dir = System.IO.Path.GetDirectoryName(resolvedPath);
-        if (dir is null) return null;
-        try { dir = System.IO.Path.GetFullPath(dir); } catch { /* use as-is */ }
-        return _libraryDirDialect.TryGetValue(dir, out string? d) ? d : null;
+        while (dir is not null)
+        {
+            string full = dir;
+            try { full = System.IO.Path.GetFullPath(dir); } catch { /* use as-is */ }
+            if (_libraryDirDialect.TryGetValue(full, out string? d)) return d;
+            dir = System.IO.Path.GetDirectoryName(dir);
+        }
+        return null;
     }
 
     // ADR-040 — true once any module with a non-null dialect has been loaded. The
@@ -180,14 +187,49 @@ public sealed partial class PrologEngine
     {
         string? savedDialect = _activeLibraryDialect;
         var savedDq = Flags.DoubleQuotes;
+        bool savedSep = Flags.DigitSeparators;
         _activeLibraryDialect = dialect;
         Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(dialect);
+        // SWI sources use digit-group separators (10_000) and bare operator
+        // atoms in operand positions (`… as volatile`); scoped to the load so
+        // ISO strictness holds everywhere else.
+        bool savedLenientOps = Flags.LenientBareOperatorOperands;
+        bool savedLenientQuote = Flags.LenientQuoteCharLiteral;
+        // SWI-only OPERATORS, scoped like the flags: `as` (dynamic/table
+        // decorations) would otherwise break user programs that use `as` as a
+        // predicate or DCG-nonterminal head. Save prior definitions so nested
+        // swi loads restore correctly and a user-defined `as` op survives.
+        bool swiOps = dialect == SwiShim.LibraryName;
+        bool hadAs = Operators.TryGetInfix("as", out int asPrec, out var asType);
+        bool hadTl = Operators.TryGetPrefix("thread_local", out int tlPrec, out var tlType);
+        if (dialect == SwiShim.LibraryName)
+        {
+            Flags.DigitSeparators = true;
+            Flags.LenientBareOperatorOperands = true;
+            Flags.LenientQuoteCharLiteral = true;
+            Operators.Define("as", 700, Shumway.Compiler.Parsing.OperatorType.Xfx);
+            Operators.Define("thread_local", 1150, Shumway.Compiler.Parsing.OperatorType.Fx);
+        }
         // ADR-040 — loading an SWI-dialect module auto-loads the SWI compat shim
         // (nb_setarg, copy_term_nat, …) so the module's system-predicate uses
         // resolve, exactly as SWI's own system predicates are always present.
         if (dialect == SwiShim.LibraryName) EnsureSwiShim();
         try { return body(); }
-        finally { _activeLibraryDialect = savedDialect; Flags.DoubleQuotes = savedDq; }
+        finally
+        {
+            _activeLibraryDialect = savedDialect;
+            Flags.DoubleQuotes = savedDq;
+            Flags.DigitSeparators = savedSep;
+            Flags.LenientBareOperatorOperands = savedLenientOps;
+            Flags.LenientQuoteCharLiteral = savedLenientQuote;
+            if (swiOps)
+            {
+                Operators.Define("as", hadAs ? asPrec : 0,
+                    hadAs ? asType : Shumway.Compiler.Parsing.OperatorType.Xfx);
+                Operators.Define("thread_local", hadTl ? tlPrec : 0,
+                    hadTl ? tlType : Shumway.Compiler.Parsing.OperatorType.Fx);
+            }
+        }
     }
 
     // ADR-040 — libraries whose SWI-shipped version depends on a system predicate
@@ -205,6 +247,22 @@ public sealed partial class PrologEngine
             // '$eval_when_condition'/2, a kernel helper we lack; Shumway ships its
             // own coroutining when/2.
             ["when"] = "$eval_when_condition",
+            // library(arithmetic): user-defined evaluable functions ride SWI's
+            // GLOBAL goal_expansion + module introspection (import_module,
+            // imported_from). On Shumway that hook mis-expands every later
+            // consult's arithmetic — a poison pill — and the feature itself
+            // (user evaluables) is unsupported. The shim stubs
+            // arithmetic_function/1 (accepted, unregistered) and
+            // arithmetic_expression_value/2 (builtin evaluation).
+            ["arithmetic"] = "math_goal_expansion",
+            // library(listing): Shumway ships listing/0,1 + portray_clause/1,2
+            // natively; SWI's listing.pl needs dicts (`_{}`) + settings and
+            // would shadow ours. do_portray_clause is its internal renderer.
+            ["listing"] = "do_portray_clause",
+            // library(prolog_stack): prints the SWI VM backtrace via
+            // prolog_frame_attribute — no such VM here; the shim's backtrace/1
+            // no-op is the equivalent surface (debug.pl autoloads only that).
+            ["prolog_stack"] = "prolog_frame_attribute",
         };
 
     /// <summary>True when <paramref name="name"/> is a native-override CANDIDATE
@@ -226,7 +284,10 @@ public sealed partial class PrologEngine
     {
         switch (name)
         {
-            case "when": UseCoroutining(); break;   // our coroutining when/2
+            case "when": UseCoroutining(); break;        // our coroutining when/2
+            case "arithmetic": EnsureSwiShim(); break;   // shim stubs (see marker note)
+            case "listing": break;                       // native listing/portray_clause builtins
+            case "prolog_stack": EnsureSwiShim(); break; // shim backtrace/1 no-op
         }
     }
 
@@ -389,6 +450,23 @@ public sealed partial class PrologEngine
         }
     }
 
+    /// <summary>Reads a <c>library(...)</c> argument as a relative library name:
+    /// a plain atom (<c>lists</c>), or a <c>/</c>-path of atoms for a
+    /// subdirectory library (SWI's <c>library(dcg/basics)</c> →
+    /// <c>"dcg/basics"</c>, resolved against each search dir).</summary>
+    private static bool TryLibraryRelName(Term t, out string rel)
+    {
+        switch (t)
+        {
+            case AtomTerm a: rel = a.Name; return true;
+            case CompoundTerm { Functor: "/", Args: [var l, var r] }
+                when TryLibraryRelName(l, out string ls) && TryLibraryRelName(r, out string rs):
+                rel = ls + "/" + rs;
+                return true;
+            default: rel = ""; return false;
+        }
+    }
+
     /// <summary>Resolves <c>library(<paramref name="name"/>)</c> to a file on the
     /// library search path (ADR-038): the first <c>Dir/name.pl</c> or
     /// <c>Dir/name.shum</c> that exists, in search-path order. Returns the full
@@ -456,9 +534,10 @@ public sealed partial class PrologEngine
 
     private string? ExecuteUseModuleDirectiveCore(Term spec, bool throwOnUnresolved)
     {
-        if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
+        if (spec is CompoundTerm { Functor: "library", Args: [var libArg] }
+            && TryLibraryRelName(libArg, out string libName))
         {
-            switch (lib.Name)
+            switch (libName)
             {
                 // (1) baked C# libraries — take precedence, they carry native
                 // hooks and stay bare-global (no import table).
@@ -467,16 +546,16 @@ public sealed partial class PrologEngine
                 case "coroutining": UseCoroutining(); return null;
                 default:
                     // (2) ADR-038 — a .pl/.shum on the library search path.
-                    if (TryResolveLibrary(lib.Name, out string libPath))
+                    if (TryResolveLibrary(libName, out string libPath))
                     {
                         // ADR-040 — the SWI-shipped version of a native-override
                         // candidate (detected by its marker in the file) can't run
                         // here; discard the load and use Shumway's native equivalent
                         // (use_module becomes a no-op). A non-candidate, or a
                         // same-named file without the marker, loads normally.
-                        if (ShouldUseNativeOverride(lib.Name, libPath))
+                        if (ShouldUseNativeOverride(libName, libPath))
                         {
-                            LoadNativeOverride(lib.Name);
+                            LoadNativeOverride(libName);
                             return null;
                         }
                         // ADR-040 D5.2 — a dir tagged with a dialect loads its
@@ -484,17 +563,17 @@ public sealed partial class PrologEngine
                         // double_quotes) for the whole subtree.
                         string? dirDialect = DialectForResolvedPath(libPath);
                         return dirDialect is not null
-                            ? WithDialect(dirDialect, () => LoadResolvedLibrary(lib.Name, libPath))
-                            : LoadResolvedLibrary(lib.Name, libPath);
+                            ? WithDialect(dirDialect, () => LoadResolvedLibrary(libName, libPath))
+                            : LoadResolvedLibrary(libName, libPath);
                     }
                     // (3) built-in Scryer/Trealla compatibility table.
-                    if (UseCompatLibrary(lib.Name)) return null;
+                    if (UseCompatLibrary(libName)) return null;
                     // (4) genuinely unknown.
                     if (throwOnUnresolved)
                         throw new Shumway.Core.PrologRuntimeException(
-                            $"existence_error(library, {lib.Name})");
+                            $"existence_error(library, {libName})");
                     Console.Error.WriteLine(
-                        $"warning: unknown library '{lib.Name}' in use_module/1 — ignored");
+                        $"warning: unknown library '{libName}' in use_module/1 — ignored");
                     return null;
             }
         }

@@ -111,6 +111,16 @@ public static class ArithmeticEvaluator
             if (n <= 0) throw new PrologRuntimeException("evaluation_error", "undefined");
             return new Number((long)(rh.Random.NextDouble() * n));
         }
+        // SWI msb/lsb: index of the most/least significant set bit of a
+        // positive integer (varnumbers' power-of-two rounding uses msb).
+        if ((name == "msb" || name == "lsb") && a.IsInt)
+        {
+            long v = a.IntValue;
+            if (v <= 0) throw new PrologRuntimeException("evaluation_error", "undefined");
+            return new Number(name == "msb"
+                ? 63 - System.Numerics.BitOperations.LeadingZeroCount((ulong)v)
+                : System.Numerics.BitOperations.TrailingZeroCount((ulong)v));
+        }
         // Unknown unary arithmetic function — ISO type_error(evaluable, Name/1).
         throw new PrologRuntimeException("type_error", "evaluable");
     }

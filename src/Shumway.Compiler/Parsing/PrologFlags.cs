@@ -57,6 +57,26 @@ public sealed class PrologFlags
     /// <c>:</c> is accepted and ignored).</summary>
     public bool ArityCompat { get; set; }
 
+    /// <summary>SWI digit-group separators (<c>10_000</c>) — see
+    /// <c>Lexer.DigitSeparators</c>. Off by default (ISO); the swi dialect
+    /// load scope turns it on for the duration of that library subtree's
+    /// consult, so SWI sources parse and everything else stays strict.</summary>
+    public bool DigitSeparators { get; set; }
+
+    /// <summary>SWI-lenient §6.3.1.3: allow a bare operator atom whose priority
+    /// exceeds the operand position's maximum (<c>:- dynamic foo/2 as
+    /// volatile.</c> — <c>volatile</c> is an fx 1150 operator sitting in
+    /// <c>as</c>'s 699 operand slot; SWI reads it as a plain atom). Off by
+    /// default — the strict rejection is exactly what the ISO syntax
+    /// conformance suite checks — and enabled by the swi dialect load
+    /// scope.</summary>
+    public bool LenientBareOperatorOperands { get; set; }
+
+    /// <summary>SWI-lenient <c>0''</c> = the quote character — see
+    /// <c>Lexer.LenientQuoteCharLiteral</c>. Off by default (ISO); enabled by
+    /// the swi dialect load scope.</summary>
+    public bool LenientQuoteCharLiteral { get; set; }
+
     /// <summary>The conversion table itself: a character maps to its
     /// replacement, missing entries pass through unchanged. The
     /// <c>:- char_conversion(In, Out)</c> directive and the runtime
