@@ -81,6 +81,19 @@ public sealed class FlagAndCleanupTests
     }
 
     [Fact]
+    public void Cleanup_BindingsReachTheCaller()
+    {
+        // SWI's determinism-detection idiom: setup_call_cleanup(true, G, Det=true)
+        // — the cleanup goal shares variables with the caller, so its binding must
+        // survive into the continuation. Regression: the cleanup used to run the
+        // assertz-retract COPY of the goal (renamed variables), so Det stayed
+        // unbound outside.
+        var e = new PrologEngine();
+        Assert.Equal("yes", e.QueryFirst<string>(
+            "setup_call_cleanup(true, true, Det = yes), Ret = Det.", "Ret"));
+    }
+
+    [Fact]
     public void Cleanup_DeterministicCall_LeavesNoChoicePoint()
     {
         var e = new PrologEngine();

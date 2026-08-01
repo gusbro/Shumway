@@ -340,16 +340,16 @@ internal static class Prelude
             '$scc_register'(Ref),
             assertz('$cleanup_pending'(Ref, Cleanup)),
             '$catch_begin'(Error, '$scc_recover'(Ref, Error)),
-            '$scc'(Goal, Ref),
+            '$scc'(Goal, Ref, Cleanup),
             '$catch_end'.
 
-        '$scc'(Goal, Ref) :-
+        '$scc'(Goal, Ref, Cleanup) :-
             '$choice_level'(B0),
             call(Goal),
             '$choice_level'(B1),
-            ( B1 =< B0 -> '$scc_fire'(Ref), ! ; true ).
-        '$scc'(_, Ref) :-
-            '$scc_fire'(Ref),
+            ( B1 =< B0 -> '$scc_fire_live'(Ref, Cleanup), ! ; true ).
+        '$scc'(_, Ref, Cleanup) :-
+            '$scc_fire_live'(Ref, Cleanup),
             fail.
 
         % Public so the catch-frame recovery dispatch ('$catch_begin') can
@@ -366,6 +366,18 @@ internal static class Prelude
         '$scc_fire'(Ref) :-
             '$scc_forget'(Ref),
             ( retract('$cleanup_pending'(Ref, Cleanup)) -> ignore(Cleanup) ; true ).
+
+        % Sync-path variant: runs the LIVE Cleanup term, NOT the retracted copy —
+        % assertz renamed its variables, and SWI's determinism-detection idiom
+        % setup_call_cleanup(true, G, Det=true) needs Cleanup's bindings to reach
+        % the caller. The retract stays as the exactly-once guard (if the engine
+        % already fired the handler asynchronously, it fails and Cleanup is
+        % skipped); the copy itself is discarded. Async paths (external cut,
+        % teardown, error unwind) still run the copy — their bindings are undone
+        % by the unwind anyway.
+        '$scc_fire_live'(Ref, Cleanup) :-
+            '$scc_forget'(Ref),
+            ( retract('$cleanup_pending'(Ref, _)) -> ignore(Cleanup) ; true ).
 
         % Run by the interpreter at a safe point when the engine enqueued cleanups
         % from a teardown path. A Cleanup exception propagates out of the drain as
