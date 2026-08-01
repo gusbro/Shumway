@@ -42,19 +42,25 @@ graphs), grammars, meta/meta_compiler, and **random — 457/457 including all
 
 ## 🟡 Partial — most tests pass, failures concentrated in one cluster
 
-The dominant failure pattern is **floating-point precision, formatting and
-special values**: `ieee_754` itself fails 19/79, and the libraries that build
-on heavy float arithmetic fail proportionally — `linear_algebra` (45/72),
-the ML classifiers/regressions/projections (`adaptive_boosting_classifier`,
-`logistic_regression_classifier`, `linear_svm_classifier`,
-`ridge_regression`, `truncated_svd_projection`, `nmf_projection`, …),
-`tzif`, and parts of the CCSDS telemetry stack (`ccsds_frames`,
-`ccsds_tc_services`). Improving float conformance (rounding modes, special
-values, exact formatting) is the single lever that would move this whole
-cluster.
+The failures concentrate in two engine-level causes:
+
+- **Spurious choice points** — the dominant one. lgtunit's
+  deterministic-goal tests report "test goal succeeded
+  non-deterministically": the engine leaves a choice point where the goal
+  is semantically deterministic. This is what fails most of
+  `linear_algebra` (45/72), the ML classifiers/regressions/projections
+  (`adaptive_boosting_classifier`, `logistic_regression_classifier`,
+  `linear_svm_classifier`, `ridge_regression`, `truncated_svd_projection`,
+  `nmf_projection`, …) and the known `types` 148/149 edge. The lever is
+  indexing / choice-point elision for the clause shapes these libraries
+  use.
+- **Integer bit-pattern arithmetic** — fixed: `1 << 63` used to overflow
+  silently to a negative instead of promoting to an unbounded integer.
+  `ieee_754` went from 19 to 7 failures with that one fix; the remaining 7
+  are genuine float-representation edges (NaN payloads, rounding corners).
 
 Everything else in the partial group fails 1–5 tests on library-specific
-edges (e.g. `types` 148/149, `arbitrary` 42/43, `os` file-system corners).
+edges (e.g. `arbitrary` 42/43, `os` file-system corners).
 
 ## ❌ Not applicable / needs missing infrastructure
 
