@@ -446,9 +446,17 @@ public static class ArithmeticEvaluator
         EnsureBothInt(a, b, "<<");
         int shift = (int)b.IntValue;
         if (a.IsBig) return new Number(a.BigValue << shift);
-        // long << large amounts overflows easily — promote to BigInteger.
-        try { return new Number(checked(a.IntValue << shift)); }
-        catch (OverflowException) { return new Number((System.Numerics.BigInteger)a.IntValue << shift); }
+        // `checked` does NOT cover shifts in C# (they wrap silently, and the
+        // count is masked to 0..63 — `1L << 64` is 1). Unbounded-integer
+        // semantics: take the long path only when shifting back round-trips;
+        // else promote to BigInteger (ieee_754's `1 << 63` bit patterns).
+        long v = a.IntValue;
+        if (shift >= 0 && shift < 64)
+        {
+            long r = v << shift;
+            if ((r >> shift) == v) return new Number(r);
+        }
+        return new Number((System.Numerics.BigInteger)v << shift);
     }
 
     private static Number ShiftRight(Number a, Number b)
