@@ -31,14 +31,16 @@ public sealed class JitIndexProfile
     private readonly Dictionary<int, bool> _compiledHot = new();
 
     /// <summary>Call count at which a dynamic predicate becomes eligible for
-    /// indexed recompilation. NOTE (determinism arc, 2026-08-01): indexing
-    /// decides DETERMINISM, not just speed - an unindexed chain leaves a
-    /// choice point on any non-last clause match (call_det(t(b)) over facts
-    /// a/b/c reports non-det where GNU/SWI report det; hot+indexed reports
-    /// det). Threshold 0 (always-indexed) fixes that but breaks the bundle
-    /// dynamic-seeds path (Chunk440) and Logtalk's live-link path bypasses
-    /// this profile entirely - both need fixing before eager indexing can
-    /// be the default.</summary>
+    /// indexed recompilation. This profile is a PERFORMANCE knob only — it
+    /// must never decide observable semantics. Known open defect it currently
+    /// masks: an unindexed dynamic chain leaves a choice point on any
+    /// non-last clause match (call_det(t(b)) over facts a/b/c reports
+    /// non-det cold, det once hot+indexed — GNU/SWI report det always).
+    /// Determinism must be tier- and hotness-uniform; the fix belongs at the
+    /// Tier-0 chain DISPATCH (first-arg clause selection in enter_dynamic:
+    /// one candidate = CP-free jump, last candidate = trust), not here —
+    /// raising or lowering this threshold to change det-ness conflates JIT
+    /// with semantics.</summary>
     public int Threshold { get; set; } = 16;
 
     /// <summary>Records one call to <paramref name="functorId"/>.
