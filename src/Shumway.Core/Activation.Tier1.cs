@@ -466,6 +466,18 @@ public sealed partial class Activation
     /// by the dispatchers right before raising existence_error.</summary>
     public Func<int, int>? ResolveLateHelper { get; set; }
 
+    /// <summary>ADR-041 — dispatch-time clause selection for an unindexed
+    /// dynamic chain, called at <c>enter_dynamic</c> with the trampoline's
+    /// address. The host inspects the call's (dereferenced) first argument
+    /// against the chain entries' first-arg keys and returns: an absolute
+    /// jump address (exactly ONE candidate clause — dispatch jumps there with
+    /// NO choice point), <c>-1</c> (ZERO candidates — the call fails without
+    /// walking the chain), or <c>-2</c> (no selection: unbound argument,
+    /// several candidates, indexed/unrecognised layout — the chain runs
+    /// unchanged). Determinism must be uniform across tiers and JIT hotness;
+    /// this hook is what makes the cold Tier-0 chain honour that.</summary>
+    public Func<Activation, int, int>? DynChainSelect { get; set; }
+
     /// <summary>ISO number_chars/number_codes reads the characters as a TERM that
     /// must be a number (§8.16.8) — so `'-'1` (a quoted prefix minus) reads as -1,
     /// as does `- /**/1`. The custom number-token parser in

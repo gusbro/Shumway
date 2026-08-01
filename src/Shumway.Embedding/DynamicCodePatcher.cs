@@ -1259,6 +1259,106 @@ internal sealed class DynamicCodePatcher
     internal DynChainTable? GetChainTable(Activation engine)
         => _engineChainTables.TryGetValue(engine, out var t) ? t : null;
 
+    /// <summary>ADR-041 — dispatch-time clause selection for an unindexed
+    /// dynamic chain (the <c>Activation.DynChainSelect</c> hook). Inspects the
+    /// call's dereferenced first argument against the chain entries'
+    /// first-argument keys. Returns an absolute jump address (exactly one
+    /// candidate — the caller jumps there with NO choice point), -1 (zero
+    /// candidates — fail without walking the chain), or -2 (no selection).
+    /// Selection includes logically-dead entries as candidates: their
+    /// <c>check_visible</c> still runs at the jump target, and a sole-but-dead
+    /// candidate correctly fails the call.</summary>
+    internal int SelectDynChainCandidate(
+        Activation engine, int trampolinePc,
+        System.Collections.Generic.IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? predsByAddr)
+    {
+        if (predsByAddr is null
+            || !predsByAddr.TryGetValue(trampolinePc, out var pred)) return -2;
+        var table = GetChainTable(engine);
+        if (table is null
+            || !table.Chains.TryGetValue(pred.FunctorId, out var state)) return -2;
+        var entries = state.Entries;
+        if (entries.Count < 2) return -2;   // 0/1-entry chains are det already
+        var prog = engine.CurrentProgram;
+        if (prog is null) return -2;
+
+        // FLAT-CHAIN layouts only. An INDEXED promotion's buckets also start
+        // with try_me_else, so the per-entry check below cannot tell them
+        // apart — discriminate at the trampoline's `execute` TARGET instead:
+        // a flat chain's head is a chain instruction; an indexed layout's is
+        // switch_on_term. Anything unexpected bails to the normal dispatch.
+        if (trampolinePc + 6 > prog.Length) return -2;
+        // The flat-chain trampoline is exactly `enter_dynamic; execute <head>`
+        // — any other successor (an inline indexed switch, execute variants)
+        // is not a shape this selection understands.
+        if ((Shumway.Core.Opcode)prog[trampolinePc + 1] != Shumway.Core.Opcode.Execute)
+            return -2;
+        int chainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, trampolinePc + 2);
+        if (chainHead < 0 || chainHead >= prog.Length) return -2;
+        var headOp = (Shumway.Core.Opcode)prog[chainHead];
+        if (headOp != Shumway.Core.Opcode.TryMeElse) return -2;
+
+        // Call's first argument, dereferenced. Unbound → every clause is a
+        // candidate → no selection.
+        Cell a0 = engine.GetRegister(0);
+        if (a0.Tag == Tag.Ref)
+        {
+            a0 = engine.GetHeap(engine.Deref(a0.AsHeapIndex));
+            if (a0.Tag == Tag.Ref) return -2;
+        }
+
+        int matchCount = 0;
+        DynChainEntry? match = null;
+        foreach (var entry in entries)
+        {
+            if (!EntryKeyCouldMatch(entry, a0)) continue;
+            if (++matchCount > 1) return -2;   // several candidates → chain
+            match = entry;
+        }
+        if (matchCount == 0) return -1;
+        // Sole candidate. Its chunk must start with a chain instruction we
+        // can skip (try_me_else / retry_me_else, incl. the 155f demoted-head
+        // form); anything else (indexed layout, single-emission shapes) bails.
+        int addr = match!.ChunkAddr;
+        if (addr < 0 || addr >= prog.Length) return -2;
+        var op = (Shumway.Core.Opcode)prog[addr];
+        if (op != Shumway.Core.Opcode.TryMeElse
+            && op != Shumway.Core.Opcode.RetryMeElse) return -2;
+        return addr + ChainEntryHeaderSize(prog, addr);
+    }
+
+    // First-arg key compatibility: a clause whose head first argument is a
+    // variable (or a shape we don't key) matches ANY call; otherwise the tags
+    // must be unifiable and, for atoms/small ints, the values equal. Every
+    // uncertain shape returns true (the clause stays a candidate — that only
+    // costs the selection, never correctness). "Keyed" call tags are the ones
+    // whose mismatch PROVES non-unifiability against a constant/compound key.
+    private static bool EntryKeyCouldMatch(DynChainEntry entry, Cell callArg)
+    {
+        Term head = entry.Clause.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
+            ? h : entry.Clause.Term;
+        if (head is not CompoundTerm hc || hc.Args.Length == 0) return true;
+        bool keyedCall = callArg.Tag is Tag.Atom or Tag.Int or Tag.Str or Tag.Lis or Tag.Pstr;
+        if (!keyedCall) return true;
+        switch (hc.Args[0])
+        {
+            case AtomTerm a:
+                return callArg.Tag == Tag.Atom
+                    && AtomTable.Intern(a.Name, permanent: true).Id == callArg.AsAtomId;
+            case IntTerm i:
+                return callArg.Tag == Tag.Int && callArg.AsInt == i.Value;
+            case CompoundTerm c when c.Functor == "." && c.Args.Length == 2:
+                return callArg.Tag is Tag.Lis or Tag.Pstr;
+            case CompoundTerm:
+                // v1: any compound key vs a Str call stays a candidate (no
+                // functor compare without a heap read); other keyed tags
+                // provably clash.
+                return callArg.Tag == Tag.Str;
+            default:
+                return true;    // var / float / bigint / unkeyed head shapes
+        }
+    }
+
     internal DynChainTable GetOrCreateChainTable(Activation engine)
         => _engineChainTables.GetValue(engine, static _ => new DynChainTable());
 

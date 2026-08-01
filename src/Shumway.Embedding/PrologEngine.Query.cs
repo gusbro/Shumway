@@ -1671,6 +1671,11 @@ public sealed partial class PrologEngine
         var mutableSwitchTables = mergedSwitchTables;
         engine.SwitchTables = mutableSwitchTables;
         engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
+        // ADR-041 — first-arg clause selection for unindexed dynamic chains at
+        // enter_dynamic (determinism must not depend on JIT hotness). Reads
+        // _currentPredicatesByAddress at call time (set later in this setup).
+        engine.DynChainSelect = (e, pc) =>
+            ChainPatcher.SelectDynChainCandidate(e, pc, _currentPredicatesByAddress);
         // ISO number_chars/number_codes fall back to the full term reader for the
         // operator/quoting cases the token parser can't cover (`'-'1` → -1).
         MetaBuiltins.WireNumberFromChars(engine);

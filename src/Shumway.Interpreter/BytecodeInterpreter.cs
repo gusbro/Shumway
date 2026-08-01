@@ -1177,6 +1177,29 @@ public sealed partial class BytecodeInterpreter
                         var provider = _engine.DbGenerationProvider;
                         _engine.CurrentViewGen = provider is null ? 0L : provider();
                     }
+                    // ADR-041 — dispatch-time clause selection by the call's
+                    // first argument. Determinism must not depend on whether
+                    // the chain is indexed yet: with the arg bound and exactly
+                    // one candidate clause, jump straight to its code with NO
+                    // choice point; with zero candidates, fail outright. The
+                    // host returns -2 for "no selection" (unbound arg,
+                    // multiple candidates, indexed/unrecognised layout), and
+                    // then the trampoline's `execute` runs the chain as ever.
+                    var select = _engine.DynChainSelect;
+                    if (select is not null)
+                    {
+                        int sel = select(_engine, pc);
+                        if (sel >= 0)
+                        {
+                            _engine.SetPc(sel); inClause = true;
+                            break;
+                        }
+                        if (sel == -1)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                    }
                     _engine.SetPc(pc + 1); inClause = true;
                     break;
                 }
