@@ -667,6 +667,47 @@ public sealed partial class PrologEngine
         return new BundlePromotionResult(promoted, skipped);
     }
 
+    /// <summary>ADR-038 — resolves which module actually PROVIDES an export of
+    /// <paramref name="sourceModule"/>. A module may list an export it does not
+    /// define locally: a re-export of a predicate it imported (SICStus-style —
+    /// chase the import chain to the DEFINING module, so the importer binds
+    /// straight to it), or a re-export of a bare-global builtin/prelude predicate
+    /// (SWI's <c>library(terms)</c> lists the builtin <c>term_variables/2</c> for
+    /// SICStus source compatibility — return <c>null</c>: no mapping, the call
+    /// falls through to the bare-global). A dynamic-declared export is also
+    /// <c>null</c>: dynamics bypass mangling, so the bare name IS the store.</summary>
+    internal string? ExportProvider(string sourceModule, int fid)
+    {
+        string cur = sourceModule;
+        HashSet<string>? seen = null;
+        while (true)
+        {
+            if (!_modules.TryGetValue(cur, out ModuleManifest? m)) return null;
+            if (m.DynamicFunctors.Contains(fid)) return null;
+            if (DefinedHeads(cur, m).Contains(fid)) return cur;
+            if (!m.Imports.TryGetValue(fid, out string? next)) return null;
+            if (!(seen ??= new HashSet<string>()).Add(cur)) return null;   // cycle
+            cur = next;
+        }
+    }
+
+    // Clause-head sets per module, invalidated by clause-list identity + count
+    // (a module reload replaces the manifest; a same-manifest consult appends).
+    private readonly Dictionary<string, (object ClausesRef, int Count, HashSet<int> Heads)>
+        _moduleDefinedHeadsCache = new();
+
+    private HashSet<int> DefinedHeads(string moduleName, ModuleManifest m)
+    {
+        if (_moduleDefinedHeadsCache.TryGetValue(moduleName, out var e)
+            && ReferenceEquals(e.ClausesRef, m.Clauses) && e.Count == m.Clauses.Count)
+            return e.Heads;
+        var heads = new HashSet<int>();
+        foreach (var c in m.Clauses)
+            heads.Add(ConsultPipeline.HeadFunctorIdOf(c));
+        _moduleDefinedHeadsCache[moduleName] = (m.Clauses, m.Clauses.Count, heads);
+        return heads;
+    }
+
     /// <summary>ADR-038 — imports the whole export surface of
     /// <paramref name="sourceModule"/> into the top-level <c>user</c> module's
     /// import table (first-import-wins), so an interactive query following a
@@ -679,27 +720,17 @@ public sealed partial class PrologEngine
         bool changed = false;
         List<int>? added = null;
         Dictionary<string, List<int>>? kept = null;
-        // Re-export of a bare-global (SWI's library(terms) re-exports the builtin
-        // term_variables/2): an export the source does not define locally is not
-        // imported into `user`, so the call resolves bare-global to the builtin /
-        // prelude predicate rather than a dangling Source$name. Mirrors the
-        // RecordImports filter in ConsultPipeline.
-        HashSet<int>? definedLocally = null;
         foreach (int fid in srcManifest.ExportFunctors)
         {
-            if (definedLocally is null)
-            {
-                definedLocally = new HashSet<int>();
-                foreach (var c in srcManifest.Clauses)
-                    definedLocally.Add(ConsultPipeline.HeadFunctorIdOf(c));
-            }
-            if (!definedLocally.Contains(fid)) continue;
-            if (userManifest.Imports.TryAdd(fid, sourceModule))
+            // Chase re-exports to the defining module; a re-exported bare-global
+            // (builtin/prelude/dynamic) gets no mapping and resolves bare.
+            if (ExportProvider(sourceModule, fid) is not { } provider) continue;
+            if (userManifest.Imports.TryAdd(fid, provider))
             {
                 changed = true;
                 (added ??= new List<int>()).Add(fid);
             }
-            else if (userManifest.Imports[fid] is { } existing && existing != sourceModule)
+            else if (userManifest.Imports[fid] is { } existing && existing != provider)
             {
                 kept ??= new Dictionary<string, List<int>>();
                 if (!kept.TryGetValue(existing, out var list))

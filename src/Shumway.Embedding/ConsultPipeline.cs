@@ -1352,32 +1352,17 @@ internal sealed class ConsultPipeline
         {
             if (src is null) return;
             ModuleManifest srcManifest = E._modules[src];
-            // Re-export of a bare-global: a module may LIST an export it does not
-            // itself define (SWI's `library(terms)` re-exports the builtin
-            // `term_variables/2`). Mapping the importer's name to the source's
-            // mangled `Source$name` would dangle — the source has no such clause —
-            // and shadow the builtin. So an export the source does not define
-            // locally is NOT imported; the importer's call falls through to the
-            // bare-global namespace (where the builtin/prelude predicate lives).
-            HashSet<int>? defined = null;
-            bool DefinedLocally(int fid)
-            {
-                if (defined is null)
-                {
-                    defined = new HashSet<int>();
-                    foreach (var c in srcManifest.Clauses)
-                        defined.Add(HeadFunctorIdOf(c));
-                }
-                return defined.Contains(fid);
-            }
             // First import of a name wins: a later use_module of a DIFFERENT module
             // exporting the same name does not silently steal it (C-linker / SWI
             // conflict semantics). TryAdd is a no-op if the name is already bound.
+            // ExportProvider chases re-exports to the module that actually DEFINES
+            // the predicate, and returns null for a re-exported bare-global
+            // (builtin/prelude) — those get no mapping, so the call falls through.
             if (filter is null)
             {
                 foreach (int fid in srcManifest.ExportFunctors)
-                    if (DefinedLocally(fid))
-                        (pendingImports ??= new()).TryAdd(fid, src);
+                    if (E.ExportProvider(src, fid) is { } provider)
+                        (pendingImports ??= new()).TryAdd(fid, provider);
                 return;
             }
             foreach (var (n, a) in filter)
@@ -1386,8 +1371,8 @@ internal sealed class ConsultPipeline
                 if (!srcManifest.ExportFunctors.Contains(fid))
                     throw new InvalidOperationException(
                         $"module '{src}' does not export {n}/{a}");
-                if (DefinedLocally(fid))
-                    (pendingImports ??= new()).TryAdd(fid, src);
+                if (E.ExportProvider(src, fid) is { } provider)
+                    (pendingImports ??= new()).TryAdd(fid, provider);
             }
         }
 

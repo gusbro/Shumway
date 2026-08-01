@@ -176,6 +176,45 @@ public class ExportQualifiedModuleTests
     }
 
     [Fact]
+    public void ReExportOfImportedPredicate_ResolvesToTheDefiningModule()
+    {
+        // SICStus-style re-export: B imports pepe/1 from A and LISTS it in its own
+        // export list without defining it. An importer of B must resolve pepe to
+        // the DEFINING module (A$pepe) — not to a dangling B$pepe, and not fall
+        // through to bare-global (where nothing lives).
+        using var libs = new LibSet()
+            .Add("defmod", ":- module(defmod, [pepe/1]).\npepe(defined_in_a).\n")
+            .Add("remod",
+                ":- module(remod, [pepe/1, own/1]).\n" +
+                ":- use_module(library(defmod)).\n" +
+                "own(mine).\n");
+        var e = EngineWith(libs);
+        e.ConsultString(
+            ":- use_module(library(remod)).\n" +
+            "run(X) :- pepe(X).");
+        Assert.Equal("defined_in_a", e.QueryFirst<string>("run(X).", "X"));
+        Assert.True(e.Query("own(mine).").Success);
+    }
+
+    [Fact]
+    public void ReExportChain_TwoHops_ResolvesToTheDefiningModule()
+    {
+        // A defines, B re-exports A's export, C re-exports B's — the chase is
+        // transitive.
+        using var libs = new LibSet()
+            .Add("bottom", ":- module(bottom, [val/1]).\nval(deep).\n")
+            .Add("middle",
+                ":- module(middle, [val/1]).\n" +
+                ":- use_module(library(bottom)).\n")
+            .Add("top",
+                ":- module(top, [val/1]).\n" +
+                ":- use_module(library(middle)).\n");
+        var e = EngineWith(libs);
+        e.ConsultString(":- use_module(library(top)).\nget(X) :- val(X).");
+        Assert.Equal("deep", e.QueryFirst<string>("get(X).", "X"));
+    }
+
+    [Fact]
     public void SameNameExports_CoexistWithoutCollision()
     {
         using var libs = new LibSet()
