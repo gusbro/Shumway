@@ -30,11 +30,15 @@ public sealed class JitIndexProfile
     // invalidate the stale (unindexed) cached compile.
     private readonly Dictionary<int, bool> _compiledHot = new();
 
-    /// <summary>Call count at which a dynamic predicate becomes
-    /// eligible for indexed recompilation. Configurable so tests can
-    /// force the transition cheaply; the default is tuned so a
-    /// genuinely hot predicate crosses it quickly while a one-off call
-    /// never does.</summary>
+    /// <summary>Call count at which a dynamic predicate becomes eligible for
+    /// indexed recompilation. NOTE (determinism arc, 2026-08-01): indexing
+    /// decides DETERMINISM, not just speed - an unindexed chain leaves a
+    /// choice point on any non-last clause match (call_det(t(b)) over facts
+    /// a/b/c reports non-det where GNU/SWI report det; hot+indexed reports
+    /// det). Threshold 0 (always-indexed) fixes that but breaks the bundle
+    /// dynamic-seeds path (Chunk440) and Logtalk's live-link path bypasses
+    /// this profile entirely - both need fixing before eager indexing can
+    /// be the default.</summary>
     public int Threshold { get; set; } = 16;
 
     /// <summary>Records one call to <paramref name="functorId"/>.
