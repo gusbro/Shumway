@@ -160,14 +160,14 @@ public static partial class MetaBuiltins
             "Re-threads the named predicate's chain to skip retracted clauses.");
         BuiltinsRegistry.Register("compact_dynamic_buffer", 0, CompactDynamicBuffer,
             Database, "compact_dynamic_buffer",
-            "Phase-11 chunk 157: invalidates the persistent dynamic-code buffer so "
+            "Invalidates the persistent dynamic-code buffer so "
             + "the next query rebuilds it from current _dynamicClauses. Reclaims memory "
             + "consumed by appended-but-now-unreachable chain entries from many "
             + "in-place assertz / asserta / retract cycles, at the cost of one "
             + "re-link of the dynamic region on the next query.");
         BuiltinsRegistry.Register("compact_dynamic_buffer", 1, CompactDynamicBuffer1,
             Database, "compact_dynamic_buffer(+Name/Arity)",
-            "Phase-12 chunk 158: per-predicate hint variant. Validates Name/Arity "
+            "Per-predicate hint variant. Validates Name/Arity "
             + "names a dynamic predicate, then triggers the same full rebuild as the "
             + "0-arg form. The single buffer holds every dynamic predicate's bytecode "
             + "interleaved, so independent per-predicate reclamation isn't currently "

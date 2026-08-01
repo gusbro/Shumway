@@ -158,14 +158,18 @@ public sealed class Parser
 
             // Comma and bar surface as their own token kinds but act as infix
             // operators when their precedence fits — treat them as named atoms
-            // for operator-lookup purposes.
+            // for operator-lookup purposes. In SWI argument mode the enclosing
+            // argument/list context suppresses them (they are separators there
+            // even though the argument itself reads at 1200).
             if (tok.Kind == TokenKind.Comma)
             {
+                if (_suppressComma) break;
                 if (!TryApplyInfix(",", 1000, OperatorType.Xfy, maxPrec, ref left, ref builtPrec, ref leftBareOp)) break;
                 continue;
             }
             if (tok.Kind == TokenKind.Bar)
             {
+                if (_suppressBar) break;
                 if (!TryApplyInfix("|", 1100, OperatorType.Xfy, maxPrec, ref left, ref builtPrec, ref leftBareOp)) break;
                 continue;
             }
@@ -377,8 +381,23 @@ public sealed class Parser
                 next.Kind == TokenKind.Atom && next.Text == "/"
                 && PeekTokenAt(2).Kind == TokenKind.Integer;
 
+            // SWI leniency: when the would-be operand is itself a bare
+            // NON-prefix operator atom (`Spec == '-'  ->  …` — after the '-'
+            // comes `->`), SWI reads the current atom as a PLAIN ATOM and
+            // lets the following operator apply infix, where strict ISO
+            // §6.3.1.3 rejects the whole form. Only when the next atom cannot
+            // head a compound (no adjacent '(').
+            bool nextIsBareNonPrefixOp =
+                _flags.LenientBareOperatorOperands
+                && next.Kind == TokenKind.Atom && !next.WasQuoted
+                && !_operators.TryGetPrefix(next.Text, out _, out _)
+                && BareOperatorAtomPriority(next.Text) > 0
+                && !(PeekTokenAt(2).Kind == TokenKind.LParen
+                     && IsAdjacent(next, PeekTokenAt(2)));
+
             if (nextCanStart && !followedByCompoundParen
-                && !nextIsPredicateIndicatorSlash)
+                && !nextIsPredicateIndicatorSlash
+                && !nextIsBareNonPrefixOp)
             {
                 NextToken();
                 int rightMax = opType == OperatorType.Fy ? opPrec : opPrec - 1;
@@ -474,11 +493,20 @@ public sealed class Parser
 
             case TokenKind.LParen:
             {
-                Term inner = ReadTermInternal(1200, out _);
-                ExpectKind(TokenKind.RParen);
-                // Keep the inner term's own position (more informative than the
-                // paren's) — Position is excluded from value equality anyway.
-                return inner;
+                // A grouping paren re-enables the separators an enclosing
+                // argument context suppressed: `f(( a, b ))` is a conjunction.
+                bool sc = _suppressComma, sb = _suppressBar;
+                _suppressComma = false;
+                _suppressBar = false;
+                try
+                {
+                    Term inner = ReadTermInternal(1200, out _);
+                    ExpectKind(TokenKind.RParen);
+                    // Keep the inner term's own position (more informative than the
+                    // paren's) — Position is excluded from value equality anyway.
+                    return inner;
+                }
+                finally { _suppressComma = sc; _suppressBar = sb; }
             }
 
             case TokenKind.LBracket:
@@ -634,6 +662,26 @@ public sealed class Parser
         }
     }
 
+    // SWI argument mode (LenientArgumentPriority): an argument / list element
+    // reads at FULL 1200 priority with the separator tokens suppressed as
+    // operators — comma always (it separates), bar only where it marks a list
+    // tail. ISO mode reads at 999 as before. The suppression flags are
+    // cleared by every bracketing context (parens, braces, a nested arg list
+    // re-establishes its own), so `f(( a, b ))` keeps its conjunction.
+    private bool _suppressComma;
+    private bool _suppressBar;
+
+    private Term ReadArgTerm(bool barIsSeparator)
+    {
+        if (!_flags.LenientArgumentPriority)
+            return ReadTermInternal(999, out _);
+        bool savedComma = _suppressComma, savedBar = _suppressBar;
+        _suppressComma = true;
+        _suppressBar = barIsSeparator;
+        try { return ReadTermInternal(1200, out _); }
+        finally { _suppressComma = savedComma; _suppressBar = savedBar; }
+    }
+
     private List<Term> ReadCommaSeparatedArgs(TokenKind closing)
     {
         var args = new List<Term>();
@@ -642,7 +690,7 @@ public sealed class Parser
             NextToken();
             return args;
         }
-        args.Add(ReadTermInternal(999, out _));
+        args.Add(ReadArgTerm(barIsSeparator: false));
         while (PeekToken().Kind == TokenKind.Comma)
         {
             NextToken();
@@ -655,7 +703,7 @@ public sealed class Parser
             if (_flags.ArityCompat && closing == TokenKind.RParen
                 && PeekToken().Kind == TokenKind.RParen)
                 break;
-            args.Add(ReadTermInternal(999, out _));
+            args.Add(ReadArgTerm(barIsSeparator: false));
         }
         ExpectKind(closing);
         return args;
@@ -665,23 +713,35 @@ public sealed class Parser
     {
         if (PeekToken().Kind == TokenKind.RBracket)
         {
-            NextToken();
+            Token rb = NextToken();
+            // SWI zero-name compound `[](Args)` (hashtable.pl's bucket
+            // arrays): `[]` immediately followed by '(' heads a compound,
+            // exactly like the ISO `{}(X)` form below. Lenient-scope only.
+            if (_flags.LenientArgumentPriority
+                && PeekToken().Kind == TokenKind.LParen
+                && IsAdjacent(rb, PeekToken()))
+            {
+                NextToken();   // consume '('
+                var cargs = ReadCommaSeparatedArgs(closing: TokenKind.RParen);
+                if (cargs.Count > 0)
+                    return new CompoundTerm("[]", cargs.ToArray()) { Position = pos };
+            }
             return new AtomTerm("[]") { Position = pos };
         }
 
         var elements = new List<Term>();
-        elements.Add(ReadTermInternal(999, out _));
+        elements.Add(ReadArgTerm(barIsSeparator: true));
         while (PeekToken().Kind == TokenKind.Comma)
         {
             NextToken();
-            elements.Add(ReadTermInternal(999, out _));
+            elements.Add(ReadArgTerm(barIsSeparator: true));
         }
 
         Term tail;
         if (PeekToken().Kind == TokenKind.Bar)
         {
             NextToken();
-            tail = ReadTermInternal(999, out _);
+            tail = ReadArgTerm(barIsSeparator: true);
         }
         else
         {
@@ -719,9 +779,17 @@ public sealed class Parser
             }
             return new AtomTerm("{}") { Position = pos };
         }
-        Term inner = ReadTermInternal(1200, out _);
-        ExpectKind(TokenKind.RBrace);
-        return new CompoundTerm("{}", new[] { inner }) { Position = pos };
+        // Braces re-enable suppressed separators, like grouping parens.
+        bool sc = _suppressComma, sb = _suppressBar;
+        _suppressComma = false;
+        _suppressBar = false;
+        try
+        {
+            Term inner = ReadTermInternal(1200, out _);
+            ExpectKind(TokenKind.RBrace);
+            return new CompoundTerm("{}", new[] { inner }) { Position = pos };
+        }
+        finally { _suppressComma = sc; _suppressBar = sb; }
     }
 
     // ---------- Token helpers ----------

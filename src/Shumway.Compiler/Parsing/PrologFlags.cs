@@ -77,6 +77,16 @@ public sealed class PrologFlags
     /// the swi dialect load scope.</summary>
     public bool LenientQuoteCharLiteral { get; set; }
 
+    /// <summary>SWI argument priority: arguments and list elements are read at
+    /// full 1200 priority with the separators suppressed as operators — comma
+    /// always, bar only inside lists (where it marks the tail). Verified
+    /// against SWI's reader: <c>f(a :- b)</c>, <c>[ :- D1, :- D2 ]</c>
+    /// (persistency.pl) and <c>f(a|b)</c> (main.pl) all parse; ISO reads
+    /// arguments at 999 and rejects all three. Also gates the SWI
+    /// <c>[](Args)</c> zero-name compound (hashtable.pl). Off by default;
+    /// enabled by the swi dialect load scope.</summary>
+    public bool LenientArgumentPriority { get; set; }
+
     /// <summary>The conversion table itself: a character maps to its
     /// replacement, missing entries pass through unchanged. The
     /// <c>:- char_conversion(In, Out)</c> directive and the runtime

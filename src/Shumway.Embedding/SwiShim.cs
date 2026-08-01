@@ -177,6 +177,11 @@ internal static class SwiShim
         :- public same_term/2.
         same_term(A, B) :- '$same_term'(A, B).
 
+        % compound_name_arguments(?Compound, ?Name, ?Args): =.. restricted to
+        % compounds (lazy_lists' iterator-macro expansion builds goals with it).
+        :- public compound_name_arguments/3.
+        compound_name_arguments(C, Name, Args) :- C =.. [Name | Args].
+
         % '$filled_array'(-Array, +Name, +Size, +Value): a compound Name/Size
         % with every argument unified with Value (nb_set's bucket arrays; Value
         % is typically one shared fresh variable used as the empty marker).

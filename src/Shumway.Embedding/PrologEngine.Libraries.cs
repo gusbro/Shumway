@@ -195,6 +195,7 @@ public sealed partial class PrologEngine
         // ISO strictness holds everywhere else.
         bool savedLenientOps = Flags.LenientBareOperatorOperands;
         bool savedLenientQuote = Flags.LenientQuoteCharLiteral;
+        bool savedLenientArgs = Flags.LenientArgumentPriority;
         // SWI-only OPERATORS, scoped like the flags: `as` (dynamic/table
         // decorations) would otherwise break user programs that use `as` as a
         // predicate or DCG-nonterminal head. Save prior definitions so nested
@@ -207,6 +208,7 @@ public sealed partial class PrologEngine
             Flags.DigitSeparators = true;
             Flags.LenientBareOperatorOperands = true;
             Flags.LenientQuoteCharLiteral = true;
+            Flags.LenientArgumentPriority = true;
             Operators.Define("as", 700, Shumway.Compiler.Parsing.OperatorType.Xfx);
             Operators.Define("thread_local", 1150, Shumway.Compiler.Parsing.OperatorType.Fx);
         }
@@ -224,6 +226,7 @@ public sealed partial class PrologEngine
             Flags.DigitSeparators = savedSep;
             Flags.LenientBareOperatorOperands = savedLenientOps;
             Flags.LenientQuoteCharLiteral = savedLenientQuote;
+            Flags.LenientArgumentPriority = savedLenientArgs;
             if (swiOps)
             {
                 Operators.Define("as", hadAs ? asPrec : 0,
@@ -319,6 +322,10 @@ public sealed partial class PrologEngine
         try { ConsultStringInner(SwiShim.Source, recordInHistory: false); }
         finally { Flags.DoubleQuotes = savedDq; }
     }
+
+    // Sequence for the per-consult early-hook hidden modules (ConsultPipeline);
+    // nested library consults each need a distinct name.
+    internal int _earlyHookSeq;
 
     private bool _scryerShimLoaded;
 

@@ -1,25 +1,46 @@
-# Scryer library support — full-corpus sweep + end-to-end validation
+# Scryer Prolog library support
 
-What actually works when a real Scryer-Prolog library is loaded on Shumway (under
-the `scryer` dialect — `double_quotes = chars`, the `atts` attribute machinery)
-and its predicates are **exercised at runtime**. Covers the full top-level corpus
-of a Scryer checkout's `lib/` (46 libraries; the `http/`, `numerics/`,
-`serialization/`, `tabling/` subdirectories are not swept), loading each on a
-fresh engine plus a runtime-smoke set. Companion to
-[`swi-library-support.md`](swi-library-support.md) — same method, same
-categories.
+Status of running Scryer Prolog's libraries **unmodified** on Shumway.
+Measured against a Scryer checkout's `lib/`: all 46 top-level libraries are
+loaded on a fresh engine under the `scryer` dialect, and 33 are exercised at
+runtime with representative queries (the opt-in `ScryerEndToEndValidation`
+test — see the end of this document). The `http/`, `numerics/`,
+`serialization/` subdirectories are not covered.
 
-## Sweep result
+**Bottom line: 46 of 46 libraries load clean — zero warnings, zero failures —
+and everything whose functionality can exist on Shumway works, including
+clp(Z), which is certified byte-identical to Scryer's own answers. What does
+not work needs a capability the engine does not have (delimited continuations,
+Rust FFI/network bindings, crypto natives).**
 
-**46/46 load clean — zero warnings, zero failures. After round 2, 33 of them
-are runtime-validated by smoke queries** (the 24 below plus the nine former
-gaps in the round-2 table). The clpz arc (ADR-040, rounds 1–8) paved the
-Scryer path: `atts`, export-qualified modules, dialect parsing, per-module
-attribute hooks. What distinguished the rest was one axis — **does the library
-bottom out in pure Prolog, or in a Rust-VM native (`'$...'`)?** — and round 2
-closed the native-gated set by emulating those natives in the Scryer shim.
+## How to use Scryer libraries
 
-## ✅ Runtime-validated (smoke queries pass) — 24
+Point the engine at a Scryer `lib/` tree with the `scryer` dialect tag:
+
+- REPL / CLI: `shumway -L "scryer:C:/Scryer/lib" myprogram.pl`
+- Embedding: `engine.AddLibraryDirectory(dir, "scryer")`
+
+Then `:- use_module(library(X)).` works as in Scryer. Libraries load with
+`double_quotes = chars` (Scryer's default) scoped to the load; text is chars
+lists throughout, as their APIs expect.
+
+A Scryer compat shim auto-loads with the first `scryer`-dialect module. Where
+the SWI shim supplies SWI system predicates, this one mostly supplies
+**emulations of Scryer's Rust-VM native instructions** (the `'$...'` calls its
+libraries bottom out in) as bare-global predicates, so the libraries' own pure
+Prolog runs unmodified: `$random_integer`, `$crypto_random_byte`, `$getenv`,
+`$file_exists` and the file-system family, `$char_type` with Scryer's full
+category vocabulary, plus `builtins.pl` helpers (`must_be_number/2`,
+`can_be_number/2`) that Scryer's bootstrap makes implicitly visible on their
+VM.
+
+Two libraries route to Shumway equivalents instead (native override — the file
+is recognised by a marker and the load discarded): `format` (its rendering
+core needs `builtins:parse_write_options`; the pack's `format/2,3` shim
+serves) and `time` (wraps `$cpu_now`; Shumway's native `time/1` + `sleep/1`
+serve — `current_time`/`format_time//2` are not available).
+
+## ✅ Supported — loads clean and runtime-validated
 
 | library | exercised |
 |---|---|
@@ -27,7 +48,7 @@ closed the native-gated set by emulating those natives in the Scryer shim.
 | `assoc` | `empty_assoc` → `put_assoc` → `get_assoc` |
 | `between` | `between/3`, `numlist/3` |
 | `clpb` | `taut(X + ~X, 1)` (boolean constraints) |
-| `clpz` | `X #= 3+4` — **certified byte-identical to Scryer** (see `clpz-vs-scryer` memory) |
+| `clpz` | `X #= 3+4` — **certified byte-identical answers vs Scryer** (queens/permutations oracle) |
 | `csv` | `phrase(parse_csv(Rows), Cs)` → `frame/2` |
 | `dcgs` | `seq//1` over chars |
 | `debug` | `* Goal` (goal generalization), `$`/`$-` ops |
@@ -46,62 +67,36 @@ closed the native-gated set by emulating those natives in the Scryer shim.
 | `terms` | `numbervars/3` |
 | `ugraphs` | `add_vertices/3` |
 | `xpath` | `xpath/3` over a term DOM (pure — no sgml needed) |
-| `crypto` | `hex_bytes/2` (the pure part; hashes are native, see ❌) |
+| `arithmetic` | `lcm/3`, `msb/2` |
+| `charsio` | `char_type/2` incl. the `lower(L)`/`upper(U)` string forms |
+| `format` | `format/2,3` (via the pack shim) |
+| `files` | `file_exists/1` and the FS family, chars↔atom converted |
+| `os` | `getenv/2` |
+| `random` | `random/1`, `random_integer/3` (upper bound exclusive, as in Scryer) |
+| `time` | `time/1`, `sleep/1` |
+| `uuid` | `uuidv4_string/1` — valid v4 UUIDs. **NOT cryptographically secure** (seedable PRNG source) |
+| `when` | `when/2` post + fire |
+| `crypto` | the pure parts (`hex_bytes/2`, `crypto_n_random_bytes/2`†) |
 
-`atts` is validated indirectly — it is the foundation the whole clpz/dif/freeze
-stack runs on.
+† random bytes come from a PRNG — fine for ids and simulation, **not for key
+material**. `atts` is validated indirectly: it is the foundation the whole
+clpz/dif/freeze stack runs on.
 
-## ✅ Round 2 — the former gaps, now served by the Scryer shim
+## ❌ Not supported — needs a capability Shumway does not have
 
-The round-1 gaps split on one axis — a call into `builtins.pl` (Scryer's
-bootstrap, implicitly visible in every module on their VM) or a Rust-VM native
-(`'$...'`). Round 2 closed ALL of them with the **Scryer shim**
-(`ScryerShim.cs`, auto-loaded on the first scryer-dialect load): bare-global
-**emulations of the `'$...'` natives** — an unresolved bare or
-`builtins:`-qualified call falls through to the bare-global namespace, so
-providing the native's contract there lets the library's own pure Prolog run
-unmodified.
-
-| library | was blocked on | now |
-|---|---|---|
-| `arithmetic` | `builtins:must_be_number/2`, `can_be_number/2` | shim helpers → `lcm/3`, `msb/2`, … work |
-| `format` | `builtins:parse_write_options/3` (via charsio) | marker-override (`format_args_cells`) → the scryer pack's `Format` shim; `format/2,3` work |
-| `charsio` | `$char_type` | shim ctype dispatch (Scryer's full category vocabulary, ASCII + non-ASCII-as-alphabetic); `char_type/2` incl. `lower(L)`/`upper(U)` string forms |
-| `files` | `$file_exists`, `$directory_files`, … | shim over our FS builtins (exists/delete/rename/mkdir/rmdir/mkpath/working_directory/directory_files), chars↔atom converted |
-| `random` | `$maybe`, `$random_integer` | shim over `random_between/3` (Upper exclusive preserved) |
-| `time` | `$cpu_now` | marker-override → native `time/1` + `sleep/1` (current_time/format_time lost) |
-| `uuid` | `$crypto_random_byte` (via crypto) | shim byte source → `uuidv4_string/1` yields valid v4 UUIDs. **NOT cryptographically secure** — fine for ids, not for key material |
-| `os` | `$getenv` | shim over the `$sys_getenv` builtin alias; `getenv/2` works |
-| `when` | (collateral of the round-1 shim state) | works — post + fire validated |
-
-**The import-shadow loop trap** (twice bitten, now designed around): a shim
-emulation must NOT call a builtin by a name the library it serves EXPORTS —
-imports win over builtins, so after `os.pl` loads, a shim call to `getenv/2`
-resolves back into `os$getenv` → infinite loop (same for `charsio`'s
-`char_type`, `files`' `working_directory`). Emulations therefore use either
-names no Scryer library exports, self-contained code, or the `$sys_getenv` /
-`$sys_working_directory` C# builtin aliases added for exactly this.
-
-## ❌ No-op (unsupported) — needs a capability Shumway does not have
-
-These load (harmlessly) but their purpose is a VM/OS capability we don't provide
-— inert, not intercepted:
+These load (harmlessly) but their purpose cannot be served:
 
 | group | libraries | why |
 |---|---|---|
-| **delimited continuations** | `cont` (`reset/3`, `shift/1` via `$reset_cont_marker`) | a VM execution-model feature |
-| `tabling` | Scryer's tabling is built ON `cont` | **Shumway's own native `:- table` covers the feature** — a program using `:- table p/2` works through our tabling engine |
+| **delimited continuations** | `cont` (`reset/3`, `shift/1`) | a VM execution-model feature |
+| `tabling` | Scryer's tabling is built on `cont` | **Shumway's own native `:- table` covers the feature** — `:- table p/2` works through our tabling engine |
 | **native bindings** | `ffi`, `sockets`, `tls`, `wasm`, `sgml` (`load_html`), `process` | Rust-side FFI / network / OS |
-| **crypto natives** | `crypto` (hashes, HKDF, curves) | Rust crypto backend (`hex_bytes` and other pure parts DO work) |
+| **crypto natives** | `crypto` hashes, HKDF, curves | Rust crypto backend (the pure parts DO work, see above) |
 | **VM introspection** | `diag` (`wam_instructions/2`) | decompiles Scryer's WAM; Shumway has `shumway-disasm` for its own |
 | **bootstrap internals** | `builtins`, `loader`, `ops_and_meta_predicates` | Scryer-internal modules; load as inert data |
 | `pio` | `phrase_from_file` needs their stream layer | unverified; plain `phrase/2,3` is native here |
 
-## Method / regenerate
-
-`ScryerEndToEndValidation` (opt-in): loads each library on a fresh engine with
-`AddLibraryDirectory(dir, "scryer")` and runs the smoke query. The hard
-assertion is the load sweep (46/46 must load).
+## Regenerate the validation
 
 ```
 SHUMWAY_SCRYER_LIB=C:/Scryer/lib SHUMWAY_TRIAGE_OUT=<file> dotnet test

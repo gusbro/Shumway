@@ -341,6 +341,29 @@ public sealed partial class PrologEngine
         }
     }
 
+    /// <summary>Runs the EARLY-ACTIVATED in-file term_expansion hooks (renamed
+    /// to <paramref name="predName"/> in the consult's hidden module) against
+    /// one directive term. Same solution/flatten handling as
+    /// <see cref="TryPrologTermExpansionOnce"/>, but scoped to the dedicated
+    /// predicate so a partial hook never affects ordinary clause
+    /// expansion.</summary>
+    internal bool TryEarlyTermExpansion(string predName, Term input, out List<Term> output)
+    {
+        output = new List<Term>();
+        var inputVars = new HashSet<string>();
+        CollectVarNames(input, inputVars);
+        var expandedVar = new VarTerm("$TE_Expanded");
+        var goal = new CompoundTerm(predName, new Term[] { input, expandedVar });
+        foreach (var sol in QueryAll(goal))
+        {
+            Term? expanded = sol["$TE_Expanded"];
+            if (expanded is null) return false;
+            FlattenExpansion(RelinkInputVars(expanded, inputVars, sol), output);
+            return true;
+        }
+        return false;
+    }
+
     private static readonly bool TeDiagEnabled =
         System.Environment.GetEnvironmentVariable("SHUMWAY_TE_DIAG") == "1";
 

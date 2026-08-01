@@ -167,6 +167,33 @@ internal sealed class ConsultPipeline
         && ((c.Functor == "term_expansion" && c.Args.Length is 2 or 6)
             || (c.Functor == "goal_expansion" && c.Args.Length == 2));
 
+    /// <summary>Early-activation clause surgery: a <c>term_expansion/2</c>
+    /// clause is renamed to <paramref name="earlyName"/> (so only the directive
+    /// probe consults it); a <c>goal_expansion/2</c> or <c>term_expansion/6</c>
+    /// clause is DROPPED (<paramref name="dropClause"/>) — a partial hook must
+    /// never reach the global aggregate. Returns false for ordinary clauses
+    /// (helpers), which the hidden module keeps verbatim.</summary>
+    private static bool TryRenameEarlyHookClause(
+        Clause c, string earlyName, out Clause renamed, out bool dropClause)
+    {
+        renamed = c;
+        dropClause = false;
+        (Term head, Term? body) = c.Term is CompoundTerm { Functor: ":-", Args: [var h, var b] }
+            ? (h, b) : (c.Term, null);
+        if (head is not CompoundTerm hc || !IsHookHead(head)) return false;
+        if (hc.Functor != "term_expansion" || hc.Args.Length != 2)
+        {
+            dropClause = true;
+            return true;
+        }
+        Term newHead = new CompoundTerm(earlyName, hc.Args) { Position = hc.Position };
+        Term newTerm = body is null
+            ? newHead
+            : new CompoundTerm(":-", new[] { newHead, body }) { Position = c.Term.Position };
+        renamed = new Clause(c.Kind, newTerm, c.Position);
+        return true;
+    }
+
     // A collected (M:-stripped) clause defining a term_expansion / goal_expansion
     // hook — its head is one of those functors.
     private static bool IsHookClauseHead(Clause c)
@@ -747,6 +774,13 @@ internal sealed class ConsultPipeline
             || E.HasPrologTermExpansion6;
         bool hasGoalExp = E.HasGoalExpansions || E.HasPrologGoalExpansion;
 
+        // Early in-file hook activation state (see the loop below). Declared
+        // before ExpandRawClause so the local function can consult it.
+        bool sawInFileHook = false;
+        bool earlyHooksActive = false;
+        string? earlyHookModuleName = null;
+        string? earlyHookPredName = null;
+
         // Per-clause term_expansion / goal_expansion — applied inline in the loop
         // (not a pre-pass over the whole file) so it composes with incremental
         // consult: a raw clause is expanded with whatever hooks are live by the
@@ -769,11 +803,29 @@ internal sealed class ConsultPipeline
                 hasGoalExp = E.HasGoalExpansions || E.HasPrologGoalExpansion;
             }
             if (rc.Kind is ClauseKind.DcgRule or ClauseKind.SsuRule
-                || !(hasTermExp || hasGoalExp))
+                || !(hasTermExp || hasGoalExp || earlyHooksActive))
                 return SingletonClause(rc);
             IReadOnlyList<Term>? repl = null;
             if (hasTermExp && E.TryPrologTermExpansion(rc.Term, out var pexp))
                 repl = pexp;
+            // Early in-file hooks intercept SAME-FILE DIRECTIVES only
+            // (lazy_lists' `:- lazy_list_iterator(...)` macro directives).
+            // Their clauses live RENAMED in the hidden module, invisible to the
+            // global hook aggregate — an early hook may lack helpers defined
+            // later in its file (clpz's goal_expansion calls list_goal_/3 from
+            // further down), so it must never run against the file's own
+            // ordinary clauses; the deferred re-expansion pass covers those.
+            // A throw from a partial hook means "cannot expand", not "abort".
+            if (repl is null && rc.Kind == ClauseKind.Directive
+                && earlyHooksActive && earlyHookPredName is not null)
+            {
+                try
+                {
+                    if (E.TryEarlyTermExpansion(earlyHookPredName, rc.Term, out var dexp))
+                        repl = dexp;
+                }
+                catch { /* fall through: process the directive unexpanded */ }
+            }
             if (repl is null)
                 return SingletonClause(hasGoalExp ? E.ExpandClauseGoals(rc) : rc);
             var outl = new List<Clause>(repl.Count);
@@ -887,6 +939,47 @@ internal sealed class ConsultPipeline
                 && TryCondCompile(condWrap.Args[0]))
                 continue;
             if (!CondIncluding()) continue;
+            // In-file term_expansion hooks + a SAME-FILE directive that needs
+            // them (lazy_lists' `:- lazy_list_iterator(...)` macro directives).
+            // Hooks normally compile only when this consult COMMITS, so
+            // expansion could never intercept a directive of the same file. On
+            // the first directive after a hook clause, activate them EARLY:
+            // commit the clause prefix seen so far as a hidden module. The
+            // term_expansion/2 clauses are RENAMED to a per-activation
+            // predicate — only the directive probe above consults them, so a
+            // partial hook never joins the global aggregate — and its
+            // goal_expansion clauses are dropped entirely. Removed again right
+            // after the real commit.
+            if (rawClause0.Kind == ClauseKind.Directive && sawInFileHook && !earlyHooksActive)
+            {
+                earlyHooksActive = true;
+                int seq = E._earlyHookSeq++;
+                earlyHookModuleName = "$early_hooks$" + seq;
+                earlyHookPredName = "$early_te$" + seq;
+                var earlyManifest = new ModuleManifest(earlyHookModuleName);
+                foreach (var pc in clauses)
+                {
+                    if (TryRenameEarlyHookClause(pc, earlyHookPredName, out Clause renamed,
+                            out bool dropClause))
+                    {
+                        if (!dropClause) earlyManifest.Clauses.Add(renamed);
+                        continue;
+                    }
+                    earlyManifest.Clauses.Add(pc);
+                }
+                earlyManifest.PublicFunctors.Add(FunctorTable.Intern(
+                    AtomTable.Intern(earlyHookPredName, permanent: true).Id, 2));
+                // The prefix's helper bodies call predicates this consult
+                // IMPORTED (lazy_lists' error/apply imports) — mirror the
+                // import table accumulated so far, as the real commit will.
+                if (pendingImports is not null)
+                    foreach (var (ifid, isrc) in pendingImports)
+                        earlyManifest.Imports[ifid] = isrc;
+                E._modules[earlyHookModuleName] = earlyManifest;
+                E._staticHeadFunctorsCache = null;
+                E._hookIndexValid = false;
+                E.InvalidatePersistent();
+            }
         foreach (var rawClause in ExpandRawClause(rawClause0))
         {
             var clause = rawClause;
@@ -899,6 +992,7 @@ internal sealed class ConsultPipeline
                 if (TryStripHookHead(clause, out Clause stripped))
                     clause = stripped;
                 clauses.Add(clause);
+                if (!sawInFileHook && IsHookClauseHead(clause)) sawInFileHook = true;
                 if (!debuggableHere && TryReadClauseHead(clause, out var headSpec))
                     (nonDebuggable ??= new()).Add(headSpec);
                 continue;
@@ -1525,6 +1619,16 @@ internal sealed class ConsultPipeline
         // use_module(library(X)) learns which module X.pl actually declared.
         E._lastConsultedModuleName = moduleName;
 
+        // The early-hook hidden module served only this consult — the real
+        // commit above carries the hooks (guarded) and the helpers; drop it.
+        if (earlyHooksActive && earlyHookModuleName is not null)
+        {
+            E._modules.Remove(earlyHookModuleName);
+            E._staticHeadFunctorsCache = null;
+            E._hookIndexValid = false;
+            E.InvalidatePersistent();
+        }
+
         // Source clauses added to an already-cached dynamic predicate were
         // invalidated PER FID as they were routed into the store (the
         // consult-borne InvalidateDynamicCache call above) — no wholesale
@@ -1744,15 +1848,19 @@ internal sealed class ConsultPipeline
         // A module-qualified head (`prolog:message(X) --> …`) is a multifile
         // contribution to ANOTHER module's predicate — inherently scattered
         // among a file's own clauses (SWI hook idiom). All of them share the
-        // head functor `:/2`, so keying contiguity on it produces spurious
-        // "clauses for :/2 not contiguous" errors; exempt it.
-        int colonFid = FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
+        // head functor `:` — arity 2 for plain clauses, arity 4 for a
+        // qualified DCG head (HeadFunctorIdOf reports the OUTER functor at
+        // the DCG-expanded arity) — so keying contiguity on `:` produces
+        // spurious errors; exempt it.
+        int colonAtomId = AtomTable.Intern(":", permanent: true).Id;
+        int colonFid2 = FunctorTable.Intern(colonAtomId, 2);
+        int colonFid4 = FunctorTable.Intern(colonAtomId, 4);
         int? currentFid = null;
         var closed = new HashSet<int>();
         foreach (var clause in clauses)
         {
             int fid = HeadFunctorIdOf(clause);
-            if (fid == colonFid) continue;
+            if (fid == colonFid2 || fid == colonFid4) continue;
             if (currentFid is null)
             {
                 currentFid = fid;

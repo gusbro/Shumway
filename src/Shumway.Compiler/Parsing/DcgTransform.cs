@@ -528,6 +528,17 @@ public static class DcgTransform
         {
             case AtomTerm a:
                 return new CompoundTerm(a.Name, new[] { sIn, sOut }) { Position = call.Position };
+            // A module-qualified nonterminal `M:NT` (SWI's multifile
+            // `prolog:message//1` heads): the diff-list args belong to NT,
+            // not to the ':' wrapper — appending to ':' fabricates a bogus
+            // :/4 head that then trips clause routing. Only when NT is
+            // concrete: a RUNTIME `M:Var` keeps the historic outer append
+            // (dispatched as a meta-call).
+            case CompoundTerm { Functor: ":", Args: [var m, var inner] }
+                when inner is AtomTerm or CompoundTerm:
+                return new CompoundTerm(":",
+                    new[] { m, AppendDiffListArgs(inner, sIn, sOut) })
+                    { Position = call.Position };
             case CompoundTerm c:
                 var args = new Term[c.Args.Length + 2];
                 Array.Copy(c.Args, args, c.Args.Length);
