@@ -183,8 +183,19 @@ public static partial class MetaBuiltins
         Cell nCell = ResolveLocal(engine, engine.GetRegister(0));
         Cell tCell = ResolveLocal(engine, engine.GetRegister(1));
         if (nCell.Tag != Tag.Int)
+        {
+            // SWI's arg/3 ENUMERATES the arguments when N is unbound
+            // (occurs.pl's contains_term walks subterms with arg(_, T, A));
+            // ISO wants an error there. Gated on the caller living in an
+            // SWI-dialect module, so strict programs keep ISO behaviour.
+            if (nCell.Tag == Tag.Ref
+                && (tCell.Tag == Tag.Str || tCell.Tag == Tag.Lis)
+                && engine.Host is Shumway.Builtins.IDialectAwareHost dh
+                && dh.CallerModuleHasDialect(engine, "swi"))
+                return ArgEnumerate(engine, tCell);
             throw new ShumwayPrologException(
                 IsoError.TypeError("integer", new VarTerm("_")));
+        }
         long n = nCell.AsInt;
 
         if (tCell.Tag == Tag.Str)
@@ -203,6 +214,28 @@ public static partial class MetaBuiltins
             return engine.UnifyRegisterWithHeapAt(2, headIdx + (int)(n - 1));
         }
         return false;
+    }
+
+    // arg(N, Term, Arg) with N unbound, SWI mode: yield (1, arg1), (2, arg2), …
+    // backtrackably. Arity 3 so the cursor CP restores all three registers.
+    private static bool ArgEnumerate(Activation engine, Cell tCell)
+    {
+        int argBase, arity;
+        if (tCell.Tag == Tag.Str)
+        {
+            int functorIdx = tCell.AsHeapIndex;
+            (_, arity) = FunctorTable.Lookup(engine.GetHeap(functorIdx).AsFunctorId);
+            argBase = functorIdx + 1;
+        }
+        else
+        {
+            argBase = tCell.AsHeapIndex;
+            arity = 2;
+        }
+        int returnPc = engine.BuiltinReturnPc;
+        return Shumway.Core.IndexEnumCursor.Start(engine, arity, 3, returnPc,
+            (e, i) => e.UnifyRegisterWithCell(0, Cell.Int(i + 1))
+                   && e.UnifyRegisterWithHeapAt(2, argBase + i));
     }
 
     /// <summary><c>T =.. List</c> — the "univ" operator. Decomposes a

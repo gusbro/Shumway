@@ -11,12 +11,13 @@ categories.
 
 ## Sweep result
 
-**46/46 load clean — zero warnings, zero failures.** The clpz arc (ADR-040,
-rounds 1–8) paved the Scryer path: `atts`, export-qualified modules, dialect
-parsing, per-module attribute hooks. Loading is a solved problem for this
-corpus; what distinguishes libraries is whether they run, which splits on one
-axis: **does the library bottom out in pure Prolog, or in a Rust-VM native
-(`'$...'`) instruction we don't provide?**
+**46/46 load clean — zero warnings, zero failures. After round 2, 33 of them
+are runtime-validated by smoke queries** (the 24 below plus the nine former
+gaps in the round-2 table). The clpz arc (ADR-040, rounds 1–8) paved the
+Scryer path: `atts`, export-qualified modules, dialect parsing, per-module
+attribute hooks. What distinguished the rest was one axis — **does the library
+bottom out in pure Prolog, or in a Rust-VM native (`'$...'`)?** — and round 2
+closed the native-gated set by emulating those natives in the Scryer shim.
 
 ## ✅ Runtime-validated (smoke queries pass) — 24
 
@@ -50,31 +51,36 @@ axis: **does the library bottom out in pure Prolog, or in a Rust-VM native
 `atts` is validated indirectly — it is the foundation the whole clpz/dif/freeze
 stack runs on.
 
-## 🟡 Loads; runtime gap — round-2 shim candidates
+## ✅ Round 2 — the former gaps, now served by the Scryer shim
 
-These load fine but their exercised predicates hit one of two walls:
-**(a)** a call into `builtins.pl` — Scryer's bootstrap module, implicitly
-visible in every module on their VM, not on ours; or **(b)** a Rust-VM native
-(`'$...'`) with a Shumway-native equivalent we could route to via the
-marker-override mechanism (as done for SWI's `when`/`arithmetic`/`listing`/
-`prolog_stack`).
+The round-1 gaps split on one axis — a call into `builtins.pl` (Scryer's
+bootstrap, implicitly visible in every module on their VM) or a Rust-VM native
+(`'$...'`). Round 2 closed ALL of them with the **Scryer shim**
+(`ScryerShim.cs`, auto-loaded on the first scryer-dialect load): bare-global
+**emulations of the `'$...'` natives** — an unresolved bare or
+`builtins:`-qualified call falls through to the bare-global namespace, so
+providing the native's contract there lets the library's own pure Prolog run
+unmodified.
 
-| library | wall | round-2 route |
+| library | was blocked on | now |
 |---|---|---|
-| `arithmetic` | (a) `builtins:must_be_number/2` | tiny bare-global shim helper → the rest (`lcm/3`, `msb/2`, …) is pure |
-| `format` | (a) `builtins:parse_write_options/3` | marker-override → the scryer pack's own `Format` shim (works today when no file dir is on the path) |
-| `charsio` | (b) `$char_type` | marker-override → pack no-op (our native `char_type/2` serves) |
-| `files` | (b) `$file_exists`, … | marker-override → shim over our FS builtins (`exists_file/1`, `delete/1`, `rename/2`, …) |
-| `random` | (b) `$maybe`, `$random_integer` | marker-override → our native `random/1` / `random_between/3` |
-| `time` | (b) `$cpu_now` | marker-override → our `time/1` + `statistics/2` |
-| `uuid` | (b) `$crypto_random_byte` | shim `uuidv4` over our random source |
-| `os` | (b) `$getenv` chain | partial shim over our env access |
-| `when` | ? | loads; `when/2` posting **fails silently** — needs diagnosis (its impl pulls lambda/format/debug) |
+| `arithmetic` | `builtins:must_be_number/2`, `can_be_number/2` | shim helpers → `lcm/3`, `msb/2`, … work |
+| `format` | `builtins:parse_write_options/3` (via charsio) | marker-override (`format_args_cells`) → the scryer pack's `Format` shim; `format/2,3` work |
+| `charsio` | `$char_type` | shim ctype dispatch (Scryer's full category vocabulary, ASCII + non-ASCII-as-alphabetic); `char_type/2` incl. `lower(L)`/`upper(U)` string forms |
+| `files` | `$file_exists`, `$directory_files`, … | shim over our FS builtins (exists/delete/rename/mkdir/rmdir/mkpath/working_directory/directory_files), chars↔atom converted |
+| `random` | `$maybe`, `$random_integer` | shim over `random_between/3` (Upper exclusive preserved) |
+| `time` | `$cpu_now` | marker-override → native `time/1` + `sleep/1` (current_time/format_time lost) |
+| `uuid` | `$crypto_random_byte` (via crypto) | shim byte source → `uuidv4_string/1` yields valid v4 UUIDs. **NOT cryptographically secure** — fine for ids, not for key material |
+| `os` | `$getenv` | shim over the `$sys_getenv` builtin alias; `getenv/2` works |
+| `when` | (collateral of the round-1 shim state) | works — post + fire validated |
 
-Note the FILE-FIRST subtlety: `charsio`/`format` **work today on an engine with
-no Scryer dir on the search path** (the dialect pack's shim/no-op resolves);
-with the real tree on the path the native-gated file wins and breaks. That is
-exactly what the marker-override mechanism is for.
+**The import-shadow loop trap** (twice bitten, now designed around): a shim
+emulation must NOT call a builtin by a name the library it serves EXPORTS —
+imports win over builtins, so after `os.pl` loads, a shim call to `getenv/2`
+resolves back into `os$getenv` → infinite loop (same for `charsio`'s
+`char_type`, `files`' `working_directory`). Emulations therefore use either
+names no Scryer library exports, self-contained code, or the `$sys_getenv` /
+`$sys_working_directory` C# builtin aliases added for exactly this.
 
 ## ❌ No-op (unsupported) — needs a capability Shumway does not have
 

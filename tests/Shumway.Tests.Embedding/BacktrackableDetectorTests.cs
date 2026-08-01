@@ -19,7 +19,8 @@ namespace Shumway.Tests.Embedding;
 /// CLP), which the detector also — correctly — flags.</para></summary>
 public sealed class BacktrackableDetectorTests
 {
-    // Every standard builtin that pushes a choice point.
+    // Every standard builtin that pushes a choice point. `arg` joined when it
+    // gained the SWI-dialect enumeration mode (arg(N,T,A) with unbound N).
     private static readonly string[] Backtrackable =
     {
         "between", "append", "atom_concat", "string_concat", "nb_current",
@@ -27,12 +28,13 @@ public sealed class BacktrackableDetectorTests
         "repeat", "retract",
         "$clause_enum", "$current_predicate_enum", "$sub_atom_enum",
         "nth0", "nth1", "recorded", "keys", "string_search", "directory",
+        "arg",
     };
 
     // A representative sample of deterministic builtins (must NOT be flagged).
     private static readonly string[] Deterministic =
     {
-        "is", "=", "==", "atom_length", "functor", "arg", "copy_term", "msort",
+        "is", "=", "==", "atom_length", "functor", "copy_term", "msort",
         "succ", "write", "nl", "var", "nonvar", "assertz", "throw",
         "atom_codes", "number_codes", "$sub_atom_decompositions",
     };

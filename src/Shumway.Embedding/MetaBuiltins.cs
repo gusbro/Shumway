@@ -427,6 +427,11 @@ public static partial class MetaBuiltins
             Io, "working_directory(-Old, +New)",
             "Unifies Old with the current working directory; if New differs, changes "
             + "the cwd to it. Use working_directory(D, D) to read without changing.");
+        // Unshadowable alias for shim internals: a loaded library may EXPORT
+        // working_directory/2 (Scryer files.pl), and imports win over builtins
+        // at resolution — a shim emulation calling the builtin by its public
+        // name would loop through the very library it serves.
+        BuiltinsRegistry.Register("$sys_working_directory", 2, WorkingDirectory2);
         BuiltinsRegistry.Register("file_name_extension", 3, FileNameExtension3,
             Io, "file_name_extension(?Base, ?Ext, ?Full)",
             "Relates a file name to its base and extension. With Full bound, splits at "
@@ -671,6 +676,9 @@ public static partial class MetaBuiltins
             "Unifies Value with the environment variable Name's contents "
             + "as an atom; fails (does not raise) when Name is unset — "
             + "SWI-compatible, so `(getenv(X,V) ; V = Default)` works.");
+        // Unshadowable alias — see $sys_working_directory (Scryer os.pl
+        // exports getenv/2; the shim's emulation must not resolve back to it).
+        BuiltinsRegistry.Register("$sys_getenv", 2, GetEnv2);
         BuiltinsRegistry.Register("exists_directory", 1, ExistsDirectory1,
             Io, "exists_directory(+Path)",
             "Succeeds when Path exists and is a directory.");

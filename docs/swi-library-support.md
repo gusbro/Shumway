@@ -86,14 +86,19 @@ with defaults + types), **dcg/basics** (`integer//1`, `string_without//2`),
 **arithmetic**° (builtin evaluation), broadcast, debug, ansi_term
 (`ansi_format/3`), varnumbers (needed the `msb` evaluable — added), gensym.
 
+### ✅ Round 2 — former gaps, now validated
+
+| library | was blocked on | now |
+|---|---|---|
+| `occurs` | SWI's *enumerating* `arg/3` (unbound index) | `arg/3` enumerates under an SWI-dialect caller (dialect-gated + backtrackable via `IndexEnumCursor`; ISO callers still get the error) — `contains_term/2` etc. work |
+| `nb_set` | `$filled_array/4` + `variant_hash/2` kernel primitives | both shimmed (functor+fill; canonical variant hash) — add/dedup/to_list validated |
+| `url` | `code_type(H, to_lower(C))` REVERSE mode (H unbound) | shim's to_lower/to_upper are bidirectional — `parse_url/2` yields protocol/host/port/path/search |
+
 ### 🟡 Loads, with a known gap
 
 | library | gap |
 |---|---|
 | `option` | `option/3` default-branch touches `is_dict/1` (dict-dependent) |
-| `occurs` | `contains_term/2` needs SWI's *enumerating* `arg/3` (ISO `arg/3` raises on unbound index) |
-| `nb_set` | needs the `$filled_array/4` kernel primitive |
-| `url` | loads; `parse_url/2` trips inside its `schema//1` DCG (legacy lib — SWI itself superseded it with `uri`, which is foreign-backed) |
 | `lazy_lists` | its `:- lazy_list_iterator(...)` macro directives don't expand (in-file hook applied to same-file directives); the plain lazy-list core loads |
 | `persistency` | parse: directives inside list literals (`[ :- dynamic(D), … ]`) |
 | `main` | parse: `A|B` as a term argument (`opt_convert/3`) |
@@ -141,10 +146,10 @@ useful behaviour targets SWI's internals — treat as not applicable.
 
 ## Remaining candidates (not done)
 
-1. SWI-enumerating `arg/3` under the caller-dialect walk → promotes `occurs`.
-2. `$filled_array/4` (functor-array) → promotes `nb_set`.
-3. `url`'s `schema//1` failure → promotes `parse_url/2`.
-4. In-file expansion of same-file directives → promotes `lazy_lists` macros.
+1. In-file expansion of same-file directives → promotes `lazy_lists` macros
+   (needs compiling a hook mid-consult — the known deep item).
+2. Parser: `[ :- D, … ]` list elements above 999 (`persistency`), `A|B` in
+   argument position (`main`), `[](_)` zero-name compounds (`hashtable`).
 
 Regenerate: `SHUMWAY_SWI_LIB=<dir> SHUMWAY_TRIAGE_OUT=<file> dotnet test
 tests/Shumway.Tests.DialectInterop/ --filter FullyQualifiedName~SwiEndToEndValidation`.

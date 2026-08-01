@@ -49,16 +49,17 @@ public sealed class ScryerEndToEndValidation
         ("atts",        null),
         ("builtins",    null),
         ("dcg/high-order-check", null),   // placeholder row: subdir libs not swept
-        // Known runtime gaps (round-2 candidates) — load-only here:
-        ("arithmetic",  null),   // needs builtins.pl's must_be_number/2
-        ("charsio",     null),   // char_type wraps the Rust-native $char_type
-        ("format",      null),   // format_//2 needs builtins:parse_write_options
-        ("files",       null),   // wraps $file_exists etc.
-        ("os",          null),
-        ("random",      null),   // wraps $maybe / $random_integer
-        ("time",        null),   // wraps $cpu_now
-        ("uuid",        null),   // wraps $crypto_random_byte
-        ("when",        null),   // loads; posting fails silently — needs diagnosis
+        // Round-2: served by the Scryer shim's '$...' native emulations /
+        // marker overrides (format → pack shim; time → native time/1+sleep/1):
+        ("arithmetic",  "lcm(4, 6, L), L == 12, msb(8, M), M == 3."),
+        ("charsio",     "char_type(a, alpha), char_type('A', lower(LS)), atom_chars(a, LS)."),
+        ("format",      "format(\"~w-~w~n\", [a, b])."),
+        ("files",       "atom_chars('C:/Scryer/lib/lists.pl', FC), file_exists(FC)."),
+        ("os",          "atom_chars('PATH', PC), getenv(PC, V), length(V, N), N > 0."),
+        ("random",      "random(R), R >= 0.0, random_integer(1, 10, RI), integer(RI)."),
+        ("time",        "time(true), sleep(0)."),
+        ("uuid",        "uuidv4_string(U), length(U, 36)."),
+        ("when",        "when(ground(X), Y = 1), X = a, Y == 1."),
         ("cont",        null),   // delimited continuations — VM feature
         ("tabling",     null),   // Scryer's uses cont; Shumway's native :- table serves
         ("ffi",         null),

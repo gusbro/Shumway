@@ -37,10 +37,19 @@ internal static class SwiShim
         code_type(Code, Type) :- '$code_type_dispatch'(Type, Code).
         '$code_type_dispatch'(upper(Lower), Code) :- !, Code >= 0'A, Code =< 0'Z, Lower is Code + 32.
         '$code_type_dispatch'(lower(Upper), Code) :- !, Code >= 0'a, Code =< 0'z, Upper is Code - 32.
+        % to_lower/to_upper are bidirectional in SWI: code_type(C, to_lower(X))
+        % with C BOUND gives X = lowercase(C); with C UNBOUND and X bound it
+        % binds C = lowercase(X) (url.pl's lwalpha lowercases that way).
         '$code_type_dispatch'(to_lower(Lower), Code) :- !,
-            ( Code >= 0'A, Code =< 0'Z -> Lower is Code + 32 ; Lower = Code ).
+            (   nonvar(Code) ->
+                ( Code >= 0'A, Code =< 0'Z -> Lower is Code + 32 ; Lower = Code )
+            ;   ( Lower >= 0'A, Lower =< 0'Z -> Code is Lower + 32 ; Code = Lower )
+            ).
         '$code_type_dispatch'(to_upper(Upper), Code) :- !,
-            ( Code >= 0'a, Code =< 0'z -> Upper is Code - 32 ; Upper = Code ).
+            (   nonvar(Code) ->
+                ( Code >= 0'a, Code =< 0'z -> Upper is Code - 32 ; Upper = Code )
+            ;   ( Upper >= 0'a, Upper =< 0'z -> Code is Upper - 32 ; Code = Upper )
+            ).
         % SWI ctype names with no weight argument (dcg/basics tests digits via
         % code_type(C, digit)); our char_type only knows the digit(W) form.
         '$code_type_dispatch'(digit, Code) :- !, Code >= 0'0, Code =< 0'9.
@@ -167,6 +176,34 @@ internal static class SwiShim
         duplicate_term(Term, Copy) :- copy_term(Term, Copy).
         :- public same_term/2.
         same_term(A, B) :- '$same_term'(A, B).
+
+        % '$filled_array'(-Array, +Name, +Size, +Value): a compound Name/Size
+        % with every argument unified with Value (nb_set's bucket arrays; Value
+        % is typically one shared fresh variable used as the empty marker).
+        :- public '$filled_array'/4.
+        '$filled_array'(Array, Name, Size, Value) :-
+            functor(Array, Name, Size),
+            '$fill_args'(Size, Array, Value).
+        '$fill_args'(0, _, _) :- !.
+        '$fill_args'(I, Array, Value) :-
+            arg(I, Array, Value),
+            I1 is I - 1,
+            '$fill_args'(I1, Array, Value).
+
+        % variant_hash(+Term, -Hash): a hash equal for variant terms (nb_set's
+        % bucket index). Canonicalise (copy + numbervars + written form), then
+        % fold the codes. Quality is bucket-grade, not cryptographic.
+        :- public variant_hash/2.
+        variant_hash(Term, Hash) :-
+            copy_term(Term, C),
+            numbervars(C, 0, _),
+            term_to_atom(C, A),
+            atom_codes(A, Codes),
+            '$vh_fold'(Codes, 5381, Hash).
+        '$vh_fold'([], H, H).
+        '$vh_fold'([C|Cs], H0, H) :-
+            H1 is (H0 * 31 + C) mod 1152921504606846976,
+            '$vh_fold'(Cs, H1, H).
 
         % ----- tries (minimal shim over the dynamic store) -----
         % SWI's solution_sequences (distinct/1,2) dedups via kernel tries. This

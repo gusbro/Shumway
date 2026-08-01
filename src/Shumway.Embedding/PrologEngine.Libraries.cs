@@ -214,6 +214,8 @@ public sealed partial class PrologEngine
         // (nb_setarg, copy_term_nat, …) so the module's system-predicate uses
         // resolve, exactly as SWI's own system predicates are always present.
         if (dialect == SwiShim.LibraryName) EnsureSwiShim();
+        // The scryer analogue: emulations of the Rust-VM '$...' natives.
+        if (dialect == "scryer") EnsureScryerShim();
         try { return body(); }
         finally
         {
@@ -263,6 +265,16 @@ public sealed partial class PrologEngine
             // prolog_frame_attribute — no such VM here; the shim's backtrace/1
             // no-op is the equivalent surface (debug.pl autoloads only that).
             ["prolog_stack"] = "prolog_frame_attribute",
+            // SCRYER library(format): its rendering core (format_args_cells)
+            // reaches builtins:parse_write_options via charsio — bootstrap
+            // internals we don't provide. The scryer pack's own Format shim
+            // (the one every engine WITHOUT a Scryer tree already uses) is the
+            // equivalent surface.
+            ["format"] = "format_args_cells",
+            // SCRYER library(time): wraps the '$cpu_now' native. Shumway's
+            // native time/1 and sleep/1 are already bare-global; the file's
+            // versions would shadow them with broken ones.
+            ["time"] = "$cpu_now",
         };
 
     /// <summary>True when <paramref name="name"/> is a native-override CANDIDATE
@@ -288,6 +300,8 @@ public sealed partial class PrologEngine
             case "arithmetic": EnsureSwiShim(); break;   // shim stubs (see marker note)
             case "listing": break;                       // native listing/portray_clause builtins
             case "prolog_stack": EnsureSwiShim(); break; // shim backtrace/1 no-op
+            case "format": UseCompatLibrary("format"); break;   // scryer pack Format shim
+            case "time": break;                          // native time/1 + sleep/1 serve
         }
     }
 
@@ -304,6 +318,20 @@ public sealed partial class PrologEngine
         Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(SwiShim.LibraryName);
         try { ConsultStringInner(SwiShim.Source, recordInHistory: false); }
         finally { Flags.DoubleQuotes = savedDq; }
+    }
+
+    private bool _scryerShimLoaded;
+
+    /// <summary>Consults the Scryer compat shim once — bare-global emulations of
+    /// the Rust-VM <c>'$...'</c> natives Scryer libraries bottom out in (random,
+    /// files, os, charsio's char_type, crypto's random bytes) plus builtins.pl
+    /// helpers. Triggered automatically when a scryer-dialect module is
+    /// loaded.</summary>
+    internal void EnsureScryerShim()
+    {
+        if (_scryerShimLoaded) return;
+        _scryerShimLoaded = true;
+        ConsultStringInner(ScryerShim.Source, recordInHistory: false);
     }
 
     internal bool UseCompatLibrary(string name)
