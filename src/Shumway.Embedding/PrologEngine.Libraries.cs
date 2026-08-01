@@ -41,8 +41,11 @@ public sealed partial class PrologEngine
     /// constraint. Opt-in like the CLP libraries, and built on the same
     /// multifile <c>verify_attributes/4</c> hook, so it coexists with
     /// CLP(FD)/CLP(R) on one engine.</summary>
+    private bool _coroutiningLoaded;
     public void UseCoroutining()
     {
+        if (_coroutiningLoaded) return;   // idempotent — re-consult would trip public uniqueness
+        _coroutiningLoaded = true;
         ConsultString(Coroutining.Source);
         MarkModuleNonDebuggable(Coroutining.ModuleName);   // ADR-035 — a library, not the user's code
     }
@@ -185,6 +188,46 @@ public sealed partial class PrologEngine
         if (dialect == SwiShim.LibraryName) EnsureSwiShim();
         try { return body(); }
         finally { _activeLibraryDialect = savedDialect; Flags.DoubleQuotes = savedDq; }
+    }
+
+    // ADR-040 — libraries whose SWI-shipped version depends on a system predicate
+    // Shumway does NOT provide (the MARKER), so loading it would break at runtime,
+    // AND for which Shumway ships a complete native equivalent. The name is the
+    // candidacy gate: only these names trigger the marker scan. If a resolved file
+    // named like a candidate CONTAINS its marker, the load is discarded and the
+    // native equivalent is used (use_module is a no-op); a user's own same-named
+    // library WITHOUT the marker loads normally. Value = a distinctive substring
+    // (a call to the unsupported system predicate) sought in a first-pass read.
+    private static readonly Dictionary<string, string> NativeOverrideMarkers =
+        new(StringComparer.Ordinal)
+        {
+            // library(when): SWI's when.pl dispatches conditions through
+            // '$eval_when_condition'/2, a kernel helper we lack; Shumway ships its
+            // own coroutining when/2.
+            ["when"] = "$eval_when_condition",
+        };
+
+    /// <summary>True when <paramref name="name"/> is a native-override CANDIDATE
+    /// and the resolved file at <paramref name="path"/> carries the candidate's
+    /// marker — meaning it is the (unsupportable) SWI version, so the load should
+    /// be discarded in favour of Shumway's native equivalent. A non-candidate name
+    /// short-circuits without touching the file.</summary>
+    private bool ShouldUseNativeOverride(string name, string path)
+    {
+        if (!NativeOverrideMarkers.TryGetValue(name, out string? marker)) return false;
+        try { return System.IO.File.ReadAllText(path).Contains(marker, StringComparison.Ordinal); }
+        catch { return false; }   // unreadable → fall through and load it
+    }
+
+    /// <summary>Ensures Shumway's native equivalent of an overridden library is
+    /// loaded (called when the SWI file is discarded), so the predicates the
+    /// program expects are present.</summary>
+    private void LoadNativeOverride(string name)
+    {
+        switch (name)
+        {
+            case "when": UseCoroutining(); break;   // our coroutining when/2
+        }
     }
 
     private bool _swiShimLoaded;
@@ -426,6 +469,16 @@ public sealed partial class PrologEngine
                     // (2) ADR-038 — a .pl/.shum on the library search path.
                     if (TryResolveLibrary(lib.Name, out string libPath))
                     {
+                        // ADR-040 — the SWI-shipped version of a native-override
+                        // candidate (detected by its marker in the file) can't run
+                        // here; discard the load and use Shumway's native equivalent
+                        // (use_module becomes a no-op). A non-candidate, or a
+                        // same-named file without the marker, loads normally.
+                        if (ShouldUseNativeOverride(lib.Name, libPath))
+                        {
+                            LoadNativeOverride(lib.Name);
+                            return null;
+                        }
                         // ADR-040 D5.2 — a dir tagged with a dialect loads its
                         // libraries in that dialect (name resolution +
                         // double_quotes) for the whole subtree.
@@ -626,8 +679,21 @@ public sealed partial class PrologEngine
         bool changed = false;
         List<int>? added = null;
         Dictionary<string, List<int>>? kept = null;
+        // Re-export of a bare-global (SWI's library(terms) re-exports the builtin
+        // term_variables/2): an export the source does not define locally is not
+        // imported into `user`, so the call resolves bare-global to the builtin /
+        // prelude predicate rather than a dangling Source$name. Mirrors the
+        // RecordImports filter in ConsultPipeline.
+        HashSet<int>? definedLocally = null;
         foreach (int fid in srcManifest.ExportFunctors)
         {
+            if (definedLocally is null)
+            {
+                definedLocally = new HashSet<int>();
+                foreach (var c in srcManifest.Clauses)
+                    definedLocally.Add(ConsultPipeline.HeadFunctorIdOf(c));
+            }
+            if (!definedLocally.Contains(fid)) continue;
             if (userManifest.Imports.TryAdd(fid, sourceModule))
             {
                 changed = true;

@@ -61,6 +61,9 @@ public static class ArithmeticEvaluator
             // smallest float > 1.0 — NOT .NET's double.Epsilon (the
             // smallest positive denormal).
             case "epsilon": return new Number(Math.Pow(2, -52));
+            // SWI's random_float: a float in [0.0, 1.0). Host-dependent.
+            case "random_float" when engine.Host is IRandomHost rh:
+                return new Number(rh.Random.NextDouble());
         }
         // ISO §7.1.2 / §7.8.7: any other atom in arithmetic position raises
         // type_error(evaluable, Name/0). The offending atom cell travels as
@@ -100,6 +103,14 @@ public static class ArithmeticEvaluator
     {
         Number a = Evaluate(engine, argCell);
         if (TryUnOp(name, out UnOp op)) return ApplyUn(op, a);
+        // SWI's random(IntExpr): a random integer in [0, IntExpr). Host-dependent,
+        // so it is not a pure UnOp; drawn from the engine's seedable generator.
+        if (name == "random" && engine.Host is IRandomHost rh && a.IsInt)
+        {
+            long n = a.IntValue;
+            if (n <= 0) throw new PrologRuntimeException("evaluation_error", "undefined");
+            return new Number((long)(rh.Random.NextDouble() * n));
+        }
         // Unknown unary arithmetic function — ISO type_error(evaluable, Name/1).
         throw new PrologRuntimeException("type_error", "evaluable");
     }

@@ -43,6 +43,12 @@ internal static class SwiShim
             ( Code >= 0'a, Code =< 0'z -> Upper is Code - 32 ; Upper = Code ).
         '$code_type_dispatch'(Type, Code) :- char_code(Char, Code), char_type(Char, Type).
 
+        % ----- ansi terminal (colour ignored) -----
+        % ansi_format(+Attributes, +Format, +Args): write the formatted text; the
+        % colour/style attributes are ignored (no terminal styling here).
+        :- public ansi_format/3.
+        ansi_format(_Attributes, Format, Args) :- format(Format, Args).
+
         % ----- debugging (no-op) -----
         % We keep no interpreter backtrace to print here; succeed so libraries that
         % call it for diagnostics keep running.

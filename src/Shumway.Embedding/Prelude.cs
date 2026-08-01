@@ -579,6 +579,10 @@ internal static class Prelude
         '$must_be_ok'(float, X) :- float(X).
         '$must_be_ok'(string, X) :- string(X).
         '$must_be_ok'(text, X) :- ( atom(X) ; string(X) ).
+        '$must_be_ok'(acyclic, X) :- acyclic_term(X).
+        '$must_be_ok'(cyclic, X) :- cyclic_term(X).
+        '$must_be_ok'(compound, X) :- compound(X).
+        '$must_be_ok'(oneof(L), X) :- memberchk(X, L).
 
         :- public print_message/2.
         %! print_message(+Kind, +Message) | Messages | Prints a message of the given kind (error/warning/informational/silent) to user_error. A best-effort renderer (no message//1 hooks).
@@ -681,6 +685,14 @@ internal static class Prelude
         pairs_keys_values([], [], []).
         pairs_keys_values([K-V|Ps], [K|Ks], [V|Vs]) :-
             pairs_keys_values(Ps, Ks, Vs).
+
+        %! pairs_keys(+Pairs, -Keys) | Lists | The keys of a list of Key-Value pairs.
+        :- public pairs_keys/2.
+        pairs_keys(Pairs, Keys) :- pairs_keys_values(Pairs, Keys, _).
+
+        %! pairs_values(+Pairs, -Values) | Lists | The values of a list of Key-Value pairs.
+        :- public pairs_values/2.
+        pairs_values(Pairs, Values) :- pairs_keys_values(Pairs, _, Values).
 
         %! predsort(:Pred, +List, -Sorted) | Lists | Sorts List by a three-way comparison predicate, dropping elements compared equal.
         predsort(P, List, Sorted) :- '$predsort_all'(List, P, [], Sorted).

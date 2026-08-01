@@ -228,7 +228,9 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `nth0(?Index, ?List, ?Elem)` | Relates a 0-based index to the list element at that position. |
 | `nth1(?Index, ?List, ?Elem)` | Relates a 1-based index to the list element at that position. |
 | `numlist(+Low, +High, -List)` | List is the consecutive integers from Low to High inclusive. |
+| `pairs_keys(+Pairs, -Keys)` | The keys of a list of Key-Value pairs. |
 | `pairs_keys_values(?Pairs, ?Keys, ?Values)` | Relates a list of Key-Value pairs to its lists of keys and values. |
+| `pairs_values(+Pairs, -Values)` | The values of a list of Key-Value pairs. |
 | `partition(:Goal, +List, -Included, -Excluded)` | Splits List by whether Goal succeeds on each element. |
 | `permutation(?List, ?Permutation)` | True when the two lists are permutations of each other; enumerates permutations. |
 | `predsort(:Pred, +List, -Sorted)` | Sorts List by a three-way comparison predicate, dropping elements compared equal. |

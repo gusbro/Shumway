@@ -153,6 +153,29 @@ public class ExportQualifiedModuleTests
     }
 
     [Fact]
+    public void ReExportOfBuiltin_ResolvesBareGlobal()
+    {
+        // Regression: a library that LISTS an export it does not itself define
+        // (SWI's library(terms) re-exports the builtin term_variables/2). The
+        // import must NOT map the name to a dangling terms$term_variables — it
+        // must fall through to the bare-global builtin. Both a direct bare call
+        // and a call from inside a library-local predicate must work.
+        using var libs = new LibSet().Add("reterms",
+            ":- module(reterms, [term_variables/2, mypred/1, grab/2]).\n" +
+            "mypred(ok).\n" +
+            "grab(T, Vs) :- term_variables(T, Vs).\n");   // local using the re-export
+        var e = EngineWith(libs);
+        e.ConsultString(
+            ":- use_module(library(reterms)).\n" +
+            "direct(T, Vs) :- term_variables(T, Vs).");   // bare, via user import
+        // A term with two distinct variables yields a 2-element list.
+        Assert.True(e.Query("direct(f(X,Y,X), Vs), Vs = [_,_].").Success);
+        // grab/2 is a library-local caller of the re-exported builtin.
+        Assert.True(e.Query("grab(g(A,B), Vs), Vs = [_,_].").Success);
+        Assert.True(e.Query("mypred(ok).").Success);   // the genuine export still works
+    }
+
+    [Fact]
     public void SameNameExports_CoexistWithoutCollision()
     {
         using var libs = new LibSet()

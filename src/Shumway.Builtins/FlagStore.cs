@@ -67,3 +67,11 @@ public interface IDialectAwareHost
 {
     bool CallerModuleHasDialect(Activation engine, string dialect);
 }
+
+/// <summary>Host-side interface exposing the per-engine random source to Builtins
+/// (the arithmetic <c>random/1</c> / <c>random_float/0</c> evaluables). Implemented
+/// by <c>PrologEngine</c>; seedable via <c>randomize/1</c>.</summary>
+public interface IRandomHost
+{
+    System.Random Random { get; }
+}

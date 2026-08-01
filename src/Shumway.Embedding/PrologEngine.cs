@@ -20,7 +20,7 @@ namespace Shumway.Embedding;
 /// named module — re-consulting the same module overwrites the previous
 /// contents, matching ADR-008.</para>
 /// </summary>
-public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shumway.Builtins.IFlagHost, Shumway.Builtins.IDialectAwareHost
+public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shumway.Builtins.IFlagHost, Shumway.Builtins.IDialectAwareHost, Shumway.Builtins.IRandomHost
 {
     public const string DefaultModuleName = "user";
 
@@ -119,6 +119,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// time-based seed on first access.</summary>
     private System.Random? _random;
     internal System.Random Random => _random ??= new System.Random();
+    System.Random Shumway.Builtins.IRandomHost.Random => Random;   // arith random/1
 
     /// <summary>Replaces the per-engine random generator with one
     /// seeded by <paramref name="seed"/>. Backs <c>randomize/1</c>.</summary>
