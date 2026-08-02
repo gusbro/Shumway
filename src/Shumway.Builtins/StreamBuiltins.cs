@@ -98,11 +98,11 @@ public static class StreamBuiltins
         }
         catch (FileNotFoundException)
         {
-            throw new PrologRuntimeException("existence_error", "source_sink");
+            throw new PrologRuntimeException("existence_error", "source_sink", engine, pathCell);
         }
         catch (DirectoryNotFoundException)
         {
-            throw new PrologRuntimeException("existence_error", "source_sink");
+            throw new PrologRuntimeException("existence_error", "source_sink", engine, pathCell);
         }
         catch (IOException ex)
         {
@@ -243,11 +243,11 @@ public static class StreamBuiltins
         }
         catch (FileNotFoundException)
         {
-            throw new PrologRuntimeException("existence_error", "source_sink");
+            throw new PrologRuntimeException("existence_error", "source_sink", engine, pathCell);
         }
         catch (DirectoryNotFoundException)
         {
-            throw new PrologRuntimeException("existence_error", "source_sink");
+            throw new PrologRuntimeException("existence_error", "source_sink", engine, pathCell);
         }
         catch (IOException ex)
         {

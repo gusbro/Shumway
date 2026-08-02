@@ -96,9 +96,7 @@ public static partial class MetaBuiltins
         "type_error" => WrapWithStampedContext(
             new CompoundTerm("type_error",
                 new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
-        "existence_error" => WrapWithStampedContext(
-            new CompoundTerm("existence_error",
-                new Term[] { new AtomTerm("procedure"), ProcedureIndicatorTerm(re.Detail) }), re),
+        "existence_error" => WrapWithStampedContext(BuildExistenceError(re), re),
         "domain_error" => WrapWithStampedContext(
             new CompoundTerm("domain_error",
                 new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
@@ -141,6 +139,24 @@ public static partial class MetaBuiltins
     /// the ball. Splits on the LAST <c>/</c> (so a quoted name containing a
     /// slash, e.g. <c>'a/b'/2</c>, still resolves correctly) and falls back to
     /// the bare atom if the suffix isn't a non-negative integer.</summary>
+    /// <summary>An existence_error's Detail is either a <c>Name/Arity</c>
+    /// procedure indicator (undefined-predicate path) or an ISO object-type
+    /// atom — <c>source_sink</c>, <c>stream</c>, <c>variable</c> — in which
+    /// case the culprit is the captured offending value. Distinguished by
+    /// whether the Detail parses as an indicator; collapsing both onto
+    /// <c>existence_error(procedure, Detail)</c> made
+    /// <c>catch(open(...), error(existence_error(source_sink, _), _), _)</c>
+    /// unreachable.</summary>
+    private static Term BuildExistenceError(PrologRuntimeException re)
+    {
+        Term culprit = ProcedureIndicatorTerm(re.Detail);
+        if (culprit is CompoundTerm)
+            return new CompoundTerm("existence_error",
+                new Term[] { new AtomTerm("procedure"), culprit });
+        return new CompoundTerm("existence_error",
+            new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) });
+    }
+
     private static Term ProcedureIndicatorTerm(string detail)
     {
         int slash = detail.LastIndexOf('/');
