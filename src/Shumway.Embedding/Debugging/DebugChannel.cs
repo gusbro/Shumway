@@ -141,6 +141,12 @@ public sealed class DebugChannel : IDisposable
                 DebugWire.WriteInt(_snapshot, ref at, index[name ?? ""]);
                 DebugWire.WriteInt(_snapshot, ref at, index[value ?? ""]);
             }
+            DebugWire.WriteInt(_snapshot, ref at, f.Residuals.Count);
+            foreach (var (name, goals) in f.Residuals)
+            {
+                DebugWire.WriteInt(_snapshot, ref at, index[name ?? ""]);
+                DebugWire.WriteInt(_snapshot, ref at, index[goals ?? ""]);
+            }
         }
 
         // Zero terminator: a reader walking past the end finds an empty count, not the
@@ -156,8 +162,9 @@ public sealed class DebugChannel : IDisposable
     {
         var fresh = new List<string>();
         // nameId arity fileId line pc headArgsId clauseNumber setNextCount varCount
-        // + per-set-next-line ints + per-var id pairs.
-        int cost = 9 * 4 + frame.SetNextLines.Count * 4 + frame.Variables.Count * 8;
+        // residCount + per-set-next-line ints + per-var and per-residual id pairs.
+        int cost = 10 * 4 + frame.SetNextLines.Count * 4
+            + frame.Variables.Count * 8 + frame.Residuals.Count * 8;
 
         int StringCost(string? s)
         {
@@ -174,6 +181,11 @@ public sealed class DebugChannel : IDisposable
         {
             cost += StringCost(name);
             cost += StringCost(value);
+        }
+        foreach (var (name, goals) in frame.Residuals)
+        {
+            cost += StringCost(name);
+            cost += StringCost(goals);
         }
         newStrings = fresh;
         return cost;

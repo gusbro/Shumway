@@ -1039,8 +1039,10 @@ public static partial class MetaBuiltins
 
     /// <summary>Collects the distinct heap addresses of attributed
     /// variables reachable from <paramref name="cell"/>. The shared
-    /// visited set also guards against a cyclic term looping.</summary>
-    private static void CollectAttvars(Activation engine, Cell cell,
+    /// visited set also guards against a cyclic term looping.
+    /// Internal: the debugger's attvar transplant walks a SUSPENDED
+    /// activation with the same collector.</summary>
+    internal static void CollectAttvars(Activation engine, Cell cell,
         System.Collections.Generic.List<int> addrs,
         System.Collections.Generic.HashSet<int> seen)
     {
@@ -1066,6 +1068,88 @@ public static partial class MetaBuiltins
                 CollectAttvars(engine, engine.GetHeap(h + 1), addrs, seen);
                 break;
         }
+    }
+
+    /// <summary><c>'$dbg_fix_foreign'(+Term)</c> — ADR-035 attvar transplant support.
+    /// A transplanted attribute value travels to the evaluation activation as compiled
+    /// term-building code, where a FOREIGN payload (clpfd's native domain object) can
+    /// only arrive as its <c>'$foreign'(N)</c> round-trip form — and N indexes the
+    /// SUSPENDED activation's per-activation foreign table. This walks the term IN
+    /// PLACE on the evaluation activation, re-registers each such object here
+    /// (<see cref="Activation.MakeForeign"/>) and overwrites the compound's referring
+    /// cell with the real FOREIGN cell. The source activation is read through
+    /// <see cref="PrologEngine.DebugTransplantSource"/>; with none set the term is left
+    /// alone (and a native consumer will say so loudly).</summary>
+    public static bool DbgFixForeign(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host
+            || host.DebugTransplantSource is not { } source)
+            return true;
+
+        int foreignFid = FunctorTable.Intern(
+            AtomTable.Intern("$foreign", permanent: true).Id, 1);
+        var seen = new System.Collections.Generic.HashSet<int>();
+
+        void FixAt(int addr)
+        {
+            if (!seen.Add(addr)) return;
+            Cell c = engine.GetHeap(addr);
+            if (c.Tag == Tag.Ref)
+            {
+                int d = engine.Deref(c.AsHeapIndex);
+                if (d != addr) FixAt(d);
+                return;
+            }
+            switch (c.Tag)
+            {
+                case Tag.Str:
+                {
+                    int fIdx = c.AsHeapIndex;
+                    int fid = engine.GetHeap(fIdx).AsFunctorId;
+                    if (fid == foreignFid)
+                    {
+                        Cell arg = engine.GetHeap(fIdx + 1);
+                        if (arg.Tag == Tag.Ref)
+                            arg = engine.GetHeap(engine.Deref(arg.AsHeapIndex));
+                        if (arg.Tag == Tag.Int)
+                        {
+                            object? obj = source.ForeignById((int)arg.AsInt);
+                            engine.SetHeap(addr, engine.MakeForeign(obj));
+                        }
+                        return;
+                    }
+                    var (_, arity) = FunctorTable.Lookup(fid);
+                    for (int i = 0; i < arity; i++) FixAt(fIdx + 1 + i);
+                    break;
+                }
+                case Tag.Lis:
+                {
+                    int h = c.AsHeapIndex;
+                    FixAt(h);
+                    FixAt(h + 1);
+                    break;
+                }
+            }
+        }
+
+        Cell start = engine.GetRegister(0);
+        if (start.Tag == Tag.Ref) FixAt(engine.Deref(start.AsHeapIndex));
+        else if (start.Tag is Tag.Str or Tag.Lis)
+        {
+            // A register value has no address of its own; walk its children.
+            if (start.Tag == Tag.Str)
+            {
+                int fIdx = start.AsHeapIndex;
+                var (_, arity) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
+                for (int i = 0; i < arity; i++) FixAt(fIdx + 1 + i);
+            }
+            else
+            {
+                FixAt(start.AsHeapIndex);
+                FixAt(start.AsHeapIndex + 1);
+            }
+        }
+        return true;
     }
 
     /// <summary><c>term_attvars(+Term, -Vars)</c> — unifies <c>Vars</c> with

@@ -203,6 +203,14 @@ public sealed class DebugSnapshotFrame
 
     public IReadOnlyList<DebugVariableView> Variables { get; set; }
         = Array.Empty<DebugVariableView>();
+
+    /// <summary>Residual constraints of the frame's attributed variables, one entry per
+    /// owner variable: Name = the variable (<c>X</c>), Value = its projected goals
+    /// (<c>X in 6..9, X #&lt; Y</c>). What the VS Locals appends as
+    /// <c>X ⟨constraints⟩</c> rows and VS Code shows as the Constraints scope. Empty
+    /// when no frame variable is attributed.</summary>
+    public IReadOnlyList<DebugVariableView> Residuals { get; set; }
+        = Array.Empty<DebugVariableView>();
 }
 
 /// <summary>ADR-035 — a variable of a frame: what the user called it, and what it is
@@ -231,7 +239,8 @@ public sealed class DebugVariableView
 ///           stringCount, { string },
 ///           frameCount, { nameId, arity, fileId, line, pc, headArgsId, clauseNumber,
 ///                         frameSetNextCount, { frameSetNextLine },
-///                         varCount, { nameId, valueId } }
+///                         varCount, { nameId, valueId },
+///                         residCount, { nameId, goalsId } }
 /// commands: version, count, { kind, file, line, flag, condition, targetFrame }
 /// </code>
 /// </summary>
@@ -244,8 +253,10 @@ public static class DebugWire
     /// binding share its bytes. v5: conditional breakpoints — a condition string on the
     /// AddBreakpoint command, a conditionError string on the snapshot. v6: Set Next
     /// Statement — the stop's valid target lines on the snapshot, the move command. v7:
-    /// cross-frame moves — per-frame valid lines, a target-frame int per command.</summary>
-    public const int FormatVersion = 7;
+    /// cross-frame moves — per-frame valid lines, a target-frame int per command. v8:
+    /// residual constraints — per-frame (variable, goals) pairs for attributed
+    /// variables.</summary>
+    public const int FormatVersion = 8;
 
     /// <summary>The size of the snapshot region — declared HERE, with the format, because the
     /// debugger has to know it: it reads the region whole (a prefix of a snapshot is not a
@@ -406,6 +417,19 @@ public static class DebugWire
                 });
             }
             frame.Variables = variables;
+            int residCount = ReadInt(buffer, ref at);
+            if (residCount < 0 || residCount > (buffer.Length - at) / 8) residCount = 0;
+            if (residCount > 0)
+            {
+                var residuals = new List<DebugVariableView>();
+                for (int r = 0; r < residCount; r++)
+                    residuals.Add(new DebugVariableView
+                    {
+                        Name = At(ReadInt(buffer, ref at)),
+                        Value = At(ReadInt(buffer, ref at)),
+                    });
+                frame.Residuals = residuals;
+            }
             frames.Add(frame);
         }
         snapshot.Frames = frames;
@@ -531,6 +555,9 @@ public static class DebugWire
             int varCount = ReadInt(buffer, ref at);
             if (varCount < 0 || varCount > (buffer.Length - at) / 8) return false;
             SkipInt(ref at, 2 * varCount);
+            int residCount = ReadInt(buffer, ref at);
+            if (residCount < 0 || residCount > (buffer.Length - at) / 8) return false;
+            SkipInt(ref at, 2 * residCount);
             if (at > buffer.Length) return false;
         }
         int framesEnd = at;

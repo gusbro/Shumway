@@ -159,6 +159,13 @@ public sealed partial class Activation
         return Cell.Foreign(id);
     }
 
+    /// <summary>The foreign-table entry by raw id, or null when out of range. The
+    /// debugger's attvar transplant reads a SUSPENDED activation's table with this to
+    /// re-register the object on the evaluation activation (foreign ids are
+    /// per-activation).</summary>
+    public object? ForeignById(int id)
+        => id >= 0 && id < _foreignTable.Count ? _foreignTable[id] : null;
+
     /// <summary>Returns the object referenced by a FOREIGN cell (possibly <c>null</c>).</summary>
     public object? AsForeign(Cell cell)
     {

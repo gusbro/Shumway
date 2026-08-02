@@ -532,6 +532,19 @@ public sealed partial class PrologEngine
         /// debug service when a stop is published; empty otherwise.</summary>
         public IReadOnlyList<int> SetNextLines { get; init; } = Array.Empty<int>();
 
+        /// <summary>Residual constraints of this frame's attributed variables, one entry
+        /// per owner variable: (<c>X</c>, <c>X in 6..9, X #&lt; Y</c>). Filled by the
+        /// debug service at a stop (the projection runs the attribute hooks in a nested
+        /// evaluation); empty when no frame variable is attributed.</summary>
+        public IReadOnlyList<(string Name, string Goals)> Residuals { get; init; }
+            = Array.Empty<(string, string)>();
+
+        /// <summary>The frame variables that are ATTRIBUTED, with the heap address of
+        /// their cell on the captured activation — what the residual projection
+        /// transplants. Capture-internal; never serialized.</summary>
+        internal IReadOnlyList<(string Name, int Addr)> AttVarSlots { get; init; }
+            = Array.Empty<(string, int)>();
+
         public override string ToString() => $"{Name}/{Arity} at {File}:{Line}";
     }
 
@@ -680,6 +693,13 @@ public sealed partial class PrologEngine
                     at = engine.Deref(cell.AsHeapIndex);
                     addr = at;
                 }
+                else if (cell.Tag == Tag.AttVar)
+                {
+                    // The slot holds the AttVar cell directly (unification copies the
+                    // value cell); its home address is the identity everything keys on.
+                    at = cell.AsHeapIndex;
+                    addr = at;
+                }
                 else
                 {
                     at = engine.AllocateHeap(1);
@@ -695,6 +715,63 @@ public sealed partial class PrologEngine
             }
         }
         return result;
+    }
+
+    /// <summary>Builds the attvar TRANSPLANT terms for a set of attributed variables of a
+    /// SUSPENDED activation: the <c>ag(Module, AttrValue, Var)</c> triples the prelude's
+    /// <c>'$dbg_residuals'/2</c> / <c>'$dbg_attach'/1</c> reattach onto an EVALUATION
+    /// activation's fresh variables. The walk is transitive over attribute values (a
+    /// hook may read a sibling variable's attribute — clpz's <c>rel_tuple</c>), exactly
+    /// like <c>'$copy_term_3_prep'/3</c>'s; variable identity is preserved by naming
+    /// every source variable <c>_G&lt;addr&gt;</c>, the same name
+    /// <see cref="TermReader.Materialize"/> gives it, so one materialisation of a goal
+    /// mentioning both lands them on the same fresh variable. The source activation is
+    /// only READ.</summary>
+    /// <summary>The suspended activation whose attributed variables are being
+    /// transplanted into a debug evaluation — what <c>'$dbg_fix_foreign'/1</c> reads
+    /// per-activation FOREIGN payloads from (clpfd's native domains). Set around each
+    /// evaluation that carries a transplant; null otherwise.</summary>
+    internal Activation? DebugTransplantSource;
+
+    internal (Term AttrInfo, Term Roots, List<int> RootAddrs)? BuildResidualAttrInfo(
+        Activation source, IEnumerable<int> rootAddrs)
+    {
+        var attvars = new List<int>();
+        var seen = new HashSet<int>();
+        foreach (int a in rootAddrs)
+            if (seen.Add(a)) attvars.Add(a);
+        if (attvars.Count == 0) return null;
+
+        var infos = new List<Term>();
+        for (int i = 0; i < attvars.Count; i++)
+        {
+            int vAddr = attvars[i];
+            var vVar = new VarTerm("_G" + vAddr);
+            foreach (int moduleId in source.AttrModules(vAddr))
+            {
+                int valueIdx = source.GetAttr(vAddr, moduleId);
+                if (valueIdx < 0) continue;
+                MetaBuiltins.CollectAttvars(source, Cell.Ref(valueIdx), attvars, seen);
+                Term attrValue = TermReader.Materialize(source, valueIdx);
+                string moduleName = AtomTable.GetById(moduleId)?.Name ?? "";
+                if (moduleName.Length == 0) continue;
+                infos.Add(new CompoundTerm("ag",
+                    new Term[] { new AtomTerm(moduleName), attrValue, vVar }));
+            }
+        }
+        if (infos.Count == 0) return null;
+
+        static Term BuildList(IReadOnlyList<Term> items)
+        {
+            Term tail = new AtomTerm("[]");
+            for (int i = items.Count - 1; i >= 0; i--)
+                tail = new CompoundTerm(".", new[] { items[i], tail });
+            return tail;
+        }
+
+        var roots = new List<Term>(attvars.Count);
+        foreach (int a in attvars) roots.Add(new VarTerm("_G" + a));
+        return (BuildList(infos), BuildList(roots), attvars);
     }
 
     /// <summary>ADR-035 — everything a nested Immediate-window evaluation clobbers.
@@ -1100,10 +1177,11 @@ public sealed partial class PrologEngine
         var clause = ClauseAt(pc);
         frames.Add(new DebugFrame(
             name, arity, file, siteId >= 0 ? site.Line : 0, pc,
-            ReadVariables(engine, pc, env, bag))
+            ReadVariables(engine, pc, env, bag, out var attVarSlots))
         {
             HeadArgs = isQuery || isConstruct ? "" : RenderHeadArgs(engine, clause, env, bag),
             ClauseNumber = isQuery || isConstruct ? 0 : clause?.ClauseNumber ?? 0,
+            AttVarSlots = attVarSlots,
         });
         return isQuery;
     }
@@ -1181,16 +1259,40 @@ public sealed partial class PrologEngine
     private const int MaxHeadArgChars = 64;
 
     private IReadOnlyList<(string Name, string Value)> ReadVariables(
-        Activation engine, int pc, int env, DebugValueBag bag)
+        Activation engine, int pc, int env, DebugValueBag bag,
+        out IReadOnlyList<(string Name, int Addr)> attVarSlots)
     {
+        attVarSlots = Array.Empty<(string, int)>();
         if (env < 0) return Array.Empty<(string, string)>();
         var clause = ClauseAt(pc);
         if (clause is null || clause.Value.Variables.Count == 0)
             return Array.Empty<(string, string)>();
 
+        List<(string, int)>? attVars = null;
         var result = new List<(string, string)>(clause.Value.Variables.Count);
         foreach (var v in clause.Value.Variables)
-            result.Add((v.Name, bag.Render(engine.GetY(env, v.Slot))));
+        {
+            Cell cell = engine.GetY(env, v.Slot);
+            result.Add((v.Name, bag.Render(cell)));
+            // An attributed variable renders as a bare _G name; note it here so the
+            // stop's residual projection knows which cells to transplant. The slot may
+            // hold the AttVar cell DIRECTLY (unification copies the value cell) or a
+            // Ref chain ending at one.
+            try
+            {
+                int at = -1;
+                if (cell.Tag == Tag.AttVar) at = cell.AsHeapIndex;
+                else if (cell.Tag == Tag.Ref)
+                {
+                    int d = engine.Deref(cell.AsHeapIndex);
+                    if (engine.GetHeap(d).Tag == Tag.AttVar) at = d;
+                }
+                if (at >= 0)
+                    (attVars ??= new List<(string, int)>()).Add((v.Name, at));
+            }
+            catch (Exception) { /* best-effort, like every frame read */ }
+        }
+        if (attVars is not null) attVarSlots = attVars;
         return result;
     }
 

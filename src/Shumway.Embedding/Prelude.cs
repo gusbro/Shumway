@@ -509,6 +509,25 @@ internal static class Prelude
         '$attr_reattach'([]).
         '$attr_reattach'([ag(M, A, V)|R]) :- put_attr(V, M, A), '$attr_reattach'(R).
 
+        % ADR-035 — debugger entry points over the same projection phases.
+        % The debugger TRANSPLANTS a suspended activation's attributed
+        % variables into an evaluation activation as ag(M, A, V) triples
+        % (fresh V per source variable, C#-side); '$dbg_residuals' turns
+        % them into the residual goals a stop's Constraints view shows, and
+        % '$dbg_attach' alone makes an Immediate-window goal's frame
+        % variables carry their real constraints.
+        :- public '$dbg_residuals'/2.
+        '$dbg_residuals'(AttrInfo, Goals) :-
+            '$dbg_fix_foreign'(AttrInfo),
+            '$attr_reattach'(AttrInfo),
+            '$attr_goals_of'(AttrInfo, Goals),
+            '$attr_strip'(AttrInfo).
+
+        :- public '$dbg_attach'/1.
+        '$dbg_attach'(AttrInfo) :-
+            '$dbg_fix_foreign'(AttrInfo),
+            '$attr_reattach'(AttrInfo).
+
         % A hook may have bound a helper variable (clpz marks propagator
         % states processed) or already stripped its own module — both fine.
         '$attr_strip'([]).

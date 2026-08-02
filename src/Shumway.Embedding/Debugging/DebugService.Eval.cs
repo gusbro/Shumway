@@ -373,6 +373,7 @@ public sealed partial class DebugService
         if (_outerScope is not null) _engine.EndDebugEvaluation(_outerScope);
 
         Activation? outer = _evalOuter;
+        _engine.DebugTransplantSource = null;
         _pendingEnum = null;
         _pendingReport = null;
         _pendingCommit = null;
@@ -562,18 +563,34 @@ public sealed partial class DebugService
             // see. Substituted BEFORE the nested query's setup swaps the tables — these
             // reads walk the outer query's own.
             string? frameModule = null;
+            List<int>? attVarRoots = null;
             if (_engine.TryGetDisplayFrameContext(engine, 0, out int framePc, out int frameEnv))
             {
                 frameModule = _engine.ModuleForFrame(framePc);
-                foreach (var (name, value) in _engine.MaterializeFrameVariables(engine, framePc, frameEnv))
+                foreach (var (name, value, addr, isAttVar)
+                    in _engine.MaterializeFrameVariablesWithAddresses(engine, framePc, frameEnv))
                     if (names.Contains(name))
                     {
                         goal = SubstituteVariable(goal, name, value);
+                        if (isAttVar && addr >= 0)
+                            (attVarRoots ??= new List<int>()).Add(addr);
                         if (ShumwayDebugHelper.DiagEnabled)
                             ShumwayDebugHelper.DiagLine(
                                 "  condition var " + name + " := "
                                 + Ellipsize(value.ToString() ?? "", 120));
                     }
+            }
+            // Attributed frame variables carry their constraints into the condition —
+            // same transplant as the Immediate window's (see EvaluateGoal).
+            if (attVarRoots is not null
+                && _engine.BuildResidualAttrInfo(engine, attVarRoots) is { } transplant)
+            {
+                goal = new CompoundTerm(",", new Term[]
+                {
+                    new CompoundTerm("$dbg_attach", new Term[] { transplant.AttrInfo }),
+                    goal,
+                });
+                _engine.DebugTransplantSource = engine;
             }
             goal = _engine.ResolveGoalModule(goal, frameModule);
 
@@ -594,6 +611,7 @@ public sealed partial class DebugService
         }
         finally
         {
+            _engine.DebugTransplantSource = null;
             _engine.EndDebugEvaluation(scope);
             _conditionEval = false;
             _mode = savedMode;
@@ -829,7 +847,8 @@ public sealed partial class DebugService
             StopReason.Redo,
             redoGoal,
             site.File, site.Line, depth,
-            WithEvalBoundary(engine, _engine.CaptureFrames(engine, pc, e, cp))));
+            WithEvalBoundary(
+                engine, AttachResiduals(engine, _engine.CaptureFrames(engine, pc, e, cp)))));
     }
 
     void IDebugSession.OnFail(Activation engine)
@@ -1007,7 +1026,8 @@ public sealed partial class DebugService
         _lastStopReason = reason;    // ADR-035 D5+ — SNS is refused at redo/fail stops
         Current = engine;
 
-        var frames = WithEvalBoundary(engine, _engine.CaptureFrames(engine));
+        var frames = WithEvalBoundary(
+            engine, AttachResiduals(engine, _engine.CaptureFrames(engine)));
         // "" is CurrentGoal()'s answer for a port with no callee to name (an inline
         // goal's) — the frame the machine is standing in is the honest name then too.
         if (string.IsNullOrEmpty(goal))

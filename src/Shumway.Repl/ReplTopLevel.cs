@@ -937,7 +937,7 @@ internal static class ReplTopLevel
         Term resCursor = resTerm ?? new AtomTerm("[]");
         while (resCursor is CompoundTerm { Functor: ".", Args.Length: 2 } rc)
         {
-            residuals.Add(SubstituteVarNames(rc.Args[0], copyToOriginal));
+            residuals.Add(ResidualProjection.SubstituteVarNames(rc.Args[0], copyToOriginal));
             resCursor = rc.Args[1];
         }
 
@@ -949,7 +949,7 @@ internal static class ReplTopLevel
         var unattachedResiduals = new List<Term>();
         foreach (Term g in residuals)
         {
-            string? owner = FindMentionedUserVar(g, userVars);
+            string? owner = ResidualProjection.FindMentionedOwner(g, userVars);
             if (owner is null) unattachedResiduals.Add(g);
             else
             {
@@ -980,7 +980,7 @@ internal static class ReplTopLevel
         {
             Term? val = solution[name];
             if (val is null || residualsByVar.ContainsKey(name)) continue;
-            if (cycleNames is not null) val = SubstituteVarNames(val, cycleNames);
+            if (cycleNames is not null) val = ResidualProjection.SubstituteVarNames(val, cycleNames);
             string key = AstTermRenderer.Render(val, 1200, ops);
             renderedValue[name] = key;
             if (!groups.TryGetValue(key, out var members))
@@ -1013,50 +1013,6 @@ internal static class ReplTopLevel
 
         if (lines.Count == 0) return "true";
         return string.Join(",\n", lines);
-    }
-
-    /// <summary>Returns the first userVars name that appears in
-    /// <paramref name="term"/>, or <c>null</c> if none does.</summary>
-    private static string? FindMentionedUserVar(Term term, IReadOnlyList<string> userVars)
-    {
-        switch (term)
-        {
-            case VarTerm v:
-                return userVars.Contains(v.Name) ? v.Name : null;
-            case CompoundTerm c:
-                foreach (Term a in c.Args)
-                {
-                    string? r = FindMentionedUserVar(a, userVars);
-                    if (r is not null) return r;
-                }
-                return null;
-            default:
-                return null;
-        }
-    }
-
-    /// <summary>Returns <paramref name="term"/> with every <see cref="VarTerm"/>
-    /// whose name is a key in <paramref name="renames"/> replaced by a
-    /// <see cref="VarTerm"/> carrying the mapped name. Other terms are
-    /// returned as-is (or rebuilt structurally for compounds).</summary>
-    private static Term SubstituteVarNames(Term term, IReadOnlyDictionary<string, string> renames)
-    {
-        switch (term)
-        {
-            case VarTerm v when renames.TryGetValue(v.Name, out string? newName):
-                return new VarTerm(newName);
-            case CompoundTerm c:
-                var newArgs = new Term[c.Args.Length];
-                bool changed = false;
-                for (int i = 0; i < c.Args.Length; i++)
-                {
-                    newArgs[i] = SubstituteVarNames(c.Args[i], renames);
-                    if (!ReferenceEquals(newArgs[i], c.Args[i])) changed = true;
-                }
-                return changed ? new CompoundTerm(c.Functor, newArgs) : term;
-            default:
-                return term;
-        }
     }
 
     /// <summary>After a solution, asks whether to search for the next:

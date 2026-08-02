@@ -226,7 +226,7 @@ public sealed partial class DebugService : IDebugSession
         Activation? engine = Current;
         if (engine is null) return null;
 
-        var frames = PresentFrames(engine, _engine.CaptureFrames(engine));
+        var frames = PresentFrames(engine, AttachResiduals(engine, _engine.CaptureFrames(engine)));
         string goal = frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : CurrentGoal();
         // A pending re-enter's stop presents at the chosen head, not the parked caller.
         var site = engine.DebugClauseEntryArmed
@@ -399,6 +399,7 @@ public sealed partial class DebugService : IDebugSession
         var substituted = new HashSet<string>(StringComparer.Ordinal);
         List<CommitVar>? commit = null;
         string? commitRefusal = null;
+        List<int>? attVarRoots = null;
         if (_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
         {
             frameModule = _engine.ModuleForFrame(pc);
@@ -411,12 +412,37 @@ public sealed partial class DebugService : IDebugSession
                 if (value is VarTerm vt && addr >= 0)
                 {
                     if (isAttVar)
+                    {
                         commitRefusal = " [" + name + " is an attributed variable: "
                             + "binding into the frame is disabled]";
+                        (attVarRoots ??= new List<int>()).Add(addr);
+                    }
                     else
                         (commit ??= new List<CommitVar>()).Add(new CommitVar(name, vt.Name, addr));
                 }
             }
+        }
+
+        // An ATTRIBUTED frame variable substitutes as a bare _G<addr> variable — the
+        // goal's materialisation gives it a fresh cell with NO attributes, so
+        // get_attr/3, copy_term/3, frozen/1 or posting a new constraint on it silently
+        // saw an unconstrained variable. The transplant (see AttachResiduals) fixes
+        // that: the suspended variable's attribute graph is rebuilt as ag(M, A, V)
+        // triples over the same _G names and '$dbg_attach'/1 reattaches them before the
+        // user's goal runs — in the EVAL activation only, the suspended machine
+        // untouched. Constraints the goal posts live and die with the evaluation.
+        if (attVarRoots is not null
+            && _engine.BuildResidualAttrInfo(outer, attVarRoots) is { } transplant)
+        {
+            goal = new CompoundTerm(",", new Term[]
+            {
+                new CompoundTerm("$dbg_attach", new Term[] { transplant.AttrInfo }),
+                goal,
+            });
+            // '$dbg_fix_foreign' reads per-activation FOREIGN payloads off the
+            // suspended activation; cleared with the evaluation's other state in
+            // AbandonPendingEvaluation.
+            _engine.DebugTransplantSource = outer;
         }
         var report = new List<string>();
         foreach (string n in names)
@@ -440,7 +466,7 @@ public sealed partial class DebugService : IDebugSession
         _evalActive = true;
         _evalOuter = outer;
         _evalGoalText = Ellipsize(trimmed, 80);
-        _evalOuterFrames = _engine.CaptureFrames(outer);
+        _evalOuterFrames = AttachResiduals(outer, _engine.CaptureFrames(outer));
         _outerScope = _engine.BeginDebugEvaluation();
         _pendingSavedDepth = _lastStopDepth;
         _pendingSavedMode = _mode;
