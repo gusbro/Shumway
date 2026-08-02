@@ -1268,26 +1268,44 @@ internal sealed class DynamicCodePatcher
     /// Selection includes logically-dead entries as candidates: their
     /// <c>check_visible</c> still runs at the jump target, and a sole-but-dead
     /// candidate correctly fails the call.</summary>
+    private static readonly bool DynSelDiag =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_DYNSEL_DIAG") == "1";
+
+    private static int SelDiag(int fid, int result, string reason)
+    {
+        if (DynSelDiag)
+        {
+            string name = "?";
+            if (fid != 0)
+            {
+                var (atomId, ar) = FunctorTable.Lookup(fid);
+                name = $"{AtomTable.GetById(atomId)?.Name}/{ar}";
+            }
+            Console.Error.WriteLine($"[dynsel] {name} -> {result} ({reason})");
+        }
+        return result;
+    }
+
     internal int SelectDynChainCandidate(
         Activation engine, int trampolinePc,
         System.Collections.Generic.IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? predsByAddr)
     {
         var table = GetChainTable(engine);
-        if (table is null) return -2;
+        if (table is null) return SelDiag(0, -2, "no-table");
         int fid;
         if (predsByAddr is not null
             && predsByAddr.TryGetValue(trampolinePc, out var pred))
             fid = pred.FunctorId;
         else if (!table.TrampolineFids.TryGetValue(trampolinePc, out fid))
-            return -2;   // neither a setup-emitted nor a live trampoline we know
-        if (!table.Chains.TryGetValue(fid, out var state)) return -2;
+            return SelDiag(0, -2, $"unknown-trampoline@{trampolinePc}");
+        if (!table.Chains.TryGetValue(fid, out var state)) return SelDiag(fid, -2, "no-chain");
         var entries = state.Entries;
         // NOTE: a 1-entry chain is NOT det by itself — its try_me_else points
         // at the fail-stub and that choice point survives a successful call
         // (Logtalk's freshly-asserted send-cache entries made every SECOND
         // send report non-deterministic). A single entry is selected CP-free
         // below regardless of the first argument.
-        if (entries.Count == 0) return -2;
+        if (entries.Count == 0) return SelDiag(fid, -2, "empty-chain");
         var prog = engine.CurrentProgram;
         if (prog is null) return -2;
 
@@ -1296,16 +1314,16 @@ internal sealed class DynamicCodePatcher
         // apart — discriminate at the trampoline's `execute` TARGET instead:
         // a flat chain's head is a chain instruction; an indexed layout's is
         // switch_on_term. Anything unexpected bails to the normal dispatch.
-        if (trampolinePc + 6 > prog.Length) return -2;
+        if (trampolinePc + 6 > prog.Length) return SelDiag(fid, -2, "short-prog");
         // The flat-chain trampoline is exactly `enter_dynamic; execute <head>`
         // — any other successor (an inline indexed switch, execute variants)
         // is not a shape this selection understands.
         if ((Shumway.Core.Opcode)prog[trampolinePc + 1] != Shumway.Core.Opcode.Execute)
-            return -2;
+            return SelDiag(fid, -2, "not-execute");
         int chainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, trampolinePc + 2);
-        if (chainHead < 0 || chainHead >= prog.Length) return -2;
+        if (chainHead < 0 || chainHead >= prog.Length) return SelDiag(fid, -2, "bad-head");
         var headOp = (Shumway.Core.Opcode)prog[chainHead];
-        if (headOp != Shumway.Core.Opcode.TryMeElse) return -2;
+        if (headOp != Shumway.Core.Opcode.TryMeElse) return SelDiag(fid, -2, $"head-op={headOp}");
 
         int matchCount;
         DynChainEntry? match;
@@ -1323,26 +1341,26 @@ internal sealed class DynamicCodePatcher
             if (a0.Tag == Tag.Ref)
             {
                 a0 = engine.GetHeap(engine.Deref(a0.AsHeapIndex));
-                if (a0.Tag == Tag.Ref) return -2;
+                if (a0.Tag == Tag.Ref) return SelDiag(fid, -2, "unbound-a0");
             }
             matchCount = 0;
             match = null;
             foreach (var entry in entries)
             {
                 if (!EntryKeyCouldMatch(engine, entry, a0)) continue;
-                if (++matchCount > 1) return -2;   // several candidates → chain
+                if (++matchCount > 1) return SelDiag(fid, -2, "multi-candidate");
                 match = entry;
             }
-            if (matchCount == 0) return -1;
+            if (matchCount == 0) return SelDiag(fid, -1, "no-candidate");
         }
         // Sole candidate. Its chunk must start with a chain instruction we
         // can skip (try_me_else / retry_me_else, incl. the 155f demoted-head
         // form); anything else (indexed layout, single-emission shapes) bails.
         int addr = match!.ChunkAddr;
-        if (addr < 0 || addr >= prog.Length) return -2;
+        if (addr < 0 || addr >= prog.Length) return SelDiag(fid, -2, "bad-addr");
         var op = (Shumway.Core.Opcode)prog[addr];
         if (op != Shumway.Core.Opcode.TryMeElse
-            && op != Shumway.Core.Opcode.RetryMeElse) return -2;
+            && op != Shumway.Core.Opcode.RetryMeElse) return SelDiag(fid, -2, $"entry-op={op}");
         return addr + ChainEntryHeaderSize(prog, addr);
     }
 

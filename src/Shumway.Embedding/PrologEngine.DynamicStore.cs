@@ -2580,6 +2580,13 @@ public sealed partial class PrologEngine
             chain.TrampolineExecuteOperandAddr = pc + 2;
             chain.HeadClauseAddr =
                 Shumway.Core.BytecodeIO.ReadInt32(program, pc + 2);
+            // ADR-041 — the dispatch-time selector resolves a trampoline pc
+            // to its functor through this map. Setup-compiled predicates in a
+            // REUSED persistent buffer are in no later query's
+            // PredicatesByAddress snapshot, so without this entry their
+            // chains never select CP-free (Logtalk's '$lgt_current_category_'
+            // lookup leaked its chain CP into every ^^ cache miss).
+            DynChains.TrampolineFids[predAddr] = fid;
             // Advance past the trampoline (EnterDynamic + Execute = 6 bytes).
             pc += 6;
         }
