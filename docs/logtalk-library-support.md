@@ -2,68 +2,54 @@
 
 Status of running **Logtalk 3.101.0's bundled libraries** on Shumway, measured
 by executing each library's own lgtunit test suite (`tester.lgt`) on a fresh
-Logtalk-on-Shumway boot — 240 library test suites swept. Logtalk itself boots
-and runs fully on Shumway (see [`logtalk.md`](logtalk.md) for setup); this
-document is about its **library** collection, which in 3.101.x is large and
-includes machine-learning, geospatial, telemetry (CCSDS) and web-format
+Logtalk-on-Shumway boot — all 240 library test suites swept. Logtalk itself
+boots and runs fully on Shumway (see [`logtalk.md`](logtalk.md) for setup);
+this document is about its **library** collection, which in 3.101.x is large
+and includes machine-learning, geospatial, telemetry (CCSDS) and web-format
 libraries beyond the classic data-structure set.
 
 ## Headline numbers
 
-- **105 of 240 test suites pass completely** (every test green).
-- **87 pass partially** with only **129 failing tests corpus-wide** — **98.7%
-  of all individual tests pass** (10,014 of 10,143 executed).
+- **192 of the 194 runnable test suites pass completely** (every test green).
+- **10,317 of 10,319 executed tests pass — 99.98%.** The 2 remaining failures
+  are external: one upstream library bug, one missing host tool (below).
 - **41 suites are not applicable** (network/JVM bindings, or testers gated to
   a hardcoded backend whitelist that prints "(not applicable)").
-- **7 time out** under the parallel sweep — heavy ML/optimization compute;
-  several of these passed in a sequential run, so treat the timeouts as
-  load-sensitivity, not failures.
+- **5 suites time out under a parallel sweep** (heavy ML/optimization compute:
+  `linear_svm_classifier`, `logistic_regression_classifier`,
+  `simulated_annealing`, `lof_anomaly_detector`,
+  `isolation_forest_anomaly_detector`) — they pass when run sequentially;
+  treat the timeouts as machine-load sensitivity, not failures.
 
-The two engine arcs this campaign drove — unbounded-integer shift promotion
-and ADR-041 (dispatch-time clause selection: chains select on the first
-argument; a single-entry chain is selected choice-point-free) — moved the
-corpus from 75 green suites and 83% of tests to these numbers. Notably,
-suites previously misattributed to missing capabilities turned out to be
-that determinism bug: crypto is 121/121, the CCSDS framing stack is fully
-green, ieee_754 has zero failures.
+Highlights among the green suites: **random 457/457**, **types 149/149**,
+**linear_algebra 72/72**, **crypto 121/121**, **ieee_754** and the whole
+**CCSDS framing stack** at zero failures, the JSON/YAML/TOML/Avro/Protobuf/
+MessagePack format family, every ML classifier/regressor/ranker/clusterer
+that runs to completion, **os 140/141**, **tzif 56/56** and
+**mime_types 14/14** (on both of which SWI-Prolog itself fails tests on
+Windows), grammars, meta/meta_compiler, and the classic data structures.
 
-## ✅ Fully green test suites (105)
+## The 2 known failing tests — neither is a Shumway bug
 
-Everything previously green plus the suites the determinism fix released:
-the whole JSON family (incl. json_graph 50/50), YAML/TOML, Avro + Protobuf +
-MessagePack, the classic data structures, grammars, meta/meta_compiler,
-**random 457/457**, **types 149/149**, **linear_algebra 72/72**,
-**ieee_754 0 failures**, **crypto 121/121**, the **CCSDS framing stack**
-(ccsds_frames 93/93, ccsds_tc_services 35/35), **reader 64/64**, several ML
-classifiers (kNN, naive Bayes, random forest, C4.5, nearest centroid), and
-the id/format/geospatial families.
-
-## 🟡 Under review — non-passing tests NOT known to be structural
-
-Per project policy, a failing test that is not explained by a missing
-capability is presumed to be a Shumway bug until proven otherwise. The
-current review list (129 failing tests corpus-wide):
-
-| suite | failing | first-look note |
+| suite | failing test | cause |
 |---|---|---|
-| `os` | 11/156 | file-system corners; partially platform-semantics, needs per-test triage |
-| `jwt` | 8/37 | NOT crypto (crypto itself is 121/121) — review |
-| `tzif`, `mime_types` | 5 each | binary timezone parsing / table lookups — review |
-| `union_find`, `http_core` | 4 each | union_find is a pure data structure — review first |
-| `dimension_reduction_protocols` | 3 | review |
-| ~30 suites (ML regressions/rankers/clusterers, cbor, csv, geojson, time_scales, …) | 1–2 each | likely a shared numeric/edge cause — sample a few, look for a common root |
+| `geojson` | `geojson_parse_invalid_json_text_01` | **Upstream library bug**: `geojson::parse/2` only catches `domain_error(json_source, _)`, but the json library throws `domain_error(json, _)` for malformed text. SWI-Logtalk fails this identically (102/103). |
+| `os` | `os_operating_system_release_1_01` | The library shells out to `pwsh.exe` (PowerShell 7), not installed on the test machine. SWI fails identically. |
 
-7 timeouts under the parallel sweep (`c45_classifier`,
-`linear_svm_classifier`, `logistic_regression_classifier`, heavy anomaly
-detectors, `simulated_annealing`, `http_directory_listing`) — several of
-these pass in a sequential run; treat as compute/load sensitivity, not
-failures, and verify sequentially when triaging.
+Verification method: every failing test was cross-checked against
+**SWI-Prolog running the same Logtalk tree** (`swipl -g
+"consult('<tree>/integration/logtalk_swi.pl')"`). A test that fails on both
+engines is upstream/platform, not ours; every test that failed only on
+Shumway was treated as a Shumway bug and fixed.
 
-## ❌ Not applicable / needs missing infrastructure
+## ❌ Not applicable / needs missing infrastructure (41 suites)
 
-- **Network / external services**: the `http_*` stack, `sockets`, `redis`,
-  `memcached`, `s3`, `stomp`, `amqp`, `linda`, `open_ai`, `open_id`,
-  `gravatar`, `git`, `url` — need socket/process infrastructure.
+- **Network / external services**: the `http_*` client/server stack,
+  `sockets`, `redis`, `memcached`, `s3`, `stomp`, `amqp`, `linda`,
+  `open_ai`, `open_id`, `gravatar`, `git`, `url`, `rest` — need
+  socket/process infrastructure. (Note `http_core` and
+  `http_directory_listing` — the pure-Prolog parts of that stack — run and
+  are fully green.)
 - **JVM / OS processes**: `java`, `process`, `timeout`.
 - **Backend-whitelisted testers**: `dif`, `coroutining`, `format`, `loops`,
   `listing`, `hook_objects`, `dates_tz`, `iso_639`/`iso_3166`/`iso_4217`/
