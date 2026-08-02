@@ -87,7 +87,9 @@ public static class StreamBuiltins
         StreamHandle handle;
         try
         {
-            handle = mode switch
+            handle = IsWindowsNullDevice(path)
+                ? NullDeviceHandle(id, mode, path, alias: null)
+                : mode switch
             {
                 "write"  => new StreamHandle(id, new StreamWriter(path, append: false), "write", path),
                 "append" => new StreamHandle(id, new StreamWriter(path, append: true), "append", path),
@@ -213,7 +215,13 @@ public static class StreamBuiltins
         StreamHandle handle;
         try
         {
-            if (binary)
+            if (IsWindowsNullDevice(path))
+            {
+                handle = binary
+                    ? new StreamHandle(id, Stream.Null, mode, path, alias)
+                    : NullDeviceHandle(id, mode, path, alias);
+            }
+            else if (binary)
             {
                 // Binary streams open the file as a raw FileStream;
                 // ISO §8.13's byte I/O builtins read / write through
@@ -258,6 +266,25 @@ public static class StreamBuiltins
         Cell foreignCell = engine.MakeForeign(handle);
         return engine.UnifyRegisterWithCell(2, foreignCell);
     }
+
+    /// <summary>.NET's FileStream refuses device paths, but portable Prolog
+    /// opens the platform null device by name (Logtalk os::null_device_path).
+    /// "nul"/"nul:" on Windows map to <see cref="Stream.Null"/>; /dev/null
+    /// opens natively on Unix so no mapping is needed there.</summary>
+    private static bool IsWindowsNullDevice(string path) =>
+        OperatingSystem.IsWindows()
+        && (path.Equals("nul", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("nul:", StringComparison.OrdinalIgnoreCase));
+
+    private static StreamHandle NullDeviceHandle(int id, string mode, string path, string? alias) =>
+        mode switch
+        {
+            "write" or "append" => new StreamHandle(
+                id, new StreamWriter(Stream.Null), mode, path, alias),
+            "read" => new StreamHandle(id, new StreamReader(Stream.Null), "read", path, alias),
+            _ => throw new PrologRuntimeException("domain_error",
+                "stream_mode (Phase 1 supports write / append / read)"),
+        };
 
     public static bool Close(Activation engine)
     {
