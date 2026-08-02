@@ -24,7 +24,8 @@ public class EdinburghIoTests
             var p = path.Replace('\\', '/');
             Assert.True(engine.Query($"tell('{p}'), write(hello), nl, told.").Success);
             string content = File.ReadAllText(path);
-            Assert.Equal("hello" + Environment.NewLine, content);
+            // File nl is byte-faithful "\n" (GNU parity).
+            Assert.Equal("hello\n", content);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }

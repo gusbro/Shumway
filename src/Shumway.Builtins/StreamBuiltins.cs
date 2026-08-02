@@ -91,8 +91,8 @@ public static class StreamBuiltins
                 ? NullDeviceHandle(id, mode, path, alias: null)
                 : mode switch
             {
-                "write"  => new StreamHandle(id, new StreamWriter(path, append: false), "write", path),
-                "append" => new StreamHandle(id, new StreamWriter(path, append: true), "append", path),
+                "write"  => new StreamHandle(id, new StreamWriter(path, append: false) { NewLine = "\n" }, "write", path),
+                "append" => new StreamHandle(id, new StreamWriter(path, append: true) { NewLine = "\n" }, "append", path),
                 "read"   => new StreamHandle(id, new StreamReader(path), "read", path),
                 _ => throw new PrologRuntimeException("domain_error",
                     "stream_mode (Phase 1 supports write / append / read)"),
@@ -241,8 +241,8 @@ public static class StreamBuiltins
             {
                 handle = mode switch
                 {
-                    "write"  => new StreamHandle(id, new StreamWriter(path, append: false), "write", path, alias),
-                    "append" => new StreamHandle(id, new StreamWriter(path, append: true), "append", path, alias),
+                    "write"  => new StreamHandle(id, new StreamWriter(path, append: false) { NewLine = "\n" }, "write", path, alias),
+                    "append" => new StreamHandle(id, new StreamWriter(path, append: true) { NewLine = "\n" }, "append", path, alias),
                     "read"   => new StreamHandle(id, new StreamReader(path), "read", path, alias),
                     _ => throw new PrologRuntimeException("domain_error",
                         "stream_mode (Phase 1 supports write / append / read)"),

@@ -652,7 +652,11 @@ public static partial class MetaBuiltins
                 IsoError.DomainError("output_sink", new VarTerm("_")));
 
         Term goal = MaterializeRegister(engine, 1);
-        var sw = new System.IO.StringWriter();
+        // Memory capture is not a Windows text file: nl / ~n inside the goal
+        // must contribute "\n" to the captured atom (GNU/SWI behaviour —
+        // sub_atom(Captured, _, _, _, '\n') patterns rely on it), while file
+        // streams keep the platform newline.
+        var sw = new System.IO.StringWriter { NewLine = "\n" };
         var sub = host.CreateSubEngine();
         sub.Out = sw;
 

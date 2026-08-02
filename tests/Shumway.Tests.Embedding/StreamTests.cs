@@ -71,8 +71,9 @@ public class StreamTests
                 + "write(S, line2), nl(S), "
                 + "close(S).");
 
+            // File nl writes "\n" (GNU parity).
             string[] lines = File.ReadAllText(path)
-                .Split(new[] { System.Environment.NewLine },
+                .Split(new[] { "\n" },
                        StringSplitOptions.RemoveEmptyEntries);
             Assert.Equal(2, lines.Length);
             Assert.Equal("line1", lines[0]);

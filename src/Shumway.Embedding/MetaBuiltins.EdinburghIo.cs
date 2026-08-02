@@ -100,7 +100,7 @@ public static partial class MetaBuiltins
         try
         {
             h = new StreamHandle(
-                streams.NextId(), new StreamWriter(path, append: false), "write", path);
+                streams.NextId(), new StreamWriter(path, append: false) { NewLine = "\n" }, "write", path);
         }
         catch (DirectoryNotFoundException)
         {
