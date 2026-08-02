@@ -672,6 +672,16 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("exists_file", 1, ExistsFile1,
             Io, "exists_file(+File)",
             "Succeeds when File exists and is a regular file.");
+        BuiltinsRegistry.Register("file_permission", 2, FilePermission2,
+            Io, "file_permission(+File, +Permission)",
+            "Succeeds when File (a file or directory) grants Permission — "
+            + "read, write, execute or search (GProlog-compatible). A "
+            + "nonexistent path fails; unknown permissions raise "
+            + "domain_error(os_file_permission, _).");
+        BuiltinsRegistry.Register("copy_file", 2, CopyFile2,
+            Io, "copy_file(+From, +To)",
+            "Copies file From to To (overwriting To). Raises "
+            + "existence_error(source_sink, From) when From is missing.");
         BuiltinsRegistry.Register("getenv", 2, GetEnv2,
             Io, "getenv(+Name, -Value)",
             "Unifies Value with the environment variable Name's contents "

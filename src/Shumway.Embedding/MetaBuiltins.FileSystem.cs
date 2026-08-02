@@ -99,6 +99,72 @@ public static partial class MetaBuiltins
         return System.IO.File.Exists(path);
     }
 
+    /// <summary>GProlog-compatible <c>file_permission(+File, +Permission)</c>:
+    /// succeeds iff File (a file or directory) grants Permission — one of
+    /// <c>read</c> / <c>write</c> / <c>execute</c> / <c>search</c>. Windows
+    /// has no execute bit, so <c>execute</c> follows the platform convention
+    /// (executable extension); <c>search</c> means a traversable directory.
+    /// A nonexistent path FAILS (GProlog behaviour) — the errors are for
+    /// uninstantiated / mistyped arguments only.</summary>
+    public static bool FilePermission2(Activation engine)
+    {
+        string path = RequireAtomPath(engine, register: 0, builtin: "file_permission/2");
+        string perm = RequireAtomPath(engine, register: 1, builtin: "file_permission/2");
+        bool isFile = System.IO.File.Exists(path);
+        bool isDir = System.IO.Directory.Exists(path);
+        switch (perm)
+        {
+            case "read":
+                return isFile || isDir;
+            case "write":
+                if (isDir) return true;
+                if (!isFile) return false;
+                return (System.IO.File.GetAttributes(path)
+                        & System.IO.FileAttributes.ReadOnly) == 0;
+            case "execute":
+                if (!isFile) return false;
+                if (OperatingSystem.IsWindows())
+                {
+                    string ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+                    return ext is ".exe" or ".bat" or ".cmd" or ".com";
+                }
+                return (System.IO.File.GetUnixFileMode(path)
+                        & (System.IO.UnixFileMode.UserExecute
+                           | System.IO.UnixFileMode.GroupExecute
+                           | System.IO.UnixFileMode.OtherExecute)) != 0;
+            case "search":
+                return isDir;
+            default:
+                throw new ShumwayPrologException(IsoError.DomainError(
+                    "os_file_permission", new AtomTerm(perm), engine));
+        }
+    }
+
+    /// <summary><c>copy_file(+From, +To)</c> — byte copy, overwriting To.
+    /// existence_error(source_sink, From) when From is missing.</summary>
+    public static bool CopyFile2(Activation engine)
+    {
+        string from = RequireAtomPath(engine, register: 0, builtin: "copy_file/2");
+        string to = RequireAtomPath(engine, register: 1, builtin: "copy_file/2");
+        if (!System.IO.File.Exists(from))
+            throw new ShumwayPrologException(IsoError.ExistenceError(
+                "source_sink", new AtomTerm(from), engine));
+        try
+        {
+            System.IO.File.Copy(from, to, overwrite: true);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("modify", "source_sink", new AtomTerm(to)));
+        }
+        catch (IOException ex)
+        {
+            throw new ShumwayPrologException(IsoError.SystemError(ex.Message));
+        }
+        return true;
+    }
+
     // SWI-compatible getenv/2: unify Value with
     // the environment variable's contents, or FAIL (not error) when unset —
     // callers rely on the failure branch for defaults:
@@ -191,6 +257,12 @@ public static partial class MetaBuiltins
     public static bool FileSize2(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "file_size/2");
+        // The Windows null device is not a file to .NET (FileInfo says it
+        // doesn't exist) but portable code sizes it — always 0.
+        if (OperatingSystem.IsWindows()
+            && (path.Equals("nul", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("nul:", StringComparison.OrdinalIgnoreCase)))
+            return engine.UnifyRegisterWithCell(1, Cell.Int(0));
         var info = new System.IO.FileInfo(path);
         if (!info.Exists)
             throw new ShumwayPrologException(

@@ -289,6 +289,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `chdir(?Path)` | Arity-Prolog 1-arg form of working_directory/2. With Path unbound, returns the current directory; with Path bound, changes to it. |
 | `close(+Stream)` | Closes an open stream. |
 | `close(+Stream, +Options)` | Closes an open stream. Options list (force(Bool), timeout) is parsed shallowly: force(true) suppresses close-time exceptions. |
+| `copy_file(+From, +To)` | Copies file From to To (overwriting To). Raises existence_error(source_sink, From) when From is missing. |
 | `current_input(-Stream)` | Unifies Stream with a designator for the current input stream (ISO §8.11.1). |
 | `current_output(-Stream)` | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
 | `current_stream(?Filename, ?Mode, ?Stream)` | Enumerates open streams (ISO §8.11.8.1). |
@@ -301,6 +302,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `exists_file(+File)` | Succeeds when File exists and is a regular file. |
 | `file_modification_time(+File, -Time)` | Unifies Time with File's last-modification time as integer Unix-epoch seconds. Raises existence_error when absent. |
 | `file_name_extension(?Base, ?Ext, ?Full)` | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). SWI / SICStus compatible. |
+| `file_permission(+File, +Permission)` | Succeeds when File (a file or directory) grants Permission — read, write, execute or search (GProlog-compatible). A nonexistent path fails; unknown permissions raise domain_error(os_file_permission, _). |
 | `file_size(+File, -Bytes)` | Unifies Bytes with File's size. Raises existence_error when File doesn't exist. |
 | `flush_output` | Flushes the current output stream (ISO §8.11.7). |
 | `flush_output(+Stream)` | Flushes the given stream (ISO §8.11.7). |
