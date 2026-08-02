@@ -851,8 +851,7 @@ public static partial class MetaBuiltins
         if (firstCell.Tag == Tag.Float)
         {
             double v = Cell.DecodeFloat(firstCell, engine.GetHeap(firstCell.FloatPairedIndex));
-            string s = v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
-            if (!s.Contains('.') && !s.Contains('e') && !s.Contains('E')) s += ".0";
+            string s = Shumway.Builtins.Number.FormatPrologFloat(v);
             return UnifyCodesList(engine, regOut: 1, s);
         }
         if (firstCell.Tag == Tag.Ref)

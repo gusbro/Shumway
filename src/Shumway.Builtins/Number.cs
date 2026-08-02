@@ -178,13 +178,16 @@ public readonly struct Number : IEquatable<Number>
 
     /// <summary>Formats a double as a round-trippable ISO Prolog float: the
     /// mantissa always carries a decimal point and the exponent uses a
-    /// lowercase <c>e</c>. .NET's <c>"R"</c> format emits forms like
-    /// <c>1E-05</c> (no point, uppercase E) and <c>1</c> (for 1.0) that
-    /// Shumway's own lexer reads back as an integer + a variable, not a
-    /// float — so <c>writeq</c>/<c>write_canonical</c> output containing a
-    /// small/large or whole-valued float was not re-consultable (it broke
-    /// Logtalk's generated scratch files: <c>1E-05</c> tokenised as
-    /// <c>1</c>, <c>E</c>). This produces <c>1.0e-05</c> / <c>1.0</c>.</summary>
+    /// lowercase <c>e</c> with an EXPLICIT sign. .NET's <c>"R"</c> format
+    /// emits forms like <c>1E-05</c> (no point, uppercase E) and <c>1</c>
+    /// (for 1.0) that Shumway's own lexer reads back as an integer + a
+    /// variable, not a float — so <c>writeq</c>/<c>write_canonical</c>
+    /// output containing a small/large or whole-valued float was not
+    /// re-consultable. This produces <c>1.0e-05</c> / <c>1.0</c> /
+    /// <c>1.0e+300</c>. The positive exponent keeps its <c>+</c> because
+    /// that is what SWI / GProlog / SICStus print and third-party code
+    /// parses the printed form positionally (Logtalk's cbor splits at
+    /// <c>e</c> and assumes a sign character follows).</summary>
     public static string FormatPrologFloat(double v)
     {
         if (double.IsNaN(v)) return "nan";
@@ -197,7 +200,7 @@ public readonly struct Number : IEquatable<Number>
         string mant = s[..e];
         string exp = s[(e + 1)..];
         if (mant.IndexOf('.') < 0) mant += ".0";
-        if (exp.StartsWith('+')) exp = exp[1..];
+        if (exp[0] != '+' && exp[0] != '-') exp = "+" + exp;
         return mant + "e" + exp;
     }
 

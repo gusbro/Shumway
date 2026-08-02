@@ -60,7 +60,7 @@ public static class AstTermRenderer
                 return quoted ? Shumway.Builtins.TermRenderer.QuotedAtomName(a.Name) : a.Name;
             case VarTerm v: return v.Name;
             case IntTerm n: return n.Value.ToString(CultureInfo.InvariantCulture);
-            case FloatTerm f: return f.Value.ToString("R", CultureInfo.InvariantCulture);
+            case FloatTerm f: return Shumway.Builtins.Number.FormatPrologFloat(f.Value);
             case StringTerm s: return $"\"{s.Content}\"";
             case BigIntTerm b: return b.Value.ToString(CultureInfo.InvariantCulture);
             case CompoundTerm { Functor: ".", Args.Length: 2 } list:
