@@ -226,6 +226,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$catch_end",   0, CatchEnd);
         // setup_call_cleanup/3 cleanup-handler primitives.
         BuiltinsRegistry.Register("$scc_register", 1, SccRegister);
+        BuiltinsRegistry.Register("$cp_owners", 0, CpOwners);
         BuiltinsRegistry.Register("$scc_forget", 1, SccForget);
         BuiltinsRegistry.Register("$pop_pending_cleanup", 1, PopPendingCleanup);
 

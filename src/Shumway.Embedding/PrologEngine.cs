@@ -417,6 +417,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     private IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _currentPredicatesByAddress;
 
+    /// <summary>Diagnostic access for the <c>'$cp_owners'/0</c> builtin (CP-owner
+    /// attribution by nearest-predicate-below floor search).</summary>
+    internal IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? PredicatesByAddressForDiag
+        => _currentPredicatesByAddress;
+
     /// <summary>Diagnostic accessor for the most recently linked query's
     /// address → predicate map. Used by tests that need to verify which
     /// predicate instances ended up in the linked program (e.g. confirming

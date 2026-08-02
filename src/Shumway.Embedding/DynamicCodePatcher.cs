@@ -1315,7 +1315,7 @@ internal sealed class DynamicCodePatcher
         DynChainEntry? match = null;
         foreach (var entry in entries)
         {
-            if (!EntryKeyCouldMatch(entry, a0)) continue;
+            if (!EntryKeyCouldMatch(engine, entry, a0)) continue;
             if (++matchCount > 1) return -2;   // several candidates → chain
             match = entry;
         }
@@ -1337,7 +1337,7 @@ internal sealed class DynamicCodePatcher
     // uncertain shape returns true (the clause stays a candidate — that only
     // costs the selection, never correctness). "Keyed" call tags are the ones
     // whose mismatch PROVES non-unifiability against a constant/compound key.
-    private static bool EntryKeyCouldMatch(DynChainEntry entry, Cell callArg)
+    private static bool EntryKeyCouldMatch(Activation engine, DynChainEntry entry, Cell callArg)
     {
         Term head = entry.Clause.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
             ? h : entry.Clause.Term;
@@ -1353,11 +1353,17 @@ internal sealed class DynamicCodePatcher
                 return callArg.Tag == Tag.Int && callArg.AsInt == i.Value;
             case CompoundTerm c when c.Functor == "." && c.Args.Length == 2:
                 return callArg.Tag is Tag.Lis or Tag.Pstr;
-            case CompoundTerm:
-                // v1: any compound key vs a Str call stays a candidate (no
-                // functor compare without a heap read); other keyed tags
-                // provably clash.
-                return callArg.Tag == Tag.Str;
+            case CompoundTerm c:
+                // Real functor/arity comparison: Logtalk's per-entity `_def`
+                // tables are chains keyed by DISTINCT goal-template compounds
+                // (precision(_), order(_), …) — without this the whole chain
+                // stayed multi-candidate and the lgtunit determinism tests
+                // under debug(on) saw the surviving chain CP.
+                if (callArg.Tag != Tag.Str) return false;
+                var (aid, ar) = FunctorTable.Lookup(
+                    engine.GetHeap(callArg.AsHeapIndex).AsFunctorId);
+                return c.Args.Length == ar
+                    && AtomTable.Intern(c.Functor, permanent: true).Id == aid;
             default:
                 return true;    // var / float / bigint / unkeyed head shapes
         }

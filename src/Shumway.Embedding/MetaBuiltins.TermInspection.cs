@@ -216,6 +216,41 @@ public static partial class MetaBuiltins
         return false;
     }
 
+    /// <summary><c>'$cp_owners'/0</c> — diagnostic: dumps every live choice
+    /// point (stack slot, saved backtrack address, arity) with the nearest
+    /// predicate at-or-below the address, to stderr. Attribution caveat: for
+    /// in-place dynamic chain chunks the label is nearest-predicate-below,
+    /// which can name the wrong neighbour.</summary>
+    public static bool CpOwners(Activation engine)
+    {
+        // Address→functor from the LIVE map (covers live-linked predicates the
+        // per-query PredicatesByAddress snapshot cannot see).
+        var byAddr = new System.Collections.Generic.SortedDictionary<int, int>();
+        if (engine.CurrentFunctorAddresses is { } famap)
+            foreach (var kv in famap)
+                if (kv.Value >= 0 && !Activation.IsResumeMarker(kv.Value))
+                    byAddr[kv.Value] = kv.Key;
+        var addrs = new int[byAddr.Count];
+        byAddr.Keys.CopyTo(addrs, 0);
+        string NameAt(int bp)
+        {
+            if (addrs.Length == 0) return "?";
+            int lo = 0, hi = addrs.Length - 1, best = -1;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) / 2;
+                if (addrs[mid] <= bp) { best = mid; lo = mid + 1; }
+                else hi = mid - 1;
+            }
+            if (best < 0) return "?";
+            var (atomId, arity) = FunctorTable.Lookup(byAddr[addrs[best]]);
+            return $"{AtomTable.GetById(atomId)?.Name}/{arity}@+{bp - addrs[best]}";
+        }
+        foreach (var (b, bp, arity) in engine.EnumerateChoicePoints())
+            Console.Error.WriteLine($"[CP] b={b} bp={bp} arity={arity} owner={NameAt(bp)}");
+        return true;
+    }
+
     // arg(N, Term, Arg) with N unbound, SWI mode: yield (1, arg1), (2, arg2), …
     // backtrackably. Arity 3 so the cursor CP restores all three registers.
     private static bool ArgEnumerate(Activation engine, Cell tCell)
