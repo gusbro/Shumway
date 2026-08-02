@@ -389,3 +389,27 @@ setup_call_cleanup(_, _, _) :-
 {Files} :-
 	'$lgt_conjunction_to_list'(Files, List),
 	logtalk_load(List).
+
+
+% atomic_concat(+atomic, +atomic, ?atom) — Logtalk adapter contract
+% (library objects `uses(user, [atomic_concat/3])`, e.g. json_graph).
+
+atomic_concat(Atomic1, Atomic2, Atom) :-
+	(	var(Atomic1) ->
+		throw(error(instantiation_error, atomic_concat/3))
+	;	var(Atomic2) ->
+		throw(error(instantiation_error, atomic_concat/3))
+	;	\+ atomic(Atomic1) ->
+		throw(error(type_error(atomic, Atomic1), atomic_concat/3))
+	;	\+ atomic(Atomic2) ->
+		throw(error(type_error(atomic, Atomic2), atomic_concat/3))
+	;	'$lgt_shumway_atomic_atom'(Atomic1, Atom1),
+		'$lgt_shumway_atomic_atom'(Atomic2, Atom2),
+		atom_concat(Atom1, Atom2, Atom)
+	).
+
+'$lgt_shumway_atomic_atom'(Atomic, Atom) :-
+	(	atom(Atomic) ->
+		Atom = Atomic
+	;	term_to_atom(Atomic, Atom)
+	).
