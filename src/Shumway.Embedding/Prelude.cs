@@ -195,26 +195,55 @@ internal static class Prelude
         %! bagof(?Template, :Goal, -List) | Findall & aggregation | Collects Goal's solutions; fails when there are none.
         %! setof(?Template, :Goal, -List) | Findall & aggregation | Like bagof/3 but the result list is sorted and duplicate-free.
         % Runtime (variable-goal) fallback for bagof/3 and setof/3, in the LIVE
-        % engine over findall/3. A statically-callable bagof/setof is rewritten by
-        % MetaTransform with full witness grouping; this fallback keeps the
-        % simplified no-grouping semantics (findall + fail-on-empty), stripping
-        % ^/2 existential wrappers. '$strip_existential'/2 preserves the '$mqual'
-        % module tag so the collected goal still resolves in the meta-caller's
-        % module.
+        % engine with FULL WITNESS GROUPING — the free variables of Goal (not in
+        % Template, not ^-quantified) partition the solutions; each distinct
+        % witness (variant equality, first-occurrence order) yields one bag on
+        % backtracking with the free variables bound to it (ISO §8.10.2).
+        % The no-grouping shortcut this replaces collapsed every group into one
+        % bag whenever bagof was reached as a runtime goal (Logtalk's
+        % union_find::disjoint_sets returned a single merged set).
+        % '$bagof_parts' preserves the '$mqual' module tag so the collected goal
+        % still resolves in the meta-caller's module; the quantified variables
+        % are collected from INSIDE the tag as well.
         bagof(Template, Goal, Bag) :-
-            '$strip_existential'(Goal, Inner),
-            findall(Template, Inner, Bag0),
-            Bag0 \= [],
-            Bag = Bag0.
+            '$bagof_parts'(Goal, Inner, QVars),
+            term_variables(Inner, GoalVars),
+            term_variables(t(Template, QVars), BoundVars),
+            '$bagof_witness'(GoalVars, BoundVars, Witness),
+            (   Witness == [] ->
+                findall(Template, Inner, Bag),
+                Bag \= []
+            ;   findall(Witness-Template, Inner, Pairs),
+                Pairs \= [],
+                '$bagof_groups'(Pairs, Witness, Bag)
+            ).
         setof(Template, Goal, Set) :-
-            '$strip_existential'(Goal, Inner),
-            findall(Template, Inner, Bag0),
-            Bag0 \= [],
-            sort(Bag0, Set).
-        '$strip_existential'('$mqual'(M, G), '$mqual'(M, S)) :- !, '$strip_caret'(G, S).
-        '$strip_existential'(G, S) :- '$strip_caret'(G, S).
-        '$strip_caret'(V, S) :- nonvar(V), V = _ ^ G, !, '$strip_caret'(G, S).
-        '$strip_caret'(G, G).
+            bagof(Template, Goal, Bag),
+            sort(Bag, Set).
+        '$bagof_parts'('$mqual'(M, G), '$mqual'(M, S), Q) :- !, '$bagof_strip'(G, S, Q).
+        '$bagof_parts'(G, S, Q) :- '$bagof_strip'(G, S, Q).
+        '$bagof_strip'(V, S, Q) :- nonvar(V), V = Vs ^ G, !, Q = [Vs|Q1], '$bagof_strip'(G, S, Q1).
+        '$bagof_strip'(G, G, []).
+        '$bagof_witness'([], _, []).
+        '$bagof_witness'([V|Vs], Bound, W) :-
+            (   '$var_memberchk'(V, Bound) -> '$bagof_witness'(Vs, Bound, W)
+            ;   W = [V|W1], '$bagof_witness'(Vs, Bound, W1)
+            ).
+        '$var_memberchk'(V, [X|Xs]) :- ( V == X -> true ; '$var_memberchk'(V, Xs) ).
+        % One group per distinct witness, in first-occurrence order; RE-SATISFIABLE
+        % (bagof enumerates groups on backtracking). Variant witnesses share a
+        % group and unify, binding the caller's free variables.
+        '$bagof_groups'([W0-T0|Rest], Witness, Bag) :-
+            '$bagof_take'(Rest, W0, Ts, Others),
+            (   Witness = W0, Bag = [T0|Ts]
+            ;   '$bagof_groups'(Others, Witness, Bag)
+            ).
+        '$bagof_take'([], _, [], []).
+        '$bagof_take'([W-T|Ps], W0, Ts, Others) :-
+            (   subsumes_term(W, W0), subsumes_term(W0, W) ->
+                W = W0, Ts = [T|Ts1], '$bagof_take'(Ps, W0, Ts1, Others)
+            ;   Others = [W-T|O1], '$bagof_take'(Ps, W0, Ts, O1)
+            ).
 
         %! catch(:Goal, ?Catcher, :Recovery) | Control | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead.
         % Runs in the LIVE engine using the catch-frame machinery
