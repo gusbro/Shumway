@@ -1282,7 +1282,12 @@ internal sealed class DynamicCodePatcher
             return -2;   // neither a setup-emitted nor a live trampoline we know
         if (!table.Chains.TryGetValue(fid, out var state)) return -2;
         var entries = state.Entries;
-        if (entries.Count < 2) return -2;   // 0/1-entry chains are det already
+        // NOTE: a 1-entry chain is NOT det by itself — its try_me_else points
+        // at the fail-stub and that choice point survives a successful call
+        // (Logtalk's freshly-asserted send-cache entries made every SECOND
+        // send report non-deterministic). A single entry is selected CP-free
+        // below regardless of the first argument.
+        if (entries.Count == 0) return -2;
         var prog = engine.CurrentProgram;
         if (prog is null) return -2;
 
@@ -1302,24 +1307,34 @@ internal sealed class DynamicCodePatcher
         var headOp = (Shumway.Core.Opcode)prog[chainHead];
         if (headOp != Shumway.Core.Opcode.TryMeElse) return -2;
 
-        // Call's first argument, dereferenced. Unbound → every clause is a
-        // candidate → no selection.
-        Cell a0 = engine.GetRegister(0);
-        if (a0.Tag == Tag.Ref)
+        int matchCount;
+        DynChainEntry? match;
+        if (entries.Count == 1)
         {
-            a0 = engine.GetHeap(engine.Deref(a0.AsHeapIndex));
-            if (a0.Tag == Tag.Ref) return -2;
+            // Sole clause: always the sole candidate, first arg irrelevant.
+            matchCount = 1;
+            match = entries[0];
         }
-
-        int matchCount = 0;
-        DynChainEntry? match = null;
-        foreach (var entry in entries)
+        else
         {
-            if (!EntryKeyCouldMatch(engine, entry, a0)) continue;
-            if (++matchCount > 1) return -2;   // several candidates → chain
-            match = entry;
+            // Call's first argument, dereferenced. Unbound → every clause is
+            // a candidate → no selection.
+            Cell a0 = engine.GetRegister(0);
+            if (a0.Tag == Tag.Ref)
+            {
+                a0 = engine.GetHeap(engine.Deref(a0.AsHeapIndex));
+                if (a0.Tag == Tag.Ref) return -2;
+            }
+            matchCount = 0;
+            match = null;
+            foreach (var entry in entries)
+            {
+                if (!EntryKeyCouldMatch(engine, entry, a0)) continue;
+                if (++matchCount > 1) return -2;   // several candidates → chain
+                match = entry;
+            }
+            if (matchCount == 0) return -1;
         }
-        if (matchCount == 0) return -1;
         // Sole candidate. Its chunk must start with a chain instruction we
         // can skip (try_me_else / retry_me_else, incl. the 155f demoted-head
         // form); anything else (indexed layout, single-emission shapes) bails.
