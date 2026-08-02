@@ -10,57 +10,61 @@ libraries beyond the classic data-structure set.
 
 ## Headline numbers
 
-- **75 of 240 test suites pass completely** (every test green).
-- **119 pass partially** — across the sequentially re-verified suites, **83% of
-  individual tests pass** (5,145 of 6,176); most partial suites fail a handful
-  of tests, concentrated in the numeric cluster below.
-- **~43 suites are not applicable or need infrastructure we don't provide**
+- **93 of 240 test suites pass completely** (every test green).
+- **102 pass partially** — **96.8% of ALL individual tests pass** (10,086 of
+  10,414); most partial suites fail 1-5 tests on library-specific edges.
+- **41 suites are not applicable or need infrastructure we do not provide**
   (network/OS/JVM bindings, or testers gated to a hardcoded backend whitelist).
-- **3 suites time out** (heavy compute: `c45_classifier`,
-  `isolation_forest_anomaly_detector`, `simulated_annealing`).
+- **4 suites time out** (heavy compute).
 
-## ✅ Fully green test suites (75)
+These numbers follow the ADR-041 determinism fix (dispatch-time clause
+selection for dynamic chains): before it, 75 suites were green and 83% of
+tests passed — the dominant failure was lgtunit determinism checks tripping
+on spurious choice points (linear_algebra went 27/72 -> 72/72, types
+148/149 -> 149/149, and the ML classifier suites went green in its wake).
+
+## ✅ Fully green test suites (93)
 
 application, arrangements, assignvars, avro, base32, base58, base64, base85,
-cartesian_products, ccsds_link_profiles, ccsds_packets, character_sets,
-combinations, command_line_options, crs_projections, cuid2, datalog, dates,
-deques, derangements, dictionaries, expecteds,
-frequent_pattern_mining_protocols, genint, geospatial, grammars, graphs,
-heaps, hierarchies, hook_flows, http_websocket_handshake, ids, intervals,
-json, json_ld, json_lines, json_patch, json_path, json_pointer, json_rpc,
-json_schema, ksuid, mcp_server, meta, meta_compiler, multisets, mutations,
-nanoid, open_api, optionals, options, partitions, permutations, protobuf,
-queues, random, recorded_database, sequential_pattern_mining_protocols, sets,
-snowflakeid, stemming, string_distance, strings, subsequences, term_io,
-tle_orbits, toml, toon, tsv, ulid, uuid, validations, wkt_wkb, yaml, zippers.
+c45_classifier, cartesian_products, ccsds_link_profiles, ccsds_packets,
+character_sets, clo_span_pattern_miner, combinations, command_line_options,
+crs_projections, cuid2, datalog, dates, dates_tz, deques, derangements,
+dictionaries, expecteds, frequent_pattern_mining_protocols, genint,
+geospatial, grammars, graphs, hashes, heaps, hierarchies, hmac, hook_flows,
+http_cors, http_htmx, http_parameters, http_websocket_handshake, ids,
+intervals, json, json_ld, json_lines, json_patch, json_path, json_pointer,
+json_rpc, json_schema, knn_classifier, ksuid, **linear_algebra**, mcp_server,
+message_pack, meta, meta_compiler, multisets, mutations,
+naive_bayes_classifier, nanoid, nearest_centroid_classifier,
+nested_dictionaries, nmea, open_api, optionals, options, partitions,
+permutations, protobuf, queues, random, random_forest_classifier,
+recorded_database, sequential_pattern_mining_protocols, sets, snowflakeid,
+statistics, stemming, string_distance, strings, subsequences, term_io,
+tle_orbits, toml, toon, tsv, **types**, ulid, uuid, validations, wkt_wkb,
+yaml, zippers.
 
-Highlights: the whole JSON family, YAML/TOML/CSV-adjacent formats, Avro +
-Protobuf, the classic data structures (sets/heaps/queues/dictionaries/
-graphs), grammars, meta/meta_compiler, and **random — 457/457 including all
-17 generator test sets, identical to a mature backend**. `types` passes
-148/149 (one known determinism edge).
+Highlights: the whole JSON family, YAML/TOML, Avro + Protobuf + MessagePack,
+the classic data structures, grammars, meta/meta_compiler, **random 457/457**,
+**types 149/149** and **linear_algebra 72/72** (both fully green since the
+ADR-041 determinism fix), and several ML classifiers (kNN, naive Bayes,
+random forest, C4.5, nearest centroid).
 
-## 🟡 Partial — most tests pass, failures concentrated in one cluster
+## 🟡 Partial — 96.8% of tests pass; the remaining tail
 
-The failures concentrate in two engine-level causes:
+The former dominant cause — spurious choice points from unindexed dynamic
+chains — is FIXED (ADR-041: dispatch-time clause selection). What remains
+is a small tail of library-specific edges:
 
-- **Spurious choice points** — the dominant one. lgtunit's
-  deterministic-goal tests report "test goal succeeded
-  non-deterministically": the engine leaves a choice point where the goal
-  is semantically deterministic. This is what fails most of
-  `linear_algebra` (45/72), the ML classifiers/regressions/projections
-  (`adaptive_boosting_classifier`, `logistic_regression_classifier`,
-  `linear_svm_classifier`, `ridge_regression`, `truncated_svd_projection`,
-  `nmf_projection`, …) and the known `types` 148/149 edge. The lever is
-  indexing / choice-point elision for the clause shapes these libraries
-  use.
-- **Integer bit-pattern arithmetic** — fixed: `1 << 63` used to overflow
-  silently to a negative instead of promoting to an unbounded integer.
-  `ieee_754` went from 19 to 7 failures with that one fix; the remaining 7
-  are genuine float-representation edges (NaN payloads, rounding corners).
+| suite | failing | nature |
+|---|---|---|
+| `ccsds_tc_services` (15/35), `ccsds_frames` (74/93) | bit-level telemetry framing | binary encode/decode edges |
+| `crypto` (108/121) | hash primitives | no native crypto backend |
+| `os` (130/156) | file-system corners | platform-specific semantics |
+| `ieee_754` (70/79) | 7 float-representation edges | NaN payloads, rounding corners |
+| `json_graph`, `jwt`, `reader`, `kernel_pca_projection`, `http_core`, … | 1–10 each | assorted library edges |
 
-Everything else in the partial group fails 1–5 tests on library-specific
-edges (e.g. `arbitrary` 42/43, `os` file-system corners).
+The integer bit-pattern arithmetic that used to fail `ieee_754` en masse
+(`1 << 63` overflowing instead of promoting) is fixed.
 
 ## ❌ Not applicable / needs missing infrastructure
 
