@@ -48,14 +48,12 @@ intermediate files, or in your `.lgt` sources' consulted forms.
 
 ## Status
 
-- **Test suites**: all 240 of Logtalk 3.101.0's library testers have been
-  swept — **93 fully green** (incl. `random` 457/457, `types` 149/149,
-  `linear_algebra` 72/72, the JSON family, Avro/Protobuf/MessagePack,
-  several ML classifiers) and **96.8 % of all individual tests pass**
-  (10,086 of 10,414); the rest are not applicable (network/JVM bindings or
-  backend-whitelisted testers) or fail small library-specific tails. Full
-  per-library status:
-  [`logtalk-library-support.md`](logtalk-library-support.md).
+- **Test suites**: all 240 of Logtalk 3.101.0 library testers swept —
+  **105 fully green** and **98.7 % of all individual tests pass** (10,014 of
+  10,143; 129 failures corpus-wide, each classified structural-or-review in
+  [`logtalk-library-support.md`](logtalk-library-support.md)). Highlights:
+  random 457/457, types 149/149, linear_algebra 72/72, crypto 121/121, the
+  CCSDS stack and ieee_754 at zero failures.
 - **Benchmarks** (`examples/benchmarks`): Shumway Tier-0 matches or beats
   GProlog-interpreted on every shape; Tier-1 wins 4–7× across the board.
   Message dispatch (`::`) runs at parity with plain calls — Logtalk

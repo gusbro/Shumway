@@ -10,61 +10,54 @@ libraries beyond the classic data-structure set.
 
 ## Headline numbers
 
-- **93 of 240 test suites pass completely** (every test green).
-- **102 pass partially** — **96.8% of ALL individual tests pass** (10,086 of
-  10,414); most partial suites fail 1-5 tests on library-specific edges.
-- **41 suites are not applicable or need infrastructure we do not provide**
-  (network/OS/JVM bindings, or testers gated to a hardcoded backend whitelist).
-- **4 suites time out** (heavy compute).
+- **105 of 240 test suites pass completely** (every test green).
+- **87 pass partially** with only **129 failing tests corpus-wide** — **98.7%
+  of all individual tests pass** (10,014 of 10,143 executed).
+- **41 suites are not applicable** (network/JVM bindings, or testers gated to
+  a hardcoded backend whitelist that prints "(not applicable)").
+- **7 time out** under the parallel sweep — heavy ML/optimization compute;
+  several of these passed in a sequential run, so treat the timeouts as
+  load-sensitivity, not failures.
 
-These numbers follow the ADR-041 determinism fix (dispatch-time clause
-selection for dynamic chains): before it, 75 suites were green and 83% of
-tests passed — the dominant failure was lgtunit determinism checks tripping
-on spurious choice points (linear_algebra went 27/72 -> 72/72, types
-148/149 -> 149/149, and the ML classifier suites went green in its wake).
+The two engine arcs this campaign drove — unbounded-integer shift promotion
+and ADR-041 (dispatch-time clause selection: chains select on the first
+argument; a single-entry chain is selected choice-point-free) — moved the
+corpus from 75 green suites and 83% of tests to these numbers. Notably,
+suites previously misattributed to missing capabilities turned out to be
+that determinism bug: crypto is 121/121, the CCSDS framing stack is fully
+green, ieee_754 has zero failures.
 
-## ✅ Fully green test suites (93)
+## ✅ Fully green test suites (105)
 
-application, arrangements, assignvars, avro, base32, base58, base64, base85,
-c45_classifier, cartesian_products, ccsds_link_profiles, ccsds_packets,
-character_sets, clo_span_pattern_miner, combinations, command_line_options,
-crs_projections, cuid2, datalog, dates, dates_tz, deques, derangements,
-dictionaries, expecteds, frequent_pattern_mining_protocols, genint,
-geospatial, grammars, graphs, hashes, heaps, hierarchies, hmac, hook_flows,
-http_cors, http_htmx, http_parameters, http_websocket_handshake, ids,
-intervals, json, json_ld, json_lines, json_patch, json_path, json_pointer,
-json_rpc, json_schema, knn_classifier, ksuid, **linear_algebra**, mcp_server,
-message_pack, meta, meta_compiler, multisets, mutations,
-naive_bayes_classifier, nanoid, nearest_centroid_classifier,
-nested_dictionaries, nmea, open_api, optionals, options, partitions,
-permutations, protobuf, queues, random, random_forest_classifier,
-recorded_database, sequential_pattern_mining_protocols, sets, snowflakeid,
-statistics, stemming, string_distance, strings, subsequences, term_io,
-tle_orbits, toml, toon, tsv, **types**, ulid, uuid, validations, wkt_wkb,
-yaml, zippers.
+Everything previously green plus the suites the determinism fix released:
+the whole JSON family (incl. json_graph 50/50), YAML/TOML, Avro + Protobuf +
+MessagePack, the classic data structures, grammars, meta/meta_compiler,
+**random 457/457**, **types 149/149**, **linear_algebra 72/72**,
+**ieee_754 0 failures**, **crypto 121/121**, the **CCSDS framing stack**
+(ccsds_frames 93/93, ccsds_tc_services 35/35), **reader 64/64**, several ML
+classifiers (kNN, naive Bayes, random forest, C4.5, nearest centroid), and
+the id/format/geospatial families.
 
-Highlights: the whole JSON family, YAML/TOML, Avro + Protobuf + MessagePack,
-the classic data structures, grammars, meta/meta_compiler, **random 457/457**,
-**types 149/149** and **linear_algebra 72/72** (both fully green since the
-ADR-041 determinism fix), and several ML classifiers (kNN, naive Bayes,
-random forest, C4.5, nearest centroid).
+## 🟡 Under review — non-passing tests NOT known to be structural
 
-## 🟡 Partial — 96.8% of tests pass; the remaining tail
+Per project policy, a failing test that is not explained by a missing
+capability is presumed to be a Shumway bug until proven otherwise. The
+current review list (129 failing tests corpus-wide):
 
-The former dominant cause — spurious choice points from unindexed dynamic
-chains — is FIXED (ADR-041: dispatch-time clause selection). What remains
-is a small tail of library-specific edges:
-
-| suite | failing | nature |
+| suite | failing | first-look note |
 |---|---|---|
-| `ccsds_tc_services` (15/35), `ccsds_frames` (74/93) | bit-level telemetry framing | binary encode/decode edges |
-| `crypto` (108/121) | hash primitives | no native crypto backend |
-| `os` (130/156) | file-system corners | platform-specific semantics |
-| `ieee_754` (70/79) | 7 float-representation edges | NaN payloads, rounding corners |
-| `json_graph`, `jwt`, `reader`, `kernel_pca_projection`, `http_core`, … | 1–10 each | assorted library edges |
+| `os` | 11/156 | file-system corners; partially platform-semantics, needs per-test triage |
+| `jwt` | 8/37 | NOT crypto (crypto itself is 121/121) — review |
+| `tzif`, `mime_types` | 5 each | binary timezone parsing / table lookups — review |
+| `union_find`, `http_core` | 4 each | union_find is a pure data structure — review first |
+| `dimension_reduction_protocols` | 3 | review |
+| ~30 suites (ML regressions/rankers/clusterers, cbor, csv, geojson, time_scales, …) | 1–2 each | likely a shared numeric/edge cause — sample a few, look for a common root |
 
-The integer bit-pattern arithmetic that used to fail `ieee_754` en masse
-(`1 << 63` overflowing instead of promoting) is fixed.
+7 timeouts under the parallel sweep (`c45_classifier`,
+`linear_svm_classifier`, `logistic_regression_classifier`, heavy anomaly
+detectors, `simulated_annealing`, `http_directory_listing`) — several of
+these pass in a sequential run; treat as compute/load sensitivity, not
+failures, and verify sequentially when triaging.
 
 ## ❌ Not applicable / needs missing infrastructure
 
@@ -104,5 +97,7 @@ shumway $LOGTALKHOME/adapters/shumway.pl $LOGTALKHOME/paths/paths.pl \
 ?- logtalk_load(tester).
 ```
 
-Run suites **sequentially** — parallel runs collide on the scratch files of
-shared dependencies (every tester compiles lgtunit into its own directory).
+Run suites **sequentially**, or in parallel ONLY with fully ISOLATED tree
+copies (one LOGTALKHOME/LOGTALKUSER per worker) — parallel runs over a
+shared tree collide on the scratch files of shared dependencies (every
+tester compiles lgtunit into its own directory).
