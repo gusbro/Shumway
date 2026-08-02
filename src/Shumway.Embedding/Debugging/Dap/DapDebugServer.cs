@@ -578,6 +578,11 @@ internal sealed class DapConnection
         });
     }
 
+    /// <summary>A variables reference above this bit addresses a frame's CONSTRAINTS
+    /// (residuals of its attributed variables) rather than its Locals. Frame ids stay
+    /// small (the frame cap is 120), so the flag never collides.</summary>
+    private const int ConstraintsReferenceFlag = 0x40000000;
+
     private void HandleScopes(int seq, JsonElement args)
     {
         int frameId = args.GetProperty("frameId").GetInt32();
@@ -585,6 +590,10 @@ internal sealed class DapConnection
         // it in the Call Stack — which is what a later Jump to Cursor targets.
         lock (_stateLock)
             if (frameId >= 1) _selectedFrame = frameId - 1;
+        DebugSnapshot? snapshot = _server.Session.Channel.ReadSnapshot();
+        bool hasResiduals = snapshot is { Running: false }
+            && frameId >= 1 && frameId <= snapshot.Frames.Count
+            && snapshot.Frames[frameId - 1].Residuals.Count > 0;
         SendResponse(seq, "scopes", true, w =>
         {
             w.WriteStartArray("scopes");
@@ -595,6 +604,16 @@ internal sealed class DapConnection
             w.WriteNumber("variablesReference", frameId);
             w.WriteBoolean("expensive", false);
             w.WriteEndObject();
+            if (hasResiduals)
+            {
+                // The residual constraints of the frame's attributed variables, one
+                // entry per owner variable — the debugger's `A in 6..9` view.
+                w.WriteStartObject();
+                w.WriteString("name", "Constraints");
+                w.WriteNumber("variablesReference", frameId | ConstraintsReferenceFlag);
+                w.WriteBoolean("expensive", false);
+                w.WriteEndObject();
+            }
             w.WriteEndArray();
         });
     }
@@ -602,12 +621,18 @@ internal sealed class DapConnection
     private void HandleVariables(int seq, JsonElement args)
     {
         int reference = args.GetProperty("variablesReference").GetInt32();
+        bool constraints = (reference & ConstraintsReferenceFlag) != 0;
+        int frameId = reference & ~ConstraintsReferenceFlag;
         DebugSnapshot? snapshot = _server.Session.Channel.ReadSnapshot();
+        DebugSnapshotFrame? frame =
+            snapshot is { Running: false } && frameId >= 1
+                && frameId <= snapshot.Frames.Count
+            ? snapshot.Frames[frameId - 1]
+            : null;
         IReadOnlyList<DebugVariableView> vars =
-            snapshot is { Running: false } && reference >= 1
-                && reference <= snapshot.Frames.Count
-            ? snapshot.Frames[reference - 1].Variables
-            : Array.Empty<DebugVariableView>();
+            frame is null ? Array.Empty<DebugVariableView>()
+            : constraints ? frame.Residuals
+            : frame.Variables;
 
         SendResponse(seq, "variables", true, w =>
         {
@@ -829,6 +854,13 @@ internal sealed class DapConnection
         int reference = args.GetProperty("variablesReference").GetInt32();
         string name = args.GetProperty("name").GetString() ?? "";
         string value = args.GetProperty("value").GetString() ?? "";
+
+        if ((reference & ConstraintsReferenceFlag) != 0)
+        {
+            SendResponse(seq, "setVariable", false,
+                message: "constraints are read-only (post a new constraint from the Debug Console)");
+            return;
+        }
 
         bool stopped;
         lock (_stateLock) stopped = _stopped;
