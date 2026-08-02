@@ -188,27 +188,108 @@ public static class MultiSolutionHelpers
         else if (!SwiLenient.TryCoerce(engine, atomCell, out name))
             throw new PrologRuntimeException("type_error", "atom");
         int len = name.Length;
-        int total = (len + 1) * (len + 2) / 2;   // Σ_{before=0..len} (len-before+1)
 
-        // Sequential (before, length) state shared by every tryAt call: the
-        // IndexEnumCursor driver invokes tryAt with i = 0,1,2,… strictly in
-        // order, so advancing the pair by one per call keeps it in lock-step
-        // with i — O(1) per decomposition, no heap list.
+        // Mode analysis: pre-filter the candidate set by every bound argument
+        // so (in the common modes) a candidate is enumerated ONLY if it will
+        // unify. The cursor drops its choice point exactly at the last real
+        // solution, so a bound-mode call is deterministic like GNU/SWI —
+        // without this, a sub_atom during a long-lived caller leaves a dead CP
+        // that breaks callers' determinism (Logtalk lgtunit `deterministic/1`).
+        Cell bCell = Resolve(engine, engine.GetRegister(1));
+        Cell lCell = Resolve(engine, engine.GetRegister(2));
+        Cell aCell = Resolve(engine, engine.GetRegister(3));
+        Cell sCell = Resolve(engine, engine.GetRegister(4));
+        int bFix = BoundIndex(bCell, len), lFix = BoundIndex(lCell, len), aFix = BoundIndex(aCell, len);
+        if (bFix == -2 || lFix == -2 || aFix == -2) return false;
+
+        int returnPc = engine.BuiltinReturnPc;
+        bool TryUnify(Activation e, int b, int l)
+        {
+            if (!e.UnifyRegisterWithCell(1, Cell.Int(b))) return false;
+            if (!e.UnifyRegisterWithCell(2, Cell.Int(l))) return false;
+            if (!e.UnifyRegisterWithCell(3, Cell.Int(len - b - l))) return false;
+            int subAtomId = AtomTable.Intern(name.Substring(b, l), permanent: false).Id;
+            return e.UnifyRegisterWithCell(4, Cell.Atom(subAtomId));
+        }
+
+        // Sub bound to an atom: candidates are its occurrence positions.
+        if (sCell.Tag == Tag.Atom)
+        {
+            string sub = AtomTable.GetById(sCell.AsAtomId)?.Name ?? "";
+            int ls = sub.Length;
+            if (lFix >= 0 && lFix != ls) return false;
+            var occ = new List<int>();
+            if (bFix >= 0)
+            {
+                if (bFix + ls <= len && string.CompareOrdinal(name, bFix, sub, 0, ls) == 0)
+                    occ.Add(bFix);
+            }
+            else if (aFix >= 0)
+            {
+                int b = len - aFix - ls;
+                if (b >= 0 && string.CompareOrdinal(name, b, sub, 0, ls) == 0) occ.Add(b);
+            }
+            else
+            {
+                for (int b = 0; b + ls <= len; b++)
+                    if (string.CompareOrdinal(name, b, sub, 0, ls) == 0) occ.Add(b);
+            }
+            return IndexEnumCursor.Start(engine, occ.Count, arity: 5, returnPc,
+                (e, i) => TryUnify(e, occ[i], ls));
+        }
+
+        // Two of Before/Length/After bound → the third is determined.
+        int boundCount = (bFix >= 0 ? 1 : 0) + (lFix >= 0 ? 1 : 0) + (aFix >= 0 ? 1 : 0);
+        if (boundCount >= 2)
+        {
+            int b1, l1;
+            if (bFix >= 0 && lFix >= 0)
+            {
+                b1 = bFix; l1 = lFix;
+                if (aFix >= 0 && bFix + lFix + aFix != len) return false;
+            }
+            else if (bFix >= 0) { b1 = bFix; l1 = len - bFix - aFix; }
+            else { l1 = lFix; b1 = len - lFix - aFix; }
+            if (b1 < 0 || l1 < 0 || b1 + l1 > len) return false;
+            return IndexEnumCursor.Start(engine, 1, arity: 5, returnPc, (e, _) => TryUnify(e, b1, l1));
+        }
+        if (bFix >= 0)
+            return IndexEnumCursor.Start(engine, len - bFix + 1, arity: 5, returnPc,
+                (e, i) => TryUnify(e, bFix, i));
+        if (lFix >= 0)
+            return IndexEnumCursor.Start(engine, len - lFix + 1, arity: 5, returnPc,
+                (e, i) => TryUnify(e, i, lFix));
+        if (aFix >= 0)
+            return IndexEnumCursor.Start(engine, len - aFix + 1, arity: 5, returnPc,
+                (e, i) => TryUnify(e, i, len - aFix - i));
+
+        // All free — full triangle. Sequential (before, length) state shared by
+        // every tryAt call: the cursor invokes tryAt with i = 0,1,2,… strictly
+        // in order, so advancing the pair keeps it in lock-step with i — O(1)
+        // per decomposition, no heap list.
+        int total = (len + 1) * (len + 2) / 2;   // Σ_{before=0..len} (len-before+1)
         int before = 0, length = 0;
         bool TryAt(Activation e, int i)
         {
             int b = before, l = length;
             if (length < len - before) length++;
             else { before++; length = 0; }
-            int after = len - b - l;
-            if (!e.UnifyRegisterWithCell(1, Cell.Int(b))) return false;
-            if (!e.UnifyRegisterWithCell(2, Cell.Int(l))) return false;
-            if (!e.UnifyRegisterWithCell(3, Cell.Int(after))) return false;
-            int subAtomId = AtomTable.Intern(name.Substring(b, l), permanent: false).Id;
-            return e.UnifyRegisterWithCell(4, Cell.Atom(subAtomId));
+            return TryUnify(e, b, l);
         }
+        return IndexEnumCursor.Start(engine, total, arity: 5, returnPc, TryAt);
+    }
 
-        return IndexEnumCursor.Start(engine, total, arity: 5, engine.BuiltinReturnPc, TryAt);
+    /// <summary>Reads an argument of sub_atom's Before/Length/After as a
+    /// candidate filter: the in-range integer value, −1 for an unbound
+    /// variable, −2 when no decomposition can satisfy it (non-integer or out
+    /// of 0..len — the caller fails, matching the unify-per-candidate
+    /// behaviour it replaces).</summary>
+    private static int BoundIndex(Cell c, int len)
+    {
+        if (c.Tag == Tag.Ref) return -1;
+        if (c.Tag != Tag.Int) return -2;
+        long v = c.AsInt;
+        return (v < 0 || v > len) ? -2 : (int)v;
     }
 
     private static int BuildFreshVarList(Activation engine, int count)

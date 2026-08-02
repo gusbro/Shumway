@@ -547,6 +547,15 @@ public sealed partial class Activation
     /// builtin CPs that route through the IL pop path). Used by the
     /// opt-in <c>SHUMWAY_CP_TRACE</c> diagnostic to dump the live
     /// CP stack at suspicious error sites.</summary>
+    /// <summary>The continuation (caller return pc) saved in the CP frame at
+    /// stack slot <paramref name="b"/> — attributes an otherwise anonymous
+    /// builtin/IL CP to the predicate that was running when it was pushed.</summary>
+    public int CpSavedContinuation(int b)
+    {
+        int arity = (int)_stack[b + CpArityOffset].Data;
+        return (int)_stack[b + CpCpOffset(arity)].Data;
+    }
+
     public IEnumerable<(int StackB, int SavedBp, int Arity)> EnumerateChoicePoints()
     {
         int b = _b;

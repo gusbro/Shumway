@@ -247,7 +247,11 @@ public static partial class MetaBuiltins
             return $"{AtomTable.GetById(atomId)?.Name}/{arity}@+{bp - addrs[best]}";
         }
         foreach (var (b, bp, arity) in engine.EnumerateChoicePoints())
-            Console.Error.WriteLine($"[CP] b={b} bp={bp} arity={arity} owner={NameAt(bp)}");
+        {
+            int savedCp = engine.CpSavedContinuation(b);
+            Console.Error.WriteLine(
+                $"[CP] b={b} bp={bp} arity={arity} owner={NameAt(bp)} caller={NameAt(savedCp)}");
+        }
         return true;
     }
 
