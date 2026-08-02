@@ -1272,11 +1272,15 @@ internal sealed class DynamicCodePatcher
         Activation engine, int trampolinePc,
         System.Collections.Generic.IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? predsByAddr)
     {
-        if (predsByAddr is null
-            || !predsByAddr.TryGetValue(trampolinePc, out var pred)) return -2;
         var table = GetChainTable(engine);
-        if (table is null
-            || !table.Chains.TryGetValue(pred.FunctorId, out var state)) return -2;
+        if (table is null) return -2;
+        int fid;
+        if (predsByAddr is not null
+            && predsByAddr.TryGetValue(trampolinePc, out var pred))
+            fid = pred.FunctorId;
+        else if (!table.TrampolineFids.TryGetValue(trampolinePc, out fid))
+            return -2;   // neither a setup-emitted nor a live trampoline we know
+        if (!table.Chains.TryGetValue(fid, out var state)) return -2;
         var entries = state.Entries;
         if (entries.Count < 2) return -2;   // 0/1-entry chains are det already
         var prog = engine.CurrentProgram;
@@ -1567,6 +1571,13 @@ internal sealed class DynChainTable
     /// with the consult broadcast, batches land in several engines'
     /// buffers, each with its own positions.</summary>
     public List<(int AbsPos, int FunctorId)>? LiveConsultUnresolved;
+
+    /// <summary>ADR-041 — trampolines materialised MID-QUERY (live consult /
+    /// runtime auto-promotion): absolute <c>enter_dynamic</c> address → functor
+    /// id. Setup-emitted trampolines resolve through the per-query
+    /// PredicatesByAddress map; these are appended after setup, so the clause
+    /// selector needs its own lookup.</summary>
+    public readonly Dictionary<int, int> TrampolineFids = new();
 }
 
 /// <summary>ADR-015 chunk C step 4: per-dynamic-functor chain state

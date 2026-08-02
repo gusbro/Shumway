@@ -1039,6 +1039,10 @@ public sealed partial class PrologEngine
             failStubAddr: engine.DynamicFailStubAddr);
 
         int trampolineAddr = engine.AppendCode(predicate.Bytecode);
+        // ADR-041 — mid-query trampolines are invisible to the per-query
+        // PredicatesByAddress map; register the address→fid here so the
+        // dispatch-time clause selector covers live-linked chains too.
+        ChainPatcher.GetOrCreateChainTable(engine).TrampolineFids[trampolineAddr] = fid;
 
         // PredicateCompiler emits the trampoline's execute opcode with
         // a PREDICATE-LOCAL target (6); the module-compile path patches
