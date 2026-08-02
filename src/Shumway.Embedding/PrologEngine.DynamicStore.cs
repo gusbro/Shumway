@@ -1236,6 +1236,24 @@ public sealed partial class PrologEngine
         var visible = engine.LiveConsultVisibleFids ??= new HashSet<int>();
         foreach (var (fid, a) in link.Addresses)
         {
+            // A RELOAD redefines a predicate an earlier batch already linked
+            // — and earlier batches may have BAKED the old entry address into
+            // their call sites (the forward-reference re-patch below resolves
+            // sites to a concrete address, not through the map). Redirect the
+            // old entry with `execute <new>` so stale baked sites flow to the
+            // redefinition — same trick as RebuildEngineFidChainView; every
+            // predicate entry is ≥ 5 bytes, and only fresh calls read the
+            // entry (a CP's bp points at a later clause, never the entry).
+            if (addrMap.TryGetValue(fid, out int oldAddr)
+                && oldAddr != a
+                && oldAddr >= 0
+                && !Shumway.Core.CallTarget.IsUnresolved(oldAddr)
+                && !Activation.IsResumeMarker(oldAddr)
+                && oldAddr + 5 <= prog.Length)
+            {
+                prog[oldAddr] = (byte)Opcode.Execute;
+                Shumway.Core.BytecodeIO.WriteInt32(prog, oldAddr + 1, a);
+            }
             addrMap[fid] = a;
             visible.Add(fid);
         }
