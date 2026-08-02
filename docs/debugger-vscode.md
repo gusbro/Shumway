@@ -69,6 +69,13 @@ stop description), pause (stops at the next port, where a stack means something)
 stack with clause heads, per-frame variables (writeq-rendered), disconnect = run free +
 reconnect later.
 
+**Constraints scope** — a frame whose variables are attributed (CLP(FD), CLP(R),
+`dif`/`freeze`, clpz, …) shows a second scope next to Locals with the projected residual
+constraints, one read-only entry per variable: `X = X in 1..6, X#<Y`. The same
+projection the REPL prints for an answer, at every stop. In the Debug Console those
+variables carry their constraints too: `get_attr(X, clpfd, A)` answers, and posting
+`X #< 5` narrows the evaluation's copy (the suspended program is untouched).
+
 **Debug Console** (V3) — the Immediate window: goals run in the live suspended engine
 (side effects persist), `;` asks for the next solution, `X = term(1)` on a free frame
 variable commits the binding into the frame (Locals refresh at once), and a bare variable
@@ -90,7 +97,8 @@ continues — no stop ever reaches the editor.
 
 ## Not yet / different from Visual Studio
 
-- **Logpoints and the packaged-marketplace polish** — V5 of ADR-036.
+- **Marketplace packaging polish** — the extension installs from the repo's script, not
+  from the marketplace yet.
 - **Mixed Prolog+C# stack in one view** — a DAP session shows Prolog only. For interop
   work run a compound session (this + `coreclr` attach to the same process) and switch
   stacks in the Call Stack panel.

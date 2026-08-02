@@ -447,7 +447,23 @@ namespace Shumway.Debugger.Concord
                 DebugSnapshot? snapshot = ShumwaySession.ReadSnapshot(frame.Process, session);
                 if (snapshot != null && index < snapshot.Frames.Count)
                 {
-                    IReadOnlyList<DebugVariableView> found = snapshot.Frames[index].Variables;
+                    DebugSnapshotFrame snapFrame = snapshot.Frames[index];
+                    IReadOnlyList<DebugVariableView> found = snapFrame.Variables;
+                    // The residual constraints of attributed variables, as read-only
+                    // pseudo-rows after the real variables: `X ⟨constraints⟩ = X in 6..9`.
+                    if (snapFrame.Residuals.Count > 0)
+                    {
+                        var withResiduals = new List<DebugVariableView>(
+                            found.Count + snapFrame.Residuals.Count);
+                        withResiduals.AddRange(found);
+                        foreach (DebugVariableView r in snapFrame.Residuals)
+                            withResiduals.Add(new DebugVariableView
+                            {
+                                Name = r.Name + " ⟨constraints⟩",
+                                Value = r.Value,
+                            });
+                        found = withResiduals;
+                    }
                     ShumwayIdeDiag.LastLocals = "idx=" + index + " n=" + found.Count;
                     return found;
                 }

@@ -207,6 +207,26 @@ shows as `_`, because it has no value yet. A long term is cut off after 512 char
 Locals window shows one line, and a variable holding a parsed file is not readable there
 anyway.
 
+**Attributed variables show their constraints.** A CLP(FD)/CLP(R)/`dif`/`freeze` variable
+is, as a term, just an unbound `_G12` — its constraints live in attributes, not in the
+term. At a stop the engine projects them (the same `attribute_goals` projection the REPL
+uses to print `A in 6..9.`) and appends one read-only row per constrained variable at the
+end of Locals:
+
+```
+X = _G12
+Y = _G15
+X ⟨constraints⟩ = X in 1..6, X#<Y
+Y ⟨constraints⟩ = Y in 3..7
+```
+
+A constraint mentioning two variables (`X#<Y`) is shown once, under the first of them.
+The rows are read-only — to *narrow* a variable, post a constraint from the Immediate
+window (below). Works for every attribute library that defines a projection hook
+(`attribute_goals/4` or the Scryer/SWI `attribute_goals//1`), so clpfd, clpr,
+coroutining (`dif`/`freeze`/`when`) and dialect libraries like clpz all display. A hook
+that fails or hangs costs the constraints display, never the stop.
+
 **A deep stack shows both ends.** Stopped two thousand frames into a recursion you get the
 innermost eighty (where the machine is), a line saying `... 1,900 frames omitted ...`, and the
 outermost twenty (how the program got in). Nobody reads two thousand frames of the same clause,
@@ -258,6 +278,14 @@ goal happened to share, it is the `N` you can see in Locals, and it went in as `
 answer is the first solution's bindings; a goal with nothing to bind answers `true` or
 `false`. Select a different frame and the same goal means something different, because the
 variables do.
+
+An **attributed** frame variable goes in *with its constraints*: the engine transplants
+its attribute graph onto the evaluation's copy, so `get_attr(X, clpfd, A)`,
+`copy_term(X, C, G)` and `frozen(Z, G)` answer the real thing, and posting a new
+constraint (`X #< 5`) narrows the copy and propagates. What you post lives in the
+evaluation — the suspended program's own variable is never touched (binding an
+attributed variable into the frame stays refused: its unification hooks cannot run in a
+suspended machine).
 
 It is a real query against the live database, so **side effects are real**:
 
@@ -410,7 +438,6 @@ it is a bug — say so.
 - **Detach is not supported.** Stop the process instead.
 - A breakpoint on a line with no callable goal binds to the next goal that has one; if
   there is none in the clause, it silently does not bind.
-- Locals are read-only and flat: no compound expansion in the tree, no editing a binding.
-- A watch names a variable of the selected clause. It does not evaluate a goal — running
-  Prolog inside a stopped engine is a different thing, and one with side effects.
-- Conditional breakpoints are not implemented.
+- Locals are flat: no compound expansion in the tree. (Editing a binding works — see the
+  Watch/Locals destructive edit; an attributed variable's `⟨constraints⟩` rows are
+  read-only.)
