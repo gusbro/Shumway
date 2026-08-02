@@ -73,6 +73,25 @@ public static class StringBuiltins
                 "instantiation_error",
                 "string_concat/3 requires either A+B or AB to be ground");
         string ab = ReadStringOrAtom(engine, 2, "string_concat/3");
+
+        // Mode-directed split: a bound A or B pins the split point — check
+        // the single candidate without a choice point (same phantom-nondet
+        // fix as atom_concat/3).
+        if (aGround)
+        {
+            string a = ReadStringOrAtom(engine, 0, "string_concat/3");
+            if (!ab.StartsWith(a, StringComparison.Ordinal)) return false;
+            int bPstr = engine.MakePstr(ab.Substring(a.Length));
+            return engine.UnifyRegisterWithCell(1, Cell.Ref(bPstr));
+        }
+        if (bGround)
+        {
+            string b = ReadStringOrAtom(engine, 1, "string_concat/3");
+            if (!ab.EndsWith(b, StringComparison.Ordinal)) return false;
+            int aPstr = engine.MakePstr(ab.Substring(0, ab.Length - b.Length));
+            return engine.UnifyRegisterWithCell(0, Cell.Ref(aPstr));
+        }
+
         int returnPc = engine.BuiltinReturnPc;
         return new StringConcatSplitCursor(ab, returnPc).Start(engine);
     }

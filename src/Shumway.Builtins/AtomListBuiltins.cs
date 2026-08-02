@@ -157,6 +157,28 @@ public static class AtomListBuiltins
         // (append([3], fac, [3|fac]) etc.), so we thread it through to the L2
         // build instead of rejecting it. For a proper list this tail is [],
         // so the behaviour is unchanged.
+
+        // Mode-directed: a proper-list L2 pins the split point (the
+        // append(-, +, +) suffix idiom), so the single candidate is checked
+        // without a choice point — the cursor would leave a dead CP after the
+        // match while the remaining splits can only fail.
+        int m = 0;
+        Cell c2 = Resolve(engine, engine.GetRegister(1));
+        while (c2.Tag == Tag.Lis)
+        {
+            m++;
+            c2 = Resolve(engine, engine.GetHeap(c2.AsHeapIndex + 1));
+        }
+        if (c2.Tag == Tag.Atom && c2.AsAtomId == AtomTable.EmptyListId)
+        {
+            if (m > elems.Count) return false;
+            int split = elems.Count - m;
+            int l1Heap = BuildListFromCells(engine, elems, 0, split, Cell.Atom(AtomTable.EmptyListId));
+            int l2Heap = BuildListFromCells(engine, elems, split, elems.Count, cursor);
+            return engine.UnifyRegisterWithHeapAt(0, l1Heap)
+                && engine.UnifyRegisterWithHeapAt(1, l2Heap);
+        }
+
         return new AppendSplitCursor(elems, cursor, returnPc).Start(engine);
     }
 
@@ -442,6 +464,30 @@ public static class AtomListBuiltins
         }
 
         string cName = AtomTable.GetById(cCell.AsAtomId)?.Name ?? "";
+
+        // Mode-directed split: a bound A or B pins the split point, so the
+        // single candidate is checked directly — no choice point. Without
+        // this the cursor walked every split unifying against the bound
+        // argument and left a dead CP after the match — phantom
+        // nondeterminism in callers that never cut (Logtalk mime_types/os).
+        if (aCell.Tag != Tag.Ref)
+        {
+            if (aCell.Tag != Tag.Atom) return false;
+            string aName = AtomTable.GetById(aCell.AsAtomId)?.Name ?? "";
+            if (!cName.StartsWith(aName, StringComparison.Ordinal)) return false;
+            int bId = AtomTable.Intern(cName.Substring(aName.Length), permanent: false).Id;
+            return engine.UnifyRegisterWithCell(1, Cell.Atom(bId));
+        }
+        if (bCell.Tag != Tag.Ref)
+        {
+            if (bCell.Tag != Tag.Atom) return false;
+            string bName = AtomTable.GetById(bCell.AsAtomId)?.Name ?? "";
+            if (!cName.EndsWith(bName, StringComparison.Ordinal)) return false;
+            int aId = AtomTable.Intern(
+                cName.Substring(0, cName.Length - bName.Length), permanent: false).Id;
+            return engine.UnifyRegisterWithCell(0, Cell.Atom(aId));
+        }
+
         int returnPc = engine.BuiltinReturnPc;
         return new AtomConcatSplitCursor(cName, returnPc).Start(engine);
     }
