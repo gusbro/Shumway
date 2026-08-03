@@ -179,6 +179,80 @@ public class Adr035ResidualTests
         Assert.Equal("", stops[0].ConditionError);
     }
 
+    //  2: :- use_module(library(clpfd)).
+    //  3: run(X, Y) :-
+    //  4:     X in 1..9,
+    //  5:     X #< Y,
+    //  6:     Y in 3..7,
+    //  7:     mark(X, Y).
+    //  8: mark(_, _).
+    private const string SnsProgram =
+        ":- use_module(library(clpfd)).\n"
+        + "run(X, Y) :-\n    X in 1..9,\n    X #< Y,\n    Y in 3..7,\n"
+        + "    mark(X, Y).\nmark(_, _).\n";
+
+    [Fact]
+    public void SetNextStatementBackward_UnpostsAndTheRerunRepostsWithoutDuplication()
+    {
+        // Stop at mark/2 with the constraints posted, rewind to `X in 1..9`, run to the
+        // breakpoint again. The rewind must UNWIND the attribute mutations (they are
+        // trailed) — a rewind that left them behind would re-post on top of the old
+        // store and the second stop's residuals would show doubled propagators.
+        var engine = DebugEngine(SnsProgram);
+        engine.AddBreakpoint("<string>", 7);
+
+        var stops = new List<DebugStopEvent>();
+        var snsResults = new List<string>();
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            stops.Add(e);
+            if (stops.Count == 1) snsResults.Add(s.SetNextStatement(0, 4));
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("run(A, B).").ToList();
+        engine.AttachDebugSession(null);
+
+        foreach (var s in stops)
+            _log.WriteLine("stop: residuals=["
+                + string.Join("; ", s.Frames[0].Residuals.Select(r => $"{r.Name}: {r.Goals}"))
+                + "]");
+        Assert.Equal("", snsResults[0]);   // the move was accepted
+        Assert.Equal(2, stops.Count);      // the breakpoint fired again after the re-run
+        // Same projection both times — nothing doubled, nothing lost.
+        Assert.Equal(
+            stops[0].Frames[0].Residuals.Select(r => $"{r.Name}={r.Goals}"),
+            stops[1].Frames[0].Residuals.Select(r => $"{r.Name}={r.Goals}"));
+        Assert.Contains("in", ResidualOf(stops[1], "X"));
+        Assert.Single(sols);
+    }
+
+    [Fact]
+    public void SetNextStatementForward_SkipsThePostingsAndShowsNoConstraints()
+    {
+        // Stop at `X in 1..9`, jump straight to mark/2: the postings never ran, so the
+        // stop at the moved-to goal's next hit shows unconstrained variables.
+        var engine = DebugEngine(SnsProgram);
+        engine.AddBreakpoint("<string>", 4);
+        engine.AddBreakpoint("<string>", 7);
+
+        var stops = new List<DebugStopEvent>();
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            stops.Add(e);
+            if (stops.Count == 1) s.SetNextStatement(0, 7);
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        engine.QueryAll("run(A, B).").ToList();
+        engine.AttachDebugSession(null);
+
+        // Stop 1 at line 4 (before any posting): no residuals. After the forward move
+        // the machine stands at mark/2 with X and Y still plain variables; the goal
+        // executes and the query ends — no further constraint stop carries rows.
+        Assert.All(stops, s => Assert.Empty(s.Frames[0].Residuals));
+    }
+
     [Fact]
     public void TheChannelCarriesResidualsThroughTheWire()
     {
