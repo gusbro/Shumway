@@ -68,7 +68,7 @@ declared it out of scope).
 
 The classical inline lowering needs an **unconditional intra-predicate branch**
 in body position — an opcode Shumway's WAM does not have (adding a top-level
-opcode is a stop-and-propose decision per CLAUDE.md; hence this ADR).
+opcode is a stop-and-propose decision per [the decision policy](../decision-policy.md); hence this ADR).
 
 ## Decision (proposed)
 

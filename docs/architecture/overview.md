@@ -317,7 +317,10 @@ Shipped subsystems this overview does not detail (each has its own doc):
 | Cut / CP-free guard commit | ADR-029..031, ADR-033 |
 | Debugger | ADR-035 (VS), ADR-036 (VS Code) |
 | PSTR | design/pstr-design.md |
-| Builtins | ../predicates.md (generated, current) |
+| Builtins | [../guide/predicates.md](../guide/predicates.md) (generated, current) |
 
-The full decision index — ADR-001 through ADR-036 — lives in the repository's
-CLAUDE.md quick-reference table and under `adr/`.
+What counts as a major decision, and how decisions are recorded, is defined in
+[`decision-policy.md`](decision-policy.md). The decisions themselves —
+ADR-001 through ADR-041 — live under [`adr/`](adr/), each with a current
+Status line; the maintainers' working decision → ADR table is in the
+repository-root CLAUDE.md.

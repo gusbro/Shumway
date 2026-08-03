@@ -17,7 +17,7 @@ export-qualified modules) and the flat, Scryer-only `CompatLibraries` shim.
   coexist (no `:- public` collision), and a variable carrying attributes from two
   modules runs both hooks. The baked clpfd/clpr/coroutining keep their bare-global
   multifile `/4` and are unchanged (they already coexisted via multifile — so the
-  old CLAUDE.md "CLP(R)/CLP(FD) cannot share an engine" note was already stale and
+  old repository-root CLAUDE.md "CLP(R)/CLP(FD) cannot share an engine" note was already stale and
   is corrected). Tested: `PerModuleAttributeHookTests`.
 - **Component 1 — DialectRegistry (done).** `DialectRegistry` replaces the flat
   `CompatLibraries` switch: dialect packs (`scryer` = the former data, `double_quotes
@@ -188,7 +188,7 @@ working explicit mechanism, not as the sole one).
 
 - **Breaking changes are acceptable** — the repo is private pre-release. But every
   such change **must be reflected in the docs the same commit**: this ADR, the
-  ADR-038 cross-reference, the CLAUDE.md quick-reference and any stale note (e.g.
+  ADR-038 cross-reference, the repository-root CLAUDE.md quick-reference and any stale note (e.g.
   the Phase-7 "CLP(R) and CLP(FD) cannot share an engine" line, which D2
   invalidates), the user guide's library section, and the generated predicate
   docs. The invariant is: **the documentation always describes the system as it
@@ -222,7 +222,7 @@ working explicit mechanism, not as the sole one).
    CLP(FD)/CLP(R)/coroutining + the clpz shim to the formal form.
 4. **Per-load parse flags (D3).** Scope `double_quotes` (and any other parse-time
    flag a pack needs) to each library consult.
-5. **Docs sweep.** This ADR to Accepted; CLAUDE.md quick-reference row; fix the
+5. **Docs sweep.** This ADR to Accepted; repository-root CLAUDE.md quick-reference row; fix the
    stale CLP coexistence note; user-guide library section; regenerate predicate
    docs.
 6. **Content sniff (D5.3).** Deferred.

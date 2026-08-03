@@ -6,7 +6,7 @@
 chunks 289–290). List (and structure) construction is core to a Prolog engine and
 currently allocates one more heap cell per compound than the standard
 WAM. Changing the on-heap shape of every list and structure is a "major
-decision" under CLAUDE.md (coherence-critical, comparable to the trail
+decision" under [the decision policy](../decision-policy.md) (coherence-critical, comparable to the trail
 format or the heap-GC strategy), so the design was settled here before
 code landed.
 

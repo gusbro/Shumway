@@ -70,7 +70,7 @@ temp. (Head-side adoption is optional / a follow-up; the build side is the win.)
 
 ## Consequences
 
-- **New opcodes** — a Major Decision per `CLAUDE.md`; this ADR is the proposal.
+- **New opcodes** — a Major Decision per [the decision policy](../decision-policy.md); this ADR is the proposal.
   Opcode ids in the `0x40` unify family (next free after `UnifyVoid = 0x48`).
 - Touches: `Opcode` / `OpcodeInfo` (ids + sizes — `unify_structure` carries a
   4-byte functor id = 5 bytes; `unify_list` = 1 byte), `Engine` (two write-mode

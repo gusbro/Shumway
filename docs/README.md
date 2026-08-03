@@ -29,6 +29,8 @@ documentation index; start with the [user guide](guide/user-guide.md).
 - [overview.md](architecture/overview.md) — the high-level architecture.
 - [invariants.md](architecture/invariants.md) — the consolidated catalog of
   non-negotiable invariants, by subsystem.
+- [decision-policy.md](architecture/decision-policy.md) — what counts as a
+  major decision, and where decisions are recorded.
 - [adr/](architecture/adr/) — Architecture Decision Records 001–041, one per
   major design decision, each with its status.
 

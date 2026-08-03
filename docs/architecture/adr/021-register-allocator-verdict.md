@@ -62,7 +62,7 @@ The synthetic benchmarks tell the opposite story (33–56 %) — they are the
 guard-before-recursion shape the optimization was invented for. This is the
 cleanest demonstration to date that **optimizing for the Van Roy suite and
 optimizing for real programs are different projects**, and the project target
-(CLAUDE.md: "comparable to or better than GNU Prolog in *real-world*
+(the project goal: "comparable to or better than GNU Prolog in *real-world*
 scenarios"; the whole Phase 28/29 discipline) picks the real program.
 
 ## Why Class B cannot be reclaimed soundly anyway

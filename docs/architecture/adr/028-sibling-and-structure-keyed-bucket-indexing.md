@@ -275,5 +275,5 @@ cross-process (`--strip-wam` and full-WAM), as ADR-027 did.
 - **Full five-project gate**: Core / Interpreter / Compiler / IsoConformance /
   Embedding.
 - **ADR-027** cross-reference updated (its deferred "structure-keyed sub-arg" is now
-  delivered here); the `CLAUDE.md` decision table gains an ADR-028 row.
+  delivered here); the repository-root CLAUDE.md decision table gains an ADR-028 row.
 ```

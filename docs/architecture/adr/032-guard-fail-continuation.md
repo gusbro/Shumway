@@ -88,7 +88,7 @@ precedent).
   `TryBacktrack` iteration for every program, guard frames present or not —
   the chunk-231/234-class dispatch costs this codebase has repeatedly paid to
   remove.
-- **It is a backtracking-model change** (CLAUDE.md major-decision list) with
+- **It is a backtracking-model change** (the [decision policy](../decision-policy.md) major-decision list) with
   four subtle interaction surfaces (catch, wakeups, GC, cut), each a
   soundness cliff of the kind the ADR-031 wakeup/lazy-CP work only just
   navigated for a far smaller mechanism.

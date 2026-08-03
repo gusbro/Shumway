@@ -215,8 +215,8 @@ method name + memory), so the VS pieces live outside the main solution:
   the comparisons), which emits no call and therefore raises no port of its own:
   without it a step walked straight over the `!` the user wanted to stand at,
   variables in hand, before it commits. Dispatch is a null check when no session
-  is attached. All three are this ADR's sanctioned additions per the CLAUDE.md
-  major-decision rule.
+  is attached. All three are this ADR's sanctioned additions per the
+  [decision policy](../decision-policy.md) major-decision rule.
 - **Debug-mode codegen differs** from release (trimming off, cut-elision off,
   LCO toggleable, named vars forced permanent) — debug bytecode is a
   correctness-equivalent, slower compilation of the same program.

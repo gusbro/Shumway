@@ -84,6 +84,7 @@ docs/
 ├── architecture/
 │   ├── overview.md
 │   ├── invariants.md       # The consolidated invariant catalog
+│   ├── decision-policy.md  # What is a major decision; where decisions live
 │   └── adr/                # Architecture Decision Records
 ├── design/                 # Detailed subsystem designs
 ├── benchmarks/             # Current cross-engine baselines
@@ -181,17 +182,13 @@ X — it breaks Y because Z"). One to three lines. Everything else is noise:
 
 ## What Counts as a Major Decision
 
-If any of the following come up, **stop and propose an ADR before implementing**:
-
-- Adding a new cell tag.
-- Changing the trail format.
-- Adding a new top-level opcode.
-- Changing the atom GC strategy.
-- Changing the module resolution mechanism.
-- Introducing a new external dependency.
-- Changing the threading model.
-
-These are areas where coherence across the codebase is critical and ad-hoc changes break invariants in non-obvious places.
+The authoritative policy lives in
+[`docs/architecture/decision-policy.md`](docs/architecture/decision-policy.md).
+In short: a new cell tag, trail-format change, new top-level opcode, atom-GC
+strategy change, module-resolution change, backtracking/choice-point model
+change, new external dependency, threading-model change, or breaking anything
+in `docs/architecture/invariants.md` → **stop and propose an ADR before
+implementing**.
 
 ---
 

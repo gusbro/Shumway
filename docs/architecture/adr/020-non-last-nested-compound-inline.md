@@ -74,7 +74,7 @@ ADR may extend reserved mode to head matching if measurement justifies it.
 
 ## Consequences
 
-- **New opcodes** — a Major Decision per `CLAUDE.md`; this ADR is the proposal.
+- **New opcodes** — a Major Decision per [the decision policy](../decision-policy.md); this ADR is the proposal.
   Ids `0x2C` / `0x2D` in the put family.
 - Touches: `Opcode` / `OpcodeTable` (ids + sizes), `Engine` (reserved-mode
   helpers + the write-pointer frame stack), the Tier-0 interpreter dispatch

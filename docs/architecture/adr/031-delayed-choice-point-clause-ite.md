@@ -260,7 +260,7 @@ choice point the cut would otherwise tear down. Targets hot Tier-1 recursion
   fail label to the else clause instead of emitting `try_me_else` + `cut`). The
   AST-fold step is a red herring; the whole win is the new CP-free codegen, which
   is exactly ADR-025's deferred step-3 follow-up. That is a Tier-1 region-emit
-  change (a **major decision** per CLAUDE.md), high-risk (ADR-025's measurement
+  change (a **major decision** per [the decision policy](../decision-policy.md)), high-risk (ADR-025's measurement
   warns the naive version regresses), and gated on a back-to-back A/B beating the
   plain `try_me_else`-chain-plus-cut.
 
