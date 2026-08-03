@@ -1,0 +1,3 @@
+# Markdown is stored and checked out LF everywhere — mixed-EOL docs kept
+# sneaking in through Windows tooling (PowerShell writers, editors).
+*.md text eol=lf
