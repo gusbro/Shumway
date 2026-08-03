@@ -23,7 +23,7 @@ Knowing the mode at compile time allows dramatic optimizations:
 
 This is the core insight behind Mercury, a Prolog-derived language that achieves performance close to C by requiring mode declarations and exploiting them aggressively. SWI-Prolog and SICStus also use mode information when available, though less aggressively than Mercury.
 
-The user has requested that Shumway support **directive-based mode declarations** (`:- mode foo(+, +, -)`) from v1, with **code specialization deferred** to later phases. This allows:
+The requirement was **directive-based mode declarations** (`:- mode foo(+, +, -)`) from v1, with **code specialization deferred** to later phases. This allows:
 
 - Programs to declare modes early, expressing intent.
 - The compiler to validate and store these declarations.
@@ -182,6 +182,51 @@ reverse([H|T], Acc, R) :- reverse(T, [H|Acc], R).
 
 This makes the modes visible to readers and to the compiler.
 
+## The trust boundary: declarations restrict, they never license removal
+
+Declared modes are consumed ONLY by this ADR's specializations (the det/semidet
+implicit cut, gates like the assert fast path). The inferred-determinism
+optimization arc (ADR-029/030/031/033/034 — cut elision, CP-free guard commit)
+deliberately reads no modes. The reason is an asymmetry in failure modes:
+
+- A declaration may soundly **restrict** behavior. The implicit cut makes the
+  predicate *conform* to its contract: commit to the first solution. If the
+  declaration is wrong — the predicate had more solutions — the outcome is
+  still well-defined and local (`once/1` semantics): solutions the programmer
+  declared nonexistent are pruned. The failure IS the declaration's meaning.
+- A declaration may never **license removing safety**. Eliding a user-written
+  cut, or not materializing a choice point, is only sound as a *theorem about
+  the actual code* — which the fail-direct bytecode analysis proves. Justified
+  by a false declaration instead, backtracking would explore clauses the cut
+  would have killed: their side effects re-run (`assertz`/`retract`/IO do not
+  un-execute — see the extra-backtracking invariant in
+  `../invariants.md`), extra solutions appear, and the behavior matches
+  neither the code nor the declaration.
+
+In one line: **a declaration can prune (defined failure: fewer solutions) but
+cannot justify removing protection (undefined failure: semantic corruption).**
+
+Production engines draw the same line. Mercury optimizes on determinism
+declarations only because its compiler *verifies* them statically — a wrong
+`det` is a compile error, not undefined behavior. SWI-Prolog's historical
+`:- mode` is documentation; its `det/1` and SSU (`=>`) turn declarations into
+*runtime checks* that raise `determinism_error`. SICStus, GNU Prolog and YAP
+derive determinacy from indexing and cuts — from the code, as ADR-030 does.
+Ciao verifies assertions statically where it can and inserts runtime checks
+where it cannot. No production engine elides choice points on an unchecked
+declaration.
+
+A practical consideration reinforced the design: the real-program corpus
+(Blint, the Arity sources, the SWI/Scryer/Logtalk libraries) contains no mode
+declarations at all, so an optimizer keyed on them would have optimized
+nothing that actually runs; ADR-030's fixpoint gets those wins from the code
+itself.
+
+Possible future hardening (not implemented): an opt-in development flag in the
+SWI `det/1` style, replacing the implicit cut with cut-plus-check — a live
+alternative at the commit point raises a determinism error instead of pruning
+silently. Release semantics would be unchanged.
+
 ## Alternatives Considered
 
 ### Full Mercury-style mode system in v1
@@ -194,7 +239,7 @@ This makes the modes visible to readers and to the compiler.
 
 ### Modes as runtime annotations (no compile-time use)
 
-**Rejected.** This is essentially what Phase 1 already does (modes are metadata), but the user's intent is for these declarations to enable future optimization. The roadmap commitment is explicit.
+**Rejected.** This is essentially what Phase 1 already does (modes are metadata), but the roadmap's intent is for these declarations to enable future optimization. The roadmap commitment is explicit.
 
 ### Different syntax (e.g., type signatures Mercury-style)
 

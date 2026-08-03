@@ -229,7 +229,10 @@ inputs:
   facts.
 
 So `:- mode` enables ADR-012's specializations and nothing else; the ADR-029+
-optimization arc reads no modes at all.
+optimization arc reads no modes at all. The full rationale — why a declaration
+may prune but never license removing a choice point, and where production
+engines (Mercury, SWI, Ciao, GNU) draw the same line — is ADR-012's
+"trust boundary" section.
 
 ## Bytecode
 
