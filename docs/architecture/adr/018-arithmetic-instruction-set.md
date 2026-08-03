@@ -2,10 +2,13 @@
 
 ## Status
 
-Accepted — implemented (Phase 25): the `a_eval_*` RPN instruction set and the fused `a_int_bin`/`a_int_cmp` integer fast lane shipped in both tiers, replacing the goal-rewriting `$arith2` mechanism. Adding new top-level opcodes is a "major decision"
-under [the decision policy](../decision-policy.md), so the design is settled here before code lands. This ADR
-supersedes the goal-rewriting arithmetic inlining of chunks 295/296
-(`ArithInline` + the `$arith2` / `$arith1` builtins), which it retires.
+Accepted — implemented (Phase 25): the `a_eval_*` RPN instruction set and the
+fused `a_int_bin`/`a_int_cmp` integer fast lane shipped in both tiers. New
+top-level opcodes are a "major decision" under
+[the decision policy](../decision-policy.md), which is why the design was
+settled in this ADR before the code landed. It supersedes and retires the
+goal-rewriting arithmetic inlining that preceded it (`ArithInline` + the
+`$arith2` / `$arith1` builtins).
 
 ## Context
 

@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted — implemented (Phase 30): `:- c` prototypes and `{...}` blocks compile to IL, run at runtime and persist in bundles. Captures the design agreed before any
-code lands.
+Accepted — implemented (Phase 30): `:- c` prototypes and `{...}` blocks compile
+to IL, run at runtime and persist in bundles. The document below is the design
+as agreed before implementation began.
 
 ## Context
 
