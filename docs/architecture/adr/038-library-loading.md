@@ -38,13 +38,20 @@ All four components are implemented and tested:
   `use_module/1` builtin loads from it and imports into the `user` module so an
   interactive query resolves the imports.
 
-**Deferred (one item):** a **baked C# library** (`clpfd`/`clpr`/`coroutining`)
-consumed through *separate compilation* is recorded as a `ShmoLibraryDep{Baked}`
-but not yet replayed at load, and — more fundamentally — its operators are not
-available to `shumway-compile` at parse time, so a CLP program cannot yet be
-`shumway-compile`d. The baked libraries work fully in the embedded / REPL path
-(the primary use case); consuming them through the compile→link toolchain is a
-follow-up. The `M:goal` qualified-call syntax remains deferred as before.
+**Deferred (narrow):** only the **file-at-a-time** compile of a program using a
+baked C# library (`clpfd`/`clpr`/`coroutining`). On that path the library is
+recorded as a `ShmoLibraryDep{Baked}` but nothing consumes it: an
+operator-carrying library (clpfd/clpr) fails at parse (its operators are not
+registered), and even an operator-free one (coroutining) compiles but **fails
+at link** with `missing_predicate` — the baked dep is neither counted as
+providing its predicates nor replayed at load. **The consult-mode path covers
+the case end to end** (verified: clpfd and coroutining programs through
+`--consult` → link → `--exe` run correctly): `shumway-compile --consult` loads
+the file in an ephemeral engine (directives run, operators register), emits
+one `.shmo` per module the load brought in — the library's Prolog side
+included — and the libraries' C# propagators are engine builtins present in
+any engine. The CLI hints `--consult` when it detects the pattern. The
+`M:goal` qualified-call syntax remains deferred as before.
 
 ## Context
 
