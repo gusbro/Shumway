@@ -18,8 +18,9 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 '$lgt_prolog_feature'(prolog_dialect, shumway).
-'$lgt_prolog_feature'(prolog_version, v(3, 101, 0)).
-'$lgt_prolog_feature'(prolog_compatible_version, @>=(v(3, 0, 0))).
+'$lgt_prolog_feature'(prolog_version, v(Major, Minor, Patch)) :-
+	current_prolog_flag(version_data, shumway(Major, Minor, Patch, _)).
+'$lgt_prolog_feature'(prolog_compatible_version, @>=(v(0, 1, 0))).
 
 % Conservative capability set. Shumway does implement tabling, dif/2 and
 % friends natively, but announcing a capability here also commits the adapter

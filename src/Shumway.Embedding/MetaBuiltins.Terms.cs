@@ -273,6 +273,9 @@ public static partial class MetaBuiltins
     /// <item><c>unknown</c>, <c>occurs_check</c> — informational
     /// flag state (engine doesn't yet vary behaviour on them).</item>
     /// <item><c>max_arity</c> — large integer constant.</item>
+    /// <item><c>version_data</c> — <c>shumway(Major, Minor, Patch, [])</c>,
+    /// the engine version (the GProlog/SWI convention consumers like the
+    /// Logtalk adapter query).</item>
     /// </list>
     /// With Flag unbound, every flag is enumerated on backtracking
     /// (ISO §8.17.2).</summary>
@@ -319,6 +322,19 @@ public static partial class MetaBuiltins
 
             case "dialect":
                 return UnifyAtom(engine, 1, "shumway");
+
+            case "version_data":
+            {
+                Term versionTerm = new CompoundTerm("shumway", new Term[]
+                {
+                    new IntTerm(PrologEngine.VersionMajor),
+                    new IntTerm(PrologEngine.VersionMinor),
+                    new IntTerm(PrologEngine.VersionPatch),
+                    new AtomTerm("[]"),
+                });
+                Cell versionCell = Materializer.MaterializeAsCell(engine, versionTerm);
+                return engine.UnifyRegisterWithCell(1, versionCell);
+            }
 
             case "library_dialect":   // ADR-040 — preferred shim dialect
                 return UnifyAtom(engine, 1, host.ActiveLibraryDialect ?? "auto");
@@ -375,7 +391,8 @@ public static partial class MetaBuiltins
     {
         "bounded", "max_arity", "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
-        "debug", "dialect", "library_dialect", "argv", "implicit_dynamic", "arity_compat",
+        "debug", "dialect", "library_dialect", "version_data", "argv",
+        "implicit_dynamic", "arity_compat",
         "compile_mode", "debug_lco", "prefer_rationals",
     };
 

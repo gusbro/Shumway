@@ -24,6 +24,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 {
     public const string DefaultModuleName = "user";
 
+    /// <summary>Shumway's version, as reported by the <c>version_data</c>
+    /// Prolog flag — <c>shumway(Major, Minor, Patch, [])</c>. Pre-release:
+    /// stays 0.x until the first official release.</summary>
+    public const int VersionMajor = 0;
+    public const int VersionMinor = 1;
+    public const int VersionPatch = 0;
+
     /// <summary>Per-engine global-variable store backing
     /// the SWI <c>nb_setval/2</c> / <c>nb_getval/2</c> family.
     /// Survives across queries on this engine.</summary>
