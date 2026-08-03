@@ -14,6 +14,7 @@ documentation index; start with the [user guide](guide/user-guide.md).
 | [embedded-native-c.md](guide/embedded-native-c.md) | `:- c` declarations and `{...}` embedded native C blocks |
 | [generic-term-interop.md](guide/generic-term-interop.md) | Whole-term interop with C# and native C (the reftype tier) |
 | [native-aot.md](guide/native-aot.md) | Publishing self-contained Native AOT executables |
+| [configuration.md](guide/configuration.md) | Runtime `SHUMWAY_*` environment variables and build-time diagnostic constants |
 | [logtalk.md](guide/logtalk.md) | Running Logtalk on Shumway |
 
 ### Compatibility status

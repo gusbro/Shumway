@@ -81,3 +81,16 @@ dotnet test
 
 The gate is five projects (Core, Interpreter, Compiler, IsoConformance,
 Embedding) — several thousand tests, all green on every commit.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — build and test workflow, coding
+conventions, the invariants and ADR process, and how contributions are
+licensed.
+
+## License
+
+[MIT](LICENSE). Third-party components are listed in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — notably the Sigil IL
+library (MS-PL) and the Visual Studio SDK components the opt-in `vs/`
+debugger build references.

@@ -2,6 +2,9 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <Authors>Gustavo Brown</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Copyright>Copyright (c) 2026 Gustavo Brown</Copyright>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -38,20 +41,19 @@
     constant that gates a family of [System.Diagnostics.Conditional]-
     attributed dump methods scattered through the engine. Production
     builds (no property set) strip every call site at compile time —
-    zero runtime cost.
+    zero runtime cost. These build-time constants are distinct from the
+    runtime SHUMWAY_* environment variables; both are catalogued in
+    docs/guide/configuration.md.
 
     Activate from the command line, e.g.:
       dotnet build -p:ShumwayRetractTrace=true
-      dotnet build -p:ShumwayUnifyTrace=true
+      dotnet build -p:ShumwayCpTrace=true
 
     Or via env var (cmd/PowerShell):
       set ShumwayRetractTrace=true & dotnet build
   -->
   <PropertyGroup Condition="'$(ShumwayRetractTrace)' == 'true'">
     <DefineConstants>$(DefineConstants);SHUMWAY_RETRACT_TRACE</DefineConstants>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(ShumwayUnifyTrace)' == 'true'">
-    <DefineConstants>$(DefineConstants);SHUMWAY_UNIFY_TRACE</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition="'$(ShumwayCpTrace)' == 'true'">
     <DefineConstants>$(DefineConstants);SHUMWAY_CP_TRACE</DefineConstants>
