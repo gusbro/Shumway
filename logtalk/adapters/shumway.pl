@@ -1,10 +1,11 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
-%  Adapter file for Shumway (.NET Prolog)  -- experimental bring-up
-%  Based on the GNU Prolog adapter (gnu.pl).
+%  Logtalk backend adapter for Shumway (Prolog on .NET)
+%  <https://logtalk.org/>
 %
-%  This file is part of Logtalk <https://logtalk.org/>
-%  SPDX-License-Identifier: Apache-2.0
+%  Written from scratch for Shumway against the Logtalk adapter interface
+%  (the '$lgt_'* hook predicates every backend provides) and Shumway's own
+%  builtin surface. SPDX-License-Identifier: MIT
 %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -13,108 +14,16 @@
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  missing builtins that Shumway does not (yet) provide natively
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-% predicate_property/2 is now a native Shumway builtin (built_in / dynamic /
-% static / defined) — no shim needed here.
-
-% term_hash/2 and /4 -- Shumway has no term hashing; derive a cheap stable
-% hash from the write-canonical atom's codes so scratch-file names are unique.
-
-term_hash(Term, Hash) :-
-	'$lgt_shumway_term_hash'(Term, Hash).
-term_hash(Term, _Depth, _Range, Hash) :-
-	'$lgt_shumway_term_hash'(Term, Hash).
-
-'$lgt_shumway_term_hash'(Term, Hash) :-
-	( atom(Term) -> Atom = Term ; term_to_atom(Term, Atom) ),
-	atom_codes(Atom, Codes),
-	'$lgt_shumway_hash_codes'(Codes, 5381, Hash).
-
-'$lgt_shumway_hash_codes'([], Acc, Acc).
-'$lgt_shumway_hash_codes'([C| Cs], Acc, Hash) :-
-	Acc1 is (Acc * 33 + C) /\ 0x3fffffff,
-	'$lgt_shumway_hash_codes'(Cs, Acc1, Hash).
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  ISO predicates that must be defined because they are not built-in
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-% '$lgt_iso_predicate'(?callable).
-'$lgt_iso_predicate'(_) :-
-	fail.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  de facto standard predicates that might be missing
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-'$lgt_format'(Stream, Format, Arguments) :-
-	format(Stream, Format, Arguments).
-'$lgt_format'(Format, Arguments) :-
-	format(Format, Arguments).
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  predicate properties
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-'$lgt_predicate_property'(Pred, Prop) :-
-	predicate_property(Pred, Prop).
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  meta-predicates
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-setup_call_cleanup(_, _, _) :-
-	throw(not_supported(setup_call_cleanup/3)).
-
-'$lgt_prolog_meta_predicate'(consult(_), consult(*), predicate) :- !.
-'$lgt_prolog_meta_predicate'(_, _, _) :- fail.
-
-'$lgt_prolog_meta_directive'(built_in(_), built_in(/)).
-'$lgt_prolog_meta_directive'(ensure_linked(_), ensure_linked(/)).
-
-'$lgt_prolog_to_logtalk_meta_argument_specifier_hook'(_, _) :- fail.
-
-'$lgt_prolog_phrase_predicate'(_) :- fail.
-
-'$lgt_candidate_tautology_or_falsehood_goal_hook'(is_list(_)).
-'$lgt_candidate_tautology_or_falsehood_goal_hook'(succ(_, _)).
-
-'$lgt_prolog_database_predicate'(listing(_)).
-
-'$lgt_prolog_predicate_property'(built_in).
-'$lgt_prolog_predicate_property'(dynamic).
-'$lgt_prolog_predicate_property'(static).
-
-'$lgt_prolog_deprecated_built_in_predicate_hook'(_, _) :- fail.
-'$lgt_prolog_deprecated_built_in_predicate_hook'(_) :- fail.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  file name extension predicates
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-'$lgt_file_extension'(logtalk, '.lgt').
-'$lgt_file_extension'(logtalk, '.logtalk').
-'$lgt_file_extension'(object, '.pl').
-'$lgt_file_extension'(prolog, '.pl').
-'$lgt_file_extension'(prolog, '.prolog').
-'$lgt_file_extension'(prolog, '.pro').
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  backend Prolog compiler features
+%  backend identity and capabilities
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 '$lgt_prolog_feature'(prolog_dialect, shumway).
 '$lgt_prolog_feature'(prolog_version, v(3, 101, 0)).
 '$lgt_prolog_feature'(prolog_compatible_version, @>=(v(3, 0, 0))).
 
+% Conservative capability set. Shumway does implement tabling, dif/2 and
+% friends natively, but announcing a capability here also commits the adapter
+% to the corresponding hook wiring — flip one only together with that work.
 '$lgt_prolog_feature'(encoding_directive, unsupported).
 '$lgt_prolog_feature'(sockets, unsupported).
 '$lgt_prolog_feature'(tabling, unsupported).
@@ -126,10 +35,10 @@ setup_call_cleanup(_, _, _) :-
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  default flag values
+%  default compiler flag values
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-'$lgt_default_flag'(settings_file, allow).
+% lint flags
 '$lgt_default_flag'(linter, default).
 '$lgt_default_flag'(general, warning).
 '$lgt_default_flag'(encodings, warning).
@@ -137,16 +46,9 @@ setup_call_cleanup(_, _, _) :-
 '$lgt_default_flag'(unknown_predicates, warning).
 '$lgt_default_flag'(undefined_predicates, warning).
 '$lgt_default_flag'(singleton_variables, warning).
-'$lgt_default_flag'(steadfastness, silent).
-'$lgt_default_flag'(naming, silent).
-'$lgt_default_flag'(duplicated_clauses, silent).
 '$lgt_default_flag'(left_recursion, warning).
-'$lgt_default_flag'(tail_recursive, silent).
 '$lgt_default_flag'(disjunctions, warning).
 '$lgt_default_flag'(conditionals, warning).
-'$lgt_default_flag'(catchall_catch, silent).
-'$lgt_default_flag'(portability, silent).
-'$lgt_default_flag'(redefined_built_ins, silent).
 '$lgt_default_flag'(redefined_operators, warning).
 '$lgt_default_flag'(deprecated, warning).
 '$lgt_default_flag'(missing_directives, warning).
@@ -157,11 +59,23 @@ setup_call_cleanup(_, _, _) :-
 '$lgt_default_flag'(grammar_rules, warning).
 '$lgt_default_flag'(arithmetic_expressions, warning).
 '$lgt_default_flag'(suspicious_calls, warning).
+'$lgt_default_flag'(steadfastness, silent).
+'$lgt_default_flag'(naming, silent).
+'$lgt_default_flag'(duplicated_clauses, silent).
+'$lgt_default_flag'(tail_recursive, silent).
+'$lgt_default_flag'(catchall_catch, silent).
+'$lgt_default_flag'(portability, silent).
+'$lgt_default_flag'(redefined_built_ins, silent).
 '$lgt_default_flag'(underscore_variables, dont_care).
+
+% optional feature flags
 '$lgt_default_flag'(complements, deny).
 '$lgt_default_flag'(dynamic_declarations, deny).
 '$lgt_default_flag'(events, deny).
 '$lgt_default_flag'(context_switching_calls, allow).
+'$lgt_default_flag'(settings_file, allow).
+
+% compilation flags
 '$lgt_default_flag'(scratch_directory, './lgt_tmp/').
 '$lgt_default_flag'(report, on).
 '$lgt_default_flag'(clean, on).
@@ -175,46 +89,114 @@ setup_call_cleanup(_, _, _) :-
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  operating-system access predicates  (Shumway chunk-271 file ops)
+%  file extensions recognized per kind of source
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+'$lgt_file_extension'(logtalk, '.lgt').
+'$lgt_file_extension'(logtalk, '.logtalk').
+'$lgt_file_extension'(object, '.pl').
+'$lgt_file_extension'(prolog, '.pl').
+'$lgt_file_extension'(prolog, '.prolog').
+'$lgt_file_extension'(prolog, '.pro').
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  compiler hook queries: how the backend classifies predicates
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% no backend-specific predicates need ISO-official treatment
+'$lgt_iso_predicate'(_) :-
+	fail.
+
+'$lgt_predicate_property'(Predicate, Property) :-
+	predicate_property(Predicate, Property).
+
+% predicate properties Shumway can actually report
+'$lgt_prolog_predicate_property'(built_in).
+'$lgt_prolog_predicate_property'(dynamic).
+'$lgt_prolog_predicate_property'(static).
+
+% consult/1 takes a goal-position argument the compiler must not touch
+'$lgt_prolog_meta_predicate'(consult(_), consult(*), predicate) :- !.
+'$lgt_prolog_meta_predicate'(_, _, _) :- fail.
+
+% Shumway directives whose argument is a predicate indicator
+'$lgt_prolog_meta_directive'(built_in(_), built_in(/)).
+'$lgt_prolog_meta_directive'(ensure_linked(_), ensure_linked(/)).
+
+'$lgt_prolog_to_logtalk_meta_argument_specifier_hook'(_, _) :- fail.
+
+'$lgt_prolog_phrase_predicate'(_) :- fail.
+
+% goals the linter may flag as trivially true/false
+'$lgt_candidate_tautology_or_falsehood_goal_hook'(is_list(_)).
+'$lgt_candidate_tautology_or_falsehood_goal_hook'(succ(_, _)).
+
+'$lgt_prolog_database_predicate'(listing(_)).
+
+'$lgt_prolog_deprecated_built_in_predicate_hook'(_, _) :- fail.
+'$lgt_prolog_deprecated_built_in_predicate_hook'(_) :- fail.
+
+% no backend-specific term/goal expansion, encodings, or string type
+'$lgt_prolog_term_expansion'(_, _) :- fail.
+'$lgt_prolog_goal_expansion'(_, _) :- fail.
+'$lgt_logtalk_prolog_encoding'(_, _, _) :- fail.
+'$lgt_string'(_) :- fail.
+'$lgt_string_codes'(_, _) :- fail.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  term services used by the compiler and libraries
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% lambda support: Shumway's plain copy already ignores no constraints here
+'$lgt_copy_term_without_constraints'(Term, Copy) :-
+	copy_term(Term, Copy).
+
+'$lgt_normalize_error_term'(Error, Error).
+
+% no module system exposed to Logtalk: goals pass through unqualified
+'$lgt_user_module_qualification'(Goal, Goal).
+'$lgt_find_visible_module_predicate'(_, _, _) :- fail.
+'$lgt_current_module_predicate'(_, _) :- fail.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  operating-system layer
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Shumway paths need no OS-specific spelling changes
 '$lgt_prolog_os_file_name'(Path, Path).
 
+% Path expansion = $LOGTALKHOME/$LOGTALKUSER substitution, then absolute,
+% then forward slashes throughout. The core assembles paths POSIX-style;
+% .NET hands back backslashed Windows paths, and a mixed 'dir\/file' join
+% breaks exists_file — so everything the adapter returns is '/'-separated.
 '$lgt_expand_path'(Path, ExpandedPath) :-
-	'$lgt_shumway_expand_env'(Path, Expanded0),
-	(	catch(absolute_file_name(Expanded0, Expanded1), _, fail) ->
+	'$shumway_env_prefix'(Path, Substituted),
+	(	catch(absolute_file_name(Substituted, Absolute), _, fail) ->
 		true
-	;	Expanded1 = Expanded0
+	;	Absolute = Substituted
 	),
-	% Logtalk's core does POSIX ('/') path arithmetic; Shumway/.NET returns
-	% native Windows ('\') paths. Normalize so a later join can't produce a
-	% broken mixed 'dir\/file' path (which fails exists_file).
-	'$lgt_shumway_slashify'(Expanded1, ExpandedPath).
+	'$shumway_forward_slashes'(Absolute, ExpandedPath).
 
-% replace every '\' with '/' so paths the adapter hands to Logtalk are
-% POSIX-style and consistent with the core's path assembly.
-'$lgt_shumway_slashify'(Path, Normalized) :-
-	atom_codes(Path, Codes),
-	'$lgt_shumway_bs_to_fs'(Codes, NormCodes),
-	atom_codes(Normalized, NormCodes).
+'$shumway_forward_slashes'(Path, Slashed) :-
+	(	sub_atom(Path, _, _, _, '\\') ->
+		atomic_list_concat(Segments, '\\', Path),
+		atomic_list_concat(Segments, '/', Slashed)
+	;	Slashed = Path
+	).
 
-'$lgt_shumway_bs_to_fs'([], []).
-'$lgt_shumway_bs_to_fs'([0'\\| Cs], [0'/| Ns]) :- !,
-	'$lgt_shumway_bs_to_fs'(Cs, Ns).
-'$lgt_shumway_bs_to_fs'([C| Cs], [C| Ns]) :-
-	'$lgt_shumway_bs_to_fs'(Cs, Ns).
-
-% expand a leading $LOGTALKHOME / $LOGTALKUSER environment variable reference
-'$lgt_shumway_expand_env'(Path, Expanded) :-
-	(	atom_concat('$LOGTALKHOME/', Rest, Path),
-		getenv('LOGTALKHOME', Home) ->
-		atom_concat(Home, '/', Home1),
-		atom_concat(Home1, Rest, Expanded)
-	;	atom_concat('$LOGTALKUSER/', Rest, Path),
-		getenv('LOGTALKUSER', User) ->
-		atom_concat(User, '/', User1),
-		atom_concat(User1, Rest, Expanded)
-	;	Expanded = Path
+'$shumway_env_prefix'(Path, Substituted) :-
+	(	sub_atom(Path, 0, _, _, '$LOGTALKHOME/'),
+		getenv('LOGTALKHOME', Value) ->
+		sub_atom(Path, 13, _, 0, Tail),
+		atomic_list_concat([Value, '/', Tail], Substituted)
+	;	sub_atom(Path, 0, _, _, '$LOGTALKUSER/'),
+		getenv('LOGTALKUSER', Value) ->
+		sub_atom(Path, 13, _, 0, Tail),
+		atomic_list_concat([Value, '/', Tail], Substituted)
+	;	Substituted = Path
 	).
 
 '$lgt_file_exists'(File) :-
@@ -227,24 +209,28 @@ setup_call_cleanup(_, _, _) :-
 	exists_directory(Directory).
 
 '$lgt_current_directory'(Directory) :-
-	working_directory(Directory0, Directory0),
-	'$lgt_shumway_slashify'(Directory0, Directory).
+	working_directory(Current, Current),
+	'$shumway_forward_slashes'(Current, Directory).
 
 '$lgt_change_directory'(Directory) :-
 	working_directory(_, Directory).
 
 '$lgt_make_directory'(Directory) :-
-	( exists_directory(Directory) -> true ; catch(mkdir(Directory), _, true) ).
+	(	exists_directory(Directory) ->
+		true
+	;	catch(mkdir(Directory), _, true)
+	).
 
+% Scratch-file naming: a per-directory hash suffixed with the dialect, and a
+% second one suffixed with a pid stand-in (Shumway sessions do not embed the
+% pid in scratch names; a constant keeps names stable across runs).
 '$lgt_directory_hashes'(Directory, HashDialect, HashPid) :-
 	term_hash(Directory, Hash),
-	number_codes(Hash, HashCodes),
-	atom_codes(shumway, DialectCodes),
-	append([0'_| HashCodes], [0'_| DialectCodes], HashDialectCodes),
-	atom_codes(HashDialect, HashDialectCodes),
-	append([0'_| HashCodes], [0'_, 0'0], HashPidCodes),
-	atom_codes(HashPid, HashPidCodes).
+	atomic_list_concat(['_', Hash, '_', shumway], HashDialect),
+	atomic_list_concat(['_', Hash, '_', 0], HashPid).
 
+% Compiling a Prolog file ahead of loading is a no-op: Shumway's consult
+% compiles internally, so loading IS the compilation step.
 '$lgt_compile_prolog_code'(_, _, _).
 
 '$lgt_load_prolog_code'(File, _, _) :-
@@ -253,58 +239,57 @@ setup_call_cleanup(_, _, _) :-
 '$lgt_load_prolog_file'(File) :-
 	consult(File).
 
+% No modification-time tracking: a constant time means reload(changed)
+% decisions fall back to the core's own bookkeeping.
 '$lgt_file_modification_time'(_File, 0).
 
 '$lgt_environment_variable'(Variable, Value) :-
 	catch(getenv(Variable, Value), _, fail).
 
+% Split a path into directory / base name / extension using sub_atom
+% arithmetic. The last '/' or '\' bounds the directory (empty -> './'); the
+% last '.' of the remainder starts the extension (none -> '').
 '$lgt_decompose_file_name'(File, Directory, Name, Extension) :-
-	'$lgt_shumway_decompose'(File, Directory, Name, Extension).
+	'$shumway_forward_slashes'(File, Path),
+	(	'$shumway_last_occurrence'(Path, '/', SlashEnd) ->
+		sub_atom(Path, 0, SlashEnd, _, Directory),
+		sub_atom(Path, SlashEnd, _, 0, Base)
+	;	Directory = './',
+		Base = Path
+	),
+	(	'$shumway_last_occurrence'(Base, '.', DotStart0),
+		DotStart0 > 1 ->
+		DotStart is DotStart0 - 1,
+		sub_atom(Base, 0, DotStart, _, Name),
+		sub_atom(Base, DotStart, _, 0, Extension)
+	;	Name = Base,
+		Extension = ''
+	).
+
+% End position (1-based, past the character) of the LAST occurrence of a
+% single-character atom; fails when absent. Driven by sub_atom backtracking.
+'$shumway_last_occurrence'(Atom, Char, End) :-
+	findall(After, sub_atom(Atom, _, 1, After, Char), Afters),
+	Afters = [_| _],
+	'$shumway_min_of'(Afters, MinAfter),
+	atom_length(Atom, Length),
+	End is Length - MinAfter.
+
+'$shumway_min_of'([X| Xs], Min) :-
+	'$shumway_min_of'(Xs, X, Min).
+
+'$shumway_min_of'([], Min, Min).
+'$shumway_min_of'([X| Xs], Acc, Min) :-
+	(	X < Acc ->
+		'$shumway_min_of'(Xs, X, Min)
+	;	'$shumway_min_of'(Xs, Acc, Min)
+	).
 
 '$lgt_directory_files'(_Directory, []).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  poor-man's file-path decomposition (atom-based; portable)
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-'$lgt_shumway_decompose'(File, Directory, Name, Extension) :-
-	atom_codes(File, Codes),
-	'$lgt_shumway_last_slash'(Codes, 0, 0, SlashPos),
-	'$lgt_shumway_split_at'(Codes, SlashPos, DirCodes, RestCodes),
-	( DirCodes == [] -> Directory = './' ; atom_codes(Directory, DirCodes) ),
-	'$lgt_shumway_last_dot'(RestCodes, 0, -1, DotPos),
-	( DotPos < 0 ->
-		atom_codes(Name, RestCodes), Extension = ''
-	;	'$lgt_shumway_split_at'(RestCodes, DotPos, NameCodes, ExtCodes),
-		atom_codes(Name, NameCodes), atom_codes(Extension, ExtCodes)
-	).
-
-'$lgt_shumway_last_slash'([], _, Last, Last).
-'$lgt_shumway_last_slash'([C| Cs], I, _, Last) :- (C =:= 0'/ ; C =:= 0'\\), !,
-	I1 is I + 1, '$lgt_shumway_last_slash'(Cs, I1, I1, Last).
-'$lgt_shumway_last_slash'([_| Cs], I, Acc, Last) :-
-	I1 is I + 1, '$lgt_shumway_last_slash'(Cs, I1, Acc, Last).
-
-'$lgt_shumway_last_dot'([], _, Last, Last).
-'$lgt_shumway_last_dot'([0'.| Cs], I, _, Last) :- !,
-	I1 is I + 1, '$lgt_shumway_last_dot'(Cs, I1, I, Last).
-'$lgt_shumway_last_dot'([_| Cs], I, Acc, Last) :-
-	I1 is I + 1, '$lgt_shumway_last_dot'(Cs, I1, Acc, Last).
-
-'$lgt_shumway_split_at'(Codes, N, Left, Right) :-
-	length(Left, N), append(Left, Right, Codes).
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  stream line number (best effort -- Shumway lacks line_count/2)
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-'$lgt_stream_current_line_number'(_Stream, 0).
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  open/close abstraction
+%  stream layer
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 '$lgt_open'(File, Mode, Stream, Options) :-
@@ -313,41 +298,12 @@ setup_call_cleanup(_, _, _) :-
 '$lgt_close'(Stream) :-
 	close(Stream).
 
+% no per-stream line counting available
+'$lgt_stream_current_line_number'(_Stream, 0).
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  read_term returning term line positions (no line tracking -> 0-0)
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
+% no term position tracking either: every term reads as spanning 0-0
 '$lgt_read_term'(Stream, Term, Options, 0-0) :-
 	read_term(Stream, Term, Options).
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  dialect specific term/goal expansion
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-'$lgt_prolog_term_expansion'(_, _) :- fail.
-'$lgt_prolog_goal_expansion'(_, _) :- fail.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  encoding name conversion (unsupported)
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-'$lgt_logtalk_prolog_encoding'(_, _, _) :- fail.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  lambda expression support
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-'$lgt_copy_term_without_constraints'(Term, Copy) :-
-	copy_term(Term, Copy).
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  compiled term writing/asserting hooks
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 '$lgt_write_compiled_term'(Stream, Term, _Kind, _Path, _Line) :-
 	write_canonical(Stream, Term),
@@ -358,58 +314,66 @@ setup_call_cleanup(_, _, _) :-
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  error term normalization
+%  auxiliary predicates the Logtalk libraries expect from the backend
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-'$lgt_normalize_error_term'(Error, Error).
+% Term hashing (scratch-name uniqueness, library term_hash users). Any
+% stable hash works; fold the canonical spelling with the classic
+% multiply-by-33 accumulator, capped to 30 bits.
+term_hash(Term, Hash) :-
+	'$shumway_hash_term'(Term, Hash).
+term_hash(Term, _Depth, _Range, Hash) :-
+	'$shumway_hash_term'(Term, Hash).
+
+'$shumway_hash_term'(Term, Hash) :-
+	(	atom(Term) ->
+		Spelling = Term
+	;	term_to_atom(Term, Spelling)
+	),
+	atom_codes(Spelling, Codes),
+	'$shumway_hash_fold'(Codes, 5381, Hash).
+
+'$shumway_hash_fold'([], Hash, Hash).
+'$shumway_hash_fold'([Code| Codes], Acc0, Hash) :-
+	Acc is (Acc0 * 33 + Code) /\ 0x3fffffff,
+	'$shumway_hash_fold'(Codes, Acc, Hash).
+
+% Not provided by this backend; a loud error beats a silent wrong answer.
+setup_call_cleanup(_, _, _) :-
+	throw(not_supported(setup_call_cleanup/3)).
+
+'$lgt_format'(Stream, Format, Arguments) :-
+	format(Stream, Format, Arguments).
+'$lgt_format'(Format, Arguments) :-
+	format(Format, Arguments).
+
+% atomic_concat(+atomic, +atomic, ?atom): strict-typed concatenation some
+% library objects import from `user`.
+atomic_concat(A, B, Atom) :-
+	(	var(A) ->
+		throw(error(instantiation_error, atomic_concat/3))
+	;	var(B) ->
+		throw(error(instantiation_error, atomic_concat/3))
+	;	\+ atomic(A) ->
+		throw(error(type_error(atomic, A), atomic_concat/3))
+	;	\+ atomic(B) ->
+		throw(error(type_error(atomic, B), atomic_concat/3))
+	;	'$shumway_as_atom'(A, AtomA),
+		'$shumway_as_atom'(B, AtomB),
+		atom_concat(AtomA, AtomB, Atom)
+	).
+
+'$shumway_as_atom'(Atomic, Atom) :-
+	(	atom(Atomic) ->
+		Atom = Atomic
+	;	term_to_atom(Atomic, Atom)
+	).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  string type (unsupported)
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-'$lgt_string'(_) :- fail.
-'$lgt_string_codes'(_, _) :- fail.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  module qualification (no modules)
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-'$lgt_user_module_qualification'(Goal, Goal).
-
-'$lgt_find_visible_module_predicate'(_, _, _) :- fail.
-'$lgt_current_module_predicate'(_, _) :- fail.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%  {}/1 shortcut for logtalk_load/logtalk_make
+%  {File, ...} top-level shorthand for logtalk_load/1
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 {Files} :-
 	'$lgt_conjunction_to_list'(Files, List),
 	logtalk_load(List).
-
-
-% atomic_concat(+atomic, +atomic, ?atom) — Logtalk adapter contract
-% (library objects `uses(user, [atomic_concat/3])`, e.g. json_graph).
-
-atomic_concat(Atomic1, Atomic2, Atom) :-
-	(	var(Atomic1) ->
-		throw(error(instantiation_error, atomic_concat/3))
-	;	var(Atomic2) ->
-		throw(error(instantiation_error, atomic_concat/3))
-	;	\+ atomic(Atomic1) ->
-		throw(error(type_error(atomic, Atomic1), atomic_concat/3))
-	;	\+ atomic(Atomic2) ->
-		throw(error(type_error(atomic, Atomic2), atomic_concat/3))
-	;	'$lgt_shumway_atomic_atom'(Atomic1, Atom1),
-		'$lgt_shumway_atomic_atom'(Atomic2, Atom2),
-		atom_concat(Atom1, Atom2, Atom)
-	).
-
-'$lgt_shumway_atomic_atom'(Atomic, Atom) :-
-	(	atom(Atomic) ->
-		Atom = Atomic
-	;	term_to_atom(Atomic, Atom)
-	).

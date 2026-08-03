@@ -68,9 +68,9 @@ intermediate files, or in your `.lgt` sources' consulted forms.
 
 ## Notes
 
-- The adapter is derived from Logtalk's GNU Prolog adapter (`gnu.pl`) and
-  keeps its Apache-2.0 license header. Upstreaming it to the Logtalk
-  distribution is a possible future step.
+- The adapter is Shumway's own code (MIT, like the rest of the repository),
+  written against Logtalk's backend-adapter interface. Upstreaming it to the
+  Logtalk distribution is a possible future step.
 - Logtalk compiles each entity to an intermediate `.pl` in its scratch
   directory and consults it; Shumway's consult-time machinery (live linking,
   dynamic registrations, IL promotion) handles that pipeline.
