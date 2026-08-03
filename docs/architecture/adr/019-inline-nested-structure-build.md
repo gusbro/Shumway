@@ -45,7 +45,7 @@ Both leverage the **contiguous heap allocation** that `PutStructure` /
 new machinery is needed in write mode — the pointer simply advances into the
 nested structure's cells, which sit immediately after the outer arg slot.
 
-### Scope: last-argument position only (linear, no write-stack)
+### Scope: last-argument position only (linear, no write-stack) — extended to non-last by ADR-020
 
 Inline nested building is emitted **only when the nested compound is the LAST
 argument of its parent** — which is *always* true for a list tail, and true for

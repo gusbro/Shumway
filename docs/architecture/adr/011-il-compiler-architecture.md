@@ -141,7 +141,7 @@ The cache uses weak references: when no engine references a delegate, the .NET G
 
 ### Phase 1 optimization scope
 
-For Phase 1, the IL compiler implements:
+For Phase 1, the IL compiler implemented:
 
 **Level 1 (translation, all opcodes)**:
 - Every WAM opcode has a corresponding IL emission method.

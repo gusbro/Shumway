@@ -175,11 +175,11 @@ as zero-copy heap construction.
 - **Variables.** An unbound variable reads as ntype **0 (UNDEF)**; the slot points
   at the REF cell. A `put*` builds a value and `reftype_term` binds the variable.
 
-## Future tier — materializer ↔ dematerializer (deferred, designed-for)
+## The materializer ↔ dematerializer tier (designed here; shipped in Phase 32)
 
 The cursor is for logic that lives **in C#**. When C# is only a **trampoline to a
 native C function** (P/Invoke), the native C **cannot touch the Shumway heap** —
-the cross-language copy problem returns. For that case a later tier adds:
+the cross-language copy problem returns. For that case this second tier (delivered in Phase 32, with `:- native` P/Invoke and the managed `Reftype` snapshot path) adds:
 
 - a physical .NET `Reftype` struct (ntype/nelem/pars/crep — identical layout to
   Arity's `t_reftype`, blittable for marshalling to native C);

@@ -2,7 +2,12 @@
 
 ## Status
 
-Accepted (Phase 1 CLI, Phase 2 API).
+Accepted (Phase 1 CLI, Phase 2 API) — partially superseded. The `.shum` bundle
+format, `LoadBundle` and the bundling API live on and grew (compiled-IL
+bundles, archives, snapshots); the `shumway-bundler` CLI described below was
+RETIRED in Phase 23, replaced by the separate-compilation toolchain —
+`shumway-compile` / `shumway-link` / `shumway-lib` (ADR-038 era, Phase 13+).
+The CLI sections stand as the record of the original tool.
 
 ## Context
 
@@ -127,7 +132,7 @@ A bundle file contains:
 8. **Operator declarations**:
    - All `:- op/3` from included modules, applied globally on load.
 
-9. **Mode declarations** (metadata, currently unused but stored for phase 3):
+9. **Mode declarations** (metadata; the determinism annotations later drove the Phase-3 implicit-cut specialization):
    - `:- mode foo(+, -)` annotations.
 
 10. **Debug info** (optional, configurable level):
@@ -166,7 +171,6 @@ The bundler runs the following validations:
 - Unreachable predicate not in entry points (excluded from bundle).
 - Module included only because of the dynamic-inclusion rule (no static path from entry points).
 - Meta-call detected (the bundler cannot trace what's called).
-- Predicate has a `:- mode` declaration but the mode is not yet exploited (phase 3 feature).
 
 ### CLI tool: `shumway-bundler`
 

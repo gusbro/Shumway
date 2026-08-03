@@ -2,10 +2,10 @@
 
 ## Status
 
-**Accepted; phases 1 (lists) and 2 (structures) implemented** (Phase 25,
-chunks 289–290). List (and structure) construction is core to a Prolog engine and
-currently allocates one more heap cell per compound than the standard
-WAM. Changing the on-heap shape of every list and structure is a "major
+**Accepted — implemented** (Phase 25; stage 1 lists, stage 2 structures).
+Before this ADR, list and structure construction — core to a Prolog engine —
+allocated one more heap cell per compound than the standard WAM; the inline
+two-cell representation removed that cell. Changing the on-heap shape of every list and structure is a "major
 decision" under [the decision policy](../decision-policy.md) (coherence-critical, comparable to the trail
 format or the heap-GC strategy), so the design was settled here before
 code landed.

@@ -2,8 +2,11 @@
 
 ## Status
 
-Accepted (Phase 1, chunk 41). Infrastructure landed; the IL compiler's
-multi-clause emission rides on top in a future chunk.
+Accepted (Phase 1) — and long since built on: Tier-1 IL emits multi-clause
+predicates over this ABI (including fully indexed dispatch, Phase 20), region
+compilation composes whole predicate closures over it (Phase 29), and
+backtrackable builtins and the debugger's clause re-enter use the same IL
+choice points. This ADR is the ABI those features stand on.
 
 ## Context
 
@@ -160,16 +163,15 @@ cleared if the engine instance is discarded.
   5-way switch and need to trace the cursor / CP interactions to
   understand which alternative runs next.
 
-### Out of scope for this ADR
+### Out of scope for this ADR (since delivered)
 
-The IL compiler doesn't yet emit multi-clause predicates — `CanCompile`
-still rejects them. The engine + interpreter + ABI are all wired, but
-extending `IlPredicateCompiler` to read a `try_me_else` chain (and,
-later, a `switch_on_*` indexed dispatch) and emit the cursor switch is
-the obvious next chunk. The infrastructure here is what unblocks that
-work; the emission itself isn't a major decision in the ADR-006 sense
-since it doesn't change opcode space, cell layout, or engine state
-shape — just IL text.
+At decision time the IL compiler did not yet emit multi-clause predicates —
+only the engine + interpreter + ABI were wired. The emission arrived as
+planned and grew far past it: `try_me_else` chains, fully indexed
+`switch_on_*` dispatch with O(1) key lookup (Phase 20), and region
+compilation (Phase 29) all emit over this ABI. It was never a major decision
+in the decision-policy sense — no opcode space, cell layout, or engine state
+changed; just IL text.
 
 ## References
 

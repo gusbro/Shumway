@@ -234,7 +234,7 @@ In Phase 1, **dynamic predicates did not have indexing**. They use a plain `try_
 
 Implementation strategy: when a predicate is declared `:- dynamic`, the compiler emits straightforward sequential code without `switch_on_*` instructions. The cost is linear time per call, but for dynamic predicates with few clauses (the typical case) this is acceptable.
 
-**Phase 2 will add indexing for dynamic predicates**, with the following design intent:
+**Phase 2 added indexing for dynamic predicates** (a cross-query cache, invalidated on modification; later the in-place indexed layouts). The design intent as recorded here:
 
 - The first call after a modification rebuilds the index lazily.
 - The index is invalidated on `assertz`/`retract`.

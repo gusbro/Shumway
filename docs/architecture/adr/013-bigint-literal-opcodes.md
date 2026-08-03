@@ -139,14 +139,14 @@ BigInts the same way it handles longs.
   optimisation could deduplicate, but the current behaviour matches what
   the float path does and isn't a Phase-1 bottleneck.
 
-**Out of scope for this ADR** (deferred):
+**Out of scope for this ADR** (both since delivered):
 
-- Tier-1 IL compiler support for the new opcodes — the IL compiler currently
-  only handles a small subset of opcodes and falls through to a runtime path
-  for anything else. Lifting that is a separate, larger piece of work.
-- Trail-aware BigInteger allocation. The side table is currently per-engine
-  and never trimmed; for long-running engines that materialise many short-
-  lived BigInts, a trailed allocator would be tighter on memory.
+- Tier-1 IL compiler support for the new opcodes — at the time the IL
+  compiler handled a small opcode subset; full coverage arrived with the
+  Phase-20 Tier-1 completeness work.
+- Trail-aware BigInteger allocation — later shipped as the
+  `TrailType.BigIntAlloc` entries (rationals mirror it with `RationalAlloc`),
+  so backtracked-over BigIntegers are reclaimed.
 
 ## References
 
