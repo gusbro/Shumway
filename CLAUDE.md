@@ -106,10 +106,15 @@ tests/
 └── Shumway.Tests.Benchmarks/
 
 docs/
+├── README.md               # Index of all documentation
+├── guide/                  # User-facing guides + compatibility status
 ├── architecture/
 │   ├── overview.md
+│   ├── invariants.md       # The consolidated invariant catalog
 │   └── adr/                # Architecture Decision Records
-└── design/                 # Detailed subsystem designs
+├── design/                 # Detailed subsystem designs
+├── benchmarks/             # Current cross-engine baselines
+└── history/                # Phase closures, audits, past comparisons
 ```
 
 The NuGet package id is `Shumway` for the main embedding library. CLI tool is `shumway-bundler`.
@@ -154,7 +159,7 @@ dotnet publish src/Shumway.Bundler/ -c Release
 dotnet run --project src/Shumway.Repl/ -- [file.pl ...]
 
 # Publish the REPL as a self-contained Native AOT executable
-# (see docs/native-aot.md — Windows needs the Visual C++ build tools)
+# (see docs/guide/native-aot.md — Windows needs the Visual C++ build tools)
 dotnet publish src/Shumway.Repl/ -r win-x64 -c Release
 ```
 
@@ -221,7 +226,7 @@ These are areas where coherence across the codebase is critical and ad-hoc chang
 
 Shumway is designed in phases. Be explicit about what phase a change targets.
 
-**Phase 1 (v1) — Core functional Prolog with embedding** — ✅ **Complete** (tagged `phase-1`; closure summary in [`docs/phase-1-closure.md`](docs/phase-1-closure.md)).
+**Phase 1 (v1) — Core functional Prolog with embedding** — ✅ **Complete** (tagged `phase-1`; closure summary in [`docs/history/phase-1-closure.md`](docs/history/phase-1-closure.md)).
 - ✓ Interpreter (Tier 0).
 - ✓ WAM compiler (Prolog → bytecode).
 - ✓ Atom GC, trail, heap, stack, unification.
@@ -236,7 +241,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ Per-call Warren argument scheduler (cycle-aware, replaces conservative head-var preservation).
 - ✓ Per-call environment trimming (live-Y analysis on every Call / CallBuiltin).
 
-**Phase 2 — Production-grade optimizations** — ✅ **Complete** (tagged `phase-2`; closure summary in [`docs/phase-2-closure.md`](docs/phase-2-closure.md)).
+**Phase 2 — Production-grade optimizations** — ✅ **Complete** (tagged `phase-2`; closure summary in [`docs/history/phase-2-closure.md`](docs/history/phase-2-closure.md)).
 - ✓ Multi-argument indexing (sequential fallback; chunk 67).
 - ✓ Indexing for dynamic predicates (cross-query cache, invalidation on modify; chunk 68).
 - ✓ Compiled bundles (.dll) via `PersistedAssemblyBuilder` (chunk 71).
@@ -244,22 +249,22 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ More aggressive IL inlining (leaf-callee inlining; chunk 69).
 - ✓ PSTR concatenation lazy (single-step; chunk 70).
 
-**Phase 3 — Advanced optimizations** — ✅ **Complete** (tagged `phase-3`; closure summary in [`docs/phase-3-closure.md`](docs/phase-3-closure.md)).
+**Phase 3 — Advanced optimizations** — ✅ **Complete** (tagged `phase-3`; closure summary in [`docs/history/phase-3-closure.md`](docs/history/phase-3-closure.md)).
 - ✓ Mode inference (consumes `:- mode` directives; chunk 73).
 - ✓ Specialized code generation per mode (det/semidet implicit cut; chunk 74).
 - ✓ Profile-guided optimization (PGO) of IL code (two-phase instrumented→optimised; chunk 76).
 - ✓ JIT indexing (deferred dynamic-predicate switch tables; chunk 75).
 
-**Phase 4 — Extended features** — ✅ **Complete** (tagged `phase-4`; closure summary in [`docs/phase-4-closure.md`](docs/phase-4-closure.md)).
+**Phase 4 — Extended features** — ✅ **Complete** (tagged `phase-4`; closure summary in [`docs/history/phase-4-closure.md`](docs/history/phase-4-closure.md)).
 - ✓ Attributed variables (attvars): the ATTVAR cell tag, the `put_attr`/`get_attr`/`del_attr` family, `attvar/1`, the `attr_unify_hook` unification hook, and residual-goal projection (chunks 77–81).
 - ✓ In-engine meta-call (added to this phase mid-stream): `findall/3`, `bagof/3`, `setof/3`, `forall/2`, `catch/3` and `call/1..7` now run in the live engine rather than an isolated sub-engine — side effects persist and there is no per-call sub-engine cost. `bagof`/`setof` do real witness grouping; `catch` and `call/N` are fully backtrackable per ISO (chunks 82–86).
 - → CLP, Native AOT and tabling were moved to Phase 6.
 
-**Phase 5 — Interactive top-level** — ✅ **Complete** (tagged `phase-5`; closure summary in [`docs/phase-5-closure.md`](docs/phase-5-closure.md)).
+**Phase 5 — Interactive top-level** — ✅ **Complete** (tagged `phase-5`; closure summary in [`docs/history/phase-5-closure.md`](docs/history/phase-5-closure.md)).
 - ✓ `src/Shumway.Repl/` — a console-app project (the `shumway` executable) with a basic Prolog top-level: it consults files named on the command line, reads queries, prints each solution with `;` to search for the next, and exits on `halt.` or end of input. A thin client over the `PrologEngine` embedding API, for interactively exercising Shumway (chunk 87).
 - ✓ Undefined-predicate calls raise a catchable ISO `existence_error(procedure, Name/Arity)` when reached, instead of an uncatchable link-time failure — a correctness fix the REPL surfaced.
 
-**Phase 6 — Constraint logic programming over finite domains** — ✅ **Complete** (tagged `phase-6`; closure summary in [`docs/phase-6-closure.md`](docs/phase-6-closure.md)).
+**Phase 6 — Constraint logic programming over finite domains** — ✅ **Complete** (tagged `phase-6`; closure summary in [`docs/history/phase-6-closure.md`](docs/history/phase-6-closure.md)).
 - ✓ Fixed `!` inside a runtime compound `call` goal (chunk 88). `call((a,!,b))` treated the cut as a no-op — *unsound*: backtracking re-ran clauses ISO would have cut away, re-executing their side effects. `DispatchCall` now threads the enclosing call's cut barrier through the `$call_*` helpers via `'$call'/2`, so a `!` in a runtime `,`/`;`/`->` goal commits exactly as far as the call — and no further.
 - ✓ CLP(FD) core — opt-in library (`engine.UseClpfd()`, module `clpfd`) over sorted
   interval-list finite domains: `in`/`ins`, the six arithmetic constraints
@@ -292,7 +297,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   domain is wholly positive).
 - → CLP(R), Native AOT and tabling moved to Phase 7.
 
-**Phase 7 — Predicate documentation, CLP(R), AOT, tabling** — ✅ **Complete** (tagged `phase-7`; closure summary in [`docs/phase-7-closure.md`](docs/phase-7-closure.md)).
+**Phase 7 — Predicate documentation, CLP(R), AOT, tabling** — ✅ **Complete** (tagged `phase-7`; closure summary in [`docs/history/phase-7-closure.md`](docs/history/phase-7-closure.md)).
 - ✓ Generated user-facing predicate documentation (chunks 94, 95). Predicate
   doc metadata lives *next to each definition* — a category, a moded call
   template and a summary passed to `BuiltinsRegistry.Register` for C#
@@ -300,11 +305,9 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   Prolog library sources (prelude, CLP(FD)). The template names every
   parameter with its mode (e.g. `between(+Low, +High, ?X)`).
   `PredicateDoc.Generate()` walks all three sources, groups by area, and
-  emits `docs/predicates.md`. A unit test regenerates and fails if the
+  emits `docs/guide/predicates.md`. A unit test regenerates and fails if the
   committed file is stale; re-running the suite with the `SHUMWAY_REGEN_DOCS`
-  environment variable set rewrites it. (The hand-written
-  `docs/design/builtins-catalog.md` remains as a design-level catalogue for
-  now.)
+  environment variable set rewrites it.
 - ✓ Common library predicates, so typical Prolog programs run unchanged
   (chunks 96–98):
   - list utilities (chunk 96): `select/3`, `permutation/2`, `memberchk/2`,
@@ -319,7 +322,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
     `format_to_atom/3`.
   Most are pure Prolog in the prelude; `atom_number/2` and `number_string/2`
   are C# builtins (parse-or-fail). Each carries doc metadata, so all land in
-  `docs/predicates.md` automatically. Two engine fixes fell out of this work:
+  `docs/guide/predicates.md` automatically. Two engine fixes fell out of this work:
   `==/2` and `\==/2` now handle floats, and `retract/1` is re-satisfiable
   (ISO requires it to enumerate matching clauses on backtracking).
 - ✓ CLP(R) — constraints over the reals. Chunk 99 delivers the linear-equality
@@ -355,7 +358,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   bytecode. The REPL (`src/Shumway.Repl/`, `<PublishAot>true</PublishAot>`)
   is the publish target: `dotnet publish` produces a self-contained native
   `shumway` executable running the full engine, interpreter-only. See
-  [`docs/native-aot.md`](docs/native-aot.md) (incl. the Windows native-link
+  [`docs/guide/native-aot.md`](docs/guide/native-aot.md) (incl. the Windows native-link
   toolchain requirement).
 - ✓ Tabling (chunk 104). `:- table p/N` memoises a predicate. At consult time
   its clauses are re-headed to `'$tabled$p'/N` and a driver clause routes
@@ -409,7 +412,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   fixpoint deeper than ~1000 rounds (a very long recursive chain) overflows
   the control stack.
 
-**Phase 8 — Engine robustness** — ✅ **Complete** (tagged `phase-8`; closure summary in [`docs/phase-8-closure.md`](docs/phase-8-closure.md)).
+**Phase 8 — Engine robustness** — ✅ **Complete** (tagged `phase-8`; closure summary in [`docs/history/phase-8-closure.md`](docs/history/phase-8-closure.md)).
 
 Problems surfaced while building Phases 6–7, recorded here for a dedicated
 pass rather than patched ad hoc.
@@ -468,7 +471,7 @@ pass rather than patched ad hoc.
   below any mid-query assertz/retract, so it sees the database as of
   when its goal began. ADR-015 is complete.
 
-**Phase 9 — ISO conformance & error system** — ✅ **Complete** (tagged `phase-9`; closure summary in [`docs/phase-9-closure.md`](docs/phase-9-closure.md)).
+**Phase 9 — ISO conformance & error system** — ✅ **Complete** (tagged `phase-9`; closure summary in [`docs/history/phase-9-closure.md`](docs/history/phase-9-closure.md)).
 
 Brought Shumway's error reporting in line with what other ISO Prologs
 emit, and widened `Shumway.Tests.IsoConformance` from a 61-test
@@ -512,7 +515,7 @@ files). 24 new ISO-named builtins implemented along the way.
   ambiguity are recorded inline next to the tests that surface them;
   queued for Phase 10+.
 
-**Phase 10 — Engine robustness leftovers** — ✅ **Complete** (tagged `phase-10`; closure summary in [`docs/phase-10-closure.md`](docs/phase-10-closure.md)).
+**Phase 10 — Engine robustness leftovers** — ✅ **Complete** (tagged `phase-10`; closure summary in [`docs/history/phase-10-closure.md`](docs/history/phase-10-closure.md)).
 
 User-facing fixes first (chunks 144–149: richer error payload,
 cyclic-term safe walking, cut-vs-catch trail snapshots, parser
@@ -549,7 +552,7 @@ indexed dispatch:
 - → True in-place multi-arg extensible-indexed dispatch deferred
   to Phase 11.
 
-**Phase 11 — Multi-arg in-place indexing + persistent compaction** — ✅ **Complete** (tagged `phase-11`; closure summary in [`docs/phase-11-closure.md`](docs/phase-11-closure.md)).
+**Phase 11 — Multi-arg in-place indexing + persistent compaction** — ✅ **Complete** (tagged `phase-11`; closure summary in [`docs/history/phase-11-closure.md`](docs/history/phase-11-closure.md)).
 
 Two chunks closing Phase 10's deferred items:
 
@@ -573,7 +576,7 @@ Two chunks closing Phase 10's deferred items:
   query; subsequent queries start fresh at append-only growth.
   Recommended use is periodic, between top-level queries.
 
-**Phase 14 — Compiler / linker UX polish + `--exe`** — ✅ **Complete** (tagged `phase-14`; closure summary in [`docs/phase-14-closure.md`](docs/phase-14-closure.md)).
+**Phase 14 — Compiler / linker UX polish + `--exe`** — ✅ **Complete** (tagged `phase-14`; closure summary in [`docs/history/phase-14-closure.md`](docs/history/phase-14-closure.md)).
 
 Polish around the Phase 13 separate-compilation workflow plus a
 real `--exe` path. Eight chunks:
@@ -617,7 +620,7 @@ disambiguates to the indicator when followed by `/ <integer>`;
 `:- dynamic a/0, b/1, c/2.` (GNU comma-separated form) is now
 accepted alongside the single-indicator and list forms.
 
-**Phase 13 — Separate compilation + linker + user docs** — ✅ **Complete** (tagged `phase-13`; closure summary in [`docs/phase-13-closure.md`](docs/phase-13-closure.md)).
+**Phase 13 — Separate compilation + linker + user docs** — ✅ **Complete** (tagged `phase-13`; closure summary in [`docs/history/phase-13-closure.md`](docs/history/phase-13-closure.md)).
 
 Introduces the `.pl → .shmo → .shum` separate-compilation
 workflow and the user-facing documentation that ties the whole
@@ -660,7 +663,7 @@ tool family together. Eight chunks:
   the chunk-72 Bundler shape: `LinkAsync(LinkConfig,
   CancellationToken)`, `LinkFromFiles(paths, entries, ...)`,
   `LinkFromSources(...)`.
-- ✓ **166** — `docs/user-guide.md`. Comprehensive walkthrough:
+- ✓ **166** — `docs/guide/user-guide.md`. Comprehensive walkthrough:
   what ships in each project, building from source, running the
   REPL, embedding the engine (PrologEngine / Solution / Term /
   CLP opt-in / LoadBundle), the full separate-compilation flow
@@ -669,7 +672,7 @@ tool family together. Eight chunks:
   a pointer to `native-aot.md`.
 - ✓ **167** — Closure summary + tag.
 
-**Phase 12 — Auto-compaction + Tier-1 IL revisit** — ✅ **Complete** (tagged `phase-12`; closure summary in [`docs/phase-12-closure.md`](docs/phase-12-closure.md)).
+**Phase 12 — Auto-compaction + Tier-1 IL revisit** — ✅ **Complete** (tagged `phase-12`; closure summary in [`docs/history/phase-12-closure.md`](docs/history/phase-12-closure.md)).
 
 Two chunks closing out the auto-compaction and IL-promotion
 questions from Phase 11's deferred list:
@@ -693,11 +696,11 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
-**Phase 36 — the third-party ecosystem phase** — ✅ **Complete** (tagged `phase-36`; closure summary in [`docs/phase-36-closure.md`](docs/phase-36-closure.md)). 145 commits: library loading + scoped `:- module/2` (ADR-038), rationals (ADR-039), multi-dialect shims (ADR-040), the SWI (94/129) / Scryer (46/46, clpz certified at parity) / **Logtalk (192/194 runnable suites, 99.98% of 10,319 tests)** library campaign with every non-structural failure fixed as an engine bug — ADR-041 dispatch-time clause selection, the phantom-nondeterminism family in enumeration builtins (sub_atom/atom_concat/append/string_concat), bagof/setof witness grouping, existence_error object types, `nl` byte-faithful GNU parity, float `e+NN` — and the debugger's residual-constraints round (wire v8, VSIX 0.28): per-variable `⟨constraints⟩` rows in VS Locals + a DAP Constraints scope + attvar-aware Immediate/Debug Console via cross-activation attvar transplant.
+**Phase 36 — the third-party ecosystem phase** — ✅ **Complete** (tagged `phase-36`; closure summary in [`docs/history/phase-36-closure.md`](docs/history/phase-36-closure.md)). 145 commits: library loading + scoped `:- module/2` (ADR-038), rationals (ADR-039), multi-dialect shims (ADR-040), the SWI (94/129) / Scryer (46/46, clpz certified at parity) / **Logtalk (192/194 runnable suites, 99.98% of 10,319 tests)** library campaign with every non-structural failure fixed as an engine bug — ADR-041 dispatch-time clause selection, the phantom-nondeterminism family in enumeration builtins (sub_atom/atom_concat/append/string_concat), bagof/setof witness grouping, existence_error object types, `nl` byte-faithful GNU parity, float `e+NN` — and the debugger's residual-constraints round (wire v8, VSIX 0.28): per-variable `⟨constraints⟩` rows in VS Locals + a DAP Constraints scope + attvar-aware Immediate/Debug Console via cross-activation attvar transplant.
 
-**Phase 35 — ISO conformance (Neumerkel) + soft cut (ADR-037) + module-local meta-calls + REPL polish** — ✅ **Complete** (tagged `phase-35`; closure summary in [`docs/phase-35-closure.md`](docs/phase-35-closure.md)). 61 commits. (1) ISO reader/writer conformance driven by Neumerkel's suites — writeq/write_term token-adjacency + operator/list parenthesisation, number_chars/number_codes §8.16.8 via a term-reader fallback, reader edge cases (radix lowercase-only, line-continuation, control chars, §6.3.1.3 bare operator-atom), directives-as-goals (§7.4.2), coroutining `when`/`?=`/`unifiable` + `dif/2`; scores number_chars 67/67, variable_names 63/63, dif 26/26, syntax 201/202 (only #106 diverges). (2) **ADR-037 soft cut `*->/2` end to end** — `soft_cut` opcode (mirrors GProlog's, verified by pl2wam disasm) with Tier-0 + Tier-1 IL, inline + non-eligible (synthesized soft-cut helper + runtime `$call_disj`/`$call_softarrow`), `time/1` determinate; fixed a nested-branch-cut crash and a **latent `->` bug** (runtime-built `( true -> a ; b )` ran both branches — `DistributeMqual`/`WrapGoal`). (3) Module-local predicates meta-called by name in linked bundles resolve via `$mqual` module-relative tagging (interpreter + IL); findall/bagof/setof variable-goal fallbacks run live. (4) REPL: fresh-line answers via output-column tracking (redirection-safe), default Tier-1 IL auto-promote at threshold 32. Closing ISO §7.8/§8 audit: every ISO construct/builtin executes; `*->` was the only "parses but doesn't run" gap. Gate: Core 444 / Interpreter 105 / Compiler 360 / ISO 298 / Embedding 3424.
+**Phase 35 — ISO conformance (Neumerkel) + soft cut (ADR-037) + module-local meta-calls + REPL polish** — ✅ **Complete** (tagged `phase-35`; closure summary in [`docs/history/phase-35-closure.md`](docs/history/phase-35-closure.md)). 61 commits. (1) ISO reader/writer conformance driven by Neumerkel's suites — writeq/write_term token-adjacency + operator/list parenthesisation, number_chars/number_codes §8.16.8 via a term-reader fallback, reader edge cases (radix lowercase-only, line-continuation, control chars, §6.3.1.3 bare operator-atom), directives-as-goals (§7.4.2), coroutining `when`/`?=`/`unifiable` + `dif/2`; scores number_chars 67/67, variable_names 63/63, dif 26/26, syntax 201/202 (only #106 diverges). (2) **ADR-037 soft cut `*->/2` end to end** — `soft_cut` opcode (mirrors GProlog's, verified by pl2wam disasm) with Tier-0 + Tier-1 IL, inline + non-eligible (synthesized soft-cut helper + runtime `$call_disj`/`$call_softarrow`), `time/1` determinate; fixed a nested-branch-cut crash and a **latent `->` bug** (runtime-built `( true -> a ; b )` ran both branches — `DistributeMqual`/`WrapGoal`). (3) Module-local predicates meta-called by name in linked bundles resolve via `$mqual` module-relative tagging (interpreter + IL); findall/bagof/setof variable-goal fallbacks run live. (4) REPL: fresh-line answers via output-column tracking (redirection-safe), default Tier-1 IL auto-promote at threshold 32. Closing ISO §7.8/§8 audit: every ISO construct/builtin executes; `*->` was the only "parses but doesn't run" gap. Gate: Core 444 / Interpreter 105 / Compiler 360 / ISO 298 / Embedding 3424.
 
-**Phase 34 — Source-level debugger: Visual Studio + VS Code (ADR-035 / ADR-036)** — ✅ **Complete** (tagged `phase-34`; closure summary in [`docs/phase-34-closure.md`](docs/phase-34-closure.md)).
+**Phase 34 — Source-level debugger: Visual Studio + VS Code (ADR-035 / ADR-036)** — ✅ **Complete** (tagged `phase-34`; closure summary in [`docs/history/phase-34-closure.md`](docs/history/phase-34-closure.md)).
 
 One engine-side debug core, two full IDE frontends, every deployment shape (REPL
 `--debug`, embedded `EnableDebugging`, linked `--exe --debug`). **ADR-035** (VS 2026
@@ -713,13 +716,13 @@ hold-the-door), Debug Console = Immediate, `setVariable`, Jump to Cursor, logpoi
 surfaced and fixed a real arm-vs-consult data race in the core (consult under the
 debug-arm gate). Verified IDE-less by xUnit DAP clients over real sockets in the normal
 gate. Pending: a Linux end-to-end smoke when a box exists (everything is xplat by
-construction); `docs/debugger.md` + `docs/debugger-vscode.md` are the user guides.
+construction); `docs/guide/debugger.md` + `docs/guide/debugger-vscode.md` are the user guides.
 
-**Phase 33 — Audit remediation + real-program rounds + the cut/tail-call arc** — ✅ **Complete** (tagged `phase-33`; closure summary in [`docs/phase-33-closure.md`](docs/phase-33-closure.md)).
+**Phase 33 — Audit remediation + real-program rounds + the cut/tail-call arc** — ✅ **Complete** (tagged `phase-33`; closure summary in [`docs/history/phase-33-closure.md`](docs/history/phase-33-closure.md)).
 
 Opened as audit remediation round 1 — five waves attacking the six-way audit
 of 2026-06-30 (backlog closed 65/66 in
-[`docs/phase-33-backlog.md`](docs/phase-33-backlog.md); the one open item is
+[`docs/history/phase-33-backlog.md`](docs/history/phase-33-backlog.md); the one open item is
 the dump-armed intermittent native AV, whose likeliest cause —
 `_emitOwnerFid` plain-static under concurrent compiles — was found and
 fixed) — and grew into the largest phase to date (138 commits):
@@ -754,7 +757,7 @@ fixed) — and grew into the largest phase to date (138 commits):
   grounds). Two latent soundness fixes shipped along the way (lazy-CP
   clobbered-register patch via `SetTopCpArgRegister`; the mixed-cycle rule).
 
-**Phase 32 — ADR-024 materializer ↔ dematerializer tier** — ✅ **Complete** (tagged `phase-32`; closure summary in [`docs/phase-32-closure.md`](docs/phase-32-closure.md)).
+**Phase 32 — ADR-024 materializer ↔ dematerializer tier** — ✅ **Complete** (tagged `phase-32`; closure summary in [`docs/history/phase-32-closure.md`](docs/history/phase-32-closure.md)).
 
 Attacks ADR-024's deferred TODO: whole-term interop for the case the cursor tier
 doesn't cover — when C# is only a **trampoline to a native C function** (P/Invoke,
@@ -875,7 +878,7 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   read-back values through an array the emitted method stores into its block-locals
   (`PInvokeFromIl`'s `outScalars` channel), so a native call with these params
   compiles instead of bailing. Memory ownership documented in
-  [generic-term-interop §10](docs/generic-term-interop.md): Shumway owns + frees the
+  [generic-term-interop §10](docs/guide/generic-term-interop.md): Shumway owns + frees the
   out-scalar slot and the `char**` cell (call-scoped); the pointed-to / returned
   `char*` is **borrowed** (native-owned, copied out, never freed) — a `malloc`'d
   return would leak, by design (caller-owns would need an explicit paired-free
@@ -894,7 +897,7 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   by a lock) and shared across engines, instead of one `NativeLibrary.Load` per engine
   — the old per-engine load leaked an OS refcount per engine under churn. The mapping
   is never freed (lives to process exit). Documented the contract in
-  [generic-term-interop §10e](docs/generic-term-interop.md): `:- native` calls are
+  [generic-term-interop §10e](docs/guide/generic-term-interop.md): `:- native` calls are
   **not serialized** (a parallel multi-engine caller needs a reentrant library;
   borrowed static-buffer returns race), and native global state is process-global and
   **not** reset between engines. Test: two engines loading the same path trigger one
@@ -904,7 +907,7 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   interpreter + IL) with the ownership + lifetime/thread-safety model documented and
   the deployment chain (`--native-dll` → `--exe` / `--dll`) verified end-to-end.
 
-**Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
+**Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/history/phase-31-closure.md`](docs/history/phase-31-closure.md)).
 
 Opened with two user-named themes (REPL line editing; a linker `--dll`) and grew,
 through review, into a native-interop correctness arc plus a test-discipline fix.
@@ -933,7 +936,7 @@ Core 432 / Interpreter 105 / ISO 277.
   mutually exclusive; `--dll` needs a reachability root (`--entry`/`--goal`) like
   any link. Verified end-to-end: a consumer .NET app referenced the generated
   `Greeter.dll`, called `Greeter.Bundle.CreateEngine()`, ran `greet(X)`, got
-  `hello`/`world`. Documented in `docs/user-guide.md` step 3b. 16 LibraryEmitterTests
+  `hello`/`world`. Documented in `docs/guide/user-guide.md` step 3b. 16 LibraryEmitterTests
   (namespace/identifier inference — the full build path is manually verified, too
   heavy for the unit suite, matching the `--exe` precedent). Gate Embedding 2558.
 
@@ -980,7 +983,7 @@ Core 432 / Interpreter 105 / ISO 277.
   Full 5-project gate now green: Core 432 / Interpreter 105 / Embedding 2564 /
   Compiler 302 / ISO 277.)
 
-**Phase 30 — Arity/Prolog32 compatibility, round 2** — ✅ **Complete** (tagged `phase-30`; closure summary in [`docs/phase-30-closure.md`](docs/phase-30-closure.md)).
+**Phase 30 — Arity/Prolog32 compatibility, round 2** — ✅ **Complete** (tagged `phase-30`; closure summary in [`docs/history/phase-30-closure.md`](docs/history/phase-30-closure.md)).
 
 Widened the Phase-24 Arity source-compat work, driven by the reference material
 at `C:\Arity` and real Arity programs (`C:\temp\test` 245, `testGen` 311,
@@ -1046,7 +1049,7 @@ literal arcs. Gate at close: Embedding 2542 / Compiler 302 / Core 432 / ISO 277.
   provides (foreign wins, like a builtin). 8 LinkLibraryTests (2 new); gate
   Embedding 2365 / Core 432 / Compiler 284 / ISO 277, all green.
 
-**Phase 29 — region compilation shipped + engine correctness/runtime arc** — ✅ **Complete** (tagged `phase-29`; closure summary in [`docs/phase-29-closure.md`](docs/phase-29-closure.md)).
+**Phase 29 — region compilation shipped + engine correctness/runtime arc** — ✅ **Complete** (tagged `phase-29`; closure summary in [`docs/history/phase-29-closure.md`](docs/history/phase-29-closure.md)).
 
 Opened as Tier-1 rule inlining (chunk-364 survey); the user's REGION COMPILATION
 model (each local predicate's body emitted once inside the caller's IL method,
@@ -1066,7 +1069,7 @@ runs; format freeze + `[Conditional("SHUMWAY_DIAG")]` diagnostics. The chunk-404
 unlink corruption was fully post-mortemed (two distinct defects) and its shapes
 pinned by a churn regression suite.
 
-**Phase 28 — real-program validation corpus + Tier-1 IL runtime speed** — ✅ **Complete** (tagged `phase-28`; closure summary in [`docs/phase-28-closure.md`](docs/phase-28-closure.md)).
+**Phase 28 — real-program validation corpus + Tier-1 IL runtime speed** — ✅ **Complete** (tagged `phase-28`; closure summary in [`docs/history/phase-28-closure.md`](docs/history/phase-28-closure.md)).
 
 Began as a GProlog-oracle validation corpus (real third-party Prolog, diffed
 against GNU Prolog) and became a sustained Tier-1 IL runtime-speed arc — the
@@ -1083,7 +1086,7 @@ phase's measurement lesson. The chunk-364 survey scopes Phase 29 (rule
 inlining). Carried discipline: trust the structural argument over thermal-noisy
 wall-clock; measure interleaved min-of-N.
 
-**Phase 27 — Tier-1 IL bundle slimming + non-last nested inline + cleanup** — ✅ **Complete** (tagged `phase-27`; closure summary in [`docs/phase-27-closure.md`](docs/phase-27-closure.md)).
+**Phase 27 — Tier-1 IL bundle slimming + non-last nested inline + cleanup** — ✅ **Complete** (tagged `phase-27`; closure summary in [`docs/history/phase-27-closure.md`](docs/history/phase-27-closure.md)).
 
 A mixed phase, four themes in order 1,3,4,2 (chunks 316–326 plus letter chunks
 B/C). **Theme 1 — `--strip-wam`**: a Tier-1 IL bundle drops its now-redundant WAM
@@ -1112,11 +1115,11 @@ GC watermark so the per-goal path stays free — heap-bounded loops uncancellabl
 by design). The other two Phase-21 items were already done in Phase 22 (modes
 ch246, `IEnumerable<T>` non-det foreigns ch244).
 
-**Phase 26 — WAM codegen quality (Blint vs GProlog)** — ✅ **Complete** (tagged `phase-26`; closure summary in [`docs/phase-26-closure.md`](docs/phase-26-closure.md)).
+**Phase 26 — WAM codegen quality (Blint vs GProlog)** — ✅ **Complete** (tagged `phase-26`; closure summary in [`docs/history/phase-26-closure.md`](docs/history/phase-26-closure.md)).
 
 Drove a predicate-by-predicate comparison of our WAM against GNU Prolog's
 `pl2wam` on Blint (a real ~2570-line program;
-[`docs/wam-vs-gprolog-blint.md`](docs/wam-vs-gprolog-blint.md)). End state: over
+[`docs/history/wam-vs-gprolog-blint.md`](docs/history/wam-vs-gprolog-blint.md)). End state: over
 the 89 Blint predicates `pl2wam` compiles, Shumway emits **3319 non-index WAM
 instructions vs GProlog's 3769 (−12%)** — ahead of or at parity on every shape,
 and beating GProlog on arithmetic, clause-prologue fusion and CSE. Nine chunks
@@ -1137,7 +1140,7 @@ does NOT keep cross-arithmetic vars in X registers — our conservative model
 already matched it and our inline `a_int_*` beats it (see
 `chunk-model-refinement-failed`).
 
-**Phase 25 — Benchmark harness + ADR-017/018 (representation + arithmetic)** — ✅ **Complete** (tagged `phase-25`; state captured in `docs/wam-vs-gprolog-blint.md` and the Phase 26 closure).
+**Phase 25 — Benchmark harness + ADR-017/018 (representation + arithmetic)** — ✅ **Complete** (tagged `phase-25`; state captured in `docs/history/wam-vs-gprolog-blint.md` and the Phase 26 closure).
 
 Performance phase preceding the codegen work. Deliverables: the Van Roy
 multi-engine benchmark harness (`--alloc` deterministic cell metric + hyperfine
@@ -1153,7 +1156,7 @@ discipline established here and carried forward: trust the deterministic
 (this laptop has ~40% thermal variance — a byte-identical `nreverse` swings that
 much between back-to-back runs).
 
-**Phase 24 — Arity-Prolog compatibility primitives** — ✅ **Complete** (tagged `phase-24`; closure summary in [`docs/phase-24-closure.md`](docs/phase-24-closure.md)).
+**Phase 24 — Arity-Prolog compatibility primitives** — ✅ **Complete** (tagged `phase-24`; closure summary in [`docs/history/phase-24-closure.md`](docs/history/phase-24-closure.md)).
 
 Ten chunks (263–274 with 269/270 dropped) bringing Arity-Prolog source-compat: snips `[! G !]`, save_state/restore_state, `:- visible` directive alias, recorded database, Edinburgh-style I/O, file_list, file-system ops, pseudo-random, expand_term/2, string_term/string_termq/string_search, and a few smaller pieces. Selection driven by Arity's actual predicate listing (`C:\Arity\doc\ARITY.HLP.txt`), not generic Prolog folklore.
 
@@ -1170,7 +1173,7 @@ Ten chunks (263–274 with 269/270 dropped) bringing Arity-Prolog source-compat:
 
 ~70 new tests, full suite at phase close ~3066 tests with 0 failures. Bundle format bumped V5→V6 (backward-compatible).
 
-**Phase 23 — REPL UX polish, listing, residual constraint display, warnings cleanup** — ✅ **Complete** (tagged `phase-23`; closure summary in [`docs/phase-23-closure.md`](docs/phase-23-closure.md)).
+**Phase 23 — REPL UX polish, listing, residual constraint display, warnings cleanup** — ✅ **Complete** (tagged `phase-23`; closure summary in [`docs/history/phase-23-closure.md`](docs/history/phase-23-closure.md)).
 
 Fourteen chunks (249–262). Originally scoped as engine robustness focused on a `retract/1` Blint bug recorded in memory; verification showed the bug had been fixed incidentally during chunks 235-248 (memory updated). With the obvious correctness target gone, pivoted to REPL UX — and expanded as each landed chunk surfaced something else worth fixing while the surface was still fresh.
 
@@ -1186,7 +1189,7 @@ New public surfaces (262): `PrologEngine.ParseGoal(string)` returns `(Term, IRea
 
 ~60 new tests, 0 failures, no engine invariants modified.
 
-**Phase 22 — Foreign-predicate toolchain (mode-aware sigs + --foreign-dll across compile/link/run)** — ✅ **Complete** (tagged `phase-22`; closure summary in [`docs/phase-22-closure.md`](docs/phase-22-closure.md)).
+**Phase 22 — Foreign-predicate toolchain (mode-aware sigs + --foreign-dll across compile/link/run)** — ✅ **Complete** (tagged `phase-22`; closure summary in [`docs/history/phase-22-closure.md`](docs/history/phase-22-closure.md)).
 
 Three chunks (246–248) taking chunk-237/242's `[PrologPredicate]` from "works in-process" to "works through the full shumway-compile / shumway-link / shumway-exe pipeline":
 
@@ -1196,7 +1199,7 @@ Three chunks (246–248) taking chunk-237/242's `[PrologPredicate]` from "works 
 
 End state: the compiler emits unresolved external references with generic `Call`/`Execute`; the linker decides how to materialise each (native address, foreign builtin id). Standard separation-of-concerns the user flagged on review of chunk 247.
 
-**Phase 21 — C# integration (ADR-010 embedding API surface)** — ✅ **Complete** (tagged `phase-21`; closure summary in [`docs/phase-21-closure.md`](docs/phase-21-closure.md)).
+**Phase 21 — C# integration (ADR-010 embedding API surface)** — ✅ **Complete** (tagged `phase-21`; closure summary in [`docs/history/phase-21-closure.md`](docs/history/phase-21-closure.md)).
 
 Eleven chunks (235–245) delivering the bulk of ADR-010's embedding API. Three threads:
 
@@ -1208,7 +1211,7 @@ End-state lets a typical embedding look like `engine.RegisterPredicates(new Serv
 
 Deferred: `EnginePool`, async `IAsyncEnumerable<Solution>` query API (cooperative cancellation via safe points), SWI-style `ForeignContext.IsFirstCall` / `State` for predicates that don't fit the `IEnumerable<T>` generator mold, mode declarations for multi-output foreigns.
 
-**Phase 20 — Heap GC + Tier-1 IL completeness + dispatch perf + user-IL bundle** — ✅ **Complete** (tagged `phase-20`; closure summary in [`docs/phase-20-closure.md`](docs/phase-20-closure.md)).
+**Phase 20 — Heap GC + Tier-1 IL completeness + dispatch perf + user-IL bundle** — ✅ **Complete** (tagged `phase-20`; closure summary in [`docs/history/phase-20-closure.md`](docs/history/phase-20-closure.md)).
 
 Largest phase to date by chunk count (210–234, with the ADR-016 GC series interleaving its own 210–217 sub-numbering). Four threads:
 
@@ -1221,7 +1224,7 @@ Other Phase 20 work: chunk 213 lock-free `AtomTable.Intern` permanent fast path 
 
 Deferred to a future phase: Stage B.4 (runtime promotion mutation Call → CallIl); IL inlining of `ResolveEntryCursor` decode; WAM stripping for bundled-IL predicates (~40% bundle-size win for IL-heavy programs); background-thread `Assembly.Load` for Tier-1 startup.
 
-**Phase 19 — IL meta-call dispatcher** — ✅ **Complete** (tagged `phase-19`; closure summary in [`docs/phase-19-closure.md`](docs/phase-19-closure.md)).
+**Phase 19 — IL meta-call dispatcher** — ✅ **Complete** (tagged `phase-19`; closure summary in [`docs/history/phase-19-closure.md`](docs/history/phase-19-closure.md)).
 
 Closes the last gap in Tier-1 IL coverage — `call/N` and `'$call'/2` are now IL-emittable, removing the chunk-201 gate. `IlMetaCallHelper.Dispatch` mirrors the bytecode interpreter's `DispatchCall` (chunks 86, 88): derefs the runtime goal, routes control constructs to `$call_*` helpers, intercepts `!`/`true`/`fail` inline, recurses for `call(call(...))`. The emit threads the dispatch through chunk-182 with a last-call optimisation — when the CallBuiltin is followed by Proceed, Cp is left alone so the called goal's proceed jumps straight back to the outer caller (the original cut at Cp = resume_marker trapped in an infinite loop).
 
@@ -1236,7 +1239,7 @@ Blint Tier-1 IL: 7.9s vs Tier-0 9.2s (3-run median).
 - ✓ **208** — bundle/linker UX: `--exe` no longer requires `-o`; help text and the stale chunk-172 `--strip` caveat corrected. (The LoadBundle fast-path *widening* part of 208 was reverted — it surfaced the chunk-209 bug below.)
 - ✓ **209** — **`:- dynamic foo/N.` predicates with source clauses now dispatch from a bundle.** Root cause: ShmoCompiler compiled a dynamic predicate's clauses as *static* bytecode, but `LoadEntryFromBytecode` registered the functor dynamic + empty `_dynamicClauses`, so dispatch hit an empty trampoline (Blint's `:- dynamic main/0.` returned `false`). Fix has four parts: (1) new `TermCodec` serialises clause terms to a compact binary form; (2) ShmoCompiler peels dynamic-head clauses out of the static bytecode into a `.shmo`/`.shum` **DynamicSeeds** trailer (`.shmo` V3, `.shum` V4) — `LoadEntryFromBytecode` rehydrates them into `_dynamicClauses` exactly as ConsultString does; (3) `CollectCalls` now descends into `catch`/`findall`/`bagof`/`setof`/`forall`/`once`/`ignore` goal args so callees inside a protected goal stay reachable; (4) ShmoObject's `ModuleName` is `DefaultModuleName` ("user") when the source has no `:- module/1` directive (was the file name) — and bundle-local fids feed `userLocalsCache` — so the dynamic-clause `ModuleRewrite` mangles body calls consistently with the static bytecode. Blint now runs end-to-end from both a `.shum` bundle and a `--strip --exe` native executable.
 
-**Phase 18 — Bundle ergonomics + IL correctness + Tier-1 perf** — ✅ **Complete** (tagged `phase-18`; closure summary in [`docs/phase-18-closure.md`](docs/phase-18-closure.md)).
+**Phase 18 — Bundle ergonomics + IL correctness + Tier-1 perf** — ✅ **Complete** (tagged `phase-18`; closure summary in [`docs/history/phase-18-closure.md`](docs/history/phase-18-closure.md)).
 
 Four issues that Phase 17 surfaced (or the user flagged) while running Blint end-to-end via `shumway-link --with-compiled-il`:
 
@@ -1247,7 +1250,7 @@ Four issues that Phase 17 surfaced (or the user flagged) while running Blint end
 
 Blint via persisted IL bundle now runs in 8.4s vs Tier-0 bundle 9.1s — IL is the fastest configuration and produces the correct answer end-to-end.
 
-**Phase 17 — Cross-process persisted Tier-1 IL** — ✅ **Complete** (tagged `phase-17`; closure summary in [`docs/phase-17-closure.md`](docs/phase-17-closure.md)).
+**Phase 17 — Cross-process persisted Tier-1 IL** — ✅ **Complete** (tagged `phase-17`; closure summary in [`docs/history/phase-17-closure.md`](docs/history/phase-17-closure.md)).
 
 Persisted Tier-1 IL bundles produced by `shumway-link --with-compiled-il` now run **correctly in a fresh process**. Pre-Phase 17 the IL baked each functor/atom id as an inline `ldc.i4` constant; the build process accumulated `AtomTable` / `FunctorTable` interns the run process doesn't, so those integers pointed at the wrong functors at runtime (symptom on Blint: ~10× faster than Tier-0 but wrong answer). Phase 17 makes persisted IL **name-relative**: emit writes sentinel constants and a side-channel patch table; `LoadBundle` rewrites each sentinel's four bytes to the runtime id before `Assembly.Load`. Per-dispatch overhead is zero — the JIT sees normal inline immediates.
 
@@ -1259,7 +1262,7 @@ Persisted Tier-1 IL bundles produced by `shumway-link --with-compiled-il` now ru
 - ✓ **198** — Test harness (`PePatchPrototype`, `PePatchEndToEnd`).
 - ✓ **199** — Closure + tag.
 
-**Phase 16 — Tier-1 IL threading** — ✅ **Complete** (tagged `phase-16`; closure summary in [`docs/phase-16-closure.md`](docs/phase-16-closure.md)).
+**Phase 16 — Tier-1 IL threading** — ✅ **Complete** (tagged `phase-16`; closure summary in [`docs/history/phase-16-closure.md`](docs/history/phase-16-closure.md)).
 
 The chunk-50 Tier-1 IL Call site used to recurse into the bytecode
 interpreter via `IlSubroutineRunner` → `RunSubroutine` →
@@ -1306,7 +1309,7 @@ Architectural goal met: deep call chains no longer blow C#'s
 stack. The remaining ~8× Blint slowdown under `promote=32` is
 *not* the floor pin — it's elsewhere (likely the per-Call
 `OnDispatch` dictionary lookup or the linear cursor-switch in
-the IL delegate's top). Follow-ups in `docs/phase-16-closure.md`.
+the IL delegate's top). Follow-ups in `docs/history/phase-16-closure.md`.
 
 ---
 
@@ -1366,5 +1369,4 @@ When proposing changes:
 | Multi-dialect library shims + per-module attribute hook ("unite worlds") — ACCEPTED, core implemented (per-search-path threading D5.2, content sniff D5.3, fuller SWI pack deferred): load libraries from different Prolog systems (Scryer, SWI, …) side by side in one engine. Dialect is a per-SUBTREE resolution context (travels with each top-level `use_module`'s dependency graph: name map + `double_quotes` + atts API), NOT a sticky engine mode — so `clpz`(Scryer)+`http`(SWI) coexist. Shims become dialect-scoped export-qualified modules (ADR-038 namespacing → `scryer$format`/`swi$format` coexist), replacing the flat Scryer-only `CompatLibraries` switch. `verify_attributes(Module,…)` formalised as THE hook, dispatched PER attribute module — removes the bare-global-public collision, so the "CLP(R)/CLP(FD) cannot share an engine" restriction is LIFTED. No dialect-level conflict guard; only genuine same-bare-global collisions error (`ValidatePublicUniqueness`). Selection layered: explicit flag/CLI/API > per-search-path tag > announced content-sniff (deferred). Breaking changes OK (private repo) IF docs track the new state | ADR-040 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
-| Builtins catalog | docs/design/builtins-catalog.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

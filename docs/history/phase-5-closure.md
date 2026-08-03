@@ -17,7 +17,7 @@ document records what landed and what was deliberately left out.
 
 ## Deliverables checklist
 
-Tracking the Phase 5 list from [`CLAUDE.md`](../CLAUDE.md).
+Tracking the Phase 5 list from [`CLAUDE.md`](../../CLAUDE.md).
 
 | Deliverable | Status | Implementing work |
 |-------------|--------|-------------------|

@@ -294,7 +294,7 @@ fmt(In, Out) :-
   your C# only forwards to a native C function (P/Invoke), that C cannot touch the
   Shumway heap — the **materializer tier** (§10) copies a term to and from a
   physical `Reftype` struct for that case. See
-  [ADR-024](architecture/adr/024-generic-term-interop.md).
+  [ADR-024](../architecture/adr/024-generic-term-interop.md).
 
 ---
 

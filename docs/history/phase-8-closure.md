@@ -20,7 +20,7 @@ diagnosis was wrong.
 
 ## Deliverables checklist
 
-Tracking the Phase 8 backlog from [`CLAUDE.md`](../CLAUDE.md).
+Tracking the Phase 8 backlog from [`CLAUDE.md`](../../CLAUDE.md).
 
 | Deliverable | Status | Implementing work |
 |-------------|--------|-------------------|
@@ -61,7 +61,7 @@ and was retired wholesale by chunk 128; chunk D was obviated en route.
   - `Shumway.Tests.Compiler` — 232 (+10)
   - `Shumway.Tests.IsoConformance` — 61
   - `Shumway.Tests.Embedding` — 1202 (+50)
-- **One new ADR** ([ADR-015](architecture/adr/015-persistent-code-space.md)).
+- **One new ADR** ([ADR-015](../architecture/adr/015-persistent-code-space.md)).
 - **Three new opcodes** — `nop` (0x56, 1 byte), `enter_dynamic` (0x66,
   1 byte), `check_visible` (0x67, 17 bytes — two 8-byte operands).
 - **CP frame grew by one slot** (`ViewGen`); ADR-005 updated.

@@ -5,7 +5,7 @@ files, a call stack of your own predicates, the variables of each frame, and ste
 through the four Prolog ports. When your program calls out to C# or to native C, those
 frames appear in the *same* stack, above the Prolog frames that called them.
 
-Design and rationale: [ADR-035](architecture/adr/035-source-level-debugger.md).
+Design and rationale: [ADR-035](../architecture/adr/035-source-level-debugger.md).
 
 ---
 

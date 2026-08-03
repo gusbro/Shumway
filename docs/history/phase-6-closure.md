@@ -15,7 +15,7 @@ records what shipped and what was deliberately left out.
 
 ## Deliverables checklist
 
-Tracking the Phase 6 list from [`CLAUDE.md`](../CLAUDE.md).
+Tracking the Phase 6 list from [`CLAUDE.md`](../../CLAUDE.md).
 
 | Deliverable | Status | Implementing work |
 |-------------|--------|-------------------|

@@ -6,7 +6,7 @@ interactively, embed the engine in a .NET application, and ship
 precompiled Prolog programs as deployable bundles.
 
 For internal design see
-[`architecture/overview.md`](architecture/overview.md) and the ADRs in
+[`architecture/overview.md`](../architecture/overview.md) and the ADRs in
 [`architecture/adr/`](architecture/adr/). For the predicate library
 reference see [`predicates.md`](predicates.md).
 

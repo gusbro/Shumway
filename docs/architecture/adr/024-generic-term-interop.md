@@ -195,7 +195,7 @@ be bolted on without reworking the cursor. **Not implemented now.**
 
 ## Documentation (required at implementation close)
 
-Done — the programmer-facing guide is [`docs/generic-term-interop.md`](../../generic-term-interop.md):
+Done — the programmer-facing guide is [`docs/generic-term-interop.md`](../../guide/generic-term-interop.md):
 declaring `reftype` term slots (including one's own), the `fill_par` /
 `reftype_term` flow, both accessor APIs (native Shumway + the `*_c` compatibility
 layer) with a worked C# example each, the ntype codes, and the build-cursor

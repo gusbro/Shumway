@@ -3,7 +3,7 @@
 > **Design-time snapshot (2026-05).** The embedding surface has grown since
 > (CLP opt-ins `UseClpfd`/`UseClpr`, native interop `UseNativeLibrary`/`Reftype`,
 > debugging `EnableDebugging`/`DebugOptions`, `EnginePool`, async queries).
-> The XML docs on `PrologEngine` and [`../user-guide.md`](../user-guide.md) are
+> The XML docs on `PrologEngine` and [`../user-guide.md`](../guide/user-guide.md) are
 > the current reference; this file covers the v1 core, which is unchanged.
 
 This document is the exhaustive reference for Shumway's public .NET API. It complements ADR-010 by providing complete signatures, parameter descriptions, exceptions, and examples for every public type.

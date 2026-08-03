@@ -15,7 +15,7 @@ was deferred to Phase 3, and the shape of the codebase at closure.
 
 ## Deliverables checklist
 
-Tracking the Phase 2 list from [`CLAUDE.md`](../CLAUDE.md).
+Tracking the Phase 2 list from [`CLAUDE.md`](../../CLAUDE.md).
 
 | Deliverable | Status | Implementing chunk |
 |-------------|--------|--------------------|

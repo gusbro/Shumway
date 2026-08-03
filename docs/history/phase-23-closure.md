@@ -327,7 +327,7 @@ Phase 23 was originally scoped as "engine robustness / correctness"
 focused on the recorded `retract/1` Blint bug. Verification at the
 start of the phase showed the bug had been fixed incidentally
 (memory updated to reflect this — see
-[`retract-blint-bug.md`](../../Users/gbrow/.claude/projects/C--claude-Shumway/memory/retract-blint-bug.md)).
+`retract-blint-bug.md` (project memory, outside the repo)).
 With the obvious correctness target gone and the ISO conformance
 suite already clean at 275/275, the phase pivoted to REPL UX —
 which had real day-to-day pain (no history, no editing, no

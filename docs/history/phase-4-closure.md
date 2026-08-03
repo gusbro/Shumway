@@ -28,7 +28,7 @@ pointers to the chunks, and what carries forward.
 
 ## Deliverables checklist
 
-Tracking the Phase 4 list from [`CLAUDE.md`](../CLAUDE.md) as it stood at
+Tracking the Phase 4 list from [`CLAUDE.md`](../../CLAUDE.md) as it stood at
 the start of the phase.
 
 | Deliverable | Status | Notes |

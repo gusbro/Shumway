@@ -16,7 +16,7 @@ was deliberately left out.
 
 ## Deliverables checklist
 
-Tracking the Phase 7 list from [`CLAUDE.md`](../CLAUDE.md).
+Tracking the Phase 7 list from [`CLAUDE.md`](../../CLAUDE.md).
 
 | Deliverable | Status | Implementing work |
 |-------------|--------|-------------------|
@@ -69,7 +69,7 @@ template and a summary, passed to `BuiltinsRegistry.Register` for C#
 builtins and written as a structured `%! Template | Category | Summary`
 comment in the Prolog library sources. `PredicateDoc.Generate()` walks
 all three sources, groups by area and emits
-[`docs/predicates.md`](predicates.md). A unit test regenerates and
+[`docs/predicates.md`](../guide/predicates.md). A unit test regenerates and
 fails if the committed file is stale (`SHUMWAY_REGEN_DOCS` rewrites it).
 
 ### Common library predicates (chunks 96–98)
@@ -109,7 +109,7 @@ is runtime code generation, so it is cleanly skipped under AOT —
 `IlPromotionStore` checks `RuntimeFeature.IsDynamicCodeSupported` and
 never constructs the IL compiler. The REPL (`<PublishAot>true</PublishAot>`)
 is the publish target: `dotnet publish` yields a self-contained native
-`shumway`. See [`docs/native-aot.md`](native-aot.md).
+`shumway`. See [`docs/native-aot.md`](../guide/native-aot.md).
 
 ### Tabling (chunks 104–109)
 
@@ -156,7 +156,7 @@ the table lives in the runtime dynamic store, read with `clause/2`.
 ## Deferred — to Phase 8
 
 Phase 7 surfaced a cluster of engine-robustness issues, recorded in the
-**Phase 8 — Engine robustness** backlog in [`CLAUDE.md`](../CLAUDE.md):
+**Phase 8 — Engine robustness** backlog in [`CLAUDE.md`](../../CLAUDE.md):
 
 - **No last-call optimisation** — a deep tail-recursive predicate grows
   the control stack; this is the root cause of the tabling

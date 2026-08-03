@@ -8,7 +8,7 @@ Phase 20 is the largest phase to date by chunk count (210–234, with
 the ADR-016 GC series interleaving its own 210–217 sub-numbering)
 and covers four largely independent threads of work:
 
-1. **ADR-016 — Heap garbage collection** ([`ADR-016`](architecture/adr/016-heap-garbage-collection.md)).
+1. **ADR-016 — Heap garbage collection** ([`ADR-016`](../architecture/adr/016-heap-garbage-collection.md)).
 2. **Tier-1 IL completeness for indexed dispatch + deep cut**.
 3. **Opcode-dispatch fast paths** (Stage A peephole → Stage B
    link-time rewrites).

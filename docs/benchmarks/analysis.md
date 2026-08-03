@@ -33,8 +33,7 @@ Two tiers, both measured, both competitive:
 
 (Same-machine, different-day numbers; ±20–40 % thermal variance applies to
 any single cell, but 2–5× is far beyond noise, and the cross-engine ratios —
-measured back-to-back within one run — confirm the direction. Prior full
-table archived in [`baseline-2026-06-04.md`](baseline-2026-06-04.md).)
+measured back-to-back within one run — confirm the direction. )
 
 ### Tier-1 (persisted region IL) vs Tier-0
 

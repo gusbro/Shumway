@@ -15,7 +15,7 @@ shape of the codebase at closure.
 
 ## Deliverables checklist
 
-Tracking the Phase 1 list from [`CLAUDE.md`](../CLAUDE.md).
+Tracking the Phase 1 list from [`CLAUDE.md`](../../CLAUDE.md).
 
 | Deliverable | Status | Implementing chunks |
 |-------------|--------|---------------------|

@@ -1111,7 +1111,7 @@ Interpreter core:
       **CLOSED — REJECTED via ADR-026 (measured ceiling below noise).** The
       focused pass ran (2026-07-05): full soundness analysis + design blueprint
       + ceiling measurement, recorded in
-      [ADR-026](architecture/adr/026-variable-width-choice-points.md).
+      [ADR-026](../architecture/adr/026-variable-width-choice-points.md).
       Key findings: (a) `CurrentViewGen` has exactly ONE reader — `CheckVisible`
       (plain handler + the `TryInlineCheckVisible` peel); `ViewGenOf` has zero
       callers — so the slot is semantically needed only on CPs pushed inside

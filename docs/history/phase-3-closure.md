@@ -16,7 +16,7 @@ the chunks, and what carries forward to Phase 4.
 
 ## Deliverables checklist
 
-Tracking the Phase 3 list from [`CLAUDE.md`](../CLAUDE.md).
+Tracking the Phase 3 list from [`CLAUDE.md`](../../CLAUDE.md).
 
 | Deliverable | Status | Implementing chunk |
 |-------------|--------|--------------------|

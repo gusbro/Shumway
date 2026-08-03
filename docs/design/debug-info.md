@@ -1,7 +1,7 @@
 # Debug Info Design
 
 > **Design-time document.** The shipped debugger's living docs are
-> [`../debugger.md`](../debugger.md), [`../debugger-vscode.md`](../debugger-vscode.md)
+> [`../debugger.md`](../guide/debugger.md), [`../debugger-vscode.md`](../guide/debugger-vscode.md)
 > and ADR-035/036 — where the design below and reality differ, they win.
 
 This document specifies the design of Shumway's debug information system: the data structures, the encoding in bytecode, the runtime behavior, and the integration points with debugging tools.
