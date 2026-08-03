@@ -120,7 +120,7 @@ embedding clause to the live fallback. Static acceptance exploded — test/
 724 → 1 222 (+69%), testGen/ 601 → 1 269 (+111%) in the default
 configuration; tierG 5→315 / 47→498 —
 
-**and it was still rejected**, on the user's runtime-cost argument:
+**and it was still rejected**, on the runtime-cost argument:
 
 1. **In any reasonable program the assert happens** (assert-before-call is
    the dominant idiom for these predicates), so the steady state is the

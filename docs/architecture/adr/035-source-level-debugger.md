@@ -164,7 +164,7 @@ impact** is a hard requirement, verified by A/B.
    bind. Under a debug session, Tier-1 promotion exclusion is therefore
    **per-module**, not global. **The prelude is implicitly `disable_debug`.**
 
-   > **Amended in implementation (D1-c), at the user's request.** The two
+   > **Amended in implementation (D1-c).** The two
    > directives are **positional**, not file-scoped declarations: each sets the
    > debuggability of the clauses that *follow* it, until the next one or the
    > end of the file. Debuggability is therefore a property of a **predicate**,

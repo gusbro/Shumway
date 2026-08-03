@@ -14,7 +14,7 @@ The bytecode is the intermediate representation produced by the WAM compiler fro
 The encoding choice affects:
 
 - **Interpreter performance**: dispatch loop overhead, cache utilization of bytecode.
-- **Memory footprint**: large programs (the user mentioned 50,000+ LOC Prolog as a target) produce significant bytecode.
+- **Memory footprint**: large programs (50,000+ LOC Prolog is a stated target) produce significant bytecode.
 - **IL compiler complexity**: how easy it is to decode and translate.
 - **Extensibility**: ability to add new opcodes without breaking existing bytecode.
 - **Debuggability**: ability to inspect and disassemble bytecode.

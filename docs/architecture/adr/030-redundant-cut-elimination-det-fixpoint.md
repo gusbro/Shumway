@@ -157,8 +157,7 @@ running extra clauses is a correctness bug, not a cosmetic one
 - **Whole-program** (the payoff): the **linker** (`ShmoLinker`) owns the complete
   cross-module call graph (per-predicate call edges in `ShmoObject`, reachability
   already walked) — it runs the same fixpoint over the linked program, resolving
-  the cross-module callees the per-file pass could not. This is the natural home
-  the user identified: the closure "if all reachable predicates from a goal are
+  the cross-module callees the per-file pass could not. This is its natural home: the closure "if all reachable predicates from a goal are
   det, the goal is det" is exactly a call-graph fixpoint the linker can compute.
 - **Applying the elision**: the affected predicate is **recompiled from
   `ClauseTerms`** without the trailing cut. The linker already recompiles from

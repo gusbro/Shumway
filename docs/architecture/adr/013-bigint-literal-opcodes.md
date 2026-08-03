@@ -28,7 +28,7 @@ Integer literal 1000000000000000000 doesn't fit in a 32-bit operand.
 BigInt support lands later.
 ```
 
-The user asked us to lift this restriction so source-level BigInteger literals
+This ADR lifts that restriction so source-level BigInteger literals
 work the same way runtime-promoted BigInteger results already do.
 
 ADR-006 marks "adding a new top-level opcode" as a major decision that needs an

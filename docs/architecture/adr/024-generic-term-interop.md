@@ -239,6 +239,6 @@ well beyond removing the dispatch hops alone.
   manual struct machinery — heap-allocated tagged structs, pointer arrays, manual
   free — when the engine already has the term in the heap. The named-intrinsic
   replacement makes the entire tier unnecessary.
-- **A single accessor API.** Rejected: the user wants the `*_c` compatibility layer
-  so existing C# runs unchanged, AND the option to write against the native API for
-  new code. Both over one `TermRef` cost nothing (the `*_c` layer is thin).
+- **A single accessor API.** Rejected: the requirement is BOTH the `*_c`
+  compatibility layer, so existing C# runs unchanged, AND the option to write
+  against the native API for new code. Both over one `TermRef` cost nothing (the `*_c` layer is thin).
