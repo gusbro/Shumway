@@ -209,6 +209,28 @@ Shumway uses two tiers:
 
 **Static Tier-1 code does not invalidate** because static predicates are immutable. **Dynamic predicates also run as Tier-1 IL** via a static-style snapshot that is **evicted on mutation** (ADR-023), preserving the logical update view; a rule-bearing dynamic's snapshot may even inline into caller guards with a clause-entry staleness test (ADR-034).
 
+### Determinism: declared modes vs inferred
+
+Two determinism machineries coexist, deliberately, and they consume different
+inputs:
+
+- **Declared modes** (ADR-012) — `:- mode f(+, -) is det.` is *trusted*
+  programmer metadata. Its consumers are the mode-aware specializations:
+  the det/semidet **implicit cut** at clause end, and gates like the
+  assert fast path (`ModeTable.AllModesDeterministic`). A wrong declaration
+  produces wrong pruning; that is the contract of a declaration.
+- **Inferred determinism** (ADR-029/030/031/033/034) is **mode-independent**
+  by design: the redundant-cut fixpoint and the CP-free guard commit derive
+  determinism from the compiled code alone (fail-direct bytecode shapes), so
+  they are sound with no declarations present. This is also why
+  first-argument-indexing-derived determinism is *excluded* from ADR-030's
+  fixpoint: whether an index makes a call deterministic depends on the call's
+  instantiation — a mode — and the inferred machinery refuses mode-dependent
+  facts.
+
+So `:- mode` enables ADR-012's specializations and nothing else; the ADR-029+
+optimization arc reads no modes at all.
+
 ## Bytecode
 
 The bytecode is a binary format read by both the interpreter and the IL compiler.
@@ -285,16 +307,16 @@ Shipped subsystems this overview does not detail (each has its own doc):
 
 - **Source-level debugger** — Visual Studio 2026 (Concord) and VS Code (DAP),
   breakpoints/stepping/eval/Set-Next-Statement over the interpreter:
-  `../debugger.md`, `../debugger-vscode.md`, ADR-035/036.
+  `../guide/debugger.md`, `../guide/debugger-vscode.md`, ADR-035/036.
 - **Embedded native C** (`:- c` prototypes + `{...}` blocks compiled to IL) and
   **generic term interop** (reftype cursors, the Arity materializer tier,
-  `:- native` P/Invoke): `../embedded-native-c.md`,
-  `../generic-term-interop.md`, ADR-022/024.
+  `:- native` P/Invoke): `../guide/embedded-native-c.md`,
+  `../guide/generic-term-interop.md`, ADR-022/024.
 - **CLP(FD) and CLP(R)** — opt-in constraint libraries over attributed
   variables (`engine.UseClpfd()` / `UseClpr()`).
 - **Tabling** — `:- table p/N`, semi-naive evaluation, well-founded negation.
 - **Separate compilation** — `.pl → .shmo → .shum` via `shumway-compile` /
-  `shumway-link` / `shumway-lib`, `--exe` / `--dll` emitters: `../user-guide.md`.
+  `shumway-link` / `shumway-lib`, `--exe` / `--dll` emitters: `../guide/user-guide.md`.
 
 ## Quick map of files to read for specific topics
 
@@ -310,7 +332,7 @@ Shipped subsystems this overview does not detail (each has its own doc):
 | Indexing | ADR-007 (first-arg), ADR-027/028 (second-level + bucket) |
 | Inline compounds / arithmetic | ADR-017 / ADR-018 |
 | Modules | ADR-008 |
-| Bundles / linker | ADR-009, ../user-guide.md |
+| Bundles / linker | ADR-009, ../guide/user-guide.md |
 | Embedding API | ADR-010, design/api-reference.md |
 | IL compiler | ADR-011, design/il-region-compilation.md |
 | Dynamic predicates in IL | ADR-023, ADR-034 |
@@ -324,3 +346,48 @@ What counts as a major decision, and how decisions are recorded, is defined in
 ADR-001 through ADR-041 — live under [`adr/`](adr/), each with a current
 Status line; the maintainers' working decision → ADR table is in the
 repository-root CLAUDE.md.
+
+## Phase chronology
+
+Development proceeded in numbered phases; ADR Status lines cite them
+("implemented (Phase 25)"). Each phase has a closure summary under
+[`../history/`](../history/) recording what shipped and the test gate at close.
+
+| Phase | Closed | Theme |
+|-------|--------|-------|
+| [1](../history/phase-1-closure.md) | 2026-05-19 | Core engine, WAM compiler, embedding API |
+| [2](../history/phase-2-closure.md) | 2026-05-19 | Production optimizations (indexing, bundles, inlining) |
+| [3](../history/phase-3-closure.md) | 2026-05-20 | Mode inference, PGO, JIT indexing |
+| [4](../history/phase-4-closure.md) | 2026-05-20 | Attributed variables, in-engine meta-call |
+| [5](../history/phase-5-closure.md) | 2026-05-20 | Interactive top-level (REPL) |
+| [6](../history/phase-6-closure.md) | 2026-05-21 | CLP(FD) |
+| [7](../history/phase-7-closure.md) | 2026-05-22 | Predicate docs, CLP(R), Native AOT, tabling |
+| [8](../history/phase-8-closure.md) | 2026-05-23 | Engine robustness, persistent code space |
+| [9](../history/phase-9-closure.md) | 2026-05-24 | ISO conformance + error system |
+| [10](../history/phase-10-closure.md) | 2026-05-24 | Robustness leftovers, in-place dynamic dispatch |
+| [11](../history/phase-11-closure.md) | 2026-05-24 | Multi-arg in-place indexing |
+| [12](../history/phase-12-closure.md) | 2026-05-24 | Auto-compaction, Tier-1 exclusions |
+| [13](../history/phase-13-closure.md) | 2026-05-25 | Separate compilation + linker |
+| [14](../history/phase-14-closure.md) | 2026-05-25 | Toolchain UX, `--exe` |
+| 15 | — | Number never used |
+| [16](../history/phase-16-closure.md) | 2026-05-26 | Tier-1 threaded dispatch (O(1) C# stack) |
+| [17](../history/phase-17-closure.md) | 2026-05-27 | Cross-process persisted IL |
+| [18](../history/phase-18-closure.md) | 2026-05-27 | Bundle ergonomics, IL fixes |
+| [19](../history/phase-19-closure.md) | 2026-05-27 | IL meta-call dispatcher |
+| [20](../history/phase-20-closure.md) | 2026-05-30 | Heap GC, Tier-1 completeness, dispatch perf |
+| [21](../history/phase-21-closure.md) | 2026-05-31 | C# integration (typed conversion, foreigns) |
+| [22](../history/phase-22-closure.md) | 2026-05-31 | Foreign-predicate toolchain |
+| [23](../history/phase-23-closure.md) | 2026-06-01 | REPL UX, residual display, zero warnings |
+| [24](../history/phase-24-closure.md) | 2026-06-01 | Arity-Prolog compatibility |
+| 25 | 2026-06-03 | Benchmark harness, ADR-017/018 (no closure doc; record in [wam-vs-gprolog-blint.md](../history/wam-vs-gprolog-blint.md)) |
+| [26](../history/phase-26-closure.md) | 2026-06-04 | WAM codegen quality vs GProlog |
+| [27](../history/phase-27-closure.md) | 2026-06-05 | `--strip-wam`, non-last inline, cleanup |
+| [28](../history/phase-28-closure.md) | 2026-06-08 | Real-program corpus, Tier-1 speed |
+| [29](../history/phase-29-closure.md) | 2026-06-11 | Region compilation (default ON) |
+| [30](../history/phase-30-closure.md) | 2026-06-26 | Arity round 2, native C, reftype interop |
+| [31](../history/phase-31-closure.md) | 2026-06-29 | REPL editing, `--dll`, native-interop correctness |
+| [32](../history/phase-32-closure.md) | 2026-06-30 | Materializer tier (ADR-024 completion) |
+| [33](../history/phase-33-closure.md) | 2026-07-10 | Audit remediation, cut/tail-call arc (ADR-029..034) |
+| [34](../history/phase-34-closure.md) | 2026-07-20 | Source-level debugger (VS + VS Code) |
+| [35](../history/phase-35-closure.md) | 2026-07-25 | ISO conformance (Neumerkel), soft cut |
+| [36](../history/phase-36-closure.md) | 2026-08-02 | Third-party ecosystem (libraries, dialects, ADR-041) |
