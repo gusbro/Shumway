@@ -1,4 +1,6 @@
-# Debugging Shumway Prolog in Visual Studio Code (ADR-036)
+# Debugging Shumway Prolog in Visual Studio Code
+
+Design and rationale: [ADR-036](../architecture/adr/036-vscode-dap-debugger.md).
 
 Cross-platform (Windows and Linux) source-level debugging in VS Code: breakpoints —
 including conditional ones whose condition is a Prolog goal — port-based stepping, the
@@ -61,7 +63,7 @@ time it overrides a baked `--dap-port` (0 disables).) Then:
 Embedded hosts can also set it in code: `engine.EnableDebugging(new DebugOptions {
 DapPort = 4711 })`, reading `session.DapPort` back when they pass 0.
 
-## What works (V1–V4)
+## What works
 
 Breakpoints (add/remove live, conditions as Prolog goals evaluated in the frame),
 continue/step over/step into/step out (port-based; redo/fail stops are annotated in the
@@ -76,21 +78,21 @@ projection the REPL prints for an answer, at every stop. In the Debug Console th
 variables carry their constraints too: `get_attr(X, clpfd, A)` answers, and posting
 `X #< 5` narrows the evaluation's copy (the suspended program is untouched).
 
-**Debug Console** (V3) — the Immediate window: goals run in the live suspended engine
+**Debug Console** — the Immediate window: goals run in the live suspended engine
 (side effects persist), `;` asks for the next solution, `X = term(1)` on a free frame
 variable commits the binding into the frame (Locals refresh at once), and a bare variable
 name prints its value. During a console evaluation breakpoints do not stop (a nested
-break state has no DAP shape). **Set Value** (V3) in the Variables panel is the
+break state has no DAP shape). **Set Value** in the Variables panel is the
 destructive edit: trailed (backtracking restores it), `_` un-instantiates, values render
 writeq so they round-trip. Hover shows frame variables and refuses goals.
 
-**Jump to Cursor** (V4) — right-click a line → *Jump to Cursor*: the ADR-035 Set Next
+**Jump to Cursor** — right-click a line → *Jump to Cursor*: the ADR-035 Set Next
 Statement. Forward skips the goals in between; backward rewinds the trail to the recorded
 mark (bindings undone; database effects are permanent, as designed); selecting another
 frame in the Call Stack first targets THAT frame (the frames above it pop). Only the
 lines the engine published as valid are offered; anything else is refused honestly.
 
-**Logpoints** (V5) — right-click a breakpoint → *Edit Breakpoint* → *Log Message* (or
+**Logpoints** — right-click a breakpoint → *Edit Breakpoint* → *Log Message* (or
 add a logpoint directly): the machine pauses invisibly, the message prints to the Debug
 Console with `{Var}` holes filled from the frame (writeq-rendered), and execution
 continues — no stop ever reaches the editor.

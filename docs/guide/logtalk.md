@@ -73,5 +73,4 @@ intermediate files, or in your `.lgt` sources' consulted forms.
   distribution is a possible future step.
 - Logtalk compiles each entity to an intermediate `.pl` in its scratch
   directory and consults it; Shumway's consult-time machinery (live linking,
-  dynamic registrations, IL promotion) handles that pipeline — the whole
-  bring-up story lives in the phase-33 records.
+  dynamic registrations, IL promotion) handles that pipeline.
