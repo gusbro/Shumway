@@ -1,12 +1,15 @@
-# Mode-Aware Compilation (Phase 3 Design)
+# Mode-Aware Compilation — the original Phase-3 design (archived)
 
-This document specifies the design intent for Phase 3 of Shumway's mode-aware compilation. It is a **forward-looking design** for code that will be written in Phase 3; it does not describe v1 behavior. The directive `:- mode/1` is accepted and stored in v1 (per ADR-012), but no code generation exploits it until Phase 3.
-
-This document exists in v1 so that:
-
-1. Source code written with mode declarations today is informed by what they will mean.
-2. Phase 1 implementation choices remain compatible with Phase 3 (e.g., the IL emitter architecture supports specialization).
-3. Phase 3 implementors have a starting design to refine.
+> **Historical document.** This is the design spec written during v1 for the
+> then-future Phase 3, preserved as it stood. What actually shipped from it:
+> mode inference from `:- mode` directives and det/semidet specialization (the
+> implicit cut), in Phase 3. The rest arrived by different designs later —
+> deterministic-clause optimization via ADR-029/030/031 (CP-free guard
+> commit), whole-body inlining via region compilation
+> ([`../design/il-region-compilation.md`](../design/il-region-compilation.md))
+> — or was never implemented (typed modes, call-site mode dispatch, strict
+> runtime mode checking). For the current state see
+> [ADR-012](../architecture/adr/012-mode-inference-roadmap.md) and ADR-030.
 
 ## Goals of Phase 3
 

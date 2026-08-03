@@ -308,4 +308,12 @@ For `det` and `semidet` predicates, much of the WAM machinery (trail, choice poi
 
 ## Related Design Docs
 
-- `design/mode-inference-phase3.md` (to be created in Phase 3): detailed algorithms for mode-aware code generation, call-site mode dispatch, and runtime mode checks.
+- The original Phase-3 design spec is archived as
+  [`../../history/mode-inference-design.md`](../../history/mode-inference-design.md).
+  What shipped from it: mode inference from `:- mode` directives and det/semidet
+  specialization (the implicit cut). Its other ideas were delivered by different
+  designs later — deterministic-clause optimization by ADR-029/030/031 (CP-free
+  guard commit), whole-body inlining by region compilation
+  ([`../../design/il-region-compilation.md`](../../design/il-region-compilation.md)).
+  Typed modes, call-site mode dispatch and strict runtime mode checking were not
+  implemented.
