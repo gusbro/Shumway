@@ -713,9 +713,14 @@ A deferral is a TODO with a prerequisite, not a closure.
       wrappers must stay callable by runtime-constructed goals; dropping them
       is the T1 prune's opt-in contract, not a default.*
 
-## OPEN — intermittent native AV (needs a minidump session)
+## CLOSED (2026-08-02) — intermittent native AV: not reproducible
 
-- [ ] **0xC0000005 in `shumway_native_calli`** during
+Closed without a repro: after the `_emitOwnerFid` fix below, months of
+dump-armed full-suite runs never produced another hit; the remaining early
+sightings match the stale-binary profile (first run after a rebuild). No
+longer tracked as open anywhere.
+
+- [x] **0xC0000005 in `shumway_native_calli`** during
       `EndToEnd_NativeDll_OutScalarPointers`, ONLY under the full parallel
       Embedding suite (~50% of full runs; seen 3× on 2026-07-03/05). NOT
       reproducible sequentially (60 000 compiled out-scalar calls clean,

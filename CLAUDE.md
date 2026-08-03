@@ -38,51 +38,24 @@ Shumway implements a **Prolog compiler and interpreter that runs on .NET**, inte
 
 ## Non-Negotiable Invariants
 
-These are hard constraints. If a change requires breaking one of them, **stop and consult before proceeding**.
+The full catalog lives in [`docs/architecture/invariants.md`](docs/architecture/invariants.md) —
+**read it before changing engine internals**. These are hard constraints; if a change requires
+breaking one, stop and write/amend an ADR before proceeding. The headline rules:
 
-### Memory and concurrency
-
-- **Naming (renamed 2026-07-11):** `Shumway.Core.Activation` (née `Engine`) is the per-query WAM machine — heap, stacks, trails, registers, choice points — born at every `SetupQueryFromTerm` and alive exactly as long as its solution enumeration. Several activations can coexist over one database (a suspended `QueryAll` plus a nested query). The durable Prolog instance (dynamic store, compiled code space, consult history) is `Shumway.Embedding.PrologEngine`. Historical docs/comments that say "engine" for the per-query machine mean Activation.
-- **Activations are single-threaded internally.** No locks inside the activation state. The caller guarantees that only one thread accesses a given activation at a time.
-- **Activations are thread-agile.** No `[ThreadStatic]` state. An activation can be used from different threads as long as access is serialized.
-- **Global tables (atom table, functor table, code cache) are thread-safe.** Use `ConcurrentDictionary` or fine-grained locks. Multiple engines may share these tables.
-- **The heap is a `Cell[]` of 8-byte blittable values.** Never put managed object references inside cells. References to managed objects (BigInteger, string, foreign object) live in per-engine auxiliary tables, accessed by integer id from the cell.
-- **Cells are 8 bytes: 4 bits tag + 60 bits payload.** See ADR-002 for the exact layout. Do not change this layout.
-
-### Atom management
-
-- **Atoms have global integer ids.** Comparison of atoms is comparison of ints.
-- **Three-tier atom table**: Permanent (eternal strong refs), Transient (strong refs in the table itself, cleaned by custom GC), TransientWeak (no strong refs, kept alive only by C# retention via `WeakReference`).
-- **The custom atom GC runs at safe points**, not in the hot path. Hot path is just write the id to a cell.
-- **Atom ids are stable for the lifetime of the atom.** Even after promotion between tiers, the id does not change.
-
-### Modules and visibility
-
-- **Each Prolog source file is one module.**
-- **Predicates are local by default.** `:- public foo/N` exports them to a flat global namespace.
-- **Static predicates are immutable.** Once compiled, they cannot be modified. `assertz`/`retract` on a static predicate is an error.
-- **Dynamic predicates may be declared explicitly** with `:- dynamic foo/N`, or — when the `implicit_dynamic` prolog_flag is `true` (the default since Phase 19+) — auto-promoted on first `assertz`/`asserta` of an undefined predicate. Matches SWI / SICStus / GNU default behaviour. Setting `:- set_prolog_flag(implicit_dynamic, false).` reverts to ISO-strict mode where assertz on an undeclared predicate raises `permission_error(modify, static_procedure, _)`. Auto-promotion never applies to predicates with existing static clauses or to registered builtins.
-- **Public predicates are globally unique.** Two modules cannot both declare `foo/N` as public.
-
-### Bytecode
-
-- **Bytecode opcode 0x00 is reserved as Invalid.** Encountering it during dispatch indicates corruption — fail loudly.
-- **Opcodes are numbered CONTIGUOUSLY** (chunk 429) so the interpreter's switch compiles to one dense jump table. The Meta opcode (sub-byte for kind, currently only DbgInfo) sits at the end of the dense dispatch block, ReservedExtension right after it; new opcodes are added at the end of the dense block (see Opcode.cs for live values — do NOT cite numeric values in docs).
-- **All dispatched opcodes follow fixed-size encoding** with operands as unaligned ints. Sizes are determined by a per-opcode table.
-
-### Trail and backtracking
-
-- **Two separate trails**: `BindingTrail` (int[] for variable bindings, the hot path) and `ExtraTrail` (struct[] for other reversible state).
-- **HB check** prevents trailing of bindings to "young" variables (those created after the most recent choice point).
-- **Young-to-old binding rule**: when unifying two unbound variables, always bind the younger (higher heap index) to the older.
-- **`assertz`, `retract`, and modifications to global state are not trailed.** They are permanent.
-
-### Compilation strategy
-
-- **Tier 0**: WAM bytecode interpreter. Always available. Used for all dynamic predicates.
-- **Tier 1**: IL-compiled code. For static predicates that are hot or pre-compiled in bundles.
-- **Promotion is automatic** based on invocation count. Promotion happens in a background thread; the swap from interpreted to compiled is atomic.
-- **Compiled IL is engine-agnostic.** It takes `Engine` as a parameter. The global code cache (indexed by bytecode hash) is shared across engines.
+- Activations (per-query WAM machines) are single-threaded internally and thread-agile; global
+  tables are thread-safe and shared.
+- The heap is a `Cell[]` of 8-byte blittable values (4-bit tag + payload) — never a managed
+  reference inside a cell; managed payloads live in per-activation side tables.
+- Atom ids are global, stable ints; the atom GC runs only at safe points.
+- One file = one module; statics are immutable; publics are globally unique;
+  `:- module/2` is the sole trigger for scoped qualification.
+- Opcode 0x00 = Invalid; opcodes stay contiguous (dense jump table); fixed-size encoding.
+- Two trails, HB check, young-to-old binding; `assertz`/`retract` are NOT trailed — extra
+  backtracking re-runs side effects and is a correctness bug.
+- Dynamic predicates execute on Tier 0 (the ADR-023/034 snapshot model is the one sanctioned
+  exception); compiled IL is engine-agnostic; promotion swaps are atomic.
+- Logical update view: a call sees the database as of when its goal began (ViewGen + born/died).
+- Zero build warnings, enforced mechanically.
 
 ---
 
@@ -721,11 +694,12 @@ construction); `docs/guide/debugger.md` + `docs/guide/debugger-vscode.md` are th
 **Phase 33 — Audit remediation + real-program rounds + the cut/tail-call arc** — ✅ **Complete** (tagged `phase-33`; closure summary in [`docs/history/phase-33-closure.md`](docs/history/phase-33-closure.md)).
 
 Opened as audit remediation round 1 — five waves attacking the six-way audit
-of 2026-06-30 (backlog closed 65/66 in
-[`docs/history/phase-33-backlog.md`](docs/history/phase-33-backlog.md); the one open item is
-the dump-armed intermittent native AV, whose likeliest cause —
-`_emitOwnerFid` plain-static under concurrent compiles — was found and
-fixed) — and grew into the largest phase to date (138 commits):
+of 2026-06-30 (backlog closed 66/66 in
+[`docs/history/phase-33-backlog.md`](docs/history/phase-33-backlog.md); the last item — the
+dump-armed intermittent native AV — is CLOSED as not reproducible: its likeliest
+cause, `_emitOwnerFid` plain-static under concurrent compiles, was fixed, and months
+of dump-armed runs since have not produced a single hit) — and grew into the
+largest phase to date (138 commits):
 
 - ✓ **Waves 1–5**: correctness-critical E-series; interop hot path; WAM
   codegen (once/snips, neck-cut, assert fast-path, Tier-0 ITE, DCG
@@ -1328,6 +1302,7 @@ When proposing changes:
 
 | Decision | See |
 |----------|-----|
+| The consolidated invariant catalog | docs/architecture/invariants.md |
 | Cell layout (8 bytes, tag + payload) | ADR-002 |
 | Atom three-tier system | ADR-003 |
 | Two separate trails | ADR-004 |

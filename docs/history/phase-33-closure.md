@@ -25,12 +25,13 @@ guards through every dispatch shape including indexed buckets.
 | 5 | LTO / startup / size | Prelude pruning (`--prune-prelude`, −94% on a small program), bundle compression, process-wide persisted-IL cache, baked WAM link, unfold widening, representation slimming. |
 
 Plus the user-directed **IL round 2** (profile-driven Tier-1 pass over
-dotnet-trace sampling) and the corpus rounds below. The one item left open —
-the **intermittent native AV** (`0xC0000005` in `shumway_native_calli`, only
-under the full parallel suite, first-run-after-rebuild profile) — had its
-likeliest cause found and fixed (`_emitOwnerFid` plain-static under
-concurrent compiles → `[ThreadStatic]`); it has not reproduced across the
-~15 dump-armed full-suite runs since, and stays dump-armed. Carried forward.
+dotnet-trace sampling) and the corpus rounds below. The one item left open at
+the time — the **intermittent native AV** (`0xC0000005` in
+`shumway_native_calli`, only under the full parallel suite,
+first-run-after-rebuild profile) — had its likeliest cause found and fixed
+(`_emitOwnerFid` plain-static under concurrent compiles → `[ThreadStatic]`)
+and was later CLOSED as not reproducible (2026-08-02): months of dump-armed
+runs without a single hit.
 
 ## 2. Real-program bring-up
 
@@ -91,7 +92,7 @@ them back to clause-entry values.
 
 ## 5. Carried forward
 
-- The intermittent native AV (dump-armed; likeliest cause already fixed).
+- ~~The intermittent native AV~~ — closed 2026-08-02, not reproducible.
 - ADR-031 minors: `unify_*_y` guard-op residual (~630 corpus), caps raise
   (must come with IL `switch` emission — user directive), a_eval cmp guards.
 - ADR-033: non-tail-cycle frames (measured small), v2 cross-method
