@@ -33,7 +33,7 @@ Implementation notes (decisions that emerged while building it):
 - **`switch_on_structure_sub` keys a nested-list terminal as the cons functor.**
   The interpreter and the Tier-1 runtime resolver / graph handle it; the Tier-1
   *inline* fast path routes a list terminal to the sound full-bucket default
-  instead (correct, just not fast-pathed — a documented v1 corner).
+  instead (correct, just not fast-pathed — a documented first-cut corner).
 - **Verified**: all 556 Arity corpus files compile clean (0 errors, 42
   `switch_on_structure_sub` emitted); djota 32/32; the audit's top targets emit
   the nested indexing (`control_has_property`/`object_has_method` nest
@@ -216,8 +216,8 @@ chain (the existing `MergeWithVar` / ADR-027 rule, one dimension wider).
      `switchTableIdSites` relocation. Sibling switches use the existing
      `EmitSwitchOn{Atom,Integer,Structure}Arg`; sub switches use the `_sub` family.
 
-The dynamic-predicate path (`CompileIndexedDynamic`) mirrors the same change or, for
-v1, keeps its current chain (dynamic predicates are Tier-0-only and mutation-heavy;
+The dynamic-predicate path (`CompileIndexedDynamic`) mirrors the same change or, in the
+first cut, keeps its current chain (dynamic predicates are Tier-0-only and mutation-heavy;
 the win there is smaller — a follow-up).
 
 ## Tier-1 (IL) implementation
@@ -242,7 +242,7 @@ cross-process (`--strip-wam` and full-WAM), as ADR-027 did.
 
 ## Consequences
 
-- **Coverage v1**: one nested `BucketSwitch` per value bucket, discriminating on a
+- **Initial coverage**: one nested `BucketSwitch` per value bucket, discriminating on a
   single best position. This matches the audit's single-discriminator model and
   captures the measured wins.
 - **Deferred** (symmetric follow-ups): recursively re-partitioning a keyed sub-group

@@ -1,8 +1,8 @@
-# ADR-007: First-Argument Indexing (v1)
+# ADR-007: First-Argument Indexing (Phase 1)
 
 ## Status
 
-Accepted (Phase 1). Multi-argument and JIT indexing planned for Phase 2+.
+Accepted (Phase 1) — and since extended well past this ADR.s scope: multi-argument indexing and dynamic-predicate index caching shipped in Phase 2, JIT indexing in Phase 3, in-place extensible indexed layouts for dynamics in Phases 10-11, and second-level / bucket indexing in ADR-027/028. What follows is the Phase-1 decision as made.
 
 ## Context
 
@@ -21,11 +21,11 @@ Real-world implementations extend this:
 - **JIT indexing** (SWI-Prolog): build index structures based on observed call patterns.
 - **Dynamic predicate indexing**: invalidate and rebuild indexes when `assertz`/`retract` modifies the predicate.
 
-Each level adds complexity. For v1, the goal is to ship a correct and useful indexing system that covers the most common patterns. More sophisticated indexing is deferred to later phases.
+Each level adds complexity. For Phase 1, the goal was to ship a correct and useful indexing system that covers the most common patterns. More sophisticated indexing is deferred to later phases.
 
 ## Decision
 
-Shumway v1 implements **first-argument indexing on static predicates only**.
+Phase 1 implements **first-argument indexing on static predicates only**.
 
 ### What is indexed
 
@@ -230,7 +230,7 @@ ListLabel:
 
 ### Dynamic predicates
 
-In v1, **dynamic predicates do not have indexing**. They use a plain `try_me_else` chain over all clauses. This avoids the complexity of invalidating and rebuilding indexes on `assertz`/`retract`.
+In Phase 1, **dynamic predicates did not have indexing**. They use a plain `try_me_else` chain over all clauses. This avoids the complexity of invalidating and rebuilding indexes on `assertz`/`retract`.
 
 Implementation strategy: when a predicate is declared `:- dynamic`, the compiler emits straightforward sequential code without `switch_on_*` instructions. The cost is linear time per call, but for dynamic predicates with few clauses (the typical case) this is acceptable.
 
@@ -240,7 +240,7 @@ Implementation strategy: when a predicate is declared `:- dynamic`, the compiler
 - The index is invalidated on `assertz`/`retract`.
 - For dynamic predicates with few clauses, the cost of rebuilding may exceed the benefit; a heuristic decides whether to build an index.
 
-The bytecode encoding leaves room for this: the dynamic predicate's bytecode in v1 is just `try_me_else` chains; in v2 a separate code path or runtime decision can dispatch to an indexed version.
+The bytecode encoding leaves room for this: the dynamic predicate.s Phase-1 bytecode is just `try_me_else` chains; in later work a separate code path or runtime decision can dispatch to an indexed version.
 
 ### Auto-declaration of dynamic predicates
 
@@ -250,7 +250,7 @@ A configuration flag `strict_dynamic_declarations` (default: false) can disable 
 
 ## Alternatives Considered
 
-### Multi-argument indexing in v1
+### Multi-argument indexing
 
 **Deferred to Phase 2.** When the first argument is a variable in the call, multi-argument indexing tries indexing on the second, third, etc. This is valuable but adds significant compiler complexity. Phase 1 ships with the simpler first-argument-only model.
 
@@ -258,9 +258,9 @@ A configuration flag `strict_dynamic_declarations` (default: false) can disable 
 
 **Rejected.** Without `switch_on_term`, every indexed predicate would have a single hash table mixing atom, int, list, and structure keys. This complicates lookup and is less cache-friendly than separating by type first.
 
-### Indexing for dynamic predicates in v1
+### Indexing for dynamic predicates
 
-**Rejected for v1.** The complexity of maintaining index consistency under `assertz`/`retract` is significant. v1 ships without it, with a clear roadmap for v2.
+**Deferred (delivered in Phase 2 as a cross-query cache, later the in-place indexed layouts).** The complexity of maintaining index consistency under `assertz`/`retract` is significant. Phase 1 shipped without it; the Phase-2 cache delivered the roadmap.
 
 ### Indexing on every argument (not just first)
 
@@ -277,12 +277,12 @@ A configuration flag `strict_dynamic_declarations` (default: false) can disable 
 - **Hot dispatch is O(1)**: indexed predicates with a discriminating first argument skip directly to matching clauses.
 - **Choice points are avoided** for deterministic calls: when only one clause matches, no CP is created. This reduces trail and stack overhead.
 - **Grammar processing benefits**: DCGs typically have many alternatives for a non-terminal; indexing makes them efficient.
-- **Static analysis stays in compile time**: indexing is computed once, not maintained at runtime (for v1).
+- **Static analysis stays in compile time**: indexing is computed once, not maintained at runtime (in Phase 1).
 
 ### Negative
 
 - **Dynamic predicates pay full cost**: without indexing, calls scale O(N) with clause count.
-- **No discrimination on later arguments**: a predicate like `foo(X, 1)` vs. `foo(X, 2)` does not benefit from indexing in v1.
+- **No discrimination on later arguments**: a predicate like `foo(X, 1)` vs. `foo(X, 2)` did not benefit from indexing in Phase 1 (multi-argument indexing later covers it).
 - **Compiler complexity**: building the switch tables and `try`/`retry`/`trust` groupings is non-trivial.
 
 ### Mitigations
@@ -307,9 +307,9 @@ A predicate with one clause needs no indexing instructions. The compiler simply 
 
 ### Handling of `is_list` and similar deep checks
 
-Indexing is shallow: it looks at the tag of the first argument's deref. It does not recurse into the structure. For predicates that discriminate based on sub-terms (e.g., `foo([1|_])` vs. `foo([2|_])`), indexing in v1 sends both to a common bucket and the clause body's `get_*` instructions handle the discrimination.
+Indexing is shallow: it looks at the tag of the first argument's deref. It does not recurse into the structure. For predicates that discriminate based on sub-terms (e.g., `foo([1|_])` vs. `foo([2|_])`), indexing in Phase 1 sends both to a common bucket and the clause body.s `get_*` instructions handle the discrimination.
 
-Phase 2 may add **shallow second-level indexing** (look at the head of a list, or the first argument of a structure). This is an optimization, not v1 work.
+Second-level indexing — look at the head of a list, or the first argument of a structure — was deliberately left out of Phase 1; it later shipped as ADR-027.
 
 ### `switch_on_constant` is two opcodes
 
@@ -317,7 +317,7 @@ We split the classical `switch_on_constant` into `switch_on_atom` and `switch_on
 
 ### Indexing and PSTR / FOREIGN
 
-For v1, PSTR and FOREIGN as first arguments in clause heads are treated as variable-like: they go in the VarBucket. Discrimination of PSTRs and foreign objects is uncommon in clause head patterns. If a use case emerges, dedicated indexing can be added later.
+PSTR and FOREIGN as first arguments in clause heads are treated as variable-like: they go in the VarBucket. Discrimination of PSTRs and foreign objects is uncommon in clause head patterns. If a use case emerges, dedicated indexing can be added later.
 
 ## Test Strategy
 

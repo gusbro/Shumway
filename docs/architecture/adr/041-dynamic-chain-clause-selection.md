@@ -54,7 +54,7 @@ live-linked and mid-query-consulted chains:
      enforces the logical update view — a dead clause then fails the call,
      which is correct because nothing else could match) — **no choice point
      is created**;
-   - **2+ candidates** → v1 runs the chain from its head unchanged (the CP
+   - **2+ candidates** → the selection declines and the chain runs from its head unchanged (the CP
      is semantically justified: another clause may match). A later
      refinement may add last-candidate-as-trust.
 

@@ -182,7 +182,7 @@ are hottest.
 
 ## Consequences
 
-- **Coverage v1**: atom / integer sub-keys, path depth ≤ 2. The interpreter hop is
+- **Initial coverage**: atom / integer sub-keys, path depth ≤ 2. The interpreter hop is
   generic (any depth), but the compiler probes and the opcode encoding cap the path
   at 2 hops.
 - **Deferred** (symmetric follow-ups, recorded here): structure-*keyed* sub-arg

@@ -62,14 +62,14 @@ Most instructions have 0–3 operands. Special instructions (e.g., `switch_on_te
 | Opcode | Purpose |
 |--------|---------|
 | 0x00   | **Invalid** (Reserved). Encountering this at runtime indicates corruption or a PC misdirection. The interpreter fails loudly. |
-| 0xFE   | **Meta opcode**. The next byte indicates the kind of meta info. v1 defines only `DbgInfo` (sub-opcode 0x00). |
-| 0xFF   | **Extension**. Reserved for future use if 256 opcodes become insufficient (an "escape" mechanism). Unused in v1. |
+| 0xFE   | **Meta opcode**. The next byte indicates the kind of meta info. Phase 1 defined only `DbgInfo` (sub-opcode 0x00). |
+| 0xFF   | **Extension**. Reserved for future use if 256 opcodes become insufficient (an "escape" mechanism). Unused. |
 
 **Usable values**:
 
 | Range | Use |
 |-------|-----|
-| 0x01..0x7F | Core opcodes: get, put, unify, control, choice, indexing, cut, builtins. ~80 opcodes in v1 (including consolidations). |
+| 0x01..0x7F | Core opcodes: get, put, unify, control, choice, indexing, cut, builtins. ~80 opcodes at Phase 1 (including consolidations); later ADRs appended more. |
 | 0x80..0xFD | Reserved for future extensions (PSTR-specific, attvar-specific, optimization variants). |
 
 The reserved ranges leave ample room for new opcodes without restructuring the encoding.
@@ -84,7 +84,7 @@ byte 1:    sub-opcode (kind of meta information)
 bytes 2+:  operands depending on sub-opcode
 ```
 
-Sub-opcodes defined in v1:
+Sub-opcodes defined initially:
 
 | Sub-opcode | Name | Operands |
 |------------|------|----------|
@@ -162,9 +162,9 @@ public class CodeArea
 
 A switch table is referenced by index from a `switch_on_*` instruction. The switch table itself contains the mapping from constant value (atom id, int, functor id) to bytecode address.
 
-### Consolidated opcodes (v1)
+### Consolidated opcodes (initial set)
 
-Beyond the base WAM instruction set, v1 includes consolidations for the most frequent patterns. These reduce dispatch overhead in the interpreter and produce more compact bytecode.
+Beyond the base WAM instruction set, the initial set includes consolidations for the most frequent patterns. These reduce dispatch overhead in the interpreter and produce more compact bytecode.
 
 Examples:
 
@@ -173,7 +173,7 @@ Examples:
 - `GetListA1`, `GetListA2`: specialization of list matching.
 - Builtin opcodes for hot builtins: `UnifyEq` (=/2), `Is` (is/2), `LessThan` (</2), `GreaterThan` (>/2), `LessEq` (=</2), `GreaterEq` (>=/2), `ArithEq` (=:=/2), `ArithNotEq` (=\=/2). These skip the general `CallBuiltin` dispatch.
 
-The full set is ~80 opcodes in v1.
+The full set was ~80 opcodes at Phase 1 (later ADRs appended to the dense block; see Opcode.cs for the live set).
 
 ### Debug info storage
 
@@ -189,7 +189,7 @@ The level is configurable per-module via `EngineConfig.DebugLevel`. The IL compi
 
 ### Structured `Instruction[]` (not binary)
 
-**Considered, rejected for v1.** A typed array of structs would be easier to inspect and debug, but uses more memory (a struct is at least the size of its largest case, with padding). For a 50,000-LOC Prolog program, this would be 2–4× the memory of a binary encoding. The IL compiler doesn't need the structured form (a disassembler iterating the binary works fine).
+**Considered, rejected.** A typed array of structs would be easier to inspect and debug, but uses more memory (a struct is at least the size of its largest case, with padding). For a 50,000-LOC Prolog program, this would be 2–4× the memory of a binary encoding. The IL compiler doesn't need the structured form (a disassembler iterating the binary works fine).
 
 ### Word-aligned instructions
 

@@ -28,7 +28,7 @@ Finally, there is the **scope of optimizations**:
 - **Level 3 (type-specialized)**: based on observed or declared types, generate specialized code paths that skip dispatch.
 - **Level 4 (mode-aware)**: with `:- mode` declarations, generate code that assumes a determinism pattern (e.g., a `+,+,-` mode means no choice points, no trail entries).
 
-Each level requires more compiler infrastructure. v1 ships with Level 1 + selected Level 2; Levels 3–4 are roadmap.
+Each level requires more compiler infrastructure. Phase 1 shipped Level 1 + selected Level 2; the later optimization arc went well past the original roadmap by different routes (regions, ADR-029..034) — Levels 3-4 as literally described (type/mode specialization) were not built (see ADR-012).
 
 ## Decision
 

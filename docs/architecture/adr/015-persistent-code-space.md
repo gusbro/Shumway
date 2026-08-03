@@ -305,7 +305,7 @@ Each is its own chunk, landing with the test suite green:
       `CurrentViewGen` at every dynamic predicate's entry;
       `check_visible <born:long> <died:long>` (17 bytes) backtracks if
       the captured view-gen lies outside `[born, died)`. The two
-      `LongValue` operands are the first 64-bit operands in v1 — the
+      `LongValue` operands are the encoding.s first 64-bit operands — the
       generation counter needs more than 32 bits for a long-running
       engine. The interpreter reads `DbGeneration` through
       `Engine.DbGenerationProvider` (a `Func<long>`) so

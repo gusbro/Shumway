@@ -19,7 +19,7 @@ structurally unable to handle mutual recursion (infinite nesting) or code-size
 -heavy callees. The whole-program links of the two real Arity apps show the
 residual: `g3:cross-tail` 666/1 859, `g3:cycle`, `g3:inner-caps`, `g3:budget`.
 
-## Decision (v1 — same-method scope)
+## Decision (first cut — same-method scope)
 
 The CLR has no computed goto across methods, but WITHIN a method the IL
 `switch` is exactly that — and the region method is already a cursor-switch.
@@ -94,7 +94,7 @@ depth) and `inner-dynamic` (needs the ADR-023 caller-eviction cascade).
   (an exception mid-callee leaves stale entries); query setup resets the top.
   The stack holds ints (cursors) — no heap-GC roots.
 
-### Deep G3 v1 (implemented): tail cycles + fresh per-copy budget
+### Deep G3, first cut (implemented): tail cycles + fresh per-copy budget
 
 The call-stack model has three cost tiers, and the third is deliberately not
 built:
@@ -116,7 +116,7 @@ built:
    Per-activation state (entry marks, saved registers) stays in the copy's IL
    locals, sound because an acyclic copy graph never re-enters a copy while
    it is active.
-3. **Non-tail cycles: NOT built (v1).** A re-entered copy's IL locals would
+3. **Non-tail cycles: NOT built (first cut).** A re-entered copy's IL locals would
    clobber the outer activation's entry marks; a later goal failing in the
    outer alternative would then under-restore. Sound support needs real
    frames (marks + registers pushed per activation). The residual is now
@@ -136,12 +136,12 @@ follows `CrossTailDet`); pinned by
 funnel bottoms: EMPTY dynamics (`g3:inner-dynamic-facts` 2 329 +
 `op:EnterDynamic-facts` 1 452 on testGen — assert targets, inherent until an
 ADR-023 caller-eviction cascade) and real semantics (`multi-mid` 461,
-`nondet-mid` 214). `g3:budget` 40→25 (test/). The value of deep-G3 v1 is the
+`nondet-mid` 214). `g3:budget` 40→25 (test/). The value of the deep-G3 first cut is the
 CAPABILITY — mutual tail recursion and caps-free deep chains compose
 correctly through the copies (proven by the unit suite) — not corpus counts
 on these two apps.
 
-## v2 (deferred): cross-method continuations
+## Deferred: cross-method continuations
 
 A callee in a DIFFERENT region needs continuation entries that survive the
 method exit: (delegate, cursor) dispatch via the existing resume-marker

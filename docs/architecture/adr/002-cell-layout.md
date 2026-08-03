@@ -136,7 +136,7 @@ This decision is consistent with `Span<Cell>` and array indexing in .NET, which 
 
 ### NaN-boxing for FLOAT inline
 
-**Considered, deferred.** NaN-boxing would allow doubles to be encoded inline without spanning two cells. The complexity of correctly handling all NaN patterns and integrating with the rest of the tag system is significant. For our target workloads, floats are not hot enough to justify the complexity in v1. May be revisited in phase 3 if profiling shows float-heavy code as a bottleneck.
+**Considered, deferred.** NaN-boxing would allow doubles to be encoded inline without spanning two cells. The complexity of correctly handling all NaN patterns and integrating with the rest of the tag system is significant. For our target workloads, floats have not been hot enough to justify the complexity. Could be revisited if profiling ever shows float-heavy code as a bottleneck.
 
 ### Object references inside cells
 

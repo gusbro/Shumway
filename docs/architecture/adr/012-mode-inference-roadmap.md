@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — implemented: the directive is parsed and stored since v1; mode inference and mode-specialized code generation shipped in Phase 3.
+Accepted — implemented: the directive has been parsed and stored since Phase 1; mode inference and mode-specialized code generation shipped in Phase 3.
 
 ## Context
 
@@ -23,15 +23,15 @@ Knowing the mode at compile time allows dramatic optimizations:
 
 This is the core insight behind Mercury, a Prolog-derived language that achieves performance close to C by requiring mode declarations and exploiting them aggressively. SWI-Prolog and SICStus also use mode information when available, though less aggressively than Mercury.
 
-The requirement was **directive-based mode declarations** (`:- mode foo(+, +, -)`) from v1, with **code specialization deferred** to later phases. This allows:
+The requirement was **directive-based mode declarations** (`:- mode foo(+, +, -)`) from the start (Phase 1), with **code specialization deferred**. This allowed:
 
 - Programs to declare modes early, expressing intent.
 - The compiler to validate and store these declarations.
-- Future phases (3+) to exploit them without requiring source code changes.
+- The specialization that later shipped in Phase 3 to exploit them without source changes.
 
 ## Decision
 
-Shumway supports the `:- mode/1` directive from v1 with the following semantics:
+Shumway supports the `:- mode/1` directive with the following semantics:
 
 ### Syntax
 
@@ -51,14 +51,15 @@ The argument indicators are:
 - `-` : output. The argument is expected to be unbound (variable) at call time; it will be bound by the predicate.
 - `?` : either. The argument may be bound or unbound. This is the default if no mode declaration is given.
 
-Extended indicators (planned for future phases, accepted but not validated in v1):
+Extended indicators (part of the original roadmap; never implemented — see
+"Mode-aware compilation as shipped" below):
 
 - `+S` : input, ground (no embedded variables).
 - `-S` : output, will be bound to a ground term.
 - `i` : input, integer specifically.
 - `+list`, `+atom`, etc.: input with type expectation.
 
-For v1, only the basic `+`, `-`, `?` indicators are accepted.
+Only the basic `+`, `-`, `?` indicators are accepted.
 
 ### Determinism annotation (extension)
 
@@ -80,7 +81,7 @@ Determinism categories (from Mercury):
 
 If no determinism is specified, the default is `nondet` (the most permissive).
 
-### Phase 1 behavior
+### Declarations as metadata (Phase 1, still the storage model)
 
 The compiler parses mode declarations and stores them in module metadata:
 
@@ -113,28 +114,36 @@ public enum Determinism
 
 These declarations are stored in `Module.ModeDeclarations` (a dictionary keyed by `FunctorId`).
 
-In v1, **the code generator does not exploit mode information**. The compiled bytecode and IL are identical to what would be generated without mode declarations. The declarations are metadata only.
+Through Phases 1–2 the code generator did not exploit mode information — the
+declarations were metadata only, so sources could be written with the coming
+optimization in mind without the early compiler carrying the complexity.
 
-This decision allows source code to be written with future optimization in mind, without forcing the v1 compiler to be more complex than necessary.
+### Mode-aware compilation as shipped (Phase 3)
 
-### Phase 3 behavior
+What the roadmap's exploitation step became when it landed:
 
-When Phase 3 implements mode-aware compilation:
+- **Mode inference**: declared modes are read into a `ModeTable` and
+  propagated where the compiler can use them.
+- **det/semidet specialization — the implicit cut**: a predicate whose
+  declared determinism is `det` or `semidet` commits at clause end, so a
+  successful call leaves no choice point. This is the declaration's contract
+  (`once/1` semantics); see "The trust boundary" below for why this is the
+  ONLY thing a declaration is allowed to buy.
+- **Determinism gates**: fast paths that require all-modes-deterministic
+  consult the table (e.g. the assert fast path,
+  `ModeTable.AllModesDeterministic`).
 
-1. For each predicate with mode declarations, generate a specialized code path for each declared mode.
-2. At call sites, where the compiler can determine which mode applies (via dataflow analysis or runtime check), dispatch to the specialized version.
-3. For `det` and `semidet` modes:
-   - Don't allocate choice points.
-   - Don't write to the trail (except for value-change trail entries, which are rare).
-   - Compile to tight straight-line code with branches for failure.
-4. For typed input declarations: skip type tests in the body, assume the declared type.
-5. For ground input declarations: skip variable handling, assume fully-instantiated terms.
+The rest of the roadmap's projection was **not built as designed**: per-mode
+specialized code paths with call-site mode dispatch, typed/ground indicators,
+and the "10–50× for deterministic predicates" estimate. Those gains arrived by
+different, mode-independent designs instead — choice-point elimination via
+ADR-029/030/031 (CP-free guard commit, redundant-cut elision) and whole-body
+compilation via IL regions. The original full design is archived as
+[`../../history/mode-inference-design.md`](../../history/mode-inference-design.md).
 
-The expected performance improvement for deterministic predicates is **10–50×** over the interpreter, putting performance in the range of Mercury or native-compiled languages for typical workloads.
+### Validation
 
-### Validation in v1
-
-The v1 compiler validates mode declarations syntactically but does not verify them semantically:
+The compiler validates mode declarations syntactically but does not verify them semantically:
 
 - Arity must match the predicate.
 - Indicators must be `+`, `-`, or `?`.
@@ -142,11 +151,14 @@ The v1 compiler validates mode declarations syntactically but does not verify th
 - Multiple declarations for the same predicate are allowed (each declares a distinct mode).
 - Mode declarations for non-existent predicates are warnings (the predicate may be defined later).
 
-In Phase 3, runtime checks may be added: if a predicate is called in a mode that doesn't match any declaration, raise an error (in strict mode) or generate a deopt code path that uses the general-purpose implementation.
+Runtime mode checks (call-mode mismatch raising an error, or a deopt path to
+the general implementation) were part of the roadmap and were not implemented;
+the cut-plus-check idea in "The trust boundary" below is the surviving form of
+that thought.
 
 ### Multiple modes per predicate
 
-A predicate with several mode declarations effectively becomes several specialized versions:
+A predicate may carry several mode declarations:
 
 ```prolog
 :- mode append(+, +, -) is det.
@@ -157,15 +169,15 @@ append([], L, L).
 append([H|T], L, [H|R]) :- append(T, L, R).
 ```
 
-In Phase 3, the compiler emits three specialized versions of `append/3`, one for each mode. At call sites, the compiler determines (statically when possible, dynamically otherwise) which version to invoke.
-
-For v1, all three declarations are stored but only the generic version is generated.
+The roadmap projected one specialized version per declared mode with call-site
+dispatch; as shipped, all declarations are stored but ONE version is compiled,
+and the determinism annotations feed the implicit-cut specialization (a
+predicate is treated as deterministic only when `ModeTable.AllModesDeterministic`
+holds — every declared mode must agree).
 
 ### Interaction with ISO Prolog
 
-Mode declarations are an extension to ISO Prolog. They are silently accepted by other Prolog implementations that don't support them (most parse them as `:- mode/1` calls and ignore them at runtime).
-
-Shumway's behavior is consistent: a program with mode declarations works in all phases. In Phase 3+, it runs faster.
+Mode declarations are an extension to ISO Prolog. They are silently accepted by other Prolog implementations that don't support them (most parse them as `:- mode/1` calls and ignore them at runtime), and a Shumway program with mode declarations runs unchanged on such systems.
 
 ### Documentation in source
 
@@ -229,9 +241,9 @@ silently. Release semantics would be unchanged.
 
 ## Alternatives Considered
 
-### Full Mercury-style mode system in v1
+### Full Mercury-style mode system from the start
 
-**Rejected.** Mercury requires extensive infrastructure: mode analysis, determinism analysis, type inference, etc. Implementing this for v1 would significantly delay shipping. The incremental approach (declarations now, exploitation later) is more pragmatic.
+**Rejected.** Mercury requires extensive infrastructure: mode analysis, determinism analysis, type inference, etc. Implementing this up front would have significantly delayed shipping. The incremental approach (declarations first, exploitation later) was more pragmatic.
 
 ### Mode inference (without declarations)
 
@@ -253,21 +265,19 @@ silently. Release semantics would be unchanged.
 
 ### Positive
 
-- **Forward compatibility**: source code written today with mode declarations benefits when Phase 3 ships, without modification.
+- **Forward compatibility paid off**: sources written with declarations before
+  Phase 3 gained the specialization without modification when it shipped.
 - **Documentation**: mode declarations express intent. Readers understand the predicate's contract.
-- **Linter input**: the linter can check whether mode declarations match the predicate's actual usage.
-- **No upfront cost**: v1 doesn't pay for mode-aware code generation; it's a v3 investment.
+- **Linter input**: a linter can check whether mode declarations match the predicate's actual usage.
+- **No upfront cost**: the early compiler did not pay for mode-aware code generation.
 
 ### Negative
 
-- **v1 doesn't realize the performance benefit**: code with mode declarations runs at the same speed as code without. Some users may be disappointed.
-- **Adding declarations is voluntary**: many users won't bother. Phase 3 will optimize only the declared predicates, leaving others slow.
-
-### Mitigations
-
-- **Documentation**: tutorial materials emphasize the value of mode declarations.
-- **Tooling support**: an IDE plugin or linter that suggests mode declarations based on observed usage patterns could lower the bar in Phase 3+.
-- **Phase 3 may include simple inference**: a pass that infers modes from call sites and clause structure can apply to undeclared predicates, providing some benefit without explicit declarations.
+- **Adding declarations is voluntary**, and in practice almost nobody does:
+  the real-program corpus carries none, which is why the mode-independent
+  ADR-029..031 arc — not this ADR — is where deterministic-predicate
+  performance actually comes from. Declared-mode specialization benefits
+  exactly the code that declares.
 
 ## Implementation Notes
 
@@ -304,7 +314,7 @@ Mode declarations are serialized into bundles (in the existing `Modes` section d
 
 ### Linter integration
 
-In v1, the linter can warn about:
+The linter can warn about:
 
 - Mode declarations for non-existent predicates (typo, or unused declaration).
 - Predicates with multiple declarations whose modes overlap inconsistently (rare, but possible to detect).

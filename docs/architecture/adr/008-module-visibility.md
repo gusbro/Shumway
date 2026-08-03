@@ -152,7 +152,7 @@ Loading a module:
 
 1. Parses the source.
 2. Identifies the module name (from `:- module/1` or filename).
-3. **Checks for module name conflict**: if a module with this name is already loaded, the existing one is **completely replaced** (clear all its predicates, then load the new ones). This is the simple v1 behavior. (Incremental reload is a possible v2 feature.)
+3. **Checks for module name conflict**: if a module with this name is already loaded, the existing one is **completely replaced** (clear all its predicates, then load the new ones). This is the simple, correct behavior — and how reconsult/1 works today.
 4. Compiles each clause to bytecode.
 5. Validates visibility declarations: public predicates do not collide with other modules' public predicates or with core builtins.
 6. Registers the module in the engine's module list.
@@ -216,13 +216,13 @@ The `CallUnresolved` opcode looks up the predicate in the appropriate table at r
 
 ### Module-qualified names as syntactic sugar
 
-**Considered.** Allow `parser:tokenize(X)` as a way to call a local predicate of another module. **Rejected for v1**: this re-introduces the SWI-style complexity. v1's model is "public or nothing" for cross-module access.
+**Considered.** Allow `parser:tokenize(X)` as a way to call a local predicate of another module. **Rejected at the time**: it re-introduces the SWI-style complexity; the Phase-1 model was "public or nothing" for cross-module access.
 
 If later a need arises to expose specific predicates "controlled" to a few modules (rather than the whole world), this can be considered as a phase 2+ feature (perhaps with `:- export(foo/2, [to(module1, module2)]).` or similar).
 
 ### Operators per module
 
-**Rejected for v1.** ISO standard treats operators as global. Shumway follows ISO: `:- op(...)` sets a global operator. Phase 2+ could add module-scoped operators if needed.
+**Rejected.** ISO standard treats operators as global. Shumway follows ISO: `:- op(...)` sets a global operator. Phase 2+ could add module-scoped operators if needed.
 
 ### Auto-import of all loaded modules' public predicates
 
@@ -365,7 +365,7 @@ When a module is reloaded (via `consult/1` of a file already loaded as that modu
 3. The new version is loaded.
 4. Cross-module references to this module's predicates are re-resolved.
 
-Reload is **all-or-nothing**: the entire module is replaced. Incremental reload (changing one clause) is not supported in v1.
+Reload is **all-or-nothing**: the entire module is replaced. Incremental reload (changing one clause) is not supported (assertz/retract on dynamic predicates is the incremental mechanism).
 
 ## Test Strategy
 
@@ -382,6 +382,6 @@ Reload is **all-or-nothing**: the entire module is replaced. Incremental reload 
 
 ## Related ADRs
 
-- ADR-007 (Indexing): visibility affects whether indexing is applied (static yes, dynamic no in v1).
+- ADR-007 (Indexing): visibility affects whether indexing is applied (static yes; dynamic predicates gained indexing later — Phase 2 cross-query caching, then the in-place indexed layouts).
 - ADR-009 (Bundler): the bundler relies heavily on visibility to compute reachability.
 - ADR-011 (IL Compiler): static predicates with resolved calls compile to direct IL invocations; dynamic ones go through runtime dispatch.

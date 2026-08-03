@@ -269,7 +269,7 @@ for (int i = 0; i < _stackTop; i++)
 
 Control slots (`CE`, `CP`, etc.) typically have tags that are not `Atom` (they store raw indices in the low bits, with high bits zero). They are not mistaken for atom cells. If for some reason a control slot's value happens to encode bits that match the `Atom` tag, the GC would mark a spurious id; this is harmless (just a redundant mark) and rare enough to ignore.
 
-If exactness is required, the GC can be made layout-aware (skip control slots based on frame layout), but this complicates the code significantly. For v1, the linear scan with `tag == Atom` check is sufficient.
+If exactness is required, the GC can be made layout-aware (skip control slots based on frame layout), but this complicates the code significantly. As shipped, the linear scan with the tag check is sufficient (ADR-016 later tagged control words RawInt for exactly this discrimination).
 
 ## Alternatives Considered
 

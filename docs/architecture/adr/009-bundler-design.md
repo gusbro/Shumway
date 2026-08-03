@@ -288,7 +288,7 @@ This eliminates JIT compilation overhead at startup for the main predicates and 
 
 ### Per-module bundles
 
-**Considered.** Each module becomes its own `.shum` file, loadable independently. **Rejected for v1**: introduces complexity in cross-module reference resolution (the loaded bundle may not have the referenced public predicate available). A single-bundle model is simpler and sufficient for typical use.
+**Considered.** Each module becomes its own `.shum` file, loadable independently. **Rejected at the time** (multi-object needs were later served by `.shum` archives — the `shumway-lib` librarian — rather than per-module bundles): it introduces complexity in cross-module reference resolution (the loaded bundle may not have the referenced public predicate available). A single-bundle model is simpler and sufficient for typical use.
 
 This could be revisited in phase 2+ for plug-in architectures or modular applications.
 

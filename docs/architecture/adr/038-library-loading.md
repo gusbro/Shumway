@@ -51,7 +51,7 @@ follow-up. The `M:goal` qualified-call syntax remains deferred as before.
 ADR-008 gave Shumway a **flat global namespace**: `:- public foo/N` (and the exports
 of `:- module(Name, [...])`) make `foo/N` a single, globally-unique bare name;
 module-local predicates are mangled `module$name`; there are no qualified `M:goal`
-calls. That was deliberate for v1 and works for a self-contained program plus the
+calls. That was deliberate initially and works for a self-contained program plus the
 baked libraries (prelude, clpfd, clpr, coroutining — all `:- module(Name)` 1-arg +
 `:- public`, provided as C# source strings).
 
