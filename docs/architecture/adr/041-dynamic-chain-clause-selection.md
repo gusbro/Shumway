@@ -1,4 +1,4 @@
-# ADR-041 — Dynamic-chain clause selection at dispatch (tier-uniform determinism)
+# ADR-041: Dynamic-chain clause selection at dispatch (tier-uniform determinism)
 
 ## Status
 

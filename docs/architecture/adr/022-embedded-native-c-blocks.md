@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (Phase 30). Not yet implemented. Captures the design agreed before any
+Accepted — implemented (Phase 30): `:- c` prototypes and `{...}` blocks compile to IL, run at runtime and persist in bundles. Captures the design agreed before any
 code lands.
 
 ## Context

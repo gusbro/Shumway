@@ -1319,14 +1319,14 @@ When proposing changes:
 | Persistent code space & live dynamic dispatch | ADR-015 |
 | Heap garbage collection | ADR-016 |
 | Inline compound references (2-cell cons) + cell-based unify | ADR-017 (phases 1 & 2 done) |
-| Arithmetic instruction set (RPN eval stack) | ADR-018 (proposed) |
+| Arithmetic instruction set (RPN eval stack) | ADR-018 (shipped) |
 | Inline nested compound build — last-arg | ADR-019 |
 | Inline nested compound build — non-last (reserve-upfront + write-pointer stack) | ADR-020 |
 | Register allocator — REJECTED with survey data (Class-B ceiling 1.5% on real code, unsound) | ADR-021 |
-| Embedded native C blocks (`:- c` / `{...}`) — IL lowering to a foreign interop class | ADR-022 (proposed) |
-| Dynamic predicates in Tier-1 IL — snapshot + evict-on-mutation | ADR-023 (proposed) |
-| Generic Prolog-term interop (reftype tier) — zero-copy TermRef cursor + named intrinsics | ADR-024 (proposed) |
-| Body `jump` opcode + inline deterministic if-then-else at Tier-0 | ADR-025 (proposed) |
+| Embedded native C blocks (`:- c` / `{...}`) — IL lowering to a foreign interop class | ADR-022 (shipped) |
+| Dynamic predicates in Tier-1 IL — snapshot + evict-on-mutation | ADR-023 (shipped) |
+| Generic Prolog-term interop (reftype tier) — zero-copy TermRef cursor + named intrinsics | ADR-024 (shipped) |
+| Body `jump` opcode + inline deterministic if-then-else at Tier-0 | ADR-025 (shipped) |
 | Variable-width choice points — REJECTED with measured ceiling (≤1% on max-CP synthetic, below noise; soundness blueprint preserved) | ADR-026 |
 | Second-level (sub-argument) indexing — `switch_on_{atom,integer}_sub`, bounded 2-hop path (list head / struct sub-arg / token stream) | ADR-027 |
 | Sibling-arg + structure-keyed indexing inside value buckets — nested `BucketSwitch` reusing `switch_on_*_arg` + new `switch_on_structure_sub` | ADR-028 |

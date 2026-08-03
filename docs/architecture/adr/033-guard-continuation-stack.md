@@ -1,6 +1,6 @@
 # ADR-033: Guard continuation stack (shared fail-direct callee copies)
 
-**Status:** Proposed — prototype in progress (user-driven design). Replaces
+**Status:** Accepted — prototype SHIPPED opt-in (`SHUMWAY_CPFREE_CONT=1`), including cross-tail composition; not default-on. Replaces
 per-call-site DUPLICATION of fail-direct callees (ADR-031 G/G2/G3) with ONE
 shared "optimized copy" per callee per IL method, routed through a small
 engine-level continuation stack. NOT a backtracking-model change: unlike the

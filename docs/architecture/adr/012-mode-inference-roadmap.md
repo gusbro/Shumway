@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted: directive `:- mode/1` is parsed and stored in v1. Code generation that exploits modes is deferred to Phase 3.
+Accepted — implemented: the directive is parsed and stored since v1; mode inference and mode-specialized code generation shipped in Phase 3.
 
 ## Context
 

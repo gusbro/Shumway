@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (Phase 30). This is the term/reftype tier deferred from
+Accepted — implemented (cursor tier in Phase 30; the materializer/dematerializer tier completed in Phase 32). This is the term/reftype tier deferred from
 [ADR-022](022-embedded-native-c-blocks.md) (the int/float/string tier shipped;
 whole-term marshalling — Arity's `reftype` / `preftype` machinery — was left for a
 dedicated design). Design settled with the user over several turns; implementation

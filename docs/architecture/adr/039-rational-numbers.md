@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (Phase 36).
+Accepted — implemented (Phase 36): Tag.Rational, `rdiv`, the `prefer_rationals` flag and the numeric tower shipped.
 
 ## Context
 

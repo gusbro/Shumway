@@ -1,6 +1,6 @@
 # ADR-020: Inline non-last nested compound build (reserve-upfront write mode)
 
-**Status:** Accepted — implementing (Phase 27, theme 3). Extends ADR-019 (which
+**Status:** Accepted — implemented (Phase 27, theme 3). Extends ADR-019 (which
 inlined nested compounds only in LAST-argument position) to **non-last**
 positions. Measurement: Blint defers 1119 non-last nested compounds to the BFS
 (temp + `get_structure`), all inlinable — a register/instruction win of the same
