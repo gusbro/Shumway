@@ -46,7 +46,7 @@ public sealed class PrologPredicateAttribute : Attribute
 
     /// <summary>Optional documentation category (e.g. <c>"Database"</c>
     /// or <c>"Control"</c>). Surfaces in the generated
-    /// <c>docs/predicates.md</c> reference.</summary>
+    /// <c>docs/guide/predicates.md</c> reference.</summary>
     public string? Category { get; init; }
 
     /// <summary>Optional moded call template, e.g.

@@ -5,7 +5,7 @@ using Shumway.Builtins;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Generates the user-facing predicate reference (<c>docs/predicates.md</c>)
+/// Generates the user-facing predicate reference (<c>docs/guide/predicates.md</c>)
 /// from the predicate definitions themselves, so it never drifts.
 ///
 /// <para>Two metadata sources, both living next to the definition. Each

@@ -8,7 +8,7 @@ namespace Shumway.Tests.Embedding;
 /// metadata lives next to each definition — a category/summary at the C#
 /// builtin registration site, a structured <c>%!</c> comment in the Prolog
 /// library sources — and <see cref="PredicateDoc"/> assembles it into
-/// <c>docs/predicates.md</c>. The staleness test below keeps that file in
+/// <c>docs/guide/predicates.md</c>. The staleness test below keeps that file in
 /// step with the code.
 /// </summary>
 public class Chunk94Tests
@@ -35,7 +35,7 @@ public class Chunk94Tests
     [Fact]
     public void PredicateReference_IsUpToDate()
     {
-        string path = Path.Combine(RepoRoot(), "docs", "predicates.md");
+        string path = Path.Combine(RepoRoot(), "docs", "guide", "predicates.md");
         string generated = Normalize(PredicateDoc.Generate());
 
         if (Environment.GetEnvironmentVariable("SHUMWAY_REGEN_DOCS") is not null)
@@ -45,9 +45,9 @@ public class Chunk94Tests
         }
 
         Assert.True(File.Exists(path),
-            "docs/predicates.md is missing — regenerate with SHUMWAY_REGEN_DOCS set.");
+            "docs/guide/predicates.md is missing — regenerate with SHUMWAY_REGEN_DOCS set.");
         Assert.True(generated == Normalize(File.ReadAllText(path)),
-            "docs/predicates.md is stale: a predicate's doc metadata changed. " +
+            "docs/guide/predicates.md is stale: a predicate's doc metadata changed. " +
             "Regenerate by running the suite with the SHUMWAY_REGEN_DOCS " +
             "environment variable set.");
     }
