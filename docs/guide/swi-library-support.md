@@ -73,13 +73,13 @@ iterators are generated), **url** (`parse_url/2` → protocol/host/port/path/
 search), **nb_set** (add/dedup/to_list), arithmetic°, broadcast, debug,
 ansi_term (`ansi_format/3` — format applied, colour ignored), varnumbers,
 **persistency**, **main**, **hashtable** (all three parse), listing°,
-prolog_stack°, gensym, codesio, date, base32, base64, utf8, readutil, readln,
+prolog_stack°, codesio, date, base32, base64, utf8, readutil, readln,
 intercept, increval, iostream, pure_input, pio, coinduction, wfs, tabling
 (via Shumway's native `:- table`), quasi_quotations, operators, oset, ugraphs,
 writef, atom, backcomp, quintus, edinburgh, dialect, macros, modules, streams,
 system, tables, portray_text, prolog_code, prolog_config, prolog_debug,
 prolog_evaluable, prolog_format, prolog_history, prolog_locale,
-prolog_metainference, prolog_versions, prolog_wrap, settings, optparse,
+prolog_metainference, prolog_versions, prolog_wrap, optparse,
 predicate_options, files, fastrw, hotfix, help, ctypes, console_input, dde,
 git, explain, obfuscate, rwlocks, www_browser, tty, vm.
 

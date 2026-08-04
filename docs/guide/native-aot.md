@@ -21,12 +21,13 @@ a single native binary with no .NET runtime dependency and no JIT.
 
 ## Publishing
 
-The REPL project (`src/Shumway.Repl/`) is the AOT publish target — its
-`.csproj` sets `<PublishAot>true</PublishAot>`. To produce the native
-`shumway` executable:
+The REPL project (`src/Shumway.Repl/`) is the AOT publish target. AOT is
+**opt-in at publish time** — the `.csproj` does not set `<PublishAot>`, so an
+ordinary build stays a normal managed binary; pass `-p:PublishAot=true` to
+`dotnet publish` to produce the native `shumway` executable:
 
 ```
-dotnet publish src/Shumway.Repl/ -r win-x64 -c Release
+dotnet publish src/Shumway.Repl/ -r win-x64 -c Release -p:PublishAot=true
 ```
 
 The output is `src/Shumway.Repl/bin/Release/net10.0/win-x64/publish/shumway.exe`
