@@ -10,7 +10,7 @@ Shumway implements a Prolog compiler and interpreter that runs natively on .NET.
 
 2. **Embedded rules engines**: applications that need symbolic reasoning, decision rules, or logic programming as part of a larger .NET system. Frequent crossing of the C# ↔ Prolog boundary is expected.
 
-The performance target is to be **comparable to or better than GNU Prolog** in real-world scenarios. In pure Prolog computation Shumway aims to be within a small factor of GNU Prolog (typically 1–2×); in interop-heavy workloads it is expected to outperform GNU Prolog significantly because Shumway avoids the cost of FFI marshalling.
+The performance **target** is to be comparable to or better than GNU Prolog in real-world scenarios. As measured today ([the benchmarks](../benchmarks/analysis.md)), the Tier-1 IL engine runs within a small factor of native-compiled GNU Prolog (roughly 1–4× by shape) and beats SWI-Prolog on the recursion/backtracking benchmarks; the Tier-0 interpreter is ~7.5× of native GProlog. Outperforming GNU Prolog on interop-heavy workloads — where the cost of crossing the C# ↔ Prolog boundary dominates raw throughput — is a **design goal that has not yet been benchmarked**.
 
 ## Architectural layers
 

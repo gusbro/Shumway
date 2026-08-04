@@ -2,8 +2,13 @@
 
 **Shumway** is a Prolog compiler and interpreter for the .NET platform, built for
 embedding Prolog in .NET applications: grammar processing (DCGs), rules engines,
-and symbolic reasoning inside larger systems — with performance comparable to or
-better than GNU Prolog, and far ahead of it on interop-heavy workloads.
+and symbolic reasoning inside larger systems. Its two-tier engine — a bytecode
+interpreter and a JIT-compiled IL tier — outperforms SWI-Prolog on recursion and
+backtracking benchmarks and runs within a small factor of native-compiled GNU
+Prolog (see [the benchmarks](docs/benchmarks/analysis.md)). A **design goal**,
+not yet benchmarked, is to outperform GNU Prolog on interop-heavy workloads,
+where the cost of crossing the C# ↔ Prolog boundary dominates raw Prolog
+throughput.
 
 ## Highlights
 
