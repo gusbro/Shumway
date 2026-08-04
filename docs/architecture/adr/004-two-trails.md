@@ -12,7 +12,7 @@ In the classic WAM described in Aït-Kaci's book, only variable bindings are tra
 
 1. **Variable bindings** (the common case, 95%+ of trail entries).
 2. **Value changes** on heap cells (rare but possible in some operations).
-3. **Attributed variable modifications** (future, when attvars are added).
+3. **Attributed variable modifications** (`AttrAdd` / `AttrModify` / `AttrRemove`, shipped in Phase 4).
 4. **Backtrackable global variables** (`b_setval/2` in SWI, optional feature).
 
 Several encoding strategies exist:
@@ -27,7 +27,7 @@ The choice has performance implications because:
 - Trail compaction after cuts processes potentially many entries.
 - Memory locality during unwind matters for cache performance.
 
-The user's target workload includes intensive use of cut and backtracking. This shifts the balance toward maximizing performance of the common case (binding trail) at the cost of slightly more complex code for the rare case.
+Shumway's target workload includes intensive use of cut and backtracking. This shifts the balance toward maximizing performance of the common case (binding trail) at the cost of slightly more complex code for the rare case.
 
 ## Decision
 
@@ -79,11 +79,13 @@ public struct ExtraTrailEntry
 public enum TrailType : byte
 {
     ValueChange = 1,
-    AttrAdd = 16,        // reserved for attvars
-    AttrModify = 17,     // reserved for attvars
-    AttrRemove = 18,     // reserved for attvars
-    MutableSet = 32,     // reserved for b_setval/2 if implemented
-    // additional types reserved per category
+    BigIntAlloc = 2,     // reverse a BigInteger side-table allocation
+    RationalAlloc = 3,   // reverse a rational side-table allocation
+    AttrAdd = 16,        // attributed-variable add (Phase 4)
+    AttrModify = 17,     // attributed-variable modify
+    AttrRemove = 18,     // attributed-variable remove
+    MutableSet = 32,     // b_setval/2
+    CatchFrame = 64,     // catch/3 barrier marker
 }
 
 private ExtraTrailEntry[] _extraTrail;
@@ -195,7 +197,7 @@ The following are **not** reversible by backtracking and are not trailed:
 
 - `assertz/1`, `asserta/1`, `retract/1`: modifications to the dynamic predicate database are permanent. This is the standard Prolog semantics (and what GNU Prolog and SWI-Prolog do).
 - Modifications to the atom table, functor table, global tables.
-- Auxiliary table growth (bigints, strings, foreign objects, floats): these grow during a query and are cleaned up at query end, not by trail.
+- Auxiliary table growth (strings, foreign objects): these grow during a query and are cleaned up at query end, not by trail. (BigInteger and rational allocations are the exception: they are trailed via `TrailType.BigIntAlloc` / `RationalAlloc` and released on backtrack, so a bound-then-unbound arithmetic result does not leak table entries.)
 - I/O side effects (`write`, `read`).
 - `set_prolog_flag/2`.
 - `nb_setval/2` (non-backtrackable globals, if implemented).
@@ -210,7 +212,7 @@ The following are **not** reversible by backtracking and are not trailed:
 
 **Considered, rejected.** This was an intermediate option: a `long[]` trail where type 0 (binding) uses just the heap index in the low bits, and rare types use a discriminator in the high bits. Better than the 16-byte option, but still 2× the memory of `int[]` for the binding case, and the dispatch branch (even if well predicted) costs ILP.
 
-For workloads with cut compaction running frequently, the cost of copying twice the data during compaction is real. The user's emphasis on cut-heavy workloads tilted the decision toward the two-trail design.
+For workloads with cut compaction running frequently, the cost of copying twice the data during compaction is real. The emphasis on cut-heavy workloads tilted the decision toward the two-trail design.
 
 ### Three or more specialized trails
 
@@ -228,7 +230,7 @@ For workloads with cut compaction running frequently, the cost of copying twice 
 - **Unwind is tight loops**: the BindingTrail unwind is a simple loop with no branch on type. The JIT can vectorize or unroll it.
 - **Cache density**: 8 binding entries per 64-byte cache line, vs. 4 or 2 for larger encodings.
 - **Compaction is fast**: scanning an `int[]` with simple comparison and copy is one of the most cache-friendly patterns possible.
-- **Extensibility for the future**: when attvars are added, they fit into ExtraTrail without disturbing the binding hot path.
+- **Extensibility**: attributed-variable modifications (shipped in Phase 4) fit into ExtraTrail without disturbing the binding hot path.
 
 ### Negative
 
@@ -248,7 +250,7 @@ For workloads with cut compaction running frequently, the cost of copying twice 
 - `_bindingTrail` starts at 1024 entries (4 KB).
 - `_extraTrail` starts at 64 entries (~1 KB).
 - Both grow geometrically (×2) when full.
-- Maximum sizes can be configured via `EngineConfig`.
+- Maximum sizes can be configured via `ActivationConfig`.
 
 ### Trail and engine.Reset
 

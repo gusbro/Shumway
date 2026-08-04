@@ -87,7 +87,7 @@ Stack offset (from cpBase = _b):
   cpBase + n + 8:       HB (saved heap boundary)
 ```
 
-Total size: 9 + n cells for an n-argument predicate.
+Total size: 11 + n cells for an n-argument predicate (`CpSize` — grown from the original 9 as ADR-015 added the `ViewGen` slot and a `B0` slot).
 
 Only **arguments** are snapshotted, not all live X registers. The compiler is responsible for ensuring that any X register needed across the boundary is also written to a Y permanent.
 
@@ -338,7 +338,7 @@ internal static class FrameLayout
     public const int CpArg1Offset = 1;
     // CE at offset 1 + arity, etc.
     
-    public static int CpSize(int arity) => 10 + arity;          // ADR-015: +1 for ViewGen
+    public static int CpSize(int arity) => 11 + arity;          // incl. ViewGen (ADR-015) and B0
     public static int CpCeOffset(int arity) => 1 + arity;
     public static int CpCpOffset(int arity) => 1 + arity + 1;
     public static int CpBOffset(int arity) => 1 + arity + 2;
@@ -359,7 +359,7 @@ calling goal saw when it entered — its logical-update-view timestamp.
 `TrustMe` restore it via `RestoreCommonFromCurrentCp`. The slot is
 uniform across all CPs (zero for static-predicate dispatch, which never
 samples it); the tiny per-CP cost buys one save/restore path instead of
-two parallel CP shapes. The upcoming `CheckVisible` opcode reads
+two parallel CP shapes. The `CheckVisible` opcode reads
 `CurrentViewGen` against a clause's `born` / `died` to honour the ISO
 logical update view at the bytecode level (no builtin indirection).
 

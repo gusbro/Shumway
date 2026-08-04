@@ -156,7 +156,7 @@ Global tables are static, lazily initialized. They live for the lifetime of the 
 ### Capacity and growth
 
 - Heap, stack, and trails grow geometrically (×2 when full).
-- Maximum sizes are configurable via `EngineConfig`. A value of 0 means unlimited (default).
+- Maximum sizes are configurable via `ActivationConfig`. A value of 0 means unlimited (default).
 - Out-of-memory at the engine level throws a Prolog `resource_error/1` exception.
 
 ## Test Strategy

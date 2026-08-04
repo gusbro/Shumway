@@ -19,13 +19,13 @@ Shumway needs a module system that:
 3. **Resolves calls at compile time when possible**, for both performance and IL compilation.
 4. **Provides encapsulation**: predicates internal to a module should not be callable from outside.
 
-The user has indicated this is intended for building large applications (10,000+ LOC Prolog), often shipped as a single bundle. The model needs to support strong static analysis: which predicates are public, which are internal, which are unreachable.
+This model is intended for building large applications (10,000+ LOC Prolog), often shipped as a single bundle. It needs to support strong static analysis: which predicates are public, which are internal, which are unreachable.
 
 A SWI-style module system with arbitrary namespaces complicates this analysis: two modules can both have `foo/2` and they coexist. Resolving which `foo/2` is called requires reasoning about imports.
 
 A different model is possible: **flat global namespace for public predicates, file-local namespace for everything else**. This is closer to how visibility works in compiled languages like C# or Java: things are local unless explicitly exported.
 
-The user proposed this model. The design is documented here.
+This is the model Shumway adopts; the design is documented here.
 
 ## Decision
 

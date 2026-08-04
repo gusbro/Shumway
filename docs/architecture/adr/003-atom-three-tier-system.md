@@ -35,7 +35,7 @@ Shumway uses a **three-tier atom table** with explicit movement between tiers dr
 
 ### The three tiers
 
-1. **Permanent**: atoms originating from source code literals, builtin names, or explicit promotion. Strong references in a global list (`_permanentAnchors`). **Never collected** by the custom GC. Two sub-categories:
+1. **Permanent**: atoms originating from source code literals, builtin names, or explicit promotion. Strong references in `_permanentById` (a `Dictionary<int, Atom>`, mirrored by a copy-on-write `_permanentByIdArray` for lock-free `GetById`). **Never collected** by the custom GC. Two sub-categories:
    - Atoms from source code (created during `Consult`).
    - Atoms promoted from Transient (e.g., when a transient atom appears in a source file loaded later).
 
@@ -45,10 +45,10 @@ Shumway uses a **three-tier atom table** with explicit movement between tiers dr
 
 ### Lookup tables
 
-- `_byName: ConcurrentDictionary<string, Atom>`: maps atom name to atom object. Used by `Intern(string)`.
-- `_permanentAnchors: List<Atom>`: strong references that keep Permanent atoms alive.
+- `_byName: ConcurrentDictionary<string, WeakReference<Atom>>`: maps atom name to a **weak** reference to the atom. Weak so that demoting an atom to TransientWeak truly releases every table-side strong reference — a strong `_byName` would make the weak tier pointless. Used by `Intern(string)`.
+- `_permanentById: Dictionary<int, Atom>`: strong references that keep Permanent atoms alive.
 - `_transientById: Dictionary<int, Atom>`: strong references for Transient atoms.
-- `_transientWeak: Dictionary<int, WeakReference<Atom>>`: weak references for TransientWeak atoms.
+- `_transientWeak: Dictionary<int, TransientWeakEntry>`: for TransientWeak atoms — each entry bundles the `WeakReference<Atom>` with a cached name (the name is needed after the atom is gone).
 - `_foreignWeakRefs: List<WeakReference<Atom>>`: weak references corresponding to atoms exposed to C# via the embedding API. Used by the GC to detect C# retention.
 
 ### Atom GC algorithm

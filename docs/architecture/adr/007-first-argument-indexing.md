@@ -264,7 +264,7 @@ A configuration flag `strict_dynamic_declarations` (default: false) can disable 
 
 ### Indexing on every argument (not just first)
 
-**Rejected.** Indexing on multiple arguments simultaneously requires multi-dimensional structures (or a sequence of single-argument indexes). Phase 2 will add multi-argument indexing as a fallback when the first argument is a variable, but indexing on every argument simultaneously is more complex and rarely needed in practice.
+**Rejected (for the all-arguments-at-once form).** Indexing on multiple arguments simultaneously requires multi-dimensional structures (or a sequence of single-argument indexes). Multi-argument indexing *did* ship as a fallback when the first argument is a variable (a sequence of single-argument switches, ADR-027/028); indexing on every argument simultaneously remains more complex and rarely needed in practice.
 
 ### JIT-compiled indexing (SWI-Prolog style)
 
@@ -340,4 +340,4 @@ PSTR and FOREIGN as first arguments in clause heads are treated as variable-like
 ## Related Design Docs
 
 - `design/wam-instruction-set.md`: detailed operand specs for indexing opcodes.
-- Phase 2 design docs (future): multi-argument indexing, dynamic predicate indexing.
+- multi-argument indexing and dynamic-predicate indexing (shipped — see ADR-027/028 and the second-level/bucket indexing opcodes in `Opcode.cs`).

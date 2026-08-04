@@ -62,17 +62,19 @@ Most instructions have 0–3 operands. Special instructions (e.g., `switch_on_te
 | Opcode | Purpose |
 |--------|---------|
 | 0x00   | **Invalid** (Reserved). Encountering this at runtime indicates corruption or a PC misdirection. The interpreter fails loudly. |
-| 0xFE   | **Meta opcode**. The next byte indicates the kind of meta info. Phase 1 defined only `DbgInfo` (sub-opcode 0x00). |
-| 0xFF   | **Extension**. Reserved for future use if 256 opcodes become insufficient (an "escape" mechanism). Unused. |
+| 0xFE   | **Meta opcode** *(original id — since renumbered, see below)*. The next byte indicates the kind of meta info; only `DbgInfo` (sub-opcode 0x00) is defined. |
+| 0xFF   | **Extension** *(original id — since renumbered)*. Reserved escape mechanism if 256 opcodes ever become insufficient. |
 
 **Usable values**:
 
-| Range | Use |
-|-------|-----|
-| 0x01..0x7F | Core opcodes: get, put, unify, control, choice, indexing, cut, builtins. ~80 opcodes at Phase 1 (including consolidations); later ADRs appended more. |
-| 0x80..0xFD | Reserved for future extensions (PSTR-specific, attvar-specific, optimization variants). |
-
-The reserved ranges leave ample room for new opcodes without restructuring the encoding.
+Opcode ids are assigned **contiguously from 0x00**, not in per-category bands
+(the original per-category reserved ranges were dropped so the interpreter can
+dispatch through a single dense jump table). Phase 1 shipped ~80 opcodes; later
+ADRs appended more (`enter_dynamic`, `check_visible`, `switch_on_arg`, the
+`a_int_*` arithmetic lane, `soft_cut`, …). In the current numbering `Meta` is
+`0x62` and `ReservedExtension` is `0x67`; **`src/Shumway.Core/Opcode.cs` is the
+source of truth for every id.** The dense block still leaves ample room for new
+opcodes without restructuring the encoding.
 
 ### Meta opcode (0xFE)
 

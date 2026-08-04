@@ -50,7 +50,10 @@ Bits 59..0:  payload (60 bits, interpretation depends on tag)
 | 0x9 | FOREIGN  | Id in the per-engine foreign object table. |
 | 0xA | ATTVAR   | Heap index to the variable's own home cell (a self-referencing variable, like REF). Implemented in Phase 4 — see chunk 77. |
 | 0xB | PSTR     | Partial string header (see PSTR design doc). |
-| 0xC..0xF | (reserved) | Available for future extensions. |
+| 0xC | PSTRBUF  | Partial-string buffer (`PstrBuffer`). |
+| 0xD | RAWINT   | Untagged control word (`RawInt`) in environment / choice-point slots — lets the conservative GC scan tell control data from heap references. |
+| 0xE | RATIONAL | Id in the per-engine rational table (`Rational`, ADR-039). |
+| 0xF | (reserved) | Available for future extensions. |
 
 ### The heap is fully blittable
 
@@ -202,7 +205,10 @@ public enum Tag : byte
     Foreign = 0x9,
     AttVar = 0xA,  // attributed variable (Phase 4, chunk 77): payload = own home index
     Pstr = 0xB,
-    // 0xC..0xF reserved
+    PstrBuffer = 0xC,
+    RawInt = 0xD,      // untagged control word (env / CP slots)
+    Rational = 0xE,    // rational table id (ADR-039)
+    // 0xF reserved
 }
 ```
 
