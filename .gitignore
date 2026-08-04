@@ -486,3 +486,8 @@ $RECYCLE.BIN/
 
 # smoke-run artifacts
 vs/smoke/*-trace.txt
+
+# Local-only, not part of the repo
+buildall.bat
+nuget.config
+ShumwayDocs_*.zip
