@@ -1,5 +1,17 @@
 # Atom GC Coordination
 
+> **The multi-engine coordination protocol described here is design-only — it
+> was not built.** There is no `AtomGcCoordinator`, no stop-the-world
+> safe-point handshake, and `AtomTable.Sweep` has no callers. What ships:
+> `AtomTable` (`src/Shumway.Core/AtomTable.cs`) with the three-tier fields
+> `_byName` (`ConcurrentDictionary<string, WeakReference<Atom>>`),
+> `_permanentById`, `_transientById`, `_transientWeak`
+> (`Dictionary<int, TransientWeakEntry>`) and `_foreignWeakRefs`; the mark phase
+> is performed externally and `Sweep` takes a `HashSet<int> reachable`. Read the
+> sections below as the intended coordination design, not current behaviour —
+> several symbols in them (`_transient`, `_lastMarkedSet`, `AtomTable.Mark`,
+> `class Engine`, `EngineConfig`) do not exist.
+
 This document specifies how the custom atom GC coordinates with multiple engines running concurrently in the same process. It complements ADR-003 by providing the synchronization protocol, safe-point mechanism, and edge cases.
 
 ## Context

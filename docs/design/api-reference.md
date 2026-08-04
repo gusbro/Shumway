@@ -1,10 +1,19 @@
 # Public API Reference
 
-> **Design-time snapshot (2026-05).** The embedding surface has grown since
-> (CLP opt-ins `UseClpfd`/`UseClpr`, native interop `UseNativeLibrary`/`Reftype`,
-> debugging `EnableDebugging`/`DebugOptions`, `EnginePool`, async queries).
-> The XML docs on `PrologEngine` and [`../user-guide.md`](../guide/user-guide.md) are
-> the current reference; this file covers the v1 core, which is unchanged.
+> **Early design snapshot — most signatures below were renamed before shipping.**
+> The [user guide](../guide/user-guide.md) and the XML docs on the real
+> `Shumway.Embedding` types are the current API reference. Key differences: `Term`
+> is the AST class hierarchy (`AtomTerm`/`CompoundTerm`/`VarTerm`/`IntTerm`/…),
+> **not** a `Term` struct with a `TermKind` enum or `MakeAtom` factories;
+> querying is `Query(string)`→`Solution`, `QueryAll`→`IEnumerable<Solution>`,
+> `QueryAsync`→`IAsyncEnumerable<Solution>` (there is no `Query` class);
+> foreign predicates use `[PrologPredicate("name/arity")]` +
+> `RegisterPredicates(...)` (no `ForeignPredicate`/`ForeignResult`/`ForeignContext`);
+> exceptions surface as the single `ShumwayPrologException`; `PrologEngine` is
+> **not** `IDisposable`; pooling is `EnginePool` handing out a `Lease` (no
+> `PooledEngine`); and there is no `EngineConfig` / `EngineFlags` / `LoadResult`.
+> The conversion surface (`ToTerm<T>` / `FromTerm<T>` / `RegisterConverter<T>`),
+> `Solution`, and `[PrologTerm]` **are** real. Read the rest as historical design.
 
 This document is the exhaustive reference for Shumway's public .NET API. It complements ADR-010 by providing complete signatures, parameter descriptions, exceptions, and examples for every public type.
 

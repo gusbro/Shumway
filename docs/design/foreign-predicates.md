@@ -1,5 +1,18 @@
 # Foreign Predicates: Implementation Patterns
 
+> **Early design — this describes a pre-rename model that did not ship.** The
+> real mechanism: annotate a method with `[PrologPredicate("name/arity")]` and
+> register it via `engine.RegisterPredicates(instance | typeof | <T>())`. A
+> method takes a `Shumway.Core.Activation` and returns `bool` (reading arguments
+> with `engine.GetRegister(0..arity-1)`), or uses typed parameters the source
+> generator decodes; non-determinism is `NonDeterministic = true` + an
+> `IEnumerable<T>` return; `out` / `ref` parameters map to `-` / `?` modes;
+> errors are thrown as `PrologRuntimeException`. There is **no**
+> `ForeignPredicate` delegate, `ForeignResult` enum, `ForeignContext`, or
+> `[PrologMode]` attribute. See the [user guide](../guide/user-guide.md) and
+> `src/Shumway.Embedding/PrologPredicateAttribute.cs`. Read the patterns below as
+> historical design.
+
 This document specifies in detail how foreign predicates work in Shumway: registration, invocation, argument access, unification, non-determinism, exceptions, and threading model.
 
 A "foreign predicate" is a Prolog predicate whose body is implemented in C# (or any other .NET language) rather than in Prolog. Foreign predicates extend Prolog with native operations: file I/O, network access, database calls, custom data manipulation, calls to other .NET libraries.

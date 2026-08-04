@@ -259,7 +259,9 @@ When the GC runs, all engines must be at a safe point (not in the middle of a ho
 
 For single-threaded use (one engine per process), this is trivial: the GC runs between queries.
 
-For multi-engine concurrent use, the coordination requires `ManualResetEventSlim` and `CountdownEvent`. See `design/atom-gc-coordination.md` for details (to be written).
+A multi-engine stop-the-world coordination protocol was sketched in
+`design/atom-gc-coordination.md`, but it is design-only — not built (see that
+file's banner).
 
 ### Pre-registered atoms
 
