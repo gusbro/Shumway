@@ -55,10 +55,12 @@ public static class ShmoViaConsult
         string? dialect = null)
     {
         var e = new PrologEngine();
-        // ADR-040: a whole library collection may be one non-shumway dialect.
+        // ADR-040: a library collection may be a non-shumway dialect. An
+        // explicit dialect applies to every dir; otherwise each dir spec may
+        // carry its own `dialect:path` prefix (AddLibraryDirectorySpec parses it).
         foreach (string d in libraryDirs)
             if (dialect is { Length: > 0 }) e.AddLibraryDirectory(d, dialect);
-            else e.AddLibraryDirectory(d);
+            else e.AddLibraryDirectorySpec(d);
         // Each root's own directory is an implicit library dir (the C
         // `#include "..."` rule) — added after the explicit -L dirs, which win.
         foreach (string rp in rootPaths)

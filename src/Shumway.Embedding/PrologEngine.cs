@@ -24,6 +24,12 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 {
     public const string DefaultModuleName = "user";
 
+    /// <summary>Whether <paramref name="name"/> is a known library dialect
+    /// (ADR-040) — so a CLI can tell a <c>dialect:path</c> library-dir spec
+    /// from a plain Windows path before resolving it.</summary>
+    public static bool IsKnownLibraryDialect(string name) =>
+        DialectRegistry.IsKnownDialect(name);
+
     /// <summary>Shumway's version, as reported by the <c>version_data</c>
     /// Prolog flag — <c>shumway(Major, Minor, Patch, [])</c>. Pre-release:
     /// stays 0.x until the first official release.</summary>

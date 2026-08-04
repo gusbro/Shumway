@@ -444,7 +444,7 @@ internal static class LinkCli
                 case "--library-dir":
                 case "-L":
                     if (++i >= args.Length) { ReportMissing(arg); return null; }
-                    opts.LibraryDirs.Add(System.IO.Path.GetFullPath(args[i]));
+                    opts.LibraryDirs.Add(NormalizeLibDirArg(args[i]));
                     break;
 
                 case "--strip":
@@ -729,6 +729,18 @@ internal static class LinkCli
 
     private static void ReportMissing(string option) =>
         Console.Error.WriteLine($"shumway-link: option '{option}' requires a value.");
+
+    /// <summary>A <c>-L</c> value may be a <c>dialect:path</c> spec (used with
+    /// <c>--consult</c> to load another Prolog system's libraries, ADR-040) or
+    /// a plain path. Preserve the former verbatim; resolve the latter to a full
+    /// path.</summary>
+    private static string NormalizeLibDirArg(string arg)
+    {
+        int c = arg.IndexOf(':');
+        if (c > 0 && PrologEngine.IsKnownLibraryDialect(arg.Substring(0, c)))
+            return arg;
+        try { return System.IO.Path.GetFullPath(arg); } catch { return arg; }
+    }
 
     /// <summary>A source compiled file-at-a-time that uses <c>library</c>
     /// dependencies or load-time expansion hooks will link with unresolved
