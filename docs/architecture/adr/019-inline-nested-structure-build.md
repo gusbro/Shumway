@@ -54,11 +54,11 @@ purely linear: after the nested structure there are no more parent args to
 return to, so `UnifyPointer` never needs to "resume" the parent and **no
 write-pointer stack is required**.
 
-A nested compound in a **non-last** argument position (`f(g(X), Y)`) keeps the
-existing BFS (temp + deferred `get_structure`), because resuming `Y` after
-`g(X)` would need a write-pointer stack. This is the minority case; last-arg /
-list nesting is the pervasive one and captures GProlog's win. (A future ADR may
-add the write-pointer stack for full generality if measurement justifies it.)
+A nested compound in a **non-last** argument position (`f(g(X), Y)`) originally
+kept the BFS (temp + deferred `get_structure`), because resuming `Y` after
+`g(X)` needs a write-pointer stack; last-arg / list nesting — the pervasive case
+— captured GProlog's win first. **ADR-020 subsequently added that write-pointer
+stack**, so non-last nested compounds are built inline too.
 
 ### Read mode
 
@@ -71,7 +71,8 @@ temp. (Head-side adoption is optional / a follow-up; the build side is the win.)
 ## Consequences
 
 - **New opcodes** — a Major Decision per [the decision policy](../decision-policy.md); this ADR is the proposal.
-  Opcode ids in the `0x40` unify family (next free after `UnifyVoid = 0x48`).
+  The `unify_structure` / `unify_list` opcodes (ids assigned in the contiguous
+  block, next to `UnifyVoid` — see `Opcode.cs`).
 - Touches: `Opcode` / `OpcodeInfo` (ids + sizes — `unify_structure` carries a
   4-byte functor id = 5 bytes; `unify_list` = 1 byte), `Engine` (two write-mode
   helpers), the Tier-0 interpreter dispatch, the Tier-1 IL emit, the

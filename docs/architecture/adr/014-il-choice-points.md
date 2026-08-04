@@ -14,7 +14,7 @@ The Tier-1 IL compiler (ADR-011) emits a `PredicateDelegate` whose
 shape used to be:
 
 ```csharp
-public delegate bool PredicateDelegate(Engine engine);
+public delegate bool PredicateDelegate(Activation engine);
 ```
 
 This is fine for single-clause facts — the delegate either succeeds
@@ -56,7 +56,7 @@ and the side table is one Dictionary on the engine.
 The delegate becomes:
 
 ```csharp
-public delegate bool PredicateDelegate(Engine engine, int clauseCursor);
+public delegate bool PredicateDelegate(Activation engine, int clauseCursor);
 ```
 
 | `clauseCursor` | Meaning |
@@ -69,15 +69,16 @@ sequence. Failure in the head-match returns `false` so the engine
 backtracks (which may re-enter the same delegate with the next
 cursor).
 
-### Engine API
+### Activation API
 
-Three new public surfaces on `Engine`:
+Three new public surfaces on `Activation` (the per-query execution object;
+`Engine` is its informal name in older text):
 
 ```csharp
 public const int IlChoicePointSentinelBp = -1;
-public void PushIlChoicePoint(Func<Engine, int, bool> del, int nextCursor, int arity);
+public void PushIlChoicePoint(Func<Activation, int, bool> del, int nextCursor, int arity);
 public bool TopChoicePointIsIl { get; }
-public (Func<Engine, int, bool> Del, int Cursor) PopIlChoicePointAndRestore();
+public (Func<Activation, int, bool> Del, int Cursor) PopIlChoicePointAndRestore();
 ```
 
 `PushIlChoicePoint` calls the existing `PushChoicePoint` with the
@@ -122,7 +123,7 @@ heap / trail restoration that runs alongside it.
 ### Why the side table instead of inlining
 
 The CP frame is a stack of `Cell`s — value types only, no managed
-references. Stashing a `Func<Engine, int, bool>` on the stack would
+references. Stashing a `Func<Activation, int, bool>` on the stack would
 mean GC-rooting the delegate through a managed array, which the
 heap / register / stack are deliberately *not*. The side table keeps
 managed references where managed references belong (a regular
@@ -177,9 +178,9 @@ changed; just IL text.
 
 - ADR-005: Stack Layout (CP frame layout that IL CPs reuse verbatim).
 - ADR-011: IL Compiler Architecture (Tier-1 promotion path).
-- `src/Shumway.Core/Engine.cs` — `PushIlChoicePoint`,
+- `src/Shumway.Core/Activation.Tier1.cs` — `PushIlChoicePoint`,
   `PopIlChoicePointAndRestore`, `TopChoicePointIsIl`.
 - `src/Shumway.Interpreter/BytecodeInterpreter.cs` — `TryBacktrack`
   loop with the IL-CP dispatch.
 - `src/Shumway.Compiler.Il/PredicateDelegate.cs` — the new
-  `(Engine, int) → bool` shape.
+  `(Activation, int) → bool` shape.

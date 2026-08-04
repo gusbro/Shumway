@@ -32,7 +32,7 @@ unchanged — so the hot common path is untouched.
 
 ### Two new opcodes (carry their reserve size at compile time — no runtime lookup)
 
-- **`put_structure_r <functorId> <regIdx> <argCount>`** (13 bytes): allocate
+- **`put_structure_r <functorId> <packed regIdx+argCount>`** (9 bytes): allocate
   `argCount + 1` contiguous cells (functor + args), write the functor, store an
   inline `Str` ref in `X[regIdx]`, enter **reserved** write mode, push a base
   frame `(remaining = argCount)`, set `UnifyPointer` to the first arg. `argCount`
@@ -50,7 +50,7 @@ unchanged — so the hot common path is untouched.
   on-demand build.
 - A scalar `unify_*` (atom/integer/nil/variable/value/void) in reserved mode
   WRITES at the pre-reserved `UnifyPointer` cell (no `AllocateHeap`), advances,
-  and calls `OnArgWritten` — decrement the top frame's `remaining`, and
+  and calls `OnReservedArgWritten` — decrement the top frame's `remaining`, and
   cascade-pop every frame that reaches 0, restoring `UnifyPointer` to the popped
   frame's saved parent-resume pointer.
 - `unify_structure` / `unify_list` in reserved mode write the nested `Str`/`Lis`
@@ -75,7 +75,7 @@ ADR may extend reserved mode to head matching if measurement justifies it.
 ## Consequences
 
 - **New opcodes** — a Major Decision per [the decision policy](../decision-policy.md); this ADR is the proposal.
-  Ids `0x2C` / `0x2D` in the put family.
+  `PutStructureR` / `PutListR` opcodes (ids in `Opcode.cs`).
 - Touches: `Opcode` / `OpcodeTable` (ids + sizes), `Engine` (reserved-mode
   helpers + the write-pointer frame stack), the Tier-0 interpreter dispatch
   (reserved branch in each `unify_*` + the two new put opcodes), the Tier-1 IL

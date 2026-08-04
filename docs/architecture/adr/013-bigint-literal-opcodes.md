@@ -43,12 +43,13 @@ BigInteger side table instead of the float heap representation:
 | Opcode        | Hex   | Size | Operands                              |
 |---------------|-------|------|----------------------------------------|
 | `GetBigInt`   | 0x0C  | 9    | `LiteralId`, `Reg`                     |
-| `PutBigInt`   | 0x2B  | 9    | `LiteralId`, `Reg`                     |
-| `UnifyBigInt` | 0x4A  | 5    | `LiteralId`                            |
+| `PutBigInt`   | 0x18  | 9    | `LiteralId`, `Reg`                     |
+| `UnifyBigInt` | 0x25  | 5    | `LiteralId`                            |
 
-The opcodes occupy the previously-unused next slot in each opcode category
-(get / put / unify), keeping the encoding's category structure (ADR-006's "0x01..0x1F:
-get instructions", "0x20..0x3F: put", "0x40..0x4F: unify").
+These reuse the existing get/put/unify machinery. The ids above are the current
+ones: opcodes were later renumbered into one contiguous block (ADR-006), so the
+original per-category bands no longer apply — `Opcode.cs` is authoritative. The
+names and 9/9/5 sizes are the stable part.
 
 The `LiteralId` operand is an index into a per-module
 `LiteralPool<BigInteger>` that the compiler builds alongside the existing
@@ -131,9 +132,8 @@ BigInts the same way it handles longs.
 
 **Negative**:
 
-- Three more opcodes consumed (0x0C, 0x2B, 0x4A). The 0x80..0xFD reserved
-  range is untouched, so there's no scarcity concern; the budget for
-  PSTR-specific and attvar-specific opcodes is preserved.
+- Three more opcodes consumed. Opcode ids come from a single contiguous block
+  (ADR-006) with ample room, so there is no scarcity concern.
 - The bigint side table grows monotonically — every `MakeBigInt(value)`
   with a side-table-bound value appends a fresh slot. A future
   optimisation could deduplicate, but the current behaviour matches what
