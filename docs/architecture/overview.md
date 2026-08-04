@@ -19,8 +19,8 @@ Shumway is organized into seven major components, each with clearly defined resp
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                   Embedding API (.NET public surface)        │
-│  PrologEngine, Term, Query, Solution, EnginePool,            │
-│  ForeignPredicate, struct↔term mapping (source generators)   │
+│  PrologEngine, Term (AST), Solution, EnginePool,             │
+│  [PrologPredicate] foreign predicates, struct↔term mapping   │
 └─────────────────────────────────────────────────────────────┘
                               │
         ┌─────────────────────┼─────────────────────┐
@@ -107,8 +107,9 @@ Tags defined in v1:
 | 0x9 | FOREIGN  | Id in per-engine foreign object table |
 | 0xA | ATTVAR   | Heap index to own home cell (attributed variables — CLP(FD)/CLP(R) build on these) |
 | 0xB | PSTR     | Partial string (Scryer-style, UTF-16) |
-| 0xC | PSTRBUF  | PSTR buffer cell (4 UTF-16 code units) |
+| 0xC | PSTRBUF  | PSTR buffer cell (3 UTF-16 code units) |
 | 0xD | RAWINT   | Non-heap-reference control word (env/CP fields) — lets the conservative heap-GC scan (ADR-016) distinguish control values from Refs |
+| 0xE | RATIONAL | Id in the per-engine rational table (ADR-039) |
 
 The heap is fully blittable. The .NET GC never scans it for references. Shumway's
 own **heap garbage collector** (ADR-016) — an order-preserving sliding mark-compact
@@ -137,8 +138,9 @@ Each Prolog source file is one module. Modules have a simple visibility model in
 
 - **Local by default**: predicates are visible only within their module.
 - **Public on declaration**: `:- public foo/N` exports the predicate to a flat global namespace.
-- **Public uniqueness**: a `foo/N` declared public in two modules is a linker error.
+- **Public uniqueness**: a `foo/N` declared public in two modules (the flat model) is a linker error.
 - **Builtins are implicitly public** and cannot be overridden globally (but library builtins can be shadowed locally).
+- **Export-qualified scoped modules** (ADR-038): `:- module(Name, [Exports])` makes *every* predicate module-private (internally mangled `Name$pred`), exposes only the listed exports, and resolves a call local → imports → global. Two such modules may export the same name without colliding, so libraries from different Prolog systems coexist in one engine.
 
 **Resolution**:
 
@@ -279,12 +281,12 @@ PSTRs solve the fundamental performance problem of representing strings as `[H|T
 
 **Layout**:
 - Header cell with tag PSTR, encoding length in code units and a buffer pointer.
-- Buffer cells encode 4 UTF-16 code units each.
+- Buffer cells encode 3 UTF-16 code units each.
 - Tail cell at the end: `[]` (complete), a variable (partial), another PSTR (lazy concatenation), or cons cells (after fallback).
 
 **Decomposition is lazy**: `[H|T] = pstr("hello")` does not allocate cons cells. `T` is another PSTR header pointing to the buffer with an incremented offset.
 
-**Default `double_quotes` is `codes`** (ISO standard). PSTRs are not created from source literals by default; they appear when reading from streams, from C# strings via the embedding API, or via explicit conversion builtins. This default can be changed per module with `:- set_prolog_flag(double_quotes, pstr)`.
+**Default `double_quotes` is `string`.** The flag can be set per module with `:- set_prolog_flag(double_quotes, D)`, where `D` is `codes`, `chars`, `atom`, or `string`. PSTRs typically appear when reading from streams, from C# strings via the embedding API, or via explicit conversion builtins rather than from source literals.
 
 **The choice of UTF-16** aligns with .NET strings. Conversion to/from C# `string` is essentially a memory copy. Surrogate pairs are handled correctly at decomposition time.
 
@@ -294,10 +296,10 @@ The public API is the surface exposed to .NET application developers. It is shap
 
 - **Engine lifecycle**: construct, configure, dispose.
 - **Source loading**: `Consult(path)`, `LoadBundle(path)`.
-- **Term construction**: `MakeAtom`, `MakeInt`, `MakeCompound`, `ParseTerm`, builder for batch construction.
-- **Term inspection**: `Kind`, `IsAtom`, `AsAtom`, `GetArg`, `EnumerateList`, `TryGet*` patterns.
-- **Query execution**: `Query(text)` or `Query(term)` returns a `Query` object that yields `Solution`s.
-- **Foreign predicates**: register C# delegates as Prolog predicates. Supports deterministic and non-deterministic patterns.
+- **Term construction**: the AST constructors (`new AtomTerm(...)`, `new IntTerm(...)`, `new CompoundTerm(...)`), plus `ToTerm<T>` for typed values.
+- **Term inspection**: pattern-match the AST subclasses (`if (t is IntTerm i) …`); `FromTerm<T>` for typed extraction.
+- **Query execution**: `Query(text)` returns the first `Solution`; `QueryAll(text)` yields all `Solution`s; `QueryAsync(text)` is the async stream.
+- **Foreign predicates**: annotate C# methods with `[PrologPredicate]` and register them via `RegisterPredicates(...)`. Supports deterministic and non-deterministic patterns.
 - **Struct ↔ term mapping**: source generators produce zero-overhead converters for types annotated with `[PrologTerm]`.
 - **Engine pool**: utility for server scenarios (one engine per request from a pool).
 - **Async API**: `IAsyncEnumerable<Solution>` with cancellation via safe points.
