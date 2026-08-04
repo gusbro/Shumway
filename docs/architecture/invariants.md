@@ -168,3 +168,18 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
 - **Zero warnings** — enforced by `<TreatWarningsAsErrors>` in the root
   `Directory.Build.props`. A genuinely unavoidable case is silenced narrowly
   (targeted pragma with a comment), never by relaxing the invariant.
+
+## Documentation
+
+- **ADRs are decision records; design docs, guides and the architecture
+  overview are reference for how the system works now — and the two are held to
+  different standards.** An ADR (`architecture/adr/`) may keep a superseded or
+  never-built design in place, clearly marked (a "superseded"/"not built"
+  banner pointing at what shipped), because its value is the record of the
+  decision and its evolution. A reference doc (`design/`, `guide/`,
+  `architecture/overview.md`) must instead **state what is true now**: it is
+  verified against the code, carries no banner over incorrect content, and when
+  a mechanism changes it is rewritten to describe the real one — concise,
+  pointing at the authoritative source — rather than annotated as stale. A
+  reference doc that describes a mechanism that was renamed or never built is a
+  defect to fix, not to caveat.

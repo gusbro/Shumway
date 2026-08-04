@@ -29,6 +29,10 @@ ordinary change: implement, test, commit.
 
 - [`adr/`](adr/) — the decisions themselves, numbered 001–041 with
   descriptive filenames; the Status line at the top of each is kept current.
+  An ADR is a *decision record*: it may keep a superseded or never-built design
+  in place, clearly marked, since its value is the history. Reference docs
+  (`design/`, `guide/`, `overview.md`) are held to the opposite standard — they
+  state what is true now (see the Documentation invariant in `invariants.md`).
 - [`invariants.md`](invariants.md) — the consolidated invariant catalog the
   decisions add up to.
 - [`overview.md`](overview.md) — the architecture tour, with a
