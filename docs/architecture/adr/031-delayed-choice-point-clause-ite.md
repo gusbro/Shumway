@@ -41,7 +41,7 @@ calls ⇒ G3-class), guard-op 651 (head ops before allocate), G3 256, caps 187.
 Blint runtime (whole-program calleeMap): **63 of 129 cut-shaped clauses
 (≈49%) CP-free**. Caps verdict: 187 (1.9%) does NOT justify raising
 `FailDirectMaxClauses`; when data justifies it, the raise MUST ship with a
-proper IL switch emission, never a wider linear chain (user directive).
+proper IL switch emission, never a wider linear chain.
 
 Original phase-1 measurement: the guard-fail recursive hot loop
 (`loop(N):-N=<0,!. loop(N):-M is N-1,loop(M).`, 30 M iterations, Tier-1

@@ -21,6 +21,36 @@ The API also intersects with the atom system (ADR-003): atoms exposed to C# code
 
 ## Decision
 
+> **The C# in this Decision is the original Phase-1 API sketch, not the shipped
+> surface.** The design goals (idiomatic .NET, cheap boundary crossing, typed
+> conversion, foreign predicates, pooling, async) all held and were built — but
+> almost every concrete type and member name below was restructured on the way
+> in. The current, accurate API reference is
+> [`../../guide/user-guide.md`](../../guide/user-guide.md) and the
+> `Shumway.Embedding` types themselves. Notable differences to keep in mind
+> while reading:
+> - **Terms** are the AST classes `AtomTerm` / `CompoundTerm` / `VarTerm` /
+>   `IntTerm` / … (pattern-matched), **not** a `Term` struct with a `TermKind`
+>   enum and `MakeAtom` / `IsAtom` helpers. `PrologEngine` has no term-factory
+>   methods; terms are built with the AST constructors.
+> - **Querying** is `engine.Query(string)` → a single `Solution`,
+>   `engine.QueryAll(string)` → `IEnumerable<Solution>`, and
+>   `engine.QueryAsync(string)` → `IAsyncEnumerable<Solution>`. There is no
+>   `Query` class and no `Solutions()` / `FirstSolution()` family.
+> - **Foreign predicates** use the `[PrologPredicate("name/arity")]` attribute +
+>   `engine.RegisterPredicates(...)`, with methods taking a
+>   `Shumway.Core.Activation` and returning `bool` (non-determinism via
+>   `IEnumerable<T>` + `NonDeterministic = true`). There is no
+>   `ForeignPredicate` delegate, `ForeignResult` enum, or `ForeignContext`.
+> - **`PrologEngine` is not `IDisposable`** and there is no `TermHandle` /
+>   scoped-handle mechanism: bindings are materialized AST terms held by
+>   `Solution`.
+> - **Exceptions** surface as the single `ShumwayPrologException` (with a
+>   `Term Term`), not a typed `PrologSyntaxException` / … hierarchy.
+> - **Pooling** is `EnginePool` handing out a `Lease` (with `.Activation`), not
+>   a `PooledEngine`. There is no `EngineConfig` / `CompilationStrategy`
+>   configuration type.
+
 The public API surface is structured around several core types:
 
 ### `PrologEngine`: the central type
@@ -375,7 +405,11 @@ public partial class Query
 }
 ```
 
-Cancellation is **cooperative via safe points**. The interpreter checks a flag every N instructions (default: 1024). When the cancellation token is signaled, the next safe point throws `OperationCanceledException`.
+Cancellation is **cooperative via safe points**. As built, the cancellation
+token is observed the next time the heap-GC watermark is crossed, at which
+point the query throws `OperationCanceledException` — so the per-goal path pays
+nothing. A heap-bounded loop such as `repeat, fail` that never crosses that
+watermark is therefore **not** cancellable by design.
 
 ```csharp
 await foreach (var sol in query.SolutionsAsync(cts.Token))
@@ -384,7 +418,11 @@ await foreach (var sol in query.SolutionsAsync(cts.Token))
 }
 ```
 
-The async API does **not** schedule work on a thread pool. Prolog execution runs synchronously on the calling thread. The async aspect comes from cancellation responsiveness, not from concurrency. If the user wants concurrent queries on different engines, they manage their own threading (e.g., `Task.Run` per engine).
+As built, `QueryAsync` drives each solution step on a thread-pool thread
+(`await Task.Run(() => iter.MoveNext())`) so the caller's thread is free
+between solutions; a single engine is still single-threaded, so the steps do
+not run concurrently with each other. For concurrent queries, use one engine
+per thread (or an `EnginePool`).
 
 ### Exception model
 

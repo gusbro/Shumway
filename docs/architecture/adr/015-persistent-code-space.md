@@ -114,11 +114,15 @@ exactly the database as of when it began, and a later goal in the same
 query, being a *new* goal evaluated against the live store, captures a
 *newer* `G` and does see an earlier `assertz`.
 
-`retract` is **logical**: it only sets `died := counter`. **Physical**
-removal is deferred until no live query's captured `G` still falls in the
-clause's visible range — otherwise an in-flight query would lose a clause
-it is entitled to see. (Standard "erased clause" + deferred GC, as in
-XSB/SWI.)
+`retract` is **logical**: it only sets `died := counter`.
+
+> **As built (see phasing D):** there is **no** deferred physical-removal
+> GC. The retracted clause's `died` slot is patched in the bytecode in
+> place and the next `check_visible` filters it out; the clause's bytecode
+> stays put. The running program buffer is append-only, so an in-flight
+> backtracking call still sees its own snapshot without any generation pin
+> to hold the clause alive. The "erased clause + deferred GC" design below
+> was obviated.
 
 ### 4. Dynamic-predicate dispatch
 
@@ -128,7 +132,18 @@ and relinks the predicate's `try/retry/trust` chain locally (O(1) — patch
 the previous last clause). `retract` sets `died`. Because the *entry*
 address never moves, callers' linked `Call`s never go stale.
 
-#### 4.1 Concrete design — recompile-on-modify with an address redirect
+#### 4.1 Original sketch — recompile-on-modify with an address redirect (SUPERSEDED)
+
+> **Not what shipped.** This recompile-on-modify redirect was the chunk-118
+> stepping stone; it landed, fixed the headline bug, and was then **removed
+> in full** (chunks 120–128) — `_dynamicRedirects`, `MarkDynamicStale`,
+> `ResolveDynamicTarget`, `DynamicRecompiler`, `RecompileDynamicPredicate`
+> are all gone from the code. The shipped mechanism is the canonical
+> engine-style dispatch — `enter_dynamic` / `check_visible` opcodes plus
+> in-place `assertz` / `asserta` / `retract` bytecode patching against a
+> stable entry trampoline (`DynamicCodePatcher`). See §4 above and phasing
+> chunk C for the as-built design. The sketch is kept here as the recorded
+> road not taken.
 
 After chunk B the program is `prefix | static region | query region`,
 and a dynamic predicate is still snapshot-compiled into the per-query
@@ -182,7 +197,15 @@ of a changed predicate must be relinked. A `consult` that only *adds* new
 predicates needs no relink. Linking thus moves from per-query to
 per-consult — acceptable, as consult is a load-time operation.
 
-### 6. Query lifecycle — `PrologQuery : IDisposable`
+### 6. Query lifecycle — `PrologQuery : IDisposable` (DROPPED)
+
+> **Not built.** This whole lifecycle existed only to release a query's
+> *generation pin* so deferred physical `retract` could reclaim a clause.
+> The canonical implementation keeps no generation pins and defers no
+> physical removal (see §3 and phasing D), so there is nothing to dispose:
+> a `PrologQuery : IDisposable` would be an empty-`Dispose` wrapper, and
+> `PrologQuery` / `OpenQuery` / the finalizer path do not exist in the code.
+> The sketch below is retained as the road not taken.
 
 A query is a concrete `IDisposable`:
 
@@ -220,26 +243,37 @@ the expected path.
 
 ### 7. Incremental indexing
 
-First-argument indexing for a dynamic predicate is maintained
-**incrementally** on `assert` / `retract`, not recompiled per query —
-so indexing learned in one query is reused by the next (ADR-007).
+Indexing for a dynamic predicate is maintained **incrementally** on
+`assert` / `retract`, so indexing survives across queries (ADR-007). As
+built this went further than the first-argument sketch: the dynamic
+dispatch is **multi-argument extensible-indexed**
+(`PredicateCompiler.CompileIndexedDynamic` — every bucket chain at every
+level is extensible and patched in place), and there is a **JIT-indexing**
+path (`JitIndexProfile`) where a cold predicate runs a plain
+`try_me_else` chain and the first query after a mutation recompiles it
+with full multi-arg indexing.
 
-### 8. Code-space compaction — follow-up
+### 8. Code-space compaction — not needed (superseded framing)
 
-`retract` / `abolish` / re-`consult` leave unreachable bytecode in the
-persistent space. A compaction / code-GC pass is required for a
-long-lived engine but is **deferred to a follow-up chunk**; until it
-lands the code space grows monotonically.
+> **Superseded (see phasing E).** The original worry was that `retract` /
+> `abolish` / re-`consult` leave unreachable bytecode requiring a moving
+> compaction / code-GC pass. That was the wrong framing: incremental
+> in-place patching (chunks 127–128) does not append superseded bodies in
+> the first place, and the per-query buffer is ordinary managed state the
+> GC reclaims when the query ends. `compact_dynamic_buffer/0` exists as an
+> explicit reclaim hook, but no moving code-GC is required.
 
 ## Consequences
 
 - Per-query overhead drops from O(program) to O(query goal).
 - The ISO logical update view is honoured; `assertz(d(1)), d(1)` works.
-- New machinery: the persistent code space and its lifecycle, generation
-  bookkeeping on dynamic clauses, the deferred-`retract` GC, the
-  finalizer-enqueue / safe-point-drain path, incremental index updates.
-- The single-threaded-engine invariant (ADR-001) is preserved — the
-  finalizer never touches engine state.
+- New machinery (as built): the persistent code space and its cached
+  static region, generation bookkeeping on dynamic clauses
+  (`born`/`died` + the `enter_dynamic`/`check_visible` opcodes), in-place
+  `assertz`/`asserta`/`retract` bytecode patching, and incremental
+  multi-arg index updates. (The originally-sketched deferred-`retract` GC
+  and query finalizer path were dropped — see §3, §6, phasing D.)
+- The single-threaded-engine invariant (ADR-001) is preserved.
 - It is a large change; it is phased so each chunk lands on a green suite.
 
 ## Implementation phasing

@@ -2,7 +2,35 @@
 
 ## Status
 
-Accepted (Phase 1 with limited scope; aggressive optimizations in Phase 2+).
+Accepted (Phase 1). The tiered Tier-0/Tier-1 split, the Sigil-based runtime
+emitter and the persisted build-time backend all shipped, and the Tier-1 arc
+went far past this ADR.
+
+> **Read the mechanism sketches below as the original Phase-1 design, not the
+> as-built code.** Several concrete mechanisms described in the Decision are
+> superseded or never shipped under the names used here:
+> - **Tier-1 dispatch is threaded continuation, not a call-site inline cache.**
+>   The `CallSiteCache` / `_predicateTableVersion` / `LookupAndCacheCallSite`
+>   inline-caching design does not exist; the non-tail Call site sets a
+>   resume marker and returns to the dispatch loop (ADR-016 / phase-16;
+>   `Activation.Tier1.cs`). The old recursive `RunSubroutine` is gone.
+> - **The IL store is per-engine, keyed by functor id, holding strong refs**
+>   (`IlPromotionStore`) — not a process-wide, bytecode-hash-keyed,
+>   weak-reference `ConcurrentDictionary`. Cross-engine reuse is via persisted
+>   bundles, not a runtime cache.
+> - **Promotion is off by default** (`IlPromotion.Threshold == 0` disables it);
+>   there is no `CompilationStrategy` / `EngineConfig` / `Tier1PromotionThreshold`
+>   configuration surface, and no `Predicate` / `InterpretedPredicate` /
+>   `CompiledIlPredicate` class hierarchy (`RunBytecode` does not exist) — the
+>   swap installs a delegate by functor id.
+> - **What shipped beyond this ADR:** region compilation (default on),
+>   deep cut / full indexed dispatch / backtrackable builtins / `call/N`
+>   meta-calls all IL-emittable, cross-process persisted name-relative IL
+>   bundles, and **dynamic predicates promoted as IL snapshots (ADR-023)** —
+>   so the "only static predicates" note below is no longer true.
+>
+> For the current surface see the user guide, ADR-016, ADR-023, and the
+> `Shumway.Compiler.Il` sources.
 
 ## Context
 
@@ -250,7 +278,7 @@ This optimization is part of Phase 1 because the cost is small (a few IL instruc
 
 ### Tier 0 only (no IL compilation)
 
-**Rejected.** Performance would be 2–5× slower than competing implementations. Compute-heavy workloads (the user's grammar processing case) would suffer.
+**Rejected.** Performance would be 2–5× slower than competing implementations. Compute-heavy grammar-processing workloads would suffer.
 
 ### Eager IL compilation (no Tier 0)
 
@@ -400,11 +428,15 @@ The interpreter (or higher-level engine code) checks `_pendingException` after e
 ## Related ADRs
 
 - ADR-006 (Bytecode Encoding): the IL compiler consumes bytecode.
-- ADR-008 (Module Visibility): only static predicates are promoted to Tier 1.
-- ADR-009 (Bundler): Phase 2 bundles include compiled IL.
-- ADR-012 (Mode Inference): future optimization layer for the IL compiler.
+- ADR-008 (Module Visibility): static predicates promote to Tier 1; dynamic
+  predicates promote too, as clause snapshots (ADR-023).
+- ADR-009 (Bundler): compiled-IL bundles are produced with
+  `shumway-link --with-compiled-il`.
+- ADR-016 (Threaded Tier-1 dispatch): the as-built call mechanism.
+- ADR-023 (Dynamic predicates in IL): dynamic-predicate promotion.
+- ADR-012 (Mode Inference): the mode-specialized codegen that shipped in Phase 3.
 
 ## Related Design Docs
 
-- `design/il-emission-patterns.md` (to be created): catalog of IL patterns for each WAM opcode.
-- `design/inline-caching.md` (to be created): details of the inline caching mechanism at call sites.
+- `design/il-emission-patterns.md`: catalog of IL patterns for each WAM opcode.
+- `design/inline-caching.md`: the call-site dispatch design.
