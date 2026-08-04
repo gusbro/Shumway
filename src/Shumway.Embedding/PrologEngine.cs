@@ -98,6 +98,33 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     internal string? _currentLoadModule;
     internal string? _currentLoadFile;
 
+    /// <summary>Module name → the full path of the <c>.pl</c> it was consulted
+    /// from, or <c>null</c> when it was loaded from an embedded source string
+    /// (a baked-in library / shim / prelude / a raw <c>ConsultString</c>). Fed
+    /// from <see cref="_currentLoadFile"/> at module registration; used by the
+    /// separate-compilation tool to date a module's <c>.shmo</c> against its
+    /// source for incremental rebuilds.</summary>
+    internal readonly Dictionary<string, string?> _moduleSourceFile = new();
+
+    /// <summary>The source file a module was consulted from, or <c>null</c> if
+    /// it came from an embedded string (baked-in library, prelude, shim).</summary>
+    internal string? ModuleSourceFile(string moduleName) =>
+        _moduleSourceFile.TryGetValue(moduleName, out var f) ? f : null;
+
+    /// <summary>Dynamic functor id → the module whose consult declared it
+    /// <c>:- dynamic</c>. The dynamic store itself is engine-wide (flat
+    /// global), but separate compilation needs to seed each dynamic
+    /// predicate's clauses from its declaring module's <c>.shmo</c> exactly
+    /// once — so each object is self-contained and no shared dependency is
+    /// double-seeded.</summary>
+    internal readonly Dictionary<int, string> _dynamicDeclaringModule = new();
+
+    /// <summary>The module that declared a dynamic functor <c>:- dynamic</c>,
+    /// or <c>null</c> if it was auto-promoted (implicit_dynamic) with no
+    /// declaration.</summary>
+    internal string? DynamicDeclaringModule(int functorId) =>
+        _dynamicDeclaringModule.TryGetValue(functorId, out var m) ? m : null;
+
     /// <summary>The clause index the in-file term_expansion re-expansion pass is
     /// currently expanding, or -1 outside that pass. An in-file hook's clause is
     /// committed guarded by <c>'$te_after'(HookIndex)</c>, which succeeds when this
@@ -456,6 +483,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // they spawn sub-PrologEngines — Builtins can't reference Embedding.
         MetaBuiltins.EnsureRegistered();
 
+        // Every operator defined (a `:- op` applies here at parse time) is
+        // routed to the active consult's collection frame, so the
+        // separate-compilation tool can attribute operators per module.
+        _operators.OnDefine = (name, precedence, type) =>
+        {
+            if (_opCollect.Count > 0) _opCollect.Peek().Ops.Add((name, precedence, type));
+        };
+
         // ADR-022 item 2 — let Tier-1 IL inline this engine's native blocks at
         // their `$native_run` call sites. The provider returns null until a block
         // is registered, so non-native programs pay nothing.
@@ -666,6 +701,55 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// that subsequent queries (and asserted clauses) will recognise.</summary>
     internal void DefineOperator(string name, int precedence, OperatorType type)
         => _operators.Define(name, precedence, type);
+
+    /// <summary>Module name → the operators its consult defined. A `:- op`
+    /// applies at parse time (<see cref="OperatorTable.OnDefine"/> fires); each
+    /// <see cref="ConsultString"/> brackets a collection frame and, on exit,
+    /// attributes the frame's operators to the module it committed. Feeds the
+    /// separate-compilation tool so each module's <c>.shmo</c> carries its own
+    /// operators — every object stays self-contained.</summary>
+    internal readonly Dictionary<string, List<(string Name, int Precedence, OperatorType Type)>> _moduleOperators = new();
+
+    private sealed class OpCollectFrame
+    {
+        public readonly List<(string Name, int Precedence, OperatorType Type)> Ops = new();
+        public string? Module;
+    }
+    private readonly Stack<OpCollectFrame> _opCollect = new();
+
+    /// <summary>The operators a module's consult defined (empty if none).</summary>
+    internal IReadOnlyList<(string Name, int Precedence, OperatorType Type)> ModuleOperators(string moduleName) =>
+        _moduleOperators.TryGetValue(moduleName, out var l)
+            ? l
+            : System.Array.Empty<(string, int, OperatorType)>();
+
+    /// <summary>Start collecting operators defined during a consult (one frame
+    /// per <see cref="ConsultString"/>, so nested <c>use_module</c> loads
+    /// attribute to their own module).</summary>
+    internal void PushOpCollection() => _opCollect.Push(new OpCollectFrame());
+
+    /// <summary>Names the module the current collection frame will attribute
+    /// its operators to (set when that module's clauses commit).</summary>
+    internal void SetOpCollectionModule(string moduleName)
+    {
+        if (_opCollect.Count > 0) _opCollect.Peek().Module = moduleName;
+    }
+
+    /// <summary>Close the current collection frame, attributing its operators
+    /// to the module it committed (deduplicated by name+fixity).</summary>
+    internal void PopOpCollection()
+    {
+        if (_opCollect.Count == 0) return;
+        var f = _opCollect.Pop();
+        if (f.Module is not { } m || f.Ops.Count == 0) return;
+        if (!_moduleOperators.TryGetValue(m, out var list))
+            _moduleOperators[m] = list = new List<(string, int, OperatorType)>();
+        foreach (var o in f.Ops)
+        {
+            list.RemoveAll(x => x.Name == o.Name && x.Type == o.Type);
+            list.Add(o);
+        }
+    }
 
     /// <summary>Snapshot of every registered operator, as
     /// (Precedence, Type, Name) triples. Used by <c>current_op/3</c>

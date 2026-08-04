@@ -636,12 +636,17 @@ internal sealed class ConsultPipeline
             // all) must not be snapshotted mid-consult. Nested consults keep it
             // suspended until the OUTERMOST one finishes.
             E.IlPromotion.PromotionsSuspended = true;
+            // One operator-collection frame per consult: a `:- op` applied
+            // during this source's parse is attributed to the module it
+            // commits (nested use_module loads get their own frame).
+            E.PushOpCollection();
             try
             {
                 ConsultStringLocked(source, recordInHistory, moduleNameFallback);
             }
             finally
             {
+                E.PopOpCollection();
                 E._currentLoadModule = prevLoadModule;
                 if (--E._consultDepth == 0)
                     E.IlPromotion.PromotionsSuspended = false;
@@ -1054,6 +1059,12 @@ internal sealed class ConsultPipeline
                     // them from the hook runner — `:- record` then ran as a goal.
                     if (PrologEngine.IsGlobalHookFunctor(fid)) continue;
                     E._dynStore.MarkDynamic(fid);
+                    // Remember the declaring module (the store is flat-global,
+                    // but separate compilation seeds each dynamic from its
+                    // declaring module's .shmo exactly once). First declarer wins.
+                    if (!E._dynamicDeclaringModule.ContainsKey(fid))
+                        E._dynamicDeclaringModule[fid] =
+                            E._currentLoadModule ?? PrologEngine.DefaultModuleName;
                     // Reserve an entry so retract on a never-asserted dynamic
                     // predicate fails cleanly instead of throwing.
                     if (!E._dynStore.HasClauses(fid))
@@ -1574,6 +1585,12 @@ internal sealed class ConsultPipeline
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
             E._modules[moduleName] = manifest;
+            // Record where this module's source came from (the .pl being
+            // consulted, or null for an embedded-string load) so the
+            // separate-compilation tool can date its .shmo for incremental rebuilds.
+            E._moduleSourceFile[moduleName] = E._currentLoadFile;
+            // Attribute this consult's collected operators to this module.
+            E.SetOpCollectionModule(moduleName);
             // A bare-global public landing under an existing top-level import
             // stays unreachable bare (imports win) — tell the user (the
             // clpz-then-clpfd load order).

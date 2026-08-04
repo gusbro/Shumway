@@ -50,7 +50,14 @@ public sealed class OperatorTable
         }
 
         if (info.IsEmpty) _byName.Remove(name);
+        OnDefine?.Invoke(name, precedence, type);
     }
+
+    /// <summary>Fired after every successful <see cref="Define"/>. The embedding
+    /// layer uses it to attribute each operator to the module whose consult
+    /// defined it (a <c>:- op</c> is applied here, at parse time), so
+    /// separate-compilation emits each module's own operators into its object.</summary>
+    public Action<string, int, OperatorType>? OnDefine;
 
     public bool TryGetPrefix(string name, out int precedence, out OperatorType type)
     {

@@ -65,6 +65,11 @@ internal static class CompileCli
             }
         }
 
+        // --consult loads ALL inputs into ONE ephemeral engine and emits one
+        // .shmo per module the whole load brought in (shared dependencies once).
+        if (opts.Consult)
+            return CompileViaConsultMany(opts.InputPaths, opts);
+
         int exit = ExitOk;
         foreach (var input in opts.InputPaths)
         {
@@ -76,55 +81,83 @@ internal static class CompileCli
     }
 
     /// <summary>--consult: compile THROUGH the consult pipeline (an ephemeral
-    /// engine loads the file, so directives and term/goal-expansion hooks
-    /// actually run), emitting one .shmo per module the load brought in.
-    /// Every module — the root and each dependency — is written as
+    /// engine loads the files, so directives and term/goal-expansion hooks
+    /// actually run), emitting one .shmo per module the load brought in. All
+    /// inputs are consulted into ONE engine, so a module shared by several
+    /// roots — a library and its dependencies — loads and compiles ONCE.
+    /// Each module — the roots and every dependency — is written as
     /// &lt;module&gt;.shmo into the output directory (<c>-o &lt;dir&gt;</c>, or
-    /// the source file's own directory when <c>-o</c> is omitted). Consult is
-    /// inherently multi-output, so <c>-o</c> is a directory, never a file.</summary>
-    private static int CompileViaConsult(string input, string output, Options opts)
+    /// the first input's directory when <c>-o</c> is omitted). Consult is
+    /// inherently multi-output, so <c>-o</c> is a directory, never a file.
+    ///
+    /// <para>A DRAGGED-IN dependency (not one of the passed inputs) is skipped
+    /// when its <c>.shmo</c> already exists, is newer than the module's source
+    /// (the <c>.pl</c>, or the runtime assembly for a baked-in library), and
+    /// was built in the same mode — so compiling <c>a.pl</c> then <c>b.pl</c>
+    /// separately regenerates each shared dependency's <c>.shmo</c> only once,
+    /// giving the same object set as one batch compilation. The roots
+    /// themselves always regenerate.</para></summary>
+    private static int CompileViaConsultMany(IReadOnlyList<string> inputs, Options opts)
     {
         Console.Error.WriteLine(
-            $"shumway-compile: compiling {input} via consult "
+            $"shumway-compile: compiling {inputs.Count} file(s) via consult "
             + $"[{opts.BuildMode.ToString().ToLowerInvariant()}]");
         var errors = new List<ShmoCompileError>();
-        List<(string ModuleName, ShmoObject Object)> objects;
+        List<(string ModuleName, ShmoObject Object, DateTime SourceTimeUtc, bool IsRoot)> objects;
         try
         {
-            objects = ShmoViaConsult.Compile(input, opts.LibraryDirs, opts.BuildMode, errors);
+            objects = ShmoViaConsult.CompileMany(inputs, opts.LibraryDirs, opts.BuildMode, errors);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"shumway-compile: consult of {input} failed: {ex.Message}");
-            RemoveStaleOutput(output);
+            Console.Error.WriteLine($"shumway-compile: consult failed: {ex.Message}");
             return ExitCompileError;
         }
         foreach (var err in errors)
-            Console.Error.WriteLine($"{input}:{err.Line}:{err.Column}: error: {err.Message}");
+            Console.Error.WriteLine($"error: {err.Message}");
         if (errors.Count > 0 || objects.Count == 0)
         {
             Console.Error.WriteLine(
-                $"shumway-compile: {Math.Max(errors.Count, 1)} error(s) in {input} (consult mode).");
-            RemoveStaleOutput(output);
+                $"shumway-compile: {Math.Max(errors.Count, 1)} error(s) (consult mode).");
             return ExitCompileError;
         }
-        // Consult emits a SET of objects (root + every dependency), so the
-        // output is a directory and each module is named by its module name —
-        // never the single -o filename (that would collide root over deps).
-        // -o <dir> when given (already created in Main); else the source's dir.
+        // Output is a directory: each module is named by its module name (a
+        // single -o filename would collide root over deps). -o <dir> when
+        // given (already created in Main); else the first input's directory.
         string dir = !string.IsNullOrEmpty(opts.OutputPath)
             ? opts.OutputPath
-            : System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(input)) ?? ".";
+            : System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(inputs[0])) ?? ".";
         try { System.IO.Directory.CreateDirectory(dir); }
         catch (System.IO.IOException) { /* surfaced by the write below */ }
-        for (int i = 0; i < objects.Count; i++)
+        foreach (var (moduleName, obj, srcTime, isRoot) in objects)
         {
-            var (moduleName, obj) = objects[i];
             string path = System.IO.Path.Combine(dir, SanitizeFileName(moduleName) + ".shmo");
+            if (!isRoot && ShmoUpToDate(path, srcTime, opts.BuildMode))
+            {
+                Console.Error.WriteLine($"shumway-compile:   {moduleName}.shmo up to date, skipped");
+                continue;
+            }
             ShmoWriter.WriteToFile(obj, path);
             Console.Error.WriteLine($"shumway-compile:   {moduleName} -> {path}");
         }
         return ExitOk;
+    }
+
+    /// <summary>A dragged-in dependency's <c>.shmo</c> may be reused when it
+    /// exists, is at least as new as the module's source, AND was built in the
+    /// same mode — never reuse a release object for a debug build (or vice
+    /// versa). An unreadable / stale-format object regenerates.</summary>
+    private static bool ShmoUpToDate(string path, DateTime sourceTimeUtc, ShmoBuildMode mode)
+    {
+        try
+        {
+            if (!System.IO.File.Exists(path)) return false;
+            if (System.IO.File.GetLastWriteTimeUtc(path) < sourceTimeUtc) return false;
+            try { if (ShmoReader.ReadFromFile(path).BuildMode != mode) return false; }
+            catch { return false; }
+            return true;
+        }
+        catch { return false; }
     }
 
     private static string SanitizeFileName(string name)
@@ -168,7 +201,6 @@ internal static class CompileCli
     {
         bool verbose = opts.Verbose;
         ShmoBuildMode buildMode = opts.BuildMode;
-        if (opts.Consult) return CompileViaConsult(input, output, opts);
         Console.Error.WriteLine(
             $"shumway-compile: compiling {input} -> {output} "
             + $"[{buildMode.ToString().ToLowerInvariant()}]");
