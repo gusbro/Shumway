@@ -571,7 +571,7 @@ If no engine is available and the pool has not reached `maxCount`, `RentAsync` c
 
 ## Related Design Docs
 
-- `design/api-reference.md`: an early API-reference sketch — its signatures were
-  renamed before shipping (see its banner and the user guide).
-- `design/foreign-predicates.md`: an early foreign-predicate sketch (pre-rename —
-  see its banner).
+- `design/api-reference.md`: a compact map of the real public surface (the user
+  guide is the worked reference).
+- `design/foreign-predicates.md`: the shipped `[PrologPredicate]` foreign-predicate
+  mechanism.

@@ -438,7 +438,7 @@ The interpreter (or higher-level engine code) checks `_pendingException` after e
 
 ## Related Design Docs
 
-- `design/il-emission-patterns.md`: per-opcode IL lowering *intent* (its concrete
-  signatures are a stale early sketch — see the banner in that file).
-- `design/inline-caching.md`: records the call-site inline-cache approach that was
-  **not** built — the shipped dispatch is threaded continuation (ADR-016).
+- `design/il-emission-patterns.md`: how the Tier-1 compiler lowers WAM to CIL
+  (the real delegate contract and per-opcode lowering).
+- `design/inline-caching.md`: notes that the once-sketched call-site inline cache
+  was **not** built — the shipped dispatch is threaded continuation (ADR-016).

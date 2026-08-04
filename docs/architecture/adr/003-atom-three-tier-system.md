@@ -259,9 +259,10 @@ When the GC runs, all engines must be at a safe point (not in the middle of a ho
 
 For single-threaded use (one engine per process), this is trivial: the GC runs between queries.
 
-A multi-engine stop-the-world coordination protocol was sketched in
-`design/atom-gc-coordination.md`, but it is design-only — not built (see that
-file's banner).
+`design/atom-gc-coordination.md` describes the atom table and its tiers as
+built; a multi-engine stop-the-world coordination protocol was considered but
+not built, and the sweep is currently exercised only by tests (that document
+covers the current status).
 
 ### Pre-registered atoms
 
