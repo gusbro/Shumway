@@ -25,7 +25,7 @@ Bits 31..2:  heap index of the first buffer cell (30 bits, max 1G heap cells)
 Bits 1..0:   offset within the first buffer cell (0..3)
 ```
 
-- **Length** is in **UTF-16 code units**, not codepoints. This makes the tail position computable in O(1): `tail_index = buffer_idx + ⌈(length + offset) / 4⌉`. The actual codepoint count requires iteration to detect surrogate pairs; the cost is paid only when needed (e.g., `pstr_length/2`).
+- **Length** is in **UTF-16 code units**, not codepoints. This makes the tail position computable in O(1): `tail_index = buffer_idx + ⌈(length + offset) / 3⌉` (3 code units per buffer cell, the adopted layout). The actual codepoint count requires iteration to detect surrogate pairs; the cost is paid only when needed (e.g., `pstr_length/2`).
 - **Heap index** points to the first buffer cell.
 - **Offset** allows the PSTR to start mid-cell. This is essential for lazy decomposition: when `[H|T] = Pstr` consumes one character, `T`'s header has an incremented offset.
 

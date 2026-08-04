@@ -43,14 +43,16 @@ public enum Tag : byte
     Foreign = 0x9,
     AttVar  = 0xA,   // attributed variable (Phase 4; CLP(FD)/CLP(R) build on it)
     Pstr    = 0xB,
-    PstrBuffer = 0xC, // PSTR buffer cell: 4 UTF-16 code units
+    PstrBuffer = 0xC, // PSTR buffer cell: 3 UTF-16 code units
     RawInt  = 0xD,   // non-heap-ref control word (env/CP fields) — ADR-016 heap-GC scan
-    // 0xE..0xF reserved for future use
+    Rational = 0xE,  // rational table id (ADR-039)
+    // 0xF reserved for future use
 }
 ```
 
-> **Post-v1 note.** This document predates two changes that refine (without
-> breaking) the layout described below: the two extra tags above, and
+> **Later note.** This document predates changes that refine (without
+> breaking) the layout described below: the three extra tags above
+> (`PstrBuffer`, `RawInt`, `Rational`), and
 > **ADR-017 inline compound references** — a `Lis`/`Str` cell may now sit
 > *inline in a referring slot* (a register, an argument, a structure argument)
 > rather than always behind an on-heap header, and unification is cell-based
@@ -370,9 +372,12 @@ public Cell MakeForeign(object obj)
 - The table is cleared at engine reset/disposal.
 - Backtracking does not unwind foreign object additions (similar to BigInt and String tables).
 
-### ATTVAR (0xA) — Attributed variable (reserved)
+### ATTVAR (0xA) — Attributed variable
 
-Reserved for future implementation (Phase 4). The tag is allocated but no encoding is defined for v1.
+Implemented in Phase 4. The payload is a heap index to the variable's own home
+cell (a self-referencing variable, like REF); its attributes live in a
+per-activation side table. Backs `attvar/1`, `put_attr`/`get_attr`, the
+`attr_unify_hook` / `verify_attributes/4` wakeup, and CLP(FD)/CLP(R).
 
 ### PSTR (0xB) — Partial string
 
@@ -382,10 +387,10 @@ PSTR cells are described in detail in `pstr-design.md`. The summary:
 Bits 63..60: 0xB (PSTR header)
 Bits 59..32: length in UTF-16 code units (28 bits)
 Bits 31..2:  heap index of the first buffer cell (30 bits)
-Bits 1..0:   offset within that buffer cell (0..3, 2 bits)
+Bits 1..0:   offset within that buffer cell (0..2, 2 bits)
 ```
 
-Each PSTR header is followed by buffer cells (each holding 4 UTF-16 code units packed into 60 bits), and a tail cell at the end.
+Each PSTR header is followed by buffer cells (each holding 3 UTF-16 code units), and a tail cell at the end.
 
 See `pstr-design.md` for the complete specification.
 
@@ -568,7 +573,7 @@ These invariants are not checked at runtime in the hot path. Debug-build asserti
 
 The following bit patterns are reserved and should never appear in valid cells:
 
-- Tags 0xC..0xF (no semantics defined yet).
+- Tag 0xF (no semantics defined yet). Tags 0xC (`PstrBuffer`), 0xD (`RawInt`) and 0xE (`Rational`) are in use.
 - The all-zero cell (`0x0000_0000_0000_0000`) is technically a valid REF cell pointing to heap[0], but in practice, the cell at heap[0] is either an unbound REF to itself or part of an allocated structure. Code should be careful when interpreting zero-initialized memory as cells.
 
 ## See also

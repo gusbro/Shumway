@@ -1,5 +1,17 @@
 # Bundle Format Specification
 
+> **This describes an earlier proposed container that is NOT the implemented
+> `.shum` format.** The byte-level layout below (a 32-byte header with CRC32, a
+> typed-section table, an `"END!"` footer with a whole-file CRC) was never
+> built. The real format (`src/Shumway.Embedding/BundleFormat.cs`, authoritative)
+> is: magic `SHUM`, a `uint32` version, a one-byte compression flag, then a
+> module-list body (optionally Brotli-compressed) — no section table, no CRC, no
+> footer. The current version is **6**, and the format is **frozen pre-release**:
+> the reader requires *exactly* the current version and rejects anything else
+> (there is no `Min`/`MaxSupportedFormatVersion` range). Treat the spec below as
+> a historical design sketch; for the shipped layout read `BundleFormat.cs` /
+> `BundleReader.cs` / `BundleWriter.cs`.
+
 This document specifies the on-disk binary format of Shumway bundles (`.shum` files). It complements ADR-009 by providing exact byte-level layout, encoding rules, and validation requirements.
 
 ## Conventions

@@ -59,7 +59,12 @@ Operand types:
 0xFF          Reserved (Extension escape)
 ```
 
-The exact ranges above are guidelines; specific opcodes are assigned individually below.
+**These per-category bands are the original scheme and no longer describe the
+encoding.** Opcodes were renumbered into one dense contiguous block (from 0x00
+upward) so dispatch is a single jump table; the ranges above survive only as a
+historical grouping. `src/Shumway.Core/Opcode.cs` is authoritative for every id,
+and the hex ids in the per-opcode tables below are frequently stale — the
+opcode **names and sizes** are the current part.
 
 ---
 
@@ -697,9 +702,9 @@ For the most frequent builtins, dedicated opcodes avoid the `call_builtin` dispa
 | 0x95   | less_eq | (none) | `=<`: arithmetic less-or-equal. |
 | 0x96   | greater_eq | (none) | `>=`: arithmetic greater-or-equal. |
 | 0x97   | arith_eq | (none) | `=:=`: arithmetic equality. |
-| 0x98   | arith_neq | (none) | `=\=`: arithmetic inequality. |
+| 0x98   | arith_not_eq | (none) | `=\=`: arithmetic inequality. |
 | 0x99   | struct_eq | (none) | `==`: structural equality (no unification). |
-| 0x9A   | struct_neq | (none) | `\==`: structural inequality. |
+| 0x9A   | struct_not_eq | (none) | `\==`: structural inequality. |
 
 ---
 
