@@ -47,6 +47,7 @@ internal static class LinkCli
         // linked bundle has none and can't serve as a library.
         var objects = new List<ShmoObject>();
         var libraries = new List<LinkLibrary>();
+        var sourceInputs = new List<string>();
         foreach (var path in opts.InputPaths)
         {
             try
@@ -69,21 +70,9 @@ internal static class LinkCli
                 }
                 else if (path.EndsWith(".pl", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Source input: compile it here, exactly as `shumway-compile`
-                    // would, and link the resulting object. Convenience so a small
-                    // program need not be pre-compiled to a .shmo.
-                    var res = ShmoCompiler.TryCompileFile(path, ShmoBuildMode.Release);
-                    foreach (var w in res.Warnings)
-                        Console.Error.WriteLine(
-                            $"{path}:{w.Line}:{w.Column}: warning: {w.Message}");
-                    if (res.Object is null)
-                    {
-                        foreach (var e in res.Errors)
-                            Console.Error.WriteLine(
-                                $"{path}:{e.Line}:{e.Column}: error: {e.Message}");
-                        return ExitLinkError;
-                    }
-                    objects.Add(res.Object);
+                    // Source input: collected and compiled below (all sources
+                    // together under --consult; one at a time otherwise).
+                    sourceInputs.Add(path);
                 }
                 else
                 {
@@ -94,6 +83,61 @@ internal static class LinkCli
             {
                 Console.Error.WriteLine($"shumway-link: error reading '{path}': {ex.Message}");
                 return ExitLinkError;
+            }
+        }
+
+        if (sourceInputs.Count > 0)
+        {
+            var libraryDirs = CollectLibraryDirs(opts.LibraryDirs);
+            if (opts.Consult)
+            {
+                // Consult ALL sources into one engine (directives + expansion
+                // hooks run, use_module dependencies load) and link every module
+                // the load brought in — the shumway-compile --consult pipeline.
+                var errors = new List<ShmoCompileError>();
+                List<(string ModuleName, ShmoObject Object, DateTime SourceTimeUtc, bool IsRoot)> compiled;
+                try
+                {
+                    compiled = ShmoViaConsult.CompileMany(
+                        sourceInputs, libraryDirs, ShmoBuildMode.Release, errors);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"shumway-link: consult failed: {ex.Message}");
+                    return ExitLinkError;
+                }
+                foreach (var e in errors)
+                    Console.Error.WriteLine($"error: {e.Message}");
+                if (errors.Count > 0 || compiled.Count == 0)
+                {
+                    Console.Error.WriteLine(
+                        $"shumway-link: {Math.Max(errors.Count, 1)} error(s) compiling sources (consult mode).");
+                    return ExitLinkError;
+                }
+                foreach (var (_, obj, _, _) in compiled) objects.Add(obj);
+            }
+            else
+            {
+                // File-at-a-time compile of each source (no load-time hooks, no
+                // dependency pull). Convenience so a small program need not be
+                // pre-compiled to a .shmo.
+                foreach (var path in sourceInputs)
+                {
+                    var res = ShmoCompiler.TryCompileFile(path, ShmoBuildMode.Release);
+                    foreach (var w in res.Warnings)
+                        Console.Error.WriteLine(
+                            $"{path}:{w.Line}:{w.Column}: warning: {w.Message}");
+                    if (res.Object is null)
+                    {
+                        foreach (var e in res.Errors)
+                            Console.Error.WriteLine(
+                                $"{path}:{e.Line}:{e.Column}: error: {e.Message}");
+                        MaybeHintConsult(path);
+                        return ExitLinkError;
+                    }
+                    MaybeHintConsult(path);
+                    objects.Add(res.Object);
+                }
             }
         }
 
@@ -310,6 +354,7 @@ internal static class LinkCli
         public bool Verbose { get; set; }
         public bool AllowUndefined { get; set; }
         public bool WarnShadow { get; set; }
+        public bool Consult { get; set; }
         public bool StripSource { get; set; }
         public bool IncludeCompiledIl { get; set; }
         public bool StripWam { get; set; }
@@ -390,6 +435,10 @@ internal static class LinkCli
 
                 case "--warn-shadow":
                     opts.WarnShadow = true;
+                    break;
+
+                case "--consult":
+                    opts.Consult = true;
                     break;
 
                 case "--library-dir":
@@ -681,6 +730,26 @@ internal static class LinkCli
     private static void ReportMissing(string option) =>
         Console.Error.WriteLine($"shumway-link: option '{option}' requires a value.");
 
+    /// <summary>A source compiled file-at-a-time that uses <c>library</c>
+    /// dependencies or load-time expansion hooks will link with unresolved
+    /// references (its libraries were never loaded) — point the user at
+    /// <c>--consult</c>, which loads them.</summary>
+    private static void MaybeHintConsult(string path)
+    {
+        string text;
+        try { text = System.IO.File.ReadAllText(path); } catch { return; }
+        bool hasLibDeps = text.Contains("use_module(library(");
+        bool hasHooks = text.Contains("term_expansion(")
+            || text.Contains("goal_expansion(")
+            || text.Contains(":- attribute");
+        if (hasLibDeps || hasHooks)
+            Console.Error.WriteLine(
+                $"shumway-link: hint: {path} uses library dependencies or load-time "
+                + "hooks that a file-at-a-time compile does not load; link it through "
+                + "the consult pipeline instead:\n"
+                + $"  shumway-link --consult -L <libdir> ... {path}");
+    }
+
     // ADR-038 — the library search path: --library-dir flags first (highest
     // precedence), then SHUMWAY_LIBRARY_PATH entries.
     private static List<string> CollectLibraryDirs(List<string> flagged)
@@ -745,6 +814,12 @@ internal static class LinkCli
             + "                           use_module(library(X)) dependency not passed\n"
             + "                           explicitly (X.pl / X.shmo). Repeatable; also reads\n"
             + "                           SHUMWAY_LIBRARY_PATH.\n"
+            + "      --consult            Compile .pl inputs THROUGH the consult pipeline\n"
+            + "                           (directives + term/goal_expansion hooks run,\n"
+            + "                           use_module dependencies load) instead of\n"
+            + "                           file-at-a-time. Needed for a source that uses a\n"
+            + "                           library's operators or generates clauses at load\n"
+            + "                           time; every module the load brings in is linked.\n"
             + "  -s, --strip              Do not embed the Prolog source text in the bundle.\n"
             + "                           Programs run unchanged (execution uses the\n"
             + "                           compiled code), but listing/1 and source positions\n"

@@ -544,7 +544,9 @@ shumway-link -o app.shum \
   lib.shmo util.shmo app.shmo
 ```
 
-- One or more `.shmo`s as positional arguments.
+- One or more positional inputs: `.shmo` objects, `.pl` sources (compiled on
+  the fly — file-at-a-time, or through the consult pipeline with `--consult`),
+  and `.shum` librarian archives (members pulled on demand).
 - **Reachability root** is either `--entry pred/N` (repeatable;
   comma-separated within a flag) or `--goal Term` (see
   [Producing a runnable executable](#step-3a--producing-a-runnable-executable)).
@@ -558,6 +560,7 @@ shumway-link -o app.shum \
 | `--allow-undefined` | Downgrade missing-predicate errors to warnings; still produce the bundle. The engine raises `existence_error/2` at call time if the missing predicate is actually invoked. |
 | `--warn-shadow` | Warn when a module's **local** predicate shares an indicator with another linked module's public — the C `static`-shadows-global shape. Legal either way (inside its module the local wins); the `--map` file always lists these regardless of the flag. (Two *publics* with the same indicator are always a `duplicate_public` **error**.) |
 | `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` dependency not passed explicitly: `X.pl`/`X.shmo` is compiled and linked in (transitively), C-linker style — already-provided inputs win, source is the last resort. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
+| `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time — the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, a `.pl` that uses `library(...)` compiles file-at-a-time and the linker prints a hint pointing here. |
 | `-s, --strip` | Remove the embedded Prolog source from every bundle entry. Bytecode preserved. Useful for size analysis / IP-protection. (Stripped bundles dispatch correctly via the source-less load path.) Note: a `.shmo` always carries the module's clause terms — it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). IP stripping is about what ships: the `.shum` / executable, which never carry clause terms. |
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, local-shadows-public listing, dropped modules, totals. |
 | `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle so it runs as compiled IL (no load-time JIT of the WAM). By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |
