@@ -7,7 +7,7 @@ precompiled Prolog programs as deployable bundles.
 
 For internal design see
 [`architecture/overview.md`](../architecture/overview.md) and the ADRs in
-[`architecture/adr/`](architecture/adr/). For the predicate library
+[`architecture/adr/`](../architecture/adr/). For the predicate library
 reference see [`predicates.md`](predicates.md).
 
 ---
@@ -387,8 +387,9 @@ shumway-compile [options] input1.pl [input2.pl ...]
   call graph, the `:- ensure_linked` set, and any module-qualified
   references.
 - File header: magic bytes `SHMO` + a `uint32` version field
-  (currently `2`). V1 artifacts are still readable; the linker rejects
-  unsupported future versions.
+  (currently `3`). The format is frozen pre-release: writer and reader
+  require exactly this version — there is no backward compatibility with
+  older `.shmo` versions until the first public release.
 
 Flags:
 
@@ -561,14 +562,14 @@ shumway-link -o app.shum \
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, local-shadows-public listing, dropped modules, totals. |
 | `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle so it runs as compiled IL (no load-time JIT of the WAM). By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |
 | `--no-region-prune` | With `--with-compiled-il`: emit one standalone IL method per predicate instead of the default pruned region layout. Mainly for inspecting the generated code; bundles are larger and typically slower. |
-| `--strip-wam` | Implies `--with-compiled-il`. Drop the redundant WAM bodies of the predicates the bundle runs as IL — standalone-IL predicates (each has its own IL delegate) and, under `--region-prune`, the region-absorbed members too (each is reachable by functor id through its region method's member-entry cursor). The bundle then ships IL, not WAM. JIT-only (the IL must load — not for Native AOT). |
+| `--strip-wam` | Implies `--with-compiled-il`. Drop the redundant WAM bodies of the predicates the bundle runs as IL — standalone-IL predicates (each has its own IL delegate) and, under the default region prune, the region-absorbed members too (each is reachable by functor id through its region method's member-entry cursor). The bundle then ships IL, not WAM. JIT-only (the IL must load — not for Native AOT). |
 | `--prune-report` | Stage-9 dead-region dry-run: report how many standalone forms would be prunable. Info diagnostic; no change to the bundle. |
 | `--dump-wam <path>` | Append a disassembly of the WAM the bundle **ships** (each entry's final bytecode, after `--strip-wam` / region prune) to `<path>`. See [below](#dumping-the-shipped-il--wam-from-the-linker). |
 | `--dump-il <path>` | Append the Tier-1 IL the bundle **ships** to `<path>` (implies `--with-compiled-il`). See [below](#dumping-the-shipped-il--wam-from-the-linker). |
 | `-e, --exe <path>` | Emit a single-file native executable. See [step 3a](#step-3a--producing-a-runnable-executable). |
 | `-g, --goal Term` | The goal the `--exe` runs at startup. Trailing `.` optional. |
 | `--self-contained` | Used with `--exe`: bake the .NET runtime into the binary (~70 MB exe, runs on machines without .NET). Default is framework-dependent (~5-10 MB exe, requires .NET 10 runtime on the target). |
-| `--debug` | Used with `--exe`: build the executable debuggable — its modules compile debuggable and it materialises their embedded source at startup, so a debugger attached to the process sets breakpoints and steps (see [`docs/debugger.md`](debugger.md)). Requires the bundle to carry source (compile inputs with `shumway-compile --debug`; not with `--strip`). |
+| `--debug` | Used with `--exe`: build the executable debuggable — its modules compile debuggable and it materialises their embedded source at startup, so a debugger attached to the process sets breakpoints and steps (see [`debugger.md`](debugger.md)). Requires the bundle to carry source (compile inputs with `shumway-compile --debug`; not with `--strip`). |
 | `--debug-wait` | Like `--debug`, but the executable also blocks at startup until a debugger has attached and armed its breakpoints, so the first goal can be stopped in. Implies `--debug`. |
 | `--dap-port <port>` | With `--exe --debug`: bake a VS Code (DAP) debug endpoint into the executable — it listens on `127.0.0.1:<port>` whenever it runs. At run time `SHUMWAY_DAP_PORT` overrides the baked port (`0` disables). Implies `--debug`. See [`debugger-vscode.md`](debugger-vscode.md). |
 | `-d, --dll <path>` | Emit a loadable .NET class library embedding the bundle, with a factory that hands back a ready engine. See [step 3b](#step-3b--producing-a-loadable-net-class-library---dll). Mutually exclusive with `--exe`. |
@@ -606,20 +607,20 @@ reachability + the Stage-9 region prune:
 
 ```bash
 shumway-link -o app.shum --entry main/0 \
-  --region-prune --strip-wam \
+  --strip-wam \
   --dump-il app.il.txt --dump-wam app.wam.txt \
   lib.shmo app.shmo
 ```
 
 - **`--dump-il <file>`** appends the persisted Tier-1 IL the bundle ships —
-  post-prune, region mode + forced roots under `--region-prune`. Each method
+  post-prune, region mode + forced roots (region prune is on by default). Each method
   is headed `;;; ===== persist region root fid=… members=N [member list] =====`
   (a region) or `;;; ===== persist fid=… clauses=N =====` (standalone). Implies
   `--with-compiled-il` (there is no IL to dump otherwise). This is the IL that
   runs cross-process and as `--exe`.
 - **`--dump-wam <file>`** appends the WAM of each bundle entry's **final**
   bytecode, *after* any strip. With `--strip-wam` the dump shrinks to only the
-  predicates that kept a Tier-0 body (with `--region-prune --strip-wam` it can
+  predicates that kept a Tier-0 body (with `--strip-wam` it can
   be empty — the whole user module runs on IL; that emptiness is the
   confirmation the strip was complete).
 
