@@ -374,6 +374,9 @@ public static partial class MetaBuiltins
             Reflect, "set_prolog_flag(+Flag, +Value)", "Sets a Prolog flag.");
         BuiltinsRegistry.Register("current_prolog_flag", 2, CurrentPrologFlag,
             Reflect, "current_prolog_flag(?Flag, ?Value)", "Reads the value of a Prolog flag.");
+        BuiltinsRegistry.Register("statistics", 2, Statistics2,
+            Reflect, "statistics(?Key, ?Value)",
+            "Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds.");
         BuiltinsRegistry.Register("predicate_property", 2, PredicateProperty,
             Reflect, "predicate_property(+Head, ?Property)",
             "Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate.");

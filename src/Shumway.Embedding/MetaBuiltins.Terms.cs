@@ -423,6 +423,67 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(register, Cell.Atom(aid));
     }
 
+    /// <summary><c>statistics(?Key, ?Value)</c> — timing/resource statistics,
+    /// the SWI/Scryer/GNU idiom. Supported keys:
+    /// <list type="bullet">
+    /// <item><c>runtime</c> / <c>walltime</c> — <c>[Total_ms, SinceLast_ms]</c>;
+    /// <c>runtime</c> is process CPU time, <c>walltime</c> is wall-clock. The
+    /// second element is the elapsed time since the previous call with the same
+    /// key, so <c>statistics(runtime, _), Goal, statistics(runtime, [_, T])</c>
+    /// times <c>Goal</c>.</item>
+    /// <item><c>cputime</c> / <c>process_cputime</c> — CPU time in seconds
+    /// (float).</item>
+    /// <item><c>real_time</c> — wall-clock seconds since the engine started
+    /// (float).</item>
+    /// </list>
+    /// An unrecognised key unifies with <c>[0, 0]</c> (lenient, so a program
+    /// probing several keys keeps working).</summary>
+    public static bool Statistics2(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "statistics/2 requires the engine to be hosted by a PrologEngine.");
+        Cell keyCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (keyCell.Tag == Tag.Ref)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (keyCell.Tag != Tag.Atom)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("atom", new VarTerm("_")));
+        string key = AtomTable.GetById(keyCell.AsAtomId)?.Name ?? "";
+        switch (key)
+        {
+            case "runtime":
+            {
+                long total = PrologEngine.StatsRuntimeMs();
+                return UnifyMsPair(engine, total, host.StatsTakeRuntimeDelta(total));
+            }
+            case "walltime":
+            {
+                long total = host.StatsWalltimeMs();
+                return UnifyMsPair(engine, total, host.StatsTakeWalltimeDelta(total));
+            }
+            case "cputime":
+            case "process_cputime":
+                return engine.UnifyRegisterWithCell(1, Materializer.MaterializeAsCell(
+                    engine, new FloatTerm(PrologEngine.StatsRuntimeMs() / 1000.0)));
+            case "real_time":
+                return engine.UnifyRegisterWithCell(1, Materializer.MaterializeAsCell(
+                    engine, new FloatTerm(host.StatsWalltimeMs() / 1000.0)));
+            default:
+                return UnifyMsPair(engine, 0, 0);
+        }
+    }
+
+    private static bool UnifyMsPair(Activation engine, long total, long sinceLast)
+    {
+        Term list = new CompoundTerm(".", new Term[]
+        {
+            new IntTerm(total),
+            new CompoundTerm(".", new Term[] { new IntTerm(sinceLast), new AtomTerm("[]") }),
+        });
+        return engine.UnifyRegisterWithCell(1, Materializer.MaterializeAsCell(engine, list));
+    }
+
     /// <summary><c>prolog_load_context(?Key, ?Value)</c> — SWI/Scryer load-context
     /// introspection, the way a <c>term_expansion</c>/<c>goal_expansion</c> hook
     /// reads the module it is expanding for (the module is NOT a hook argument).

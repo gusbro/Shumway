@@ -37,6 +37,43 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     public Shumway.Builtins.GlobalVarStore GlobalVars { get; } =
         new Shumway.Builtins.GlobalVarStore();
 
+    // statistics/2 support: a wall-clock reference taken at engine creation,
+    // plus the last-observed totals so the classic
+    // `statistics(runtime, _), Work, statistics(runtime, [_, Delta])` idiom
+    // reports the elapsed time between two calls.
+    private readonly long _statsWallStart = System.Diagnostics.Stopwatch.GetTimestamp();
+    private long _statsLastRuntimeMs;
+    private long _statsLastWalltimeMs;
+
+    /// <summary>Wall-clock milliseconds since this engine was created.</summary>
+    internal long StatsWalltimeMs() =>
+        (System.Diagnostics.Stopwatch.GetTimestamp() - _statsWallStart) * 1000L
+            / System.Diagnostics.Stopwatch.Frequency;
+
+    /// <summary>Process CPU milliseconds (user + kernel) so far — the
+    /// <c>runtime</c> series. Process-wide, but for a single-threaded
+    /// benchmark loop it tracks the engine's own compute.</summary>
+    internal static long StatsRuntimeMs() =>
+        (long)System.Environment.CpuUsage.TotalTime.TotalMilliseconds;
+
+    /// <summary>The runtime delta since the previous <c>statistics(runtime, _)</c>
+    /// call, updating the reference.</summary>
+    internal long StatsTakeRuntimeDelta(long total)
+    {
+        long d = total - _statsLastRuntimeMs;
+        _statsLastRuntimeMs = total;
+        return d;
+    }
+
+    /// <summary>The walltime delta since the previous
+    /// <c>statistics(walltime, _)</c> call, updating the reference.</summary>
+    internal long StatsTakeWalltimeDelta(long total)
+    {
+        long d = total - _statsLastWalltimeMs;
+        _statsLastWalltimeMs = total;
+        return d;
+    }
+
     /// <summary>Per-engine <c>flag/3</c> store (SWI). A global,
     /// non-backtrackable key → value map, distinct from
     /// <see cref="GlobalVars"/>. Survives across queries — a flag counter

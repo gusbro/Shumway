@@ -393,6 +393,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `op(+Priority, +Type, +Name)` | Declares an operator of the given priority and type. |
 | `predicate_property(+Head, ?Property)` | Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate. |
 | `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
+| `statistics(?Key, ?Value)` | Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds. |
 
 ## CLP(FD) — domains
 
