@@ -60,8 +60,10 @@ is what ships. Any build honors them.
 | `SHUMWAY_REGION` | on | `=0` disables region compilation (each local predicate emitted inline in the caller's IL method). |
 | `SHUMWAY_REGION_BUDGET`, `SHUMWAY_REGION_ROOT_MINSAVE` | tuned | Size/benefit thresholds bounding which predicates become regions. |
 | `SHUMWAY_CPFREE_IDXBUCKET` | on | `=0` disables the lazy choice-point in indexed-bucket dispatch (ADR-031). |
-| `SHUMWAY_CPFREE_GUARD`, `SHUMWAY_CPFREE_CONT` | see ADR-031/033 | Toggle CP-free guard-commit tiers and the guard-continuation-stack prototype. |
-| `SHUMWAY_INLINE_FACTS`, `SHUMWAY_INLINE_RULES`, `SHUMWAY_INLINE_RULES2` | on | Toggle the local-predicate fact/rule inliners. |
+| `SHUMWAY_CPFREE_GUARD` | on | `=0` disables CP-free guard-commit (ADR-031). |
+| `SHUMWAY_CPFREE_CONT` | off | `=1` enables the opt-in guard-continuation-stack prototype (ADR-033). |
+| `SHUMWAY_INLINE_FACTS` | on | `=0` disables the local-predicate fact inliner. |
+| `SHUMWAY_INLINE_RULES`, `SHUMWAY_INLINE_RULES2` | off | `=1` enables the opt-in local-predicate rule inliners. |
 | `SHUMWAY_IL_STATS`, `SHUMWAY_IL_SHAPE` | off | Emit Tier-1 promotion statistics / per-predicate IL shape summaries to stderr. |
 | `SHUMWAY_CPFREE_STATS`, `SHUMWAY_CPFREE_DETAIL`, `SHUMWAY_CPFREE_IDXCENSUS` | off | Emit CP-free-commit census/statistics. |
 
