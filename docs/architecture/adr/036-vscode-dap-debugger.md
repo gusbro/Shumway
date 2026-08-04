@@ -149,7 +149,7 @@ policy, **`gotoTargets`/`goto` = Set Next Statement** ("Jump to Cursor"),
    (this session + `coreclr` attach to the same pid) — VS Code shows both
    sessions side-by-side in the Call Stack panel, the standard polyglot answer;
    (b) render interop spans inside our Prolog stack as opaque `[C# call: …]`
-   frames (the env chain has the information). Plan: (b) in V1, (a) documented
+   frames (the env chain has the information). Shipped: (b) in V1; (a) documented
    as a recipe.
 2. **Step into C# from Prolog** — no cross-session step arbitration in DAP.
    Behaves as step-over; with the compound session, a C# breakpoint at the
@@ -158,7 +158,7 @@ policy, **`gotoTargets`/`goto` = Set Next Statement** ("Jump to Cursor"),
    The selected frame is known from the last `stackTrace`/`scopes` requests
    (the same inference `MsgSelectedFrame` formalized in VS), which likely
    covers cross-frame; whatever does not map gets a Debug Console meta-command
-   (`:sns <line>`) over `evaluate`. To be settled in V4.
+   (`:sns <line>`) over `evaluate`. Settled in V4: cross-frame works, no `:sns` fallback needed.
 4. **Rich SNS refusal popups** — `goto` succeeds or fails; the honest
    explanation goes to the Debug Console via `output` events (as the VS Output
    feedback already does).

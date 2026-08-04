@@ -48,7 +48,7 @@ toward engine frames.
 
 - **No per-site code growth**: O(1) copy per callee per method — the caps
   (`FailDirectMaxClauses/MaxBytes/MaxTotalBytes`) stop being load-bearing for
-  shared callees, and the caps-raise-needs-IL-switch directive loses urgency.
+  shared callees, and the caps-raise-needs-IL-switch requirement loses urgency.
 - **Mutual recursion and arbitrary non-tail depth**: the continuation stack IS
   a call stack for these callees — `g3:cycle` ceases to be structural.
 - **Cross-tail composes for free**: a tail `execute` to another fail-direct

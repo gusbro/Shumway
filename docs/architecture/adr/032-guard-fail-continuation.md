@@ -2,7 +2,7 @@
 
 **Status:** **SOFT-REJECTED (revisable).** Not a hard rejection: the design is
 recorded in full and the decision is explicitly open to revisiting once the
-promotion-time accept/reject statistics (`IlPredicateCompiler.CpFreeStats`,
+promotion-time accept/reject statistics (`IlPredicateCompiler.CpFreeGuardStats`,
 surfaced by `shumway-link --verbose` and `SHUMWAY_CPFREE_STATS=1`) show, on
 real corpus programs, how much of the guard-call population remains beyond the
 static tiers after the planned widenings (caps, callee cuts, control shapes,

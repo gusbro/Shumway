@@ -1,7 +1,8 @@
 # ADR-040: Multi-dialect library shims + per-module attribute hook (uniting Prolog worlds)
 
-**Status:** Accepted — implemented (Components 1–4 + D5.2). D5.3 content sniff,
-a fuller SWI shim, and the CLI `-L dir:dialect` surface are deferred (see below).
+**Status:** Accepted — implemented (Components 1–4 + D5.2), including the
+CLI / REPL `-L dir:dialect` surface. D5.3 content sniff and a fuller SWI shim
+are deferred (see below).
 
 **Supersedes/extends:** [ADR-038](038-library-loading.md) (library loading +
 export-qualified modules) and the flat, Scryer-only `CompatLibraries` shim.
@@ -36,9 +37,10 @@ export-qualified modules) and the flat, Scryer-only `CompatLibraries` shim.
   (and its pack-resolved dependency subtree) with that dialect active — name
   resolution preferred and `double_quotes` in force — via `WithDialect`. Two dirs
   tagged `scryer` / `swi` load each system's libraries correctly in one engine.
-- **Deferred:** D5.3 content sniff, a real (non-stub) SWI shim beyond the
-  prelude-covered no-ops, and the CLI/REPL `-L dir:dialect` surface (the engine
-  API is done; the CLI still tags dirs one dialect at a time only via code).
+- **Deferred:** D5.3 content sniff and a real (non-stub) SWI shim beyond the
+  prelude-covered no-ops. (The CLI/REPL `-L dir:dialect` surface shipped:
+  `AddLibraryDirectorySpec` parses a `dialect:path` prefix, e.g.
+  `-L scryer:C:/Scryer/lib`.)
 
 **Verified end-to-end (manual smoke, machine-path dependent so not committed):**
 real Scryer `library(clpz)` and real SWI `library(pairs)` / `library(assoc)`

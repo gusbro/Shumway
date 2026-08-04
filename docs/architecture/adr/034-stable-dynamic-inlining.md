@@ -7,7 +7,7 @@ keeps the optimization).
 
 Two converging facts, one shipped bug.
 
-**The practical model (user-supplied, corpus-validated).** ISO permits
+**The practical model (corpus-validated).** ISO permits
 asserting new clauses onto any `:- dynamic` predicate, including one compiled
 with rule bodies — but real programs never do that. What real (Arity) programs
 do is assert **facts**, onto predicates that start **empty** (or fact-only).
@@ -45,12 +45,12 @@ were found while fixing it (see §Dispatch fixes).
 ## Decision
 
 Keep the inline — it is the fast path the corpus profits from — and make it
-sound with a **clause-entry staleness test + un-inlined fallback**, per the
-user's design ("fast path for the usual case; if one of them is ever asserted,
-patch to the slow path, losing the optimization").
+sound with a **clause-entry staleness test + un-inlined fallback**: fast path
+for the usual case; if one of them is ever asserted, patch to the slow path,
+losing the optimization.
 
 1. **Marker.** `CompiledPredicate.IsDynamicSnapshot` +
-   `SnapshotRuleBearing`, set by `BuildDynamicSnapshot` (rule-bearing = any
+   `SnapshotHasRules`, set by `BuildDynamicSnapshot` (has-rules = any
    RAW source clause is a rule). Callee-side inlining decisions can now tell a
    snapshot from a real static.
 

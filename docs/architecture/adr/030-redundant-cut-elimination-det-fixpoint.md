@@ -6,8 +6,8 @@ provably prunes nothing — dropping the cut, its `get_level`, and (where the cu
 was the sole reason) the environment frame, and turning `Head :- …, call, !.`
 into a clean tail call eligible for LCO / Tier-1 self-tail loops. Tier-agnostic:
 it removes work from both Tier-0 bytecode and Tier-1 IL. The **whole-program
-(linker-closure)** extension that unblocks cross-module-callee candidates is
-**deferred** (see Implementation notes).
+(linker-closure)** extension that unblocks cross-module-callee candidates
+**shipped too** (`ShmoLinker.WholeProgramCutElision`; see Implementation notes).
 
 ## Implementation notes (2026-07-09)
 
@@ -44,8 +44,8 @@ it removes work from both Tier-0 bytecode and Tier-1 IL. The **whole-program
   left alone.
 - **Corpus impact (556 Arity files, sound model).** 13 119 deep last-cut
   candidates: 2 191 elidable intra-module (16.7%), 3 218 genuinely load-bearing
-  (nondet prefix), 7 710 blocked only by a cross-module callee (the deferred
-  linker-closure win). Plus 6 727 last-clause **neck** cuts, all elidable
+  (nondet prefix), 7 710 blocked only by a cross-module callee (the
+  linker-closure win, since shipped). Plus 6 727 last-clause **neck** cuts, all elidable
   (all-inline prefix) — 8 918 redundant cuts removed intra-module in total.
 - **Generalised det model (2026-07-09).** Two soundness-preserving widenings:
   (1) `DispatchDet` requires only that every clause **except the last** commits

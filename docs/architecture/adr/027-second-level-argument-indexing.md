@@ -185,9 +185,10 @@ are hottest.
 - **Initial coverage**: atom / integer sub-keys, path depth ≤ 2. The interpreter hop is
   generic (any depth), but the compiler probes and the opcode encoding cap the path
   at 2 hops.
-- **Deferred** (symmetric follow-ups, recorded here): structure-*keyed* sub-arg
-  (a functor table on the sub-value — djota `ast_html_rows_//2`, Arity
-  `sql_q_pcondition/9` function-name dispatch); paths deeper than 2; mixed
+- **Delivered by ADR-028**: structure-*keyed* sub-arg (a functor table on the
+  sub-value — djota `ast_html_rows_//2`, Arity `sql_q_pcondition/9`
+  function-name dispatch) via `switch_on_structure_sub`.
+- **Deferred** (symmetric follow-ups, recorded here): paths deeper than 2; mixed
   atom+integer sub-keys at one position; and the second-token axis
   (`[t(';'),t(')')|_]`), which `heading_line//2`'s all-`#` heads also need.
 - **Impact is narrow but hot**: a concentrated determinism/scan win on the Arity

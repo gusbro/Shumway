@@ -84,8 +84,9 @@ visible clauses, and **evict** that snapshot on any mutation of the predicate.
    bytecode, which carries the post-mutation state.
 
 5. **Churn guard.** Each eviction increments a per-functor counter. After **K =
-   3** evictions the functor is marked **permanently Tier 0** (it will never be
-   IL-promoted again this session). This bounds the promote→evict thrash for a
+   3** evictions the functor is pinned to Tier 0 — but **re-armably**: after
+   `ChurnRearmCalls` (4096) mutation-free invocations the pin resets and
+   promotion is allowed again. This bounds the promote→evict thrash for a
    predicate that turns out to be mutation-hot (e.g. an empty dynamic that gets
    called between asserts and briefly promotes). Re-promotion **is** otherwise
    allowed: after an eviction the normal invocation counter resumes, and a
@@ -131,7 +132,7 @@ only ever be correct-for-its-snapshot or absent.
   the eviction hook lives there, so any mutation path that forgets to call it is
   already a pre-existing ADR-015 bug, not a new failure mode.
 - `IlPromotionStore` gains: a snapshot-compile entry point, a per-functor
-  eviction counter + permanent-Tier-0 mark, and `EvictOnMutation(fid)`.
+  eviction counter + re-armable Tier-0 pin, and `EvictDelegate(fid)`.
 - The IL compiler is unchanged — it only ever sees the static-style snapshot
   `CompiledPredicate`, never the `enter_dynamic` layout.
 

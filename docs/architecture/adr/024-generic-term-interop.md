@@ -84,12 +84,14 @@ A reftype/preftype is a **cursor over a Prolog term in the heap**, not a copied
 struct. Whole-term interop is zero-copy: the .NET side reads and builds the real
 term directly.
 
-### 1. `TermRef` — a cursor, not a struct
+### 1. `TermSlot` — a cursor, not a struct
 
-`reftype` / `preftype` map to a lightweight **`TermRef`** handle (an index into a
-small per-engine slot table; no managed object graph, no copy). A slot holds a
-single heap cell (the term's root, or — during construction — an argument
-position to be filled).
+`reftype` / `preftype` map to a lightweight **`TermSlot`** cursor. It references
+the term at the AST `Term` level (a `TermSlot` with a `TermSlot[]` of argument
+cursors) rather than copying the whole term across the boundary. A slot holds
+the term's root — or, during construction, an argument position to be filled.
+(A later refinement can push the cursor down to raw heap cells; the public
+contract is the same either way.)
 
 ### 2. Any `reftype` global is a runtime term slot
 
@@ -97,7 +99,7 @@ A global declared with type `reftype` / `t_reftype` in a `:- c` region is a
 **runtime-owned term slot** — NOT a field of the user's interop class, and NOT a
 fixed hard-coded list. Recognition is **by type, not by name**: at consult / load
 the runtime creates one slot per such global and maps `name → slot`; `&name`
-resolves to that slot's `TermRef`.
+resolves to that slot's `TermSlot`.
 
 The `par1ref … par10ref` globals are simply the ones declared in `prlg_ifce.pl`
 (`extern reftype par1ref;` …) — the library's buffers, captured by the general
@@ -134,14 +136,15 @@ ever appear inside the predicates we replace.
 - `fill_par(Term, Ref)` — put `Term` into slot `Ref`.
 - `reftype_term(Term, Ref)` — unify `Term` with whatever the slot points at.
 
-### 4. Two accessor APIs over the same `TermRef`
+### 4. Two accessor APIs over the same `TermSlot`
 
 Both sit on the same zero-copy cursor; the user picks per function.
 
-- **Native Shumway API** — idiomatic: `GetTag(ref)`, `GetInt(ref)`,
-  `GetFloat(ref)`, `GetAtom(ref)`, `GetFunctor(ref, out name, out arity)`,
-  `GetArg(ref, n)`, `PutInt(ref, v)`, `PutAtom(ref, s)`, `PutCompound(ref, name,
-  arity)`, `PutArg(ref, n, child)`, `Unify(ref, term)`.
+- **Native Shumway API** — idiomatic, as methods on a `TermSlot`: `FindType()`,
+  `GetInt(out v)`, `GetFloat(out v)`, `GetText(out s)`,
+  `GetFunctor(out name, out arity)`, `Arg(n)` (the child cursor), `PutInt(v)`,
+  `PutAtom(s)`, `PutFunctor(name, arity)` (then fill each argument via `Arg(n)`),
+  and `Materialize()` (cursor → `Term`).
 - **Arity `*_c` compatibility API** — same signatures as Arity, implemented on top
   of the native API, so existing C# written against it runs almost unchanged:
   `findtype_c`, `getint_c`, `putint_c`, `getflt_c`, `putflt_c`, `gettxt_c`,
@@ -157,7 +160,7 @@ maps to a build cursor:
   point the slot at it.
 - `putfunctor_c(name, arity, ref)` — allocate the functor cell + `arity` argument
   slots (fresh variables); point the slot at the functor.
-- `getfuncarg_c(ref, n, &argref)` — return a sub-`TermRef` for argument slot `n`,
+- `getfuncarg_c(ref, n, &argref)` — return a sub-`TermSlot` for argument slot `n`,
   filled recursively with `put*`.
 - `reftype_term(Term, ref)` at the end unifies `Term` with the built root.
 
@@ -189,9 +192,10 @@ the cross-language copy problem returns. For that case this second tier (deliver
   same thing in Shumway.
 
 This is the ADR-022 "option B" as an **optional** layer on top of the cursor, not a
-replacement. The current design must not block it; the ntype-code table (§ ntype
-codes) is the shared contract, and the `Reftype` field layout is reserved so it can
-be bolted on without reworking the cursor. **Not implemented now.**
+replacement. It bolted on without reworking the cursor: the ntype-code table (§ ntype
+codes) is the shared contract, and the `Reftype` field layout matches Arity's
+`t_reftype`. **Shipped in Phase 32** — see the `Reftype` / `NativeReftype` types and
+the `:- native` P/Invoke path.
 
 ## Documentation (required at implementation close)
 
@@ -222,7 +226,7 @@ well beyond removing the dispatch hops alone.
   "outperform GProlog in interop-heavy workloads" goal needs.
 - `prlg_ifce.pl` consults cleanly without compiling the reftype-struct tier — its
   interface predicates become builtins; its native blocks are never reached.
-- The engine gains a per-engine `TermRef` slot table, the named-interface builtins,
+- The engine gains a per-engine `TermSlot` slot table, the named-interface builtins,
   and the two accessor APIs.
 - A new ADR (this one) governs the term-interface surface; the future materializer
   tier extends it rather than changing it.
@@ -241,4 +245,4 @@ well beyond removing the dispatch hops alone.
   replacement makes the entire tier unnecessary.
 - **A single accessor API.** Rejected: the requirement is BOTH the `*_c`
   compatibility layer, so existing C# runs unchanged, AND the option to write
-  against the native API for new code. Both over one `TermRef` cost nothing (the `*_c` layer is thin).
+  against the native API for new code. Both over one `TermSlot` cost nothing (the `*_c` layer is thin).

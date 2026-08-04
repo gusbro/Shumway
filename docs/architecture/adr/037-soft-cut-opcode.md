@@ -86,7 +86,7 @@ This reuses ADR-025's inline-ITE machinery almost verbatim (`get_level_b`,
 `try_me_else`/`trust_me`, `jump`, the arity-0 CP, the Y-slot barrier discipline);
 the only genuinely new piece is the CP-neutralisation semantics of `soft_cut`.
 
-## Decision (proposed)
+## Decision
 
 ### 1. One new opcode
 
@@ -160,7 +160,7 @@ variant) before the WAM compiler starts emitting it — otherwise a body-`*->`
 predicate would lose IL promotion. `soft_cut` in IL marks the ITE's IL choice
 point dead (see §1); the rest reuses the ADR-025 ITE emit.
 
-### Rollout order
+### Rollout order (all delivered)
 
 (a) `soft_cut` opcode + `Opcode.cs` + interpreter case + `Activation.SoftCut` +
 `TryBacktrack` dead-sentinel handling + `shumway-disasm`; (b) IL describe/emit
