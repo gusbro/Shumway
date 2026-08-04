@@ -1051,6 +1051,36 @@ public sealed partial class PrologEngine
     private int _metaHelperSeq;
     internal int NextMetaHelperId() => ++_metaHelperSeq;
 
+    /// <summary>A bundle's <see cref="Shumway.Compiler.Parsing.MetaTransform"/>
+    /// helpers (<c>$disj_N</c> / <c>$neg_N</c> / <c>$once_N</c> / …) were
+    /// numbered by ShmoCompiler's per-module 0-based counter at compile time —
+    /// a counter this engine's runtime <see cref="NextMetaHelperId"/> knows
+    /// nothing about. But a bundled module's DYNAMIC clauses are re-transformed
+    /// at query setup with <see cref="NextMetaHelperId"/>, which also starts
+    /// low, so a dynamic clause's helper can mint the SAME mangled functor id
+    /// (e.g. <c>clpz$$disj_253</c>) as a compiled STATIC helper. The static-link
+    /// partition adds the query-setup (dynamic) predicate first, so it shadows
+    /// the bundled static body — a caller then reaches the wrong helper (the bug
+    /// that broke clpz narrowing's bounded-domain if-then-else). Advancing the
+    /// runtime counter past every bundled helper id keeps the two number ranges
+    /// disjoint — the same guarantee the live/JIT path gets for free by
+    /// numbering every helper (static and dynamic) from one counter.</summary>
+    internal void ObserveBundleHelperId(int functorId)
+    {
+        var (atomId, _) = Shumway.Core.FunctorTable.Lookup(functorId);
+        string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
+        // MetaTransform helper names are `<prefix>$<kind>_<id>` (module mangling
+        // prepends `mod$`). The id is the trailing `_<digits>` and is preceded
+        // by a `$<kind>_` marker — required so a plain user predicate whose name
+        // happens to end in `_<digits>` is not mistaken for a helper.
+        int lastUnderscore = name.LastIndexOf('_');
+        if (lastUnderscore <= 0 || lastUnderscore == name.Length - 1) return;
+        int dollar = name.LastIndexOf('$', lastUnderscore);
+        if (dollar < 0 || dollar >= lastUnderscore - 1) return;
+        if (!int.TryParse(name.AsSpan(lastUnderscore + 1), out int id)) return;
+        if (id > _metaHelperSeq) _metaHelperSeq = id;
+    }
+
 
     /// <summary>ADR-025 — enables the inline if-then-else lowering: an eligible
     /// plain-goal <c>(C -&gt; T ; E)</c> / <c>(A ; B)</c> compiles INSIDE the host

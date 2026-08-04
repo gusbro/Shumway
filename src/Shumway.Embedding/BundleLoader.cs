@@ -1138,7 +1138,13 @@ internal sealed class BundleLoader
         // is already bound by BindPersistedIlForEntry, independent of this.)
         if (registerStaticPredicates)
             foreach (var pred in module.Predicates)
+            {
                 E._precompiledStaticPredicates[pred.FunctorId] = pred;
+                // Keep the runtime meta-helper counter above every bundled
+                // helper id so a query-setup re-transform of this module's
+                // dynamic clauses can't mint a colliding `mod$$disj_N` fid.
+                E.ObserveBundleHelperId(pred.FunctorId);
+            }
         return module;
     }
 
