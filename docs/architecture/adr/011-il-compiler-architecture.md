@@ -438,5 +438,7 @@ The interpreter (or higher-level engine code) checks `_pendingException` after e
 
 ## Related Design Docs
 
-- `design/il-emission-patterns.md`: catalog of IL patterns for each WAM opcode.
-- `design/inline-caching.md`: the call-site dispatch design.
+- `design/il-emission-patterns.md`: per-opcode IL lowering *intent* (its concrete
+  signatures are a stale early sketch — see the banner in that file).
+- `design/inline-caching.md`: records the call-site inline-cache approach that was
+  **not** built — the shipped dispatch is threaded continuation (ADR-016).

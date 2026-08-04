@@ -153,8 +153,8 @@ WAM state.
 - **Persisted bundles**: the region method bakes the root fid into markers; the
   patch-site mechanism (Phase 17) already remaps fids. Members reached only inside
   the region need no separate persisted entry, but their standalone delegate (if any
-  external caller exists) is persisted as today. **Out of scope for the first
-  cut — runtime DynamicMethod path only**, like the chunk-367 rule inline.
+  external caller exists) is persisted as today. **First cut: runtime DynamicMethod
+  path only** — the persisted-bundle path region-compiles too as of Stage 9b (below).
 - **Budget exceeded / non-IL-eligible member**: that edge stays a trampoline; the
   region is just smaller.
 
@@ -388,7 +388,10 @@ WAM state.
 7. **Budget + method-size guard**; fall back to trampoline past the budget.
 8. **Gating + full-bench validation + measurement**; decide the default flip and
    whether the duplication inliners are subsumed.
-   - **MEASURED on Blint (chunk 382): NO clear win — default stays OFF.** Same binary,
+   - **MEASURED on Blint (chunk 382): NO clear win at the time — default stayed OFF then.**
+     *(Later reversed: chunk 418 found the real lever — the `(C->T;E)` lowering — and
+     regions were flipped **default ON**, which is the shipped state in the header. The
+     Blint-only measurement below stands as the chunk-382 record.)* Same binary,
      `SHUMWAY_REGION=1` toggle, `SHUMWAY_IL_PROMOTE=1` both sides (Tier-1 trampoline vs
      Tier-1 region), interleaved min-of-N on the `SHUMWAY_TIMING=1` exec phase (97.5% of
      total). **One-shot exec (N=1, includes JIT): region LOSES ~19%** (OFF min 4153 ms,

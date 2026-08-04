@@ -1,5 +1,19 @@
 # IL Emission Patterns
 
+> **Early pre-implementation sketch — the concrete signatures and helper names
+> below are stale.** The IL that ships differs systematically from this draft:
+> the compiled delegate is `PredicateDelegate(Activation engine, int cursor)`
+> (the second argument is a clause/resume cursor, **not** a register `argBase`),
+> the runtime type is `Activation` (there is no `Engine` class), dispatch is
+> threaded-continuation via resume markers — not a call-site inline cache (see
+> [`inline-caching.md`](inline-caching.md)) — and clauses are emitted as
+> cursor-labelled blocks within one delegate re-entered through
+> `PushIlChoicePoint`, not one method per clause. Helper names like
+> `EngineMethods` / `PrepareCall` / `CallAndCacheCallSite` do not exist. Read
+> the per-opcode lowering below as *intent only*; for the shipped model see
+> [`il-region-compilation.md`](il-region-compilation.md) and
+> `src/Shumway.Compiler.Il/`.
+
 This document specifies how the Shumway IL compiler translates WAM bytecode instructions to .NET CIL. It complements ADR-011 by providing concrete IL patterns for each opcode.
 
 The patterns assume the compiled method signature:
