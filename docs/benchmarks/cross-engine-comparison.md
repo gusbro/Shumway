@@ -9,10 +9,13 @@ The short version: Shumway's Tier-1 (compiled IL) is **competitive with
 GNU Prolog's native code**, **consistently ahead of Scryer** on the classics,
 and **faster than SWI** on allocation-heavy work. It **loses to all three on
 naive-reverse** (a pure allocation micro-benchmark) and to Scryer on the most
-propagation-heavy `clp(Z)` model (`all_distinct` + a wide linear equation).
-Nothing here is marketing: every table is measured, the losses are called out,
-and the interop-heavy embedding case Shumway is *designed* to win is not yet
-benchmarked.
+propagation-heavy `clp(Z)` model (`all_distinct` + a wide linear equation). On
+the **interop-heavy embedding** case (§[Interop](#interop-embedding)) the
+picture splits by mechanism: the convenience API loses to a P/Invoke-embedded
+native engine, but Shumway's zero-copy hot-path — C# touching the engine's own
+heap cells, which a native engine structurally cannot offer — wins by 3–180×.
+Nothing here is marketing: every table is measured and the losses are called
+out.
 
 ## Method
 
@@ -130,6 +133,42 @@ what those benchmarks stress.
 
 ---
 
+## Interop (embedding)
+
+The workload Shumway is *designed* for: a C# application with an embedded Prolog
+engine, crossing the C# ↔ Prolog boundary. The comparison is against **GNU Prolog
+embedded in the same C# host via P/Invoke** — a native engine, so every crossing
+marshals data across the managed/native boundary (C# cannot touch GProlog's
+unmanaged cells). Shumway runs in-process on a managed `Cell[]` heap, so it has a
+choice of two mechanisms — and they land on opposite sides of the result.
+
+Prolog→C# per crossing, **marshalling only** (loop/dispatch baseline subtracted),
+oracle-verified, ns/call; full write-up in the [interop guide](../guide/interop.md):
+
+| Operation | GProlog (P/Invoke) | Shumway convenience | Shumway zero-copy |
+|-----------|-------------------:|--------------------:|------------------:|
+| integer scalar          | ~95  | ~30    | (scalars don't copy) |
+| int list, read (100)    | ~700 | ~24000 | **~190 (3.5× win)** |
+| int list, build (100)   | ~1400| ~11500 | **~750 (1.8× win)** |
+| atom list, read (50)    | ~3400| ~12000 | **~20 (≈free)** |
+| atom list, build (50)   | ~5100| ~10900 | **~280 (18× win)** |
+| compound, traverse      | ~800 | —      | **≈free** |
+| compound, build         | ~680 | —      | **~290 (2.3× win)** |
+
+- **Convenience** (`[PrologPredicate]` typed args, `Query<T>`, `SolveOnce<List>`):
+  decodes each composite through an intermediate `Term` tree, so it is **3–34×
+  slower** than P/Invoke marshalling on lists. It buys ergonomics — plain C#
+  values, no WAM knowledge — not speed. Correct choice off the hot path.
+- **Zero-copy** (raw `bool(Activation)` foreign predicates walking/building the
+  engine's heap cells directly): **3–180× faster** than P/Invoke marshalling;
+  list and term *traversal* is essentially free. A P/Invoke-embedded native
+  engine cannot match this — its cells are unmanaged, so it must copy where
+  Shumway does not. This is the concrete payoff of an in-process engine.
+
+Scalars are a wash. The honest statement is not "Shumway wins interop" flatly, but:
+**for hot-path term manipulation the zero-copy mechanism wins decisively; for
+everything else the convenience API is there and its overhead doesn't matter.**
+
 ## Summary
 
 | Against | Shumway wins | Shumway loses |
@@ -141,8 +180,6 @@ what those benchmarks stress.
 The recurring weak spot across all three is **allocation-bound micro-benchmarks**
 (naive reverse) — a C# constant-factor behind native/Rust cell allocation. The
 recurring strength is **search- and dispatch-heavy** work, where Tier-1 IL and
-the region compiler pull ahead.
-
-**Not yet benchmarked:** the interop-heavy embedding workload (crossing the
-C# ↔ Prolog boundary) that Shumway is specifically designed to win — a
-microbenchmark against GNU Prolog's FFI is the open item.
+the region compiler pull ahead. On **interop** the strength is structural:
+zero-copy access to the engine's live heap, which a P/Invoke-embedded native
+engine cannot offer (see §[Interop](#interop-embedding)).
