@@ -97,6 +97,12 @@ public sealed partial class BytecodeInterpreter
     /// backtracking stays contained at its entry level.</summary>
     private int _backtrackFloor = -1;
 
+    // Backing state for Activation.ReentrantSolve (the host→Prolog re-entrant
+    // solve API): one cached closure, the current ProgramView held in a field so
+    // the closure needn't capture it per Run (zero-alloc after the first Run).
+    private ProgramView _reentrantCode;
+    private Func<Cell, bool>? _reentrantSolve;
+
     // Functor ids the in-engine meta-call recognises (the control-construct
     // functors). The attribute-hook functor ids are resolved per module on the
     // Activation (ADR-040 Verify3FunctorId / Verify4FunctorId).
@@ -266,6 +272,11 @@ public sealed partial class BytecodeInterpreter
                 $"startPc 0x{startPc:X} is outside [0, 0x{code.Length:X}).");
 
         _engine.SetPc(startPc);
+        // Expose the re-entrant semidet solve to foreign code running under this
+        // activation (see Activation.ReentrantSolve). The closure reads _reentrantCode
+        // so it is allocated once; each Run refreshes the program view it targets.
+        _reentrantCode = code;
+        _engine.ReentrantSolve = _reentrantSolve ??= ReentrantSolveTransparent;
         try { return Dispatch(code); }
         catch (TopLevelFailure) { return InterpreterResult.Failed; }
         catch (System.Exception ex) when (PcRing is not null
@@ -276,6 +287,29 @@ public sealed partial class BytecodeInterpreter
         {
             DumpPcRing(code, _engine.P, ex.GetType().Name);
             throw;
+        }
+    }
+
+    /// <summary>Backs <see cref="Activation.ReentrantSolve"/> (the host→Prolog
+    /// SolveOnce API). Must be TRANSPARENT to the caller's argument registers: a
+    /// foreign predicate's generated bridge reads its output register AFTER the user
+    /// method returns, but <see cref="MetaCallInEngine"/> loads the nested goal's args
+    /// into X0… So snapshot the register bank, run the nested semidet solve (which binds
+    /// the shared heap/trail — the intended output), then restore the registers. The
+    /// bank may have grown during the solve; restoring the saved low indices is
+    /// in-bounds and enough (the caller only relies on its own argument registers).
+    /// The save buffer is per-invocation (pool-rented, not a shared field) so nested
+    /// SolveOnce — C#→Prolog→C#→Prolog — each preserves its own caller's registers.</summary>
+    private bool ReentrantSolveTransparent(Cell goal)
+    {
+        int n = _engine.RegisterCount;
+        Cell[] save = System.Buffers.ArrayPool<Cell>.Shared.Rent(n);
+        for (int i = 0; i < n; i++) save[i] = _engine.GetRegister(i);
+        try { return MetaCallInEngine(_reentrantCode, goal); }
+        finally
+        {
+            for (int i = 0; i < n; i++) _engine.SetRegister(i, save[i]);
+            System.Buffers.ArrayPool<Cell>.Shared.Return(save);
         }
     }
 

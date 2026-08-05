@@ -466,6 +466,39 @@ public sealed partial class Activation
     /// by the dispatchers right before raising existence_error.</summary>
     public Func<int, int>? ResolveLateHelper { get; set; }
 
+    /// <summary>Re-entrant semidet solve of a goal on THIS live activation, reusing
+    /// the already-linked program (no fresh transient-region link, no new machine) —
+    /// the cheap host→Prolog path for a foreign predicate that calls back into Prolog
+    /// mid-execution (<c>C#→Prolog</c> in the <c>C#→main→C#→predX</c> pattern). Wired by
+    /// the interpreter's <c>Run</c> to its <c>MetaCallInEngine</c>; runs the goal cell to
+    /// its first solution with once-semantics (choice points it leaves are discarded),
+    /// leaving the bindings on the shared heap/trail. Returns success. Contrast
+    /// <see cref="Host"/>'s top-level <c>QueryAll</c>, which builds a whole new query.</summary>
+    public Func<Cell, bool>? ReentrantSolve { get; set; }
+
+    // Pooled variable maps for the re-entrant SolveOnce read path: a map must survive
+    // materialize→solve→read within one call (the nested solve clobbers the shared
+    // MaterializeScratchMap), so it is rented per call and returned after. A stack
+    // makes it nesting-safe — each nested SolveOnce rents its own.
+    private System.Collections.Generic.Stack<System.Collections.Generic.Dictionary<string, int>>? _reentrantMapPool;
+
+    /// <summary>Rents a cleared variable map for a re-entrant <c>SolveOnce</c> read.</summary>
+    public System.Collections.Generic.Dictionary<string, int> RentReentrantVarMap()
+    {
+        var pool = _reentrantMapPool;
+        if (pool is not null && pool.Count > 0)
+        {
+            var d = pool.Pop();
+            d.Clear();
+            return d;
+        }
+        return new System.Collections.Generic.Dictionary<string, int>();
+    }
+
+    /// <summary>Returns a map rented via <see cref="RentReentrantVarMap"/>.</summary>
+    public void ReturnReentrantVarMap(System.Collections.Generic.Dictionary<string, int> map)
+        => (_reentrantMapPool ??= new()).Push(map);
+
     /// <summary>ADR-041 — dispatch-time clause selection for an unindexed
     /// dynamic chain, called at <c>enter_dynamic</c> with the trampoline's
     /// address. The host inspects the call's (dereferenced) first argument
