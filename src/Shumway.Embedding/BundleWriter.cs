@@ -416,6 +416,37 @@ public static class BundleWriter
                 dynamicSnapshotFids.Add(fid);
             }
         }
+
+        // A dynamic predicate's snapshot body calls the MetaTransform helpers
+        // ($disj_N / $neg_N / ...) the warm engine's Query("true.") minted for
+        // its clauses' control constructs. Those helpers are query-region
+        // predicates — NOT in the entry's decoded bytecode, so the emitOnly
+        // rules above leave them out and the baked snapshot's calls dangle at
+        // runtime (existence_error). Their fids never collide with the runtime
+        // re-transform's own helpers (arity + number differ), so baking them
+        // here — reachable from any snapshot — makes the snapshot self-contained.
+        {
+            var work = new Queue<int>(dynamicSnapshotFids);
+            var seen = new HashSet<int>(dynamicSnapshotFids);
+            while (work.Count > 0)
+            {
+                if (!predicates.TryGetValue(work.Dequeue(), out var p)) continue;
+                foreach (var cs in p.CallSites)
+                {
+                    int cf = cs.CalleeFunctorId;
+                    if (!seen.Add(cf)) continue;
+                    var (caid, _) = Shumway.Core.FunctorTable.Lookup(cf);
+                    string cn = Shumway.Core.AtomTable.GetById(caid)?.Name ?? "";
+                    if ((cn.Contains("$disj_") || cn.Contains("$neg_") || cn.Contains("$once_")
+                         || cn.Contains("$ign_") || cn.Contains("$catchgoal_"))
+                        && predicates.ContainsKey(cf))
+                    {
+                        emitOnly.Add(cf);
+                        work.Enqueue(cf);
+                    }
+                }
+            }
+        }
         // Stage 9b-3 / 9c / 9d: compute the dead-region prune set HERE, over the EXACT
         // calleeMap the IL compile is about to use (`predicates` — the warm-up engine's
         // FULL set: user module + prelude + every reached callee). The linker's per-module
