@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using Shumway.Compiler.Ast;
 using Shumway.Compiler.Lexer;
 using Shumway.Compiler.Parsing;
@@ -31,7 +32,9 @@ internal sealed class NativeRuntime
     /// consulting Arity sources that use <c>{...}</c> blocks. Without an explicit
     /// call the engine auto-discovers a class named <c>Shumway.Native.Interop</c>
     /// in the loaded assemblies.</summary>
-    public void UseNativeInterop(Type interopClass)
+    public void UseNativeInterop(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)]
+        Type interopClass)
     {
         ArgumentNullException.ThrowIfNull(interopClass);
         _nativeInterop = interopClass
@@ -48,15 +51,41 @@ internal sealed class NativeRuntime
     {
         if (_nativeInterop is null)
         {
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                Type? t = null;
-                try { t = asm.GetType("Shumway.Native.Interop"); } catch { }
-                if (t is not null) { UseNativeInterop(t); break; }
-            }
+            AutoDiscoverInterop();
             _nativeInterop ??= new Dictionary<string, System.Reflection.MethodInfo>();
         }
         return _nativeInterop.TryGetValue(name, out var m) ? m : null;
+    }
+
+    /// <summary>Looks for a class named <c>Shumway.Native.Interop</c> across the
+    /// loaded assemblies. Discovery by name cannot be made trim-safe — nothing
+    /// statically references the class, so a trimmed build may not contain it.
+    /// An application that relies on auto-discovery under trimming must root the
+    /// class itself, or call <see cref="UseNativeInterop"/> explicitly, which is
+    /// annotated and trim-safe.</summary>
+    /// <para>Suppressed rather than propagated: the lookup DEGRADES, it does not
+    /// break. If trimming removed the class, no assembly reports it, the map stays
+    /// empty and every native-block call reports an unresolved function — the same
+    /// outcome as a program that never defined one. Propagating
+    /// <c>RequiresUnreferencedCode</c> from here would mark consult itself as
+    /// trim-unsafe for every program, including the vast majority that use no
+    /// native blocks at all.</para>
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Auto-discovery by type name degrades to 'no interop class' "
+        + "when trimmed; callers that need it under trimming call UseNativeInterop "
+        + "explicitly, which is annotated and trim-safe.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2072",
+        Justification = "The discovered type is handed straight to UseNativeInterop, "
+        + "whose parameter is annotated; if trimming removed its methods the map "
+        + "simply comes back empty, which is the same degradation.")]
+    private void AutoDiscoverInterop()
+    {
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type? t = null;
+            try { t = asm.GetType("Shumway.Native.Interop"); } catch { }
+            if (t is not null) { UseNativeInterop(t); break; }
+        }
     }
 
     // ADR-022 item 1 — per-engine table of embedded native blocks, keyed by a

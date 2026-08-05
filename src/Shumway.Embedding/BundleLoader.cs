@@ -146,6 +146,16 @@ internal sealed class BundleLoader
         return false;
     }
 
+    // The RequiresUnreferencedCode call below (RegisterForeignAssembly) is reached
+    // only for a bundle that DECLARES foreign assemblies — a deployment that must
+    // ship those DLLs beside the bundle anyway, and therefore cannot rely on
+    // trimming to reason about them. Propagating the attribute instead would brand
+    // every LoadBundle trim-unsafe, including the overwhelming majority of bundles
+    // that declare none (a browser bundle can declare none at all).
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Only reached when the bundle declares foreign assemblies, "
+        + "which are loaded from disk beside it and are outside the trimmer's view "
+        + "by construction.")]
     internal void LoadBundleCore(Bundle bundle, string? bundleDir)
     {
         ArgumentNullException.ThrowIfNull(bundle);

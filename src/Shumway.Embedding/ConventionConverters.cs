@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Shumway.Compiler.Ast;
 using static System.Linq.Expressions.Expression;
@@ -32,24 +33,44 @@ internal static class ConventionConverters
 {
     private static readonly ConcurrentDictionary<Type, ConvertersEntry> _cache = new();
 
-    public static bool TryToTerm<T>(PrologEngine engine, T value, out Term result)
+    public static bool TryToTerm<[DynamicallyAccessedMembers(ConventionMembers)] T>(
+        PrologEngine engine, T value, out Term result)
     {
         if (value is null) { result = null!; return false; }
-        var entry = _cache.GetOrAdd(typeof(T), static t => BuildEntry(t));
+        var entry = EntryFor<T>();
         if (entry.ToTerm is null) { result = null!; return false; }
         result = entry.ToTerm(engine, value!);
         return true;
     }
 
-    public static bool TryFromTerm<T>(PrologEngine engine, Term term, out T result)
+    public static bool TryFromTerm<[DynamicallyAccessedMembers(ConventionMembers)] T>(
+        PrologEngine engine, Term term, out T result)
     {
-        var entry = _cache.GetOrAdd(typeof(T), static t => BuildEntry(t));
+        var entry = EntryFor<T>();
         if (entry.FromTerm is null) { result = default!; return false; }
         result = (T)entry.FromTerm(engine, term)!;
         return true;
     }
 
-    private static ConvertersEntry BuildEntry(Type type)
+    /// <summary>What this tier looks for on a type: the source-generated
+    /// <c>ToPrologTerm</c> / <c>FromPrologTerm</c> conventions, found by name.
+    /// Annotating the type parameter is what keeps them alive under trimming —
+    /// nothing else references them, so a trimmed build would otherwise drop the
+    /// very methods the tier exists to find.</summary>
+    internal const DynamicallyAccessedMemberTypes ConventionMembers =
+        DynamicallyAccessedMemberTypes.PublicMethods;
+
+    // Looked up through a typed helper rather than GetOrAdd's factory lambda: the
+    // lambda's Type parameter carries no annotation, so the trimmer would lose
+    // track of T there and warn. Racing callers may each build an entry; the
+    // dictionary keeps one, which is what the factory overload guarantees too.
+    private static ConvertersEntry EntryFor<[DynamicallyAccessedMembers(ConventionMembers)] T>()
+        => _cache.TryGetValue(typeof(T), out var hit)
+            ? hit
+            : _cache.GetOrAdd(typeof(T), BuildEntry(typeof(T)));
+
+    private static ConvertersEntry BuildEntry(
+        [DynamicallyAccessedMembers(ConventionMembers)] Type type)
     {
         // the resolved MethodInfos are COMPILED to delegates here,
         // once per type, instead of MethodInfo.Invoke (+ a fresh object[]) per

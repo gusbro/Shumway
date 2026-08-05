@@ -70,7 +70,7 @@ public sealed class Solution
     /// <see cref="KeyNotFoundException"/> if the variable isn't in
     /// the bindings, or whatever <see cref="PrologEngine.FromTerm{T}"/>
     /// raises on a type mismatch.</summary>
-    public T Get<T>(string variableName)
+    public T Get<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] T>(string variableName)
     {
         ArgumentNullException.ThrowIfNull(variableName);
         if (!Bindings.TryGetValue(variableName, out var t))
@@ -87,7 +87,7 @@ public sealed class Solution
     /// returns <c>false</c> when the variable isn't bound; surfaces
     /// type-conversion exceptions as-is (they signal a programmer
     /// error, not the absence of data).</summary>
-    public bool TryGet<T>(string variableName, out T value)
+    public bool TryGet<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] T>(string variableName, out T value)
     {
         ArgumentNullException.ThrowIfNull(variableName);
         if (!Bindings.TryGetValue(variableName, out var t) || Activation is null)

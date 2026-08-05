@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using Shumway.Compiler.Ast;
 using Shumway.Compiler.Lexer;
 using Shumway.Compiler.Parsing;
@@ -52,7 +53,8 @@ public sealed partial class PrologEngine
     /// <see cref="InvalidOperationException"/> when neither covers
     /// the type — the diagnostic names the type so the host can
     /// register a converter.</summary>
-    public Term ToTerm<T>(T value)
+    public Term ToTerm<[DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] T>(
+        T value)
     {
         if (_userConverters is not null
             && _userConverters.TryGetValue(typeof(T), out var pair))
@@ -76,7 +78,8 @@ public sealed partial class PrologEngine
     /// <summary>inverse of <see cref="ToTerm{T}"/>:
     /// extracts a <typeparamref name="T"/> from <paramref name="term"/>.
     /// User converters win over the built-in mappings.</summary>
-    public T FromTerm<T>(Term term)
+    public T FromTerm<[DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] T>(
+        Term term)
     {
         ArgumentNullException.ThrowIfNull(term);
         if (_userConverters is not null
@@ -103,45 +106,56 @@ public sealed partial class PrologEngine
     /// The generic method handle is built and cached on first use
     /// per element type; subsequent calls are a dictionary probe +
     /// delegate invoke.</summary>
-    internal Term ToTermDynamic(Type type, object? value)
+    internal Term ToTermDynamic(
+        [DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] Type type,
+        object? value)
     {
         // the cached delegate is now COMPILED (engine.ToTerm<T>((T)v))
         // instead of a wrapper that re-ran MethodInfo.Invoke + a fresh object[] per
         // ELEMENT of every converted collection. Expression.Compile interprets
         // under Native AOT, so this stays AOT-correct.
-        var del = _toTermDynamicCache.GetOrAdd(type, static t =>
-        {
-            var m = typeof(PrologEngine)
-                .GetMethod(nameof(ToTerm))!
-                .MakeGenericMethod(t);
-            var engP = System.Linq.Expressions.Expression.Parameter(typeof(PrologEngine), "engine");
-            var valP = System.Linq.Expressions.Expression.Parameter(typeof(object), "value");
-            return System.Linq.Expressions.Expression.Lambda<Func<PrologEngine, object?, Term>>(
-                System.Linq.Expressions.Expression.Call(engP, m,
-                    System.Linq.Expressions.Expression.Convert(valP, t)),
-                engP, valP).Compile();
-        });
+        // Built through an annotated helper rather than GetOrAdd's factory lambda,
+        // whose Type parameter carries no annotation and would lose the trimmer's
+        // guarantee that T's convention methods survive.
+        if (!_toTermDynamicCache.TryGetValue(type, out var del))
+            del = _toTermDynamicCache.GetOrAdd(type, BuildToTermDelegate(type));
         return del(this, value);
+    }
+
+    private static Func<PrologEngine, object?, Term> BuildToTermDelegate(
+        [DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] Type t)
+    {
+        var m = typeof(PrologEngine).GetMethod(nameof(ToTerm))!.MakeGenericMethod(t);
+        var engP = System.Linq.Expressions.Expression.Parameter(typeof(PrologEngine), "engine");
+        var valP = System.Linq.Expressions.Expression.Parameter(typeof(object), "value");
+        return System.Linq.Expressions.Expression.Lambda<Func<PrologEngine, object?, Term>>(
+            System.Linq.Expressions.Expression.Call(engP, m,
+                System.Linq.Expressions.Expression.Convert(valP, t)),
+            engP, valP).Compile();
     }
 
     /// <summary>reflective bridge for the inverse
     /// direction; same caching strategy as
     /// <see cref="ToTermDynamic"/>.</summary>
-    internal object? FromTermDynamic(Type type, Term term)
+    internal object? FromTermDynamic(
+        [DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] Type type,
+        Term term)
     {
-        var del = _fromTermDynamicCache.GetOrAdd(type, static t =>
-        {
-            var m = typeof(PrologEngine)
-                .GetMethod(nameof(FromTerm))!
-                .MakeGenericMethod(t);
-            var engP = System.Linq.Expressions.Expression.Parameter(typeof(PrologEngine), "engine");
-            var termP = System.Linq.Expressions.Expression.Parameter(typeof(Term), "term");
-            return System.Linq.Expressions.Expression.Lambda<Func<PrologEngine, Term, object?>>(
-                System.Linq.Expressions.Expression.Convert(
-                    System.Linq.Expressions.Expression.Call(engP, m, termP), typeof(object)),
-                engP, termP).Compile();
-        });
+        if (!_fromTermDynamicCache.TryGetValue(type, out var del))
+            del = _fromTermDynamicCache.GetOrAdd(type, BuildFromTermDelegate(type));
         return del(this, term);
+    }
+
+    private static Func<PrologEngine, Term, object?> BuildFromTermDelegate(
+        [DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] Type t)
+    {
+        var m = typeof(PrologEngine).GetMethod(nameof(FromTerm))!.MakeGenericMethod(t);
+        var engP = System.Linq.Expressions.Expression.Parameter(typeof(PrologEngine), "engine");
+        var termP = System.Linq.Expressions.Expression.Parameter(typeof(Term), "term");
+        return System.Linq.Expressions.Expression.Lambda<Func<PrologEngine, Term, object?>>(
+            System.Linq.Expressions.Expression.Convert(
+                System.Linq.Expressions.Expression.Call(engP, m, termP), typeof(object)),
+            engP, termP).Compile();
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
@@ -161,7 +175,8 @@ public sealed partial class PrologEngine
     /// with <see cref="PrologPredicateAttribute"/>. Use for classes
     /// that group stateless predicates (the common case for
     /// embedding-side helpers).</summary>
-    public void RegisterPredicates(Type type)
+    public void RegisterPredicates(
+        [DynamicallyAccessedMembers(PredicateMembers)] Type type)
     {
         ArgumentNullException.ThrowIfNull(type);
         RegisterPredicatesImpl(type, instance: null, staticOnly: false);
@@ -174,7 +189,8 @@ public sealed partial class PrologEngine
     /// that walks every type in a foreign-DLL: instance methods
     /// can't be auto-registered without an instance, but other
     /// (static) methods in the same DLL should still surface.</summary>
-    public void RegisterPredicates(Type type, bool staticOnly)
+    public void RegisterPredicates(
+        [DynamicallyAccessedMembers(PredicateMembers)] Type type, bool staticOnly)
     {
         ArgumentNullException.ThrowIfNull(type);
         RegisterPredicatesImpl(type, instance: null, staticOnly: staticOnly);
@@ -182,7 +198,8 @@ public sealed partial class PrologEngine
 
     /// <summary>Generic convenience: <c>engine.RegisterPredicates&lt;MyClass&gt;()</c>
     /// for static classes.</summary>
-    public void RegisterPredicates<T>() => RegisterPredicates(typeof(T));
+    public void RegisterPredicates<[DynamicallyAccessedMembers(PredicateMembers)] T>()
+        => RegisterPredicates(typeof(T));
 
     /// <summary>loads <paramref name="assemblyPath"/>
     /// via <see cref="System.Reflection.Assembly.LoadFrom"/> and
@@ -224,6 +241,11 @@ public sealed partial class PrologEngine
         catch { return null; }
     }
 
+    [RequiresUnreferencedCode(
+        "Loads an assembly from disk and reflects over every type in it. Nothing "
+        + "statically references those types, so a trimmed application cannot "
+        + "guarantee the foreign assembly's predicates survive; register them with "
+        + "RegisterPredicates(typeof(...)) instead, which is annotated.")]
     public void RegisterForeignAssembly(string assemblyPath)
     {
         ArgumentNullException.ThrowIfNull(assemblyPath);
@@ -253,7 +275,16 @@ public sealed partial class PrologEngine
         }
     }
 
-    private void RegisterPredicatesImpl(Type type, object? instance, bool staticOnly = false)
+    // What RegisterPredicates reflects over: it walks the type's methods (public and
+    // not) looking for [PrologPredicate], then re-finds the generated bridge by name.
+    // Naming the set once keeps the annotations on the overloads honest and identical.
+    internal const DynamicallyAccessedMemberTypes PredicateMembers =
+        DynamicallyAccessedMemberTypes.PublicMethods
+        | DynamicallyAccessedMemberTypes.NonPublicMethods;
+
+    private void RegisterPredicatesImpl(
+        [DynamicallyAccessedMembers(PredicateMembers)] Type type,
+        object? instance, bool staticOnly = false)
     {
         const System.Reflection.BindingFlags flags =
             System.Reflection.BindingFlags.Public

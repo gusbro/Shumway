@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using Shumway.Compiler.Ast;
 
 namespace Shumway.Embedding;
@@ -34,6 +35,40 @@ namespace Shumway.Embedding;
 /// </summary>
 internal static class CompositeConverters
 {
+    /// <summary>The one place trimming is genuinely lossy here, recorded rather
+    /// than papered over. A composite's ELEMENT types are discovered at runtime
+    /// (<c>GetGenericArguments</c> / <c>GetElementType</c>), which the trimmer
+    /// cannot follow, so the annotation chain that keeps a type's generated
+    /// <c>ToPrologTerm</c> / <c>FromPrologTerm</c> alive stops at the composite.
+    /// Consequence for a trimmed application: converting a <c>List&lt;MyType&gt;</c>
+    /// of <c>[PrologTerm]</c> types may find those methods trimmed and decline the
+    /// conversion. Rooting the element type (a direct <c>ToTerm&lt;MyType&gt;</c>
+    /// call, or <c>[DynamicDependency]</c>) restores it. Top-level and scalar
+    /// conversions are annotated and unaffected.</summary>
+    private const string ElementTypeLimitation =
+        "Composite element types are resolved at runtime and cannot be tracked; a "
+        + "trimmed app must root the element types of [PrologTerm] collections "
+        + "itself. See ElementTypeLimitation.";
+
+    // The reflection below never touches a user type's members: it reads Item1 /
+    // Item2 / Key / Value off closed FRAMEWORK generics (Tuple<,>, ValueTuple<,>,
+    // KeyValuePair<,>) and constructs List<>/Dictionary<,>/Nullable<>, all reached
+    // only after matching the open type against a typeof(...) literal. Those
+    // members belong to types the application itself constructs to make the call,
+    // so they are rooted independently of this tier. Annotating T instead would
+    // preserve fields and properties on every user type ever converted, to keep
+    // members that are not the user's.
+    [UnconditionalSuppressMessage("Trimming", "IL2090",
+        Justification = "Reflects only over closed framework generics matched by "
+        + "typeof literal; their members are rooted by the caller constructing the "
+        + "value it passes in.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2087",
+        Justification = "Same: the constructed types are framework collections "
+        + "matched by typeof literal, not caller-supplied types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2062",
+        Justification = ElementTypeLimitation)]
+    [UnconditionalSuppressMessage("Trimming", "IL2072",
+        Justification = ElementTypeLimitation)]
     public static bool TryToTerm<T>(PrologEngine engine, T value, out Term result)
     {
         var type = typeof(T);
@@ -124,6 +159,16 @@ internal static class CompositeConverters
         return false;
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2087",
+        Justification = "Activator.CreateInstance is called only on framework "
+        + "collection types (List<>, Dictionary<,>) matched by typeof literal, "
+        + "whose constructors the caller's own use already roots.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2090",
+        Justification = "See TryToTerm: framework generics only.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2062",
+        Justification = ElementTypeLimitation)]
+    [UnconditionalSuppressMessage("Trimming", "IL2072",
+        Justification = ElementTypeLimitation)]
     public static bool TryFromTerm<T>(PrologEngine engine, Term term, out T result)
     {
         var type = typeof(T);
@@ -231,7 +276,9 @@ internal static class CompositeConverters
     /// <c>./2</c>, terminated by the atom <c>[]</c>) from any
     /// .NET enumerable. Each element is routed through the engine's
     /// dynamic dispatcher so user converters apply at every depth.</summary>
-    private static Term BuildList(PrologEngine engine, Type elementType, IEnumerable items)
+    private static Term BuildList(PrologEngine engine,
+        [DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] Type elementType,
+        IEnumerable items)
     {
         var elements = new List<Term>();
         foreach (var item in items)
@@ -246,7 +293,9 @@ internal static class CompositeConverters
     /// the engine's dynamic dispatcher. Throws on an improper list
     /// (the tail must be <c>[]</c>, not a partial list or non-list
     /// term).</summary>
-    private static List<object?> ReadList(PrologEngine engine, Type elementType, Term term)
+    private static List<object?> ReadList(PrologEngine engine,
+        [DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] Type elementType,
+        Term term)
     {
         var result = new List<object?>();
         Term cursor = term;

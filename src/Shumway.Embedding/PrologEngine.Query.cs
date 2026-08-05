@@ -277,7 +277,7 @@ public sealed partial class PrologEngine
     /// out of each answer (the typical embedding-side
     /// "give me all the X such that p(X)" use case).
     /// <c>foreach (var x in engine.Query&lt;int&gt;("p(X).", "X")) ...</c></summary>
-    public IEnumerable<T> Query<T>(string queryText, string variableName)
+    public IEnumerable<T> Query<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] T>(string queryText, string variableName)
     {
         ArgumentNullException.ThrowIfNull(queryText);
         ArgumentNullException.ThrowIfNull(variableName);
@@ -303,7 +303,7 @@ public sealed partial class PrologEngine
     /// <para>Throws when the query has zero variables (a yes/no
     /// query — use <see cref="QueryAll(string)"/>) or more than
     /// one variable (the explicit-name overload disambiguates).</para></summary>
-    public IEnumerable<T> Query<T>(string queryText)
+    public IEnumerable<T> Query<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] T>(string queryText)
     {
         ArgumentNullException.ThrowIfNull(queryText);
         // Parse once to discover the query's variable set, then defer
@@ -336,7 +336,7 @@ public sealed partial class PrologEngine
     /// (a null reference / zero value) when the query fails. Drops
     /// the remaining solutions; the engine state is unaffected (the
     /// underlying iterator handles disposal).</summary>
-    public T? QueryFirst<T>(string queryText, string variableName)
+    public T? QueryFirst<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] T>(string queryText, string variableName)
     {
         foreach (var v in Query<T>(queryText, variableName))
             return v;
@@ -345,7 +345,7 @@ public sealed partial class PrologEngine
 
     /// <summary>single-variable overload of
     /// <see cref="QueryFirst{T}(string,string)"/>.</summary>
-    public T? QueryFirst<T>(string queryText)
+    public T? QueryFirst<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] T>(string queryText)
     {
         foreach (var v in Query<T>(queryText))
             return v;

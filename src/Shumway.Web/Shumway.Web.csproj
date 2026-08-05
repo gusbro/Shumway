@@ -9,6 +9,14 @@
     <!-- The engine's culture handling is invariant everywhere else (see the
          REPL); keep the browser build identical and skip the ICU payload. -->
     <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- Sigil (Tier-1's IL emitter) is a third-party assembly we cannot annotate,
+         so the trimmer reports IL2104 for it. Narrow and local, per the repo's
+         zero-warning rule: it is scoped to THIS project, names the one code, and
+         is understood — the browser never emits IL (RuntimeCaps folds Tier-1 off),
+         so Sigil's code is unreachable here. Every warning from OUR code was fixed
+         at the source instead; nothing else is silenced. -->
+    <NoWarn>$(NoWarn);IL2104</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

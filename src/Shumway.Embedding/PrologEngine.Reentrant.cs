@@ -65,7 +65,7 @@ public sealed partial class PrologEngine
     /// common foreign-predicate shape: compute one value from a Prolog goal. Put a
     /// <see cref="VarTerm"/> named <paramref name="outVar"/> in <paramref name="goal"/>
     /// for the result.</summary>
-    public bool SolveOnce<T>(Activation engine, Term goal, string outVar, out T value)
+    public bool SolveOnce<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(ConventionConverters.ConventionMembers)] T>(Activation engine, Term goal, string outVar, out T value)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(goal);
