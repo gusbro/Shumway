@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Shumway.Core;
 
 /// <summary>
@@ -17,8 +19,20 @@ public static class RuntimeCaps
     /// <c>PlatformNotSupportedException</c>. Taking the flag at face value there
     /// makes the first query die inside builtin classification, long before any
     /// promotion threshold. The browser is therefore excluded explicitly: it runs
-    /// Tier-0, exactly as AOT does.</para></summary>
-    public static readonly bool SupportsRuntimeCodegen =
+    /// Tier-0, exactly as AOT does.</para>
+    ///
+    /// <para>A <b>feature switch</b>, so a host that will never emit IL can have the
+    /// trimmer fold this to a constant and delete the whole Tier-1 subtree — the IL
+    /// compiler and its Sigil dependency included. Set it in the consuming project:
+    /// <code>&lt;RuntimeHostConfigurationOption Include="Shumway.RuntimeCodegen"
+    ///     Value="false" Trim="true" /&gt;</code>
+    /// Nothing changes for a normal build: the getter stays an ordinary check, and
+    /// both operands are JIT intrinsics that fold to a constant anyway, so reading
+    /// it costs nothing. Callers must consult THIS property rather than caching it
+    /// in a static field, or the trimmer has nothing to fold and the subtree
+    /// survives.</para></summary>
+    [FeatureSwitchDefinition("Shumway.RuntimeCodegen")]
+    public static bool SupportsRuntimeCodegen =>
         System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported
         && !OperatingSystem.IsBrowser();
 }

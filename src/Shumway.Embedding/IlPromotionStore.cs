@@ -69,8 +69,12 @@ public sealed class IlPromotionStore
     // a pure Tier-0 counter and the IL compiler (reflection-heavy type init) is
     // never constructed. See RuntimeCaps for why the browser needs more than
     // IsDynamicCodeSupported to be excluded.
-    private static readonly bool DynamicCodeSupported =
-        Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen;
+    //
+    // Forwards to the property on every read rather than caching it in a static
+    // field: RuntimeCaps.SupportsRuntimeCodegen is a trimmer feature switch, and a
+    // cached field is opaque to the trimmer — the guarded branches would survive
+    // and drag the IL compiler (and Sigil) into a build that can never run them.
+    private static bool DynamicCodeSupported => Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen;
 
     private IlPredicateCompiler? _compilerInstance;
 

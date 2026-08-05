@@ -19,4 +19,14 @@
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
   </ItemGroup>
 
+  <!-- The browser cannot emit IL (see RuntimeCaps), so declare it as a link-time
+       constant: the trimmer folds RuntimeCaps.SupportsRuntimeCodegen to false,
+       deletes every Tier-1 branch behind it, and the IL compiler and its Sigil
+       dependency fall out of the payload as unreferenced. Nothing is suppressed
+       and no source is conditionally compiled — the desktop build is untouched. -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="Shumway.RuntimeCodegen"
+                                    Value="false" Trim="true" />
+  </ItemGroup>
+
 </Project>
