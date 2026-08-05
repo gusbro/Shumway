@@ -43,7 +43,8 @@ coordination, debug info, foreign predicates, the embedding API reference.
 
 ## Benchmarks (`benchmarks/`)
 
-- [analysis.md](benchmarks/analysis.md) — the curated cross-engine analysis.
+- [cross-engine-comparison.md](benchmarks/cross-engine-comparison.md) — Shumway vs GNU Prolog, Scryer, and SWI across Van Roy, clp(Z), and Logtalk.
+- [analysis.md](benchmarks/analysis.md) — the curated Van Roy analysis & hotspots.
 - [baseline.md](benchmarks/baseline.md) — the current auto-generated baseline.
 
 ## History (`history/`)
