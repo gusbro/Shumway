@@ -1,12 +1,12 @@
 using Shumway.Core;
 
-namespace Shumway.Repl;
+namespace Shumway.TopLevel;
 
 /// <summary>
-/// Pure helpers the REPL's
-/// <c>ReplTopLevel.PrintError</c> calls into. Factored out so the
-/// formatting logic is unit-testable without spinning up a real
-/// REPL session.
+/// Pure helpers for turning an engine exception into the text a top level
+/// shows. Free of console I/O, so both the REPL and the web front-end render
+/// the same diagnostic — and so the formatting is unit-testable without
+/// spinning up a session.
 /// </summary>
 public static class ErrorRendering
 {

@@ -3,6 +3,7 @@ using System.Threading;
 using Shumway.Compiler.Ast;
 using Shumway.Core;
 using Shumway.Embedding;
+using Shumway.TopLevel;
 
 namespace Shumway.Repl;
 
@@ -138,10 +139,10 @@ internal static class ReplTopLevel
         // before the stream registry is built so user_output writes and time/1's
         // report share the tracker and can query the column. Must precede any query.
         engine.Out = _outputTracker!;
-        // Stash the engine reference so the line editor's
-        // Tab completer (constructed lazily on first ReadLine) can
-        // query for predicate names.
-        _replEngine = engine;
+        // Stash the session so the line editor's Tab completer (constructed
+        // lazily on first ReadLine) can query for predicate names, and so
+        // RunQuery has the shared top-level logic to drive.
+        _session = new TopLevelSession(engine);
         engine.Flags.Argv = programArgs;
         // Default: promote a predicate to Tier-1 IL once it has been invoked 32
         // times, so interactive / --goal runs get compiled code for hot predicates
@@ -526,7 +527,7 @@ internal static class ReplTopLevel
     /// history. The engine reference is captured so the
     /// editor's Tab handler can query for completion candidates.</summary>
     private static LineEditor? _lineEditor;
-    private static PrologEngine? _replEngine;
+    private static TopLevelSession? _session;
     private static ColumnTrackingWriter? _outputTracker;
     private static LineEditor LineEd => _lineEditor ??=
         new LineEditor(
@@ -534,78 +535,7 @@ internal static class ReplTopLevel
             completer: BuildCompleter());
 
     private static Func<string, IReadOnlyList<string>> BuildCompleter() =>
-        prefix => CompletePredicateName(_replEngine, prefix);
-
-    /// <summary>Returns the sorted, deduplicated set of
-    /// predicate names that start with <paramref name="prefix"/>.
-    /// Sources: every registered builtin (process-wide
-    /// <see cref="Shumway.Builtins.BuiltinsRegistry"/>), every user
-    /// predicate the engine knows about (each module's clauses +
-    /// dynamic functors + precompiled-bundle predicates). Capped to
-    /// keep the UI usable when the user hits Tab on an empty / very
-    /// short prefix.</summary>
-    private static IReadOnlyList<string> CompletePredicateName(
-        PrologEngine? engine, string prefix)
-    {
-        const int Cap = 200;
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var results = new List<string>();
-        void Offer(string name)
-        {
-            if (results.Count >= Cap) return;
-            if (string.IsNullOrEmpty(name)) return;
-            if (!name.StartsWith(prefix, StringComparison.Ordinal)) return;
-            if (seen.Add(name)) results.Add(name);
-        }
-
-        // Builtins.
-        foreach (var b in Shumway.Builtins.BuiltinsRegistry.AllEntries())
-            Offer(b.Name);
-
-        // User predicates per module — module-local + module-public +
-        // dynamic.
-        if (engine is not null)
-        {
-            foreach (var (_, manifest) in engine.Modules)
-            {
-                foreach (var clause in manifest.Clauses)
-                {
-                    string? n = ClauseHeadName(clause);
-                    if (n is not null) Offer(n);
-                }
-                foreach (int fid in manifest.PublicFunctors)
-                    Offer(NameOfFunctor(fid));
-                foreach (int fid in manifest.DynamicFunctors)
-                    Offer(NameOfFunctor(fid));
-            }
-            foreach (var (fid, _) in engine.PrecompiledStaticPredicates)
-                Offer(NameOfFunctor(fid));
-        }
-
-        results.Sort(StringComparer.Ordinal);
-        return results;
-    }
-
-    private static string? ClauseHeadName(Shumway.Compiler.Ast.Clause clause)
-    {
-        Shumway.Compiler.Ast.Term head = clause.Term;
-        if ((clause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
-             || clause.Kind == Shumway.Compiler.Ast.ClauseKind.DcgRule)
-            && head is Shumway.Compiler.Ast.CompoundTerm wrap && wrap.Args.Length == 2)
-            head = wrap.Args[0];
-        return head switch
-        {
-            Shumway.Compiler.Ast.AtomTerm a => a.Name,
-            Shumway.Compiler.Ast.CompoundTerm c => c.Functor,
-            _ => null,
-        };
-    }
-
-    private static string NameOfFunctor(int fid)
-    {
-        var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
-        return Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
-    }
+        prefix => PredicateCompletion.Matching(_session?.Engine, prefix);
 
     /// <summary>Reads one query from standard input, joining lines until a
     /// line ends with the <c>.</c> clause terminator. Returns the empty
@@ -626,71 +556,26 @@ internal static class ReplTopLevel
         }
     }
 
-    // Hidden var names used to smuggle residual constraints out of
-    // the wrapped query — long unique strings unlikely to collide
-    // with anything a user types. Parsed-input vars must start with
-    // an uppercase letter or `_`; these meet that rule.
-    private const string ResidualVarName = "_ReplResiduals_8a7b3c";
-    private const string CopiesVarName = "_ReplCopies_8a7b3c";
-
-    /// <summary>Runs a query and prints its solutions one at a time.
-    /// The query is wrapped with <c>copy_term/3</c> over its named
-    /// variables, which collects residual attribute goals (e.g. CLP(FD)
-    /// domain constraints) so an unground answer like
-    /// <c>?- A #&gt; 5, A #&lt; 10.</c> can print as <c>A in 6..9.</c>
-    /// rather than leaving the user with a bare unbound variable.</summary>
+    /// <summary>Runs a query and prints its solutions one at a time. The search
+    /// itself, the <c>copy_term/3</c> wrapping that surfaces residual constraints,
+    /// and the answer formatting all live in <see cref="TopLevelSession"/>; what
+    /// stays here is the console's half — when to ask for another solution, and
+    /// how to print.</summary>
     private static void RunQuery(PrologEngine engine, string query)
     {
-        // Parse and wrap. If the parse fails, fall through to the
-        // string-form QueryAll so the engine produces the same error
-        // it always did.
-        Term wrapped;
-        IReadOnlyList<string> userVars;
-        try
-        {
-            var (goal, vars) = engine.ParseGoal(query);
-            userVars = vars;
-            if (vars.Count == 0)
-            {
-                wrapped = goal;
-            }
-            else
-            {
-                var varsList = MakeList(vars.Select(n => (Term)new VarTerm(n)).ToArray());
-                Term copyTerm = new CompoundTerm("copy_term", new Term[]
-                {
-                    varsList,
-                    new VarTerm(CopiesVarName),
-                    new VarTerm(ResidualVarName),
-                });
-                wrapped = new CompoundTerm(",", new[] { goal, copyTerm });
-            }
-        }
-        catch
+        using QueryRun run = _session!.StartQuery(query);
+        if (!run.Parsed)
         {
             // Parser error — let the engine produce its usual diagnostic.
-            using var fallback = engine.QueryAll(query).GetEnumerator();
-            if (!fallback.MoveNext())
-            {
-                if (engine.LastHaltExitCode is null)
-                    Console.WriteLine("false.");
-            }
+            if (!run.MoveNext() && engine.LastHaltExitCode is null)
+                Console.WriteLine("false.");
             return;
         }
-
-        // ADR-035 — the goal the engine is about to run is not the goal the user typed: it
-        // is theirs wrapped in a copy_term/3 so residual constraints can be shown. A
-        // debugger names the query frame after what it was handed, so tell it what was
-        // actually typed, or the user reads their query back with the top level's plumbing
-        // stapled to it.
-        engine.QueryLabel = query.TrimEnd().TrimEnd('.');
 
         // The search runs on this thread; an ESC keypress (watched on a
         // background thread) aborts a long-running query at the next engine
         // safe point. Not instantaneous, but responsive.
-        using var cts = new CancellationTokenSource();
-        using var solutions = engine.QueryAll(wrapped, cts.Token).GetEnumerator();
-        if (!MoveNextWatched(solutions, cts, out bool aborted))
+        if (!MoveNextWatched(run, out bool aborted))
         {
             if (aborted) Console.WriteLine("% Execution aborted.");
             else if (engine.LastHaltExitCode is null) { EnsureLineStart(); Console.WriteLine("false."); }
@@ -698,7 +583,6 @@ internal static class ReplTopLevel
         }
         while (true)
         {
-            Solution solution = solutions.Current;
             int width;
             try { width = Console.WindowWidth; }
             catch { width = 80; }
@@ -707,8 +591,8 @@ internal static class ReplTopLevel
             // writeq/1 with no trailing nl), start the answer on its own line
             // so the `true`/bindings don't run into the goal's output.
             EnsureLineStart();
-            Console.Write(FormatSolutionWithResiduals(engine, solution, userVars, width));
-            if (solution.IsLast)
+            Console.Write(run.Format(width));
+            if (run.IsLast)
             {
                 Console.WriteLine(".");
                 return;
@@ -719,7 +603,7 @@ internal static class ReplTopLevel
                 return;
             }
             Console.WriteLine(" ;");
-            if (!MoveNextWatched(solutions, cts, out aborted))
+            if (!MoveNextWatched(run, out aborted))
             {
                 if (aborted) Console.WriteLine("% Execution aborted.");
                 else if (engine.LastHaltExitCode is null) { EnsureLineStart(); Console.WriteLine("false."); }
@@ -749,12 +633,11 @@ internal static class ReplTopLevel
     /// <c>MoveNext</c> result; sets <paramref name="aborted"/> when ESC stopped
     /// the search. With redirected input there is no key to watch, so it just
     /// advances.</summary>
-    private static bool MoveNextWatched(
-        IEnumerator<Solution> solutions, CancellationTokenSource cts, out bool aborted)
+    private static bool MoveNextWatched(QueryRun run, out bool aborted)
     {
         aborted = false;
         if (Console.IsInputRedirected)
-            return solutions.MoveNext();
+            return run.MoveNext();
 
         // Keep Ctrl+C on the SIGNAL route while a query runs (a debugger attach/detach
         // can leave the console delivering it as a keystroke — see LineEditor.ReadLine).
@@ -762,7 +645,7 @@ internal static class ReplTopLevel
         catch { /* no interactive console */ }
 
         using var stop = new ManualResetEventSlim(false);
-        var watcher = new Thread(() => WatchForEsc(cts, stop))
+        var watcher = new Thread(() => WatchForEsc(run, stop))
         {
             IsBackground = true,
             Name = "repl-esc-watch",
@@ -770,7 +653,7 @@ internal static class ReplTopLevel
         watcher.Start();
         try
         {
-            return solutions.MoveNext();
+            return run.MoveNext();
         }
         catch (OperationCanceledException)
         {
@@ -790,7 +673,7 @@ internal static class ReplTopLevel
     /// the cancellation source; any other key typed mid-search is dropped (the
     /// REPL doesn't queue type-ahead). Exits when <paramref name="stop"/> is
     /// signalled or the console becomes unavailable.</summary>
-    private static void WatchForEsc(CancellationTokenSource cts, ManualResetEventSlim stop)
+    private static void WatchForEsc(QueryRun run, ManualResetEventSlim stop)
     {
         while (!stop.IsSet)
         {
@@ -801,7 +684,7 @@ internal static class ReplTopLevel
                     ConsoleKeyInfo k = Console.ReadKey(intercept: true);
                     if (k.Key == ConsoleKey.Escape)
                     {
-                        cts.Cancel();
+                        run.Cancel();
                         return;
                     }
                     // Ctrl+C arriving as a KEYSTROKE (post-debugger console-mode skew —
@@ -895,124 +778,6 @@ internal static class ReplTopLevel
             + "  SHUMWAY_DAP_PORT=<N>     Open the --dap endpoint whenever a debug session\n"
             + "                           opens (any deployment shape, incl. linked exes).\n"
             + "  SHUMWAY_DEBUG_DIAG=1     Verbose debug-session diagnostics on stderr.");
-    }
-
-    /// <summary>Builds a Prolog list AST from a sequence of terms.</summary>
-    private static Term MakeList(IList<Term> elements)
-    {
-        Term tail = new AtomTerm("[]");
-        for (int i = elements.Count - 1; i >= 0; i--)
-            tail = new CompoundTerm(".", new[] { elements[i], tail });
-        return tail;
-    }
-
-    /// <summary>Formats a solution: bindings for vars that got values,
-    /// residual goals (substituted to mention the original variable
-    /// names) for vars that are still attvar-constrained.</summary>
-    private static string FormatSolutionWithResiduals(
-        PrologEngine engine, Solution solution, IReadOnlyList<string> userVars, int width)
-    {
-        var ops = engine.Operators;
-        if (userVars.Count == 0)
-            return solution.Bindings.Count == 0 ? "true" : solution.ToString(width);
-
-        // Build copy-name -> original-name map from the _ReplCopies_ binding
-        // (a list `[Copy1, Copy2, ...]` aligned with userVars).
-        var copyToOriginal = new Dictionary<string, string>();
-        Term? copiesTerm = solution[CopiesVarName];
-        int idx = 0;
-        Term cursor = copiesTerm ?? new AtomTerm("[]");
-        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c
-               && idx < userVars.Count)
-        {
-            if (c.Args[0] is VarTerm v)
-                copyToOriginal[v.Name] = userVars[idx];
-            cursor = c.Args[1];
-            idx++;
-        }
-
-        // Collect residual goals and substitute copy-vars back to originals.
-        var residuals = new List<Term>();
-        Term? resTerm = solution[ResidualVarName];
-        Term resCursor = resTerm ?? new AtomTerm("[]");
-        while (resCursor is CompoundTerm { Functor: ".", Args.Length: 2 } rc)
-        {
-            residuals.Add(ResidualProjection.SubstituteVarNames(rc.Args[0], copyToOriginal));
-            resCursor = rc.Args[1];
-        }
-
-        // For each user var: if it has residuals mentioning it, those
-        // replace the binding line; otherwise show the binding (unless
-        // the binding is an unbound var with no residuals, in which case
-        // skip it — that's what SWI does).
-        var residualsByVar = new Dictionary<string, List<Term>>();
-        var unattachedResiduals = new List<Term>();
-        foreach (Term g in residuals)
-        {
-            string? owner = ResidualProjection.FindMentionedOwner(g, userVars);
-            if (owner is null) unattachedResiduals.Add(g);
-            else
-            {
-                if (!residualsByVar.TryGetValue(owner, out var list))
-                    residualsByVar[owner] = list = new List<Term>();
-                list.Add(g);
-            }
-        }
-
-        // Cyclic-term display: a cycle that re-enters at the root of a user
-        // variable's value renders as that variable — `A = [a, b | A]` — by
-        // mapping the materializer's `_C{addr}` marker back to the variable
-        // whose value is rooted at that address.
-        Dictionary<string, string>? cycleNames = null;
-        if (solution.ValueRootAddresses is { } rootAddrs)
-            foreach (string name in userVars)
-                if (rootAddrs.TryGetValue(name, out int addr))
-                    (cycleNames ??= new Dictionary<string, string>())
-                        .TryAdd($"_C{addr}", name);
-
-        // SWI-style binding display: user vars whose values are identical are
-        // CHAINED — `A = B, B = algo` instead of `A = algo, B = algo` — and
-        // two vars sharing one still-unbound variable show their aliasing
-        // (`A = B.`) instead of nothing. A lone unbound var stays omitted.
-        var renderedValue = new Dictionary<string, string>();
-        var groups = new Dictionary<string, List<string>>();
-        foreach (string name in userVars)
-        {
-            Term? val = solution[name];
-            if (val is null || residualsByVar.ContainsKey(name)) continue;
-            if (cycleNames is not null) val = ResidualProjection.SubstituteVarNames(val, cycleNames);
-            string key = AstTermRenderer.Render(val, 1200, ops);
-            renderedValue[name] = key;
-            if (!groups.TryGetValue(key, out var members))
-                groups[key] = members = new List<string>();
-            members.Add(name);
-        }
-
-        var lines = new List<string>();
-        var groupEmitted = new HashSet<string>();
-        foreach (string name in userVars)
-        {
-            if (residualsByVar.TryGetValue(name, out var rs))
-            {
-                foreach (Term g in rs) lines.Add(AstTermRenderer.Render(g, 1200, ops));
-                continue;
-            }
-            if (!renderedValue.TryGetValue(name, out string? key)
-                || !groupEmitted.Add(key))
-                continue;   // no value, or its group was already emitted
-            var members = groups[key];
-            for (int i = 0; i + 1 < members.Count; i++)
-                lines.Add($"{members[i]} = {members[i + 1]}");
-            // The last member carries the value — unless the shared value is
-            // itself an unbound variable (the chain alone says it all).
-            if (solution[members[^1]] is not VarTerm)
-                lines.Add($"{members[^1]} = {key}");
-        }
-        foreach (Term g in unattachedResiduals)
-            lines.Add(AstTermRenderer.Render(g, 1200, ops));
-
-        if (lines.Count == 0) return "true";
-        return string.Join(",\n", lines);
     }
 
     /// <summary>After a solution, asks whether to search for the next:

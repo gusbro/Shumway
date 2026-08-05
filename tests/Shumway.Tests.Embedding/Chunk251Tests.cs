@@ -1,5 +1,5 @@
 using Shumway.Core;
-using Shumway.Repl;
+using Shumway.TopLevel;
 using Xunit;
 
 namespace Shumway.Tests.Embedding;

@@ -24,6 +24,7 @@
          to avoid spinning up a dedicated Shumway.Tests.Repl project
          for a single small surface. -->
     <ProjectReference Include="..\..\src\Shumway.Repl\Shumway.Repl.csproj" />
+    <ProjectReference Include="..\..\src\Shumway.TopLevel\Shumway.TopLevel.csproj" />
     <!-- Chunk 241: source generator. Loaded as an analyzer so it
          runs at this project's compile time; the generator assembly
          itself isn't shipped at runtime. -->

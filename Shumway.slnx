@@ -12,6 +12,7 @@
     <Project Path="src/Shumway.Lib/Shumway.Lib.csproj" />
     <Project Path="src/Shumway.Link/Shumway.Link.csproj" />
     <Project Path="src/Shumway.Repl/Shumway.Repl.csproj" />
+    <Project Path="src/Shumway.TopLevel/Shumway.TopLevel.csproj" />
     <Project Path="src/Shumway.SourceGen/Shumway.SourceGen.csproj" />
   </Folder>
   <Folder Name="/tests/">

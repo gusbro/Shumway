@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Shumway.TopLevel</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
+  </ItemGroup>
+
+</Project>

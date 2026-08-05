@@ -10,8 +10,13 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Shumway.Tests.Embedding" />
-    <!-- The REPL reads Solution.ValueRootAddresses to display cyclic terms
-         as their query variable (A = [a, b | A]). -->
+    <!-- The top level reads Solution.ValueRootAddresses to display cyclic terms
+         as their query variable (A = [a, b | A]). Granted to the shared library
+         rather than to a front-end: the REPL and the web UI both format answers
+         through it. -->
+    <InternalsVisibleTo Include="Shumway.TopLevel" />
+    <!-- The REPL itself still reaches for engine internals of its own
+         (PrintLoadProfile, PromoteBareBundleModulesToUser). -->
     <InternalsVisibleTo Include="shumway" />
   </ItemGroup>
 

@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\Shumway.TopLevel\Shumway.TopLevel.csproj" />
   </ItemGroup>
 
   <!-- ADR-038 — ship the repo lib/ next to the executable so the engine's
