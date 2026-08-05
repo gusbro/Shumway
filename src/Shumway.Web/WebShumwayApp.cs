@@ -1,136 +1,153 @@
-using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices.JavaScript;
 using Shumway.Embedding;
+using Shumway.TopLevel;
 
 namespace Shumway.Web;
 
 /// <summary>
-/// Phase 38 chunk 1 — the feasibility spike. Boots the engine under
-/// <c>browser-wasm</c> and reports what the plan needs decided before the rest of
-/// WebShumway is designed:
-/// <list type="number">
-///   <item>does the engine run at all in the browser (Tier-0, with Tier-1 cleanly
-///     off — the same gate Native AOT uses)?</item>
-///   <item>does <c>System.IO</c> work over Emscripten's MEMFS? The whole filesystem
-///     story (workspace, OPFS sync, <c>consult/1</c>, <c>open/4</c>) rides on it.</item>
-///   <item>what does it cost — boot time and payload?</item>
-/// </list>
-/// Every probe is independently guarded: one failure must not hide the others.
+/// WebShumway's engine side: the surface JavaScript calls, over the shared
+/// <see cref="TopLevelSession"/> the console REPL also drives.
+///
+/// <para><b>Why these are synchronous.</b> The plan is for the engine to move to
+/// a Web Worker so a long search cannot freeze the tab. That is a change of
+/// TRANSPORT, not of contract: the async seam lives in <c>main.js</c>, which
+/// presents an async facade to the UI. Today it resolves these calls directly;
+/// under a Worker it will postMessage instead, and no UI code changes. Making
+/// these return Task today would only wrap a synchronous result in a promise —
+/// the appearance of async without the property that matters.</para>
+///
+/// <para>Solutions are PULLED one at a time (<see cref="QueryNext"/>), which is
+/// what lets the UI offer "next solution" the way the REPL offers <c>;</c>.</para>
 /// </summary>
 internal static partial class WebShumwayApp
 {
-    [JSImport("ui.line", "main.js")]
-    internal static partial void Line(string text);
+    private static TopLevelSession? _session;
+    private static QueryRun? _run;
+
+    /// <summary>Reply prefixes from <see cref="QueryNext"/>. One character, so a
+    /// search that steps solution by solution crosses to JavaScript cheaply.</summary>
+    private const char TagSolution = 's';   // a solution; more may follow
+    private const char TagLast = 'l';       // the last solution
+    private const char TagFailed = 'f';     // no (more) solutions
+    private const char TagError = 'e';      // the query raised
+
+    /// <summary>Appends engine output to the page. Prolog writes reach this through
+    /// <see cref="PageWriter"/>, which the engine holds as its output stream.</summary>
+    [JSImport("ui.write", "main.js")]
+    internal static partial void WriteToPage(string text);
 
     private static void Main()
     {
-        // Both flags, because they disagree here and that disagreement is the
-        // finding: Mono-wasm reports dynamic code as supported, yet Reflection.Emit
-        // and MethodBody.GetILAsByteArray both throw. RuntimeCaps is the real gate.
-        Line($"IsDynamicCodeSupported   : {RuntimeFeature.IsDynamicCodeSupported}");
-        Line($"RuntimeCaps codegen      : {Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen}  (false ⇒ Tier-0, as intended)");
-        Line("");
-
-        PrologEngine? engine = Probe("engine boot", () =>
-        {
-            var sw = Stopwatch.StartNew();
-            var e = new PrologEngine();
-            sw.Stop();
-            Line($"  prelude consulted in {sw.ElapsedMilliseconds} ms");
-            return e;
-        });
-        if (engine is null) return;
-
-        Probe("arithmetic", () =>
-        {
-            foreach (var s in engine.QueryAll("X is 6*7."))
-                return $"X = {s.Get<long>("X")}";
-            return "NO SOLUTION";
-        });
-
-        Probe("backtracking", () =>
-        {
-            var acc = new List<string>();
-            foreach (var s in engine.QueryAll("member(X, [a,b,c])."))
-                acc.Add(s.Get<string>("X"));
-            return string.Join(", ", acc);
-        });
-
-        Probe("consult + solve", () =>
-        {
-            engine.ConsultString(
-                "anc(X,Y) :- par(X,Y).  anc(X,Z) :- par(X,Y), anc(Y,Z).  par(a,b).  par(b,c).");
-            var acc = new List<string>();
-            foreach (var s in engine.QueryAll("anc(a, X)."))
-                acc.Add(s.Get<string>("X"));
-            return string.Join(", ", acc);
-        });
-
-        Probe("output redirect", () =>
-        {
-            // How the web UI will capture Prolog output. Out must be set BEFORE the
-            // engine's first query: query setup builds the StreamRegistry, and
-            // user_output keeps whatever writer it was handed then.
-            var sink = new StringWriter();
-            var fresh = new PrologEngine { Out = sink };
-            foreach (var _ in fresh.QueryAll("write(hello_from_wasm), nl.")) break;
-            return $"captured '{sink.ToString().Trim()}'";
-        });
-
-        // ---- the filesystem question ----
-        Line("");
-        Line("filesystem (Emscripten MEMFS):");
-        Probe("  temp path", () => Path.GetTempPath());
-        Probe("  cwd", () => Directory.GetCurrentDirectory());
-
-        const string File1 = "/shumway-spike.pl";
-        Probe("  File.WriteAllText", () =>
-        {
-            File.WriteAllText(File1, "spike_fact(from_memfs).\n");
-            return $"wrote {new FileInfo(File1).Length} bytes to {File1}";
-        });
-        Probe("  File.ReadAllText", () => File.ReadAllText(File1).Trim());
-        Probe("  ConsultFile + query", () =>
-        {
-            engine.ConsultFile(File1);
-            foreach (var s in engine.QueryAll("spike_fact(X)."))
-                return $"spike_fact({s.Get<string>("X")})";
-            return "NO SOLUTION";
-        });
-        Probe("  Directory ops", () =>
-        {
-            Directory.CreateDirectory("/ws");
-            File.WriteAllText("/ws/a.pl", "a.\n");
-            File.WriteAllText("/ws/b.pl", "b.\n");
-            return string.Join(", ", Directory.GetFiles("/ws").OrderBy(p => p));
-        });
-        Probe("  Prolog open/4", () =>
-        {
-            foreach (var _ in engine.QueryAll(
-                "open('/via_prolog.txt', write, S), write(S, hi), nl(S), close(S)."))
-                break;
-            return $"read back '{File.ReadAllText("/via_prolog.txt").Trim()}'";
-        });
-
-        Line("");
-        Line("spike complete.");
+        // A Main is required to start the runtime; the app itself is driven from
+        // JavaScript through the exports below.
     }
 
-    /// <summary>Runs one probe, reporting its value or the exception it died of.
-    /// Returns default on failure so the remaining probes still run.</summary>
-    private static T? Probe<T>(string name, Func<T> body)
+    /// <summary>Creates the engine. Returns a short description of what booted,
+    /// or a message starting with "error:" if it could not.</summary>
+    [JSExport]
+    internal static string Boot()
     {
         try
         {
-            T value = body();
-            Line($"{name,-24} : {value}");
-            return value;
+            // Out must be set BEFORE the first query: query setup builds the stream
+            // registry, and user_output keeps whatever writer it was handed then.
+            PrologEngine engine = BootEngine();
+            engine.Out = new PageWriter();
+            _session = new TopLevelSession(engine);
+            return Tier0Only
+                ? "Shumway ready (Tier-0 interpreter)."
+                : "Shumway ready.";
         }
         catch (Exception ex)
         {
-            Line($"{name,-24} : FAILED {ex.GetType().Name}: {ex.Message}");
-            return default;
+            return "error: " + ex.Message;
         }
+    }
+
+    /// <summary>Loads Prolog source. Returns null on success, or the error text.</summary>
+    [JSExport]
+    internal static string? Consult(string source)
+    {
+        try
+        {
+            _session!.Consult(source);
+            return null;
+        }
+        catch (Exception ex) { return Describe(ex); }
+    }
+
+    /// <summary>Begins a query. Returns null when it started, or the error text —
+    /// a syntax error surfaces here, because the engine parses before it runs.</summary>
+    [JSExport]
+    internal static string? QueryStart(string queryText)
+    {
+        QueryCancel();
+        try
+        {
+            _run = _session!.StartQuery(queryText);
+            return null;
+        }
+        catch (Exception ex) { return Describe(ex); }
+    }
+
+    /// <summary>Takes the next solution. The reply is one tag character followed by
+    /// the text: see TagSolution / TagLast / TagFailed / TagError.</summary>
+    [JSExport]
+    internal static string QueryNext(int width)
+    {
+        if (_run is null) return TagFailed.ToString();
+        try
+        {
+            if (!_run.MoveNext()) { EndRun(); return TagFailed.ToString(); }
+            string text = _run.Format(width <= 20 ? 80 : width);
+            if (_run.IsLast) { EndRun(); return TagLast + text; }
+            return TagSolution + text;
+        }
+        catch (Exception ex)
+        {
+            EndRun();
+            return TagError + Describe(ex);
+        }
+    }
+
+    /// <summary>Abandons the running query, if any. The engine stops at its next
+    /// safe point, so this is prompt rather than instantaneous.</summary>
+    [JSExport]
+    internal static void QueryCancel()
+    {
+        _run?.Cancel();
+        EndRun();
+    }
+
+    /// <summary>Predicate names starting with <paramref name="prefix"/>, for the
+    /// editor's completion. Newline-separated: a plain string crosses to
+    /// JavaScript far more cheaply than an array of them.</summary>
+    [JSExport]
+    internal static string Complete(string prefix)
+        => _session is null ? "" : string.Join('\n', _session.Complete(prefix));
+
+    private static void EndRun()
+    {
+        _run?.Dispose();
+        _run = null;
+    }
+
+    private static string Describe(Exception ex) => ex switch
+    {
+        Shumway.Core.PrologRuntimeException re => ErrorRendering.FormatRuntimeError(re),
+        _ => ex.Message,
+    };
+
+    /// <summary>The engine's output stream, forwarding to the page. Buffers nothing:
+    /// a program that writes as it searches should be watchable while it runs.</summary>
+    private sealed class PageWriter : TextWriter
+    {
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+        public override void Write(char value) => WriteToPage(value.ToString());
+        public override void Write(string? value)
+        {
+            if (!string.IsNullOrEmpty(value)) WriteToPage(value);
+        }
+        public override void WriteLine(string? value) => Write((value ?? "") + "\n");
     }
 }

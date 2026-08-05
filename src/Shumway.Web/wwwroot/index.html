@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WebShumway — feasibility spike</title>
+  <title>WebShumway</title>
   <link rel="stylesheet" href="styles.css" />
 
   <!-- Filled in by the WebAssembly SDK at publish: the runtime preload hint and
@@ -14,8 +14,27 @@
   <script type="module" src="main#[.{fingerprint}].js"></script>
 </head>
 <body>
-  <h1>WebShumway <span class="tag">feasibility spike</span></h1>
-  <p class="sub">Phase 38 chunk 1 — booting the Shumway engine under <code>browser-wasm</code>.</p>
-  <pre id="out">loading the .NET runtime…</pre>
+  <h1>WebShumway <span class="tag">Prolog in the browser</span></h1>
+
+  <div class="panes">
+    <section>
+      <h2>Program</h2>
+      <textarea id="program" spellcheck="false"
+                placeholder="anc(X,Y) :- par(X,Y).&#10;anc(X,Z) :- par(X,Y), anc(Y,Z).&#10;par(a,b).&#10;par(b,c)."></textarea>
+      <button id="consult" type="button">Consult</button>
+    </section>
+
+    <section>
+      <h2>Answers</h2>
+      <pre id="out">loading the engine…</pre>
+      <form id="query-form" autocomplete="off">
+        <label for="query">?-</label>
+        <input id="query" type="text" spellcheck="false" placeholder="anc(a, X)." />
+        <button type="submit">Run</button>
+        <button id="more" type="button" title="next solution">;</button>
+        <button id="stop" type="button">Stop</button>
+      </form>
+    </section>
+  </div>
 </body>
 </html>

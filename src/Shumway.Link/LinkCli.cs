@@ -470,6 +470,12 @@ internal static class LinkCli
                     opts.BakePrelude = true;
                     break;
 
+                case "--no-compress":
+                    // For a host whose runtime has no Brotli codec (browser-wasm).
+                    // The image stays a normal bundle — flag 0 is part of the format.
+                    Shumway.Embedding.BundleFormat.DisableCompression = true;
+                    break;
+
                 // Bake only the REACHED prelude predicates
                 // (closure over the prelude call graph). Opt-in: runtime-
                 // constructed goals naming unreached prelude predicates raise
@@ -857,6 +863,10 @@ internal static class LinkCli
             + "                           Automatic with --exe. Larger bundle, faster start;\n"
             + "                           load via PrologEngine.FromBundle (a plain\n"
             + "                           new PrologEngine()+LoadBundle ignores it).\n"
+            + "      --no-compress        Store the bundle uncompressed. Needed for a host\n"
+            + "                           whose runtime has no Brotli codec — browser-wasm\n"
+            + "                           throws on a compressed bundle. The image is still\n"
+            + "                           an ordinary bundle every reader accepts.\n"
             + "      --prune-prelude      With --stdlib/--exe: bake only the prelude\n"
             + "                           predicates the program can reach (closure over\n"
             + "                           the prelude call graph) instead of the whole\n"

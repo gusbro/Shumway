@@ -98,11 +98,20 @@ public static class BundleFormat
     /// <c>[magic][version][flag][raw-or-brotli body]</c>. Shared by
     /// <see cref="BundleWriter"/> and the linker's in-line serialiser so both
     /// emit identical framing.</summary>
+    /// <summary>Set to leave every image UNCOMPRESSED regardless of size. For
+    /// hosts whose runtime has no Brotli codec — browser-wasm throws
+    /// <c>PlatformNotSupportedException</c> from <c>BrotliStream</c>, so a
+    /// compressed bundle cannot be read there at all. Flag 0 is part of the
+    /// format already, so such an image is an ordinary bundle every reader
+    /// accepts; only the size differs, and a web server re-compresses in
+    /// transport anyway.</summary>
+    public static bool DisableCompression { get; set; }
+
     internal static byte[] FinalizeImage(byte[] raw)
     {
         const int headerBytes = 8;   // magic + version
         int bodyLen = raw.Length - headerBytes;
-        if (bodyLen < CompressionThresholdBytes)
+        if (bodyLen < CompressionThresholdBytes || DisableCompression)
         {
             var plain = new byte[raw.Length + 1];
             Array.Copy(raw, 0, plain, 0, headerBytes);
@@ -131,9 +140,24 @@ public static class BundleFormat
             case CompressionBrotli:
             {
                 var body = new MemoryStream();
-                using (var brotli = new System.IO.Compression.BrotliStream(
-                           stream, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true))
+                try
+                {
+                    using var brotli = new System.IO.Compression.BrotliStream(
+                        stream, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true);
                     brotli.CopyTo(body);
+                }
+                catch (PlatformNotSupportedException ex)
+                {
+                    // browser-wasm ships no Brotli codec. Say so, instead of
+                    // letting an opaque platform exception surface from what
+                    // looks to the caller like a plain file read.
+                    throw new NotSupportedException(
+                        "This bundle is Brotli-compressed and the current runtime has no "
+                        + "Brotli codec (browser-wasm does not). Produce it with compression "
+                        + "disabled (BundleFormat.DisableCompression / shumway-link "
+                        + "--no-compress) — an uncompressed bundle is a normal bundle every "
+                        + "reader accepts.", ex);
+                }
                 body.Position = 0;
                 return new BinaryReader(body, System.Text.Encoding.UTF8, leaveOpen: false);
             }

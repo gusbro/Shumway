@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\Shumway.TopLevel\Shumway.TopLevel.csproj" />
   </ItemGroup>
 
   <!-- The browser cannot emit IL (see RuntimeCaps), so declare it as a link-time
@@ -35,6 +36,42 @@
   <ItemGroup>
     <RuntimeHostConfigurationOption Include="Shumway.RuntimeCodegen"
                                     Value="false" Trim="true" />
+  </ItemGroup>
+
+  <!-- Bake the standard library into a bundle the app embeds, so the engine boots
+       without compiling the prelude: ~500 ms to ~345 ms cold under browser-wasm.
+       Compression is switched off because browser-wasm has no Brotli codec (see
+       BundleFormat). Inputs/Outputs make the target incremental: it re-bakes when
+       the prelude changes, which is what keeps the embedded stdlib from going
+       stale.
+
+       Paths are spelled out rather than using IntermediateOutputPath: that
+       property is set by the SDK targets, which are imported AFTER this file's
+       body, so it is empty while the project is being evaluated — and an
+       EmbeddedResource item is evaluated then. -->
+  <PropertyGroup>
+    <StdlibDir>obj\$(Configuration)\$(TargetFramework)\</StdlibDir>
+    <StdlibBundle>$(StdlibDir)stdlib.shum</StdlibBundle>
+    <ShumwayCompileDll>..\Shumway.Compile\bin\$(Configuration)\net10.0\shumway-compile.dll</ShumwayCompileDll>
+    <ShumwayLinkDll>..\Shumway.Link\bin\$(Configuration)\net10.0\shumway-link.dll</ShumwayLinkDll>
+  </PropertyGroup>
+
+  <Target Name="BakeStdlibBundle"
+          BeforeTargets="PrepareForBuild"
+          Inputs="boot.pl;..\Shumway.Embedding\Prelude.cs"
+          Outputs="$(StdlibBundle)">
+    <!-- Ordering without a ProjectReference: a browser-wasm app is self-contained
+         and may not reference a framework-dependent executable (NETSDK1150), so
+         the two CLIs are built explicitly here instead. -->
+    <MSBuild Projects="..\Shumway.Compile\Shumway.Compile.csproj;..\Shumway.Link\Shumway.Link.csproj"
+             Targets="Build" Properties="Configuration=$(Configuration)" />
+    <MakeDir Directories="$(StdlibDir)" />
+    <Exec Command="dotnet &quot;$(ShumwayCompileDll)&quot; boot.pl -o &quot;$(StdlibDir)boot.shmo&quot;" />
+    <Exec Command="dotnet &quot;$(ShumwayLinkDll)&quot; &quot;$(StdlibDir)boot.shmo&quot; --stdlib --no-compress --entry web_boot/0 -o &quot;$(StdlibBundle)&quot;" />
+  </Target>
+
+  <ItemGroup>
+    <EmbeddedResource Include="$(StdlibBundle)" LogicalName="stdlib.shum" Visible="false" />
   </ItemGroup>
 
 </Project>

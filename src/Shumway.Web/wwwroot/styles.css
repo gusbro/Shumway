@@ -2,12 +2,13 @@
 
 body {
   font: 15px/1.5 system-ui, sans-serif;
-  margin: 2rem auto;
-  max-width: 70rem;
+  margin: 1.5rem auto;
+  max-width: 78rem;
   padding: 0 1rem;
 }
 
-h1 { font-size: 1.4rem; margin-bottom: .25rem; }
+h1 { font-size: 1.35rem; margin: 0 0 1rem; }
+h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; opacity: .7; margin: 0 0 .4rem; }
 
 .tag {
   font-size: .7rem;
@@ -17,15 +18,39 @@ h1 { font-size: 1.4rem; margin-bottom: .25rem; }
   padding: .15rem .45rem;
   border: 1px solid currentColor;
   border-radius: .25rem;
-  opacity: .6;
+  opacity: .55;
 }
 
-.sub { margin-top: 0; opacity: .75; }
+.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+@media (max-width: 60rem) { .panes { grid-template-columns: 1fr; } }
 
-pre#out {
+textarea, pre#out, input {
   font: 13px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace;
-  padding: 1rem;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
   border-radius: .4rem;
-  overflow-x: auto;
-  background: color-mix(in srgb, currentColor 6%, transparent);
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  color: inherit;
+  padding: .6rem;
 }
+
+textarea { height: 22rem; resize: vertical; }
+pre#out { height: 22rem; overflow: auto; margin: 0; white-space: pre-wrap; }
+
+#query-form { display: flex; gap: .4rem; align-items: center; margin-top: .5rem; }
+#query-form label { font: 13px ui-monospace, monospace; opacity: .7; }
+#query { flex: 1; }
+
+button {
+  font: inherit;
+  padding: .35rem .8rem;
+  border-radius: .35rem;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: color-mix(in srgb, currentColor 16%, transparent); }
+button:disabled { opacity: .4; cursor: default; }
+#consult { margin-top: .5rem; }
