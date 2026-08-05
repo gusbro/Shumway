@@ -96,7 +96,7 @@ public static class NativeBlockCompiler
         int regOffset, Func<string, MethodInfo?> resolve, PrologEngine? host = null)
     {
         if (ForceInterpreter) return null;
-        if (!System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
+        if (!Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen)
             return null;
         try
         {

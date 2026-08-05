@@ -1,0 +1,31 @@
+:root { color-scheme: light dark; }
+
+body {
+  font: 15px/1.5 system-ui, sans-serif;
+  margin: 2rem auto;
+  max-width: 70rem;
+  padding: 0 1rem;
+}
+
+h1 { font-size: 1.4rem; margin-bottom: .25rem; }
+
+.tag {
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  vertical-align: middle;
+  padding: .15rem .45rem;
+  border: 1px solid currentColor;
+  border-radius: .25rem;
+  opacity: .6;
+}
+
+.sub { margin-top: 0; opacity: .75; }
+
+pre#out {
+  font: 13px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace;
+  padding: 1rem;
+  border-radius: .4rem;
+  overflow-x: auto;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}

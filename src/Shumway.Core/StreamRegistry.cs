@@ -56,7 +56,7 @@ public sealed class StreamRegistry
         ArgumentNullException.ThrowIfNull(defaultOut);
 
         UserInput = new StreamHandle(
-            id: AllocateId(), reader: System.Console.In,
+            id: AllocateId(), reader: HostInput(),
             mode: "read", filename: null, alias: "user_input");
         Register(UserInput);
 
@@ -72,6 +72,18 @@ public sealed class StreamRegistry
 
         CurrentInput = UserInput;
         CurrentOutput = UserOutput;
+    }
+
+    /// <summary>The host's standard input, or an empty reader when it has none.
+    /// A browser-wasm host has no stdin at all: <c>Console.In</c> does not return
+    /// an exhausted reader there, it throws — which would take down the FIRST
+    /// query of every program, since this registry is built during query setup.
+    /// Reading <c>user_input</c> as immediate end-of-file is the honest answer,
+    /// and it is what a redirected-from-/dev/null desktop run already does.</summary>
+    private static TextReader HostInput()
+    {
+        try { return System.Console.In; }
+        catch (PlatformNotSupportedException) { return TextReader.Null; }
     }
 
     private int AllocateId() => _nextId++;

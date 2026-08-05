@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WebShumway — feasibility spike</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Filled in by the WebAssembly SDK at publish: the runtime preload hint and
+       the import map that resolves ./_framework/dotnet.js to its fingerprinted
+       file name. Without both, a published (fingerprinted) build 404s on boot. -->
+  <link rel="preload" id="webassembly" />
+  <script type="importmap"></script>
+  <script type="module" src="main#[.{fingerprint}].js"></script>
+</head>
+<body>
+  <h1>WebShumway <span class="tag">feasibility spike</span></h1>
+  <p class="sub">Phase 38 chunk 1 — booting the Shumway engine under <code>browser-wasm</code>.</p>
+  <pre id="out">loading the .NET runtime…</pre>
+</body>
+</html>

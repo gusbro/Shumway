@@ -65,10 +65,12 @@ public sealed class IlPromotionStore
         _unpromotableReason[functorId] = reason;
     }
 
-    // Under Native AOT there is no runtime codegen: the store stays a pure Tier-0
-    // counter and the IL compiler (reflection-heavy type init) is never constructed.
+    // Where there is no runtime codegen (Native AOT, browser-wasm) the store stays
+    // a pure Tier-0 counter and the IL compiler (reflection-heavy type init) is
+    // never constructed. See RuntimeCaps for why the browser needs more than
+    // IsDynamicCodeSupported to be excluded.
     private static readonly bool DynamicCodeSupported =
-        RuntimeFeature.IsDynamicCodeSupported;
+        Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen;
 
     private IlPredicateCompiler? _compilerInstance;
 

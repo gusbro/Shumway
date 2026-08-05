@@ -645,7 +645,7 @@ public static class NativeBlockRunner
 
     private static Func<object?[], object?> BuildInvoker(MethodInfo m)
     {
-        if (!System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
+        if (!Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen)
             return args => m.Invoke(null, args);
 
         var argsParam = Expression.Parameter(typeof(object?[]), "args");

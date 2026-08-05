@@ -17,12 +17,12 @@ namespace Shumway.Builtins;
 /// thinks is deterministic, so the cursor resumes at PC 0).
 ///
 /// <para><b>Why reflection is safe here.</b> <c>IsBacktrackable</c> is read
-/// ONLY by the IL compiler, which runs only in non-AOT contexts — the linker (a
-/// build tool) and runtime promotion (gated on
-/// <see cref="RuntimeFeature.IsDynamicCodeSupported"/>). Under Native AOT the IL
-/// compiler never runs, so this is never reached; the guard below short-circuits
-/// regardless. Results are cached globally per method, so each builtin's IL is
-/// walked at most once per process.</para>
+/// ONLY by the IL compiler, which runs only where runtime codegen exists — the
+/// linker (a build tool) and runtime promotion (gated on
+/// <see cref="Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen"/>). Under Native
+/// AOT and on browser-wasm the IL compiler never runs, so this is never reached;
+/// the guard below short-circuits regardless. Results are cached globally per
+/// method, so each builtin's IL is walked at most once per process.</para>
 ///
 /// <para>Auto-handles non-deterministic <c>[PrologPredicate]</c> foreigns too:
 /// their generated bridge transitively calls <c>NonDetForeignCursor</c> →
@@ -66,9 +66,11 @@ internal static class BacktrackableDetector
 
     public static bool IsBacktrackable(BuiltinImpl impl)
     {
-        // AOT never reads IsBacktrackable (the IL compiler doesn't run); short-
-        // circuit so the reflection-over-IL below is never reached there.
-        if (!RuntimeFeature.IsDynamicCodeSupported) return false;
+        // A Tier-0-only host never reads IsBacktrackable (the IL compiler doesn't
+        // run); short-circuit so the reflection-over-IL below is never reached
+        // there. Browser-wasm needs this as much as AOT does: GetILAsByteArray
+        // throws there even though IsDynamicCodeSupported is true (RuntimeCaps).
+        if (!Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen) return false;
         return _cache.GetOrAdd(impl.Method, m => Reaches(m, new HashSet<MethodBase>(), 0));
     }
 

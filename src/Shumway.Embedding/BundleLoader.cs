@@ -1096,7 +1096,7 @@ internal sealed class BundleLoader
     private void BindPersistedIlForEntry(BundleEntry entry)
     {
         if (entry.CompiledIl is null || entry.CompiledIl.Length == 0
-            || !System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
+            || !Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen)
             return;
         var module = GetOrLoadPersistedIl(entry);
         if (module is null) return;
