@@ -54,6 +54,9 @@ internal static partial class WebShumwayApp
             PrologEngine engine = BootEngine();
             engine.Out = new PageWriter();
             _session = new TopLevelSession(engine);
+            // Relative paths in Prolog — consult('lists.pl'), open/4 — resolve
+            // against the workspace, so a program means what it says.
+            EnsureWorkspace();
             return Tier0Only
                 ? "Shumway ready (Tier-0 interpreter)."
                 : "Shumway ready.";

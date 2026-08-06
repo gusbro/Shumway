@@ -21,7 +21,8 @@
 
   <div class="panes">
     <section class="pane">
-      <h2><label for="program">Program</label></h2>
+      <h2><label for="program">Program</label> — <span id="current-file">scratch.pl</span></h2>
+      <div id="files" class="files" aria-label="workspace files"></div>
       <!-- The editor: a real <textarea> does the editing, the <pre> behind it
            does the colouring, and the textarea's own text is transparent. They
            stay aligned because they share font, padding, border and wrapping. -->
@@ -32,6 +33,9 @@
       </div>
       <div class="row">
         <button id="consult" type="button">Consult</button>
+        <button id="new-file" type="button">New</button>
+        <button id="open-file" type="button">Open…</button>
+        <button id="save-file" type="button">Save as…</button>
         <span class="hint">Tab completes a predicate name</span>
       </div>
     </section>

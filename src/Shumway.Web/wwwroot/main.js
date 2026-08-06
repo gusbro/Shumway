@@ -6,6 +6,7 @@
 // stops — the same keys the console REPL answers to, so the habit transfers.
 
 import * as session from './session.js';
+import * as workspace from './workspace.js';
 import { attach } from './editor.js';
 
 const out = document.getElementById('out');
@@ -32,6 +33,13 @@ function emit(text, role = '') {
 }
 
 const emitEngineOutput = (text) => emit(text);
+
+// A page that dies silently looks like a page that is still loading. Anything
+// that escapes lands in the transcript, where it can be read and reported.
+const emitFailure = (what, detail) =>
+  emit(`% ${what}: ${detail && detail.stack ? detail.stack : detail}\n`, 'error');
+addEventListener('error', (e) => emitFailure('script error', e.error ?? e.message));
+addEventListener('unhandledrejection', (e) => emitFailure('unhandled rejection', e.reason));
 
 // --- pending-solution state ---------------------------------------------
 // A query is "pending" between solutions: the engine has one more it could
@@ -124,7 +132,74 @@ queryInput.addEventListener('keydown', async (e) => {
 
 document.getElementById('stop').addEventListener('click', () => stop());
 
+// --- files ---------------------------------------------------------------
+// The buffer being edited is itself a workspace file, so it persists like any
+// other and a program that spans several files can be assembled here.
+
+const filesEl = document.getElementById('files');
+let currentFile = 'scratch.pl';
+
+/** Writes the editor's buffer back to its file, then mirrors to storage. */
+async function saveBuffer() {
+  workspace.write(currentFile, programInput.value);
+  await workspace.persist();
+  refreshFiles();
+}
+
+function refreshFiles() {
+  const names = workspace.list();
+  filesEl.replaceChildren(...names.map((name) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'file' + (name === currentFile ? ' current' : '');
+    item.textContent = name;
+    item.title = `open ${name}`;
+    item.addEventListener('click', async () => {
+      workspace.write(currentFile, programInput.value);   // don't lose the buffer
+      currentFile = name;
+      programInput.value = workspace.read(name) ?? '';
+      await editor?.repaintNow();
+      refreshFiles();
+    });
+    return item;
+  }));
+  document.getElementById('current-file').textContent = currentFile;
+}
+
+document.getElementById('open-file').addEventListener('click', async () => {
+  const names = await workspace.openFiles();
+  if (names.length === 0) return;
+  workspace.write(currentFile, programInput.value);
+  currentFile = names[0];
+  programInput.value = workspace.read(currentFile) ?? '';
+  await editor?.repaintNow();
+  await workspace.persist();
+  refreshFiles();
+  emit(`% opened ${names.join(', ')}\n`, 'note');
+});
+
+document.getElementById('save-file').addEventListener('click', async () => {
+  await saveBuffer();
+  const saved = await workspace.saveFile(currentFile, programInput.value);
+  emit(`% saved ${saved}\n`, 'note');
+});
+
+document.getElementById('new-file').addEventListener('click', async () => {
+  const name = prompt('New file name', 'program.pl');
+  if (!name) return;
+  workspace.write(currentFile, programInput.value);
+  workspace.write(name, '');
+  currentFile = name;
+  programInput.value = '';
+  await editor?.repaintNow();
+  await workspace.persist();
+  refreshFiles();
+});
+
 document.getElementById('consult').addEventListener('click', async () => {
+  // The buffer IS a file; consulting saves it first, so what ran and what is
+  // stored are the same text.
+  await saveBuffer();
   const err = await session.consult(programInput.value);
   if (!err) {
     editor?.markError(null);
@@ -151,11 +226,27 @@ editor = attach(
   programInput, document.getElementById('program-backdrop'),
   session.highlight, session.highlightKinds(), session.complete);
 
+// Files: bring back whatever the last session left, then show the buffer.
+workspace.init(session.exports());
+const restored = await workspace.restore();
+if (workspace.read(currentFile) === null) workspace.write(currentFile, '');
+programInput.value = workspace.read(currentFile) ?? '';
+await editor.repaintNow();
+refreshFiles();
+if (restored > 0) emit(`% ${restored} file(s) restored\n`, 'note');
+else if (!workspace.persistent())
+  emit('% this browser has no origin-private storage — files last for this session only\n', 'note');
+
 queryInput.focus();
 
-if (location.hash === '#selftest') {
+const persistMode = /^#persist=(write|check)$/.exec(location.hash);
+if (persistMode) {
   try {
-    await (await import('./selftest.js')).run(session, emit, out, editor);
+    await (await import('./selftest.js')).persistProbe(workspace, emit, persistMode[1]);
+  } catch (ex) { emitFailure('persist probe', ex); }
+} else if (location.hash === '#selftest') {
+  try {
+    await (await import('./selftest.js')).run(session, emit, out, editor, workspace);
   } catch (ex) {
     // A selftest that dies silently reads as a selftest that passed.
     emit(`--- selftest CRASHED: ${ex && ex.stack ? ex.stack : ex} ---\n`, 'error');

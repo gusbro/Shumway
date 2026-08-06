@@ -29,6 +29,10 @@ export async function boot(onOutput) {
   return engine.Boot();
 }
 
+/** The raw exports, for the workspace module — which speaks to the engine's
+ *  filesystem rather than to its solver, so it gets its own facade. */
+export const exports = () => engine;
+
 /** Loads Prolog source. Resolves to null on success, or the diagnostic. */
 export const consult = async (source) => engine.Consult(source);
 

@@ -98,6 +98,22 @@ textarea:focus-visible, input:focus-visible, pre#out:focus-visible {
 
 .hint { font-size: .78rem; color: var(--muted); margin-left: .6rem; }
 
+.files { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .35rem; min-height: 1.6rem; }
+.file {
+  font: 12px var(--mono);
+  padding: .15rem .5rem;
+  border-radius: .3rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.file:hover { color: inherit; }
+.file.current { color: inherit; border-color: currentColor; background: var(--field); }
+
+#current-file { font: 12px var(--mono); text-transform: none; letter-spacing: 0; }
+.row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+
 pre#out {
   height: 24rem;
   overflow: auto;

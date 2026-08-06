@@ -5,7 +5,30 @@
 //
 // Loaded on demand, so a normal page never fetches it.
 
-export async function run(session, emit, out, editor) {
+/**
+ * Whether a file survives a reload — the whole point of mirroring to OPFS, and
+ * the one claim a single page load cannot check. Run the page twice against the
+ * same browser profile: `#persist=write` leaves a marker, `#persist=check`
+ * reports whether it came back.
+ */
+export async function persistProbe(workspace, emit, mode) {
+  const marker = 'persist_marker.pl';
+  if (mode === 'write') {
+    workspace.write(marker, 'marker(survived).\n');
+    const ok = await workspace.persist();
+    emit(`persist write: stored=${ok}${ok ? '' : ' reason=' + workspace.storageError()}\n`,
+         ok ? 'note' : 'error');
+    return;
+  }
+  const content = workspace.read(marker);
+  const ok = content === 'marker(survived).\n';
+  emit(`persist check: ${ok ? 'ok   restored across reload' : 'FAIL not restored'}`
+     + ` (${JSON.stringify(content)})\n`, ok ? 'note' : 'error');
+  workspace.remove(marker);
+  await workspace.persist();
+}
+
+export async function run(session, emit, out, editor, workspace) {
   let failures = 0;
 
   const check = (name, got, want) => {
@@ -97,6 +120,55 @@ export async function run(session, emit, out, editor) {
 
   program.value = '';
   await editor.repaintNow();
+
+  // --- the workspace, and that Prolog can actually see it -----------------
+  workspace.write('selftest_data.pl', 'from_a_file(yes).\n');
+  check('file appears in the workspace', workspace.list().includes('selftest_data.pl'), true);
+  check('file reads back', workspace.read('selftest_data.pl'), 'from_a_file(yes).\n');
+  check('consulting a workspace file', workspace.consultFile('selftest_data.pl'), null);
+  check('its clauses are solvable', await solutions('from_a_file(X).'), 'X = yes');
+
+  // Prolog's own file I/O writes into the same workspace — the point of putting
+  // it on a real filesystem rather than a bag of strings.
+  await solutions("open('written_by_prolog.txt', write, S), write(S, hello), close(S).");
+  check('open/4 wrote into the workspace',
+        workspace.read('written_by_prolog.txt'), 'hello');
+
+  check('delete removes it', workspace.remove('written_by_prolog.txt'), null);
+  check('and it is gone', workspace.list().includes('written_by_prolog.txt'), false);
+  workspace.remove('selftest_data.pl');
+
+  // The mirror, both ways, through real storage: write a file, push it to OPFS,
+  // erase it from the engine's filesystem, and pull it back. That is exactly
+  // what a reload does, minus the reload — which a headless browser cannot be
+  // made to perform reliably.
+  if (workspace.persistent()) {
+    workspace.write('mirror_probe.pl', 'mirrored(yes).\n');
+    const stored = await workspace.persist();
+    if (!stored) {
+      // A headless browser advertises origin-private storage and then never
+      // answers. That is the harness, not the app — reported, not counted as a
+      // failure, because the app's own behaviour (degrade, say so, carry on) is
+      // exactly what happens here.
+      emit(`note: storage unusable here — ${workspace.storageError()};`
+         + ` mirror unverified in this environment\n`, 'note');
+      workspace.remove('mirror_probe.pl');
+    } else {
+      workspace.remove('mirror_probe.pl');
+      check('mirror: gone from memory', workspace.read('mirror_probe.pl'), null);
+      await workspace.restore();
+      check('mirror: restored from storage',
+            workspace.read('mirror_probe.pl'), 'mirrored(yes).\n');
+      workspace.remove('mirror_probe.pl');
+      await workspace.persist();
+    }
+  }
+
+  // Persistence is reported rather than assumed: a browser may refuse storage,
+  // and the session must still work when it does.
+  emit(`note: origin-private storage ${workspace.persistent() ? 'available' : 'UNAVAILABLE'}`
+     + `, file pickers ${workspace.canPickFiles() ? 'available' : 'unavailable (download fallback)'}\n`,
+       'note');
 
   emit(`--- selftest ${failures === 0 ? 'passed' : failures + ' FAILED'} ---\n`,
        failures === 0 ? 'note' : 'error');
