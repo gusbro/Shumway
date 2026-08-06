@@ -78,6 +78,8 @@ internal static class Clpfd
         :- public '$fd_abs'/2.
         :- public '$fd_idiv'/3.
         :- public '$fd_linear'/4.
+        :- public '$fd_neq_lin'/3.
+        :- public '$fd_alldiff_view'/1.
         :- public '$fd_set'/3.
         :- public '$fd_reif'/4.
         :- public '$fd_alldiff'/1.
@@ -259,20 +261,39 @@ internal static class Clpfd
         % whose user-facing form isn't already subsumed by the domain
         % (clpfd_prop_to_goal/2 fails for those — e.g. `$fd_lt(X, 10)`
         % only narrows X's domain, which is already projected).
-        clpfd_props_owned_by([], _, []).
-        clpfd_props_owned_by([P|Ps], V, Goals) :-
-            ( clpfd_prop_owner(P, V), clpfd_prop_to_goal(P, G) ->
-                Goals = [G|Rest], clpfd_props_owned_by(Ps, V, Rest)
-            ; clpfd_props_owned_by(Ps, V, Goals)
+        clpfd_props_owned_by(Props, V, Goals) :- clpfd_props_owned(Props, V, Props, Goals).
+
+        clpfd_props_owned([], _, _, []).
+        clpfd_props_owned([P|Ps], V, All, Goals) :-
+            ( clpfd_prop_owner(P, V), \+ clpfd_prop_covered(P, All),
+              clpfd_prop_to_goal(P, G) ->
+                Goals = [G|Rest], clpfd_props_owned(Ps, V, All, Rest)
+            ; clpfd_props_owned(Ps, V, All, Goals)
             ).
+
+        % A disequality between two members of an all_different group is already
+        % said by the group; printing both says the same thing n(n-1)/2 times.
+        clpfd_prop_covered('$fd_neq'(X, Y), All) :- clpfd_view_covers(All, X, Y).
+
+        clpfd_view_covers([P|Ps], X, Y) :-
+            ( nonvar(P), P = '$fd_alldiff_view'(Vs),
+              clpfd_memq(X, Vs), clpfd_memq(Y, Vs) -> true
+            ; clpfd_view_covers(Ps, X, Y)
+            ).
+
+        clpfd_memq(X, [Y|Ys]) :- ( X == Y -> true ; clpfd_memq(X, Ys) ).
 
         clpfd_prop_owner(P, V) :-
             P =.. [_|Args],
             clpfd_first_var(Args, FV),
             FV == V.
 
+        % A list argument is searched, but a list with no variable in it must
+        % NOT end the search: `$fd_neq_lin`'s first argument is its coefficients,
+        % and cutting there would leave the constraint with no owner — projected
+        % by nobody, hence invisible.
         clpfd_first_var([A|_], A) :- var(A), !.
-        clpfd_first_var([A|_], V) :- nonvar(A), is_list(A), !, clpfd_first_var(A, V).
+        clpfd_first_var([A|_], V) :- nonvar(A), is_list(A), clpfd_first_var(A, V0), !, V = V0.
         clpfd_first_var([_|R], V) :- clpfd_first_var(R, V).
 
         % Translate each internal propagator back to its source-level
@@ -291,6 +312,60 @@ internal static class Clpfd
         clpfd_prop_to_goal('$fd_abs'(A,C),    (abs(A) #= C)).
         clpfd_prop_to_goal('$fd_idiv'(A,B,C), (A // B #= C)).
         clpfd_prop_to_goal('$fd_alldiff'(Vs), all_distinct(Vs)).
+        clpfd_prop_to_goal('$fd_alldiff_view'(Vs), all_different(Vs)).
+        % A linear constraint prints as the relation the user wrote, not as the
+        % coefficient vector it is stored as. With fewer than two variables left
+        % the domains already say everything it does.
+        clpfd_prop_to_goal('$fd_neq_lin'(Cs, Vs, K), G) :-
+            clpfd_two_free(Vs), clpfd_lin_goal(Cs, Vs, K, (#\=), G).
+        clpfd_prop_to_goal('$fd_linear'(Cs, Vs, Rel, K), G) :-
+            clpfd_two_free(Vs), clpfd_rel_op(Rel, Op), clpfd_lin_goal(Cs, Vs, K, Op, G).
+
+        clpfd_rel_op(=,  (#=)).
+        clpfd_rel_op(=<, (#=<)).
+
+        clpfd_two_free([V|Vs]) :- ( var(V) -> clpfd_one_free(Vs) ; clpfd_two_free(Vs) ).
+        clpfd_one_free([V|Vs]) :- ( var(V) -> true ; clpfd_one_free(Vs) ).
+
+        % sum(Ci*Vi) Rel K rendered as a relation between two sums: the terms
+        % with a positive coefficient on the left, the negated rest on the
+        % right. `[1,-1,-1]` over `[Q,R,D]` with K=0 comes back out as
+        % `Q #\= R + D` — what was written, not what was stored.
+        clpfd_lin_goal(Cs, Vs, K, Op, Goal) :-
+            clpfd_lin_sides(Cs, Vs, Pos, Neg),
+            ( Pos == [] ->
+                % Everything is negative: negate both sides, which turns the
+                % inequality around.
+                clpfd_sum_expr(Neg, L), R is -K, clpfd_flip_op(Op, GoalOp)
+            ; GoalOp = Op,
+              clpfd_sum_expr(Pos, L),
+              ( Neg == [] -> R = K
+              ; clpfd_sum_expr(Neg, R0),
+                ( K =:= 0 -> R = R0
+                ; K > 0   -> R = R0 + K
+                ; K1 is -K, R = R0 - K1      % `Y - 1`, not `Y + -1`
+                )
+              )
+            ),
+            Goal =.. [GoalOp, L, R].
+
+        clpfd_flip_op((#=),  (#=)).
+        clpfd_flip_op((#\=), (#\=)).
+        clpfd_flip_op((#=<), (#>=)).
+
+        clpfd_lin_sides([], [], [], []).
+        clpfd_lin_sides([C|Cs], [V|Vs], Pos, Neg) :-
+            ( C > 0 -> Pos = [C-V|P1], Neg = N1
+            ; C1 is -C, Neg = [C1-V|N1], Pos = P1
+            ),
+            clpfd_lin_sides(Cs, Vs, P1, N1).
+
+        clpfd_sum_expr([T|Ts], E) :- clpfd_term_expr(T, E0), clpfd_sum_acc(Ts, E0, E).
+        clpfd_sum_acc([], E, E).
+        clpfd_sum_acc([T|Ts], E0, E) :- clpfd_term_expr(T, E1), clpfd_sum_acc(Ts, E0 + E1, E).
+
+        clpfd_term_expr(1-V, V) :- !.
+        clpfd_term_expr(C-V, C*V).
 
         % ===== in / ins =====
         %! in(?Var, +Domain) | CLP(FD) — domains | Constrains a variable to a finite domain (e.g. X in 1..9).
@@ -374,6 +449,14 @@ internal static class Clpfd
         % decomposition for those.
         '#='(L, R)  :- clpfd_norm(L, R, Terms, Const), clpfd_worth_linear(Terms), !, RHS is -Const, clpfd_post_lin(Terms, =, RHS).
         '#='(L, R)  :- clpfd_expr(L, X), clpfd_expr(R, Y), X = Y.
+        % A disequality over a COMPOUND side goes linear too — not for pruning
+        % power (a disequality prunes only when one variable is left) but because
+        % the decomposition invents an auxiliary variable per operator, and an
+        % auxiliary variable is visible: `Q #\= R + D` would answer
+        % `_T in 1..8, R + D #= _T, Q #\= _T` — three lines naming a variable the
+        % user never wrote. One propagator says it in one.
+        '#\\='(L, R) :- ( compound(L) ; compound(R) ), clpfd_norm(L, R, Terms, Const), !,
+            RHS is -Const, clpfd_post_neq_lin(Terms, RHS).
         '#\\='(L, R) :- clpfd_expr(L, X), clpfd_expr(R, Y), clpfd_post('$fd_neq'(X, Y), [X, Y]).
         '#<'(L, R)  :- clpfd_norm(L, R, Terms, Const), clpfd_worth_linear(Terms), !, RHS is -Const - 1, clpfd_post_lin(Terms, =<, RHS).
         '#<'(L, R)  :- clpfd_expr(L, X), clpfd_expr(R, Y), clpfd_post('$fd_lt'(X, Y), [X, Y]).
@@ -438,6 +521,43 @@ internal static class Clpfd
 
         clpfd_unzip([], [], []).
         clpfd_unzip([C-V | T], [C | Cs], [V | Vs]) :- clpfd_unzip(T, Cs, Vs).
+
+        % post sum(Ci*Vi) =\= RHS. No variables left is a plain check; one
+        % variable is decided on the spot (the value it may not take is
+        % arithmetic), so only a genuinely suspended disequality is stored.
+        clpfd_post_neq_lin([], RHS) :- !, RHS =\= 0.
+        clpfd_post_neq_lin(Terms, RHS) :-
+            clpfd_unzip(Terms, Coeffs, Vars),
+            clpfd_makevars(Vars),
+            clpfd_post('$fd_neq_lin'(Coeffs, Vars, RHS), Vars).
+
+        % ===== the linear disequality: sum(Ci*Vi) =\= RHS =====
+        % A disequality says nothing until one variable is left: with two
+        % unknowns every value is still possible. So the propagator sums the
+        % fixed terms, and acts only when exactly one variable remains — then
+        % the forbidden value is whatever would balance the sum, and only if
+        % the coefficient divides it exactly.
+        '$fd_neq_lin'(Coeffs, Vars, RHS) :-
+            clpfd_neq_lin_scan(Coeffs, Vars, 0, Sum, none, Free),
+            ( Free == none -> Sum =\= RHS
+            ; Free = one(C, V) ->
+                Diff is RHS - Sum,
+                Val is Diff // C,
+                ( C * Val =:= Diff ->
+                    clpfd_dom_of(V, DV), clpfd_dom_del(DV, Val, DV2), clpfd_narrow(V, DV2)
+                ; true
+                )
+            ; true      % two or more unknowns: nothing is excluded yet
+            ).
+
+        clpfd_neq_lin_scan([], [], S, S, F, F).
+        clpfd_neq_lin_scan([_|_], _, S, S, many, many) :- !.
+        clpfd_neq_lin_scan([C|Cs], [V|Vs], S0, S, F0, F) :-
+            ( integer(V) -> S1 is S0 + C * V, F1 = F0
+            ; F0 == none -> F1 = one(C, V), S1 = S0
+            ; F1 = many, S1 = S0
+            ),
+            clpfd_neq_lin_scan(Cs, Vs, S1, S, F1, F).
 
         % ===== the global linear propagator: sum(Ci*Vi) Rel RHS =====
         % Bounds consistency. SMin/SMax are the sum's reachable bounds; each
@@ -805,8 +925,21 @@ internal static class Clpfd
         % all_different posts pairwise disequality: whenever a variable
         % grounds, '#\='/2 prunes its value from the others.
         %! all_different(?Vars) | CLP(FD) — global constraints | Every element of the list takes a distinct value (pairwise).
-        all_different([]).
-        all_different([X|Xs]) :- clpfd_diff_all(Xs, X), all_different(Xs).
+        all_different(List) :-
+            clpfd_diff_pairs(List),
+            % A projection-only marker, so the answer reads `all_different([A,B,C])`
+            % instead of the n(n-1)/2 disequalities that implement it. It is a fact:
+            % running it is a no-op, and it earns that by being what makes a
+            % constrained answer readable at all beyond a handful of variables.
+            ( List = [_, _ | _] ->
+                clpfd_makevars(List), clpfd_watch(List, '$fd_alldiff_view'(List))
+            ; true
+            ).
+
+        '$fd_alldiff_view'(_).
+
+        clpfd_diff_pairs([]).
+        clpfd_diff_pairs([X|Xs]) :- clpfd_diff_all(Xs, X), clpfd_diff_pairs(Xs).
 
         clpfd_diff_all([], _).
         clpfd_diff_all([Y|Ys], X) :- X #\= Y, clpfd_diff_all(Ys, X).
