@@ -26,6 +26,11 @@ public sealed class TopLevelSession
     /// <summary>Loads clauses from Prolog source text.</summary>
     public void Consult(string source) => Engine.ConsultString(source);
 
+    /// <summary>Loads a buffer: the predicates it defines are replaced rather
+    /// than added to, so loading the same text twice defines it once. What a
+    /// host with an editor wants when the user asks to load what they see.</summary>
+    public void ReconsultBuffer(string source) => Engine.ReconsultString(source);
+
     /// <summary>Starts <paramref name="queryText"/> and returns a cursor over its
     /// solutions. The search itself is pull-based — the caller decides when to
     /// take each solution, and how many.

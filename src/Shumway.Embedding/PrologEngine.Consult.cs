@@ -24,6 +24,11 @@ public sealed partial class PrologEngine
     /// <summary>Consults Prolog source text into this engine.</summary>
     public void ConsultString(string source) => Consults.ConsultString(source);
 
+    /// <summary>Classical reconsult of source text: abolishes the predicates it
+    /// defines, then consults it — so loading the same text twice defines it
+    /// once. What an editor's "load this buffer" means.</summary>
+    public void ReconsultString(string source) => Consults.ReconsultString(source);
+
     internal void ConsultStringInner(string source, bool recordInHistory,
         string? moduleNameFallback = null)
         => Consults.ConsultStringInner(source, recordInHistory, moduleNameFallback);

@@ -519,12 +519,19 @@ internal sealed class ConsultPipeline
         }
         else
         {
-            string source = File.ReadAllText(path);
-            var (moduleName, defined) = ScanSourceForDefinedHeads(source);
-            foreach (int fid in defined)
-                AbolishPredicateInModule(moduleName, fid);
-            ConsultString(source);
+            ReconsultString(File.ReadAllText(path));
         }
+    }
+
+    /// <summary>Loads <paramref name="source"/> as <see cref="ReconsultFile"/>
+    /// would: what the engine knows about the predicates it defines becomes what
+    /// this text says, rather than that plus whatever an earlier load left. The
+    /// path an editor takes — loading the same buffer twice must not double its
+    /// clauses.</summary>
+    public void ReconsultString(string source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ConsultStringInner(source, recordInHistory: true, reconsult: true);
     }
 
     /// <summary>light reader pass over a source string,
@@ -615,7 +622,7 @@ internal sealed class ConsultPipeline
     private static List<Clause>? s_preludeClauses;
 
     internal void ConsultStringInner(string source, bool recordInHistory,
-        string? moduleNameFallback = null)
+        string? moduleNameFallback = null, bool reconsult = false)
     {
         // ADR-036 — serialized against AddBreakpoint (same gate as query setup): a
         // debug session's idle watcher arms breakpoints from ITS OWN thread, and an
@@ -642,7 +649,7 @@ internal sealed class ConsultPipeline
             E.PushOpCollection();
             try
             {
-                ConsultStringLocked(source, recordInHistory, moduleNameFallback);
+                ConsultStringLocked(source, recordInHistory, moduleNameFallback, reconsult);
             }
             finally
             {
@@ -655,7 +662,7 @@ internal sealed class ConsultPipeline
     }
 
     private void ConsultStringLocked(string source, bool recordInHistory,
-        string? moduleNameFallback)
+        string? moduleNameFallback, bool reconsult)
     {
         // Save-state record every user-visible consult so
         // SaveState can serialize it. The prelude (auto-loaded by the
@@ -1372,6 +1379,34 @@ internal sealed class ConsultPipeline
                     moduleName,
                     ComputeConsultLocalFunctors(clauses, publics),
                     E._dynStore.Functors);
+
+            // Reconsult: the predicates this source defines are REPLACED, not
+            // extended. Done here rather than by scanning the text first,
+            // because the heads are only knowable once the source's own
+            // directives have run — a file that opens with
+            // `:- use_module(library(clpfd))` cannot be parsed at all until
+            // that directive has put `ins` and `#=` in the operator table.
+            // (An explicit `:- module` file already replaces its previous load;
+            // this is what makes a module-less buffer behave the same way.)
+            if (reconsult)
+            {
+                var redefined = new HashSet<int>();
+                foreach (var c0 in clauses)
+                    if (PrologEngine.TryExtractHead(c0, out string rn, out int ra))
+                        redefined.Add(FunctorTable.Intern(
+                            AtomTable.Intern(rn, permanent: true).Id, ra));
+                foreach (int fid in redefined)
+                {
+                    // A `:- dynamic` in THIS source has already run; abolishing
+                    // would undo the declaration the file just made and route
+                    // its own clauses as static. Only the clauses go — including
+                    // whatever was asserted since the last load, which is what
+                    // reloading a file means.
+                    bool wasDynamic = E._dynStore.IsDynamic(fid);
+                    AbolishPredicateInModule(moduleName, fid);
+                    if (wasDynamic) E._dynStore.MarkDynamic(fid);
+                }
+            }
 
             var keptClauses = new List<Clause>(clauses.Count);
             foreach (var c0 in clauses)
