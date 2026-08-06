@@ -364,34 +364,10 @@ internal static class ReplTopLevel
     /// interpreter.</para></summary>
     private static void PrintError(PrologEngine engine, Exception ex)
     {
-        switch (ex)
-        {
-            case ShumwayPrologException pex:
-                Console.WriteLine($"% error: {pex.Term}");
-                break;
-            case Shumway.Core.PrologRuntimeException re:
-                Console.WriteLine($"% error: {ErrorRendering.FormatRuntimeError(re)}");
-                break;
-            default:
-                Console.WriteLine($"% {ex.GetType().Name}: {ex.Message}");
-                break;
-        }
-
-        // Stack trace from the engine — non-empty only for Prolog
-        // exception kinds. Skip synthetic launcher frames and the
-        // innermost wrapper that just re-throws.
-        var trace = engine.LastErrorStackTraceWithPositions;
-        if (trace is not null && trace.Count > 0)
-        {
-            foreach (var f in trace)
-            {
-                if (f.Name.StartsWith("$", StringComparison.Ordinal)) continue;
-                if (f.Position.Line <= 1 && f.Position.Column <= 1 && f.Position.Offset == 0)
-                    Console.WriteLine($"%   at {f.Name}/{f.Arity}");
-                else
-                    Console.WriteLine($"%   at {f.Name}/{f.Arity} ({f.Position})");
-            }
-        }
+        // The diagnostic itself is shared with the web front-end (ErrorRendering);
+        // the console only adds its own `%` prefix.
+        foreach (string line in ErrorRendering.Describe(engine, ex))
+            Console.WriteLine("% " + line);
 
         if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
         {

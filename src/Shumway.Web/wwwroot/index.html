@@ -14,25 +14,31 @@
   <script type="module" src="main#[.{fingerprint}].js"></script>
 </head>
 <body>
-  <h1>WebShumway <span class="tag">Prolog in the browser</span></h1>
+  <header>
+    <h1>WebShumway</h1>
+    <p class="sub">Prolog in the browser — the Shumway engine compiled to WebAssembly.</p>
+  </header>
 
   <div class="panes">
-    <section>
-      <h2>Program</h2>
-      <textarea id="program" spellcheck="false"
-                placeholder="anc(X,Y) :- par(X,Y).&#10;anc(X,Z) :- par(X,Y), anc(Y,Z).&#10;par(a,b).&#10;par(b,c)."></textarea>
-      <button id="consult" type="button">Consult</button>
+    <section class="pane">
+      <h2><label for="program">Program</label></h2>
+      <textarea id="program" spellcheck="false" autocapitalize="off" autocomplete="off"
+                placeholder="anc(X, Y) :- par(X, Y).&#10;anc(X, Z) :- par(X, Y), anc(Y, Z).&#10;&#10;par(a, b).&#10;par(b, c)."></textarea>
+      <div class="row">
+        <button id="consult" type="button">Consult</button>
+      </div>
     </section>
 
-    <section>
+    <section class="pane">
       <h2>Answers</h2>
-      <pre id="out">loading the engine…</pre>
+      <pre id="out" tabindex="0">loading the engine…</pre>
+      <p id="status" class="status" aria-live="polite"></p>
       <form id="query-form" autocomplete="off">
-        <label for="query">?-</label>
-        <input id="query" type="text" spellcheck="false" placeholder="anc(a, X)." />
+        <label for="query" class="prompt">?-</label>
+        <input id="query" type="text" spellcheck="false" autocapitalize="off"
+               placeholder="anc(a, X)." />
         <button type="submit">Run</button>
-        <button id="more" type="button" title="next solution">;</button>
-        <button id="stop" type="button">Stop</button>
+        <button id="stop" type="button" title="abandon the running query">Stop</button>
       </form>
     </section>
   </div>

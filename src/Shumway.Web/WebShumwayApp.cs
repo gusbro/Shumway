@@ -132,11 +132,12 @@ internal static partial class WebShumwayApp
         _run = null;
     }
 
-    private static string Describe(Exception ex) => ex switch
-    {
-        Shumway.Core.PrologRuntimeException re => ErrorRendering.FormatRuntimeError(re),
-        _ => ex.Message,
-    };
+    /// <summary>The full diagnostic — the error plus the engine's call stack with
+    /// source positions — as the REPL shows it, newline-separated for the page.</summary>
+    private static string Describe(Exception ex)
+        => _session is null
+            ? ex.Message
+            : string.Join('\n', ErrorRendering.Describe(_session.Engine, ex));
 
     /// <summary>The engine's output stream, forwarding to the page. Buffers nothing:
     /// a program that writes as it searches should be watchable while it runs.</summary>

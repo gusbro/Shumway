@@ -1,125 +1,134 @@
-import { dotnet } from './_framework/dotnet.js'
-
-// The async seam. The engine's exports are synchronous today because it runs on
-// this thread; the UI never calls them directly, it calls THIS facade, which is
-// async. When the engine moves to a Web Worker only this file changes — the
-// calls become postMessage round-trips and the UI code does not notice.
+// WebShumway's front end: a Prolog top level in the page.
 //
-// Tagged replies from queryNext: 's' solution, 'l' last solution, 'f' failed,
-// 'e' error.
+// The interaction is the one every Prolog top level has, and the reason the
+// engine hands back solutions one at a time: show a solution, then wait to be
+// asked for the next. Here `;` (or space) asks, `.` (or Enter, or Escape)
+// stops — the same keys the console REPL answers to, so the habit transfers.
+
+import * as session from './session.js';
 
 const out = document.getElementById('out');
-const write = (text) => { out.textContent += text; out.scrollTop = out.scrollHeight; };
+const queryInput = document.getElementById('query');
+const programInput = document.getElementById('program');
+const statusEl = document.getElementById('status');
 
-const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
-setModuleImports('main.js', { ui: { write } });
+// --- the transcript ------------------------------------------------------
 
-const exports = (await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp;
-await runMain();
-
-export const shumway = {
-  boot:     async ()        => exports.Boot(),
-  consult:  async (src)     => exports.Consult(src),
-  start:    async (q)       => exports.QueryStart(q),
-  next:     async (width)   => exports.QueryNext(width ?? 80),
-  cancel:   async ()        => exports.QueryCancel(),
-  complete: async (prefix)  => {
-    const s = exports.Complete(prefix);
-    return s.length === 0 ? [] : s.split('\n');
-  },
-};
-
-// --- a minimal driver, enough to exercise the session end to end ---------
-// The editor and answer panes arrive with the UI chunks; this proves the
-// contract: consult, query, pull solutions one at a time, cancel, complete.
-
-write(await shumway.boot() + '\n\n');
-
-const form = document.getElementById('query-form');
-const input = document.getElementById('query');
-const moreBtn = document.getElementById('more');
-const stopBtn = document.getElementById('stop');
-
-let running = false;
-
-function setRunning(on) {
-  running = on;
-  moreBtn.disabled = !on;
-  stopBtn.disabled = !on;
+/** Appends text in a role: 'query' | 'answer' | 'error' | 'note' | '' (engine). */
+function emit(text, role = '') {
+  const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+  const span = document.createElement('span');
+  if (role) span.className = role;
+  span.textContent = text;
+  out.appendChild(span);
+  // Follow the tail only if the user was already there — scrolling back to read
+  // something should not be undone by the next line of output.
+  if (atBottom) out.scrollTop = out.scrollHeight;
 }
-setRunning(false);
+
+const emitEngineOutput = (text) => emit(text);
+
+// --- pending-solution state ---------------------------------------------
+// A query is "pending" between solutions: the engine has one more it could
+// look for, and the UI is waiting to be told whether to.
+
+let pending = false;
+
+function setPending(on) {
+  pending = on;
+  document.body.classList.toggle('pending', on);
+  statusEl.textContent = on ? 'more solutions?  ;  next    .  stop' : '';
+}
+
+/** Columns available for an answer, so long terms wrap where they are read. */
+function answerWidth() {
+  const probe = document.createElement('span');
+  probe.textContent = '0'.repeat(10);
+  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+  out.appendChild(probe);
+  const charWidth = probe.getBoundingClientRect().width / 10;
+  probe.remove();
+  const cols = Math.floor((out.clientWidth - 24) / (charWidth || 8));
+  return Math.max(40, Math.min(200, cols));
+}
 
 async function step() {
-  const reply = await shumway.next(80);
-  const tag = reply[0], text = reply.slice(1);
-  if (tag === 'f') { write('false.\n\n'); setRunning(false); return; }
-  if (tag === 'e') { write('% ' + text + '\n\n'); setRunning(false); return; }
-  write(text + (tag === 'l' ? '.\n\n' : ' ;\n'));
-  setRunning(tag !== 'l');
+  const { tag, text } = await session.next(answerWidth());
+  if (tag === session.FAILED) { emit('false.\n\n', 'answer'); setPending(false); return; }
+  if (tag === session.ERROR) { emit(text + '\n\n', 'error'); setPending(false); return; }
+  if (tag === session.LAST) { emit(text + '.\n\n', 'answer'); setPending(false); return; }
+  emit(text + ' ', 'answer');
+  setPending(true);
 }
 
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const q = input.value.trim();
-  if (!q) return;
-  write('?- ' + q + '\n');
-  const err = await shumway.start(q);
-  if (err) { write('% ' + err + '\n\n'); return; }
-  setRunning(true);
+async function run(queryText) {
+  emit('?- ' + queryText + '\n', 'query');
+  const err = await session.start(queryText);
+  if (err) { emit(err + '\n\n', 'error'); return; }
   await step();
+}
+
+async function stop() {
+  await session.cancel();
+  emit(';\n% Execution aborted.\n\n', 'note');
+  setPending(false);
+}
+
+// --- query entry ---------------------------------------------------------
+
+const history = [];
+let historyAt = 0;      // index into history; == length means "the live line"
+let draft = '';         // what was typed before arrowing into history
+
+document.getElementById('query-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (pending) return;          // Enter means "stop" while a query is pending
+  const text = queryInput.value.trim();
+  if (!text) return;
+  queryInput.value = '';
+  if (history[history.length - 1] !== text) history.push(text);
+  historyAt = history.length;
+  draft = '';
+  await run(text.endsWith('.') ? text : text + '.');
 });
 
-moreBtn.addEventListener('click', () => step());
-stopBtn.addEventListener('click', async () => {
-  await shumway.cancel();
-  write('% Execution aborted.\n\n');
-  setRunning(false);
+queryInput.addEventListener('keydown', async (e) => {
+  // While solutions are pending the keys mean what they mean in a top level.
+  if (pending) {
+    if (e.key === ';' || e.key === ' ') { e.preventDefault(); await step(); return; }
+    if (e.key === '.' || e.key === 'Enter' || e.key === 'Escape') {
+      e.preventDefault();
+      emit('.\n\n', 'answer');
+      await session.cancel();
+      setPending(false);
+      return;
+    }
+    return;
+  }
+
+  if (e.key === 'ArrowUp' && historyAt > 0) {
+    e.preventDefault();
+    if (historyAt === history.length) draft = queryInput.value;
+    queryInput.value = history[--historyAt];
+    queryInput.setSelectionRange(queryInput.value.length, queryInput.value.length);
+  } else if (e.key === 'ArrowDown' && historyAt < history.length) {
+    e.preventDefault();
+    queryInput.value = ++historyAt === history.length ? draft : history[historyAt];
+  }
 });
+
+document.getElementById('stop').addEventListener('click', () => stop());
 
 document.getElementById('consult').addEventListener('click', async () => {
-  const src = document.getElementById('program').value;
-  const err = await shumway.consult(src);
-  write(err ? '% ' + err + '\n' : '% consulted.\n');
+  const err = await session.consult(programInput.value);
+  emit(err ? err + '\n' : '% consulted.\n', err ? 'error' : 'note');
 });
 
-// --- #selftest -----------------------------------------------------------
-// Drives the whole browser path without a human: consult, pull solutions one
-// at a time, a syntax error, engine output, completion. Loading the page with
-// #selftest and reading the answers pane is an end-to-end check of the
-// deployed app — the part no xUnit test can reach, since it needs a browser.
-if (location.hash === '#selftest') {
-  const check = (name, got, want) =>
-    write(`${got === want ? 'ok  ' : 'FAIL'} ${name}: ${JSON.stringify(got)}` +
-          (got === want ? '\n' : ` (wanted ${JSON.stringify(want)})\n`));
+// --- boot ----------------------------------------------------------------
 
-  const solutions = async (q) => {
-    const acc = [];
-    let err = await shumway.start(q);
-    if (err) return 'error: ' + err;
-    for (;;) {
-      const r = await shumway.next(80);
-      if (r[0] === 'f') return acc.join(' | ');
-      if (r[0] === 'e') return 'error: ' + r.slice(1);
-      acc.push(r.slice(1));
-      if (r[0] === 'l') return acc.join(' | ');
-    }
-  };
+out.textContent = '';
+emit(await session.boot(emitEngineOutput) + '\n\n', 'note');
+setPending(false);
+queryInput.focus();
 
-  write('--- selftest ---\n');
-  check('consult', await shumway.consult(
-    'anc(X,Y) :- par(X,Y).  anc(X,Z) :- par(X,Y), anc(Y,Z).  par(a,b).  par(b,c).'), null);
-  check('arithmetic', await solutions('X is 6*7.'), 'X = 42');
-  check('backtracking', await solutions('member(X,[a,b,c]).'), 'X = a | X = b | X = c');
-  check('consulted rules', await solutions('anc(a,X).'), 'X = b | X = c');
-  check('failure', await solutions('fail.'), '');
-  check('no variables', await solutions('atom(foo).'), 'true');
-  const bad = await shumway.start('this is not( prolog.');
-  check('syntax error reported', typeof bad === 'string' && bad.length > 0, true);
-  check('completion', (await shumway.complete('appen')).includes('append'), true);
-  const before = out.textContent.length;
-  await solutions('write(engine_output), nl.');
-  check('engine output reaches the page',
-        out.textContent.slice(before).includes('engine_output'), true);
-  await shumway.cancel();
-  write('--- selftest done ---\n');
-}
+if (location.hash === '#selftest') (await import('./selftest.js')).run(session, emit, out);
