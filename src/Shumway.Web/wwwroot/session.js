@@ -1,9 +1,9 @@
 // The async seam.
 //
-// The engine's exports are synchronous because it runs on this thread today.
-// The UI never calls them; it calls THIS facade, which is async. Moving the
-// engine to a Web Worker is then a change of transport, not of contract: these
-// functions become postMessage round-trips and no UI code changes.
+// The runtime does not live on this thread — the app is built with threads, so
+// .NET runs on its own worker and every call to it is a message and a reply.
+// That is what keeps the page drawable while a search runs. This module is the
+// facade the UI talks to; nothing above it needs to know where the engine is.
 
 import { dotnet } from './_framework/dotnet.js'
 
@@ -21,9 +21,9 @@ let engine = null;
  *        as it is written — a program that prints while it searches should be
  *        watchable while it runs.
  */
-export async function boot(onOutput) {
+export async function boot(onOutput, onAskForInput) {
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
-  setModuleImports('main.js', { ui: { write: onOutput } });
+  setModuleImports('main.js', { ui: { write: onOutput, askForInput: onAskForInput } });
   engine = (await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp;
   await runMain();
   return engine.Boot();
@@ -33,21 +33,31 @@ export async function boot(onOutput) {
  *  filesystem rather than to its solver, so it gets its own facade. */
 export const exports = () => engine;
 
-/** Loads Prolog source. Resolves to null on success, or the diagnostic. */
-export const consult = async (source) => engine.Consult(source);
+/** Loads the editor's buffer, replacing what it defines. Resolves to null on
+ *  success, or the diagnostic. */
+export const consult = async (source) => engine.ConsultBuffer(source);
 
 /** Begins a query. Resolves to null when it started, or the diagnostic —
  *  a syntax error surfaces here, because the engine parses before it runs. */
 export const start = async (queryText) => engine.QueryStart(queryText);
 
-/** Takes the next solution: `{ tag, text }`. */
+/** Takes the next solution: `{ tag, text }`. The engine runs this on a pool
+ *  thread, so awaiting it does not block the page. */
 export async function next(width = 80) {
-  const reply = engine.QueryNext(width);
+  const reply = await engine.QueryNext(width);
   return { tag: reply[0], text: reply.slice(1) };
 }
 
-/** Abandons the running query. The engine stops at its next safe point. */
+/** Abandons the running query. Returns immediately — it sets the cancellation
+ *  token, which the engine observes at its next safe point, so the pending
+ *  `next()` resolves shortly afterwards. */
 export const cancel = async () => engine.QueryCancel();
+
+/** Hands a waiting `read/1` a line of input. */
+export const supplyInput = async (text) => engine.SupplyInput(text);
+
+/** Ends the input stream: a waiting read gets `end_of_file`. */
+export const supplyEndOfFile = async () => engine.SupplyEndOfFile();
 
 /** Predicate names starting with `prefix`. */
 export async function complete(prefix) {
@@ -59,8 +69,8 @@ export async function complete(prefix) {
 export const shareEncode = (program, query) => engine.ShareEncode(program, query);
 
 /** Unpacks one, or null if the text is not a valid share. */
-export function shareDecode(encoded) {
-  const packed = engine.ShareDecode(encoded);
+export async function shareDecode(encoded) {
+  const packed = await engine.ShareDecode(encoded);
   if (packed === null) return null;
   const nl = packed.indexOf('\n');
   const programLength = Number(packed.slice(0, nl));
@@ -68,11 +78,11 @@ export function shareDecode(encoded) {
   return { program: rest.slice(0, programLength), query: rest.slice(programLength) };
 }
 
-/** Loads CLP(FD). Resolves to null, or the diagnostic. */
-export const useClpfd = async () => engine.UseClpfd();
-
 /** Flat [start, length, kind, …] spans covering `source`, from the engine's lexer. */
-export const highlight = async (source) => engine.Highlight(source);
+export async function highlight(source) {
+  const packed = await engine.Highlight(source);
+  return packed.length === 0 ? [] : packed.split(',').map(Number);
+}
 
 /** CSS-class names indexed by span kind. */
-export const highlightKinds = () => engine.HighlightKinds().split(',');
+export const highlightKinds = async () => (await engine.HighlightKinds()).split(',');

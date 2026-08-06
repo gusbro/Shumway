@@ -19,8 +19,11 @@ export function init(exports) { engine = exports; }
 
 // --- the in-memory side (the engine's) -----------------------------------
 
-export const list = () => {
-  const s = engine.WorkspaceList();
+// All of these are async because the engine's exports are: the runtime lives on
+// its own thread, so every call to it is a message and a reply.
+
+export const list = async () => {
+  const s = await engine.WorkspaceList();
   return s.length === 0 ? [] : s.split('\n');
 };
 export const read = (name) => engine.WorkspaceRead(name);
@@ -61,7 +64,7 @@ async function restoreCore() {
     const dir = await opfsRoot();
     for await (const [name, handle] of dir.entries()) {
       if (handle.kind !== 'file') continue;
-      write(name, await (await handle.getFile()).text());
+      await write(name, await (await handle.getFile()).text());
       count++;
     }
   } catch {
@@ -81,11 +84,11 @@ export async function persist() {
 async function persistCore() {
   try {
     const dir = await opfsRoot();
-    const names = new Set(list());
+    const names = new Set(await list());
     for (const name of names) {
       const handle = await dir.getFileHandle(name, { create: true });
       const writable = await handle.createWritable();
-      await writable.write(read(name) ?? '');
+      await writable.write((await read(name)) ?? '');
       await writable.close();
     }
     for await (const [name, handle] of dir.entries()) {
@@ -125,7 +128,7 @@ export async function openFiles() {
     const names = [];
     for (const handle of handles) {
       const file = await handle.getFile();
-      write(file.name, await file.text());
+      await write(file.name, await file.text());
       names.push(file.name);
     }
     return names;
@@ -139,7 +142,7 @@ export async function openFiles() {
     input.addEventListener('change', async () => {
       const names = [];
       for (const file of input.files ?? []) {
-        write(file.name, await file.text());
+        await write(file.name, await file.text());
         names.push(file.name);
       }
       resolve(names);

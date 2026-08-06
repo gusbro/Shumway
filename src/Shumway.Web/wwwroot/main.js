@@ -11,7 +11,10 @@ import { attach } from './editor.js';
 
 const out = document.getElementById('out');
 const queryInput = document.getElementById('query');
-const programInput = document.getElementById('program');
+const programEl = document.getElementById('program');
+
+/// The program text. There is one copy of it, in the editor.
+const program = () => (editor ? editor.getText() : '');
 const statusEl = document.getElementById('status');
 
 // Attached once the engine exists (its colouring comes from the engine's lexer),
@@ -20,16 +23,27 @@ let editor = null;
 
 // --- the transcript ------------------------------------------------------
 
+// Whether the transcript is at the start of a line. A program that writes
+// without a newline would otherwise have the next answer run onto its output.
+let atLineStart = true;
+
 /** Appends text in a role: 'query' | 'answer' | 'error' | 'note' | '' (engine). */
 function emit(text, role = '') {
+  if (!text) return;
   const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
   const span = document.createElement('span');
   if (role) span.className = role;
   span.textContent = text;
   out.appendChild(span);
+  atLineStart = text.endsWith('\n');
   // Follow the tail only if the user was already there — scrolling back to read
   // something should not be undone by the next line of output.
   if (atBottom) out.scrollTop = out.scrollHeight;
+}
+
+/** Starts a line, unless one is already started. */
+function freshLine() {
+  if (!atLineStart) emit('\n');
 }
 
 const emitEngineOutput = (text) => emit(text);
@@ -65,27 +79,104 @@ function answerWidth() {
   return Math.max(40, Math.min(200, cols));
 }
 
+let aborted = false;
+let stepping = false;      // a solution is being searched for right now
+
+// --- input for the running program ---------------------------------------
+// A goal may READ. The engine's read blocks the thread it is on — a pool
+// thread, so the page stays live — and asks here for a line. The query box does
+// double duty: while a program is reading, what is typed into it goes to the
+// program instead of being a new query.
+
+let awaitingInput = false;
+
+/** Called by the engine when a read has no characters left to give. */
+function askForInput() {
+  awaitingInput = true;
+  freshLine();
+  emit('|: ', 'note');
+  statusEl.textContent = 'the program is reading — type a term and press Enter  (Esc: end of file)';
+  queryInput.placeholder = 'input for the program';
+  queryInput.focus();
+}
+
+function inputDone() {
+  awaitingInput = false;
+  statusEl.textContent = '';
+  queryInput.placeholder = '';
+}
+
+async function supplyInput(text) {
+  emit(text + '\n', 'query');
+  inputDone();
+  await session.supplyInput(text);
+}
+
+async function supplyEndOfFile() {
+  emit('end_of_file\n', 'note');
+  inputDone();
+  await session.supplyEndOfFile();
+}
+
 async function step() {
-  const { tag, text } = await session.next(answerWidth());
+  stepping = true;
+  let tag, text;
+  try { ({ tag, text } = await session.next(answerWidth())); }
+  finally { stepping = false; }
+  // The goal may have written as it ran; an answer starts its own line.
+  freshLine();
+  if (aborted) { aborted = false; emit('% Execution aborted.\n\n', 'note'); setPending(false); return; }
   if (tag === session.FAILED) { emit('false.\n\n', 'answer'); setPending(false); return; }
   if (tag === session.ERROR) { emit(text + '\n\n', 'error'); setPending(false); return; }
   if (tag === session.LAST) { emit(text + '.\n\n', 'answer'); setPending(false); return; }
+  // No newline: the answer waits on its line for the `;` or `.` that follows
+  // it, exactly as a console top level leaves it.
   emit(text + ' ', 'answer');
   setPending(true);
 }
 
 async function run(queryText) {
+  freshLine();
   emit('?- ' + queryText + '\n', 'query');
   const err = await session.start(queryText);
   if (err) { emit(err + '\n\n', 'error'); return; }
   await step();
 }
 
-async function stop() {
-  await session.cancel();
-  emit(';\n% Execution aborted.\n\n', 'note');
-  setPending(false);
+/**
+ * Ends whatever query is open, in either of its two states, and says so.
+ * Returns whether there was one.
+ *
+ * A query SEARCHING is on a pool thread: cancelling only asks it to stop, and
+ * the pending step() prints the abort when the engine reaches its next safe
+ * point — which is why the message is not printed here. A query WAITING for `;`
+ * has nobody to print it, so this does.
+ */
+async function abandonQuery() {
+  if (stepping) {
+    aborted = true;
+    await session.cancel();
+    // A goal blocked on input is not at a safe point and will never see the
+    // cancellation. Closing the stream lets the read return so it can.
+    if (awaitingInput) { inputDone(); await session.supplyEndOfFile(); }
+    return true;
+  }
+  if (pending) {
+    emit('.\n\n', 'answer');
+    setPending(false);
+    await session.cancel();
+    return true;
+  }
+  return false;
 }
+
+const stop = abandonQuery;
+
+document.getElementById('clear').addEventListener('click', () => {
+  out.replaceChildren();
+  atLineStart = true;
+  queryInput.focus();
+});
 
 // --- query entry ---------------------------------------------------------
 
@@ -95,6 +186,12 @@ let draft = '';         // what was typed before arrowing into history
 
 document.getElementById('query-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (awaitingInput) {          // the program is reading; this line is for it
+    const line = queryInput.value;
+    queryInput.value = '';
+    await supplyInput(line);
+    return;
+  }
   if (pending) return;          // Enter means "stop" while a query is pending
   const text = queryInput.value.trim();
   if (!text) return;
@@ -106,9 +203,23 @@ document.getElementById('query-form').addEventListener('submit', async (e) => {
 });
 
 queryInput.addEventListener('keydown', async (e) => {
+  // While a program is reading, the box is its input: only Escape is ours, and
+  // it means what Ctrl-D means at a terminal.
+  if (awaitingInput) {
+    if (e.key === 'Escape') { e.preventDefault(); await supplyEndOfFile(); }
+    return;
+  }
+
   // While solutions are pending the keys mean what they mean in a top level.
   if (pending) {
-    if (e.key === ';' || e.key === ' ') { e.preventDefault(); await step(); return; }
+    if (e.key === ';' || e.key === ' ') {
+      e.preventDefault();
+      // Echo the request and close the line, so the next solution starts on
+      // its own — `X = 1 ;` then the next answer, as a top level reads.
+      emit(';\n', 'answer');
+      await step();
+      return;
+    }
     if (e.key === '.' || e.key === 'Enter' || e.key === 'Escape') {
       e.preventDefault();
       emit('.\n\n', 'answer');
@@ -141,13 +252,13 @@ let currentFile = 'scratch.pl';
 
 /** Writes the editor's buffer back to its file, then mirrors to storage. */
 async function saveBuffer() {
-  workspace.write(currentFile, programInput.value);
+  await workspace.write(currentFile, program());
   await workspace.persist();
-  refreshFiles();
+  await refreshFiles();
 }
 
-function refreshFiles() {
-  const names = workspace.list();
+async function refreshFiles() {
+  const names = await workspace.list();
   filesEl.replaceChildren(...names.map((name) => {
     const item = document.createElement('button');
     item.type = 'button';
@@ -155,11 +266,10 @@ function refreshFiles() {
     item.textContent = name;
     item.title = `open ${name}`;
     item.addEventListener('click', async () => {
-      workspace.write(currentFile, programInput.value);   // don't lose the buffer
+      await workspace.write(currentFile, program());   // don't lose the buffer
       currentFile = name;
-      programInput.value = workspace.read(name) ?? '';
-      await editor?.repaintNow();
-      refreshFiles();
+      await editor.setText((await workspace.read(name)) ?? '');
+      await refreshFiles();
     });
     return item;
   }));
@@ -169,31 +279,29 @@ function refreshFiles() {
 document.getElementById('open-file').addEventListener('click', async () => {
   const names = await workspace.openFiles();
   if (names.length === 0) return;
-  workspace.write(currentFile, programInput.value);
+  await workspace.write(currentFile, program());
   currentFile = names[0];
-  programInput.value = workspace.read(currentFile) ?? '';
-  await editor?.repaintNow();
+  await editor.setText((await workspace.read(currentFile)) ?? '');
   await workspace.persist();
-  refreshFiles();
+  await refreshFiles();
   emit(`% opened ${names.join(', ')}\n`, 'note');
 });
 
 document.getElementById('save-file').addEventListener('click', async () => {
   await saveBuffer();
-  const saved = await workspace.saveFile(currentFile, programInput.value);
+  const saved = await workspace.saveFile(currentFile, program());
   emit(`% saved ${saved}\n`, 'note');
 });
 
 document.getElementById('new-file').addEventListener('click', async () => {
   const name = prompt('New file name', 'program.pl');
   if (!name) return;
-  workspace.write(currentFile, programInput.value);
-  workspace.write(name, '');
+  await workspace.write(currentFile, program());
+  await workspace.write(name, '');
   currentFile = name;
-  programInput.value = '';
-  await editor?.repaintNow();
+  await editor.setText('');
   await workspace.persist();
-  refreshFiles();
+  await refreshFiles();
 });
 
 // --- examples ------------------------------------------------------------
@@ -211,20 +319,15 @@ const EXAMPLES = [
 
 async function loadExample(name) {
   const source = await (await fetch('examples/' + name)).text();
-  workspace.write(currentFile, programInput.value);   // don't lose the buffer
+  await workspace.write(currentFile, program());   // don't lose the buffer
   currentFile = name;
-  workspace.write(name, source);
-  programInput.value = source;
-  await editor?.repaintNow();
-  await workspace.persist();
-  refreshFiles();
-  // The constraint example needs its library; loading it here means the
-  // example runs as written instead of failing on the first #=.
-  if (name === 'clpfd.pl') {
-    const err = await session.useClpfd();
-    emit(err ? err + '\n' : '% CLP(FD) loaded.\n', err ? 'error' : 'note');
-  }
-  emit(`% loaded ${name} — its queries are in the comment at the top\n`, 'note');
+  await workspace.write(name, source);
+  await editor.setText(source);
+  // Choosing an example LOADS it: its queries are meant to be run, and an
+  // example you still have to press Consult on is a half-loaded example.
+  // (Anything it needs — CLP(FD), say — it asks for in its own source, so this
+  // is an ordinary load with nothing special about being an example.)
+  await consultBuffer(`% loaded and consulted ${name} — its queries are in the comment at the top\n`);
 }
 
 const examplesEl = document.getElementById('examples');
@@ -244,7 +347,7 @@ for (const [name, title] of EXAMPLES) {
 // a third party.
 
 document.getElementById('share').addEventListener('click', async () => {
-  const encoded = await session.shareEncode(programInput.value, queryInput.value);
+  const encoded = await session.shareEncode(program(), queryInput.value);
   const url = location.origin + location.pathname + '#p=' + encoded;
   try {
     await navigator.clipboard.writeText(url);
@@ -255,58 +358,68 @@ document.getElementById('share').addEventListener('click', async () => {
   history.replaceState(null, '', '#p=' + encoded);
 });
 
-document.getElementById('consult').addEventListener('click', async () => {
-  // The buffer IS a file; consulting saves it first, so what ran and what is
-  // stored are the same text.
+/**
+ * Loads the buffer into the engine. The buffer IS a file, so it is saved first:
+ * what ran and what is stored are the same text. Reports either way, and
+ * returns whether it loaded.
+ */
+async function consultBuffer(note) {
+  // Loading a program ends any query still open over the old one — running, or
+  // waiting for the next solution. Otherwise `;` would go on asking a search
+  // whose clauses have been replaced underneath it.
+  await abandonQuery();
   await saveBuffer();
-  const err = await session.consult(programInput.value);
+  const err = await session.consult(program());
   if (!err) {
     editor?.markError(null);
     // Operators the program declared are now in the table, so the buffer's
     // colouring can change on consult — repaint it.
     editor?.repaint();
-    emit('% consulted.\n', 'note');
-    return;
+    emit(note, 'note');
+    return true;
   }
   emit(err + '\n', 'error');
   // A parse error names its position; put it on the editor too, so the report
   // and the text the user has to fix are not in different places.
   const at = /(\d+):(\d+):/.exec(err);
   if (at) editor?.markError(Number(at[1]), Number(at[2]), err);
-});
+  return false;
+}
+
+document.getElementById('consult').addEventListener('click',
+  () => consultBuffer('% consulted.\n'));
 
 // --- boot ----------------------------------------------------------------
 
 out.textContent = '';
-emit(await session.boot(emitEngineOutput) + '\n\n', 'note');
+emit(await session.boot(emitEngineOutput, askForInput) + '\n\n', 'note');
 setPending(false);
 
 editor = attach(
-  programInput, document.getElementById('program-backdrop'),
-  session.highlight, session.highlightKinds(), session.complete);
+  programEl, session.highlight, await session.highlightKinds(), session.complete);
 
 // Files: bring back whatever the last session left, then show the buffer.
 workspace.init(session.exports());
 const restored = await workspace.restore();
-if (workspace.read(currentFile) === null) workspace.write(currentFile, '');
+if ((await workspace.read(currentFile)) === null) await workspace.write(currentFile, '');
 
 // A shared link wins over the stored buffer: someone who followed a link came
 // to see what is in it. It is not saved over the workspace file until they
 // consult or save, so following a link cannot silently destroy their work.
 const shared = /^#p=(.+)$/.exec(location.hash);
 if (shared) {
-  const unpacked = session.shareDecode(shared[1]);
+  const unpacked = await session.shareDecode(shared[1]);
   if (unpacked) {
-    programInput.value = unpacked.program;
+    await editor.setText(unpacked.program);
     queryInput.value = unpacked.query;
     emit('% loaded from a shared link\n', 'note');
   } else {
     emit('% that link could not be read\n', 'error');
   }
 }
-if (!shared) programInput.value = workspace.read(currentFile) ?? '';
+if (!shared) await editor.setText((await workspace.read(currentFile)) ?? '');
 await editor.repaintNow();
-refreshFiles();
+await refreshFiles();
 if (restored > 0) emit(`% ${restored} file(s) restored\n`, 'note');
 else if (!workspace.persistent())
   emit('% this browser has no origin-private storage — files last for this session only\n', 'note');

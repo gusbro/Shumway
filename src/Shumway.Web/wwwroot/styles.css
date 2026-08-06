@@ -6,6 +6,7 @@
   --answer: light-dark(#0b5f2a, #7ee2a8);
   --error: light-dark(#a01b1b, #ff9a9a);
   --muted: color-mix(in srgb, currentColor 55%, transparent);
+  --caret: light-dark(#111, #eee);
 }
 
 body {
@@ -22,6 +23,22 @@ h2 {
   font-size: .72rem; text-transform: uppercase; letter-spacing: .07em;
   color: var(--muted); margin: 0 0 .35rem; font-weight: 600;
 }
+
+/* An action that belongs to a pane rather than to the query line — putting it
+   down there would take room from the thing being typed. */
+.heading-action {
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0 .2rem;
+  margin-left: .5rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.heading-action:hover { color: inherit; opacity: .75; }
 
 .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
 @media (max-width: 62rem) { .panes { grid-template-columns: 1fr; } }
@@ -42,38 +59,33 @@ textarea:focus-visible, input:focus-visible, pre#out:focus-visible {
   outline-offset: 1px;
 }
 
-/* --- the editor overlay ---
-   The textarea and the backdrop must lay text out IDENTICALLY, or the caret
-   drifts from the colours. Everything that affects layout is set on both. */
-.editor { position: relative; height: 24rem; }
-
-.editor > #program,
-.editor > #program-backdrop {
-  position: absolute;
-  inset: 0;
-  margin: 0;
-  height: 100%;
+/* --- the editor ---
+   One element, holding the coloured text it edits. Nothing to keep aligned. */
+.editor {
+  font: 13px/1.5 var(--mono);
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  background: var(--field);
+  color: inherit;
+  padding: .6rem .75rem;
+  height: 24rem;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
   tab-size: 4;
+  caret-color: var(--caret);
 }
-
-.editor > #program {
-  resize: none;
-  background: transparent;
-  color: transparent;          /* the text you see is the backdrop's */
-  caret-color: currentColor;
-  position: relative;          /* above the backdrop, to take the events */
-  z-index: 1;
+.editor:focus-visible {
+  outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
+  outline-offset: 1px;
 }
-.editor > #program::placeholder { color: var(--muted); }
-.editor > #program::selection { background: color-mix(in srgb, currentColor 25%, transparent); }
-.editor > #program.has-error { border-color: var(--error); }
-
-.editor > #program-backdrop {
-  pointer-events: none;
-  border-color: transparent;   /* the textarea draws the border */
+.editor.has-error { border-color: var(--error); }
+.editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  white-space: pre-wrap;
 }
 
 /* Token colours. Deliberately few: structure first, then what a reader scans

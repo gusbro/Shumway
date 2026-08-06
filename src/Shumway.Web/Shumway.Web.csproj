@@ -10,6 +10,21 @@
          REPL); keep the browser build identical and skip the ICU payload. -->
     <InvariantGlobalization>true</InvariantGlobalization>
 
+    <!-- The engine's search is synchronous, so whatever thread it runs on is
+         blocked until it answers — and a page that stops responding is a page
+         people close. Threads let it run on a POOL thread while the UI thread
+         keeps drawing, and let a cancellation actually reach it: the token is
+         set from the UI thread and the engine observes it at its next safe
+         point, which is the mechanism the console REPL's ESC already uses.
+         (Hosting the runtime inside a hand-written worker was tried first and
+         does not boot — it downloads everything and dotnet.create() never
+         settles.)
+
+         The cost is real and must be stated: threads need SharedArrayBuffer,
+         which needs cross-origin isolation, which means the host must send
+         COOP/COEP headers. See docs. -->
+    <WasmEnableThreads>true</WasmEnableThreads>
+
     <!-- Sigil (Tier-1's IL emitter) is a third-party assembly we cannot annotate,
          so the trimmer reports IL2104 for it. Narrow and local, per the repo's
          zero-warning rule: it is scoped to THIS project, names the one code, and

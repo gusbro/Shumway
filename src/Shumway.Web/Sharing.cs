@@ -20,7 +20,7 @@ internal static partial class WebShumwayApp
 {
     /// <summary>Packs a program and a query into a fragment-safe string.</summary>
     [JSExport]
-    internal static string ShareEncode(string program, string query)
+    internal static Task<string> ShareEncode(string program, string query)
     {
         // Length-prefixed rather than delimited: a program may contain anything,
         // including whatever separator we might have picked.
@@ -35,7 +35,7 @@ internal static partial class WebShumwayApp
         using (var deflate = new DeflateStream(compressed, CompressionLevel.Optimal, true))
             deflate.Write(payload.GetBuffer(), 0, (int)payload.Length);
 
-        return ToBase64Url(compressed.ToArray());
+        return Task.FromResult(ToBase64Url(compressed.ToArray()));
     }
 
     /// <summary>Unpacks what <see cref="ShareEncode"/> produced: the program and
@@ -43,7 +43,7 @@ internal static partial class WebShumwayApp
     /// length in characters. Returns null when the text is not a valid share —
     /// a hand-edited URL should land the user on an empty page, not an error.</summary>
     [JSExport]
-    internal static string? ShareDecode(string encoded)
+    internal static Task<string?> ShareDecode(string encoded)
     {
         try
         {
@@ -57,11 +57,11 @@ internal static partial class WebShumwayApp
             using var r = new BinaryReader(payload, Encoding.UTF8);
             string program = r.ReadString();
             string query = r.ReadString();
-            return program.Length + "\n" + program + query;
+            return Task.FromResult<string?>(program.Length + "\n" + program + query);
         }
         catch
         {
-            return null;
+            return Task.FromResult((string?)null);
         }
     }
 
@@ -74,14 +74,5 @@ internal static partial class WebShumwayApp
     {
         string b64 = s.Replace('-', '+').Replace('_', '/');
         return Convert.FromBase64String(b64.PadRight((b64.Length + 3) / 4 * 4, '='));
-    }
-
-    /// <summary>Loads the CLP(FD) library, so a program can post constraints.
-    /// Opt-in because it is a library, not part of the core engine.</summary>
-    [JSExport]
-    internal static string? UseClpfd()
-    {
-        try { _session!.Engine.UseClpfd(); return null; }
-        catch (Exception ex) { return Describe(ex); }
     }
 }

@@ -27,14 +27,19 @@
     <section class="pane">
       <h2><label for="program">Program</label> — <span id="current-file">scratch.pl</span></h2>
       <div id="files" class="files" aria-label="workspace files"></div>
-      <!-- The editor: a real <textarea> does the editing, the <pre> behind it
-           does the colouring, and the textarea's own text is transparent. They
-           stay aligned because they share font, padding, border and wrapping. -->
-      <div class="editor">
-        <pre id="program-backdrop" aria-hidden="true"></pre>
-        <textarea id="program" spellcheck="false" autocapitalize="off" autocomplete="off"
-                  placeholder="anc(X, Y) :- par(X, Y).&#10;anc(X, Z) :- par(X, Y), anc(Y, Z).&#10;&#10;par(a, b).&#10;par(b, c)."></textarea>
-      </div>
+      <!-- The editor holds ONE copy of the program: the coloured text IS the
+           text being edited. An earlier version drew colours on a second copy
+           behind a transparent textarea, which only works while the two lay out
+           identically — and when they drift, the caret lands where the text is
+           not. -->
+      <div id="program" class="editor" contenteditable="plaintext-only"
+           role="textbox" aria-multiline="true" aria-label="Program"
+           spellcheck="false" autocapitalize="off" autocorrect="off"
+           data-placeholder="anc(X, Y) :- par(X, Y).
+anc(X, Z) :- par(X, Y), anc(Y, Z).
+
+par(a, b).
+par(b, c)."></div>
       <div class="row">
         <button id="consult" type="button">Consult</button>
         <button id="new-file" type="button">New</button>
@@ -46,7 +51,9 @@
     </section>
 
     <section class="pane">
-      <h2>Answers</h2>
+      <h2>Answers
+        <button id="clear" type="button" class="heading-action"
+                title="clear the transcript">Clear</button></h2>
       <pre id="out" tabindex="0">loading the engine…</pre>
       <p id="status" class="status" aria-live="polite"></p>
       <form id="query-form" autocomplete="off">

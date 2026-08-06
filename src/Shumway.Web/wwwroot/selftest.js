@@ -14,17 +14,17 @@
 export async function persistProbe(workspace, emit, mode) {
   const marker = 'persist_marker.pl';
   if (mode === 'write') {
-    workspace.write(marker, 'marker(survived).\n');
+    await workspace.write(marker, 'marker(survived).\n');
     const ok = await workspace.persist();
     emit(`persist write: stored=${ok}${ok ? '' : ' reason=' + workspace.storageError()}\n`,
          ok ? 'note' : 'error');
     return;
   }
-  const content = workspace.read(marker);
+  const content = await workspace.read(marker);
   const ok = content === 'marker(survived).\n';
   emit(`persist check: ${ok ? 'ok   restored across reload' : 'FAIL not restored'}`
      + ` (${JSON.stringify(content)})\n`, ok ? 'note' : 'error');
-  workspace.remove(marker);
+  await workspace.remove(marker);
   await workspace.persist();
 }
 
@@ -84,20 +84,18 @@ export async function run(session, emit, out, editor, workspace) {
   check('cancel leaves no run', (await session.next(80)).tag, session.FAILED);
 
   // --- the editor's highlighting, over the real DOM -----------------------
-  const backdrop = document.getElementById('program-backdrop');
+  // ONE copy of the text: the element that gets coloured IS the element being
+  // edited. So these are also checks that what is on screen is what the caret
+  // is in — there is no second copy that could disagree.
   const program = document.getElementById('program');
 
-  // repaintNow rather than the input event: the scheduled repaint waits for a
+  // setText rather than the input event: the scheduled repaint waits for a
   // frame, and a headless browser's virtual clock does not reliably deliver one.
-  const paint = async (src) => {
-    program.value = src;
-    await editor.repaintNow();
-    return backdrop;
-  };
+  const paint = async (src) => { await editor.setText(src); return program; };
 
   const painted = await paint("foo(X) :- bar(X). % note\n");
-  check('backdrop reproduces the text exactly',
-        painted.textContent.replace(/\n$/, ''), "foo(X) :- bar(X). % note\n");
+  check('the editor holds the text exactly',
+        editor.getText(), "foo(X) :- bar(X). % note\n");
   check('variables are coloured',
         [...painted.querySelectorAll('.tok-variable')].some(e => e.textContent === 'X'), true);
   check('comments are coloured',
@@ -105,45 +103,71 @@ export async function run(session, emit, out, editor, workspace) {
   check('operators are coloured',
         [...painted.querySelectorAll('.tok-operator')].some(e => e.textContent === ':-'), true);
 
-  const halfTyped = await paint("p('unterminated");
-  check('half-typed text still reproduces',
-        halfTyped.textContent.replace(/\n$/, ''), "p('unterminated");
+  await paint("p('unterminated");
+  check('half-typed text still reproduces', editor.getText(), "p('unterminated");
 
   // A program-declared operator must colour as one once consulted — the payoff
   // of asking the live table instead of a fixed pattern list.
   await paint('X #= Y.');
-  const beforeOp = [...backdrop.querySelectorAll('.tok-operator')].some(e => e.textContent === '#=');
+  const beforeOp = [...program.querySelectorAll('.tok-operator')].some(e => e.textContent === '#=');
   await session.consult(':- op(700, xfx, #=).');
   await paint('X #= Y.');
-  const afterOp = [...backdrop.querySelectorAll('.tok-operator')].some(e => e.textContent === '#=');
+  const afterOp = [...program.querySelectorAll('.tok-operator')].some(e => e.textContent === '#=');
   check('program-declared operator colours after consult', [beforeOp, afterOp].join(), 'false,true');
 
-  program.value = '';
-  await editor.repaintNow();
+  // Editing where the caret is: put text in, place the caret inside it, and
+  // check that what the DOM reports back is the same offset in the same text.
+  // With two copies this is exactly what came apart.
+  await paint('abc(def).');
+  const range = document.createRange();
+  const walk = document.createTreeWalker(program, NodeFilter.SHOW_TEXT);
+  let node, seen = 0, target = null, targetOffset = 0;
+  while ((node = walk.nextNode())) {
+    if (seen + node.data.length >= 5) { target = node; targetOffset = 5 - seen; break; }
+    seen += node.data.length;
+  }
+  range.setStart(target, targetOffset);
+  range.collapse(true);
+  const sel = document.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const probe = document.createRange();
+  probe.selectNodeContents(program);
+  probe.setEnd(target, targetOffset);
+  check('the caret is where the text says it is', probe.toString(), 'abc(d');
+
+  await editor.setText('');
+
+  // A query left waiting for its next solution does not survive a load: the
+  // program it was asked of is being replaced.
+  await session.start('member(X, [a,b,c]).');
+  check('a query is open', (await session.next(80)).tag, session.SOLUTION);
+  await session.consult('unrelated_fact(1).');
+  check('loading a program ended it', (await session.next(80)).tag, session.FAILED);
 
   // --- the workspace, and that Prolog can actually see it -----------------
-  workspace.write('selftest_data.pl', 'from_a_file(yes).\n');
-  check('file appears in the workspace', workspace.list().includes('selftest_data.pl'), true);
-  check('file reads back', workspace.read('selftest_data.pl'), 'from_a_file(yes).\n');
-  check('consulting a workspace file', workspace.consultFile('selftest_data.pl'), null);
+  await workspace.write('selftest_data.pl', 'from_a_file(yes).\n');
+  check('file appears in the workspace', (await workspace.list()).includes('selftest_data.pl'), true);
+  check('file reads back', await workspace.read('selftest_data.pl'), 'from_a_file(yes).\n');
+  check('consulting a workspace file', await workspace.consultFile('selftest_data.pl'), null);
   check('its clauses are solvable', await solutions('from_a_file(X).'), 'X = yes');
 
   // Prolog's own file I/O writes into the same workspace — the point of putting
   // it on a real filesystem rather than a bag of strings.
   await solutions("open('written_by_prolog.txt', write, S), write(S, hello), close(S).");
   check('open/4 wrote into the workspace',
-        workspace.read('written_by_prolog.txt'), 'hello');
+        await workspace.read('written_by_prolog.txt'), 'hello');
 
-  check('delete removes it', workspace.remove('written_by_prolog.txt'), null);
-  check('and it is gone', workspace.list().includes('written_by_prolog.txt'), false);
-  workspace.remove('selftest_data.pl');
+  check('delete removes it', await workspace.remove('written_by_prolog.txt'), null);
+  check('and it is gone', (await workspace.list()).includes('written_by_prolog.txt'), false);
+  await workspace.remove('selftest_data.pl');
 
   // The mirror, both ways, through real storage: write a file, push it to OPFS,
   // erase it from the engine's filesystem, and pull it back. That is exactly
   // what a reload does, minus the reload — which a headless browser cannot be
   // made to perform reliably.
   if (workspace.persistent()) {
-    workspace.write('mirror_probe.pl', 'mirrored(yes).\n');
+    await workspace.write('mirror_probe.pl', 'mirrored(yes).\n');
     const stored = await workspace.persist();
     if (!stored) {
       // A headless browser advertises origin-private storage and then never
@@ -152,14 +176,14 @@ export async function run(session, emit, out, editor, workspace) {
       // exactly what happens here.
       emit(`note: storage unusable here — ${workspace.storageError()};`
          + ` mirror unverified in this environment\n`, 'note');
-      workspace.remove('mirror_probe.pl');
+      await workspace.remove('mirror_probe.pl');
     } else {
-      workspace.remove('mirror_probe.pl');
-      check('mirror: gone from memory', workspace.read('mirror_probe.pl'), null);
+      await workspace.remove('mirror_probe.pl');
+      check('mirror: gone from memory', await workspace.read('mirror_probe.pl'), null);
       await workspace.restore();
       check('mirror: restored from storage',
-            workspace.read('mirror_probe.pl'), 'mirrored(yes).\n');
-      workspace.remove('mirror_probe.pl');
+            await workspace.read('mirror_probe.pl'), 'mirrored(yes).\n');
+      await workspace.remove('mirror_probe.pl');
       await workspace.persist();
     }
   }
@@ -167,11 +191,11 @@ export async function run(session, emit, out, editor, workspace) {
   // --- sharing ------------------------------------------------------------
   const shared = 'p(1).\np(2).  % a comment with | and \\n in it\n';
   const packed = await session.shareEncode(shared, 'p(X).');
-  const unpacked = session.shareDecode(packed);
+  const unpacked = await session.shareDecode(packed);
   check('share round-trips the program', unpacked && unpacked.program, shared);
   check('share round-trips the query', unpacked && unpacked.query, 'p(X).');
   check('share is url-safe', encodeURIComponent(packed), packed);
-  check('a mangled link is rejected', session.shareDecode('not a share'), null);
+  check('a mangled link is rejected', await session.shareDecode('not a share'), null);
 
   // --- examples -------------------------------------------------------------
   // Every example must at least parse and load; one that does not is worse than
@@ -181,11 +205,18 @@ export async function run(session, emit, out, editor, workspace) {
     const source = await (await fetch('examples/' + name)).text();
     check(`example ${name} is served`, source.length > 0, true);
   }
-  // A fresh engine per example is not available here, so only the one that
-  // needs no library is consulted — enough to prove the pipeline.
+  // A fresh engine per example is not available here, so two are consulted into
+  // this one: the plain case, and the one that needs a library.
   check('example family.pl consults',
         await session.consult(await (await fetch('examples/family.pl')).text()), null);
   check('and answers', await solutions('ancestor(ana, W), W == beto.'), 'W = beto');
+
+  // The library-dependent example names its library in a directive of its own,
+  // so consulting it is enough — it does not depend on having arrived here by
+  // a particular route. It used to, and came back from storage unloadable.
+  check('example clpfd.pl consults',
+        await session.consult(await (await fetch('examples/clpfd.pl')).text()), null);
+  check('and its constraints hold', await solutions('X #> 3, X #< 7.'), 'X in 4..6');
 
   // Persistence is reported rather than assumed: a browser may refuse storage,
   // and the session must still work when it does.

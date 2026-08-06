@@ -1,10 +1,15 @@
 % Constraints over finite domains: state the relationships, let the solver
-% narrow the possibilities. Load the library first from the query pane —
-% the CLP(FD) button does it for you.
+% narrow the possibilities.
+%
+% The library is opt-in, and the program says so itself — the directive below
+% runs as this file is consulted, which is what puts `ins`, `#=` and the rest
+% in the operator table before the clauses that use them are read.
 %
 % Try:  puzzle(Digits).           SEND + MORE = MONEY
 %       queens_fd(8, Qs), label(Qs).
 %       X #> 3, X #< 7.           an answer that is still a constraint
+
+:- use_module(library(clpfd)).
 
 puzzle([S,E,N,D,M,O,R,Y]) :-
     Vars = [S,E,N,D,M,O,R,Y],

@@ -26,65 +26,77 @@ internal static partial class WebShumwayApp
         Directory.SetCurrentDirectory(WorkspaceRoot);
     }
 
+    // These go through the engine gate too. They are not engine calls, but they
+    // are the SAME filesystem a running goal reads and writes through open/4 —
+    // and EnsureWorkspace sets the process-wide current directory. Queueing them
+    // behind engine work costs a save nothing in practice (the gate is only held
+    // for the length of one solution) and removes the race entirely.
+
     /// <summary>The workspace's file names, newline-separated, sorted.</summary>
     [JSExport]
-    internal static string WorkspaceList()
-    {
-        EnsureWorkspace();
-        var names = Directory.GetFiles(WorkspaceRoot)
-            .Select(Path.GetFileName)
-            .Where(n => !string.IsNullOrEmpty(n))
-            .OrderBy(n => n, StringComparer.Ordinal);
-        return string.Join('\n', names!);
-    }
+    internal static Task<string> WorkspaceList()
+        => OnEngine(() =>
+        {
+            EnsureWorkspace();
+            var names = Directory.GetFiles(WorkspaceRoot)
+                .Select(Path.GetFileName)
+                .Where(n => !string.IsNullOrEmpty(n))
+                .OrderBy(n => n, StringComparer.Ordinal);
+            return string.Join('\n', names!);
+        });
 
     /// <summary>A file's contents, or null when there is no such file.</summary>
     [JSExport]
-    internal static string? WorkspaceRead(string name)
-    {
-        string path = Resolve(name);
-        return File.Exists(path) ? File.ReadAllText(path) : null;
-    }
+    internal static Task<string?> WorkspaceRead(string name)
+        => OnEngine(() =>
+        {
+            string path = Resolve(name);
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        });
 
     /// <summary>Creates or replaces a file. Returns null, or the error text.</summary>
     [JSExport]
-    internal static string? WorkspaceWrite(string name, string content)
-    {
-        try
+    internal static Task<string?> WorkspaceWrite(string name, string content)
+        => OnEngine(() =>
         {
-            EnsureWorkspace();
-            File.WriteAllText(Resolve(name), content);
-            return null;
-        }
-        catch (Exception ex) { return ex.Message; }
-    }
+            try
+            {
+                EnsureWorkspace();
+                File.WriteAllText(Resolve(name), content);
+                return (string?)null;
+            }
+            catch (Exception ex) { return ex.Message; }
+        });
 
     /// <summary>Removes a file. Returns null, or the error text.</summary>
     [JSExport]
-    internal static string? WorkspaceDelete(string name)
-    {
-        try
+    internal static Task<string?> WorkspaceDelete(string name)
+        => OnEngine(() =>
         {
-            string path = Resolve(name);
-            if (File.Exists(path)) File.Delete(path);
-            return null;
-        }
-        catch (Exception ex) { return ex.Message; }
-    }
+            try
+            {
+                string path = Resolve(name);
+                if (File.Exists(path)) File.Delete(path);
+                return (string?)null;
+            }
+            catch (Exception ex) { return ex.Message; }
+        });
 
     /// <summary>Consults a workspace file — the path Prolog itself would take,
     /// so a program that spans several files loads the way it does on a desktop.
     /// Returns null, or the diagnostic.</summary>
     [JSExport]
-    internal static string? ConsultWorkspaceFile(string name)
-    {
-        try
+    internal static Task<string?> ConsultWorkspaceFile(string name)
+        => OnEngine(() =>
         {
-            _session!.Engine.ConsultFile(Resolve(name));
-            return null;
-        }
-        catch (Exception ex) { return Describe(ex); }
-    }
+            try
+            {
+                EndRun();       // as ConsultBuffer: the program is changing
+                _session!.Engine.ConsultFile(Resolve(name));
+                return (string?)null;
+            }
+            catch (Exception ex) { return Describe(ex); }
+        });
 
     /// <summary>Rejects anything that would leave the workspace. The page is not
     /// a hostile input, but a path assembled from a Prolog program's output is

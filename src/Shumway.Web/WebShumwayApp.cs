@@ -8,13 +8,15 @@ namespace Shumway.Web;
 /// WebShumway's engine side: the surface JavaScript calls, over the shared
 /// <see cref="TopLevelSession"/> the console REPL also drives.
 ///
-/// <para><b>Why these are synchronous.</b> The plan is for the engine to move to
-/// a Web Worker so a long search cannot freeze the tab. That is a change of
-/// TRANSPORT, not of contract: the async seam lives in <c>main.js</c>, which
-/// presents an async facade to the UI. Today it resolves these calls directly;
-/// under a Worker it will postMessage instead, and no UI code changes. Making
-/// these return Task today would only wrap a synchronous result in a promise —
-/// the appearance of async without the property that matters.</para>
+/// <para><b>Why every export returns a Task.</b> The app is built with
+/// <c>WasmEnableThreads</c>, which moves the .NET runtime OFF the browser's UI
+/// thread. JavaScript then reaches it by posting to that thread, and the runtime
+/// rejects synchronous exports outright ("Cannot call synchronous C# methods") —
+/// a synchronous call would have to block the UI thread waiting for a reply,
+/// which is the freeze this design exists to prevent. Work that can take time
+/// goes one hop further, onto a POOL thread (<c>Task.Run</c>), leaving the
+/// runtime thread free to receive <see cref="QueryCancel"/> while a search
+/// runs.</para>
 ///
 /// <para>Solutions are PULLED one at a time (<see cref="QueryNext"/>), which is
 /// what lets the UI offer "next solution" the way the REPL offers <c>;</c>.</para>
@@ -23,6 +25,27 @@ internal static partial class WebShumwayApp
 {
     private static TopLevelSession? _session;
     private static QueryRun? _run;
+
+    /// <summary>Serializes everything that touches the engine.
+    ///
+    /// <para>An activation is single-threaded internally — the engine is not a
+    /// thing two threads may be inside at once. With the search on a pool thread
+    /// there ARE two threads in play, and the editor asks for highlighting on
+    /// every keystroke, which reads the live operator table a consult is busy
+    /// mutating. So engine work queues rather than overlaps: at most one of
+    /// these bodies runs at a time, whichever thread called it.</para>
+    ///
+    /// <para><see cref="QueryCancel"/> is deliberately outside — it must reach a
+    /// running search, and it only sets a flag the engine reads at a safe
+    /// point.</para></summary>
+    private static readonly SemaphoreSlim _engineGate = new(1, 1);
+
+    private static async Task<T> OnEngine<T>(Func<T> work)
+    {
+        await _engineGate.WaitAsync().ConfigureAwait(false);
+        try { return await Task.Run(work).ConfigureAwait(false); }
+        finally { _engineGate.Release(); }
+    }
 
     /// <summary>Reply prefixes from <see cref="QueryNext"/>. One character, so a
     /// search that steps solution by solution crosses to JavaScript cheaply.</summary>
@@ -36,127 +59,186 @@ internal static partial class WebShumwayApp
     [JSImport("ui.write", "main.js")]
     internal static partial void WriteToPage(string text);
 
+    /// <summary>The runtime thread's context, captured while we are on it.
+    /// JavaScript interop is thread-affine: <see cref="WriteToPage"/> may only be
+    /// called from the thread that owns the JavaScript side. The search does not
+    /// run there, so output made during a query is posted back through this.</summary>
+    private static SynchronizationContext? _jsThread;
+
     private static void Main()
     {
         // A Main is required to start the runtime; the app itself is driven from
-        // JavaScript through the exports below.
+        // JavaScript through the exports below. This runs ON the runtime thread,
+        // which is the only place its context can be captured.
+        _jsThread = SynchronizationContext.Current;
     }
 
     /// <summary>Creates the engine. Returns a short description of what booted,
     /// or a message starting with "error:" if it could not.</summary>
     [JSExport]
-    internal static string Boot()
-    {
-        try
+    internal static Task<string> Boot()
+        => OnEngine(() =>
         {
-            // Out must be set BEFORE the first query: query setup builds the stream
-            // registry, and user_output keeps whatever writer it was handed then.
-            PrologEngine engine = BootEngine();
-            engine.Out = new PageWriter();
-            _session = new TopLevelSession(engine);
-            // Relative paths in Prolog — consult('lists.pl'), open/4 — resolve
-            // against the workspace, so a program means what it says.
-            EnsureWorkspace();
-            return Tier0Only
-                ? "Shumway ready (Tier-0 interpreter)."
-                : "Shumway ready.";
-        }
-        catch (Exception ex)
-        {
-            return "error: " + ex.Message;
-        }
-    }
+            try
+            {
+                // Out must be set BEFORE the first query: query setup builds the stream
+                // registry, and user_output keeps whatever writer it was handed then.
+                PrologEngine engine = BootEngine();
+                engine.Out = new PageWriter();
+                engine.In = _pageInput;
+                _session = new TopLevelSession(engine);
+                // Relative paths in Prolog — consult('lists.pl'), open/4 — resolve
+                // against the workspace, so a program means what it says.
+                EnsureWorkspace();
+                return Tier0Only
+                    ? "Shumway ready (Tier-0 interpreter)."
+                    : "Shumway ready.";
+            }
+            catch (Exception ex)
+            {
+                return "error: " + ex.Message;
+            }
+        });
 
-    /// <summary>Loads Prolog source. Returns null on success, or the error text.</summary>
+    /// <summary>Loads the editor's buffer. Returns null on success, or the error
+    /// text. RE-consults: the predicates the buffer defines are replaced, so
+    /// pressing the button twice does not define everything twice.
+    ///
+    /// <para>On a pool thread like the search: compiling a large program is not
+    /// instantaneous either, and the page must stay drawable while it
+    /// happens.</para></summary>
     [JSExport]
-    internal static string? Consult(string source)
-    {
-        try
+    internal static Task<string?> ConsultBuffer(string source)
+        => OnEngine(() =>
         {
-            _session!.Consult(source);
-            return null;
-        }
-        catch (Exception ex) { return Describe(ex); }
-    }
+            // Any query still open is over. It was asked of the program as it
+            // was, and that program is about to change; holding its cursor open
+            // across the change would let the user ask for the next solution of
+            // a search whose clauses no longer exist. The gate guarantees no
+            // search is mid-step here, so ending it is safe.
+            EndRun();
+            try
+            {
+                _session!.ReconsultBuffer(source);
+                return (string?)null;
+            }
+            catch (Exception ex) { return Describe(ex); }
+        });
 
     /// <summary>Begins a query. Returns null when it started, or the error text —
     /// a syntax error surfaces here, because the engine parses before it runs.</summary>
     [JSExport]
-    internal static string? QueryStart(string queryText)
+    internal static Task<string?> QueryStart(string queryText)
     {
-        QueryCancel();
-        try
+        _run?.Cancel();
+        return OnEngine(() =>
         {
-            _run = _session!.StartQuery(queryText);
-            return null;
-        }
-        catch (Exception ex) { return Describe(ex); }
+            // A fresh query gets a fresh input stream: an end-of-file answered
+            // to the last one must not be the first thing this one reads.
+            _pageInput.Reset();
+            try
+            {
+                _run = _session!.StartQuery(queryText);
+                return (string?)null;
+            }
+            catch (Exception ex) { return Describe(ex); }
+        });
     }
 
     /// <summary>Takes the next solution. The reply is one tag character followed by
-    /// the text: see TagSolution / TagLast / TagFailed / TagError.</summary>
+    /// the text: see TagSolution / TagLast / TagFailed / TagError.
+    ///
+    /// <para>Runs the search on a POOL THREAD and hands JavaScript a promise. The
+    /// search is synchronous — it blocks whatever thread it is on until it has an
+    /// answer — so the one thing that must not happen is for that thread to be the
+    /// one drawing the page. Off the UI thread, the page keeps responding and
+    /// <see cref="QueryCancel"/> can actually reach the engine while it is
+    /// working.</para></summary>
     [JSExport]
-    internal static string QueryNext(int width)
-    {
-        if (_run is null) return TagFailed.ToString();
-        try
+    internal static Task<string> QueryNext(int width)
+        => OnEngine(() =>
         {
-            if (!_run.MoveNext()) { EndRun(); return TagFailed.ToString(); }
-            string text = _run.Format(width <= 20 ? 80 : width);
-            if (_run.IsLast) { EndRun(); return TagLast + text; }
-            return TagSolution + text;
-        }
-        catch (Exception ex)
-        {
-            EndRun();
-            return TagError + Describe(ex);
-        }
-    }
+            if (_run is null) return TagFailed.ToString();
+            try
+            {
+                if (!_run.MoveNext()) { EndRun(); return TagFailed.ToString(); }
+                string text = _run.Format(width <= 20 ? 80 : width);
+                if (_run.IsLast) { EndRun(); return TagLast + text; }
+                return TagSolution + text;
+            }
+            catch (OperationCanceledException)
+            {
+                EndRun();
+                return TagFailed.ToString();
+            }
+            catch (Exception ex)
+            {
+                EndRun();
+                return TagError + Describe(ex);
+            }
+        });
 
-    /// <summary>Abandons the running query, if any. The engine stops at its next
-    /// safe point, so this is prompt rather than instantaneous.</summary>
+    /// <summary>Abandons the running query, if any. Called from the UI thread
+    /// WHILE the search may be running on a pool thread: it only sets the
+    /// cancellation token, which the engine observes at its next safe point, so
+    /// it is prompt rather than instantaneous. Disposing is left to whoever
+    /// finishes the run, or the token would be pulled out from under it.</summary>
     [JSExport]
-    internal static void QueryCancel()
+    internal static Task<bool> QueryCancel()
     {
+        bool wasRunning = _run is not null;
         _run?.Cancel();
-        EndRun();
+        // Task<bool> rather than a bare Task: a non-generic Task is not
+        // marshalable, and a synchronous void is not callable under threads.
+        return Task.FromResult(wasRunning);
     }
 
     /// <summary>Predicate names starting with <paramref name="prefix"/>, for the
     /// editor's completion. Newline-separated: a plain string crosses to
     /// JavaScript far more cheaply than an array of them.</summary>
     [JSExport]
-    internal static string Complete(string prefix)
-        => _session is null ? "" : string.Join('\n', _session.Complete(prefix));
+    internal static Task<string> Complete(string prefix)
+        => OnEngine(() =>
+            _session is null ? "" : string.Join('\n', _session.Complete(prefix)));
 
-    /// <summary>Highlighting for the editor, as flat triples
-    /// <c>[start, length, kind, …]</c> — one array rather than a list of objects,
-    /// because this crosses to JavaScript on every keystroke. <c>kind</c> indexes
+    /// <summary>Highlighting for the editor: flat triples
+    /// <c>start,length,kind,…</c> comma-separated. <c>kind</c> indexes
     /// <see cref="SpanKind"/>; the spans cover the text exactly and in order, so
     /// the renderer can emit them one after another.
+    ///
+    /// <para>A string rather than an <c>int[]</c> because an array inside a Task
+    /// is not marshalable, and under threads every export is a Task. The parse on
+    /// the JavaScript side is cheap next to re-rendering the overlay, which is
+    /// what this call is for.</para>
     ///
     /// <para>Uses the ENGINE'S lexer and the LIVE operator table, so the editor
     /// agrees with the reader — including operators the consulted program
     /// declared itself.</para></summary>
     [JSExport]
-    internal static int[] Highlight(string source)
-    {
-        var spans = SyntaxHighlighter.Highlight(source, _session?.Engine.Operators);
-        var flat = new int[spans.Count * 3];
-        for (int i = 0; i < spans.Count; i++)
+    internal static Task<string> Highlight(string source)
+        => OnEngine(() =>
         {
-            flat[i * 3] = spans[i].Start;
-            flat[i * 3 + 1] = spans[i].Length;
-            flat[i * 3 + 2] = (int)spans[i].Kind;
-        }
-        return flat;
-    }
+            // Reads the LIVE operator table, which a consult mutates — hence the
+            // gate. It also means highlighting waits behind a running search;
+            // the page's editor draws its text without waiting for the colours.
+            var spans = SyntaxHighlighter.Highlight(source, _session?.Engine.Operators);
+            var sb = new System.Text.StringBuilder(spans.Count * 12);
+            for (int i = 0; i < spans.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(spans[i].Start).Append(',')
+                  .Append(spans[i].Length).Append(',')
+                  .Append((int)spans[i].Kind);
+            }
+            return sb.ToString();
+        });
 
     /// <summary>The <see cref="SpanKind"/> names, in ordinal order, so the page
     /// can turn a kind index into a CSS class without hard-coding the enum.</summary>
     [JSExport]
-    internal static string HighlightKinds()
-        => string.Join(',', Enum.GetNames<SpanKind>().Select(n => n.ToLowerInvariant()));
+    internal static Task<string> HighlightKinds()
+        => Task.FromResult(
+            string.Join(',', Enum.GetNames<SpanKind>().Select(n => n.ToLowerInvariant())));
 
     private static void EndRun()
     {
@@ -172,15 +254,25 @@ internal static partial class WebShumwayApp
             : string.Join('\n', ErrorRendering.Describe(_session.Engine, ex));
 
     /// <summary>The engine's output stream, forwarding to the page. Buffers nothing:
-    /// a program that writes as it searches should be watchable while it runs.</summary>
+    /// a program that writes as it searches should be watchable while it runs.
+    ///
+    /// <para>A write from the search thread cannot touch JavaScript directly, so it
+    /// is POSTED to the runtime thread. Posts on one context run in the order they
+    /// were made, which is the property that matters: a program's output must
+    /// reach the page in the order it was written.</para></summary>
     private sealed class PageWriter : TextWriter
     {
         public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
-        public override void Write(char value) => WriteToPage(value.ToString());
+        public override void Write(char value) => Write(value.ToString());
+        public override void WriteLine(string? value) => Write((value ?? "") + "\n");
+
         public override void Write(string? value)
         {
-            if (!string.IsNullOrEmpty(value)) WriteToPage(value);
+            if (string.IsNullOrEmpty(value)) return;
+            if (_jsThread is null || SynchronizationContext.Current == _jsThread)
+                WriteToPage(value);
+            else
+                _jsThread.Post(static s => WriteToPage((string)s!), value);
         }
-        public override void WriteLine(string? value) => Write((value ?? "") + "\n");
     }
 }
