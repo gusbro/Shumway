@@ -50,3 +50,9 @@ export async function complete(prefix) {
   const s = engine.Complete(prefix);
   return s.length === 0 ? [] : s.split('\n');
 }
+
+/** Flat [start, length, kind, …] spans covering `source`, from the engine's lexer. */
+export const highlight = async (source) => engine.Highlight(source);
+
+/** CSS-class names indexed by span kind. */
+export const highlightKinds = () => engine.HighlightKinds().split(',');

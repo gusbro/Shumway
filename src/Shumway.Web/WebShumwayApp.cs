@@ -126,6 +126,35 @@ internal static partial class WebShumwayApp
     internal static string Complete(string prefix)
         => _session is null ? "" : string.Join('\n', _session.Complete(prefix));
 
+    /// <summary>Highlighting for the editor, as flat triples
+    /// <c>[start, length, kind, …]</c> — one array rather than a list of objects,
+    /// because this crosses to JavaScript on every keystroke. <c>kind</c> indexes
+    /// <see cref="SpanKind"/>; the spans cover the text exactly and in order, so
+    /// the renderer can emit them one after another.
+    ///
+    /// <para>Uses the ENGINE'S lexer and the LIVE operator table, so the editor
+    /// agrees with the reader — including operators the consulted program
+    /// declared itself.</para></summary>
+    [JSExport]
+    internal static int[] Highlight(string source)
+    {
+        var spans = SyntaxHighlighter.Highlight(source, _session?.Engine.Operators);
+        var flat = new int[spans.Count * 3];
+        for (int i = 0; i < spans.Count; i++)
+        {
+            flat[i * 3] = spans[i].Start;
+            flat[i * 3 + 1] = spans[i].Length;
+            flat[i * 3 + 2] = (int)spans[i].Kind;
+        }
+        return flat;
+    }
+
+    /// <summary>The <see cref="SpanKind"/> names, in ordinal order, so the page
+    /// can turn a kind index into a CSS class without hard-coding the enum.</summary>
+    [JSExport]
+    internal static string HighlightKinds()
+        => string.Join(',', Enum.GetNames<SpanKind>().Select(n => n.ToLowerInvariant()));
+
     private static void EndRun()
     {
         _run?.Dispose();

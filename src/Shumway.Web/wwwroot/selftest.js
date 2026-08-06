@@ -5,7 +5,7 @@
 //
 // Loaded on demand, so a normal page never fetches it.
 
-export async function run(session, emit, out) {
+export async function run(session, emit, out, editor) {
   let failures = 0;
 
   const check = (name, got, want) => {
@@ -59,6 +59,44 @@ export async function run(session, emit, out) {
   await session.start('between(1, 100000000, X), X > 99999999.');
   await session.cancel();
   check('cancel leaves no run', (await session.next(80)).tag, session.FAILED);
+
+  // --- the editor's highlighting, over the real DOM -----------------------
+  const backdrop = document.getElementById('program-backdrop');
+  const program = document.getElementById('program');
+
+  // repaintNow rather than the input event: the scheduled repaint waits for a
+  // frame, and a headless browser's virtual clock does not reliably deliver one.
+  const paint = async (src) => {
+    program.value = src;
+    await editor.repaintNow();
+    return backdrop;
+  };
+
+  const painted = await paint("foo(X) :- bar(X). % note\n");
+  check('backdrop reproduces the text exactly',
+        painted.textContent.replace(/\n$/, ''), "foo(X) :- bar(X). % note\n");
+  check('variables are coloured',
+        [...painted.querySelectorAll('.tok-variable')].some(e => e.textContent === 'X'), true);
+  check('comments are coloured',
+        [...painted.querySelectorAll('.tok-comment')].some(e => e.textContent === '% note'), true);
+  check('operators are coloured',
+        [...painted.querySelectorAll('.tok-operator')].some(e => e.textContent === ':-'), true);
+
+  const halfTyped = await paint("p('unterminated");
+  check('half-typed text still reproduces',
+        halfTyped.textContent.replace(/\n$/, ''), "p('unterminated");
+
+  // A program-declared operator must colour as one once consulted — the payoff
+  // of asking the live table instead of a fixed pattern list.
+  await paint('X #= Y.');
+  const beforeOp = [...backdrop.querySelectorAll('.tok-operator')].some(e => e.textContent === '#=');
+  await session.consult(':- op(700, xfx, #=).');
+  await paint('X #= Y.');
+  const afterOp = [...backdrop.querySelectorAll('.tok-operator')].some(e => e.textContent === '#=');
+  check('program-declared operator colours after consult', [beforeOp, afterOp].join(), 'false,true');
+
+  program.value = '';
+  await editor.repaintNow();
 
   emit(`--- selftest ${failures === 0 ? 'passed' : failures + ' FAILED'} ---\n`,
        failures === 0 ? 'note' : 'error');

@@ -22,10 +22,17 @@
   <div class="panes">
     <section class="pane">
       <h2><label for="program">Program</label></h2>
-      <textarea id="program" spellcheck="false" autocapitalize="off" autocomplete="off"
-                placeholder="anc(X, Y) :- par(X, Y).&#10;anc(X, Z) :- par(X, Y), anc(Y, Z).&#10;&#10;par(a, b).&#10;par(b, c)."></textarea>
+      <!-- The editor: a real <textarea> does the editing, the <pre> behind it
+           does the colouring, and the textarea's own text is transparent. They
+           stay aligned because they share font, padding, border and wrapping. -->
+      <div class="editor">
+        <pre id="program-backdrop" aria-hidden="true"></pre>
+        <textarea id="program" spellcheck="false" autocapitalize="off" autocomplete="off"
+                  placeholder="anc(X, Y) :- par(X, Y).&#10;anc(X, Z) :- par(X, Y), anc(Y, Z).&#10;&#10;par(a, b).&#10;par(b, c)."></textarea>
+      </div>
       <div class="row">
         <button id="consult" type="button">Consult</button>
+        <span class="hint">Tab completes a predicate name</span>
       </div>
     </section>
 

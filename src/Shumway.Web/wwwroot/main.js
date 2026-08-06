@@ -6,11 +6,16 @@
 // stops — the same keys the console REPL answers to, so the habit transfers.
 
 import * as session from './session.js';
+import { attach } from './editor.js';
 
 const out = document.getElementById('out');
 const queryInput = document.getElementById('query');
 const programInput = document.getElementById('program');
 const statusEl = document.getElementById('status');
+
+// Attached once the engine exists (its colouring comes from the engine's lexer),
+// so the handlers registered below must tolerate it being absent for that moment.
+let editor = null;
 
 // --- the transcript ------------------------------------------------------
 
@@ -121,7 +126,19 @@ document.getElementById('stop').addEventListener('click', () => stop());
 
 document.getElementById('consult').addEventListener('click', async () => {
   const err = await session.consult(programInput.value);
-  emit(err ? err + '\n' : '% consulted.\n', err ? 'error' : 'note');
+  if (!err) {
+    editor?.markError(null);
+    // Operators the program declared are now in the table, so the buffer's
+    // colouring can change on consult — repaint it.
+    editor?.repaint();
+    emit('% consulted.\n', 'note');
+    return;
+  }
+  emit(err + '\n', 'error');
+  // A parse error names its position; put it on the editor too, so the report
+  // and the text the user has to fix are not in different places.
+  const at = /(\d+):(\d+):/.exec(err);
+  if (at) editor?.markError(Number(at[1]), Number(at[2]), err);
 });
 
 // --- boot ----------------------------------------------------------------
@@ -129,6 +146,18 @@ document.getElementById('consult').addEventListener('click', async () => {
 out.textContent = '';
 emit(await session.boot(emitEngineOutput) + '\n\n', 'note');
 setPending(false);
+
+editor = attach(
+  programInput, document.getElementById('program-backdrop'),
+  session.highlight, session.highlightKinds(), session.complete);
+
 queryInput.focus();
 
-if (location.hash === '#selftest') (await import('./selftest.js')).run(session, emit, out);
+if (location.hash === '#selftest') {
+  try {
+    await (await import('./selftest.js')).run(session, emit, out, editor);
+  } catch (ex) {
+    // A selftest that dies silently reads as a selftest that passed.
+    emit(`--- selftest CRASHED: ${ex && ex.stack ? ex.stack : ex} ---\n`, 'error');
+  }
+}

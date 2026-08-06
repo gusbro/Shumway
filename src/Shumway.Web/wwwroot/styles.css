@@ -42,7 +42,61 @@ textarea:focus-visible, input:focus-visible, pre#out:focus-visible {
   outline-offset: 1px;
 }
 
-textarea { height: 24rem; resize: vertical; }
+/* --- the editor overlay ---
+   The textarea and the backdrop must lay text out IDENTICALLY, or the caret
+   drifts from the colours. Everything that affects layout is set on both. */
+.editor { position: relative; height: 24rem; }
+
+.editor > #program,
+.editor > #program-backdrop {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  height: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 4;
+}
+
+.editor > #program {
+  resize: none;
+  background: transparent;
+  color: transparent;          /* the text you see is the backdrop's */
+  caret-color: currentColor;
+  position: relative;          /* above the backdrop, to take the events */
+  z-index: 1;
+}
+.editor > #program::placeholder { color: var(--muted); }
+.editor > #program::selection { background: color-mix(in srgb, currentColor 25%, transparent); }
+.editor > #program.has-error { border-color: var(--error); }
+
+.editor > #program-backdrop {
+  pointer-events: none;
+  border-color: transparent;   /* the textarea draws the border */
+}
+
+/* Token colours. Deliberately few: structure first, then what a reader scans
+   for — a variable, a quoted string, a comment to skip. */
+.tok-comment  { color: var(--muted); font-style: italic; }
+.tok-variable { color: light-dark(#7a3ea3, #d8a7ff); }
+.tok-operator { color: light-dark(#0b5f8a, #7fd1ff); }
+.tok-number   { color: light-dark(#0b5f2a, #7ee2a8); }
+.tok-quoted   { color: light-dark(#9a5b00, #ffc879); }
+.tok-error    { text-decoration: underline wavy var(--error); }
+
+.completions {
+  font: 12px var(--mono);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: .35rem;
+  padding: .35rem .5rem;
+  margin-top: .35rem;
+  max-height: 6rem;
+  overflow: auto;
+}
+
+.hint { font-size: .78rem; color: var(--muted); margin-left: .6rem; }
 
 pre#out {
   height: 24rem;
