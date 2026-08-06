@@ -738,6 +738,7 @@ public sealed partial class PrologEngine
     {
         var attvars = new List<int>();
         var seen = new HashSet<int>();
+        var seenStructs = new HashSet<int>();
         foreach (int a in rootAddrs)
             if (seen.Add(a)) attvars.Add(a);
         if (attvars.Count == 0) return null;
@@ -751,7 +752,7 @@ public sealed partial class PrologEngine
             {
                 int valueIdx = source.GetAttr(vAddr, moduleId);
                 if (valueIdx < 0) continue;
-                MetaBuiltins.CollectAttvars(source, Cell.Ref(valueIdx), attvars, seen);
+                MetaBuiltins.CollectAttvars(source, Cell.Ref(valueIdx), attvars, seen, seenStructs);
                 Term attrValue = TermReader.Materialize(source, valueIdx);
                 string moduleName = AtomTable.GetById(moduleId)?.Name ?? "";
                 if (moduleName.Length == 0) continue;

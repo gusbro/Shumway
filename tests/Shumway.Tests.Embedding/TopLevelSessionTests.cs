@@ -99,6 +99,43 @@ public class TopLevelSessionTests
     }
 
     [Fact]
+    public void ProjectsResidualConstraintsOfVariablesInsideATerm()
+    {
+        // The queens shape: the constrained variables are ELEMENTS of a list the
+        // goal built, not query variables. Their domains must still be reported —
+        // an answer of `Qs = [_G4, _G6, _G8]` alone says nothing true about Qs.
+        var engine = new PrologEngine { Out = new StringWriter() };
+        engine.UseClpfd();
+        using var run = new TopLevelSession(engine)
+            .StartQuery("length(Qs, 3), Qs ins 1..3.");
+        Assert.True(run.MoveNext());
+        string answer = run.Format(80);
+
+        var lines = answer.Split(",\n");
+        Assert.Equal(4, lines.Length);              // the binding + one domain each
+        Assert.StartsWith("Qs = [", lines[0]);
+        // And each domain names a variable the binding actually shows.
+        foreach (string line in lines.Skip(1))
+        {
+            Assert.EndsWith(" in 1..3", line);
+            Assert.Contains(line[..line.IndexOf(' ')], lines[0]);
+        }
+    }
+
+    [Fact]
+    public void AVariableInsideAnotherValuePrintsAsItsName()
+    {
+        // `Y = f(_G0)` next to `_G0 in 4..6` reads as two unrelated facts. The
+        // name the user typed is the one thing tying the answer together.
+        var engine = new PrologEngine { Out = new StringWriter() };
+        engine.UseClpfd();
+        using var run = new TopLevelSession(engine)
+            .StartQuery("X #> 3, X #< 7, Y = f(X).");
+        Assert.True(run.MoveNext());
+        Assert.Equal("X in 4..6,\nY = f(X)", run.Format(80));
+    }
+
+    [Fact]
     public void SharedValuesChainInsteadOfRepeating()
     {
         // SWI-style: A = B, B = value — not the same value printed twice.

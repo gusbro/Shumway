@@ -35,20 +35,30 @@ public static class SolutionFormatter
         if (userVars.Count == 0)
             return solution.Bindings.Count == 0 ? "true" : solution.ToString(width);
 
-        // Build copy-name -> original-name map from the copies binding
-        // (a list `[Copy1, Copy2, ...]` aligned with userVars).
+        // An unbound user variable's value is an engine variable `_Gn`; wherever
+        // that same `_Gn` turns up inside ANOTHER variable's value, it is the
+        // variable the user named. Rendering it as its name is what makes
+        // `Y = f(X)` read as f of X rather than f of something anonymous.
+        var displayName = new Dictionary<string, string>();
+        foreach (string name in userVars)
+            if (solution[name] is VarTerm ov) displayName.TryAdd(ov.Name, name);
+
+        // Copy-name -> the name the answer shows, from the copies binding (a list
+        // `[Copy1, Copy2, …]` aligned with userVars), walking each copy against the
+        // value it was copied from. Roots go first so a user variable's own name
+        // always wins over an occurrence of it nested in some other value.
         var copyToOriginal = new Dictionary<string, string>();
-        Term? copiesTerm = solution[QueryWrapper.CopiesVarName];
-        int idx = 0;
-        Term cursor = copiesTerm ?? new AtomTerm("[]");
-        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c
-               && idx < userVars.Count)
-        {
-            if (c.Args[0] is VarTerm v)
-                copyToOriginal[v.Name] = userVars[idx];
-            cursor = c.Args[1];
-            idx++;
-        }
+        var copies = ResidualProjection.ListElements(
+            solution[QueryWrapper.CopiesVarName]).ToList();
+        for (int i = 0; i < copies.Count && i < userVars.Count; i++)
+            if (copies[i] is VarTerm cv) copyToOriginal.TryAdd(cv.Name, userVars[i]);
+        for (int i = 0; i < copies.Count && i < userVars.Count; i++)
+            ResidualProjection.MapCopyNames(
+                copies[i], solution[userVars[i]], userVars[i], copyToOriginal);
+        // A copy that landed on an engine variable the user did name shows the name.
+        foreach (string key in copyToOriginal.Keys.ToList())
+            if (displayName.TryGetValue(copyToOriginal[key], out string? shown))
+                copyToOriginal[key] = shown;
 
         // Collect residual goals and substitute copy-vars back to originals.
         var residuals = new List<Term>();
@@ -100,6 +110,9 @@ public static class SolutionFormatter
             Term? val = solution[name];
             if (val is null || residualsByVar.ContainsKey(name)) continue;
             if (cycleNames is not null) val = ResidualProjection.SubstituteVarNames(val, cycleNames);
+            // A named variable occurring inside this value prints as its name.
+            if (displayName.Count > 0)
+                val = ResidualProjection.SubstituteVarNames(val, displayName);
             string key = AstTermRenderer.Render(val, 1200, ops);
             renderedValue[name] = key;
             if (!groups.TryGetValue(key, out var members))

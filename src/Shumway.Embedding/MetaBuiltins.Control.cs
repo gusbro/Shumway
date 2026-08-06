@@ -1000,7 +1000,8 @@ public static partial class MetaBuiltins
         // worklist: scanning a value may append more variables.
         var attvars = new System.Collections.Generic.List<int>();
         var seen = new System.Collections.Generic.HashSet<int>();
-        CollectAttvars(engine, engine.GetRegister(0), attvars, seen);
+        var seenStructs = new System.Collections.Generic.HashSet<int>();
+        CollectAttvars(engine, engine.GetRegister(0), attvars, seen, seenStructs);
 
         Term original = MaterializeRegister(engine, 0);
 
@@ -1015,7 +1016,7 @@ public static partial class MetaBuiltins
             foreach (int moduleId in engine.AttrModules(vAddr))
             {
                 int attrValueIdx = engine.GetAttr(vAddr, moduleId);
-                CollectAttvars(engine, Cell.Ref(attrValueIdx), attvars, seen);
+                CollectAttvars(engine, Cell.Ref(attrValueIdx), attvars, seen, seenStructs);
                 Term attrValue = TermReader.Materialize(engine, attrValueIdx);
                 string moduleName = AtomTable.GetById(moduleId)?.Name
                     ?? throw new InvalidOperationException(
@@ -1038,13 +1039,22 @@ public static partial class MetaBuiltins
     }
 
     /// <summary>Collects the distinct heap addresses of attributed
-    /// variables reachable from <paramref name="cell"/>. The shared
-    /// visited set also guards against a cyclic term looping.
-    /// Internal: the debugger's attvar transplant walks a SUSPENDED
-    /// activation with the same collector.</summary>
+    /// variables reachable from <paramref name="cell"/>.
+    /// <paramref name="seenVars"/> deduplicates the variables;
+    /// <paramref name="seenStructs"/> guards against a cyclic term looping.
+    ///
+    /// <para>The two sets must stay SEPARATE. An unbound variable inside a
+    /// list or structure lives in the argument cell itself, so once it gains
+    /// an attribute the attvar's address IS the compound's — sharing one set
+    /// makes the compound's own visited-mark swallow the variable. That is
+    /// the whole of <c>Qs ins 1..N</c> projecting no domains at all.</para>
+    ///
+    /// <para>Internal: the debugger's attvar transplant walks a SUSPENDED
+    /// activation with the same collector.</para></summary>
     internal static void CollectAttvars(Activation engine, Cell cell,
         System.Collections.Generic.List<int> addrs,
-        System.Collections.Generic.HashSet<int> seen)
+        System.Collections.Generic.HashSet<int> seenVars,
+        System.Collections.Generic.HashSet<int> seenStructs)
     {
         if (cell.Tag == Tag.Ref)
             cell = engine.GetHeap(engine.Deref(cell.AsHeapIndex));
@@ -1052,20 +1062,20 @@ public static partial class MetaBuiltins
         {
             case Tag.AttVar:
                 int va = cell.AsHeapIndex;
-                if (seen.Add(va)) addrs.Add(va);
+                if (seenVars.Add(va)) addrs.Add(va);
                 break;
             case Tag.Str:
                 int fIdx = cell.AsHeapIndex;
-                if (!seen.Add(fIdx)) break;
+                if (!seenStructs.Add(fIdx)) break;
                 var (_, arity) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
                 for (int i = 0; i < arity; i++)
-                    CollectAttvars(engine, engine.GetHeap(fIdx + 1 + i), addrs, seen);
+                    CollectAttvars(engine, engine.GetHeap(fIdx + 1 + i), addrs, seenVars, seenStructs);
                 break;
             case Tag.Lis:
                 int h = cell.AsHeapIndex;
-                if (!seen.Add(h)) break;
-                CollectAttvars(engine, engine.GetHeap(h), addrs, seen);
-                CollectAttvars(engine, engine.GetHeap(h + 1), addrs, seen);
+                if (!seenStructs.Add(h)) break;
+                CollectAttvars(engine, engine.GetHeap(h), addrs, seenVars, seenStructs);
+                CollectAttvars(engine, engine.GetHeap(h + 1), addrs, seenVars, seenStructs);
                 break;
         }
     }
@@ -1161,7 +1171,8 @@ public static partial class MetaBuiltins
     {
         var attvars = new System.Collections.Generic.List<int>();
         var seen = new System.Collections.Generic.HashSet<int>();
-        CollectAttvars(engine, engine.GetRegister(0), attvars, seen);
+        CollectAttvars(engine, engine.GetRegister(0), attvars, seen,
+            new System.Collections.Generic.HashSet<int>());
         return engine.UnifyRegisterWithHeapAt(1, BuildRefList(engine, attvars));
     }
 

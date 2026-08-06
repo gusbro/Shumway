@@ -54,6 +54,40 @@ public static class ResidualProjection
         }
     }
 
+    /// <summary>Maps the copy's variable names onto the names the answer displays,
+    /// by walking a copied value and the original it was copied from in step.
+    ///
+    /// <para>The residual goals a constraint library projects are expressed over the
+    /// COPY, so without this they mention variables that appear nowhere in the answer:
+    /// <c>Qs = [_G6, _G8], _G43 in 1..10</c> reads as three unrelated things. The
+    /// root's own name comes from <paramref name="rootName"/> — that is the name the
+    /// user typed — and every variable below it takes the original's name, which is
+    /// what the binding line prints for it.</para></summary>
+    public static void MapCopyNames(
+        Term copy, Term? original, string rootName, Dictionary<string, string> map)
+    {
+        // Explicit stack: a value can be a long list, and the walk must not be
+        // bounded by the C# stack.
+        var work = new Stack<(Term Copy, Term? Original, bool AtRoot)>();
+        work.Push((copy, original, true));
+        while (work.Count > 0)
+        {
+            var (c, o, atRoot) = work.Pop();
+            if (c is VarTerm cv)
+            {
+                // First mapping wins: the caller maps roots before nested
+                // occurrences, so a variable the user named keeps its name.
+                if (atRoot) map.TryAdd(cv.Name, rootName);
+                else if (o is VarTerm ov) map.TryAdd(cv.Name, ov.Name);
+                continue;
+            }
+            if (c is CompoundTerm cc && o is CompoundTerm oc
+                && cc.Functor == oc.Functor && cc.Args.Length == oc.Args.Length)
+                for (int i = 0; i < cc.Args.Length; i++)
+                    work.Push((cc.Args[i], oc.Args[i], false));
+        }
+    }
+
     /// <summary>Walks a Prolog list term, yielding its elements. A non-list or partial
     /// tail ends the walk (best-effort — the projection built the list, a malformed one
     /// only loses its tail).</summary>
