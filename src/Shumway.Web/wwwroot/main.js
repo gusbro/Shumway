@@ -196,6 +196,65 @@ document.getElementById('new-file').addEventListener('click', async () => {
   refreshFiles();
 });
 
+// --- examples ------------------------------------------------------------
+// Real programs, each with its queries in a comment at the top — the fastest
+// way to find out what the engine can do is to run something that does it.
+
+const EXAMPLES = [
+  ['family.pl',  'Relations and recursion'],
+  ['queens.pl',  'N queens, generate and test'],
+  ['zebra.pl',   'The zebra puzzle'],
+  ['clpfd.pl',   'Constraints over finite domains'],
+  ['dcg.pl',     'Grammars (DCG)'],
+  ['tabling.pl', 'Tabling: left recursion and memoisation'],
+];
+
+async function loadExample(name) {
+  const source = await (await fetch('examples/' + name)).text();
+  workspace.write(currentFile, programInput.value);   // don't lose the buffer
+  currentFile = name;
+  workspace.write(name, source);
+  programInput.value = source;
+  await editor?.repaintNow();
+  await workspace.persist();
+  refreshFiles();
+  // The constraint example needs its library; loading it here means the
+  // example runs as written instead of failing on the first #=.
+  if (name === 'clpfd.pl') {
+    const err = await session.useClpfd();
+    emit(err ? err + '\n' : '% CLP(FD) loaded.\n', err ? 'error' : 'note');
+  }
+  emit(`% loaded ${name} — its queries are in the comment at the top\n`, 'note');
+}
+
+const examplesEl = document.getElementById('examples');
+for (const [name, title] of EXAMPLES) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'example';
+  b.textContent = name.replace(/\.pl$/, '');
+  b.title = title;
+  b.addEventListener('click', () => loadExample(name));
+  examplesEl.appendChild(b);
+}
+
+// --- sharing -------------------------------------------------------------
+// No server to store anything on, so the program travels in the URL fragment —
+// which browsers never send anywhere. Sharing a link does not hand the code to
+// a third party.
+
+document.getElementById('share').addEventListener('click', async () => {
+  const encoded = await session.shareEncode(programInput.value, queryInput.value);
+  const url = location.origin + location.pathname + '#p=' + encoded;
+  try {
+    await navigator.clipboard.writeText(url);
+    emit(`% link copied (${url.length} characters)\n`, 'note');
+  } catch {
+    emit(`% link: ${url}\n`, 'note');
+  }
+  history.replaceState(null, '', '#p=' + encoded);
+});
+
 document.getElementById('consult').addEventListener('click', async () => {
   // The buffer IS a file; consulting saves it first, so what ran and what is
   // stored are the same text.
@@ -230,12 +289,35 @@ editor = attach(
 workspace.init(session.exports());
 const restored = await workspace.restore();
 if (workspace.read(currentFile) === null) workspace.write(currentFile, '');
-programInput.value = workspace.read(currentFile) ?? '';
+
+// A shared link wins over the stored buffer: someone who followed a link came
+// to see what is in it. It is not saved over the workspace file until they
+// consult or save, so following a link cannot silently destroy their work.
+const shared = /^#p=(.+)$/.exec(location.hash);
+if (shared) {
+  const unpacked = session.shareDecode(shared[1]);
+  if (unpacked) {
+    programInput.value = unpacked.program;
+    queryInput.value = unpacked.query;
+    emit('% loaded from a shared link\n', 'note');
+  } else {
+    emit('% that link could not be read\n', 'error');
+  }
+}
+if (!shared) programInput.value = workspace.read(currentFile) ?? '';
 await editor.repaintNow();
 refreshFiles();
 if (restored > 0) emit(`% ${restored} file(s) restored\n`, 'note');
 else if (!workspace.persistent())
   emit('% this browser has no origin-private storage — files last for this session only\n', 'note');
+
+// Offline. Registered after boot so it never competes with the runtime download
+// on a first visit; the second visit is the one that benefits.
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {
+    emit('% offline support unavailable in this browser\n', 'note');
+  });
+}
 
 queryInput.focus();
 

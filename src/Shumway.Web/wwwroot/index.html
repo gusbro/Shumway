@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WebShumway</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <meta name="theme-color" content="#111111" />
 
   <!-- Filled in by the WebAssembly SDK at publish: the runtime preload hint and
        the import map that resolves ./_framework/dotnet.js to its fingerprinted
@@ -17,6 +20,7 @@
   <header>
     <h1>WebShumway</h1>
     <p class="sub">Prolog in the browser — the Shumway engine compiled to WebAssembly.</p>
+    <div id="examples" class="examples" aria-label="examples"></div>
   </header>
 
   <div class="panes">
@@ -36,6 +40,7 @@
         <button id="new-file" type="button">New</button>
         <button id="open-file" type="button">Open…</button>
         <button id="save-file" type="button">Save as…</button>
+        <button id="share" type="button" title="copy a link containing this program">Share</button>
         <span class="hint">Tab completes a predicate name</span>
       </div>
     </section>

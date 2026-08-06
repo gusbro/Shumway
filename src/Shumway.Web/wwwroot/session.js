@@ -55,6 +55,22 @@ export async function complete(prefix) {
   return s.length === 0 ? [] : s.split('\n');
 }
 
+/** Packs a program and a query into a fragment-safe string. */
+export const shareEncode = (program, query) => engine.ShareEncode(program, query);
+
+/** Unpacks one, or null if the text is not a valid share. */
+export function shareDecode(encoded) {
+  const packed = engine.ShareDecode(encoded);
+  if (packed === null) return null;
+  const nl = packed.indexOf('\n');
+  const programLength = Number(packed.slice(0, nl));
+  const rest = packed.slice(nl + 1);
+  return { program: rest.slice(0, programLength), query: rest.slice(programLength) };
+}
+
+/** Loads CLP(FD). Resolves to null, or the diagnostic. */
+export const useClpfd = async () => engine.UseClpfd();
+
 /** Flat [start, length, kind, …] spans covering `source`, from the engine's lexer. */
 export const highlight = async (source) => engine.Highlight(source);
 

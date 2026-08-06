@@ -21,6 +21,11 @@
 
   <ItemGroup>
     <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
+    <!-- The service worker must NOT be fingerprinted. Its URL determines its
+         scope and its identity: a name that changes every publish would register
+         a new worker each time and leave the old ones in place. It is versioned
+         from the inside instead, by its cache name. -->
+    <StaticWebAssetFingerprintPattern Include="ServiceWorker" Pattern="sw.js" Expression="" />
   </ItemGroup>
 
   <ItemGroup>

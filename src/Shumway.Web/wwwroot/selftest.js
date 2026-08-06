@@ -164,6 +164,29 @@ export async function run(session, emit, out, editor, workspace) {
     }
   }
 
+  // --- sharing ------------------------------------------------------------
+  const shared = 'p(1).\np(2).  % a comment with | and \\n in it\n';
+  const packed = await session.shareEncode(shared, 'p(X).');
+  const unpacked = session.shareDecode(packed);
+  check('share round-trips the program', unpacked && unpacked.program, shared);
+  check('share round-trips the query', unpacked && unpacked.query, 'p(X).');
+  check('share is url-safe', encodeURIComponent(packed), packed);
+  check('a mangled link is rejected', session.shareDecode('not a share'), null);
+
+  // --- examples -------------------------------------------------------------
+  // Every example must at least parse and load; one that does not is worse than
+  // no example. (Their queries are exercised on the desktop REPL, where a wrong
+  // answer is visible; here the point is that the files ship and consult.)
+  for (const name of ['family.pl', 'queens.pl', 'zebra.pl', 'dcg.pl', 'tabling.pl', 'clpfd.pl']) {
+    const source = await (await fetch('examples/' + name)).text();
+    check(`example ${name} is served`, source.length > 0, true);
+  }
+  // A fresh engine per example is not available here, so only the one that
+  // needs no library is consulted — enough to prove the pipeline.
+  check('example family.pl consults',
+        await session.consult(await (await fetch('examples/family.pl')).text()), null);
+  check('and answers', await solutions('ancestor(ana, W), W == beto.'), 'W = beto');
+
   // Persistence is reported rather than assumed: a browser may refuse storage,
   // and the session must still work when it does.
   emit(`note: origin-private storage ${workspace.persistent() ? 'available' : 'UNAVAILABLE'}`

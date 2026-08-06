@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="WebShumway">
+  <rect width="512" height="512" rx="96" fill="#111"/>
+  <!-- The neck of a Prolog clause: head :- body. -->
+  <g fill="none" stroke="#7ee2a8" stroke-width="34" stroke-linecap="round">
+    <circle cx="150" cy="186" r="18" fill="#7ee2a8" stroke="none"/>
+    <circle cx="150" cy="326" r="18" fill="#7ee2a8" stroke="none"/>
+    <path d="M214 256 H362"/>
+  </g>
+  <path d="M362 200 L362 312" stroke="#7ee2a8" stroke-width="34" stroke-linecap="round"/>
+</svg>

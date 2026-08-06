@@ -152,3 +152,15 @@ button {
 }
 button:hover { background: color-mix(in srgb, currentColor 16%, transparent); }
 button:active { transform: translateY(1px); }
+
+.examples { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .6rem; }
+.example {
+  font: 12px var(--mono);
+  padding: .2rem .55rem;
+  border-radius: .3rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.example:hover { color: inherit; border-color: currentColor; }
