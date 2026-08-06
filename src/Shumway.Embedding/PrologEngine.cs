@@ -208,7 +208,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// engine that never touches streams pays nothing.</summary>
     private StreamRegistry? _streams;
     internal StreamRegistry Streams =>
-        _streams ??= new StreamRegistry(Out);
+        _streams ??= new StreamRegistry(Out, In);
 
     /// <summary>Activation-wide mutable flag state. Builtins
     /// <c>set_prolog_flag/2</c> and <c>current_prolog_flag/2</c> read
@@ -285,6 +285,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// swap in a <see cref="System.IO.StringWriter"/> to capture program
     /// output in tests.</summary>
     public System.IO.TextWriter Out { get; set; } = Console.Out;
+
+    /// <summary>The source <c>user_input</c> reads from — <c>read/1</c>,
+    /// <c>get_char/1</c> and the rest. Null means the host's standard input
+    /// (and end-of-file where the host has none, as a browser does). Set it
+    /// BEFORE the first query: the stream registry is built during query setup
+    /// and <c>user_input</c> keeps whatever reader it was handed then.</summary>
+    public System.IO.TextReader? In { get; set; }
 
     /// <summary>Per-engine state for Tier-0 → Tier-1 auto-promotion: an
     /// invocation counter per functor plus a cache of successfully

@@ -51,12 +51,12 @@ public sealed class StreamRegistry
     /// <see cref="System.Console.Error"/>.</summary>
     public StreamHandle UserError { get; }
 
-    public StreamRegistry(TextWriter defaultOut)
+    public StreamRegistry(TextWriter defaultOut, TextReader? defaultIn = null)
     {
         ArgumentNullException.ThrowIfNull(defaultOut);
 
         UserInput = new StreamHandle(
-            id: AllocateId(), reader: HostInput(),
+            id: AllocateId(), reader: defaultIn ?? HostInput(),
             mode: "read", filename: null, alias: "user_input");
         Register(UserInput);
 
