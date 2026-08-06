@@ -755,7 +755,7 @@ public sealed partial class PrologEngine
     {
         foreach (var (name, manifest) in _modules)
         {
-            if (name == Prelude.ModuleName || name == Clpfd.ModuleName) continue;
+            if (IsLibraryModule(name)) continue;
             foreach (var c in manifest.Clauses)
             {
                 if (TryExtractHead(c, out string n, out int a))
@@ -775,7 +775,7 @@ public sealed partial class PrologEngine
         var seen = new HashSet<int>();
         foreach (var (name, manifest) in _modules)
         {
-            if (name == Prelude.ModuleName || name == Clpfd.ModuleName) continue;
+            if (IsLibraryModule(name)) continue;
             foreach (var c in manifest.Clauses)
                 if (TryExtractHead(c, out string n, out int a))
                 {
@@ -806,15 +806,38 @@ public sealed partial class PrologEngine
         }
     }
 
-    /// <summary>true when the functor is part of the
-    /// always-loaded prelude / clpfd library. Listing skips these
-    /// the same way it skips builtins.</summary>
+    /// <summary>The libraries the engine itself provides. Their predicates are
+    /// not the user's program, so listing skips them the way it skips
+    /// builtins.</summary>
+    private static readonly string[] LibraryModules =
+    {
+        Prelude.ModuleName, Clpfd.ModuleName, Clpr.ModuleName, Coroutining.ModuleName,
+    };
+
+    internal static bool IsLibraryModule(string moduleName)
+        => Array.IndexOf(LibraryModules, moduleName) >= 0;
+
+    /// <summary>true when the functor belongs to one of those libraries.
+    ///
+    /// <para>The name test is not redundant with the public-functor test: a
+    /// library's LOCAL predicates are mangled <c>&lt;module&gt;$&lt;name&gt;</c>
+    /// and appear in no PublicFunctors set, so an engine booted from a bundle
+    /// with a baked prelude — precompiled records rather than manifest clauses —
+    /// would otherwise list every one of them
+    /// (<c>$prelude$$member3/3: 2 clauses, source stripped</c>).</para></summary>
     private bool IsLibraryFunctor(int fid)
     {
-        if (_modules.TryGetValue(Prelude.ModuleName, out var pre)
-            && pre.PublicFunctors.Contains(fid)) return true;
-        if (_modules.TryGetValue(Clpfd.ModuleName, out var cl)
-            && cl.PublicFunctors.Contains(fid)) return true;
+        foreach (string module in LibraryModules)
+            if (_modules.TryGetValue(module, out var m) && m.PublicFunctors.Contains(fid))
+                return true;
+
+        var (atomId, _) = FunctorTable.Lookup(fid);
+        string name = AtomTable.GetById(atomId)?.Name ?? "";
+        foreach (string module in LibraryModules)
+            if (name.Length > module.Length
+                && name[module.Length] == '$'
+                && name.StartsWith(module, StringComparison.Ordinal))
+                return true;
         return false;
     }
 
