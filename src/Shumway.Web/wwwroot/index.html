@@ -121,12 +121,33 @@ par(b, c)."></div>
       <div class="row">
         <h3>Libraries</h3>
         <button type="button" id="import-library">Import folder…</button>
+        <button type="button" id="import-url">Import from URL…</button>
         <button type="button" data-close>Close</button>
       </div>
       <p class="hint-block">Available to every workspace as
          <code>:- use_module(library(Name)).</code> A library from another
          system loads under its own dialect.</p>
       <div id="libraries-body" class="doc"></div>
+    </form>
+  </dialog>
+
+  <!-- A library from a URL, so nobody has to clone a whole Prolog system to
+       get one of its libraries. -->
+  <dialog id="url-dialog">
+    <form method="dialog">
+      <h3>Import from a URL</h3>
+      <p>A GitHub directory — open it on github.com and copy the address.</p>
+      <label class="field">Suggested
+        <select id="url-suggested"></select>
+      </label>
+      <label class="field">URL
+        <input id="url-input" type="url" spellcheck="false" autocapitalize="off"
+               placeholder="https://github.com/owner/repo/tree/branch/path" />
+      </label>
+      <div class="row end">
+        <button type="button" data-close>Cancel</button>
+        <button value="ok" class="primary">Fetch</button>
+      </div>
     </form>
   </dialog>
 

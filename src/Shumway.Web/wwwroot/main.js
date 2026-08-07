@@ -322,6 +322,7 @@ const referenceDialog = document.getElementById('reference-dialog');
 const guideDialog = document.getElementById('guide-dialog');
 const librariesDialog = document.getElementById('libraries-dialog');
 const importDialog = document.getElementById('import-dialog');
+const urlDialog = document.getElementById('url-dialog');
 
 // Cancel closes without submitting, so the only submit button is the one Enter
 // should press. Escape closes with an empty returnValue, which reads as cancel
@@ -330,7 +331,7 @@ const importDialog = document.getElementById('import-dialog');
 // The confirmation dialog has no such button in the markup: its answers vary by
 // question, so askChoice builds them — including the cancelling one.
 for (const dialog of [promptDialog, shareDialog, referenceDialog, guideDialog,
-                       librariesDialog, importDialog]) {
+                       librariesDialog, importDialog, urlDialog]) {
   dialog.querySelector('[data-close]')
     .addEventListener('click', () => dialog.close('cancel'));
 }
@@ -398,6 +399,9 @@ function askFor(title, value) {
 const buildStatusEl = document.getElementById('build-status');
 let buildRun = null;
 
+/** Above this many libraries, a collection is not compiled through unasked. */
+const BIG_COLLECTION = 80;
+
 // A consult PAUSES the batch. Not for the engine's sake — each compile holds
 // the engine gate for its own duration, so the two never run at once — but so
 // that what a consult resolves against is a settled set of bundles, and so that
@@ -455,7 +459,7 @@ async function buildCollection(name) {
 
   const queue = (await libraries.entries(name)).filter((e) => !e.compiled);
   const total = queue.length;
-  let built = 0, failed = 0;
+  let built = 0, failed = 0, stoppedEarly = false;
   let wanted = await librariesInUse();
   let knownAt = consultEpoch;
   const started = performance.now();
@@ -476,6 +480,12 @@ async function buildCollection(name) {
       // when a program's imports change.
       if (consultEpoch !== knownAt) { wanted = await librariesInUse(); knownAt = consultEpoch; }
       let next = queue.findIndex((e) => wanted.has(e.name));
+
+      // A big collection is not compiled through unasked. SWI's library is two
+      // hundred files; grinding for an hour on libraries nobody here calls is
+      // rude, and the ones that ARE called have just been done. The rest stay a
+      // button away.
+      if (next < 0 && total > BIG_COLLECTION) { stoppedEarly = true; break; }
       if (next < 0) next = 0;
       const [entry] = queue.splice(next, 1);
 
@@ -498,7 +508,10 @@ async function buildCollection(name) {
   emit(`% ${name}: ${built} librar${built === 1 ? 'y' : 'ies'} compiled in ${seconds}s`
      + (failed > 0 ? `, ${failed} could not be` : '')
      + (run.cancel ? ' (stopped)' : '')
-     + '. The rest still load from source.\n', 'note');
+     + (stoppedEarly
+          ? '. That is what your programs import; “compile the rest” for the others,'
+            + ' which still load from source.\n'
+          : '. The rest still load from source.\n'), 'note');
 }
 
 async function refreshLibraries() {
@@ -592,17 +605,13 @@ document.getElementById('libraries').addEventListener('click', async () => {
   librariesDialog.showModal();
 });
 
-document.getElementById('import-library').addEventListener('click', async () => {
-  const picked = await libraries.pickFolder();
-  if (!picked) return;
-  if (picked.files.length === 0) {
-    emit('% that folder holds no Prolog sources\n', 'error');
-    return;
-  }
-
+/** Names a set of fetched sources, writes them in, and starts building. Shared
+ *  by both ways in — where the files came from stops mattering here. */
+async function adoptCollection(files, { name: suggestedName, dialect = '', from }) {
   document.getElementById('import-detail').textContent =
-    `${picked.files.length} source file(s) from “${picked.name}”.`;
-  document.getElementById('import-name').value = picked.name;
+    `${files.length} source file(s) from “${from}”.`;
+  document.getElementById('import-name').value = suggestedName;
+  document.getElementById('import-dialect').value = dialect;
   importDialog.showModal();
   const answer = await new Promise((resolve) =>
     importDialog.addEventListener('close', () => resolve(importDialog.returnValue), { once: true }));
@@ -615,7 +624,7 @@ document.getElementById('import-library').addEventListener('click', async () => 
   let phase = 'importing';
   const err = await withBusy(
     () => `${phase} ${name}`,
-    () => libraries.importFolder(name, dial, picked.files, (p) => { phase = p; }));
+    () => libraries.importFolder(name, dial, files, (p) => { phase = p; }));
 
   if (err) { emit(`% ${name}: ${err}\n`, 'error'); return; }
   const provided = await libraries.entries(name);
@@ -623,6 +632,75 @@ document.getElementById('import-library').addEventListener('click', async () => 
      + ` — compiling them in the background; each gets faster as it lands\n`, 'note');
   await refreshLibraries();
   buildCollection(name);        // not awaited: it runs while the page is used
+}
+
+document.getElementById('import-library').addEventListener('click', async () => {
+  // Out of the way first: this dialog is modal, so anything reported while it
+  // is open is drawn behind its backdrop — which reads as nothing happening.
+  librariesDialog.close('');
+  const picked = await libraries.pickFolder();
+  if (!picked) return;
+  if (picked.files.length === 0) {
+    emit('% that folder holds no Prolog sources\n', 'error');
+    return;
+  }
+  await adoptCollection(picked.files, { name: picked.name, from: picked.name });
+});
+
+// --- from a URL -----------------------------------------------------------
+
+const urlSuggested = document.getElementById('url-suggested');
+const urlInput = document.getElementById('url-input');
+
+urlSuggested.replaceChildren(
+  Object.assign(document.createElement('option'), { value: '', textContent: 'another address…' }),
+  ...libraries.SUGGESTED.map((s, i) =>
+    Object.assign(document.createElement('option'), { value: String(i), textContent: s.label })));
+urlSuggested.addEventListener('change', () => {
+  const chosen = libraries.SUGGESTED[Number(urlSuggested.value)];
+  if (chosen) urlInput.value = chosen.url;
+});
+
+document.getElementById('import-url').addEventListener('click', async () => {
+  librariesDialog.close('');          // see import-library: modal hides progress
+  urlSuggested.value = '0';
+  urlInput.value = libraries.SUGGESTED[0].url;
+  urlDialog.showModal();
+  const answer = await new Promise((resolve) =>
+    urlDialog.addEventListener('close', () => resolve(urlDialog.returnValue), { once: true }));
+  if (answer !== 'ok') return;
+
+  const url = urlInput.value.trim();
+  const where = libraries.parseGitHubTree(url);
+  if (!where) {
+    emit('% that is not a GitHub directory address'
+       + ' (https://github.com/owner/repo/tree/branch/path)\n', 'error');
+    return;
+  }
+
+  const known = libraries.SUGGESTED.find((s) => s.url === url);
+  emit(`% fetching ${where.owner}/${where.repo}`
+     + (where.path ? `/${where.path}` : '') + `…\n`, 'note');
+
+  let fetched = 0, expected = 0;
+  let files;
+  try {
+    files = await withBusy(
+      () => expected === 0
+        ? `asking GitHub what is in ${where.repo}`
+        : `fetching ${where.repo}: ${fetched} of ${expected} files`,
+      () => libraries.fetchGitHubTree(where, (done, total) => { fetched = done; expected = total; }));
+  } catch (ex) {
+    emit(`% ${ex.message ?? ex}\n`, 'error');
+    return;
+  }
+  emit(`% fetched ${files.length} file(s)\n`, 'note');
+
+  await adoptCollection(files, {
+    name: known?.name ?? (where.path.split('/').pop() || where.repo),
+    dialect: known?.dialect ?? '',
+    from: `${where.owner}/${where.repo}`,
+  });
 });
 
 // --- the reference and the guide -----------------------------------------

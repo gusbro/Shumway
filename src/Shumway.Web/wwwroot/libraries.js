@@ -77,6 +77,88 @@ export async function pickFolder() {
  *  and whatever else, and none of it is what use_module resolves. */
 const isSource = (path) => /\.(pl|pro|prolog)$/i.test(path);
 
+// --- importing from a URL -------------------------------------------------
+// The point is not having to clone a whole Prolog system to get one library.
+//
+// Two hosts are involved and they behave differently, which is the whole story
+// of why this works: the FILES come from raw.githubusercontent.com, which sends
+// `Cross-Origin-Resource-Policy: cross-origin` and so is readable even from a
+// cross-origin-isolated page; the LISTING comes from api.github.com, which
+// sends CORS but no CORP — readable only because this app asks for
+// `credentialless` isolation rather than `require-corp`.
+
+/** Somewhere to start from, for the systems whose libraries are worth having. */
+export const SUGGESTED = [
+  {
+    label: 'Scryer Prolog — library (about 60 files)',
+    url: 'https://github.com/mthom/scryer-prolog/tree/master/src/lib',
+    dialect: 'scryer',
+    name: 'scryer',
+  },
+  {
+    label: 'SWI-Prolog — library (about 200 files)',
+    url: 'https://github.com/SWI-Prolog/swipl-devel/tree/master/library',
+    dialect: 'swi',
+    name: 'swi',
+  },
+];
+
+/** Reads `https://github.com/owner/repo/tree/ref/path` — what you get by
+ *  navigating to a directory on GitHub and copying the address. */
+export function parseGitHubTree(url) {
+  const m = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/?(.*)$/.exec(url.trim());
+  if (!m) return null;
+  const [, owner, repo, ref, path] = m;
+  return { owner, repo, ref, path: path.replace(/\/$/, '') };
+}
+
+/**
+ * Fetches every Prolog source under a GitHub directory.
+ *
+ * ONE listing request, recursive: a directory at a time would be one request
+ * per directory against an hourly budget of sixty.
+ *
+ * @param report called with (done, total) as the files arrive
+ */
+export async function fetchGitHubTree(where, report = () => {}) {
+  const listing = await fetch(
+    `https://api.github.com/repos/${where.owner}/${where.repo}`
+    + `/git/trees/${encodeURIComponent(where.ref)}?recursive=1`);
+  if (!listing.ok) {
+    throw new Error(listing.status === 403
+      ? 'GitHub is rate-limiting this address (sixty listings an hour, unauthenticated)'
+      : `GitHub answered ${listing.status} for that repository`);
+  }
+  const tree = (await listing.json()).tree ?? [];
+
+  const prefix = where.path ? where.path + '/' : '';
+  const wanted = tree.filter((e) =>
+    e.type === 'blob' && e.path.startsWith(prefix) && isSource(e.path));
+  if (wanted.length === 0) throw new Error('no Prolog sources under that path');
+
+  // A few at a time: sixty files fetched one after another is sixty round
+  // trips end to end, and most of each one is waiting. Six keeps it brisk
+  // without hammering a host that is doing us a favour.
+  const files = [];
+  const queue = [...wanted];
+  const worker = async () => {
+    while (queue.length > 0) {
+      const entry = queue.shift();
+      const raw = `https://raw.githubusercontent.com/${where.owner}/${where.repo}`
+        + `/${where.ref}/${entry.path}`;
+      try {
+        const response = await fetch(raw);
+        // One missing file is not a failed import.
+        if (response.ok)
+          files.push({ path: entry.path.slice(prefix.length), text: await response.text() });
+      } catch { /* likewise for one that would not come */ }
+      report(files.length, wanted.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(6, queue.length) }, worker));
+  return files;
+}
+
 async function collect(dir, prefix, into) {
   for await (const [name, handle] of dir.entries()) {
     const path = prefix + name;
