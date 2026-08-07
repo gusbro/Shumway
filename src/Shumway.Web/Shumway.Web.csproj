@@ -82,9 +82,15 @@
           Outputs="$(StdlibBundle)">
     <!-- Ordering without a ProjectReference: a browser-wasm app is self-contained
          and may not reference a framework-dependent executable (NETSDK1150), so
-         the two CLIs are built explicitly here instead. -->
+         the two CLIs are built explicitly here instead.
+
+         RESTORE as well as Build: a ProjectReference would have been restored
+         with this project, and these are not — so on a machine that has never
+         built them (a CI runner, a fresh clone) Build failed for want of
+         project.assets.json. It passed here only because they were already
+         built. -->
     <MSBuild Projects="..\Shumway.Compile\Shumway.Compile.csproj;..\Shumway.Link\Shumway.Link.csproj"
-             Targets="Build" Properties="Configuration=$(Configuration)" />
+             Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
     <MakeDir Directories="$(StdlibDir)" />
     <Exec Command="dotnet &quot;$(ShumwayCompileDll)&quot; boot.pl -o &quot;$(StdlibDir)boot.shmo&quot;" />
     <Exec Command="dotnet &quot;$(ShumwayLinkDll)&quot; &quot;$(StdlibDir)boot.shmo&quot; --stdlib --no-compress --entry web_boot/0 -o &quot;$(StdlibBundle)&quot;" />
