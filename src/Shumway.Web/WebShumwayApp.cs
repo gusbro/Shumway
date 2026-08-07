@@ -163,7 +163,7 @@ internal static partial class WebShumwayApp
     /// instantaneous either, and the page must stay drawable while it
     /// happens.</para></summary>
     [JSExport]
-    internal static Task<string?> ConsultBuffer(string source)
+    internal static Task<string?> ConsultBuffer(string source, string dialect)
         => OnEngine(() =>
         {
             // Any query still open is over. It was asked of the program as it
@@ -174,7 +174,16 @@ internal static partial class WebShumwayApp
             EndRun();
             try
             {
-                _session!.ReconsultBuffer(source);
+                // A buffer opened from a library is that library's source, and
+                // it means what its own system says it means: Scryer's
+                // double_quotes is not SWI's is not ISO's. Reading it as ISO
+                // gets it wrong — and quietly, since most of a file parses
+                // either way.
+                _session!.Engine.WithLibraryDialect(dialect, () =>
+                {
+                    _session.ReconsultBuffer(source);
+                    return true;
+                });
                 return (string?)null;
             }
             catch (Exception ex) { return Describe(ex); }

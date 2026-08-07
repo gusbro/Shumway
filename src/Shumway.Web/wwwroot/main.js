@@ -768,6 +768,21 @@ let currentFile = 'scratch.pl';
 // The library the open file belongs to, or null for the workspace's own. One
 // editor, two places a file can live — and saving has to reach the right one.
 let currentLib = null;
+// And which system's Prolog it is. A library's source means what ITS system
+// says it means — Scryer's double_quotes is not SWI's is not ISO's — so
+// consulting it has to read it that way. Empty for a workspace file, which is
+// the user's own program.
+let currentDialect = '';
+
+/** Opens a WORKSPACE file — the user's own program, in ISO Prolog. Going
+ *  through one function is what keeps `currentLib` from being left pointing at
+ *  a library after moving off one: saveBuffer would then write the workspace's
+ *  text into the library's file. */
+function editingWorkspaceFile(name) {
+  currentLib = null;
+  currentDialect = '';
+  editingWorkspaceFile(name);
+}
 
 /** Writes the editor's buffer back to its file, then mirrors to storage. */
 async function saveBuffer() {
@@ -785,10 +800,12 @@ async function saveBuffer() {
 async function openLibraryFile(name, file) {
   await saveBuffer();
   currentLib = name;
+  currentDialect = await libraries.dialect(name);
   currentFile = file;
   await editor.setText((await libraries.read(name, file)) ?? '');
   await refreshFiles();
-  emit(`% editing library ${name}/${file}\n`, 'note');
+  emit(`% editing library ${name}/${file}`
+     + (currentDialect ? ` — consulting it reads ${currentDialect} Prolog\n` : '\n'), 'note');
 }
 
 async function refreshWorkspaces() {
@@ -816,8 +833,7 @@ async function refreshFiles() {
     item.title = `open ${name}`;
     item.addEventListener('click', async () => {
       await saveBuffer();               // whichever place the open file lives in
-      currentLib = null;
-      currentFile = name;
+      editingWorkspaceFile(name);
       await editor.setText((await workspace.read(name)) ?? '');
       await refreshFiles();
     });
@@ -861,7 +877,7 @@ async function openWorkspace(name, { confirm = true } = {}) {
   settings.update({ workspace: name });
 
   const files = await workspace.list();
-  currentFile = files[0] ?? 'scratch.pl';
+  editingWorkspaceFile(files[0] ?? 'scratch.pl');
   if (files.length === 0) await workspace.write(currentFile, '');
   await editor.setText((await workspace.read(currentFile)) ?? '');
   await refreshWorkspaces();
@@ -913,8 +929,8 @@ document.getElementById('export-workspace').addEventListener('click', async () =
 document.getElementById('open-file').addEventListener('click', async () => {
   const names = await workspace.openFiles();
   if (names.length === 0) return;
-  await workspace.write(currentFile, program());
-  currentFile = names[0];
+  await saveBuffer();               // may be a library file: it saves where it belongs
+  editingWorkspaceFile(names[0]);
   await editor.setText((await workspace.read(currentFile)) ?? '');
   await workspace.persist();
   await refreshFiles();
@@ -954,9 +970,9 @@ addEventListener('keydown', async (e) => {
 document.getElementById('new-file').addEventListener('click', async () => {
   const name = await askFor('New file', 'program.pl');
   if (!name) return;
-  await workspace.write(currentFile, program());
+  await saveBuffer();               // may be a library file: it saves where it belongs
   await workspace.write(name, '');
-  currentFile = name;
+  editingWorkspaceFile(name);
   await editor.setText('');
   await workspace.persist();
   await refreshFiles();
@@ -1070,7 +1086,7 @@ async function openShared(shared) {
     const [file] = shared.files;
     if (!file) return;
     const { written } = await mergeSharedFiles([file]);
-    currentFile = file.name;
+    editingWorkspaceFile(file.name);
     await editor.setText((await workspace.read(file.name)) ?? '');
     await refreshFiles();
     emit(written
@@ -1105,7 +1121,7 @@ async function openShared(shared) {
   }
 
   const here = await workspace.list();
-  currentFile = here[0] ?? 'scratch.pl';
+  editingWorkspaceFile(here[0] ?? 'scratch.pl');
   await editor.setText((await workspace.read(currentFile)) ?? '');
   await refreshWorkspaces();
   await refreshFiles();
@@ -1148,7 +1164,7 @@ async function consultBuffer(note) {
   await saveBuffer();
   const started = performance.now();
   const err = await whileConsulting(
-    () => withBusy('consulting', () => session.consult(program())));
+    () => withBusy('consulting', () => session.consult(program(), currentDialect)));
   const took = Math.round(performance.now() - started);
   if (!err) {
     editor?.markError(null);
@@ -1232,7 +1248,7 @@ await workspace.setActive(known.includes(config.workspace) ? config.workspace : 
 await refreshWorkspaces();
 
 const inWorkspace = await workspace.list();
-currentFile = inWorkspace[0] ?? 'scratch.pl';
+editingWorkspaceFile(inWorkspace[0] ?? 'scratch.pl');
 if (inWorkspace.length === 0) await workspace.write(currentFile, '');
 
 // A shared link brings its own files. They are ADDED — never written over what

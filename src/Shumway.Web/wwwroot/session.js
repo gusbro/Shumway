@@ -42,7 +42,7 @@ export const exports = () => engine;
 
 /** Loads the editor's buffer, replacing what it defines. Resolves to null on
  *  success, or the diagnostic. */
-export const consult = async (source) => engine.ConsultBuffer(source);
+export const consult = async (source, dialect = '') => engine.ConsultBuffer(source, dialect);
 
 /** Begins a query. Resolves to null when it started, or the diagnostic —
  *  a syntax error surfaces here, because the engine parses before it runs. */
