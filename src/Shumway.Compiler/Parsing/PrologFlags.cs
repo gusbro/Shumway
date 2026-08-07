@@ -149,6 +149,18 @@ public sealed class PrologFlags
     /// <c>set_prolog_flag(prefer_rationals, true)</c>.</summary>
     public bool PreferRationals { get; set; } = false;
 
+    /// <summary>How much of an answer a TOP LEVEL prints before eliding: a list
+    /// shows this many elements and then <c>|...</c>, and a subterm nested
+    /// deeper than this shows as <c>...</c>. Zero means print everything.
+    ///
+    /// <para>An answer is read by a person, and <c>numlist(1, 10000000, X)</c>
+    /// has an answer nobody wants delivered in full. This affects ONLY what a
+    /// top level displays — <c>write/1</c> and friends print what they are
+    /// given, because a program's output is not a summary of itself.
+    /// <c>set_prolog_flag(answer_max_depth, 0)</c> when the whole thing is
+    /// wanted.</para></summary>
+    public int AnswerMaxDepth { get; set; } = 100;
+
     /// <summary>ISO <c>debug</c> flag (§7.11.2.2), as a boolean
     /// (<c>on</c> → <c>true</c>). Shumway has no interactive debugger,
     /// but ISO requires the flag to exist and be settable; stored so

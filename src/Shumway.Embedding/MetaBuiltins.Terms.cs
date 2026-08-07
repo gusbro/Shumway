@@ -109,11 +109,26 @@ public static partial class MetaBuiltins
         if (flagCell.Tag != Tag.Atom)
             throw new ShumwayPrologException(
                 IsoError.TypeError("atom", new VarTerm("_")));
+
+        string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
+
+        // Checked before the atom rule below, which every other flag follows.
+        if (flagName == "answer_max_depth")
+        {
+            if (valueCell.Tag != Tag.Int)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("integer", new VarTerm("_")));
+            if (valueCell.AsInt < 0)
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("not_less_than_zero", new IntTerm(valueCell.AsInt)));
+            host.Flags.AnswerMaxDepth = (int)System.Math.Min(valueCell.AsInt, int.MaxValue);
+            return true;
+        }
+
         if (valueCell.Tag != Tag.Atom)
             throw new ShumwayPrologException(
                 IsoError.TypeError("atom", new VarTerm("_")));
 
-        string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
         string valueName = AtomTable.GetById(valueCell.AsAtomId)?.Name ?? "";
 
         if (flagName == "double_quotes")
@@ -357,6 +372,9 @@ public static partial class MetaBuiltins
             case "prefer_rationals":
                 return UnifyAtom(engine, 1, host.Flags.PreferRationals ? "true" : "false");
 
+            case "answer_max_depth":
+                return engine.UnifyRegisterWithCell(1, Cell.Int(host.Flags.AnswerMaxDepth));
+
             case "arity_compat":
                 return UnifyAtom(engine, 1, host.Flags.ArityCompat ? "true" : "false");
 
@@ -393,7 +411,7 @@ public static partial class MetaBuiltins
         "double_quotes", "unknown", "occurs_check", "char_conversion",
         "debug", "dialect", "library_dialect", "version_data", "argv",
         "implicit_dynamic", "arity_compat",
-        "compile_mode", "debug_lco", "prefer_rationals",
+        "compile_mode", "debug_lco", "prefer_rationals", "answer_max_depth",
     };
 
     private static bool PrologFlagUnify(Activation engine, PrologEngine host, int idx)

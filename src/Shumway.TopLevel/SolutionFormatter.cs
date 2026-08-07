@@ -12,6 +12,56 @@ namespace Shumway.TopLevel;
 /// </summary>
 public static class SolutionFormatter
 {
+    /// <summary>Shortens a term for DISPLAY, the way a top level does: a list
+    /// keeps <paramref name="limit"/> elements and ends in <c>|...</c>, and a
+    /// subterm nested deeper than that shows as <c>...</c>. A limit of zero
+    /// leaves the term alone.
+    ///
+    /// <para>Elision belongs here and not in the writer: <c>write/1</c> prints
+    /// what it is given, because a program's output is not a summary of itself.
+    /// An ANSWER is read by a person, and <c>numlist(1, 10000000, X)</c> has one
+    /// nobody wants in full.</para></summary>
+    public static Term Elide(Term term, int limit)
+    {
+        if (limit <= 0) return term;
+        return Walk(term, limit, limit);
+
+        // `budget` is what is left of the nesting allowance; `limit` is how many
+        // elements a list may show. Passed rather than captured, so this stays a
+        // static local function and allocates no closure.
+        static Term Walk(Term t, int budget, int limit)
+        {
+            if (budget <= 0) return new AtomTerm("...");
+            if (t is not CompoundTerm c) return t;
+
+            if (c is { Functor: ".", Args.Length: 2 })
+            {
+                // Along the spine, not into the tail: the whole point is lists
+                // long enough that one C# frame each would not fit.
+                var kept = new List<Term>();
+                Term cursor = t;
+                while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cons
+                       && kept.Count < limit)
+                {
+                    kept.Add(Walk(cons.Args[0], budget - 1, limit));
+                    cursor = cons.Args[1];
+                }
+                // Anything left becomes the improper tail `|...`, which is how
+                // every top level says "there is more".
+                Term tail = cursor is CompoundTerm { Functor: ".", Args.Length: 2 }
+                    ? new AtomTerm("...")
+                    : Walk(cursor, budget - 1, limit);
+                for (int i = kept.Count - 1; i >= 0; i--)
+                    tail = new CompoundTerm(".", new[] { kept[i], tail });
+                return tail;
+            }
+
+            var args = new Term[c.Args.Length];
+            for (int i = 0; i < args.Length; i++) args[i] = Walk(c.Args[i], budget - 1, limit);
+            return new CompoundTerm(c.Functor, args);
+        }
+    }
+
     /// <summary>Builds a Prolog list AST from a sequence of terms.</summary>
     public static Term MakeList(IList<Term> elements)
     {
@@ -32,6 +82,7 @@ public static class SolutionFormatter
         ArgumentNullException.ThrowIfNull(userVars);
 
         var ops = engine.Operators;
+        int elide = engine.Flags.AnswerMaxDepth;
         if (userVars.Count == 0)
             return solution.Bindings.Count == 0 ? "true" : solution.ToString(width);
 
@@ -113,7 +164,7 @@ public static class SolutionFormatter
             // A named variable occurring inside this value prints as its name.
             if (displayName.Count > 0)
                 val = ResidualProjection.SubstituteVarNames(val, displayName);
-            string key = AstTermRenderer.Render(val, 1200, ops);
+            string key = AstTermRenderer.Render(Elide(val, elide), 1200, ops);
             renderedValue[name] = key;
             if (!groups.TryGetValue(key, out var members))
                 groups[key] = members = new List<string>();
@@ -126,7 +177,8 @@ public static class SolutionFormatter
         {
             if (residualsByVar.TryGetValue(name, out var rs))
             {
-                foreach (Term g in rs) lines.Add(AstTermRenderer.Render(g, 1200, ops));
+                foreach (Term g in rs)
+                    lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops));
                 continue;
             }
             if (!renderedValue.TryGetValue(name, out string? key)
@@ -141,7 +193,7 @@ public static class SolutionFormatter
                 lines.Add($"{members[^1]} = {key}");
         }
         foreach (Term g in unattachedResiduals)
-            lines.Add(AstTermRenderer.Render(g, 1200, ops));
+            lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops));
 
         if (lines.Count == 0) return "true";
         return string.Join(",\n", lines);
