@@ -22,13 +22,29 @@
       <h1>WebShumway</h1>
       <p class="sub">Prolog in the browser — the Shumway engine compiled to WebAssembly.</p>
     </div>
-    <button id="theme" type="button" class="icon-button" title="Switch theme"></button>
+    <nav class="tools">
+      <button id="guide" type="button" class="icon-button" title="About WebShumway"
+              aria-label="About WebShumway">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round"
+             stroke-linejoin="round"><circle cx="12" cy="12" r="9" />
+          <path d="M9.6 9.2a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.7-.9 1.3v.6" />
+          <path d="M12 17h.01" /></svg>
+      </button>
+      <button id="reference" type="button" class="icon-button" title="Predicate reference"
+              aria-label="Predicate reference">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round"
+             stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v14H5.5A1.5 1.5 0 0 0 4 19.5z" />
+          <path d="M4 19.5A1.5 1.5 0 0 1 5.5 18H19v2.5H5.5A1.5 1.5 0 0 1 4 19.5z" />
+          <path d="M8 8h7M8 11h5" /></svg>
+      </button>
+      <button id="theme" type="button" class="icon-button" title="Switch theme"></button>
+    </nav>
   </header>
 
   <div class="panes">
     <section class="pane">
-      <h2>Program</h2>
-
       <div class="bar">
         <label class="visually-hidden" for="workspace">Workspace</label>
         <select id="workspace" title="the workspace these files belong to"></select>
@@ -54,12 +70,13 @@ par(a, b).
 par(b, c)."></div>
 
       <div class="row">
-        <button id="consult" type="button" class="primary">Consult</button>
+        <button id="consult" type="button" class="primary"
+                title="load this program into the engine (Ctrl-Enter)">Consult</button>
         <button id="new-file" type="button">New file</button>
         <button id="open-file" type="button">Open…</button>
         <button id="download-file" type="button" title="save this file to your computer">Download</button>
         <button id="share" type="button" title="copy a link containing this program">Share</button>
-        <span class="hint">Tab completes a predicate name</span>
+        <span class="hint">Ctrl-Enter consults · Ctrl-S saves · Tab completes</span>
       </div>
     </section>
 
@@ -89,6 +106,87 @@ par(b, c)."></div>
            one is NOT a submit button — in a method="dialog" form Enter presses
            the first submit, so a Cancel there would make Enter mean cancel. -->
       <div class="row end" id="confirm-actions"></div>
+    </form>
+  </dialog>
+
+  <!-- The predicate reference, built from the engine's own metadata (see
+       PredicateReference) rather than a copy that could drift from it. -->
+  <dialog id="reference-dialog" class="wide">
+    <form method="dialog">
+      <div class="row">
+        <h3>Predicate reference</h3>
+        <input id="reference-filter" type="search" placeholder="filter by name or words"
+               spellcheck="false" autocapitalize="off" />
+        <button type="button" data-close>Close</button>
+      </div>
+      <div id="reference-body" class="doc"></div>
+    </form>
+  </dialog>
+
+  <dialog id="guide-dialog" class="wide guide">
+    <form method="dialog">
+      <div class="row">
+        <h3>WebShumway</h3>
+        <button type="button" data-close>Close</button>
+      </div>
+      <div class="doc prose">
+        <p>WebShumway brings the Shumway Prolog engine to your browser. The
+           engine and your files live in this tab and never leave it. There is
+           no server behind this page.</p>
+
+        <h4>Asking a question</h4>
+        <p>Type a goal in the <b>?-</b> box and press Enter. When an answer
+           appears the engine is holding the next one back: press
+           <kbd>;</kbd> (or space) for it, <kbd>.</kbd> (or Enter, or Escape) to
+           stop. <b>Stop</b> abandons a search that is taking too long — the
+           page stays usable while one runs.</p>
+
+        <h4>Writing a program</h4>
+        <p>Write it on the left and press <b>Consult</b> (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>)
+           to load it. Loading REPLACES what the text defines, so pressing it
+           twice does not define anything twice. <kbd>Tab</kbd> completes a
+           predicate name; <kbd>Ctrl</kbd>+<kbd>S</kbd> saves the file.</p>
+
+        <h4>Files and workspaces</h4>
+        <p>A workspace is a folder of files and the engine's working directory,
+           so <code>:- use_module('other.pl').</code> and <code>open/4</code>
+           resolve inside it. A file you edit is reloaded by the file that
+           imports it when you consult again. Switching workspace starts a
+           fresh engine, because a workspace is a separate program.</p>
+        <p>Files live in this browser's private storage and survive a reload.
+           <b>Download</b> saves one to your computer, <b>Export</b> saves the
+           whole workspace as a zip.</p>
+
+        <h4>Libraries</h4>
+        <p>Constraints and coroutining are opt-in, from the program itself:</p>
+        <pre><code>:- use_module(library(clpfd)).
+
+puzzle([S,E,N,D,M,O,R,Y]) :-
+    Vars = [S,E,N,D,M,O,R,Y], Vars ins 0..9,
+    all_different(Vars), S #\= 0, M #\= 0,
+    1000*S + 100*E + 10*N + D + 1000*M + 100*O + 10*R + E
+      #= 10000*M + 1000*O + 100*N + 10*E + Y,
+    label(Vars).</code></pre>
+        <p>The <b>Predicate reference</b> (the book icon) lists everything the
+           engine provides, with the mode of each argument.</p>
+
+        <h4>Sharing</h4>
+        <p><b>Share</b> puts a file or a whole workspace INSIDE the link, in the
+           part of a URL browsers never send to a server. Opening one never
+           overwrites your files without asking.</p>
+
+        <h4>What is different here</h4>
+        <p>The browser build runs the bytecode interpreter only: Shumway's
+           second tier compiles to IL at runtime, which a browser does not
+           allow. Programs behave identically — only speed differs.</p>
+
+        <p class="fineprint">
+          Shumway — a Prolog compiler and interpreter for .NET.
+          MIT licensed. Copyright © 2026 Gustavo Brown.
+          <a href="https://github.com/gusbro/Shumway" target="_blank"
+             rel="noopener">github.com/gusbro/Shumway</a>
+        </p>
+      </div>
     </form>
   </dialog>
 

@@ -255,6 +255,11 @@ document.getElementById('stop').addEventListener('click', () => stop());
 const confirmDialog = document.getElementById('confirm');
 const promptDialog = document.getElementById('prompt-dialog');
 const shareDialog = document.getElementById('share-dialog');
+// Declared with the others rather than beside the code that uses them: the loop
+// below wires every dialog's closing button, and a const is unreachable before
+// its declaration runs.
+const referenceDialog = document.getElementById('reference-dialog');
+const guideDialog = document.getElementById('guide-dialog');
 
 // Cancel closes without submitting, so the only submit button is the one Enter
 // should press. Escape closes with an empty returnValue, which reads as cancel
@@ -262,7 +267,7 @@ const shareDialog = document.getElementById('share-dialog');
 //
 // The confirmation dialog has no such button in the markup: its answers vary by
 // question, so askChoice builds them — including the cancelling one.
-for (const dialog of [promptDialog, shareDialog]) {
+for (const dialog of [promptDialog, shareDialog, referenceDialog, guideDialog]) {
   dialog.querySelector('[data-close]')
     .addEventListener('click', () => dialog.close('cancel'));
 }
@@ -311,6 +316,60 @@ function askFor(title, value) {
       () => resolve(promptDialog.returnValue === 'ok' ? input.value.trim() : null),
       { once: true }));
 }
+
+// --- the reference and the guide -----------------------------------------
+// The reference is built from the ENGINE's own predicate metadata — the same
+// metadata that generates docs/guide/predicates.md — so what the page shows
+// cannot drift from what the engine actually provides.
+
+let reference = null;                 // fetched once, on first opening
+
+function renderReference(filter) {
+  const body = document.getElementById('reference-body');
+  const wanted = filter.trim().toLowerCase();
+  const shown = wanted.length === 0 ? reference : reference.filter((entry) =>
+    entry.template.toLowerCase().includes(wanted)
+    || entry.summary.toLowerCase().includes(wanted)
+    || entry.category.toLowerCase().includes(wanted));
+
+  if (shown.length === 0) {
+    body.replaceChildren(Object.assign(document.createElement('p'),
+      { className: 'doc-empty', textContent: `nothing matches “${filter.trim()}”` }));
+    return;
+  }
+
+  const parts = [];
+  let category = null;
+  for (const entry of shown) {
+    if (entry.category !== category) {
+      category = entry.category;
+      parts.push(Object.assign(document.createElement('h4'), { textContent: category }));
+    }
+    const row = document.createElement('div');
+    row.className = 'doc-entry';
+    row.append(
+      Object.assign(document.createElement('code'), { textContent: entry.template }),
+      Object.assign(document.createElement('span'), { textContent: entry.summary }));
+    parts.push(row);
+  }
+  body.replaceChildren(...parts);
+}
+
+document.getElementById('reference').addEventListener('click', async () => {
+  if (reference === null) {
+    try { reference = JSON.parse(await session.predicateReference()); }
+    catch (ex) { emit(`% could not read the reference: ${ex}\n`, 'error'); return; }
+  }
+  const filter = document.getElementById('reference-filter');
+  renderReference(filter.value);
+  referenceDialog.showModal();
+  filter.focus();
+});
+
+document.getElementById('reference-filter')
+  .addEventListener('input', (e) => renderReference(e.target.value));
+
+document.getElementById('guide').addEventListener('click', () => guideDialog.showModal());
 
 // --- workspaces ----------------------------------------------------------
 // A workspace is a project: its own directory, its own files, and — because
@@ -449,13 +508,28 @@ document.getElementById('download-file').addEventListener('click', async () => {
   emit(`% saved ${saved}\n`, 'note');
 });
 
-// Ctrl-S / Cmd-S saves the FILE, not the page. The browser's own meaning for it
-// here — download this HTML — is never what someone editing a program wants.
+// Keys that mean something here rather than to the browser.
+//
+// Ctrl-Enter loads the buffer. Not a Ctrl-letter: there is no letter free
+// across browsers — B, I and M open a sidebar, page info or mute the tab in
+// Firefox; E, K and L go to the address bar; J, D, P, R, U, W are taken
+// everywhere. Ctrl-Enter is claimed by none of them, and it is already what
+// "run this" means in SWISH, Jupyter and every playground of this shape.
+//
+// Ctrl-S saves the FILE. The browser's own meaning here — download this HTML —
+// is never what someone editing a program wants.
 addEventListener('keydown', async (e) => {
-  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's' || e.altKey) return;
-  e.preventDefault();
-  await saveBuffer();
-  emit(`% saved ${currentFile}\n`, 'note');
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    await consultBuffer('% consulted.\n');
+    return;
+  }
+  if (e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    await saveBuffer();
+    emit(`% saved ${currentFile}\n`, 'note');
+  }
 });
 
 document.getElementById('new-file').addEventListener('click', async () => {

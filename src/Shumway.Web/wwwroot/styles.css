@@ -234,6 +234,10 @@ button.primary:hover { background: color-mix(in srgb, var(--accent) 85%, current
 /* --- dialogs ------------------------------------------------------------ */
 
 dialog {
+  /* Without this, `width` is the CONTENT box: a dialog asking for 94vw ends up
+     94vw PLUS its padding and border, and the page grows a horizontal
+     scrollbar it can never justify. */
+  box-sizing: border-box;
   border: 1px solid var(--line);
   border-radius: .6rem;
   background: var(--panel);
@@ -246,6 +250,112 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 dialog h3 { margin: 0 0 .4rem; font-size: 1rem; }
 dialog p { margin: 0; color: var(--muted); font-size: .9rem; }
 dialog input { margin-top: .6rem; }
+
+.tools { display: flex; gap: .3rem; flex: none; }
+
+/* A dialog that holds a document rather than a question: as wide as the app
+   itself, and deliberately NOT as tall as the window — a panel that reaches
+   both edges reads as a page that replaced the app rather than something
+   sitting on top of it. */
+dialog.wide {
+  max-width: none;
+  width: min(96vw, 78rem);
+  padding: 1.2rem 1.6rem;
+}
+dialog.wide .row { align-items: center; margin: 0 0 .7rem; }
+dialog.wide .row h3 { flex: 1; margin: 0; font-size: 1.05rem; }
+dialog.wide .row input { flex: 1; max-width: 20rem; }
+
+.doc {
+  max-height: min(58vh, 32rem);
+  overflow-y: auto;
+  padding-right: .5rem;
+}
+/* The reference's rows have a fixed first column, so a narrow window has to be
+   able to scroll them sideways. Prose never does. */
+.doc:not(.prose) {
+  overflow-x: auto;
+  /* A FIXED height, not a maximum: filtering must not resize the dialog under
+     the search box you are typing in. */
+  height: min(58vh, 32rem);
+}
+.prose { overflow-x: hidden; }
+
+/* The predicate reference: one line per predicate, so a filtered list reads as
+   a list and not as a wall. */
+.doc h4 {
+  position: sticky;          /* the category stays visible while its entries scroll */
+  top: 0;
+  background: var(--panel);
+  margin: 1.3rem 0 .4rem;
+  padding: .3rem 0;
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.doc h4:first-child { margin-top: 0; }
+
+/* Room to breathe: a reference is read by scanning down one column and across
+   to the other, which a tight list defeats. */
+.doc-entry {
+  display: flex;
+  gap: 1.2rem;
+  padding: .35rem .4rem;
+  align-items: baseline;
+  border-radius: .25rem;
+}
+.doc-entry:hover { background: var(--field); }
+.doc-entry code {
+  font: 12.5px/1.5 var(--mono);
+  color: inherit;
+  flex: none;
+  min-width: 21rem;
+}
+.doc-entry span { color: var(--muted); font-size: .9rem; }
+@media (max-width: 52rem) {
+  .doc-entry { display: block; padding-bottom: .5rem; }
+  .doc-entry code { min-width: 0; }
+}
+.doc-empty { color: var(--muted); font-style: italic; padding: .6rem 0; }
+
+/* The guide reads as prose. It keeps a measure — a line the full width of a
+   wide panel is one the eye loses its place on — but a generous one, so the
+   panel is not mostly empty around it. */
+.prose { max-width: 68rem; margin-inline: auto; }
+.prose p { color: inherit; margin: .55rem 0; line-height: 1.6; }
+.prose h4 {
+  position: static;
+  background: none;
+  border: 0;
+  margin: 1.4rem 0 .2rem;
+  font-size: .78rem;
+  color: var(--accent);
+}
+.prose h4:first-child { margin-top: 0; }
+.prose code { font: 12px var(--mono); }
+.prose pre {
+  font: 12px/1.5 var(--mono);
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  padding: .6rem .75rem;
+  /* Wraps rather than scrolls: a sample you have to drag sideways to finish
+     reading is a sample nobody finishes reading. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.prose kbd {
+  font: 11px var(--mono);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: .25rem;
+  padding: 0 .3rem;
+}
+.prose a { color: var(--accent); }
+.fineprint { font-size: .82rem; color: var(--muted); margin-top: 1.2rem; }
 
 .visually-hidden {
   position: absolute; width: 1px; height: 1px;

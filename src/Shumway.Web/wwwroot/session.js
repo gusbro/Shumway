@@ -63,6 +63,9 @@ export const supplyInput = async (text) => engine.SupplyInput(text);
 /** Ends the input stream: a waiting read gets `end_of_file`. */
 export const supplyEndOfFile = async () => engine.SupplyEndOfFile();
 
+/** Every documented predicate, as JSON — the engine's own metadata. */
+export const predicateReference = async () => engine.PredicateReference();
+
 /** Predicate names starting with `prefix`. */
 export async function complete(prefix) {
   const names = await engine.Complete(prefix);

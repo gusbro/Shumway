@@ -265,6 +265,33 @@ internal static partial class WebShumwayApp
             return sb.ToString();
         });
 
+    /// <summary>Every documented predicate, as JSON: <c>[{category, name, arity,
+    /// template, summary}]</c>. The page turns it into a searchable reference —
+    /// the same metadata that generates <c>docs/guide/predicates.md</c>, so what
+    /// the browser shows cannot drift from what the engine documents.</summary>
+    [JSExport]
+    internal static Task<string> PredicateReference()
+        => OnEngine(() =>
+        {
+            var json = new MemoryStream();
+            using (var w = new System.Text.Json.Utf8JsonWriter(json))
+            {
+                w.WriteStartArray();
+                foreach (var entry in PredicateDoc.Entries())
+                {
+                    w.WriteStartObject();
+                    w.WriteString("category", entry.Category);
+                    w.WriteString("name", entry.Name);
+                    w.WriteNumber("arity", entry.Arity);
+                    w.WriteString("template", entry.Template);
+                    w.WriteString("summary", entry.Summary);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+            }
+            return System.Text.Encoding.UTF8.GetString(json.ToArray());
+        });
+
     /// <summary>The <see cref="SpanKind"/> names, in ordinal order, so the page
     /// can turn a kind index into a CSS class without hard-coding the enum.</summary>
     [JSExport]
