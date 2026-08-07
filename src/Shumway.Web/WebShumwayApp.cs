@@ -81,15 +81,7 @@ internal static partial class WebShumwayApp
         {
             try
             {
-                // Out must be set BEFORE the first query: query setup builds the stream
-                // registry, and user_output keeps whatever writer it was handed then.
-                PrologEngine engine = BootEngine();
-                engine.Out = new PageWriter();
-                engine.In = _pageInput;
-                _session = new TopLevelSession(engine);
-                // Relative paths in Prolog — consult('lists.pl'), open/4 — resolve
-                // against the workspace, so a program means what it says.
-                EnsureWorkspace();
+                StartEngine();
                 return Tier0Only
                     ? "Shumway ready (Tier-0 interpreter)."
                     : "Shumway ready.";
@@ -99,6 +91,46 @@ internal static partial class WebShumwayApp
                 return "error: " + ex.Message;
             }
         });
+
+    /// <summary>Throws away the engine and starts another. Switching workspace
+    /// offers this because a workspace is a project: carrying the last one's
+    /// consulted predicates into it would let a query answer from a program the
+    /// user is no longer looking at.</summary>
+    [JSExport]
+    internal static Task<string?> EngineReset()
+        => OnEngine(() =>
+        {
+            try
+            {
+                // Whatever was open belonged to the engine being discarded —
+                // including a goal blocked on input, which would otherwise wait
+                // for a page that has moved on.
+                EndRun();
+                _pageInput.SupplyEof();
+                StartEngine();
+                return (string?)null;
+            }
+            catch (Exception ex) { return "error: " + ex.Message; }
+        });
+
+    private static void StartEngine()
+    {
+        // Out and In must be set BEFORE the first query: query setup builds the
+        // stream registry, and user_output / user_input keep whatever they were
+        // handed then.
+        PrologEngine engine = BootEngine();
+        engine.Out = new PageWriter();
+        // Load-time warnings default to standard error, which a page does not
+        // have: a use_module that found nothing would load silently and leave
+        // the user looking at a program missing half of itself.
+        engine.Warnings = new PageWriter();
+        engine.In = _pageInput;
+        _pageInput.Reset();
+        _session = new TopLevelSession(engine);
+        // Relative paths in Prolog — consult('lists.pl'), open/4 — resolve
+        // against the active workspace, so a program means what it says.
+        EnsureWorkspace();
+    }
 
     /// <summary>Loads the editor's buffer. Returns null on success, or the error
     /// text. RE-consults: the predicates the buffer defines are replaced, so

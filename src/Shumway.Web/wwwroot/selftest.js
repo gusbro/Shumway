@@ -4,6 +4,8 @@
 // DEPLOYED app — the part no xUnit test can reach, since it needs a browser.
 //
 // Loaded on demand, so a normal page never fetches it.
+ 
+import * as settings from './settings.js';
 
 /**
  * Whether a file survives a reload — the whole point of mirroring to OPFS, and
@@ -160,7 +162,65 @@ export async function run(session, emit, out, editor, workspace) {
 
   check('delete removes it', await workspace.remove('written_by_prolog.txt'), null);
   check('and it is gone', (await workspace.list()).includes('written_by_prolog.txt'), false);
+
+  // --- workspaces ---------------------------------------------------------
+  // A workspace is a directory, so the claim worth checking is separation: one
+  // workspace's files are not the other's, and deleting one takes its files.
+  const home = workspace.active();
+  const ws = 'selftest_ws';
+  check('creating a workspace', await workspace.create(ws), null);
+  check('it is listed', (await workspace.names()).includes(ws), true);
+
+  check('switching to it', await workspace.setActive(ws), null);
+  check('the other workspace\'s files are not here',
+        (await workspace.list()).includes('selftest_data.pl'), false);
+  await workspace.write('only_here.pl', 'here(yes).\n');
+
+  // Prolog resolves relative paths against the ACTIVE workspace, so a consult
+  // from here must find this file and not one of the same name elsewhere.
+  check('consult resolves inside it', await workspace.consultFile('only_here.pl'), null);
+  check('and it ran', await solutions('here(X).'), 'X = yes');
+
+  check('back to where we were', await workspace.setActive(home), null);
+  check('and its files are still there',
+        (await workspace.list()).includes('selftest_data.pl'), true);
+  check('the other workspace\'s file is not', (await workspace.list()).includes('only_here.pl'), false);
+
+  check('deleting the workspace', await workspace.removeWorkspace(ws), null);
+  check('it is gone', (await workspace.names()).includes(ws), false);
+  check('the active one cannot be deleted',
+        typeof (await workspace.removeWorkspace(home)), 'string');
+
   await workspace.remove('selftest_data.pl');
+
+  // --- exporting ----------------------------------------------------------
+  // The zip is built by the engine (it owns the filesystem) and crosses as
+  // base64. Checking the header is enough to know it is a zip and not a
+  // stringified something.
+  await workspace.write('zipped.pl', 'in_the_zip(yes).\n');
+  const zipped = await session.exports().WorkspaceZip();
+  const zipBytes = atob(zipped);
+  check('the export is a zip', zipBytes.slice(0, 2), 'PK');
+  check('and it holds the file', zipBytes.includes('zipped.pl'), true);
+  await workspace.remove('zipped.pl');
+
+  // --- settings -----------------------------------------------------------
+  // An envelope of another version is discarded rather than half-read. Done on
+  // a copy: the real preferences are put back afterwards.
+  const saved = localStorage.getItem('shumway.settings');
+  try {
+    localStorage.setItem('shumway.settings', JSON.stringify({ v: 0, theme: 'dark' }));
+    const fresh = settings.load();
+    check('settings of another version are discarded', settings.wasDiscarded(), true);
+    check('and the defaults are used', fresh.theme, null);
+    localStorage.setItem('shumway.settings', JSON.stringify({ v: settings.SETTINGS_VERSION, theme: 'dark' }));
+    check('a current envelope is kept', settings.load().theme, 'dark');
+    check('and nothing was discarded', settings.wasDiscarded(), false);
+  } finally {
+    if (saved === null) localStorage.removeItem('shumway.settings');
+    else localStorage.setItem('shumway.settings', saved);
+    settings.load();
+  }
 
   // The mirror, both ways, through real storage: write a file, push it to OPFS,
   // erase it from the engine's filesystem, and pull it back. That is exactly
@@ -180,7 +240,7 @@ export async function run(session, emit, out, editor, workspace) {
     } else {
       await workspace.remove('mirror_probe.pl');
       check('mirror: gone from memory', await workspace.read('mirror_probe.pl'), null);
-      await workspace.restore();
+      await workspace.restoreAll();
       check('mirror: restored from storage',
             await workspace.read('mirror_probe.pl'), 'mirrored(yes).\n');
       await workspace.remove('mirror_probe.pl');
@@ -190,12 +250,27 @@ export async function run(session, emit, out, editor, workspace) {
 
   // --- sharing ------------------------------------------------------------
   const shared = 'p(1).\np(2).  % a comment with | and \\n in it\n';
-  const packed = await session.shareEncode(shared, 'p(X).');
+  const packed = await session.shareFile('shared.pl', shared, 'p(X).');
   const unpacked = await session.shareDecode(packed);
-  check('share round-trips the program', unpacked && unpacked.program, shared);
+  check('a file share says so', unpacked && unpacked.kind, 'file');
+  check('it is labelled', unpacked && unpacked.label, 'shared.pl');
+  check('share round-trips the program', unpacked && unpacked.files[0].text, shared);
+  check('share round-trips the name', unpacked && unpacked.files[0].name, 'shared.pl');
   check('share round-trips the query', unpacked && unpacked.query, 'p(X).');
   check('share is url-safe', encodeURIComponent(packed), packed);
   check('a mangled link is rejected', await session.shareDecode('not a share'), null);
+
+  // A workspace share carries every file in it, and says which workspace it was.
+  await workspace.write('shared_a.pl', 'a(1).\n');
+  await workspace.write('shared_b.pl', 'b(2).\n');
+  const wsPacked = await session.shareWorkspace('a(X).');
+  const wsShare = await session.shareDecode(wsPacked);
+  check('a workspace share says so', wsShare && wsShare.kind, 'workspace');
+  check('labelled with the workspace', wsShare && wsShare.label, workspace.active());
+  const names = wsShare ? wsShare.files.map((f) => f.name) : [];
+  check('it carries the files', names.includes('shared_a.pl') && names.includes('shared_b.pl'), true);
+  await workspace.remove('shared_a.pl');
+  await workspace.remove('shared_b.pl');
 
   // --- examples -------------------------------------------------------------
   // Every example must at least parse and load; one that does not is worse than

@@ -1,27 +1,70 @@
+/* One palette, written once. `light-dark()` under `color-scheme` gives both
+   themes from a single declaration, and choosing a theme is narrowing the
+   scheme on the root element (see theme.js) — there is no second sheet to keep
+   in step. */
 :root {
   color-scheme: light dark;
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
   --line: color-mix(in srgb, currentColor 22%, transparent);
   --field: color-mix(in srgb, currentColor 5%, transparent);
+  --panel: light-dark(#ffffff, #191919);
+  --page: light-dark(#fbfbfb, #111111);
   --answer: light-dark(#0b5f2a, #7ee2a8);
   --error: light-dark(#a01b1b, #ff9a9a);
   --muted: color-mix(in srgb, currentColor 55%, transparent);
   --caret: light-dark(#111, #eee);
+  --accent: light-dark(#1e5fbf, #7fb2ff);
 }
 
 body {
   font: 15px/1.5 system-ui, sans-serif;
-  margin: 1.5rem auto;
+  margin: 0 auto;
   max-width: 82rem;
-  padding: 0 1rem 2rem;
+  padding: 1.5rem 1rem 2.5rem;
+  background: var(--page);
 }
 
-header { margin-bottom: 1.1rem; }
-h1 { font-size: 1.3rem; margin: 0; }
+/* --- header ------------------------------------------------------------- */
+
+header {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.1rem;
+}
+.title { flex: 1; min-width: 0; }
+h1 { font-size: 1.3rem; margin: 0; letter-spacing: -.01em; }
 .sub { margin: .15rem 0 0; color: var(--muted); font-size: .9rem; }
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  flex: none;
+  border-radius: .5rem;
+  color: var(--muted);
+}
+.icon-button:hover { color: inherit; }
+
+/* --- panes -------------------------------------------------------------- */
+
+.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
+@media (max-width: 62rem) { .panes { grid-template-columns: 1fr; } }
+
+.pane {
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: .6rem;
+  padding: .85rem .9rem 1rem;
+}
+
 h2 {
   font-size: .72rem; text-transform: uppercase; letter-spacing: .07em;
-  color: var(--muted); margin: 0 0 .35rem; font-weight: 600;
+  color: var(--muted); margin: 0 0 .5rem; font-weight: 600;
 }
 
 /* An action that belongs to a pane rather than to the query line — putting it
@@ -40,11 +83,9 @@ h2 {
 }
 .heading-action:hover { color: inherit; opacity: .75; }
 
-.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
-@media (max-width: 62rem) { .panes { grid-template-columns: 1fr; } }
-.pane { min-width: 0; }
+/* --- fields ------------------------------------------------------------- */
 
-textarea, pre#out, input {
+pre#out, input, select {
   font: 13px/1.5 var(--mono);
   width: 100%;
   box-sizing: border-box;
@@ -52,10 +93,11 @@ textarea, pre#out, input {
   border-radius: .4rem;
   background: var(--field);
   color: inherit;
-  padding: .6rem .75rem;
+  padding: .4rem .6rem;
 }
-textarea:focus-visible, input:focus-visible, pre#out:focus-visible {
-  outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
+pre#out { padding: .6rem .75rem; }
+:is(input, select, pre#out, .editor, button):focus-visible {
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
@@ -76,10 +118,6 @@ textarea:focus-visible, input:focus-visible, pre#out:focus-visible {
   word-break: break-word;
   tab-size: 4;
   caret-color: var(--caret);
-}
-.editor:focus-visible {
-  outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
-  outline-offset: 1px;
 }
 .editor.has-error { border-color: var(--error); }
 .editor:empty::before {
@@ -108,9 +146,22 @@ textarea:focus-visible, input:focus-visible, pre#out:focus-visible {
   overflow: auto;
 }
 
-.hint { font-size: .78rem; color: var(--muted); margin-left: .6rem; }
+.hint { font-size: .78rem; color: var(--muted); margin-left: auto; }
 
-.files { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .35rem; min-height: 1.6rem; }
+/* --- workspace bar and files -------------------------------------------- */
+
+.bar { display: flex; gap: .35rem; align-items: center; margin-bottom: .5rem; }
+.bar select { flex: 1; min-width: 0; }
+
+/* The dropdown is drawn by the platform using the ELEMENT's background, and
+   --field is nearly transparent (it is meant to sit on a panel). That left the
+   popup on the system's own white with our light-theme-on-dark text. Both the
+   control and its options get an opaque colour of their own. */
+select { background: var(--panel); }
+select option { background: var(--panel); color: light-dark(#111, #eee); }
+.bar button { font-size: .82rem; padding: .3rem .6rem; }
+
+.files { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .45rem; min-height: 1.6rem; }
 .file {
   font: 12px var(--mono);
   padding: .15rem .5rem;
@@ -121,10 +172,16 @@ textarea:focus-visible, input:focus-visible, pre#out:focus-visible {
   cursor: pointer;
 }
 .file:hover { color: inherit; }
-.file.current { color: inherit; border-color: currentColor; background: var(--field); }
+.file.current {
+  color: inherit;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
 
-#current-file { font: 12px var(--mono); text-transform: none; letter-spacing: 0; }
-.row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .5rem; }
+.row.end { justify-content: flex-end; }
+
+/* --- the transcript ----------------------------------------------------- */
 
 pre#out {
   height: 24rem;
@@ -147,11 +204,11 @@ pre#out .note   { color: var(--muted); font-style: italic; }
 /* The prompt marks that the engine is holding a solution back. */
 body.pending .prompt { color: var(--answer); font-weight: 700; }
 
-.row { margin-top: .5rem; }
-
 #query-form { display: flex; gap: .4rem; align-items: center; margin-top: .35rem; }
 .prompt { font: 13px var(--mono); color: var(--muted); }
 #query { flex: 1; }
+
+/* --- buttons ------------------------------------------------------------ */
 
 button {
   font: inherit;
@@ -165,14 +222,32 @@ button {
 button:hover { background: color-mix(in srgb, currentColor 16%, transparent); }
 button:active { transform: translateY(1px); }
 
-.examples { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .6rem; }
-.example {
-  font: 12px var(--mono);
-  padding: .2rem .55rem;
-  border-radius: .3rem;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
+/* One primary action per pane, so the eye knows where to go first. */
+button.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: light-dark(#fff, #10203a);
+  font-weight: 600;
 }
-.example:hover { color: inherit; border-color: currentColor; }
+button.primary:hover { background: color-mix(in srgb, var(--accent) 85%, currentColor); }
+
+/* --- dialogs ------------------------------------------------------------ */
+
+dialog {
+  border: 1px solid var(--line);
+  border-radius: .6rem;
+  background: var(--panel);
+  color: inherit;
+  padding: 1rem 1.1rem;
+  max-width: 26rem;
+  width: calc(100% - 2rem);
+}
+dialog::backdrop { background: rgb(0 0 0 / .45); }
+dialog h3 { margin: 0 0 .4rem; font-size: 1rem; }
+dialog p { margin: 0; color: var(--muted); font-size: .9rem; }
+dialog input { margin-top: .6rem; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}

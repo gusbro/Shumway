@@ -18,15 +18,27 @@
 </head>
 <body>
   <header>
-    <h1>WebShumway</h1>
-    <p class="sub">Prolog in the browser — the Shumway engine compiled to WebAssembly.</p>
-    <div id="examples" class="examples" aria-label="examples"></div>
+    <div class="title">
+      <h1>WebShumway</h1>
+      <p class="sub">Prolog in the browser — the Shumway engine compiled to WebAssembly.</p>
+    </div>
+    <button id="theme" type="button" class="icon-button" title="Switch theme"></button>
   </header>
 
   <div class="panes">
     <section class="pane">
-      <h2><label for="program">Program</label> — <span id="current-file">scratch.pl</span></h2>
+      <h2>Program</h2>
+
+      <div class="bar">
+        <label class="visually-hidden" for="workspace">Workspace</label>
+        <select id="workspace" title="the workspace these files belong to"></select>
+        <button id="new-workspace" type="button">New…</button>
+        <button id="delete-workspace" type="button">Delete…</button>
+        <button id="export-workspace" type="button" title="download this workspace as a zip">Export</button>
+      </div>
+
       <div id="files" class="files" aria-label="workspace files"></div>
+
       <!-- The editor holds ONE copy of the program: the coloured text IS the
            text being edited. An earlier version drew colours on a second copy
            behind a transparent textarea, which only works while the two lay out
@@ -40,11 +52,12 @@ anc(X, Z) :- par(X, Y), anc(Y, Z).
 
 par(a, b).
 par(b, c)."></div>
+
       <div class="row">
-        <button id="consult" type="button">Consult</button>
-        <button id="new-file" type="button">New</button>
+        <button id="consult" type="button" class="primary">Consult</button>
+        <button id="new-file" type="button">New file</button>
         <button id="open-file" type="button">Open…</button>
-        <button id="save-file" type="button">Save as…</button>
+        <button id="download-file" type="button" title="save this file to your computer">Download</button>
         <button id="share" type="button" title="copy a link containing this program">Share</button>
         <span class="hint">Tab completes a predicate name</span>
       </div>
@@ -60,10 +73,54 @@ par(b, c)."></div>
         <label for="query" class="prompt">?-</label>
         <input id="query" type="text" spellcheck="false" autocapitalize="off"
                placeholder="anc(a, X)." />
-        <button type="submit">Run</button>
+        <button type="submit" class="primary">Run</button>
         <button id="stop" type="button" title="abandon the running query">Stop</button>
       </form>
     </section>
   </div>
+
+  <!-- One dialog, reused: anything that needs a yes before it happens. Native
+       <dialog> is modal, focus-trapping and Escape-closing on its own. -->
+  <dialog id="confirm">
+    <form method="dialog">
+      <h3 id="confirm-title">Are you sure?</h3>
+      <p id="confirm-detail"></p>
+      <!-- Filled per question: some have two answers, some four. The cancelling
+           one is NOT a submit button — in a method="dialog" form Enter presses
+           the first submit, so a Cancel there would make Enter mean cancel. -->
+      <div class="row end" id="confirm-actions"></div>
+    </form>
+  </dialog>
+
+  <!-- What a link should carry. A program that spans files is not shareable one
+       file at a time, and a whole workspace is a much longer URL — so it is the
+       kind of choice only the person sharing can make. -->
+  <dialog id="share-dialog">
+    <form method="dialog">
+      <h3>Share a link</h3>
+      <p>The link carries the code itself, in the part of the URL browsers never
+         send to a server.</p>
+      <div class="row end">
+        <button type="button" data-close>Cancel</button>
+        <button value="file" class="primary">This file</button>
+        <button value="workspace">Whole workspace</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Asking for a name, in the same shape as the confirmation. -->
+  <dialog id="prompt-dialog">
+    <form method="dialog">
+      <h3 id="prompt-title">Name</h3>
+      <input id="prompt-input" type="text" spellcheck="false" autocapitalize="off" />
+      <div class="row end">
+        <!-- NOT a submit button: in a method="dialog" form, Enter submits the
+             FIRST submit button, so a Cancel button here would make Enter mean
+             cancel — which is exactly what typing a name and pressing Enter did. -->
+        <button type="button" data-close>Cancel</button>
+        <button value="ok" class="primary">Create</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

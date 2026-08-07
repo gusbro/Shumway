@@ -53,6 +53,10 @@ export async function next(width = 80) {
  *  `next()` resolves shortly afterwards. */
 export const cancel = async () => engine.QueryCancel();
 
+/** Throws the engine away and starts another — a workspace is its own program.
+ *  Resolves to null, or the error text. */
+export const resetEngine = async () => engine.EngineReset();
+
 /** Hands a waiting `read/1` a line of input. */
 export const supplyInput = async (text) => engine.SupplyInput(text);
 
@@ -61,21 +65,23 @@ export const supplyEndOfFile = async () => engine.SupplyEndOfFile();
 
 /** Predicate names starting with `prefix`. */
 export async function complete(prefix) {
-  const s = engine.Complete(prefix);
-  return s.length === 0 ? [] : s.split('\n');
+  const names = await engine.Complete(prefix);
+  return names.length === 0 ? [] : names.split('\n');
 }
 
-/** Packs a program and a query into a fragment-safe string. */
-export const shareEncode = (program, query) => engine.ShareEncode(program, query);
+/** Packs one file and a query into a fragment-safe string. */
+export const shareFile = (name, program, query) =>
+  engine.ShareEncodeFile(name, program, query);
 
-/** Unpacks one, or null if the text is not a valid share. */
+/** Packs the whole active workspace and a query. */
+export const shareWorkspace = (query) => engine.ShareEncodeWorkspace(query);
+
+/** Unpacks a share — `{kind, label, query, files:[{name, text}]}` — or null if
+ *  the text is not a valid one. */
 export async function shareDecode(encoded) {
-  const packed = await engine.ShareDecode(encoded);
-  if (packed === null) return null;
-  const nl = packed.indexOf('\n');
-  const programLength = Number(packed.slice(0, nl));
-  const rest = packed.slice(nl + 1);
-  return { program: rest.slice(0, programLength), query: rest.slice(programLength) };
+  const json = await engine.ShareDecode(encoded);
+  if (json === null) return null;
+  try { return JSON.parse(json); } catch { return null; }
 }
 
 /** Flat [start, length, kind, …] spans covering `source`, from the engine's lexer. */
