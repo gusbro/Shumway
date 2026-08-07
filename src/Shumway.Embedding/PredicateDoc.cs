@@ -33,6 +33,27 @@ public static class PredicateDoc
     private sealed record Entry(
         string Category, string Name, int Arity, string Template, string Summary);
 
+    /// <summary>One documented predicate: what it is called, how it is called
+    /// (a template naming each parameter and its mode) and what it does.</summary>
+    public sealed record DocEntry(
+        string Category, string Name, int Arity, string Template, string Summary);
+
+    /// <summary>Every documented predicate, in the order the reference presents
+    /// them. The same metadata <see cref="Generate"/> renders as markdown, for a
+    /// host that wants to show it its own way — the browser app builds a
+    /// searchable reference out of this.</summary>
+    public static IReadOnlyList<DocEntry> Entries()
+    {
+        var entries = Collect();
+        var order = OrderedCategories(entries).ToList();
+        return entries
+            .OrderBy(e => order.IndexOf(e.Category))
+            .ThenBy(e => e.Name, StringComparer.Ordinal)
+            .ThenBy(e => e.Arity)
+            .Select(e => new DocEntry(e.Category, e.Name, e.Arity, e.Template, e.Summary))
+            .ToList();
+    }
+
     /// <summary>Matches a <c>%! Template | Category | Summary</c> comment.</summary>
     private static readonly Regex DocComment = new(
         @"^\s*%!\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.+?)\s*$",
@@ -65,7 +86,12 @@ public static class PredicateDoc
 
     /// <summary>Builds the predicate-reference markdown. Newlines are
     /// always <c>\n</c> so the result is comparable across platforms.</summary>
-    public static string Generate()
+    public static string Generate() => Render(Collect());
+
+    /// <summary>The documented predicates, as found: C# builtins carry their
+    /// metadata on registration, library predicates carry it in a
+    /// <c>%! Template | Category | Summary</c> comment next to the clause.</summary>
+    private static List<Entry> Collect()
     {
         StandardBuiltins.EnsureRegistered();
         MetaBuiltins.EnsureRegistered();
@@ -78,8 +104,7 @@ public static class PredicateDoc
         CollectDocComments(Prelude.Source, entries);
         CollectDocComments(Clpfd.Source, entries);
         CollectDocComments(Coroutining.Source, entries);
-
-        return Render(entries);
+        return entries;
     }
 
     private static void CollectDocComments(string source, List<Entry> into)
