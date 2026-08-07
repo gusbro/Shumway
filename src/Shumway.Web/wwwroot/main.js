@@ -49,6 +49,8 @@ function freshLine() {
 }
 
 const emitEngineOutput = (text) => emit(text);
+// Standard error, which in a browser has nowhere else to go.
+const emitDiagnostic = (text) => emit(text, 'error');
 
 // A page that dies silently looks like a page that is still loading. Anything
 // that escapes lands in the transcript, where it can be read and reported.
@@ -759,7 +761,7 @@ theme.attach(document.getElementById('theme'), config.theme,
              (choice) => settings.update({ theme: choice }));
 
 out.textContent = '';
-emit(await session.boot(emitEngineOutput, askForInput) + '\n\n', 'note');
+emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic) + '\n\n', 'note');
 setPending(false);
 
 editor = attach(

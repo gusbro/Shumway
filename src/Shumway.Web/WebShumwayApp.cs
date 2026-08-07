@@ -59,6 +59,10 @@ internal static partial class WebShumwayApp
     [JSImport("ui.write", "main.js")]
     internal static partial void WriteToPage(string text);
 
+    /// <summary>Appends a diagnostic to the page, marked as one.</summary>
+    [JSImport("ui.writeError", "main.js")]
+    internal static partial void WriteErrorToPage(string text);
+
     /// <summary>The runtime thread's context, captured while we are on it.
     /// JavaScript interop is thread-affine: <see cref="WriteToPage"/> may only be
     /// called from the thread that owns the JavaScript side. The search does not
@@ -71,6 +75,15 @@ internal static partial class WebShumwayApp
         // JavaScript through the exports below. This runs ON the runtime thread,
         // which is the only place its context can be captured.
         _jsThread = SynchronizationContext.Current;
+
+        // Standard output and error have no home in a browser — they go to the
+        // developer console, where a user never looks. Anything written to them
+        // (the runtime's own report of a failure it could not hand back, above
+        // all) belongs in the transcript: this is a Prolog top level, its users
+        // are programmers, and a page that fails silently is worse than one that
+        // fails loudly.
+        Console.SetOut(new PageWriter());
+        Console.SetError(new PageWriter(asError: true));
     }
 
     /// <summary>Creates the engine. Returns a short description of what booted,
@@ -319,7 +332,7 @@ internal static partial class WebShumwayApp
     /// is POSTED to the runtime thread. Posts on one context run in the order they
     /// were made, which is the property that matters: a program's output must
     /// reach the page in the order it was written.</para></summary>
-    private sealed class PageWriter : TextWriter
+    private sealed class PageWriter(bool asError = false) : TextWriter
     {
         public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
         public override void Write(char value) => Write(value.ToString());
@@ -329,9 +342,14 @@ internal static partial class WebShumwayApp
         {
             if (string.IsNullOrEmpty(value)) return;
             if (_jsThread is null || SynchronizationContext.Current == _jsThread)
-                WriteToPage(value);
+                Emit(value);
             else
-                _jsThread.Post(static s => WriteToPage((string)s!), value);
+                _jsThread.Post(s => Emit((string)s!), value);
+        }
+
+        private void Emit(string text)
+        {
+            if (asError) WriteErrorToPage(text); else WriteToPage(text);
         }
     }
 }

@@ -19,6 +19,11 @@ public static class ResidualProjection
         {
             case VarTerm v when renames.TryGetValue(v.Name, out string? newName):
                 return new VarTerm(newName);
+            case CompoundTerm { Functor: ".", Args.Length: 2 }:
+                // A list is walked along its spine rather than into its tail: a
+                // long one would otherwise cost a C# frame per element, which is
+                // a stack overflow where the stack is small (a browser).
+                return SubstituteInList(term, renames);
             case CompoundTerm c:
                 var newArgs = new Term[c.Args.Length];
                 bool changed = false;
@@ -33,25 +38,53 @@ public static class ResidualProjection
         }
     }
 
+    private static Term SubstituteInList(Term list, IReadOnlyDictionary<string, string> renames)
+    {
+        var heads = new List<Term>();
+        var originals = new List<Term>();
+        Term cursor = list;
+        bool changed = false;
+        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+        {
+            Term head = SubstituteVarNames(cons.Args[0], renames);
+            if (!ReferenceEquals(head, cons.Args[0])) changed = true;
+            heads.Add(head);
+            originals.Add(cons);
+            cursor = cons.Args[1];
+        }
+        Term tail = SubstituteVarNames(cursor, renames);
+        if (!ReferenceEquals(tail, cursor)) changed = true;
+        if (!changed) return list;
+
+        for (int i = heads.Count - 1; i >= 0; i--)
+            tail = new CompoundTerm(".", new[] { heads[i], tail });
+        return tail;
+    }
+
     /// <summary>The first name from <paramref name="owners"/> that occurs as a variable
     /// in <paramref name="term"/>, or null — the owner-variable rule both displays use:
     /// a goal is shown once, under the first of its variables the user can see.</summary>
     public static string? FindMentionedOwner(Term term, IReadOnlyList<string> owners)
     {
-        switch (term)
+        // Iterative, for the same reason SubstituteVarNames is: a goal may
+        // mention a list of any length, and one C# frame per element is a stack
+        // overflow waiting for a big enough answer.
+        var pending = new Stack<Term>();
+        pending.Push(term);
+        while (pending.Count > 0)
         {
-            case VarTerm v:
-                return owners.Contains(v.Name) ? v.Name : null;
-            case CompoundTerm c:
-                foreach (Term a in c.Args)
-                {
-                    string? r = FindMentionedOwner(a, owners);
-                    if (r is not null) return r;
-                }
-                return null;
-            default:
-                return null;
+            switch (pending.Pop())
+            {
+                case VarTerm v when owners.Contains(v.Name):
+                    return v.Name;
+                case CompoundTerm c:
+                    // Pushed in reverse so the walk still finds the FIRST
+                    // mentioned owner in argument order.
+                    for (int i = c.Args.Length - 1; i >= 0; i--) pending.Push(c.Args[i]);
+                    break;
+            }
         }
+        return null;
     }
 
     /// <summary>Maps the copy's variable names onto the names the answer displays,

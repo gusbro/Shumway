@@ -21,9 +21,11 @@ let engine = null;
  *        as it is written — a program that prints while it searches should be
  *        watchable while it runs.
  */
-export async function boot(onOutput, onAskForInput) {
+export async function boot(onOutput, onAskForInput, onDiagnostic) {
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
-  setModuleImports('main.js', { ui: { write: onOutput, askForInput: onAskForInput } });
+  setModuleImports('main.js', {
+    ui: { write: onOutput, writeError: onDiagnostic, askForInput: onAskForInput },
+  });
   engine = (await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp;
   await runMain();
   return engine.Boot();

@@ -1056,27 +1056,47 @@ public static partial class MetaBuiltins
         System.Collections.Generic.HashSet<int> seenVars,
         System.Collections.Generic.HashSet<int> seenStructs)
     {
-        if (cell.Tag == Tag.Ref)
-            cell = engine.GetHeap(engine.Deref(cell.AsHeapIndex));
-        switch (cell.Tag)
+        // ITERATIVE over the list spine. Recursing once per element cost one C#
+        // frame per element: a thousand-element list overflowed the stack in a
+        // browser (where it is small) and a hundred thousand did on the desktop.
+        // A list continues the loop; only a nested compound goes on the work
+        // list, so the memory used tracks the term's SHAPE, not its length.
+        System.Collections.Generic.Stack<Cell>? pending = null;
+        while (true)
         {
-            case Tag.AttVar:
-                int va = cell.AsHeapIndex;
-                if (seenVars.Add(va)) addrs.Add(va);
-                break;
-            case Tag.Str:
-                int fIdx = cell.AsHeapIndex;
-                if (!seenStructs.Add(fIdx)) break;
-                var (_, arity) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
-                for (int i = 0; i < arity; i++)
-                    CollectAttvars(engine, engine.GetHeap(fIdx + 1 + i), addrs, seenVars, seenStructs);
-                break;
-            case Tag.Lis:
-                int h = cell.AsHeapIndex;
-                if (!seenStructs.Add(h)) break;
-                CollectAttvars(engine, engine.GetHeap(h), addrs, seenVars, seenStructs);
-                CollectAttvars(engine, engine.GetHeap(h + 1), addrs, seenVars, seenStructs);
-                break;
+            if (cell.Tag == Tag.Ref)
+                cell = engine.GetHeap(engine.Deref(cell.AsHeapIndex));
+            switch (cell.Tag)
+            {
+                case Tag.AttVar:
+                    int va = cell.AsHeapIndex;
+                    if (seenVars.Add(va)) addrs.Add(va);
+                    break;
+                case Tag.Str:
+                    int fIdx = cell.AsHeapIndex;
+                    if (!seenStructs.Add(fIdx)) break;
+                    var (_, arity) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
+                    // Pushed last-to-first so they come off in argument order:
+                    // the collection order is what the answer displays.
+                    for (int i = arity - 1; i >= 0; i--)
+                        Visit(engine.GetHeap(fIdx + 1 + i));
+                    break;
+                case Tag.Lis:
+                    int h = cell.AsHeapIndex;
+                    if (!seenStructs.Add(h)) break;
+                    Visit(engine.GetHeap(h + 1));        // the rest, for later
+                    cell = engine.GetHeap(h);            // this element, now
+                    continue;
+            }
+            if (pending is null || pending.Count == 0) return;
+            cell = pending.Pop();
+        }
+
+        // Only what can hold an attributed variable is worth remembering.
+        void Visit(Cell c)
+        {
+            if (c.Tag is Tag.Ref or Tag.AttVar or Tag.Str or Tag.Lis)
+                (pending ??= new System.Collections.Generic.Stack<Cell>()).Push(c);
         }
     }
 
