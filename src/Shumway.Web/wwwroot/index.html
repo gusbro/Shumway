@@ -221,7 +221,7 @@ par(b, c)."></div>
            <b>Download</b> saves one to your computer, <b>Export</b> saves the
            whole workspace as a zip.</p>
 
-        <h4>Libraries</h4>
+        <h4>Libraries that come with the engine</h4>
         <p>Constraints and coroutining are opt-in, from the program itself:</p>
         <pre><code>:- use_module(library(clpfd)).
 
@@ -233,6 +233,30 @@ puzzle([S,E,N,D,M,O,R,Y]) :-
     label(Vars).</code></pre>
         <p>The <b>Predicate reference</b> (the book icon) lists everything the
            engine provides, with the mode of each argument.</p>
+
+        <h4>Libraries from elsewhere</h4>
+        <p><b>Libraries…</b> brings in someone else's. Import a folder from
+           your computer, or fetch one straight from a GitHub directory —
+           Scryer's and SWI's are offered, so you do not have to install a
+           Prolog system to borrow its library. What you import is a
+           <i>collection</i>: Scryer's <code>lib/</code> is one folder and
+           sixty libraries, and every <code>x.pl</code> in it becomes
+           <code>library(x)</code>.</p>
+        <p>Each collection carries a <b>dialect</b>. A library written for
+           Scryer loads under Scryer's reading of Prolog and one written for
+           SWI under SWI's, which is what lets both systems' versions of the
+           same library sit here at once.</p>
+        <p>A library loads faster once <b>compiled</b> — several times faster,
+           because the compiling stops happening on every consult. That runs by
+           itself in the background after an import, doing the ones your
+           programs import first, and each becomes fast the moment its own
+           build lands. It pauses while you consult and you can stop it at any
+           time; what is already built stays built, across reloads too.</p>
+        <p>You can read and edit a library's sources from the same dialog. They
+           are <i>sources</i>: what a program resolves is the compiled version
+           beside them, so an edit takes effect when you press <b>rebuild</b>.
+           Libraries are shared by every workspace and do not travel in a
+           workspace's zip or share link.</p>
 
         <h4>Sharing</h4>
         <p><b>Share</b> puts a file or a whole workspace INSIDE the link, in the

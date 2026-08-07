@@ -8,6 +8,7 @@ documentation index; start with the [user guide](guide/user-guide.md).
 | Doc | What it covers |
 |---|---|
 | [user-guide.md](guide/user-guide.md) | The complete walkthrough: building, the REPL, embedding in .NET, modules, the compile/link/exe toolchain |
+| [webshumway.md](guide/webshumway.md) | Prolog in the browser: the top level, workspaces, imported libraries, sharing, hosting |
 | [interop.md](guide/interop.md) | C# ↔ Prolog interop: typed foreign predicates, typed queries, re-entrant `SolveOnce`, and the zero-copy cell-access hot path |
 | [predicates.md](guide/predicates.md) | Reference of every builtin and library predicate (auto-generated — do not edit) |
 | [debugger.md](guide/debugger.md) | Source-level debugging in Visual Studio |
@@ -33,7 +34,7 @@ documentation index; start with the [user guide](guide/user-guide.md).
   non-negotiable invariants, by subsystem.
 - [decision-policy.md](architecture/decision-policy.md) — what counts as a
   major decision, and where decisions are recorded.
-- [adr/](architecture/adr/) — Architecture Decision Records 001–041, one per
+- [adr/](architecture/adr/) — Architecture Decision Records 001–042, one per
   major design decision, each with its status.
 
 ## Subsystem designs (`design/`)
