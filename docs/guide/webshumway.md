@@ -177,7 +177,7 @@ forgets, and says so.
 
 Static files, with one requirement: the app uses threads (so a long search
 cannot freeze the tab), threads need `SharedArrayBuffer`, and that needs the
-page to be **cross-origin isolated**. The host must send:
+page to be **cross-origin isolated**:
 
 ```
 Cross-Origin-Opener-Policy: same-origin
@@ -187,17 +187,47 @@ Cross-Origin-Embedder-Policy: credentialless
 `credentialless` rather than `require-corp` so that the library importer can
 read GitHub's listing API, which sends CORS but no `Cross-Origin-Resource-Policy`.
 Everything else it fetches (`raw.githubusercontent.com`) does send CORP and
-would work under either.
+would work under either. Safari does not support `credentialless` today: the app
+runs there, but importing a library from a URL does not (importing a folder
+does).
 
-This rules out hosts that cannot set headers — GitHub Pages among them. And
-`credentialless` is unsupported in Safari today: the app runs there, but
-importing a library from a URL does not (importing a folder does).
+### A host that can send them
 
-The app registers a **service worker**, so a second visit starts offline. Files
-whose name pins their contents (the runtime, the fingerprinted modules) are
-served from the cache; everything else — the stylesheet, the manifest, the
-examples — goes to the network first with the cache as fallback, because those
-keep their names across publishes and a cached copy can be stale.
+Serve the published `wwwroot` and set the two headers. The page is isolated from
+the first request; nothing below applies.
+
+### A host that cannot — GitHub Pages
+
+A service worker controls the responses the page receives, so it can add the
+headers itself: what matters to the browser is what arrives, not who wrote it
+(`sw.js`). The cost is that a worker does not control the page that installed
+it, so the **first load of a fresh visit** is not isolated and the page reloads
+once — a blink, once per browser rather than once per visit.
+
+Two things make that work, and both are load-bearing:
+
+- `isolate.js` runs as a plain script in `<head>`, **ahead of the module that
+  boots the engine**. A module's imports are evaluated before its own body, so
+  isolation code living inside `main.js` ran only after the runtime had already
+  asserted about `SharedArrayBuffer`.
+- `session.js` imports the runtime **when it starts it**, not when the module
+  loads, so the page's own startup happens first.
+
+If the worker never takes control, the app starts un-isolated and says so
+instead of failing: everything works except that a long query blocks the tab.
+
+`.github/workflows/webshumway.yml` builds and deploys on every push to `main`.
+It needs **Settings → Pages → Source: GitHub Actions** in the repository, and
+publishes a `.nojekyll` because Pages otherwise skips `_framework`, where the
+whole runtime lives.
+
+### Offline
+
+The same worker makes a second visit start offline. Files whose name pins their
+contents (the runtime, the fingerprinted modules) are served from the cache;
+everything else — the stylesheet, the manifest, the examples — goes to the
+network first with the cache as fallback, because those keep their names across
+publishes and a cached copy can be stale.
 
 ---
 

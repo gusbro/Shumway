@@ -5,7 +5,11 @@
 // That is what keeps the page drawable while a search runs. This module is the
 // facade the UI talks to; nothing above it needs to know where the engine is.
 
-import { dotnet } from './_framework/dotnet.js'
+// The runtime is imported when it is STARTED, not when this module is loaded.
+// A static import is evaluated before the body of everything that imports it,
+// which put the runtime ahead of the page's own startup: on a page that is not
+// yet cross-origin isolated it asserted about SharedArrayBuffer before a single
+// line of main.js had run — no message, no theme, nothing to explain it.
 
 /** Reply tags from queryNext, matching WebShumwayApp. */
 export const SOLUTION = 's';
@@ -22,6 +26,7 @@ let engine = null;
  *        watchable while it runs.
  */
 export async function boot(onOutput, onAskForInput, onDiagnostic) {
+  const { dotnet } = await import('./_framework/dotnet.js');
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
   setModuleImports('main.js', {
     ui: { write: onOutput, writeError: onDiagnostic, askForInput: onAskForInput },

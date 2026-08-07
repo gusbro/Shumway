@@ -9,6 +9,20 @@
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <meta name="theme-color" content="#111111" />
 
+  <!-- BEFORE the module script, and not a module itself, because a module's
+       imports are evaluated before its own body: main.js pulls in the .NET
+       runtime through session.js, so anything main.js did about isolation
+       happened after the runtime had already asserted its way out.
+
+       The app needs SharedArrayBuffer, which needs the page to be cross-origin
+       isolated, which normally means the server sends COOP/COEP. Where it
+       cannot (GitHub Pages), the service worker adds them to what the page
+       receives — but a worker does not control the page that installed it, so
+       the first load of a fresh visit needs one reload. That is what this
+       does, once per browser, guarded so a worker that never takes control
+       cannot make a loop of it. -->
+  <script src="isolate#[.{fingerprint}].js"></script>
+
   <!-- Filled in by the WebAssembly SDK at publish: the runtime preload hint and
        the import map that resolves ./_framework/dotnet.js to its fingerprinted
        file name. Without both, a published (fingerprinted) build 404s on boot. -->

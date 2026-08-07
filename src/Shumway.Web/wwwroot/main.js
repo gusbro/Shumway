@@ -1184,6 +1184,19 @@ theme.attach(document.getElementById('theme'), config.theme,
              (choice) => settings.update({ theme: choice }));
 
 out.textContent = '';
+
+// isolate.js (a plain script, ahead of this module) has already decided what to
+// do about cross-origin isolation. If it is reloading the page to get it, there
+// is nothing worth starting here.
+if (!crossOriginIsolated && !window.shumwayIsolationFailed) {
+  throw new Error('reloading to isolate the page');
+}
+if (window.shumwayIsolationFailed) {
+  emit('% this page could not be isolated, so the engine shares the page\'s'
+     + ' thread: a long query will freeze the tab until it answers or you'
+     + ' reload\n', 'error');
+}
+
 emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic) + '\n\n', 'note');
 setPending(false);
 
@@ -1235,7 +1248,10 @@ if (!settings.persistent())
   emit('% this browser will not store preferences — the theme lasts for this session only\n', 'note');
 
 // Offline. Registered after boot so it never competes with the runtime download
-// on a first visit; the second visit is the one that benefits.
+// on a first visit; the second visit is the one that benefits. (On a host that
+// needs the worker for isolation, ensureIsolated already registered it — this
+// is the case where the server sends the headers itself and the worker is only
+// wanted for offline.)
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {
     emit('% offline support unavailable in this browser\n', 'note');

@@ -98,10 +98,12 @@ nobody wants delivered in full.
 - **Tier-0 only.** A browser does not allow runtime code generation. Programs
   behave identically; only speed differs — the project's standing invariant, here
   enforced by the platform.
-- **The hosting requirement is real.** COOP/COEP rules out hosts that cannot set
-  headers, GitHub Pages among them. `credentialless` (needed for the library
-  importer's listing call) is unsupported in Safari, where URL import does not
-  work and folder import does.
+- **The hosting requirement is real, but not disqualifying.** COOP/COEP is
+  needed; a host that cannot send it (GitHub Pages) is served by the service
+  worker synthesizing the headers, at the cost of one reload on a first visit.
+  `credentialless` (needed for the library importer's listing call) is
+  unsupported in Safari, where URL import does not work and folder import does.
+  Both paths verified against a real header-less server.
 - **`#selftest` is the only automatic test at this layer.** A browser-wasm project
   cannot be referenced by a normal test project. Everything below it —
   `Shumway.TopLevel` included — is covered by the ordinary gate.

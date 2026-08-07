@@ -70,8 +70,16 @@ load-bearing:
   point.
 - **Cross-origin isolation is required**, which means the host must send
   `Cross-Origin-Opener-Policy: same-origin` and a `Cross-Origin-Embedder-Policy`.
-  This rules out static hosts that cannot set headers, GitHub Pages among them.
-  Hosting a JS worker that owns the runtime was tried first and does not boot.
+  A host that cannot set headers — GitHub Pages — is still viable, because the
+  service worker can add them to what the page receives: the browser judges what
+  arrives, not who wrote it. The cost is one reload on a first visit, since a
+  worker does not control the page that installed it. That in turn forces two
+  things: the isolation check must run as a plain script BEFORE the module that
+  boots the engine (a module's imports are evaluated before its own body, so the
+  runtime was asserting about `SharedArrayBuffer` before any of the app's code
+  ran), and the runtime is imported when it is started rather than when the
+  module loads. Hosting a JS worker that owns the runtime was tried first and
+  does not boot.
 
 `Cross-Origin-Embedder-Policy: credentialless` rather than `require-corp`, so the
 library importer can read GitHub's listing API (CORS, no CORP). Cost: Safari does

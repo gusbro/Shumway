@@ -1,15 +1,55 @@
-// Offline, by remembering what the page actually fetched.
+// Offline, and cross-origin isolation on a host that cannot send headers.
 //
-// A precache list is not an option here: the runtime's files are fingerprinted
-// at publish time, so their names are not known when this file is written. So
-// the strategy is cache-as-you-go — the first visit fills the cache from the
-// network, and every visit after that can run with no network at all. That also
-// keeps this file correct across republishes without maintaining a manifest.
+// OFFLINE. A precache list is not an option here: the runtime's files are
+// fingerprinted at publish time, so their names are not known when this file is
+// written. So the strategy is cache-as-you-go — the first visit fills the cache
+// from the network, and every visit after that can run with no network at all.
+// That also keeps this file correct across republishes without maintaining a
+// manifest.
+//
+// ISOLATION. The app uses threads, threads need SharedArrayBuffer, and that
+// needs the page to be cross-origin isolated — which normally means the SERVER
+// sends COOP/COEP. A host like GitHub Pages cannot. But a service worker
+// controls the responses the page receives, so it can add those headers itself:
+// the browser sees an isolated document either way, because what matters is what
+// arrives, not who wrote it.
+//
+// The one cost is the FIRST load of a fresh visit: no worker controls the page
+// yet, so nothing adds the headers and the page is not isolated. main.js detects
+// that and reloads once — after which the worker is in charge and the app runs
+// isolated for good. Where the server DOES send the headers (see
+// docs/guide/webshumway.md), the page is isolated from the start and neither the
+// rewriting nor the reload ever happens.
 //
 // Versioned by cache name: bumping it discards the previous generation on
 // activate, which is how a republished app stops serving yesterday's runtime.
 
-const CACHE = 'webshumway-v2';
+const CACHE = 'webshumway-v3';
+
+/**
+ * The response the page should get, isolated.
+ *
+ * `credentialless` rather than `require-corp` so the library importer can read
+ * GitHub's listing API, which sends CORS but no Cross-Origin-Resource-Policy.
+ * A response whose body cannot be re-read (an opaque cross-origin one) is
+ * returned untouched — it is not ours to relabel.
+ */
+function isolated(response) {
+  if (!response || response.type === 'opaque' || response.type === 'opaqueredirect')
+    return response;
+  const headers = new Headers(response.headers);
+  headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+  headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
+  // Same-origin subresources need this to be embeddable in an isolated
+  // document; the server sends it where it can, and this covers where it
+  // cannot.
+  headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
 
 /**
  * Whether a URL names one exact version of its contents. The runtime's files
@@ -58,10 +98,10 @@ self.addEventListener('fetch', (event) => {
       try {
         const fresh = await fetch(request);
         (await caches.open(CACHE)).put('./', fresh.clone());
-        return fresh;
+        return isolated(fresh);
       } catch {
-        return (await caches.match('./')) ?? (await caches.match('./index.html'))
-            ?? Response.error();
+        const cached = (await caches.match('./')) ?? (await caches.match('./index.html'));
+        return cached ? isolated(cached) : Response.error();
       }
     })());
     return;
@@ -73,10 +113,10 @@ self.addEventListener('fetch', (event) => {
   if (immutable(url)) {
     event.respondWith((async () => {
       const hit = await caches.match(request);
-      if (hit) return hit;
+      if (hit) return isolated(hit);
       const fresh = await fetch(request);
       if (fresh.ok) (await caches.open(CACHE)).put(request, fresh.clone());
-      return fresh;
+      return isolated(fresh);
     })());
     return;
   }
@@ -88,9 +128,10 @@ self.addEventListener('fetch', (event) => {
     try {
       const fresh = await fetch(request);
       if (fresh.ok) (await caches.open(CACHE)).put(request, fresh.clone());
-      return fresh;
+      return isolated(fresh);
     } catch {
-      return (await caches.match(request)) ?? Response.error();
+      const cached = await caches.match(request);
+      return cached ? isolated(cached) : Response.error();
     }
   })());
 });

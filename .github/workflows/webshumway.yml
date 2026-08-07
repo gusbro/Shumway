@@ -1,0 +1,68 @@
+# Builds WebShumway and publishes it to GitHub Pages.
+#
+# The site is static files, so Pages can serve it — with one caveat that shapes
+# the whole deployment: the app uses threads, which need the page to be
+# cross-origin isolated, which normally means the SERVER sends COOP/COEP. Pages
+# cannot. The service worker adds those headers to what the page receives
+# instead (see wwwroot/sw.js), at the cost of one reload on a first visit.
+#
+# See docs/guide/webshumway.md for hosting, including the hosts where the
+# headers can be sent for real and no reload happens.
+
+name: WebShumway
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - '.github/workflows/webshumway.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and a queued one is not worth running if a newer
+# push is already waiting — but never cancel one mid-flight.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # browser-wasm is not part of the SDK: without this the publish fails
+      # asking for it.
+      - name: Install the WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Publish
+        run: dotnet publish src/Shumway.Web -c Release -o publish
+
+      # A file starting with an underscore is skipped by Pages' Jekyll
+      # processing, and the .NET runtime lives in _framework.
+      - name: Keep _framework
+        run: touch publish/wwwroot/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish/wwwroot
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
