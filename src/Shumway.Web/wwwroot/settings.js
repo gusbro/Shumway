@@ -17,7 +17,7 @@ export const SETTINGS_VERSION = 1;
 
 const DEFAULTS = {
   v: SETTINGS_VERSION,
-  theme: null,              // null = follow the operating system
+  theme: 'dark',            // what a first visit gets; the toggle overrides it
   workspace: 'scratch',     // the one to open on load
   seededExamples: false,    // whether the examples workspace was ever created
 };
@@ -30,7 +30,13 @@ const DEFAULTS = {
  */
 function migrate(stored) {
   if (!stored || typeof stored !== 'object') return { settings: { ...DEFAULTS }, discarded: false };
-  if (stored.v === SETTINGS_VERSION) return { settings: { ...DEFAULTS, ...stored }, discarded: false };
+  if (stored.v === SETTINGS_VERSION) {
+    const settings = { ...DEFAULTS, ...stored };
+    // No theme stored is no CHOICE made, so it takes the default rather than
+    // meaning "follow the system" — a null that predates there being a default.
+    settings.theme ??= DEFAULTS.theme;
+    return { settings, discarded: false };
+  }
   // No migration path yet, by choice. When one is worth writing it goes here,
   // version by version, and this line becomes the last resort.
   return { settings: { ...DEFAULTS }, discarded: true };

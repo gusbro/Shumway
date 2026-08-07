@@ -84,6 +84,13 @@ internal static partial class WebShumwayApp
         // fails loudly.
         Console.SetOut(new PageWriter());
         Console.SetError(new PageWriter(asError: true));
+
+        // browser-wasm has no Brotli codec, and a bundle is compressed with it
+        // by default. Reading was never affected (the format says whether a
+        // bundle is compressed); WRITING one is, and compiling a library writes
+        // one. Set here rather than at the call site: nothing this build
+        // produces can be compressed.
+        BundleFormat.DisableCompression = true;
     }
 
     /// <summary>Creates the engine. Returns a short description of what booted,
@@ -143,6 +150,9 @@ internal static partial class WebShumwayApp
         // Relative paths in Prolog — consult('lists.pl'), open/4 — resolve
         // against the active workspace, so a program means what it says.
         EnsureWorkspace();
+        // Libraries are global: every engine, including one started by switching
+        // workspace, knows them.
+        RegisterLibraries();
     }
 
     /// <summary>Loads the editor's buffer. Returns null on success, or the error

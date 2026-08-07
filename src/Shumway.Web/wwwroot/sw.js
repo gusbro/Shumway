@@ -9,7 +9,20 @@
 // Versioned by cache name: bumping it discards the previous generation on
 // activate, which is how a republished app stops serving yesterday's runtime.
 
-const CACHE = 'webshumway-v1';
+const CACHE = 'webshumway-v2';
+
+/**
+ * Whether a URL names one exact version of its contents. The runtime's files
+ * and this app's modules carry a fingerprint in their name, so a changed one
+ * arrives under a NEW name and the cached copy can never be wrong.
+ *
+ * Everything else — the stylesheet, the manifest, the examples — keeps its name
+ * across publishes, so a cached copy CAN be stale, and serving it was: a normal
+ * reload gave the new HTML with the old CSS, and only a cache-bypassing reload
+ * looked right.
+ */
+const immutable = (url) =>
+  url.pathname.includes('/_framework/') || /\.[a-z0-9]{8,}\.[a-z]+$/.test(url.pathname);
 
 self.addEventListener('install', (event) => {
   // The shell, whose names we DO know. Everything else arrives via fetch.
@@ -54,14 +67,30 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Everything else is content-addressed in practice — the runtime's assets
-  // carry a fingerprint in their name — so serving from cache is safe and the
-  // network is only consulted when we have never seen the file.
+  // A file whose name pins its contents is served from the cache: it cannot be
+  // stale, and this is what makes a second visit fast and an offline one
+  // possible.
+  if (immutable(url)) {
+    event.respondWith((async () => {
+      const hit = await caches.match(request);
+      if (hit) return hit;
+      const fresh = await fetch(request);
+      if (fresh.ok) (await caches.open(CACHE)).put(request, fresh.clone());
+      return fresh;
+    })());
+    return;
+  }
+
+  // Everything else keeps its name across publishes, so the network decides and
+  // the cache is the fallback — which is still an offline app, just one that
+  // takes the newer file when there is a network to ask.
   event.respondWith((async () => {
-    const hit = await caches.match(request);
-    if (hit) return hit;
-    const fresh = await fetch(request);
-    if (fresh.ok) (await caches.open(CACHE)).put(request, fresh.clone());
-    return fresh;
+    try {
+      const fresh = await fetch(request);
+      if (fresh.ok) (await caches.open(CACHE)).put(request, fresh.clone());
+      return fresh;
+    } catch {
+      return (await caches.match(request)) ?? Response.error();
+    }
   })());
 });

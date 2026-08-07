@@ -51,11 +51,17 @@ h1 { font-size: 1.3rem; margin: 0; letter-spacing: -.01em; }
 
 /* --- panes -------------------------------------------------------------- */
 
-.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
+/* The two panes are the same height, top and bottom. They do not hold the same
+   furniture — the program side carries a workspace bar and a file list — so
+   equal height means the TRANSCRIPT takes up the slack, which is where extra
+   room is worth having. */
+.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: stretch; }
 @media (max-width: 62rem) { .panes { grid-template-columns: 1fr; } }
 
 .pane {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: .6rem;
@@ -112,7 +118,10 @@ pre#out { padding: .6rem .75rem; }
   background: var(--field);
   color: inherit;
   padding: .6rem .75rem;
+  /* Fixed rather than growing: the editor is the reference the answers pane is
+     matched against, so it must not chase it back. */
   height: 24rem;
+  flex: none;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -184,7 +193,9 @@ select option { background: var(--panel); color: light-dark(#111, #eee); }
 /* --- the transcript ----------------------------------------------------- */
 
 pre#out {
-  height: 24rem;
+  /* Never shorter than the editor, and taller when the pane has room to give. */
+  min-height: 24rem;
+  flex: 1;
   overflow: auto;
   margin: 0;
   white-space: pre-wrap;
@@ -320,6 +331,16 @@ dialog.wide .row input { flex: 1; max-width: 20rem; }
 }
 .doc-empty { color: var(--muted); font-style: italic; padding: .6rem 0; }
 
+.hint-block { color: var(--muted); font-size: .86rem; margin: 0 0 .6rem; }
+.hint-block code { font: 12px var(--mono); }
+
+/* A labelled field in a dialog: the label above what it names. */
+.field { display: block; margin-top: .7rem; font-size: .86rem; color: var(--muted); }
+.field input, .field select { margin-top: .2rem; }
+
+/* A file open from a library rather than from the workspace. */
+.file.lib { border-style: dashed; cursor: default; }
+
 /* The guide reads as prose. It keeps a measure — a line the full width of a
    wide panel is one the eye loses its place on — but a generous one, so the
    panel is not mostly empty around it. */
@@ -361,3 +382,8 @@ dialog.wide .row input { flex: 1; max-width: 20rem; }
   position: absolute; width: 1px; height: 1px;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
+
+/* Something is being worked on. The page is not frozen — the search runs on
+   another thread — so the only thing missing is saying so. */
+body.busy .status { color: var(--accent); }
+body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }

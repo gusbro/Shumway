@@ -7,6 +7,7 @@
 
 import * as session from './session.js';
 import * as workspace from './workspace.js';
+import * as libraries from './libraries.js';
 import * as settings from './settings.js';
 import * as theme from './theme.js';
 import { attach } from './editor.js';
@@ -104,6 +105,37 @@ function askForInput() {
   queryInput.focus();
 }
 
+// --- work that takes a while ---------------------------------------------
+// The page stays responsive while the engine works (that is what the pool
+// thread is for), which is exactly why silence is wrong: nothing is frozen, so
+// nothing tells you anything is happening. Loading a library can take a good
+// many seconds.
+
+let busyTimer = 0;
+
+async function withBusy(label, work) {
+  const started = performance.now();
+  // The label may be a function, for work that goes through phases: reading
+  // files is not compiling, and a wait that says which is which is a wait
+  // somebody can judge.
+  const text = typeof label === 'function' ? label : () => label;
+  const tick = () => {
+    const seconds = Math.round((performance.now() - started) / 1000);
+    statusEl.textContent = seconds < 1 ? `${text()}…` : `${text()}… ${seconds}s`;
+  };
+  tick();
+  busyTimer = setInterval(tick, 500);
+  document.body.classList.add('busy');
+  try {
+    return await work();
+  } finally {
+    clearInterval(busyTimer);
+    busyTimer = 0;
+    document.body.classList.remove('busy');
+    statusEl.textContent = '';
+  }
+}
+
 function inputDone() {
   awaitingInput = false;
   statusEl.textContent = '';
@@ -122,11 +154,37 @@ async function supplyEndOfFile() {
   await session.supplyEndOfFile();
 }
 
+/**
+ * Says the engine is searching — but only once it has gone on long enough to
+ * wonder. Under a couple of seconds an indicator is just a flash, and a line
+ * that appears and vanishes on every query is worse than none.
+ *
+ * Returns the function that takes it down again.
+ */
+function runningIndicator() {
+  const started = performance.now();
+  let ticking = 0;
+  const tick = () => {
+    // The status line belongs to whoever needs it more: a program asking for
+    // input has something for the user to DO.
+    if (awaitingInput) return;
+    statusEl.textContent =
+      `running goal… ${((performance.now() - started) / 1000).toFixed(0)}s   (Stop to abandon)`;
+  };
+  const waiting = setTimeout(() => { tick(); ticking = setInterval(tick, 500); }, 2000);
+  return () => {
+    clearTimeout(waiting);
+    clearInterval(ticking);
+    if (!awaitingInput) statusEl.textContent = '';
+  };
+}
+
 async function step() {
   stepping = true;
+  const searching = runningIndicator();
   let tag, text;
   try { ({ tag, text } = await session.next(answerWidth())); }
-  finally { stepping = false; }
+  finally { stepping = false; searching(); }
   // The goal may have written as it ran; an answer starts its own line.
   freshLine();
   if (aborted) { aborted = false; emit('% Execution aborted.\n\n', 'note'); setPending(false); return; }
@@ -262,6 +320,8 @@ const shareDialog = document.getElementById('share-dialog');
 // its declaration runs.
 const referenceDialog = document.getElementById('reference-dialog');
 const guideDialog = document.getElementById('guide-dialog');
+const librariesDialog = document.getElementById('libraries-dialog');
+const importDialog = document.getElementById('import-dialog');
 
 // Cancel closes without submitting, so the only submit button is the one Enter
 // should press. Escape closes with an empty returnValue, which reads as cancel
@@ -269,7 +329,8 @@ const guideDialog = document.getElementById('guide-dialog');
 //
 // The confirmation dialog has no such button in the markup: its answers vary by
 // question, so askChoice builds them — including the cancelling one.
-for (const dialog of [promptDialog, shareDialog, referenceDialog, guideDialog]) {
+for (const dialog of [promptDialog, shareDialog, referenceDialog, guideDialog,
+                       librariesDialog, importDialog]) {
   dialog.querySelector('[data-close]')
     .addEventListener('click', () => dialog.close('cancel'));
 }
@@ -318,6 +379,251 @@ function askFor(title, value) {
       () => resolve(promptDialog.returnValue === 'ok' ? input.value.trim() : null),
       { once: true }));
 }
+
+// --- libraries -----------------------------------------------------------
+// Global, not part of any workspace: what a program builds ON rather than what
+// it is. Editable, because reading the library you are calling is half of
+// learning it — a library file opened here saves back into the library.
+
+// --- building a collection in the background ------------------------------
+// Importing a collection makes forty-odd libraries available; compiling them is
+// what makes each one load fast, and there is no reason to make anyone ask for
+// that one at a time. So it runs by itself, one library after another, and each
+// becomes fast the moment its own build lands — the whole thing does not have
+// to finish to be worth having.
+//
+// Each compile takes the engine gate for its own duration and no longer, so a
+// query or a consult waits for ONE library rather than for the batch.
+
+const buildStatusEl = document.getElementById('build-status');
+let buildRun = null;
+
+// A consult PAUSES the batch. Not for the engine's sake — each compile holds
+// the engine gate for its own duration, so the two never run at once — but so
+// that what a consult resolves against is a settled set of bundles, and so that
+// pressing Consult does not mean waiting behind a library nobody asked for.
+// The batch stops starting new ones and picks up where it left off after.
+let consultsInFlight = 0;
+
+// Bumped whenever the answer to "what do the programs here import" may have
+// changed: a consult, and a switch to a different workspace's files.
+let consultEpoch = 0;
+
+async function whileConsulting(work) {
+  consultsInFlight++;
+  try { return await work(); } finally { consultsInFlight--; consultEpoch++; }
+}
+
+/**
+ * The libraries this workspace's programs ask for.
+ *
+ * Read out of the sources rather than from the engine, because the point is to
+ * compile them BEFORE anything imports them. A regular expression is enough
+ * for that: it decides what to build FIRST, so a false positive costs a
+ * library compiled early and a miss costs nothing but the original order.
+ */
+async function librariesInUse() {
+  const wanted = new Set();
+  const seen = [program(), ...await Promise.all(
+    (await workspace.list()).map((f) => workspace.read(f)))];
+  for (const text of seen) {
+    for (const [, name] of (text ?? '').matchAll(/use_module\s*\(\s*library\s*\(\s*([\w.]+)/g))
+      wanted.add(name);
+  }
+  return wanted;
+}
+
+const idle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function showBuildStatus(text, onStop) {
+  buildStatusEl.replaceChildren(document.createTextNode(text));
+  if (onStop) {
+    const stopIt = document.createElement('button');
+    stopIt.type = 'button';
+    stopIt.className = 'heading-action';
+    stopIt.textContent = 'stop';
+    stopIt.addEventListener('click', onStop);
+    buildStatusEl.appendChild(stopIt);
+  }
+  buildStatusEl.hidden = false;
+}
+
+async function buildCollection(name) {
+  if (buildRun) { emit(`% already building ${buildRun.name}\n`, 'note'); return; }
+  const run = { name, cancel: false };
+  buildRun = run;
+
+  const queue = (await libraries.entries(name)).filter((e) => !e.compiled);
+  const total = queue.length;
+  let built = 0, failed = 0;
+  let wanted = await librariesInUse();
+  let knownAt = consultEpoch;
+  const started = performance.now();
+  try {
+    while (queue.length > 0) {
+      if (run.cancel) break;
+
+      // Between libraries, not inside one: a compile that has started finishes,
+      // and the next one waits for the user to be done.
+      if (consultsInFlight > 0) {
+        showBuildStatus(`paused while consulting — ${name}: ${queue.length} to go`);
+        while (consultsInFlight > 0 && !run.cancel) await idle(200);
+        if (run.cancel) break;
+      }
+
+      // What the programs here import goes FIRST — those are the ones whose
+      // being slow is felt. Re-read after each consult, because a consult is
+      // when a program's imports change.
+      if (consultEpoch !== knownAt) { wanted = await librariesInUse(); knownAt = consultEpoch; }
+      let next = queue.findIndex((e) => wanted.has(e.name));
+      if (next < 0) next = 0;
+      const [entry] = queue.splice(next, 1);
+
+      showBuildStatus(
+        `compiling ${name}: ${entry.name} (${total - queue.length}/${total})`,
+        () => { run.cancel = true; showBuildStatus('finishing the current library…'); });
+      const err = await libraries.compile(name, entry.name);
+      if (err) failed++; else built++;
+      // Stored as each one lands: a reload keeps what is already built.
+      await libraries.persist();
+      if (librariesDialog.open) await refreshLibraries();
+    }
+  } finally {
+    buildRun = null;
+    buildStatusEl.hidden = true;
+    buildStatusEl.replaceChildren();
+  }
+
+  const seconds = ((performance.now() - started) / 1000).toFixed(0);
+  emit(`% ${name}: ${built} librar${built === 1 ? 'y' : 'ies'} compiled in ${seconds}s`
+     + (failed > 0 ? `, ${failed} could not be` : '')
+     + (run.cancel ? ' (stopped)' : '')
+     + '. The rest still load from source.\n', 'note');
+}
+
+async function refreshLibraries() {
+  const body = document.getElementById('libraries-body');
+  const known = await libraries.names();
+  if (known.length === 0) {
+    body.replaceChildren(Object.assign(document.createElement('p'),
+      { className: 'doc-empty', textContent: 'no libraries imported yet' }));
+    return;
+  }
+
+  const parts = [];
+  for (const name of known) {
+    const tag = await libraries.dialect(name);
+    const provided = await libraries.entries(name);
+    const head = document.createElement('h4');
+    head.textContent = (tag ? `${name} — ${tag}` : name)
+      + ` — ${provided.length} librar${provided.length === 1 ? 'y' : 'ies'}`;
+
+    // Compiling what is left, for a collection imported before this existed or
+    // one whose batch was stopped.
+    if (provided.some((e) => !e.compiled)) {
+      const buildRest = document.createElement('button');
+      buildRest.type = 'button';
+      buildRest.className = 'heading-action';
+      buildRest.textContent = 'compile the rest';
+      buildRest.addEventListener('click', () => { librariesDialog.close(''); buildCollection(name); });
+      head.appendChild(buildRest);
+    }
+
+    const drop = document.createElement('button');
+    drop.type = 'button';
+    drop.className = 'heading-action';
+    drop.textContent = 'remove';
+    drop.addEventListener('click', async () => {
+      if (!await ask(`Remove library “${name}”?`,
+                     'Its files are deleted from this browser. Programs that '
+                     + 'import it will stop finding it.', 'Remove')) return;
+      await libraries.remove(name);
+      await libraries.persist();
+      await refreshLibraries();
+      emit(`% removed library ${name}\n`, 'note');
+    });
+    head.appendChild(drop);
+    parts.push(head);
+
+    // One row per LIBRARY the collection provides — the names use_module can
+    // ask for. Compiling is per library: nobody wants to wait for forty-six of
+    // them to get the one they came for.
+    for (const entry of provided) {
+      const row = document.createElement('div');
+      row.className = 'doc-entry';
+
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'file';
+      open.textContent = `library(${entry.name})`;
+      open.title = `open ${entry.name}.pl`;
+      open.addEventListener('click', async () => {
+        await openLibraryFile(name, entry.name + '.pl');
+        librariesDialog.close('');
+      });
+
+      const state = document.createElement('span');
+      state.textContent = entry.compiled ? 'compiled' : 'source only';
+
+      // Editing a source does nothing until the library is built again: what
+      // library(X) resolves to is the bundle beside the sources.
+      const build = document.createElement('button');
+      build.type = 'button';
+      build.className = 'heading-action';
+      build.textContent = entry.compiled ? 'rebuild' : 'compile';
+      build.addEventListener('click', async () => {
+        const failed = await withBusy(`compiling ${entry.name}`,
+                                      () => libraries.compile(name, entry.name));
+        await libraries.persist();
+        emit(failed ? `% ${entry.name}: ${failed}\n` : `% ${entry.name} compiled\n`,
+             failed ? 'error' : 'note');
+        await refreshLibraries();
+      });
+
+      row.append(open, state, build);
+      parts.push(row);
+    }
+  }
+  body.replaceChildren(...parts);
+}
+
+document.getElementById('libraries').addEventListener('click', async () => {
+  await refreshLibraries();
+  librariesDialog.showModal();
+});
+
+document.getElementById('import-library').addEventListener('click', async () => {
+  const picked = await libraries.pickFolder();
+  if (!picked) return;
+  if (picked.files.length === 0) {
+    emit('% that folder holds no Prolog sources\n', 'error');
+    return;
+  }
+
+  document.getElementById('import-detail').textContent =
+    `${picked.files.length} source file(s) from “${picked.name}”.`;
+  document.getElementById('import-name').value = picked.name;
+  importDialog.showModal();
+  const answer = await new Promise((resolve) =>
+    importDialog.addEventListener('close', () => resolve(importDialog.returnValue), { once: true }));
+  if (answer !== 'ok') return;
+
+  const name = document.getElementById('import-name').value.trim();
+  const dial = document.getElementById('import-dialect').value;
+  if (!name) return;
+
+  let phase = 'importing';
+  const err = await withBusy(
+    () => `${phase} ${name}`,
+    () => libraries.importFolder(name, dial, picked.files, (p) => { phase = p; }));
+
+  if (err) { emit(`% ${name}: ${err}\n`, 'error'); return; }
+  const provided = await libraries.entries(name);
+  emit(`% ${name}: ${provided.length} librar${provided.length === 1 ? 'y' : 'ies'} available`
+     + ` — compiling them in the background; each gets faster as it lands\n`, 'note');
+  await refreshLibraries();
+  buildCollection(name);        // not awaited: it runs while the page is used
+});
 
 // --- the reference and the guide -----------------------------------------
 // The reference is built from the ENGINE's own predicate metadata — the same
@@ -381,12 +687,30 @@ document.getElementById('guide').addEventListener('click', () => guideDialog.sho
 const filesEl = document.getElementById('files');
 const workspaceEl = document.getElementById('workspace');
 let currentFile = 'scratch.pl';
+// The library the open file belongs to, or null for the workspace's own. One
+// editor, two places a file can live — and saving has to reach the right one.
+let currentLib = null;
 
 /** Writes the editor's buffer back to its file, then mirrors to storage. */
 async function saveBuffer() {
+  if (currentLib !== null) {
+    await libraries.write(currentLib, currentFile, program());
+    await libraries.persist();
+    return;
+  }
   await workspace.write(currentFile, program());
   await workspace.persist();
   await refreshFiles();
+}
+
+/** Opens a library's file in the editor. It saves back into the library. */
+async function openLibraryFile(name, file) {
+  await saveBuffer();
+  currentLib = name;
+  currentFile = file;
+  await editor.setText((await libraries.read(name, file)) ?? '');
+  await refreshFiles();
+  emit(`% editing library ${name}/${file}\n`, 'note');
 }
 
 async function refreshWorkspaces() {
@@ -406,20 +730,32 @@ async function refreshWorkspaces() {
 
 async function refreshFiles() {
   const names = await workspace.list();
-  filesEl.replaceChildren(...names.map((name) => {
+  const chips = names.map((name) => {
     const item = document.createElement('button');
     item.type = 'button';
-    item.className = 'file' + (name === currentFile ? ' current' : '');
+    item.className = 'file' + (currentLib === null && name === currentFile ? ' current' : '');
     item.textContent = name;
     item.title = `open ${name}`;
     item.addEventListener('click', async () => {
-      await workspace.write(currentFile, program());   // don't lose the buffer
+      await saveBuffer();               // whichever place the open file lives in
+      currentLib = null;
       currentFile = name;
       await editor.setText((await workspace.read(name)) ?? '');
       await refreshFiles();
     });
     return item;
-  }));
+  });
+
+  // A library file is not one of the workspace's, so it gets a chip of its own
+  // saying where it is from — otherwise the editor would be showing a file that
+  // no chip claims.
+  if (currentLib !== null) {
+    const chip = document.createElement('span');
+    chip.className = 'file current lib';
+    chip.textContent = `library(${currentLib}) ${currentFile}`;
+    chips.unshift(chip);
+  }
+  filesEl.replaceChildren(...chips);
 }
 
 /** Opens a workspace. Its files are a different program, so the engine starts
@@ -441,6 +777,9 @@ async function openWorkspace(name, { confirm = true } = {}) {
   if (err) { emit(`% ${err}\n`, 'error'); await refreshWorkspaces(); return; }
   await session.resetEngine();
   consultedSomething = false;
+  // Different files, so possibly different imports: a background build should
+  // re-aim at what THIS workspace uses.
+  consultEpoch++;
   settings.update({ workspace: name });
 
   const files = await workspace.list();
@@ -729,14 +1068,20 @@ async function consultBuffer(note) {
   // whose clauses have been replaced underneath it.
   await abandonQuery();
   await saveBuffer();
-  const err = await session.consult(program());
+  const started = performance.now();
+  const err = await whileConsulting(
+    () => withBusy('consulting', () => session.consult(program())));
+  const took = Math.round(performance.now() - started);
   if (!err) {
     editor?.markError(null);
     // Operators the program declared are now in the table, so the buffer's
     // colouring can change on consult — repaint it.
     editor?.repaint();
     consultedSomething = true;
-    emit(note, 'note');
+    // How long it took, when it took long enough to have been noticed: loading
+    // a library is seconds of work and saying so is the difference between
+    // "slow" and "broken".
+    emit(took >= 1000 ? note.replace(/\n$/, ` (${(took / 1000).toFixed(1)}s)\n`) : note, 'note');
     return true;
   }
   emit(err + '\n', 'error');
@@ -768,6 +1113,7 @@ editor = attach(
   programEl, session.highlight, await session.highlightKinds(), session.complete);
 
 workspace.init(session.exports());
+libraries.init(session.exports());
 
 // Settings of another version are discarded rather than guessed at (see
 // settings.js), and the stored files were written against the layout they
@@ -782,6 +1128,10 @@ if (settings.wasDiscarded()) {
 // Files: bring back whatever the last session left, then open the workspace it
 // was left in.
 const restored = await workspace.restoreAll();
+// Libraries come back before anything is consulted: a program whose first act
+// is use_module(library(…)) must find it.
+const restoredLibs = await libraries.restoreAll();
+if (restoredLibs > 0) emit(`% ${restoredLibs} library(ies) restored\n`, 'note');
 if (!config.seededExamples) {
   await workspace.seedExamples();
   settings.update({ seededExamples: true });

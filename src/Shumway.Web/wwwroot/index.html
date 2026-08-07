@@ -51,8 +51,11 @@
         <button id="new-workspace" type="button">New…</button>
         <button id="delete-workspace" type="button">Delete…</button>
         <button id="export-workspace" type="button" title="download this workspace as a zip">Export</button>
+        <button id="libraries" type="button"
+                title="libraries available to use_module(library(…))">Libraries…</button>
       </div>
 
+      <p id="build-status" class="status" aria-live="polite" hidden></p>
       <div id="files" class="files" aria-label="workspace files"></div>
 
       <!-- The editor holds ONE copy of the program: the coloured text IS the
@@ -106,6 +109,46 @@ par(b, c)."></div>
            one is NOT a submit button — in a method="dialog" form Enter presses
            the first submit, so a Cancel there would make Enter mean cancel. -->
       <div class="row end" id="confirm-actions"></div>
+    </form>
+  </dialog>
+
+  <!-- Libraries: folders of Prolog on the engine's search path, shared by every
+       workspace. Kept out of the workspace's own file list because they are not
+       the user's program — but visible and editable, because reading the
+       library you are calling is half of learning it. -->
+  <dialog id="libraries-dialog" class="wide">
+    <form method="dialog">
+      <div class="row">
+        <h3>Libraries</h3>
+        <button type="button" id="import-library">Import folder…</button>
+        <button type="button" data-close>Close</button>
+      </div>
+      <p class="hint-block">Available to every workspace as
+         <code>:- use_module(library(Name)).</code> A library from another
+         system loads under its own dialect.</p>
+      <div id="libraries-body" class="doc"></div>
+    </form>
+  </dialog>
+
+  <!-- Naming an imported library, and saying whose it is. -->
+  <dialog id="import-dialog">
+    <form method="dialog">
+      <h3>Import library</h3>
+      <p id="import-detail"></p>
+      <label class="field">Name
+        <input id="import-name" type="text" spellcheck="false" autocapitalize="off" />
+      </label>
+      <label class="field">Dialect
+        <select id="import-dialect">
+          <option value="">plain (Shumway / ISO)</option>
+          <option value="scryer">Scryer</option>
+          <option value="swi">SWI</option>
+        </select>
+      </label>
+      <div class="row end">
+        <button type="button" data-close>Cancel</button>
+        <button value="ok" class="primary">Import</button>
+      </div>
     </form>
   </dialog>
 
