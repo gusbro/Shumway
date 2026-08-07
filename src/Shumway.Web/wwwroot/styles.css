@@ -60,6 +60,7 @@ h1 { font-size: 1.3rem; margin: 0; letter-spacing: -.01em; }
 
 .pane {
   min-width: 0;
+  min-height: 0;          /* so a child may be smaller than its content */
   display: flex;
   flex-direction: column;
   background: var(--panel);
@@ -193,9 +194,14 @@ select option { background: var(--panel); color: light-dark(#111, #eee); }
 /* --- the transcript ----------------------------------------------------- */
 
 pre#out {
-  /* Never shorter than the editor, and taller when the pane has room to give. */
-  min-height: 24rem;
-  flex: 1;
+  /* `flex: 1 1 0` with a min-height SMALLER than the pane's natural height is
+     what makes this a window rather than a growing page: a flex item is sized
+     from its content unless its basis is zero, so transcript text pushed the
+     pane taller and taller instead of scrolling inside it. The height now comes
+     from the pane — which the editor opposite sets — and the floor only matters
+     if that side ever gets short. */
+  flex: 1 1 0;
+  min-height: 12rem;
   overflow: auto;
   margin: 0;
   white-space: pre-wrap;
