@@ -492,6 +492,45 @@ public static partial class MetaBuiltins
         }
     }
 
+    /// <summary><c>statistics/0</c> — writes a short report of where the time
+    /// and the memory went, to the current output.
+    ///
+    /// <para>The counters are the RUNNING activation's, which is the only place
+    /// they exist: an engine's heap and trails belong to the query in progress.
+    /// So this reports what the query calling it is using at that moment —
+    /// which is what someone typing <c>statistics.</c> after a run wants to
+    /// know.</para></summary>
+    public static bool Statistics0(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "statistics/0 requires the engine to be hosted by a PrologEngine.");
+
+        long runtime = PrologEngine.StatsRuntimeMs();
+        var report = new System.Text.StringBuilder();
+        report.Append("Runtime:   ").Append(Seconds(runtime))
+              .Append(" sec  (").Append(runtime).Append(" ms)\n");
+        report.Append("Walltime:  ").Append(Seconds(host.StatsWalltimeMs()))
+              .Append(" sec\n");
+        report.Append("Heap:      ").Append(Count(engine.HeapTop)).Append(" cells in use of ")
+              .Append(Count(engine.HeapCapacity)).Append(" (")
+              .Append(Count((long)engine.HeapCapacity * 8 / 1024)).Append(" KB)\n");
+        // ADR-004 — two trails, reported as the two they are.
+        report.Append("Trail:     ").Append(Count(engine.BindingTrailTop))
+              .Append(" bindings, ").Append(Count(engine.ExtraTrailTop)).Append(" other\n");
+        report.Append("Stack:     ").Append(Count(engine.StackTop)).Append(" words in use of ")
+              .Append(Count(engine.StackCapacity)).Append('\n');
+
+        host.Out.Write(report.ToString());
+        return true;
+
+        static string Seconds(long ms) => (ms / 1000.0).ToString("0.000",
+            System.Globalization.CultureInfo.InvariantCulture);
+        // Grouped, because these numbers are read rather than computed with.
+        static string Count(long n) => n.ToString("N0",
+            System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     private static bool UnifyMsPair(Activation engine, long total, long sinceLast)
     {
         Term list = new CompoundTerm(".", new Term[]

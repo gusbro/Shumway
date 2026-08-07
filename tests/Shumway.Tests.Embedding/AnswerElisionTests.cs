@@ -90,3 +90,42 @@ public sealed class AnswerElisionTests
         Assert.Equal("[1,2,3,4,5,6,7,8,9,10]", sink.ToString());
     }
 }
+
+/// <summary>
+/// <c>statistics/0</c> — the report a person reads after a run. Its counters
+/// are the RUNNING activation's, because that is where a heap and a trail
+/// exist: they belong to the query in progress.
+/// </summary>
+public sealed class Statistics0Tests
+{
+    private static string Report(string goal)
+    {
+        var sink = new StringWriter();
+        var e = new PrologEngine { Out = sink };
+        Assert.True(e.Query(goal).Success);
+        return sink.ToString();
+    }
+
+    [Fact]
+    public void ReportsTimeAndMemory()
+    {
+        string text = Report("statistics.");
+        Assert.Contains("Runtime:", text);
+        Assert.Contains("Walltime:", text);
+        Assert.Contains("Heap:", text);
+        Assert.Contains("Trail:", text);
+        Assert.Contains("Stack:", text);
+    }
+
+    [Fact]
+    public void TheHeapFigureFollowsWhatTheQueryBuilt()
+    {
+        // A query that built a 200,000-element list has used more heap than one
+        // that built nothing — the number has to be the live activation's, not a
+        // constant.
+        string idle = Report("statistics.");
+        string busy = Report("numlist(1, 200000, _), statistics.");
+        Assert.Contains("Heap:      0 cells", idle);
+        Assert.DoesNotContain("Heap:      0 cells", busy);
+    }
+}

@@ -374,6 +374,9 @@ public static partial class MetaBuiltins
             Reflect, "set_prolog_flag(+Flag, +Value)", "Sets a Prolog flag.");
         BuiltinsRegistry.Register("current_prolog_flag", 2, CurrentPrologFlag,
             Reflect, "current_prolog_flag(?Flag, ?Value)", "Reads the value of a Prolog flag.");
+        BuiltinsRegistry.Register("statistics", 0, Statistics0,
+            Reflect, "statistics",
+            "Writes a report of runtime, walltime and heap/trail/stack use to the current output.");
         BuiltinsRegistry.Register("statistics", 2, Statistics2,
             Reflect, "statistics(?Key, ?Value)",
             "Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds.");
