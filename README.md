@@ -10,6 +10,13 @@ not yet benchmarked, is to outperform GNU Prolog on interop-heavy workloads,
 where the cost of crossing the C# ↔ Prolog boundary dominates raw Prolog
 throughput.
 
+## Try it — [gusbro.github.io/Shumway](https://gusbro.github.io/Shumway/)
+
+The whole engine, compiled to WebAssembly and running in the page: a Prolog top
+level, an editor, files, and libraries you can import from a folder or straight
+from a GitHub URL — Scryer's and SWI's among them. Nothing is installed and
+nothing is uploaded; there is no server behind it.
+
 ## Highlights
 
 - **ISO Prolog** with a real conformance record (driven by the standard test
@@ -36,10 +43,13 @@ throughput.
   (conditional, logpoints), port-based stepping, the real Prolog call stack
   with per-frame variables and residual constraints, goal evaluation at a
   stop, Set Next Statement — including into interop C#.
+- **Runs in a browser**: the same engine on WebAssembly, as a static site with
+  no backend ([WebShumway](docs/guide/webshumway.md)).
 
 ## Quick start
 
-Build and run the REPL:
+Nothing to install: [try it in the browser](https://gusbro.github.io/Shumway/).
+Locally, build and run the REPL:
 
 ```
 dotnet build
