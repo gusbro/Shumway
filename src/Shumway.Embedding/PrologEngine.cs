@@ -120,6 +120,49 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// is a no-op instead of doubling its clauses.</summary>
     internal readonly HashSet<string> _consultedPaths = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>What each loaded file looked like when it was loaded, so that
+    /// "already loaded" can mean "already loaded, and unchanged".
+    ///
+    /// <para><c>use_module</c> is idempotent by design — importing a library
+    /// twice must not consult it twice. But someone EDITING the file they just
+    /// imported means the opposite by the same act: reloading the importer has
+    /// to pick the change up, or the program runs against a version that is no
+    /// longer on disk. Both are true, and the file itself says which applies.</para></summary>
+    private readonly Dictionary<string, (DateTime Written, long Size)> _loadStamps
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    private static (DateTime Written, long Size) StampOf(string fullPath)
+    {
+        try
+        {
+            var info = new System.IO.FileInfo(fullPath);
+            return (info.LastWriteTimeUtc, info.Length);
+        }
+        catch { return (default, -1); }
+    }
+
+    /// <summary>Records a file as loaded, as it is now.</summary>
+    internal void NoteFileLoaded(string path)
+    {
+        try
+        {
+            string full = System.IO.Path.GetFullPath(path);
+            _consultedPaths.Add(full);
+            _loadStamps[full] = StampOf(full);
+        }
+        catch { /* unresolvable path — idempotency simply won't apply */ }
+    }
+
+    /// <summary>Whether <paramref name="fullPath"/> differs from what was loaded.
+    ///
+    /// <para>No stamp means NOT changed — this only ever forces a reload of
+    /// something we know has moved. A file loaded by a route that records no
+    /// stamp (a <c>.shum</c> bundle, whose load returns before the source path
+    /// is noted) would otherwise look changed forever and be re-loaded on every
+    /// import, undoing the idempotence this sits inside.</para></summary>
+    internal bool FileDiffersFromLoad(string fullPath)
+        => _loadStamps.TryGetValue(fullPath, out var loaded) && StampOf(fullPath) != loaded;
+
     /// <summary>ADR-035 — functors whose module was declared :- disable_debug.
     /// Engine-wide (fids are global) and additive across consults.</summary>
     internal readonly HashSet<int> _nonDebuggableFunctors = new();
@@ -285,6 +328,30 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// swap in a <see cref="System.IO.StringWriter"/> to capture program
     /// output in tests.</summary>
     public System.IO.TextWriter Out { get; set; } = Console.Out;
+
+    /// <summary>Where load-time warnings go: a directive that failed, a
+    /// <c>use_module</c> target that is not there, a directive nobody
+    /// recognises. Defaults to standard error, which is right for a console
+    /// host and invisible in one that has no console — a browser page would
+    /// otherwise load a program that quietly did not load part of itself.
+    /// Point it at the same writer as <see cref="Out"/> to have them read as
+    /// one stream.</summary>
+    /// Resolved late rather than captured at construction: unset, it IS standard
+    /// error, so redirecting the console after building an engine still works.
+    public System.IO.TextWriter Warnings
+    {
+        get => _warnings ?? Console.Error;
+        set => _warnings = value;
+    }
+
+    private System.IO.TextWriter? _warnings;
+
+    /// <summary>Reports a load-time warning through <see cref="Warnings"/>.</summary>
+    internal void Warn(string message)
+    {
+        try { Warnings.WriteLine(message); }
+        catch { /* a host whose sink is gone must not take the load down */ }
+    }
 
     /// <summary>The source <c>user_input</c> reads from — <c>read/1</c>,
     /// <c>get_char/1</c> and the rest. Null means the host's standard input

@@ -57,8 +57,17 @@ internal sealed class ConsultPipeline
             E.LoadBundle(path);
             return;
         }
-        try { E._consultedPaths.Add(Path.GetFullPath(path)); }
-        catch { /* unresolvable path — idempotency simply won't apply */ }
+        LoadSourceFile(path, reconsult: false);
+    }
+
+    /// <summary>The shared body of consulting and RE-consulting a source file:
+    /// everything that makes loading it a file rather than a string — the
+    /// directory its relative paths resolve against, the name
+    /// <c>prolog_load_context</c> reports, the debugger's file identity, and the
+    /// record that it was loaded and when.</summary>
+    private void LoadSourceFile(string path, bool reconsult)
+    {
+        E.NoteFileLoaded(path);
         // ISO include/1 — `:- include('lib/x.pl')` resolves relative to the
         // INCLUDING file's directory, so consulting a file records its
         // directory for the duration of the consult (restored after: a
@@ -96,7 +105,8 @@ internal sealed class ConsultPipeline
             Debugging.ShumwayDebugHelper.NoteSourceFile(path);
         try
         {
-            ConsultString(File.ReadAllText(path));
+            ConsultStringInner(File.ReadAllText(path), recordInHistory: true,
+                               reconsult: reconsult);
         }
         finally
         {
@@ -519,7 +529,10 @@ internal sealed class ConsultPipeline
         }
         else
         {
-            ReconsultString(File.ReadAllText(path));
+            // Through the same path as ConsultFile, not ReconsultString: a file
+            // reloaded as bare text would lose the directory its own relative
+            // includes and use_module targets resolve against.
+            LoadSourceFile(path, reconsult: true);
         }
     }
 
@@ -913,10 +926,9 @@ internal sealed class ConsultPipeline
             };
             return actual is not null && valueTerm is AtomTerm v && v.Name == actual;
         }
-        static bool CondWarnFalse(Term cond)
+        bool CondWarnFalse(Term cond)
         {
-            Console.Error.WriteLine(
-                $"warning: unsupported :- if/elif condition ({cond}) — treated as false");
+            E.Warn($"warning: unsupported :- if/elif condition ({cond}) — treated as false");
             return false;
         }
         // Handles an if/elif/else/endif directive body, returning true if it was
@@ -1265,7 +1277,7 @@ internal sealed class ConsultPipeline
                     // Shumway meaning; warn + skip rather than run them as
                     // goals, which could collide with a real builtin name.
                     if (!recognisedDeclaration)
-                        Console.Error.WriteLine(
+                        E.Warn(
                             $"warning: unknown directive '{dirName}' ignored (arity_compat)");
                 }
                 else if (!recognisedDeclaration)
@@ -1311,7 +1323,7 @@ internal sealed class ConsultPipeline
             var droppedBuiltins = new List<(string Name, int Arity)>();
             clauses = ReftypeInterface.DropInterfaceClauses(clauses, droppedBuiltins);
             foreach (var (name, arity) in droppedBuiltins)
-                Console.Error.WriteLine(
+                E.Warn(
                     $"warning: redefinition of builtin {name}/{arity} ignored (arity_compat)");
         }
 
@@ -1806,16 +1818,16 @@ internal sealed class ConsultPipeline
                         throw new PrologHaltException(exitCode);
 
                     if (!ok)
-                        Console.Error.WriteLine(
+                        E.Warn(
                             $"Warning: initialization goal failed: {g}");
                 }
                 catch (PrologHaltException) { throw; }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine(
+                    E.Warn(
                         $"Warning: initialization goal raised: {g}: {ex.Message}");
                     if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
-                        Console.Error.WriteLine(ex.StackTrace);
+                        E.Warn(ex.StackTrace ?? "");
                 }
             }
         }
@@ -1874,16 +1886,16 @@ internal sealed class ConsultPipeline
                 throw new PrologHaltException(exitCode);
 
             if (!ok)
-                Console.Error.WriteLine(
+                E.Warn(
                     $"Warning: directive failed: {goal}");
         }
         catch (PrologHaltException) { throw; }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
+            E.Warn(
                 $"Warning: directive raised: {goal}: {ex.Message}");
             if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
-                Console.Error.WriteLine(ex.StackTrace);
+                E.Warn(ex.StackTrace ?? "");
         }
     }
 

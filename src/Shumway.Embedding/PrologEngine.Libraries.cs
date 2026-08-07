@@ -607,7 +607,7 @@ public sealed partial class PrologEngine
                     if (throwOnUnresolved)
                         throw new Shumway.Core.PrologRuntimeException(
                             $"existence_error(library, {libName})");
-                    Console.Error.WriteLine(
+                    Warn(
                         $"warning: unknown library '{libName}' in use_module/1 — ignored");
                     return null;
             }
@@ -629,7 +629,7 @@ public sealed partial class PrologEngine
                 if (throwOnUnresolved)
                     throw new Shumway.Core.PrologRuntimeException(
                         $"existence_error(source_sink, '{fileAtom.Name}')");
-                Console.Error.WriteLine(
+                Warn(
                     $"warning: use_module/1 target '{fileAtom.Name}' not found — ignored");
                 return null;
             }
@@ -648,21 +648,32 @@ public sealed partial class PrologEngine
         string full;
         try { full = System.IO.Path.GetFullPath(path); }
         catch { full = path; }
-        // Already loaded via this path: don't re-consult, but recover the module.
-        if (_libraryModuleByPath.TryGetValue(full, out string? known))
-            return ExportQualifiedNameOrNull(known);
-        if (_consultedPaths.Contains(full))
-            return null;   // loaded by another route; no recorded module mapping
+
+        // Already loaded, and still what was loaded: importing it again is the
+        // no-op it should be. CHANGED on disk is the other case — someone is
+        // editing it — and then reloading the importer has to bring the change
+        // in, or the program runs against a version that no longer exists.
+        bool changed = FileDiffersFromLoad(full);
+        if (!changed)
+        {
+            if (_libraryModuleByPath.TryGetValue(full, out string? known))
+                return ExportQualifiedNameOrNull(known);
+            if (_consultedPaths.Contains(full))
+                return null;   // loaded by another route; no recorded module mapping
+        }
         try
         {
-            ConsultFile(path);
+            // Reloading REPLACES what the file defines rather than adding to it;
+            // a first load has nothing to replace, so the two are the same call.
+            if (_consultedPaths.Contains(full)) ReconsultFile(path);
+            else ConsultFile(path);
             string? loaded = _lastConsultedModuleName;
             if (loaded is not null) _libraryModuleByPath[full] = loaded;
             return ExportQualifiedNameOrNull(loaded);
         }
         catch (System.Exception ex)
         {
-            Console.Error.WriteLine(
+            Warn(
                 $"warning: use_module(library({name})) failed: {ex.Message}");
             return null;
         }
@@ -854,7 +865,7 @@ public sealed partial class PrologEngine
         }
         if (kept is not null)
             foreach (var (winner, fids) in kept)
-                Console.Error.WriteLine(
+                Warn(
                     $"warning: {IndicatorList(fids)} already imported from "
                     + $"'{winner}' — keeping '{winner}', ignoring '{sourceModule}'.");
         if (added is not null) WarnImportsShadowGlobals(added, sourceModule);
@@ -889,7 +900,7 @@ public sealed partial class PrologEngine
         }
         if (shadowed is null) return;
         foreach (var (owner, fids) in shadowed)
-            Console.Error.WriteLine(
+            Warn(
                 $"warning: importing {IndicatorList(fids)} from '{sourceModule}' "
                 + $"shadows the global definition(s) from '{owner}' at the top level.");
     }
@@ -914,7 +925,7 @@ public sealed partial class PrologEngine
         }
         if (bySource is null) return;
         foreach (var (src, fids) in bySource)
-            Console.Error.WriteLine(
+            Warn(
                 $"warning: the global {IndicatorList(fids)} from '{moduleName}' "
                 + $"is shadowed at the top level by the existing import(s) from '{src}'.");
     }
@@ -933,7 +944,7 @@ public sealed partial class PrologEngine
             {
                 if (existing != src)
                 {
-                    Console.Error.WriteLine(
+                    Warn(
                         $"warning: {IndicatorList(new List<int> { fid })} import from "
                         + $"'{src}' replaces the earlier import from '{existing}'.");
                     userManifest.Imports[fid] = src;
