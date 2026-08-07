@@ -607,8 +607,15 @@ public sealed partial class PrologEngine
                     if (throwOnUnresolved)
                         throw new Shumway.Core.PrologRuntimeException(
                             $"existence_error(library, {libName})");
-                    Warn(
-                        $"warning: unknown library '{libName}' in use_module/1 — ignored");
+                    // Name WHERE it looked. "Unknown library" alone leaves the
+                    // reader guessing between a misspelling, a search path that
+                    // was never added, and a file that is not where it is
+                    // expected — three different fixes.
+                    string searched = string.Join(", ", EnumerateLibraryDirs());
+                    Warn($"warning: unknown library '{libName}' in use_module/1 — ignored"
+                       + (searched.Length == 0
+                            ? " (the library search path is empty)"
+                            : $" (searched: {searched})"));
                     return null;
             }
         }
@@ -663,11 +670,26 @@ public sealed partial class PrologEngine
         }
         try
         {
+            // "The module this consult declared" is a source-file notion: a
+            // .shum holds MANY modules and brings them all in at once, so it
+            // sets nothing. Cleared first either way, so a stale name from an
+            // earlier load cannot be mistaken for this one's.
+            bool isBundle = path.EndsWith(".shum", System.StringComparison.OrdinalIgnoreCase);
+            _lastConsultedModuleName = null;
+
             // Reloading REPLACES what the file defines rather than adding to it;
             // a first load has nothing to replace, so the two are the same call.
             if (_consultedPaths.Contains(full)) ReconsultFile(path);
             else ConsultFile(path);
-            string? loaded = _lastConsultedModuleName;
+
+            // From a bundle, the module being imported is the one named like the
+            // library — which is what `library(clpz)` asked for. Without this an
+            // export-qualified module loaded from a bundle fed no import table,
+            // so its predicates were invisible to the importer (the operators
+            // arrived, the predicates did not).
+            string? loaded = isBundle
+                ? (_modules.ContainsKey(name) ? name : null)
+                : _lastConsultedModuleName;
             if (loaded is not null) _libraryModuleByPath[full] = loaded;
             return ExportQualifiedNameOrNull(loaded);
         }
@@ -817,19 +839,31 @@ public sealed partial class PrologEngine
     }
 
     // Clause-head sets per module, invalidated by clause-list identity + count
-    // (a module reload replaces the manifest; a same-manifest consult appends).
-    private readonly Dictionary<string, (object ClausesRef, int Count, HashSet<int> Heads)>
+    // (a module reload replaces the manifest; a same-manifest consult appends)
+    // and by the count of precompiled locals, which arrive without touching the
+    // clause list at all.
+    private readonly Dictionary<string,
+        (object ClausesRef, int Count, int LocalCount, HashSet<int> Heads)>
         _moduleDefinedHeadsCache = new();
 
     private HashSet<int> DefinedHeads(string moduleName, ModuleManifest m)
     {
+        _precompiledModuleLocals.TryGetValue(moduleName, out var locals);
+        int localCount = locals?.Count ?? 0;
         if (_moduleDefinedHeadsCache.TryGetValue(moduleName, out var e)
-            && ReferenceEquals(e.ClausesRef, m.Clauses) && e.Count == m.Clauses.Count)
+            && ReferenceEquals(e.ClausesRef, m.Clauses) && e.Count == m.Clauses.Count
+            && e.LocalCount == localCount)
             return e.Heads;
         var heads = new HashSet<int>();
         foreach (var c in m.Clauses)
             heads.Add(ConsultPipeline.HeadFunctorIdOf(c));
-        _moduleDefinedHeadsCache[moduleName] = (m.Clauses, m.Clauses.Count, heads);
+        // A module loaded from a BUNDLE has no clauses — it has compiled code,
+        // and what it defines is recorded as its precompiled locals. Without
+        // them an export-qualified library loaded from a .shum exports names
+        // that resolve to nothing: the importer's table stays empty, and the
+        // predicates are invisible while the operators are not.
+        if (locals is not null) heads.UnionWith(locals);
+        _moduleDefinedHeadsCache[moduleName] = (m.Clauses, m.Clauses.Count, localCount, heads);
         return heads;
     }
 
