@@ -183,6 +183,20 @@ public sealed partial class PrologEngine
     // Runs <paramref name="body"/> with <paramref name="dialect"/> active — its
     // name resolution preferred and its double_quotes in force — restoring both
     // after. The subtree a library pulls in inherits the dialect for the load.
+    /// <summary>Runs <paramref name="body"/> as if loading a library of
+    /// <paramref name="dialect"/>: its <c>double_quotes</c>, its parsing
+    /// leniencies and its operators apply for the duration and are restored
+    /// after (ADR-040). Consulting the SOURCE of a Scryer or SWI library is the
+    /// case this exists for outside the loader — the text means what its own
+    /// system says it means, and reading it as ISO gets it wrong.
+    ///
+    /// <para>An unknown or empty dialect runs <paramref name="body"/> plainly,
+    /// so a caller need not check first.</para></summary>
+    public T WithLibraryDialect<T>(string? dialect, System.Func<T> body)
+        => string.IsNullOrEmpty(dialect) || !DialectRegistry.IsKnownDialect(dialect)
+            ? body()
+            : WithDialect(dialect, body);
+
     private T WithDialect<T>(string dialect, System.Func<T> body)
     {
         string? savedDialect = _activeLibraryDialect;
