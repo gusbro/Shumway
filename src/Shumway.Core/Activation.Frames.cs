@@ -41,7 +41,7 @@ public sealed partial class Activation
 
     public Activation(ActivationConfig config)
     {
-        if (config is null) throw new ArgumentNullException(nameof(config));
+        ArgumentNullException.ThrowIfNull(config);
         Validate(config);
 
         _config = config;

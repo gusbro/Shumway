@@ -28,8 +28,8 @@ public sealed class LayeredIntMap<TValue> : IReadOnlyDictionary<int, TValue>
 
     public LayeredIntMap(Dictionary<int, TValue> overlay, IReadOnlyDictionary<int, TValue> baseMap)
     {
-        if (overlay is null) throw new ArgumentNullException(nameof(overlay));
-        if (baseMap is null) throw new ArgumentNullException(nameof(baseMap));
+        ArgumentNullException.ThrowIfNull(overlay);
+        ArgumentNullException.ThrowIfNull(baseMap);
         _overlay = overlay;
         _base = baseMap;
         foreach (var kv in overlay)

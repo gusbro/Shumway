@@ -30,8 +30,8 @@ public sealed class SwitchTable
 
     public SwitchTable(int[] keys, int[] values, int defaultAddress)
     {
-        if (keys is null) throw new ArgumentNullException(nameof(keys));
-        if (values is null) throw new ArgumentNullException(nameof(values));
+        ArgumentNullException.ThrowIfNull(keys);
+        ArgumentNullException.ThrowIfNull(values);
         if (keys.Length != values.Length)
             throw new ArgumentException(
                 $"keys ({keys.Length}) and values ({values.Length}) must have the same length.");

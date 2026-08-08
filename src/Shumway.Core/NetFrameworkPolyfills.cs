@@ -16,13 +16,59 @@ namespace System.Runtime.CompilerServices
     internal static class IsExternalInit { }
 }
 
+namespace System.Runtime.CompilerServices
+{
+    /// <summary>Lets a parameter default to the SOURCE TEXT of another argument,
+    /// which is how ThrowIfNull below knows the name to blame.</summary>
+    [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
+    internal sealed class CallerArgumentExpressionAttribute : Attribute
+    {
+        public CallerArgumentExpressionAttribute(string parameterName)
+            => ParameterName = parameterName;
+
+        public string ParameterName { get; }
+    }
+}
+
 namespace Shumway.Core
 {
-    /// <summary>The two BCL statics .NET Framework lacks that cannot be added to
-    /// their own types. Named rather than aliased: shadowing a framework type
-    /// would change what a `catch` in this assembly catches.</summary>
+    /// <summary>Statics .NET Framework's own types lack.
+    ///
+    /// <para><c>ArgumentNullException.ThrowIfNull</c> is added back where it
+    /// belongs, as a C# 14 STATIC EXTENSION MEMBER — extending a type rather
+    /// than an instance, which older C# could not do. That is what lets 176
+    /// call sites stay exactly as they are, on both targets, with no
+    /// conditional compilation anywhere but here.</para>
+    ///
+    /// <para>The other two extend nothing (they would have to be added to
+    /// <c>Array</c> and <c>HashCode</c>, whose shapes differ) and are named
+    /// plainly.</para></summary>
     internal static class Compat
     {
+        extension(ArgumentNullException)
+        {
+            public static void ThrowIfNull(
+                object? argument,
+                [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(argument))]
+                string? paramName = null)
+            {
+                if (argument is null) throw new ArgumentNullException(paramName);
+            }
+        }
+
+        extension(ArgumentException)
+        {
+            public static void ThrowIfNullOrEmpty(
+                string? argument,
+                [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(argument))]
+                string? paramName = null)
+            {
+                if (argument is null) throw new ArgumentNullException(paramName);
+                if (argument.Length == 0)
+                    throw new ArgumentException("The value cannot be empty.", paramName);
+            }
+        }
+
         /// <summary><c>Array.Fill</c>.</summary>
         public static void Fill<T>(T[] array, T value)
         {

@@ -53,7 +53,7 @@ public sealed class StreamRegistry
 
     public StreamRegistry(TextWriter defaultOut, TextReader? defaultIn = null)
     {
-        if (defaultOut is null) throw new ArgumentNullException(nameof(defaultOut));
+        ArgumentNullException.ThrowIfNull(defaultOut);
 
         UserInput = new StreamHandle(
             id: AllocateId(), reader: defaultIn ?? HostInput(),

@@ -136,7 +136,7 @@ public sealed partial class Activation
     /// a STRING cell whose payload is its id.</summary>
     public Cell MakeString(string value)
     {
-        if (value is null) throw new ArgumentNullException(nameof(value));
+        ArgumentNullException.ThrowIfNull(value);
         int id = _stringTable.Count;
         _stringTable.Add(value);
         return Cell.String(id);
@@ -205,7 +205,7 @@ public sealed partial class Activation
     /// </summary>
     public int MakePstr(string value)
     {
-        if (value is null) throw new ArgumentNullException(nameof(value));
+        ArgumentNullException.ThrowIfNull(value);
         int codeUnits = value.Length;
         int bufferCellCount = (codeUnits + Cell.PstrCodeUnitsPerBuffer - 1) / Cell.PstrCodeUnitsPerBuffer;
         int totalCells = 1 + bufferCellCount + 1;

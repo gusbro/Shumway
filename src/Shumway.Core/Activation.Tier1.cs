@@ -893,7 +893,7 @@ public sealed partial class Activation
     public void PushIlChoicePoint(
         Func<Activation, int, bool> del, int nextCursor, int arity, Action? onPrune)
     {
-        if (del is null) throw new ArgumentNullException(nameof(del));
+        ArgumentNullException.ThrowIfNull(del);
         PushChoicePoint(arity, IlChoicePointSentinelBp);
         if (_ilCpTop == _ilCpStack.Length)
             System.Array.Resize(ref _ilCpStack, _ilCpStack.Length * 2);

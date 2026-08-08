@@ -172,7 +172,7 @@ public static class AtomTable
     /// </summary>
     public static Atom Intern(string name, bool permanent = false)
     {
-        if (name is null) throw new ArgumentNullException(nameof(name));
+        ArgumentNullException.ThrowIfNull(name);
         if (permanent)
         {
             // Lock-free fast path: a permanent
@@ -255,7 +255,7 @@ public static class AtomTable
     /// </summary>
     public static void RegisterForeignHold(Atom atom)
     {
-        if (atom is null) throw new ArgumentNullException(nameof(atom));
+        ArgumentNullException.ThrowIfNull(atom);
         if (atom.IsPermanent)
             return;
         lock (_lock)
@@ -271,7 +271,7 @@ public static class AtomTable
     /// </summary>
     public static void Sweep(HashSet<int> reachable)
     {
-        if (reachable is null) throw new ArgumentNullException(nameof(reachable));
+        ArgumentNullException.ThrowIfNull(reachable);
         lock (_lock)
         {
             // compact foreign-hold weak refs and collect ids still alive in C#.
