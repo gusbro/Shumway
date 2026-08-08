@@ -4,8 +4,11 @@
     <!-- net48-only console smoke for the netfx-target branch (milestone 3):
          proves Tier-0 actually RUNS on .NET Framework, in a genuinely 32-bit
          process. Build it twice from the CLI:
-           dotnet build -p:SmokeBitness=x86   (what we came to find out)
-           dotnet build -p:SmokeBitness=x64   (parity check)
+           dotnet build -p:ShumwayNetFx=true -p:SmokeBitness=x86   (32-bit)
+           dotnet build -p:ShumwayNetFx=true -p:SmokeBitness=x64   (parity)
+         ShumwayNetFx=true is REQUIRED: this project references the net48
+         flavor of Shumway.Embedding, which only exists under the opt-in
+         switch (Directory.Build.props).
          Both land in bin\<cfg>\net48 (last build wins) — run between builds.
          TWO TRAPS: (1) obj\ is split by Platform (AnyCPU), NOT PlatformTarget,
          so switching bitness needs a non-incremental build (/t:Rebuild) or the

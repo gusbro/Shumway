@@ -6,6 +6,21 @@ without leaving its runtime. The engine core, Tier-1 IL promotion and
 persisted-IL bundles all work on Framework; this page collects what a
 Framework host needs to know. Design rationale: [ADR-043](../architecture/adr/043-net-framework-target.md).
 
+## Building the net48 flavor
+
+The net48 flavor is **opt-in** — a plain `dotnet build` stays net10-only.
+Activate it with:
+
+```bash
+dotnet build -p:ShumwayNetFx=true                 # both flavors, whole repo
+dotnet build src/Shumway.Link -p:ShumwayNetFx=true    # the net48 toolchain
+dotnet test tests/Shumway.Tests.Core -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
+```
+
+Compiling net48 needs no .NET Framework install and works on Linux/macOS too
+(the SDK compiles against NuGet reference assemblies) — only *running* net48
+binaries and tests needs Windows.
+
 ## What works, what does not
 
 | Area | net48 |

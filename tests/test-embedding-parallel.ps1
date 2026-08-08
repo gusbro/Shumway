@@ -57,8 +57,11 @@ $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
 # One build; the parallel runs are --no-build (concurrent builds of the same
 # project would collide on the output tree).
+# The net48 flavor only exists under the opt-in switch (Directory.Build.props).
+$fxProps = @(); if ($Framework -eq 'net48') { $fxProps = @('-p:ShumwayNetFx=true') }
+
 Write-Host "[parallel] building ($Framework)..."
-dotnet build $proj -c Debug -f $Framework --nologo -v q
+dotnet build $proj -c Debug -f $Framework @fxProps --nologo -v q
 if ($LASTEXITCODE -ne 0) { Write-Host '[parallel] BUILD FAILED'; exit 1 }
 
 Write-Host "[parallel] launching $($buckets.Count) test processes..."
@@ -68,7 +71,8 @@ foreach ($b in $buckets) {
     $p = Start-Process -FilePath 'dotnet' -PassThru -NoNewWindow `
         -RedirectStandardOutput $log `
         -ArgumentList @(
-            'test', $proj, '-c', 'Debug', '-f', $Framework, '--no-build', '--nologo',
+            'test', $proj, '-c', 'Debug', '-f', $Framework, '--no-build', '--nologo'
+            $fxProps
             '--filter', $b.Filter,
             '--blame-hang-timeout', '300s'
             if ($Platform -ne '') { '--', "RunConfiguration.TargetPlatform=$Platform" })

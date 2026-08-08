@@ -59,17 +59,17 @@ jobs:
           # cl targets x86 so the native tests' DLLs load in the x86 testhost.
           arch: amd64_x86
       - name: Core
-        run: dotnet test tests/Shumway.Tests.Core -f net48 -- RunConfiguration.TargetPlatform=x86
+        run: dotnet test tests/Shumway.Tests.Core -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: Interpreter
-        run: dotnet test tests/Shumway.Tests.Interpreter -f net48 -- RunConfiguration.TargetPlatform=x86
+        run: dotnet test tests/Shumway.Tests.Interpreter -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: Compiler
-        run: dotnet test tests/Shumway.Tests.Compiler -f net48 -- RunConfiguration.TargetPlatform=x86
+        run: dotnet test tests/Shumway.Tests.Compiler -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: IsoConformance
-        run: dotnet test tests/Shumway.Tests.IsoConformance -f net48 -- RunConfiguration.TargetPlatform=x86
+        run: dotnet test tests/Shumway.Tests.IsoConformance -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Framework net48 -Platform x86
       - name: Smoke build (32-bit)
-        run: dotnet build tests/Shumway.Smoke.Net48 -p:SmokeBitness=x86 -t:Rebuild -v q
+        run: dotnet build tests/Shumway.Smoke.Net48 -p:SmokeBitness=x86 -p:ShumwayNetFx=true -t:Rebuild -v q
       - name: Smoke run (32-bit process, Tier-0 + Tier-1)
         run: .\tests\Shumway.Smoke.Net48\bin\Debug\net48\shumway-smoke-net48.exe
 
@@ -85,12 +85,12 @@ jobs:
         with:
           arch: x64
       - name: Core
-        run: dotnet test tests/Shumway.Tests.Core -f net48 -- RunConfiguration.TargetPlatform=x64
+        run: dotnet test tests/Shumway.Tests.Core -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: Interpreter
-        run: dotnet test tests/Shumway.Tests.Interpreter -f net48 -- RunConfiguration.TargetPlatform=x64
+        run: dotnet test tests/Shumway.Tests.Interpreter -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: Compiler
-        run: dotnet test tests/Shumway.Tests.Compiler -f net48 -- RunConfiguration.TargetPlatform=x64
+        run: dotnet test tests/Shumway.Tests.Compiler -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: IsoConformance
-        run: dotnet test tests/Shumway.Tests.IsoConformance -f net48 -- RunConfiguration.TargetPlatform=x64
+        run: dotnet test tests/Shumway.Tests.IsoConformance -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Framework net48 -Platform x64

@@ -21,7 +21,7 @@
          silently fall back to bytecode there). See
          src/Shumway.Core/Shumway.Core.csproj for the pattern. -->
     <TargetFramework></TargetFramework>
-    <TargetFrameworks>net10.0;net48</TargetFrameworks>
+    <TargetFrameworks>$(ShumwayTargetFrameworks)</TargetFrameworks>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

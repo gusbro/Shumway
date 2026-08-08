@@ -2,6 +2,23 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+
+    <!--
+      The .NET Framework 4.8 flavor (ADR-043) is OPT-IN: a default build is
+      net10.0-only — same outputs, same `dotnet run`/`dotnet test` behavior as
+      a single-target repo, and nothing to download on Linux/macOS. Activate
+      with
+
+        dotnet build -p:ShumwayNetFx=true
+        dotnet test <proj> -f net48 -p:ShumwayNetFx=true
+
+      (works on any OS: compiling net48 uses NuGet reference assemblies, no
+      Framework install needed — only RUNNING net48 binaries needs Windows).
+      Multi-targeted csprojs consume $(ShumwayTargetFrameworks); the CI matrix
+      and tests/test-embedding-parallel.ps1 pass the switch where needed.
+    -->
+    <ShumwayTargetFrameworks>net10.0</ShumwayTargetFrameworks>
+    <ShumwayTargetFrameworks Condition="'$(ShumwayNetFx)' == 'true'">net10.0;net48</ShumwayTargetFrameworks>
     <Authors>Gustavo Brown</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Copyright>Copyright (c) 2026 Gustavo Brown</Copyright>

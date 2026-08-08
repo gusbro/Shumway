@@ -5,7 +5,7 @@
          TargetFramework must be CLEARED: Directory.Build.props sets the
          singular one for every project, and singular wins over plural. -->
     <TargetFramework></TargetFramework>
-    <TargetFrameworks>net10.0;net48</TargetFrameworks>
+    <TargetFrameworks>$(ShumwayTargetFrameworks)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

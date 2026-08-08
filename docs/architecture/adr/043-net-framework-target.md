@@ -22,11 +22,22 @@ run unmodified. Everything else is packaging.
 
 ## Decisions
 
-### 1. Multi-target set
+### 1. Multi-target set — opt-in, net10-only by default
 
-`net10.0;net48` on: Core, Builtins, Compiler, Interpreter, Compiler.Il,
-Embedding, TopLevel, shumway-compile, shumway-link, and five test projects
-(Core, Interpreter, IsoConformance, Compiler, Embedding). NOT multi-targeted:
+The net48 flavor exists ONLY under `-p:ShumwayNetFx=true`
+(`Directory.Build.props` resolves `$(ShumwayTargetFrameworks)` to `net10.0`
+or `net10.0;net48`). A default build is single-target: same outputs, same
+`dotnet run`/`dotnet test` behavior as before the arc, nothing extra to
+restore on Linux/macOS. With the switch on, COMPILING net48 works on any OS
+(NuGet reference assemblies — no Framework install); only RUNNING net48
+binaries needs Windows. The CI matrix and
+`tests/test-embedding-parallel.ps1 -Framework net48` pass the switch
+themselves.
+
+`net10.0;net48` (under the switch) on: Core, Builtins, Compiler, Interpreter,
+Compiler.Il, Embedding, TopLevel, shumway-compile, shumway-link, and five test
+projects (Core, Interpreter, IsoConformance, Compiler, Embedding). NOT
+multi-targeted:
 the REPL (line editor, AOT publish target), Shumway.Web (browser), the VS/DAP
 debugger frontends' host processes (the engine-side debug core IS in the
 net48 build — the DAP server runs on net48), and the emitters' publish path
