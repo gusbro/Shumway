@@ -138,6 +138,9 @@ internal static class SmokeNet48Cli
             {
                 var e2 = new PrologEngine();
                 e2.LoadBundle(args[0]);
+                // >0 means the bundle's PERSISTED IL actually loaded and bound
+                // delegates in this runtime (vs silently serving bytecode).
+                Console.WriteLine($"        persisted-IL delegates bound: {e2.IlPromotion.PromotedCount}");
                 return Succeeds(e2, args[1]);
             });
         }

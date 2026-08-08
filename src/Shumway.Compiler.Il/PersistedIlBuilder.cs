@@ -100,17 +100,23 @@ public static class PersistedIlBuilder
         ISet<int>? emitOnly = null)
     {
 #if NETFRAMEWORK
-        // Persisted-IL bundles are PRODUCED by the .NET 10 toolchain and only
-        // LOADED here. Framework could emit them (AssemblyBuilder.Save is
-        // native there), but a second emitter is a second thing to keep
-        // byte-compatible — the milestone-5 cross-emit question, not this one.
-        throw new PlatformNotSupportedException(
-            "Persisted-IL bundles are produced by the .NET toolchain "
-            + "(shumway-link --with-compiled-il); this runtime only loads them.");
+        // Framework's native persisted emit: AssemblyBuilder in Save mode —
+        // the API PersistedAssemblyBuilder was designed to mirror. Same
+        // TypeBuilder / Sigil BuildMethod / patch-sentinel machinery below;
+        // only the assembly shell and the save differ (disk-only Save, so a
+        // per-call temp dir round-trips the bytes).
+        string tempDir = Path.Combine(Path.GetTempPath(),
+            "shumway-psab-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        string dllFileName = assemblyName + ".dll";
+        var psab = AppDomain.CurrentDomain.DefineDynamicAssembly(
+            new AssemblyName(assemblyName), AssemblyBuilderAccess.Save, tempDir);
+        var module = psab.DefineDynamicModule(assemblyName, dllFileName);
 #else
         var psab = new PersistedAssemblyBuilder(
             new AssemblyName(assemblyName), typeof(object).Assembly);
         var module = psab.DefineDynamicModule(assemblyName);
+#endif
         var typeBuilder = module.DefineType(
             TypeName,
             TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
@@ -252,9 +258,22 @@ public static class PersistedIlBuilder
         typeBuilder.CreateType();
         ic.EndPersistEmit();
 
+#if NETFRAMEWORK
+        byte[] bytes;
+        try
+        {
+            psab.Save(dllFileName);
+            bytes = File.ReadAllBytes(Path.Combine(tempDir, dllFileName));
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch (IOException) { }
+        }
+#else
         using var stream = new MemoryStream();
         psab.Save(stream);
         byte[] bytes = stream.ToArray();
+#endif
 
         // Locate each sentinel in the saved PE and record
         // its absolute byte offset. Each sentinel is unique and is
@@ -266,7 +285,6 @@ public static class PersistedIlBuilder
         LocatePatchSites(bytes, patches);
 
         return (bytes, entries, patches);
-#endif
     }
 
     /// <summary>Scans <paramref name="peBytes"/> within every method
