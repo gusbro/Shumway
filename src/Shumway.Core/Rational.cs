@@ -43,7 +43,11 @@ public readonly struct Rational : IEquatable<Rational>
 
     public bool Equals(Rational other) => Num == other.Num && Den == other.Den;
     public override bool Equals(object? obj) => obj is Rational r && Equals(r);
+#if NETFRAMEWORK
+    public override int GetHashCode() => Compat.Combine(Num, Den);
+#else
     public override int GetHashCode() => HashCode.Combine(Num, Den);
+#endif
     public override string ToString() => $"{Num} rdiv {Den}";
 
     /// <summary>Sign of the value (-1, 0, +1). Den is always positive, so it is

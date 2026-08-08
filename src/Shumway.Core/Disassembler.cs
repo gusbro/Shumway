@@ -36,7 +36,7 @@ public static class Disassembler
 {
     public static IEnumerable<DisassembledInstruction> Iterate(byte[] code, int start, int end)
     {
-        ArgumentNullException.ThrowIfNull(code);
+        if (code is null) throw new ArgumentNullException(nameof(code));
         if (start < 0 || end > code.Length || start > end)
             throw new ArgumentOutOfRangeException(nameof(start),
                 $"Range [{start}, {end}) is not within [0, {code.Length}].");

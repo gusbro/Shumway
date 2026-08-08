@@ -57,7 +57,14 @@ public static class AtomTable
     // System.Threading.Lock skips the syncblock dance and uses a
     // dedicated state machine with a true fast path that the JIT
     // can inline.
+    // .NET Framework has no System.Threading.Lock, so there it is the object
+    // monitor — the very thing this measurement was about. Same semantics,
+    // slower uncontended path; the modern target keeps what it measured.
+#if NETFRAMEWORK
+    private static readonly object _lock = new();
+#else
     private static readonly System.Threading.Lock _lock = new();
+#endif
     private static int _nextId = FirstUserId;
 
     // fast-path for the most common GetById case. Permanent
@@ -165,7 +172,7 @@ public static class AtomTable
     /// </summary>
     public static Atom Intern(string name, bool permanent = false)
     {
-        ArgumentNullException.ThrowIfNull(name);
+        if (name is null) throw new ArgumentNullException(nameof(name));
         if (permanent)
         {
             // Lock-free fast path: a permanent
@@ -248,7 +255,7 @@ public static class AtomTable
     /// </summary>
     public static void RegisterForeignHold(Atom atom)
     {
-        ArgumentNullException.ThrowIfNull(atom);
+        if (atom is null) throw new ArgumentNullException(nameof(atom));
         if (atom.IsPermanent)
             return;
         lock (_lock)
@@ -264,7 +271,7 @@ public static class AtomTable
     /// </summary>
     public static void Sweep(HashSet<int> reachable)
     {
-        ArgumentNullException.ThrowIfNull(reachable);
+        if (reachable is null) throw new ArgumentNullException(nameof(reachable));
         lock (_lock)
         {
             // compact foreign-hold weak refs and collect ids still alive in C#.

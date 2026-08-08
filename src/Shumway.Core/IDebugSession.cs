@@ -85,7 +85,15 @@ public interface IDebugSession
     /// wanted to stand at, variables in hand, before it commits. Raised by the
     /// <c>debug_port</c> opcode, which only compile_mode=debug code contains, one byte
     /// before each inline body goal.</summary>
+    // The empty body is what lets a session ignore the ports it does not care
+    // about — DebugTracer takes neither of these. .NET Framework's runtime has
+    // no default interface implementations, so there it is declared and the
+    // implementers supply the empty body themselves.
+#if NETFRAMEWORK
+    void OnInlineGoal(Activation engine);
+#else
     void OnInlineGoal(Activation engine) { }
+#endif
     /// <summary>Control is leaving Prolog and going back to whoever asked for a
     /// solution â€” the query has produced one, or run out of them. There is no port
     /// here and nothing to show: the machine is not in the program any more.
@@ -95,7 +103,11 @@ public interface IDebugSession
     /// has to be abandoned, and said to be abandoned â€” a debugger left waiting for a
     /// stop that will never arrive believes the program is still running, and every
     /// key the user presses after that is answered with an error.</para></summary>
+#if NETFRAMEWORK
+    void OnLeaveProlog(Activation engine);
+#else
     void OnLeaveProlog(Activation engine) { }
+#endif
 
     /// <summary>ADR-016 mark phase: a session that holds heap indices of its own
     /// (a tracer keeps each open goal's argument cells so it can show what the

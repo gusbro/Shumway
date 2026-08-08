@@ -1,10 +1,22 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Multi-targeted for the .NET Framework spike (branch netfx-target).
+         TargetFramework must be CLEARED: Directory.Build.props sets the
+         singular one for every project, and singular wins over plural. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net10.0;net48</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <!-- Span<T> and ArrayPool<T> ship in the framework from .NET Core on; on
+       .NET Framework they are packages. Same types, same shapes — Span there is
+       the library implementation rather than a runtime intrinsic, which is a
+       performance difference and not a semantic one. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <PackageReference Include="System.Memory" Version="4.6.0" />
+  </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Shumway.Tests.Core" />
