@@ -852,7 +852,11 @@ internal sealed class BundleLoader
                 if (!int.TryParse(method.Name.AsSpan(u1 + 1, u2 - u1 - 1), out slot)) continue;
                 if (!int.TryParse(method.Name.AsSpan(u2 + 1, u3 - u2 - 1), out functorId)) continue;
             }
-            var del = method.CreateDelegate<Shumway.Compiler.Il.PredicateDelegate>();
+            // The cast form rather than CreateDelegate<T>: net48 has only the
+            // non-generic method, and an instance member with the right name
+            // blocks extension-method fallback for the generic call shape.
+            var del = (Shumway.Compiler.Il.PredicateDelegate)method.CreateDelegate(
+                typeof(Shumway.Compiler.Il.PredicateDelegate));
             bound.Add((slot, functorId, del));
             if (graphByMethod is not null
                 && graphByMethod.TryGetValue(method.Name, out var graphBytes))
@@ -1281,7 +1285,7 @@ internal sealed class BundleLoader
         }
         if (!string.IsNullOrEmpty(entry.NativeDecls))
             E.RegisterNativePrototypes(
-                Shumway.Compiler.NativeC.CParser.ParseDeclarations(entry.NativeDecls));
+                Shumway.Compiler.NativeC.CParser.ParseDeclarations(entry.NativeDecls!));
 
         // Bind this entry's persisted Tier-1 IL BEFORE the warm below. A
         // source-stripped IL bundle warms here, and RegisterBoundDelegate is

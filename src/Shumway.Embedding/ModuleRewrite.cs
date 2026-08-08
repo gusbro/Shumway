@@ -24,7 +24,7 @@ public static class ModuleRewrite
     {
         public string ModuleName { get; }
         public HashSet<int> LocalFunctors { get; }
-        public IReadOnlySet<int> DynamicFunctors { get; }
+        public ISet<int> DynamicFunctors { get; }
 
         /// <summary>ADR-038 — this module's import table: bare functor id →
         /// the export-qualified source module that provides it. A call that
@@ -66,13 +66,13 @@ public static class ModuleRewrite
         {
         }
 
-        public Context(string moduleName, HashSet<int> localFunctors, IReadOnlySet<int> dynamicFunctors)
+        public Context(string moduleName, HashSet<int> localFunctors, ISet<int> dynamicFunctors)
             : this(moduleName, localFunctors, dynamicFunctors, EmptyImports)
         {
         }
 
         public Context(string moduleName, HashSet<int> localFunctors,
-            IReadOnlySet<int> dynamicFunctors, IReadOnlyDictionary<int, string> imports)
+            ISet<int> dynamicFunctors, IReadOnlyDictionary<int, string> imports)
         {
             ModuleName = moduleName;
             LocalFunctors = localFunctors;

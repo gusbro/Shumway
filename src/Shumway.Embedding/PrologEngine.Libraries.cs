@@ -193,9 +193,11 @@ public sealed partial class PrologEngine
     /// <para>An unknown or empty dialect runs <paramref name="body"/> plainly,
     /// so a caller need not check first.</para></summary>
     public T WithLibraryDialect<T>(string? dialect, System.Func<T> body)
-        => string.IsNullOrEmpty(dialect) || !DialectRegistry.IsKnownDialect(dialect)
+        // The ! is for net48, whose IsNullOrEmpty lacks the NotNullWhen flow
+        // annotation the modern compiler reasons from.
+        => string.IsNullOrEmpty(dialect) || !DialectRegistry.IsKnownDialect(dialect!)
             ? body()
-            : WithDialect(dialect, body);
+            : WithDialect(dialect!, body);
 
     private T WithDialect<T>(string dialect, System.Func<T> body)
     {
@@ -394,10 +396,16 @@ public sealed partial class PrologEngine
         _libraryDirs = new List<string>();
         string? env = Environment.GetEnvironmentVariable("SHUMWAY_LIBRARY_PATH");
         if (!string.IsNullOrEmpty(env))
-            foreach (string d in env.Split(System.IO.Path.PathSeparator,
-                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            // Trim() by hand rather than StringSplitOptions.TrimEntries, which
+            // is a .NET 5+ enum value an #if cannot paper over.
+            foreach (string entry in env.Split(System.IO.Path.PathSeparator,
+                         StringSplitOptions.RemoveEmptyEntries))
+            {
+                string d = entry.Trim();
+                if (d.Length == 0) continue;
                 // Each entry may carry a :dialect tag (ADR-040 D5.2).
                 AddLibraryDirectorySpec(d);
+            }
     }
 
     private void AddLibraryDirNormalized(string path)

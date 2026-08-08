@@ -35,11 +35,7 @@ public static class FunctorTable
     private static long[] CreateByIdArray(int size)
     {
         var arr = new long[size];
-#if NETFRAMEWORK
-        Compat.Fill(arr, EmptyByIdEntry);
-#else
         Array.Fill(arr, EmptyByIdEntry);
-#endif
         return arr;
     }
 

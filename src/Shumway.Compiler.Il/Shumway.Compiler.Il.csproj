@@ -6,6 +6,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.Reflection.Metadata" Version="8.0.0" Condition="'$(TargetFramework)' == 'net48'" />
     <PackageReference Include="Sigil" Version="5.0.0" />
   </ItemGroup>
 
@@ -14,7 +15,8 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net10.0;net48</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

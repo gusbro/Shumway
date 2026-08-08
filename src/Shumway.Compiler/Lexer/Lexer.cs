@@ -392,8 +392,11 @@ public sealed class Lexer
                 int numStart = scan;
                 while (scan < _source.Length && char.IsDigit(_source[scan])) scan++;
                 int lineNo = 0;
+                // Substring rather than AsSpan: net48 has no span TryParse, and
+                // this is the `#line` directive path — parsed once per directive,
+                // not per token, so the allocation is noise.
                 bool haveNum = scan > numStart
-                    && int.TryParse(_source.AsSpan(numStart, scan - numStart), out lineNo);
+                    && int.TryParse(_source.Substring(numStart, scan - numStart), out lineNo);
                 while (_offset < _source.Length && _source[_offset] != '\n') Advance();
                 if (_offset < _source.Length) Advance();   // the newline itself
                 if (haveNum) _line = lineNo;

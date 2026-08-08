@@ -748,7 +748,7 @@ internal sealed class ConsultPipeline
         // plain ConsultString (no fallback) keeps the historic behaviour.
         string moduleName = string.IsNullOrEmpty(moduleNameFallback)
             ? PrologEngine.DefaultModuleName
-            : moduleNameFallback;
+            : moduleNameFallback!;   // ! for net48: its IsNullOrEmpty lacks the NotNullWhen flow annotation
         // prolog_load_context(module, _): the module of the file being loaded,
         // updated when the :- module directive is seen below.
         E._currentLoadModule = moduleName;

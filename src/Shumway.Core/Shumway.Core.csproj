@@ -10,13 +10,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <!-- Span<T> and ArrayPool<T> ship in the framework from .NET Core on; on
-       .NET Framework they are packages. Same types, same shapes — Span there is
-       the library implementation rather than a runtime intrinsic, which is a
-       performance difference and not a semantic one. -->
-  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
-    <PackageReference Include="System.Memory" Version="4.6.0" />
-  </ItemGroup>
+  <!-- The net48 polyfills and packages come from Directory.Build.targets,
+       shared by every multi-targeted project. -->
 
   <ItemGroup>
     <InternalsVisibleTo Include="Shumway.Tests.Core" />
@@ -24,6 +19,16 @@
     <InternalsVisibleTo Include="Shumway.Tests.Interpreter" />
     <!-- IL emission for Execute needs SetPc / SetB0. -->
     <InternalsVisibleTo Include="Shumway.Compiler.Il" />
+  </ItemGroup>
+
+  <!-- net48 ONLY: Core is the single carrier of the framework polyfills
+       (src/Shared, linked in by Directory.Build.targets), and these let the
+       sibling assemblies use them. Conditional so the net10.0 build's
+       encapsulation is exactly what it was. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <InternalsVisibleTo Include="Shumway.Compiler" />
+    <InternalsVisibleTo Include="Shumway.Builtins" />
+    <InternalsVisibleTo Include="Shumway.Embedding" />
   </ItemGroup>
 
 </Project>

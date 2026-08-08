@@ -95,10 +95,19 @@ public static class PersistedIlBuilder
         IReadOnlyList<IlPatchSite> Patches) Build(
         string assemblyName,
         IReadOnlyDictionary<int, CompiledPredicate> predicates,
-        IReadOnlySet<int>? prunableFids = null,
+        ISet<int>? prunableFids = null,
         Func<int, IReadOnlyList<double>?>? floatPoolProvider = null,
-        IReadOnlySet<int>? emitOnly = null)
+        ISet<int>? emitOnly = null)
     {
+#if NETFRAMEWORK
+        // Persisted-IL bundles are PRODUCED by the .NET 10 toolchain and only
+        // LOADED here. Framework could emit them (AssemblyBuilder.Save is
+        // native there), but a second emitter is a second thing to keep
+        // byte-compatible — the milestone-5 cross-emit question, not this one.
+        throw new PlatformNotSupportedException(
+            "Persisted-IL bundles are produced by the .NET toolchain "
+            + "(shumway-link --with-compiled-il); this runtime only loads them.");
+#else
         var psab = new PersistedAssemblyBuilder(
             new AssemblyName(assemblyName), typeof(object).Assembly);
         var module = psab.DefineDynamicModule(assemblyName);
@@ -257,6 +266,7 @@ public static class PersistedIlBuilder
         LocatePatchSites(bytes, patches);
 
         return (bytes, entries, patches);
+#endif
     }
 
     /// <summary>Scans <paramref name="peBytes"/> within every method
@@ -476,7 +486,9 @@ public static class PersistedIlBuilder
         {
             var slash = ind.IndexOf('/');
             if (slash < 0) continue;
-            if (!int.TryParse(ind.AsSpan(slash + 1), out int ar)) continue;
+            // Substring rather than AsSpan: net48 has no span TryParse, and this
+            // runs once per indicator at bundle-build time.
+            if (!int.TryParse(ind.Substring(slash + 1), out int ar)) continue;
             string nm = ind.Substring(0, slash);
             int aid = AtomTable.Intern(nm).Id;
             int fid = FunctorTable.Intern(aid, ar);

@@ -98,7 +98,7 @@ public sealed class ModeTable
     /// Indicator / determinism syntax is already validated at parse
     /// time, so this pass only covers cross-declaration and
     /// cross-program consistency.</summary>
-    public IReadOnlyList<ModeValidationIssue> Validate(IReadOnlySet<int> definedFunctors)
+    public IReadOnlyList<ModeValidationIssue> Validate(ISet<int> definedFunctors)
     {
         ArgumentNullException.ThrowIfNull(definedFunctors);
         var issues = new List<ModeValidationIssue>();

@@ -1035,7 +1035,7 @@ public sealed partial class DebugService
 
         _snsApplied = default;   // a fresh stop: any queued SNS from the last one is history
         _onStop(this, new DebugStopEvent(
-            reason, goal, site.File, site.Line, depth,
+            reason, goal!, site.File, site.Line, depth,
             WithSetNextLines(PresentFrames(engine, frames)))
         {
             BreakFile = _breakRequest?.File ?? "",

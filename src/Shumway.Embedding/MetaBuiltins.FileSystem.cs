@@ -128,10 +128,17 @@ public static partial class MetaBuiltins
                     string ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
                     return ext is ".exe" or ".bat" or ".cmd" or ".com";
                 }
+#if NETFRAMEWORK
+                // Unreachable: IsWindows() above is constant true on a runtime
+                // that only exists on Windows. Kept as a real return so the
+                // compiler sees every path produce a value.
+                return false;
+#else
                 return (System.IO.File.GetUnixFileMode(path)
                         & (System.IO.UnixFileMode.UserExecute
                            | System.IO.UnixFileMode.GroupExecute
                            | System.IO.UnixFileMode.OtherExecute)) != 0;
+#endif
             case "search":
                 return isDir;
             default:

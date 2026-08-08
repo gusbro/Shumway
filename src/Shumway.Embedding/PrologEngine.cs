@@ -60,7 +60,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// <c>runtime</c> series. Process-wide, but for a single-threaded
     /// benchmark loop it tracks the engine's own compute.</summary>
     internal static long StatsRuntimeMs() =>
+#if NETFRAMEWORK
+        // Environment.CpuUsage is .NET 8+; the Process property is the same
+        // number fetched the pre-8 way.
+        (long)System.Diagnostics.Process.GetCurrentProcess()
+            .TotalProcessorTime.TotalMilliseconds;
+#else
         (long)System.Environment.CpuUsage.TotalTime.TotalMilliseconds;
+#endif
 
     /// <summary>The runtime delta since the previous <c>statistics(runtime, _)</c>
     /// call, updating the reference.</summary>
@@ -786,7 +793,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// <c>:- dynamic</c> or runtime-asserted). Used as the
     /// "defined predicates" input to
     /// <see cref="Shumway.Compiler.Modes.ModeTable.Validate"/>.</summary>
-    public IReadOnlySet<int> DefinedFunctors()
+    public ISet<int> DefinedFunctors()
     {
         var set = new HashSet<int>();
         foreach (var manifest in _modules.Values)

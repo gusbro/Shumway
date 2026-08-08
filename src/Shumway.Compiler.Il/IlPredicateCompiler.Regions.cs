@@ -49,7 +49,7 @@ public sealed partial class IlPredicateCompiler
     /// to its own root trades N duplicated copies of its sub-region for one copy + N
     /// cross-region trampolines, cutting the all-as-roots inter-root duplication. Set by
     /// the bundle build (save/restore) before a pruned-IL build; null = none.</summary>
-    public static IReadOnlySet<int>? RegionForcedRootFids { get; set; }
+    public static ISet<int>? RegionForcedRootFids { get; set; }
 
     /// <summary>When non-null, region
     /// membership is restricted to these functor ids (the bundle entry's own
@@ -59,7 +59,7 @@ public sealed partial class IlPredicateCompiler
     /// ThreadStatic on purpose: a bundle build on the caller thread must not
     /// scope background promotions running on the IlCompileWorker.</summary>
     [System.ThreadStatic]
-    public static IReadOnlySet<int>? RegionMemberScopeFids;
+    public static ISet<int>? RegionMemberScopeFids;
 
     /// <summary>The labels + cursor map threaded into <see cref="EmitClauseBody"/>
     /// while emitting a region member's block.</summary>
@@ -313,7 +313,7 @@ public sealed partial class IlPredicateCompiler
     /// candidate promotion set without mutating the global static.</param>
     public IReadOnlyCollection<int> RegionMemberFids(
         CompiledPredicate root, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        IReadOnlySet<int>? extraExcluded)
+        ISet<int>? extraExcluded)
     {
         if (calleeMap is null) return new[] { root.FunctorId };
         var region = IlRegionBuilder.Build(root, calleeMap,

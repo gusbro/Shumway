@@ -21,9 +21,25 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net10.0;net48</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <!-- Framework-inbox from .NET Core on; packages here. System.Text.Json is
+         the DAP wire format; Bcl.AsyncInterfaces is IAsyncEnumerable for
+         QueryAsync. -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+    <PackageReference Include="System.Collections.Immutable" Version="8.0.0" />
+    <!-- Toolchain, not runtime: these shell out to `dotnet publish` to produce
+         MODERN .NET executables and class libraries. A net48 host consumes
+         bundles; it does not build .NET 10 apps. Nothing else references them
+         (checked), so they are simply not part of this target. -->
+    <Compile Remove="ExecutableEmitter.cs" />
+    <Compile Remove="LibraryEmitter.cs" />
+  </ItemGroup>
 
 </Project>
