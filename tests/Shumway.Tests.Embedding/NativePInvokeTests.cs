@@ -501,11 +501,11 @@ public class NativePInvokeTests
             Objects = new[] { ShmoCompiler.CompileSource(
                 ":- set_prolog_flag(arity_compat, true).\n:- public p/0.\np.\n", "prog", ShmoBuildMode.Release) },
             EntryPoints = new[] { new PredicateRef("p", 0) },
-            NativeLibraries = new[] { System.IO.Path.Combine("some", "dir", "genexus.dll") },
+            NativeLibraries = new[] { System.IO.Path.Combine("some", "dir", "customer.dll") },
             BakePrelude = true,
         }).Bytes!;
         var bundle = BundleReader.FromBytes(bytes);
-        Assert.Contains("genexus.dll", bundle.NativeLibraries);   // file name recorded + round-tripped
+        Assert.Contains("customer.dll", bundle.NativeLibraries);   // file name recorded + round-tripped
     }
 
     private const string BundleProgram =

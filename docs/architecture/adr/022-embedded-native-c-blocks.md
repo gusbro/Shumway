@@ -8,7 +8,7 @@ as agreed before implementation began.
 
 ## Context
 
-Arity-Prolog sources (the GeneXus corpus under `C:\temp\test` — 245 files, ~137
+Arity-Prolog sources (the reference corpus under `C:\temp\test` — 245 files, ~137
 with a `:- c` region, ~500 `{...}` blocks) use an embedded-C FFI:
 
 - A `:- c.` … `:- prolog.` region declares a **C environment**: global variables

@@ -7,7 +7,7 @@
 Phase 32 delivers ADR-024's deferred **materializer ↔ dematerializer tier** — whole-term
 interop for the case the Phase-30 cursor tier doesn't cover: when C# is only a
 **trampoline to a native C function** (P/Invoke, can't touch the Shumway heap) or a .NET
-method that wants a struct **snapshot**. The work was driven by the GeneXus `testProc`
+method that wants a struct **snapshot**. The work was driven by the `testProc` reference
 corpus, whose uniform pattern is `fill_par(Term,&parNref)` → `ret='native_fn'(…,parNref)`
 → `reftype_term(Term,&parNref)`. Eighteen commits (`384d5f8` … `cd15130`).
 
