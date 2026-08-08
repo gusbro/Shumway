@@ -1006,6 +1006,15 @@ never even constructed) and the engine runs on the bytecode
 interpreter only. See [`native-aot.md`](native-aot.md) for the full
 story, including the Windows toolchain requirements.
 
+## .NET Framework hosts
+
+Shumway also multi-targets **.NET Framework 4.8**, so a legacy C#
+application — 32-bit included — can embed the engine, promote to Tier-1 IL
+at runtime, and load persisted-IL bundles (link those with the net48 build
+of `shumway-link`). See [`net-framework-hosts.md`](net-framework-hosts.md)
+for the deployment matrix, the app.config a Framework host wants, and the
+32-bit memory limits.
+
 ## Logtalk
 
 Shumway is a working backend for [Logtalk](https://logtalk.org/) — the glue

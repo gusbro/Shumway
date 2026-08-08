@@ -16,6 +16,7 @@ documentation index; start with the [user guide](guide/user-guide.md).
 | [embedded-native-c.md](guide/embedded-native-c.md) | `:- c` declarations and `{...}` embedded native C blocks |
 | [generic-term-interop.md](guide/generic-term-interop.md) | Whole-term interop with C# and native C (the reftype tier) |
 | [native-aot.md](guide/native-aot.md) | Publishing self-contained Native AOT executables |
+| [net-framework-hosts.md](guide/net-framework-hosts.md) | Embedding in .NET Framework 4.8 apps (32-bit legacy hosts): bundles, app.config, memory limits |
 | [configuration.md](guide/configuration.md) | Runtime `SHUMWAY_*` environment variables and build-time diagnostic constants |
 | [logtalk.md](guide/logtalk.md) | Running Logtalk on Shumway |
 
@@ -34,7 +35,7 @@ documentation index; start with the [user guide](guide/user-guide.md).
   non-negotiable invariants, by subsystem.
 - [decision-policy.md](architecture/decision-policy.md) — what counts as a
   major decision, and where decisions are recorded.
-- [adr/](architecture/adr/) — Architecture Decision Records 001–042, one per
+- [adr/](architecture/adr/) — Architecture Decision Records 001–043, one per
   major design decision, each with its status.
 
 ## Subsystem designs (`design/`)
