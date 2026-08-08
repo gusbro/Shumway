@@ -88,6 +88,41 @@ internal static class SmokeNet48Cli
                 == "bcd";
         });
 
+        Check("tier-1 IL promotion (Sigil DynamicMethod on Framework's JIT)", () =>
+        {
+            var e = new PrologEngine();
+            e.IlPromotion.Threshold = 1;
+            e.ConsultString("""
+                nrev([], []).
+                nrev([H|T], R) :- nrev(T, RT), app(RT, [H], R).
+                app([], L, L).
+                app([H|T], L, [H|R]) :- app(T, L, R).
+                fib(0, 0).
+                fib(1, 1).
+                fib(N, F) :- N > 1, N1 is N - 1, N2 is N - 2,
+                             fib(N1, F1), fib(N2, F2), F is F1 + F2.
+                color(red, 1).
+                color(green, 2).
+                color(blue, 3).
+                pick(X, Y) :- ( X > 0 -> Y = pos ; Y = nonpos ).
+                loop(0, Acc, Acc).
+                loop(N, Acc, R) :- N > 0, A1 is Acc + N, N1 is N - 1, loop(N1, A1, R).
+                """);
+            // Each shape runs several times: the first crossings promote, the
+            // later iterations must produce the same answers FROM the emitted IL.
+            for (int i = 0; i < 5; i++)
+            {
+                if (e.QueryFirst<long>("fib(15, F).", "F") != 610) return false;
+                if (e.QueryFirst<string>("numlist(1, 30, L), nrev(L, [H|_]), atom_number(A, H).", "A") != "30") return false;
+                if (e.QueryFirst<long>("color(green, N).", "N") != 2) return false;
+                if (e.QueryFirst<string>("pick(3, Y).", "Y") != "pos") return false;
+                if (e.QueryFirst<string>("pick(-1, Y).", "Y") != "nonpos") return false;
+                if (e.QueryFirst<long>("loop(100000, 0, R).", "R") != 5000050000L) return false;
+            }
+            Console.WriteLine($"        promoted predicates: {e.IlPromotion.PromotedCount}");
+            return e.IlPromotion.PromotedCount > 0;
+        });
+
         Check("heap growth + GC (1M-element list, 32-bit friendly)", () =>
         {
             engine.ConsultString("""

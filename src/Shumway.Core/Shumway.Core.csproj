@@ -29,10 +29,12 @@
     <InternalsVisibleTo Include="Shumway.Compiler" />
     <InternalsVisibleTo Include="Shumway.Builtins" />
     <InternalsVisibleTo Include="Shumway.Embedding" />
+    <InternalsVisibleTo Include="Shumway.TopLevel" />
     <!-- Multi-targeted TEST assemblies also lean on the polyfills (Index/Range
          from ^1 slicing, char-overload extensions, ...). -->
     <InternalsVisibleTo Include="Shumway.Tests.Compiler" />
     <InternalsVisibleTo Include="Shumway.Tests.IsoConformance" />
+    <InternalsVisibleTo Include="Shumway.Tests.Embedding" />
   </ItemGroup>
 
 </Project>

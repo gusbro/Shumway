@@ -30,6 +30,11 @@ public class Adr035BreakTests
     /// <summary>Records every breakpoint hit, as the source line it stopped on.</summary>
     private sealed class Recorder : IDebugSession
     {
+        // net10 defaults these on the interface; net48 has no default
+        // interface implementations, so the explicit no-ops are required.
+        void IDebugSession.OnInlineGoal(Activation engine) { }
+        void IDebugSession.OnLeaveProlog(Activation engine) { }
+
         private readonly PrologEngine _engine;
         public readonly List<int> Lines = new();
 

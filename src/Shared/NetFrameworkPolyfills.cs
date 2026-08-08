@@ -73,6 +73,16 @@ namespace System
             public static bool IsWindows() => true;
 
             public static bool IsBrowser() => false;
+
+            public static bool IsMacOS() => false;
+
+            public static bool IsLinux() => false;
+        }
+
+        extension(Text.Encoding)
+        {
+            /// <summary>ISO-8859-1, framework-inbox by codepage.</summary>
+            public static Text.Encoding Latin1 => Text.Encoding.GetEncoding(28591);
         }
 
         extension(int)
@@ -81,6 +91,18 @@ namespace System
             /// is parsing a name or a header, not a token stream.</summary>
             public static bool TryParse(ReadOnlySpan<char> s, out int result)
                 => int.TryParse(s.ToString(), out result);
+        }
+
+        extension(Math)
+        {
+            public static int Clamp(int value, int min, int max)
+                => value < min ? min : value > max ? max : value;
+
+            public static long Clamp(long value, long min, long max)
+                => value < min ? min : value > max ? max : value;
+
+            public static double Clamp(double value, double min, double max)
+                => value < min ? min : value > max ? max : value;
         }
 
         extension(Environment)
@@ -279,6 +301,17 @@ namespace System
         public static string[] Split(this string s, string separator,
             StringSplitOptions options = StringSplitOptions.None)
             => s.Split(new[] { separator }, options);
+    }
+}
+
+namespace System.Linq
+{
+    /// <summary>The tuple-projecting Zip (.NET Core 3.0+).</summary>
+    internal static class LinqPolyfills
+    {
+        public static IEnumerable<(TFirst First, TSecond Second)> Zip<TFirst, TSecond>(
+            this IEnumerable<TFirst> first, IEnumerable<TSecond> second)
+            => first.Zip(second, (a, b) => (a, b));
     }
 }
 

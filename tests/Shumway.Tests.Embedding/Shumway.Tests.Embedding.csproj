@@ -1,7 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Multi-targeted for the .NET Framework spike (branch netfx-target);
+         see src/Shumway.Core/Shumway.Core.csproj for the pattern. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net10.0;net48</TargetFrameworks>
+    <!-- net48: unify the NuGet closure's assembly versions (Unsafe 6.0.1 vs
+         6.0.3 etc.) — without redirects every test dies in FileLoadException. -->
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -22,8 +29,10 @@
     <ProjectReference Include="..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
     <!-- Chunk 249: REPL components (HistoryStore) tested from here
          to avoid spinning up a dedicated Shumway.Tests.Repl project
-         for a single small surface. -->
-    <ProjectReference Include="..\..\src\Shumway.Repl\Shumway.Repl.csproj" />
+         for a single small surface. The REPL stays net10-only, so its
+         tests come out of the net48 flavor of this suite. -->
+    <ProjectReference Include="..\..\src\Shumway.Repl\Shumway.Repl.csproj"
+                      Condition="'$(TargetFramework)' == 'net10.0'" />
     <ProjectReference Include="..\..\src\Shumway.TopLevel\Shumway.TopLevel.csproj" />
     <!-- Chunk 241: source generator. Loaded as an analyzer so it
          runs at this project's compile time; the generator assembly
@@ -31,6 +40,27 @@
     <ProjectReference Include="..\..\src\Shumway.SourceGen\Shumway.SourceGen.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- net48: the REPL project (line editor, history) is net10-only. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <Compile Remove="Chunk249Tests.cs" />
+    <Compile Remove="Chunk250Tests.cs" />
+    <Compile Remove="Chunk253Tests.cs" />
+    <!-- Toolchain / cross-process tests: they exercise ExecutableEmitter /
+         LibraryEmitter / PersistedAssemblyBuilder or spawn the net10 CLIs and
+         REPL. The toolchain is net10 by design (a net48 host only LOADS
+         bundles), so its tests stay on the net10 flavor of this suite. -->
+    <Compile Remove="Chunk164Tests.cs" />
+    <Compile Remove="Chunk168Tests.cs" />
+    <Compile Remove="Chunk170Tests.cs" />
+    <Compile Remove="Chunk174Tests.cs" />
+    <Compile Remove="LibraryEmitterTests.cs" />
+    <Compile Remove="LinkGoalRefsTests.cs" />
+    <Compile Remove="PePatchPrototype.cs" />
+    <Compile Remove="PePatchEndToEnd.cs" />
+    <Compile Remove="PreludeIlBakeTests.cs" />
+    <Compile Remove="TablingBundleTests.cs" />
   </ItemGroup>
 
 </Project>

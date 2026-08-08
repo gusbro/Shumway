@@ -164,6 +164,7 @@ public class Adr035EmbeddingTests
         Assert.Single(engine.QueryAll("run(1).").ToList());
     }
 
+#if !NETFRAMEWORK  // ExecutableEmitter is net10 toolchain, excluded from the net48 build.
     [Fact]
     public void ExeDebug_OnASourceStrippedBundle_FailsThePrecondition()
     {
@@ -192,6 +193,7 @@ public class Adr035EmbeddingTests
         Assert.Contains(res.Diagnostics, d => d.Code == "debug_no_source");
         Assert.False(File.Exists(exePath), "no exe should be produced when the precondition fails");
     }
+#endif
 
     [Fact]
     public void WithoutEnableDebugging_TheSameBundleIsNotDebuggable()

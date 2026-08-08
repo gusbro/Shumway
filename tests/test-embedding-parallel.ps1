@@ -20,7 +20,12 @@
 # bucket's Duration).
 
 param(
-    [switch] $Full
+    [switch] $Full,
+    # The suite is multi-targeted (netfx-target branch): without an explicit
+    # framework a bare `dotnet test` would run BOTH flavors of every bucket.
+    [string] $Framework = 'net10.0',
+    # net48 only: 'x86' / 'x64' forces the testhost bitness (empty = default).
+    [string] $Platform = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,8 +57,8 @@ $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
 # One build; the parallel runs are --no-build (concurrent builds of the same
 # project would collide on the output tree).
-Write-Host '[parallel] building...'
-dotnet build $proj -c Debug --nologo -v q
+Write-Host "[parallel] building ($Framework)..."
+dotnet build $proj -c Debug -f $Framework --nologo -v q
 if ($LASTEXITCODE -ne 0) { Write-Host '[parallel] BUILD FAILED'; exit 1 }
 
 Write-Host "[parallel] launching $($buckets.Count) test processes..."
@@ -63,9 +68,10 @@ foreach ($b in $buckets) {
     $p = Start-Process -FilePath 'dotnet' -PassThru -NoNewWindow `
         -RedirectStandardOutput $log `
         -ArgumentList @(
-            'test', $proj, '-c', 'Debug', '--no-build', '--nologo',
+            'test', $proj, '-c', 'Debug', '-f', $Framework, '--no-build', '--nologo',
             '--filter', $b.Filter,
-            '--blame-hang-timeout', '300s')
+            '--blame-hang-timeout', '300s'
+            if ($Platform -ne '') { '--', "RunConfiguration.TargetPlatform=$Platform" })
     # Cache the handle NOW: without this, .ExitCode reads $null after the
     # process exits (PS 5.1 Start-Process quirk) and $null -ne 0 is true.
     $null = $p.Handle
