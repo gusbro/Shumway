@@ -193,9 +193,13 @@ the cross-language copy problem returns. For that case this second tier (deliver
 
 This is the ADR-022 "option B" as an **optional** layer on top of the cursor, not a
 replacement. It bolted on without reworking the cursor: the ntype-code table (§ ntype
-codes) is the shared contract, and the `Reftype` field layout matches Arity's
-`t_reftype`. **Shipped in Phase 32** — see the `Reftype` / `NativeReftype` types and
-the `:- native` P/Invoke path.
+codes) is the shared contract, and the `t_reftype` field layout is **Shumway's own
+declaration** (Arity-inspired names/API — `fill_par`, `newreftype`, `freepar` — but
+the Arity material we hold does not declare the struct, and the reference corpus's
+`:- c` prototypes treat `reftype` as opaque, so the 64-bit-ready `int64 ntype; int64 nelem`
+fields are ours; native C interops by recompiling against our declaration).
+**Shipped in Phase 32** — see the `Reftype` / `NativeReftype` types and the
+`:- native` P/Invoke path.
 
 ## Documentation (required at implementation close)
 

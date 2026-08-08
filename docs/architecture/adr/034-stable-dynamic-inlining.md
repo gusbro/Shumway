@@ -131,7 +131,7 @@ configuration; tierG 5→315 / 47→498 —
    The only true beneficiaries are never-asserted empties (dead features,
    mode-gated hooks) — not worth taxing everything else.
 2. **The corpus counts were inflated by placeholders.** Most of the "empty
-   dynamics" are GX host-interface predicates (`i_*`) that these links model
+   dynamics" are host-interface predicates (`i_*`) that these links model
    as empty dynamics only because they were linked WITHOUT the host
    (`--allow-undefined`). In a production link they are FOREIGN predicates
    (`[PrologPredicate]` / `:- native`), and the guard machinery already

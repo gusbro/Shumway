@@ -238,7 +238,7 @@ public sealed partial class IlPredicateCompiler
     // but in any reasonable program the assert DOES happen, so the steady
     // state is the fallback (the plain pre-feature path) PLUS a per-entry
     // membership probe: a net runtime cost for the dominant
-    // assert-before-call idiom. The corpus counts were also inflated by GX
+    // assert-before-call idiom. The corpus counts were also inflated by
     // host-interface placeholders (i_*) that production links declare as
     // FOREIGN predicates — whose det-ness the guard machinery already derives
     // from the implementation (BacktrackableDetector), needing no dynamic

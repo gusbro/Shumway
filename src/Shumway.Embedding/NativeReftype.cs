@@ -8,7 +8,11 @@ namespace Shumway.Embedding;
 /// <summary>ADR-024 — the **blittable native-memory** form of the materializer tier.
 /// A Prolog term is copied into a real <c>t_reftype</c> struct graph in unmanaged
 /// memory so a native C function (reached via P/Invoke) — which cannot touch the
-/// Shumway heap — can read and rebuild it. The layout is identical to Arity's:
+/// Shumway heap — can read and rebuild it. The layout is SHUMWAY'S OWN contract
+/// (Arity-inspired in field names and API shape; the Arity material we hold does
+/// not declare the struct at all, and the reference corpus's <c>:- c</c>
+/// prototypes treat <c>reftype</c> as opaque — the 64-bit-ready int64 fields are
+/// ours). Native C interops by RECOMPILING against this declaration:
 ///
 /// <code>
 /// union u_crep { char* cstr; int cint; double cflt; };   // 8 bytes
