@@ -303,10 +303,28 @@ fmt(In, Out) :-
 The cursor (§1–§9) is for interop logic written *in C#*. When the work is a real
 **native C function** — a P/Invoke target in a `.dll` / `.so` / `.dylib` that cannot
 touch the Shumway heap — Shumway **materializes** each whole-term argument into a
-physical Arity `t_reftype` struct in native memory, calls the function by pointer,
+physical `t_reftype` struct in native memory, calls the function by pointer,
 then **dematerializes** the (possibly modified) struct back into the term. A managed
 .NET method that wants a struct *snapshot* (a `Reftype` parameter) uses the same
 machinery without leaving managed memory.
+
+The struct layout is **Shumway's declared contract** (Arity-inspired in names and
+API, but the field declaration is ours). Native C participates by **recompiling
+against this declaration**:
+
+```c
+union u_crep { char* cstr; int cint; double cflt; };
+typedef struct s_reftype {
+    int64_t ntype;             /* +0   (ntype codes, §6)              */
+    int64_t nelem;             /* +8   (arity / list len / strlen)    */
+    struct s_reftype** pars;   /* +16  (array of t_reftype*)          */
+    union u_crep crep;         /* +24                                 */
+} t_reftype;                   /* sizeof == 32                        */
+```
+
+The same offsets hold in a **32-bit** build: MSVC x86 aligns the `int64_t`/`double`
+members at 8, so `pars` is a 4-byte pointer at +16 (followed by 4 bytes of padding)
+and `crep` stays at +24 — one declaration serves both bitnesses.
 
 ### 10a. Declaring a native function
 

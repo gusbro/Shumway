@@ -447,7 +447,7 @@ A deferral is a TODO with a prerequisite, not a closure.
       true cause. Re-census with the real promotion-path setup (float pool
       set, per-fid): of testGen's 3 344 typed-switch predicates, 1 681 are
       IL-ok and ALL 1 663 rejects are `call->unresolved` — the census's own
-      consult-failure artifact (callees on files needing the GX interop
+      consult-failure artifact (callees on files needing the host interop
       class); the residual 3 were the harness not setting the float pool.
       A synthetic multi-arg cascade (switch_on_term → switch_on_arg ×2 with
       SwitchOnAtomArg/SwitchOnIntegerArg tables) describes, compiles AND runs
@@ -1297,7 +1297,7 @@ WAM↔IL boundary:
 Functional interop gaps:
 - [x] **D6** 🟡 four sub-items, resolved by evidence (2026-07-03):
       - `int**`/struct-by-value/array params — **rejected on corpus census**:
-        the 63 GXPROLOG-side prototypes across testProc contain ZERO
+        the 63 Prolog-side prototypes across testProc contain ZERO
         occurrences (all params are scalars, char*, char**, scalar
         out-pointers, reftype; the one array param `ltosp(.., TEXT *vec[], ..)`
         is in the C-side `#else` branch, never crossed from Prolog).

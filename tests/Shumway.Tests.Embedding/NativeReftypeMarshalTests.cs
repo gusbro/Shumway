@@ -47,11 +47,12 @@ public class NativeReftypeMarshalTests
     }
 
     [Fact]
-    public void StructLayout_MatchesArity()
+    public void StructLayout_MatchesTheDeclaredContract()
     {
-        // The blittable contract a native C function relies on: ntype at +0, nelem
-        // at +8, pars at +16, crep at +24; a functor's name is in crep.cstr and its
-        // args are t_reftype* in the pars array.
+        // The blittable contract a native C function RECOMPILED against our
+        // t_reftype declaration relies on (Shumway's own layout): ntype at +0,
+        // nelem at +8, pars at +16, crep at +24; a functor's name is in
+        // crep.cstr and its args are t_reftype* in the pars array.
         IntPtr p = NativeReftype.Materialize(
             new CompoundTerm("pt", new Term[] { new IntTerm(7), new IntTerm(9) }));
         try

@@ -99,7 +99,7 @@ them back to clause-entry values.
   continuations, CONT default-ON decision.
 - ADR-034: runtime-promotion snapshot feeding; caller re-promotion with the
   settled fact set (needs a runnable corpus).
-- Corpus-link fidelity: declare the GX `i_*` host natives as foreign stubs
+- Corpus-link fidelity: declare the `i_*` host natives as foreign stubs
   so measurement links stop modelling them as empty dynamics.
 
 ## Gate at close
