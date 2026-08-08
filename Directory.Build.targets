@@ -33,6 +33,12 @@
     <!-- Span<T>, ArrayPool<T> and friends: framework-inbox from .NET Core on,
          packages on .NET Framework. Same types, same shapes. -->
     <PackageReference Include="System.Memory" Version="4.6.0" />
+    <!-- Pinned explicitly ABOVE what System.Memory pulls transitively: the
+         test platform's net48 assemblies bind to assembly 6.0.3.0 (package
+         6.1.2) while the transitive resolution restored 6.1.0 (assembly
+         6.0.1.0) — strict Framework binding then kills every test in
+         FileLoadException. One version everywhere ends the conflict. -->
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.1.2" />
   </ItemGroup>
 
 </Project>

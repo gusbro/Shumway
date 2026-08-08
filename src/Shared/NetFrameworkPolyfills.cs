@@ -275,6 +275,10 @@ namespace System
 
         public static string[] Split(this string s, char separator, StringSplitOptions options)
             => s.Split(new[] { separator }, options);
+
+        public static string[] Split(this string s, string separator,
+            StringSplitOptions options = StringSplitOptions.None)
+            => s.Split(new[] { separator }, options);
     }
 }
 
