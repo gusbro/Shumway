@@ -20,6 +20,15 @@ namespace Shumway.Embedding;
 /// };                                                       // 32 bytes
 /// </code>
 ///
+/// <para>The SAME offsets hold in a 32-bit process: MSVC x86 aligns the
+/// int64/double members at 8, so <c>pars</c> is a 4-byte pointer at +16
+/// followed by 4 bytes of padding and <c>crep</c> stays at +24, total still
+/// 32 (verified against cl x86, offsetof probe). Every pointer access here
+/// goes through <see cref="Marshal.ReadIntPtr(IntPtr,int)"/> /
+/// <c>WriteIntPtr</c> and every pars-array stride is <c>IntPtr.Size</c>, so
+/// one layout serves both bitnesses — do not replace them with the
+/// 8-byte-fixed Int64 forms.</para>
+///
 /// <para>The managed <see cref="Reftype"/> snapshot and this share the
 /// <see cref="Reftype.Codes"/> ntype contract; this one allocates with
 /// <see cref="Marshal.AllocHGlobal(int)"/> and must be released with
