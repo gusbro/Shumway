@@ -342,6 +342,10 @@ public sealed partial class PrologEngine
     /// stripped indexed predicate resolves its entry clause without a WAM body.</summary>
     internal readonly Dictionary<int, byte[]> _persistedIndexGraphs = new();
 
+    /// <summary>Module names already warned about unbindable persisted IL, so
+    /// the two load passes that visit an entry warn once, not twice.</summary>
+    internal readonly HashSet<string> _warnedIlUnbindable = new();
+
     /// <summary>region member-entry aliases, keyed by the member's runtime
     /// functor id; the value is <c>EncodeResumeMarker(regionRootRuntimeFid, entryCursor)</c>.
     /// Populated at LoadBundle from each region method's <see cref="Shumway.Compiler.Il.

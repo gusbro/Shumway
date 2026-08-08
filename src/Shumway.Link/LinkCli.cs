@@ -292,6 +292,16 @@ internal static class LinkCli
                 + $"bytes={result.Bytes!.Length}).");
         }
 
+#if NETFRAMEWORK
+        // The emitters shell out to `dotnet publish` (a .NET 10 SDK affair) —
+        // the net48 toolchain links bundles; it does not build executables.
+        if (!string.IsNullOrEmpty(opts.ExePath) || !string.IsNullOrEmpty(opts.DllPath))
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --exe / --dll require the .NET 10 build of the toolchain.");
+            return ExitUsageError;
+        }
+#else
         if (!string.IsNullOrEmpty(opts.ExePath))
         {
             var mode = opts.SelfContained
@@ -339,6 +349,7 @@ internal static class LinkCli
                 $"shumway-link: wrote {dllResult.OutputPath} "
                 + $"(factory {dllResult.FactoryTypeName}.CreateEngine()).");
         }
+#endif
         return ExitOk;
     }
 
@@ -775,9 +786,13 @@ internal static class LinkCli
         var dirs = new List<string>(flagged);
         string? env = Environment.GetEnvironmentVariable("SHUMWAY_LIBRARY_PATH");
         if (!string.IsNullOrEmpty(env))
-            foreach (string d in env.Split(System.IO.Path.PathSeparator,
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                dirs.Add(d);
+            // Manual Trim: net48 has no StringSplitOptions.TrimEntries.
+            foreach (string raw in env.Split(System.IO.Path.PathSeparator,
+                StringSplitOptions.RemoveEmptyEntries))
+            {
+                string d = raw.Trim();
+                if (d.Length > 0) dirs.Add(d);
+            }
         return dirs;
     }
 

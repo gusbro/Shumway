@@ -13,7 +13,16 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Multi-targeted for the .NET Framework spike (branch netfx-target): a
+         net48 build of the toolchain links WITH the Framework persisted-IL
+         emitter, so its "with compiled il" bundles carry mscorlib-referencing
+         IL that a net48 HOST can bind (the net10 toolchain's IL references
+         System.Private.CoreLib, which Framework cannot resolve; such bundles
+         silently fall back to bytecode there). See
+         src/Shumway.Core/Shumway.Core.csproj for the pattern. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net10.0;net48</TargetFrameworks>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

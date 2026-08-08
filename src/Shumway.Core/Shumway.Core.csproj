@@ -30,6 +30,9 @@
     <InternalsVisibleTo Include="Shumway.Builtins" />
     <InternalsVisibleTo Include="Shumway.Embedding" />
     <InternalsVisibleTo Include="Shumway.TopLevel" />
+    <!-- The toolchain CLIs (assembly names carry the hyphen). -->
+    <InternalsVisibleTo Include="shumway-compile" />
+    <InternalsVisibleTo Include="shumway-link" />
     <!-- Multi-targeted TEST assemblies also lean on the polyfills (Index/Range
          from ^1 slicing, char-overload extensions, ...). -->
     <InternalsVisibleTo Include="Shumway.Tests.Compiler" />

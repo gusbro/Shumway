@@ -1113,7 +1113,23 @@ internal sealed class BundleLoader
             || !Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen)
             return;
         var module = GetOrLoadPersistedIl(entry);
-        if (module is null) return;
+        if (module is null)
+        {
+            // The image loaded but its type could not surface — on .NET
+            // Framework this is a bundle whose IL was emitted by the .NET 10
+            // toolchain (System.Private.CoreLib refs Framework cannot
+            // resolve). Correctness survives on the bytecode, but silently
+            // losing the persisted tier hides a real deployment mistake.
+            if (!E._warnedIlUnbindable.Add(entry.ModuleName)) return;
+            E.Warn($"bundle entry '{entry.ModuleName}': persisted IL could not "
+                + "be bound on this runtime; using bytecode."
+#if NETFRAMEWORK
+                + " A bundle for a .NET Framework host must be linked with the"
+                + " net48 build of shumway-link."
+#endif
+                );
+            return;
+        }
         foreach (var (_, functorId, del) in module.Bound)
             E.IlPromotion.RegisterBoundDelegate(functorId, del);
         // A stripped indexed predicate carries its dispatch graph in the bundle.
