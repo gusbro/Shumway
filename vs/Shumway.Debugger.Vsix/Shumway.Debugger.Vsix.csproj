@@ -77,6 +77,29 @@
     <PackageReference Include="Microsoft.VisualStudio.Extensibility.Sdk" Version="17.14.40608" PrivateAssets="all" />
     <PackageReference Include="Microsoft.VisualStudio.Extensibility.Build" Version="17.14.40608" PrivateAssets="all" />
   </ItemGroup>
+  <!-- The 17.14 SDK's settings generator emits the pre-VS2026 format token
+       "filePath"; the VS 18 settings UI silently DROPS any property carrying
+       it. Rewrite to the schema VS 18's own registrations use (the Terminal's
+       shell path: "format": "path" + "pathKind": "file"). Runs on the
+       generated obj\ JSON BEFORE it is copied into .vsextension\ and packed.
+       Delete when an 18.x Extensibility SDK emits the new schema natively. -->
+  <Target Name="ShumwayPatchSettingsRegistrationFormat" AfterTargets="CoreCompile"
+          Condition="Exists('$(IntermediateOutputPath)settingsRegistration.json')">
+    <PropertyGroup>
+      <_ShumwaySettingsRegPath>$(IntermediateOutputPath)settingsRegistration.json</_ShumwaySettingsRegPath>
+      <_ShumwaySettingsRegText>$([System.IO.File]::ReadAllText('$(_ShumwaySettingsRegPath)'))</_ShumwaySettingsRegText>
+      <_ShumwaySettingsRegPatched>$(_ShumwaySettingsRegText.Replace('"format": "filePath"', '"format": "path",
+      "pathKind": "file"'))</_ShumwaySettingsRegPatched>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(_ShumwaySettingsRegPath)"
+                      Lines="$(_ShumwaySettingsRegPatched)"
+                      Overwrite="true"
+                      Condition="'$(_ShumwaySettingsRegPatched)' != '$(_ShumwaySettingsRegText)'" />
+    <Message Text="ShumwayPatchSettingsRegistrationFormat: rewrote filePath -> path/pathKind"
+             Importance="normal"
+             Condition="'$(_ShumwaySettingsRegPatched)' != '$(_ShumwaySettingsRegText)'" />
+  </Target>
+
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Debugger.Concord\Shumway.Debugger.Concord.csproj">
       <Name>Shumway.Debugger.Concord</Name>

@@ -33,9 +33,16 @@ namespace Shumway.Debugger.Vsix
             Description = "Launching a .pl file under the Shumway Prolog debugger.",
         };
 
-        // FormattedString + FilePath (not a bare String): the settings editor
-        // then treats the value as a file path — which is what caught a
-        // hand-typed "shuwmway.exe" silently resolving to nothing.
+        // FormattedString + FilePath so the settings editor treats the value as
+        // a file path (a bare string field is what let a hand-typed
+        // "shuwmway.exe" resolve to nothing). TRAP: the 17.14 SDK's generator
+        // emits the PRE-VS2026 schema token `"format": "filePath"`, which the
+        // VS 18 settings UI does not recognize — it silently DROPS the whole
+        // property from the page. VS 18's own registrations (the Terminal's
+        // shell path) use `"format": "path", "pathKind": "file"`, so the
+        // csproj's ShumwayPatchSettingsRegistrationFormat target rewrites the
+        // generated JSON to that schema. Delete the target when an 18.x
+        // Extensibility SDK emits it natively.
         [VisualStudioContribution]
         internal static Setting.FormattedString EnginePath { get; } = new(
             "enginePath", "Path to shumway.exe", ShumwayCategory,
