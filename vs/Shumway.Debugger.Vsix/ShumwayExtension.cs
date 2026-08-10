@@ -33,9 +33,13 @@ namespace Shumway.Debugger.Vsix
             Description = "Launching a .pl file under the Shumway Prolog debugger.",
         };
 
+        // FormattedString + FilePath (not a bare String): the settings editor
+        // then treats the value as a file path — which is what caught a
+        // hand-typed "shuwmway.exe" silently resolving to nothing.
         [VisualStudioContribution]
-        internal static Setting.String EnginePath { get; } = new(
-            "enginePath", "Path to shumway.exe", ShumwayCategory, defaultValue: "")
+        internal static Setting.FormattedString EnginePath { get; } = new(
+            "enginePath", "Path to shumway.exe", ShumwayCategory,
+            SettingStringFormat.FilePath, defaultValue: "")
         {
             Description = "The Shumway REPL executable used to run a .pl file under the "
                 + "debugger. Leave empty to take it from the SHUMWAY_EXE environment "
