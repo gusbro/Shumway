@@ -783,6 +783,12 @@ public sealed partial class BytecodeInterpreter
                     var table = IlByFunctorId;
                     var ilFn = table is not null && (uint)functorId < (uint)table.Length
                         ? table[functorId] : null;
+                    // Per-query table miss → the engine-wide dispatcher. A delegate
+                    // promoted AFTER this query's setup snapshot (an interleaved
+                    // debug evaluation promoting clpfd internals mid-stop is the
+                    // real case) rewrote shared bytecode to CallIl; the rewrite is
+                    // engine-global, the snapshot is not.
+                    ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
                     if (ilFn is null)
                     {
                         // IL was unregistered after the link-time
@@ -874,6 +880,8 @@ public sealed partial class BytecodeInterpreter
                     var table = IlByFunctorId;
                     var ilFn = table is not null && (uint)functorId < (uint)table.Length
                         ? table[functorId] : null;
+                    // Same stale-snapshot fallback as CallIl above.
+                    ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
                     if (ilFn is null)
                         throw new InvalidOperationException(
                             $"ExecuteIl: no IL delegate for functor id {functorId}. "

@@ -216,6 +216,44 @@ public class Adr035ResidualTests
     }
 
     [Fact]
+    public void OnFrameGoals_SurviveTier1Promotion()
+    {
+        // The user's session shape: REPL --debug arms IlPromotion (threshold 32);
+        // repeated evals promote clpfd internals mid-stop, and the SECOND
+        // on-frame post once died with "CallIl: no IL delegate for functor id N".
+        // Threshold 1 makes every eval a promotion trigger.
+        var engine = DebugEngine(
+            ":- use_module(library(clpfd)).\n"
+            + "p(X) :-\n    X in 6..9,\n    mark(X),\n    once(labeling([up], [X])).\n"
+            + "mark(_).\n");
+        engine.IlPromotion.Threshold = 1;
+        engine.AddBreakpoint("<string>", 5);
+
+        var outputs = new List<string>();
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            outputs.Add(s.EvaluateGoal(0, "X #> 8, X #< 5."));   // sandbox: false
+            outputs.Add(s.EvaluateGoal(0, "!X in 1..9."));
+            // Sandbox evals BETWEEN the posts: each runs the residual
+            // re-capture + transplant, the way a front end refreshes after
+            // FrameStateChanged — the mix that broke the user's session.
+            outputs.Add(s.EvaluateGoal(0, "X #= 7"));
+            outputs.Add(s.EvaluateGoal(0, "!X in 1..8."));
+            outputs.Add(s.EvaluateGoal(0, "copy_term(X, _C, G)"));
+            outputs.Add(s.EvaluateGoal(0, "!X #> 6."));
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var solutions = engine.QueryAll("p(V).").ToList();
+        engine.AttachDebugSession(null);
+
+        foreach (var o in outputs) _log.WriteLine("-> " + o);
+        Assert.All(outputs.Skip(1), o => Assert.DoesNotContain("error", o));
+        Assert.Single(solutions);
+        Assert.Equal(7L, solutions[0].Get<long>("V"));   // 6..9 ∩ 1..8 ∩ >6 = 7..8
+    }
+
+    [Fact]
     public void ABreakpointConditionCanReadTheAttribute()
     {
         var engine = DebugEngine(
