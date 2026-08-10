@@ -56,6 +56,14 @@ namespace Shumway.Debugger.Vsix
             var command = new OleMenuCommand(Execute, id);
             command.BeforeQueryStatus += OnlyForPrologFiles;
             commandService.AddCommand(command);
+
+            // The Solution Explorer flavor: same caption, but it operates on the
+            // SELECTED item — the active document may be something else entirely.
+            var explorerId = new CommandID(PackageGuids.CommandSet,
+                PackageGuids.DebugPrologFileFromExplorerCommandId);
+            var explorerCommand = new OleMenuCommand(ExecuteFromExplorer, explorerId);
+            explorerCommand.BeforeQueryStatus += OnlyForPrologItems;
+            commandService.AddCommand(explorerCommand);
         }
 
         /// <summary>The command exists for .pl files and says so by disappearing everywhere
@@ -65,6 +73,19 @@ namespace Shumway.Debugger.Vsix
             ThreadHelper.ThrowIfNotOnUIThread();
             if (sender is not OleMenuCommand command) return;
             string? file = ActiveDocument();
+            bool prolog = file != null
+                && string.Equals(Path.GetExtension(file), ".pl", StringComparison.OrdinalIgnoreCase);
+            command.Visible = prolog;
+            command.Enabled = prolog;
+        }
+
+        /// <summary>Visibility twin of <see cref="OnlyForPrologFiles"/> for the
+        /// Solution Explorer placement: show only when the selected item is a .pl.</summary>
+        private void OnlyForPrologItems(object sender, EventArgs e)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (sender is not OleMenuCommand command) return;
+            string? file = SelectedExplorerItem();
             bool prolog = file != null
                 && string.Equals(Path.GetExtension(file), ".pl", StringComparison.OrdinalIgnoreCase);
             command.Visible = prolog;
@@ -81,6 +102,25 @@ namespace Shumway.Debugger.Vsix
                 Complain("Open a .pl file first.");
                 return;
             }
+            LaunchResolved(file);
+        }
+
+        private void ExecuteFromExplorer(object sender, EventArgs e)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            string? file = SelectedExplorerItem();
+            if (file == null)
+            {
+                Complain("Select a .pl file in Solution Explorer first.");
+                return;
+            }
+            LaunchResolved(file);
+        }
+
+        private void LaunchResolved(string file)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
 
             var (configuredEngine, configuredArguments) = ReadConfiguredSettings(out string? readError);
             string? engine = ShumwayLaunchOptions.Resolve(configuredEngine);
@@ -99,6 +139,27 @@ namespace Shumway.Debugger.Vsix
             catch (Exception ex)
             {
                 Complain("Could not start the debug session: " + ex.Message);
+            }
+        }
+
+        /// <summary>The single selected Solution Explorer item's file path, or null
+        /// (no selection, multiple items, or a node with no file — a project, the
+        /// solution, a virtual folder).</summary>
+        private string? SelectedExplorerItem()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var dte = GetService(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
+            try
+            {
+                var selected = dte?.SelectedItems;
+                if (selected == null || selected.Count != 1) return null;
+                var projectItem = selected.Item(1)?.ProjectItem;
+                if (projectItem == null || projectItem.FileCount < 1) return null;
+                return projectItem.FileNames[1];   // 1-based, per the DTE contract
+            }
+            catch (Exception)
+            {
+                return null;   // a node type that has no file story
             }
         }
 

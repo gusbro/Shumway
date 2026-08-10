@@ -66,7 +66,7 @@ stops at your breakpoint.
 Everything else is ordinary Visual Studio: F5 continues, F10/F11 step, the Call Stack and
 Locals windows work, and double-clicking a frame navigates to its source.
 
-The command is on the editor context menu and appears only for `.pl` files.
+The command appears only for `.pl` files, wherever you look for it: the editor context menu, the document tab's context menu, the file's context menu in Solution Explorer, and the Debug menu.
 
 ## Attaching to an engine you started yourself
 

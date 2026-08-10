@@ -12,8 +12,14 @@ namespace Shumway.Debugger.Vsix
 
         public static readonly Guid CommandSet = new Guid(CommandSetString);
 
-        /// <summary>The command the user sees: "Debug Prolog File".</summary>
+        /// <summary>The command the user sees: "Debug Prolog File". Active-document
+        /// based: the Debug menu, the editor context menu and the document tab's
+        /// (right-clicking a tab activates its document first).</summary>
         public const int DebugPrologFileCommandId = 0x0100;
+
+        /// <summary>The Solution Explorer flavor of the same command — operates on
+        /// the SELECTED item rather than the active document.</summary>
+        public const int DebugPrologFileFromExplorerCommandId = 0x0101;
 
         /// <summary>The CoreCLR debug engine. Shumway is a .NET program: the engine that
         /// launches it is the ordinary managed one, and our Concord components layer on top
