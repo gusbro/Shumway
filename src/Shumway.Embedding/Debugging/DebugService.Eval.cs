@@ -376,6 +376,7 @@ public sealed partial class DebugService
         _engine.DebugTransplantSource = null;
         _pendingEnum = null;
         _pendingReport = null;
+        _pendingResidVars = null;
         _pendingCommit = null;
         _pendingCts = null;
         _outerScope = null;

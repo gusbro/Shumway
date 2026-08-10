@@ -285,13 +285,17 @@ its attribute graph onto the evaluation's copy, so `get_attr(X, clpfd, A)`,
 `copy_term(X, C, G)` and `frozen(Z, G)` answer the real thing, and posting a new
 constraint (`X #< 5`) narrows the copy and propagates. What you post lives in the
 evaluation — the suspended program's own variable is untouched, which makes the plain
-Immediate a consequence-free "what if".
+Immediate a consequence-free "what if". The answer shows the **residual constraints**
+the goal left on its variables, exactly like the REPL's answers — `X #> 5` on an
+`X in 1..9` frame variable answers `X in 6..9` — so a what-if tells you not just
+*whether* it is consistent but *what would remain*.
 
 To affect the **real frame**, prefix the goal with `!`:
 
 ```prolog
 !X #> 5.
 true [applied to the frame]
+X in 6..9
 ```
 
 That runs the goal *on the suspended machine itself*, once-committed: the constraint

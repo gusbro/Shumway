@@ -171,6 +171,9 @@ public class Adr035ResidualTests
         Assert.DoesNotContain("false", posted);      // the post succeeded on the transplant
         // The sandbox note advertises the on-frame gesture.
         Assert.Contains("prefix the goal with !", posted);
+        // The sandbox answer shows the residuals the post left on the copy —
+        // X in 1..9 narrowed by #> 5 — under the user's own variable name.
+        Assert.Contains("X in 6..9", posted);
     }
 
     [Fact]
@@ -205,6 +208,8 @@ public class Adr035ResidualTests
         _log.WriteLine("probeHigh-> " + probeHigh);
         Assert.Contains("[applied to the frame]", posted);
         Assert.DoesNotContain("error", posted);
+        // The on-frame answer shows the resulting residuals, in the user's name.
+        Assert.Contains("X in 6..9", posted);
         Assert.StartsWith("false", dryRun);
         Assert.Contains("[frame unchanged]", dryRun);
         Assert.Contains("false", probeLow);          // 3 excluded: the post REALLY narrowed X
