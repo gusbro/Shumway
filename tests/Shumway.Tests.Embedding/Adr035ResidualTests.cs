@@ -221,6 +221,41 @@ public class Adr035ResidualTests
     }
 
     [Fact]
+    public void SandboxLabeling_ShowsTheBindingPerSolution_AndBacktracksWithSemicolon()
+    {
+        var engine = DebugEngine(
+            ":- use_module(library(clpfd)).\n"
+            + "p(X) :-\n    X in 6..9,\n    mark(X),\n    once(labeling([up], [X])).\n"
+            + "mark(_).\n");
+        engine.AddBreakpoint("<string>", 5);
+
+        string first = "", second = "", third = "";
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            // label/1 on a frame attvar: the answer names the labeled value —
+            // and ';' backtracks into the labeling for the next one. All
+            // eval-local: the suspended X stays 6..9.
+            first = s.EvaluateGoal(0, "label([X])");
+            second = s.EvaluateGoal(0, ";");
+            third = s.EvaluateGoal(0, ";");
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var solutions = engine.QueryAll("p(V).").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("1st -> " + first);
+        _log.WriteLine("2nd -> " + second);
+        _log.WriteLine("3rd -> " + third);
+        Assert.Contains("X = 6", first);
+        Assert.Contains("X = 7", second);
+        Assert.Contains("X = 8", third);
+        // The labeling lived in the sandbox: the resumed program labels 6 itself.
+        Assert.Single(solutions);
+        Assert.Equal(6L, solutions[0].Get<long>("V"));
+    }
+
+    [Fact]
     public void OnFrameGoals_SurviveTier1Promotion()
     {
         // The user's session shape: REPL --debug arms IlPromotion (threshold 32);

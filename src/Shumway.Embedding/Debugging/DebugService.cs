@@ -608,16 +608,33 @@ public sealed partial class DebugService : IDebugSession
                 }
                 rendered = text.ToString();
             }
-            // The residual constraints the solution left on the goal's variables
-            // — `A in 6..9` after a post — appended under the bindings, in the
-            // user's own variable names.
             if (_pendingResidVars is { } residVars)
             {
-                string residLines = RenderEvalResiduals(_pendingEnum!.Current, residVars);
-                if (residLines.Length > 0)
-                    rendered = rendered == "true"
-                        ? residLines
-                        : rendered + ",\n" + residLines;
+                var extraLines = new List<string>();
+                var evalSolution = _pendingEnum!.Current;
+                // A FRAME variable the goal BOUND shows its new (eval-local) value
+                // under the user's name — `label([A])` answers `A = 5`, and each
+                // `;` shows the next labeling, instead of an unreadable run of
+                // bare `true`s. Frame pairs are the ones whose goal-side name is
+                // the substituted _G alias (Var != Display); still-unbound ones
+                // stay silent (Locals and the residual lines cover them).
+                foreach (var (display, varName) in residVars)
+                {
+                    if (varName == display) continue;         // a plain goal var: already in report
+                    Term? value = evalSolution[varName];
+                    if (value is null or VarTerm) continue;
+                    extraLines.Add(display + " = " + Ellipsize(AstTermRenderer.Render(
+                        value, 999, _engine.Operators, quoted: true), 2048));
+                }
+                // The residual constraints the solution left on the goal's variables
+                // — `A in 6..9` after a post — in the user's own variable names.
+                string residLines = RenderEvalResiduals(evalSolution, residVars);
+                if (residLines.Length > 0) extraLines.Add(residLines);
+                if (extraLines.Count > 0)
+                {
+                    string extra = string.Join(",\n", extraLines);
+                    rendered = rendered == "true" ? extra : rendered + ",\n" + extra;
+                }
             }
 
             // ADR-035 D5+ — commit this solution's bindings INTO THE SUSPENDED FRAME. Read
