@@ -371,6 +371,20 @@ public sealed partial class DebugService : IDebugSession
         if (outer is null) return "nothing is stopped: no frame to evaluate against";
         if (string.IsNullOrWhiteSpace(trimmed)) return "nothing to evaluate";
 
+        // A leading '!' runs the goal ON the suspended activation itself — frame
+        // variables are the REAL cells, so a posted constraint narrows them and a
+        // binding sticks, with once-semantics and Prolog's own trail as the
+        // transaction: failure (append `, fail` for a dry run) or an error
+        // unwinds to the entry marks and the frame is untouched. Side effects
+        // (assertz, output) follow normal Prolog rules and do not undo.
+        if (trimmed.StartsWith("!", StringComparison.Ordinal))
+        {
+            string rest = trimmed.Substring(1).Trim();
+            if (rest.Length == 0 || rest == ".")
+                return "prefix a goal with ! to run it on the real frame, e.g. !X #> 5.";
+            return EvaluateGoalOnFrame(outer, frameIndex, rest);
+        }
+
         // Parse first — nothing is saved or run for a goal that does not read.
         Term goal;
         IReadOnlyList<string> names;
@@ -414,7 +428,8 @@ public sealed partial class DebugService : IDebugSession
                     if (isAttVar)
                     {
                         commitRefusal = " [" + name + " is an attributed variable: "
-                            + "binding into the frame is disabled]";
+                            + "evaluated on a copy — prefix the goal with ! to bind or "
+                            + "post on the real frame]";
                         (attVarRoots ??= new List<int>()).Add(addr);
                     }
                     else
@@ -1047,4 +1062,97 @@ public sealed partial class DebugService : IDebugSession
     /// around to a breakpoint on the moved-to line stops normally.</summary>
     private int _snsMovedToSite = -1;
 
+    /// <summary>The Immediate window's <c>!goal</c>: runs the goal ON the suspended
+    /// activation via the re-entrant solve (the SolveOnce machinery — a nested
+    /// once-semantics Dispatch on the live machine, register-transparent). Frame
+    /// variables resolve to their REAL heap cells through the sharing materializer, so
+    /// a posted constraint narrows the frame's own variable and a binding sticks —
+    /// trailed, so a later backtrack of the program past this point undoes it exactly
+    /// as if the program had posted it here itself. Failure or an error unwinds to the
+    /// entry marks: the frame is untouched (which makes <c>!(G, fail)</c> the free
+    /// dry-run). No timeout: on-frame execution is an explicit request on the real
+    /// machine.</summary>
+    private string EvaluateGoalOnFrame(Activation outer, int frameIndex, string goalText)
+    {
+        Term goal;
+        IReadOnlyList<string> names;
+        try
+        {
+            string text = goalText;
+            if (!text.EndsWith(".", StringComparison.Ordinal)) text += ".";
+            (goal, names) = _engine.ParseGoal(text);
+        }
+        catch (Exception ex)
+        {
+            return "syntax error: " + ex.Message;
+        }
+
+        var solve = outer.ReentrantSolve;
+        if (solve is null)
+            return "the stopped activation cannot run a nested goal here";
+
+        // Frame variables: a free (or attributed) one seeds the sharing map by its
+        // heap ADDRESS — real sharing, the whole point of '!'; a bound one whose
+        // address is unavailable substitutes as its value (plain data either way).
+        string? frameModule = null;
+        var shared = new Dictionary<string, int>();
+        var frameNames = new HashSet<string>(StringComparer.Ordinal);
+        if (_engine.TryGetDisplayFrameContext(outer, frameIndex, out int framePc, out int frameEnv))
+        {
+            frameModule = _engine.ModuleForFrame(framePc);
+            foreach (var (name, value, addr, _)
+                in _engine.MaterializeFrameVariablesWithAddresses(outer, framePc, frameEnv))
+            {
+                if (!names.Contains(name)) continue;
+                frameNames.Add(name);
+                if (addr >= 0) shared[name] = addr;
+                else goal = SubstituteVariable(goal, name, value);
+            }
+        }
+        goal = _engine.ResolveGoalModule(goal, frameModule);
+
+        // The transaction marks. Success KEEPS bindings (they are trailed against the
+        // program's own older choice points); failure and error restore everything.
+        int savedB = outer.B, savedB0 = outer.B0, savedH = outer.HeapTop;
+        int savedBindingTop = outer.BindingTrailTop, savedExtraTop = outer.ExtraTrailTop;
+        bool ok;
+        try
+        {
+            Cell goalCell = Materializer.MaterializeAsCellSharing(outer, goal, shared);
+            ok = solve(goalCell);
+        }
+        catch (Exception ex)
+        {
+            RestoreOnFrameMarks(outer, savedB, savedB0, savedBindingTop, savedExtraTop, savedH);
+            return "error: " + ex.Message + " [frame restored]";
+        }
+        if (!ok)
+        {
+            RestoreOnFrameMarks(outer, savedB, savedB0, savedBindingTop, savedExtraTop, savedH);
+            return "false [frame unchanged]";
+        }
+
+        // The suspended state visibly changed: the front ends re-pull frames, locals
+        // and constraints (same signal as Set Next Statement / a committed edit).
+        FrameStateChanged = true;
+
+        var parts = new List<string>();
+        foreach (var kv in shared)
+        {
+            if (frameNames.Contains(kv.Key)) continue;   // frame vars: Locals shows them
+            parts.Add(kv.Key + " = " + AstTermRenderer.Render(
+                TermReader.Materialize(outer, kv.Value), 999, _engine.Operators, quoted: true));
+        }
+        return (parts.Count == 0 ? "true" : string.Join(",\n", parts))
+            + " [applied to the frame]";
+    }
+
+    private static void RestoreOnFrameMarks(
+        Activation outer, int b, int b0, int bindingTop, int extraTop, int heapTop)
+    {
+        outer.SetB(b);
+        outer.UnwindTrails(bindingTop, extraTop);
+        outer.SetHeapTop(heapTop);
+        outer.SetB0(b0);
+    }
 }

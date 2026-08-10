@@ -284,9 +284,25 @@ An **attributed** frame variable goes in *with its constraints*: the engine tran
 its attribute graph onto the evaluation's copy, so `get_attr(X, clpfd, A)`,
 `copy_term(X, C, G)` and `frozen(Z, G)` answer the real thing, and posting a new
 constraint (`X #< 5`) narrows the copy and propagates. What you post lives in the
-evaluation — the suspended program's own variable is never touched (binding an
-attributed variable into the frame stays refused: its unification hooks cannot run in a
-suspended machine).
+evaluation — the suspended program's own variable is untouched, which makes the plain
+Immediate a consequence-free "what if".
+
+To affect the **real frame**, prefix the goal with `!`:
+
+```prolog
+!X #> 5.
+true [applied to the frame]
+```
+
+That runs the goal *on the suspended machine itself*, once-committed: the constraint
+narrows the frame's own `X` (watch its `⟨constraints⟩` row update), a binding sticks,
+and when you press F5 the program continues with it — trailed, so if the program later
+backtracks past this point it is undone exactly as if the program had posted it here.
+A goal that **fails** leaves no trace, so Prolog's own idiom is the dry run:
+`!(X #> 7, fail).` answers `false [frame unchanged]`. An error also restores the frame.
+The usual caveat is the language's own: side effects (`assertz`, output) are not
+transactional and stay done. `!` also lifts the attributed-variable binding refusal —
+`!X = 7.` unifies on the frame and wakes the propagators.
 
 It is a real query against the live database, so **side effects are real**:
 

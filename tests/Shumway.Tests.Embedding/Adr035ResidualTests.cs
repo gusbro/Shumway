@@ -169,6 +169,50 @@ public class Adr035ResidualTests
         Assert.DoesNotContain("error", projected);
         Assert.DoesNotContain("error", posted);
         Assert.DoesNotContain("false", posted);      // the post succeeded on the transplant
+        // The sandbox note advertises the on-frame gesture.
+        Assert.Contains("prefix the goal with !", posted);
+    }
+
+    [Fact]
+    public void OnFrameGoal_PostsOnTheRealVariable_AndFailureRollsBack()
+    {
+        var engine = DebugEngine(
+            ":- use_module(library(clpfd)).\n"
+            + "p(X) :-\n    X in 0..9,\n    mark(X),\n    once(labeling([up], [X])).\n"
+            + "mark(_).\n");
+        engine.AddBreakpoint("<string>", 5);
+
+        string posted = "", dryRun = "", probeLow = "", probeHigh = "";
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            // '!' = the REAL frame: the post narrows X itself (0..9 -> 6..9).
+            posted = s.EvaluateGoal(0, "!X #> 5.");
+            // A failing on-frame goal leaves NO trace — the user's dry-run idiom.
+            dryRun = s.EvaluateGoal(0, "!(X #> 7, fail).");
+            // Sandbox probes against the (now narrowed) real attribute:
+            // 3 is outside 6..9; 8 is inside (proving the dry-run rolled back).
+            probeLow = s.EvaluateGoal(0, "X #= 3");
+            probeHigh = s.EvaluateGoal(0, "X #= 8");
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var solutions = engine.QueryAll("p(V).").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("posted   -> " + posted);
+        _log.WriteLine("dry-run  -> " + dryRun);
+        _log.WriteLine("probeLow -> " + probeLow);
+        _log.WriteLine("probeHigh-> " + probeHigh);
+        Assert.Contains("[applied to the frame]", posted);
+        Assert.DoesNotContain("error", posted);
+        Assert.StartsWith("false", dryRun);
+        Assert.Contains("[frame unchanged]", dryRun);
+        Assert.Contains("false", probeLow);          // 3 excluded: the post REALLY narrowed X
+        Assert.DoesNotContain("error", probeHigh);
+        Assert.DoesNotContain("false", probeHigh);   // 8 still in: the dry-run left no trace
+        // The program CONTINUED with the posted constraint: labeling starts at 6.
+        Assert.Single(solutions);
+        Assert.Equal(6L, solutions[0].Get<long>("V"));
     }
 
     [Fact]
