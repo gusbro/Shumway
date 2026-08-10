@@ -57,11 +57,14 @@ The buffers are a small fixed set of `extern reftype par1ref … par10ref` globa
 
 ### The asymmetry that drives the design
 
-This whole apparatus exists in Arity for **one reason**: the C code runs in a
-separate process and **cannot touch the Prolog heap**, so it must **copy** the term
-to/from a C struct. In Shumway the "C" is **.NET running in-process** with direct
-access to the engine and the heap. **The copy is unnecessary** — and eliminating it
-is exactly the interop advantage over GNU Prolog the project targets.
+This whole apparatus exists in Arity because the C side works on an **opaque
+representation**. Arity's C is embedded in the engine — one process — but a term
+reaches C only by being **marshalled** into the reftype form and back
+(`fill_par` / `reftype_term`): the C code never touches the engine's own term
+representation, so every crossing pays a copy at the API boundary. In Shumway
+the ".NET" side runs against the engine itself with direct access to the heap.
+**The intermediate marshalling is unnecessary** — and eliminating it is exactly
+the interop advantage over GNU Prolog the project targets.
 
 ### ntype codes (the shared source of truth)
 

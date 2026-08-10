@@ -13,15 +13,17 @@ structures, not just scalars — between Prolog and your .NET code, the Arity
 
 ## 1. The model: a reftype is a cursor, not a copy
 
-In Arity a `reftype` is a C struct that mirrors a Prolog term (a tag, an arity, an
-argument array, a value). The C code copies a term into that struct, works on it,
-and copies it back — because Arity's C runs in a separate process and cannot touch
-the Prolog heap.
+In Arity a `reftype` is an **opaque type for handling Prolog terms from C**. The
+C is embedded in the engine itself — everything runs in one process — but the C
+side never touches the engine's own term representation: a term crosses the API
+boundary by being **marshalled** into the reftype form (`fill_par`), worked on
+through the accessor API, and marshalled back (`reftype_term`). The copy is a
+property of that opaque API boundary.
 
-Shumway's interop runs **in-process**, so there is no copy. A `reftype` /
-`preftype` is a lightweight **`TermSlot`** — a cursor over the actual term in the
-heap. Your .NET function reads its shape and builds into it directly. This is the
-interop speed advantage; nothing is serialized to a struct.
+Shumway drops the intermediate marshalling. A `reftype` / `preftype` is a
+lightweight **`TermSlot`** — a cursor over the actual term in the heap. Your
+.NET function reads its shape and builds into it directly. This is the interop
+speed advantage; nothing is serialized to a struct.
 
 ---
 
