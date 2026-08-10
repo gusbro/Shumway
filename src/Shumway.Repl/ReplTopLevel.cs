@@ -32,7 +32,7 @@ internal static class ReplTopLevel
         // separator belongs to the consulted program (the argv Prolog flag), including
         // a --help of its own.
         int helpSep = Array.IndexOf(args, "--");
-        string[] ownArgs = helpSep < 0 ? args : args[..helpSep];
+        string[] ownArgs = helpSep < 0 ? args : args.Take(helpSep).ToArray();   // not args[..n]: net48 lacks GetSubArray
         if (Array.IndexOf(ownArgs, "--help") >= 0 || Array.IndexOf(ownArgs, "-h") >= 0)
         {
             PrintUsage();
@@ -70,8 +70,8 @@ internal static class ReplTopLevel
         // Prolog flag (current_prolog_flag(argv, Argv)). Matches
         // SWI / GNU / SICStus convention.
         int sep = Array.IndexOf(args, "--");
-        string[] consultFiles = sep < 0 ? args : args[..sep];
-        string[] programArgs = sep < 0 ? Array.Empty<string>() : args[(sep + 1)..];
+        string[] consultFiles = sep < 0 ? args : args.Take(sep).ToArray();   // not args[..n]: net48 lacks GetSubArray
+        string[] programArgs = sep < 0 ? Array.Empty<string>() : args.Skip(sep + 1).ToArray();
 
         // --foreign-dll <path> / --native-dll <path>, repeatable. The linker records these in
         // a bundle and LoadBundle honours them; consulting SOURCE had no way to say them at
@@ -294,7 +294,7 @@ internal static class ReplTopLevel
         // launched and run under the debugger in one command line.
         if (!string.IsNullOrWhiteSpace(startupGoalArg))
         {
-            string goalText = startupGoalArg.Trim();
+            string goalText = startupGoalArg!.Trim();
             if (!goalText.EndsWith(".", StringComparison.Ordinal)) goalText += " .";
             Shumway.Core.Profiler.Reset();
             try { RunQuery(engine, goalText); }

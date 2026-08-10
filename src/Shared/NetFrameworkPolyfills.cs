@@ -93,6 +93,18 @@ namespace System
                 => int.TryParse(s.ToString(), out result);
         }
 
+        extension(GC)
+        {
+            /// <summary>Cumulative allocated bytes. Framework's equivalent is the
+            /// AppDomain monitoring counter; enabling monitoring is one-way and
+            /// process-wide, flipped lazily on first use.</summary>
+            public static long GetTotalAllocatedBytes(bool precise = false)
+            {
+                if (!AppDomain.MonitoringIsEnabled) AppDomain.MonitoringIsEnabled = true;
+                return AppDomain.CurrentDomain.MonitoringTotalAllocatedMemorySize;
+            }
+        }
+
         extension(Math)
         {
             public static int Clamp(int value, int min, int max)
