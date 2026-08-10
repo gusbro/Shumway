@@ -86,7 +86,10 @@ to show. Attaching to an engine started without `--debug` looks like a debugger 
 nothing.
 
 **Attach as managed code.** Debug > Attach to Process, pick the process, and make sure
-"Attach to:" says **Managed (.NET Core)** (press *Select...* if it does not).
+"Attach to:" says **Managed (.NET Core)** — or **Managed (.NET Framework)** when the
+engine is the net48 build (press *Select...* if it does not). The **Debug Prolog File**
+command picks the right engine by itself, from the target exe's runtime (a CoreCLR
+build carries a `.runtimeconfig.json` next to the exe; a Framework build does not).
 
 You can attach to an engine that is doing nothing — sitting at the prompt, waiting for a
 query — and set breakpoints on predicates that have never run. They bind, and they are hit

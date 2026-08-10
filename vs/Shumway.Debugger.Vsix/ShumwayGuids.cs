@@ -27,5 +27,10 @@ namespace Shumway.Debugger.Vsix
         /// the whole point of the Concord model, and the reason this file has no engine id
         /// of its own.</summary>
         public static readonly Guid CoreClrEngine = new Guid("2E36F1D4-B23C-435D-AB41-18E608940038");
+
+        /// <summary>The classic managed engine (.NET Framework 4.x). A net48 shumway.exe
+        /// launched under the CORECLR engine never attaches — the engine-side
+        /// --debug-wait then waits forever — so the launcher picks per target runtime.</summary>
+        public static readonly Guid ClrV4Engine = new Guid("FB0D4648-F776-4980-95F8-BB7F36EBC1EE");
     }
 }

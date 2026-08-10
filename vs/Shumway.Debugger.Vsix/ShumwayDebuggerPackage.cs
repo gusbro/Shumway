@@ -142,6 +142,21 @@ namespace Shumway.Debugger.Vsix
             }
         }
 
+        /// <summary>Which managed debug engine can attach to <paramref name="enginePath"/>:
+        /// a CoreCLR apphost carries <c>&lt;name&gt;.runtimeconfig.json</c> next to the exe;
+        /// a .NET Framework build has no such file (its sibling is
+        /// <c>&lt;name&gt;.exe.config</c>). Launching a net48 engine under the CoreCLR
+        /// debug engine leaves --debug-wait waiting forever.</summary>
+        private static Guid DebugEngineFor(string enginePath)
+        {
+            string runtimeConfig = Path.Combine(
+                Path.GetDirectoryName(enginePath) ?? "",
+                Path.GetFileNameWithoutExtension(enginePath) + ".runtimeconfig.json");
+            return File.Exists(runtimeConfig)
+                ? PackageGuids.CoreClrEngine
+                : PackageGuids.ClrV4Engine;
+        }
+
         /// <summary>The single selected Solution Explorer item's file path, or null
         /// (no selection, multiple items, or a node with no file — a project, the
         /// solution, a virtual folder).</summary>
@@ -294,7 +309,7 @@ namespace Shumway.Debugger.Vsix
                 // before the file that uses them is consulted.
                 bstrArg = "--debug-wait " + extra + "\"" + prologFile + "\"",
                 bstrCurDir = Path.GetDirectoryName(prologFile),
-                guidLaunchDebugEngine = PackageGuids.CoreClrEngine,
+                guidLaunchDebugEngine = DebugEngineFor(enginePath),
                 LaunchFlags = (uint)__VSDBGLAUNCHFLAGS.DBGLAUNCH_StopDebuggingOnEnd,
             };
 
