@@ -1,37 +1,20 @@
-// Shumway debugger - Tools > Options page (ADR-035, phase D4).
+// Shumway debugger - engine/argument resolution for the launch command.
+// The configured values come from Unified Settings (ShumwaySettingDefinitions);
+// these helpers add the environment/PATH fallbacks so a script (the E2E smoke)
+// or a team .env can drive a launch without touching the settings UI.
 
 using System;
-using System.ComponentModel;
 using System.IO;
-using Microsoft.VisualStudio.Shell;
 
 namespace Shumway.Debugger.Vsix
 {
-    /// <summary>Where the Prolog engine lives. Nothing else about the debug session is
-    /// configurable — the rest is decided by the program being debugged.</summary>
-    public sealed class ShumwayOptionsPage : DialogPage
+    internal static class ShumwayLaunchOptions
     {
-        [Category("Shumway")]
-        [DisplayName("Path to shumway.exe")]
-        [Description("The Shumway REPL executable used to run a .pl file under the debugger. "
-            + "Leave empty to take it from the SHUMWAY_EXE environment variable, or from PATH.")]
-        public string ShumwayExePath { get; set; } = "";
-
-        /// <summary>Without this, a program with INTEROP cannot be launched at all: its
-        /// foreign assembly and its native library have to be named on the command line, and
-        /// nothing about the .pl says where they are.</summary>
-        [Category("Shumway")]
-        [DisplayName("Additional arguments")]
-        [Description("Passed to shumway.exe before the file, e.g. "
-            + "--foreign-dll C:\\path\\MyForeigns.dll --native-dll C:\\path\\native.dll. "
-            + "Leave empty to take them from the SHUMWAY_ARGS environment variable.")]
-        public string ExtraArguments { get; set; } = "";
-
         /// <summary>The extra arguments, taking the environment as a fallback — the same
         /// setting-then-environment order as the engine path. It is what lets a script (the
         /// E2E smoke) drive a launch that needs interop DLLs without clicking through a
         /// dialog, and what lets a team put the flags in a shared .env-style setup rather
-        /// than in each developer's options.</summary>
+        /// than in each developer's settings.</summary>
         public static string ResolveArguments(string? configured)
         {
             if (!string.IsNullOrWhiteSpace(configured))

@@ -48,8 +48,9 @@ The `vs\` solution builds with **desktop MSBuild only** — it references the VS
 `dotnet build` cannot resolve. It is deliberately not part of `Shumway.slnx`: nothing in
 the engine depends on it, and a Linux build never sees it.
 
-Then tell the extension where the engine is, in **Tools > Options > Shumway > Prolog
-Debugger**:
+Then tell the extension where the engine is, in VS 2026's settings editor
+(**Tools > Settings**, category **Shumway Prolog Debugger** — the extension uses
+the Unified Settings scheme, not the legacy Options dialog):
 
 | Setting | Meaning |
 |---|---|

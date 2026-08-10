@@ -16,6 +16,8 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.VisualStudio;
+using Microsoft.VisualStudio.Extensibility;            // ExtensibilityPoints.Settings()
+using Microsoft.VisualStudio.Extensibility.Settings;   // SettingValue.ValueOrDefault
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Task = System.Threading.Tasks.Task;
@@ -26,13 +28,13 @@ namespace Shumway.Debugger.Vsix
     [Guid(PackageGuids.PackageString)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
     [InstalledProductRegistration("#110", "#112", "0.1")]
-    // The resource ids are the ones in VSPackage.resx, which is also where the command table
-    // is merged. They are not decoration: a page registered against id 0 has no name to show.
-    // supportsAutomation: the settings are reachable through DTE.Properties, which is how a
-    // script sets them — the E2E smoke has to point the launcher at a foreign assembly, and
-    // clicking through a dialog is not something a smoke test can do.
-    [ProvideOptionPage(typeof(ShumwayOptionsPage), "Shumway", "Prolog Debugger",
-        categoryResourceID: 120, pageNameResourceID: 121, supportsAutomation: true)]
+    // The settings (engine path, extra arguments) live in Unified Settings —
+    // contributed by ShumwaySettingDefinitions on the in-proc
+    // VisualStudio.Extensibility part, read here through the
+    // VisualStudioExtensibility service. The old DialogPage is gone: VS 2026's
+    // settings UI only shows contributions, and this extension requires 2026.
+    // Scripted launches (the E2E smoke) keep working settings-free through the
+    // SHUMWAY_EXE / SHUMWAY_ARGS environment fallbacks in ShumwayLaunchOptions.
     // Loaded when a solution is open OR not: a .pl file is usually opened on its own, and a
     // command that only appears once you have created a solution for it is a command nobody
     // finds.
@@ -80,23 +82,51 @@ namespace Shumway.Debugger.Vsix
                 return;
             }
 
-            var options = (ShumwayOptionsPage)GetDialogPage(typeof(ShumwayOptionsPage));
-            string? engine = ShumwayOptionsPage.Resolve(options.ShumwayExePath);
+            var (configuredEngine, configuredArguments) = ReadConfiguredSettings();
+            string? engine = ShumwayLaunchOptions.Resolve(configuredEngine);
             if (engine == null)
             {
-                Complain("Cannot find shumway.exe. Set its path in Tools > Options > Shumway > "
+                Complain("Cannot find shumway.exe. Set its path in Settings > Shumway "
                     + "Prolog Debugger, or put it on PATH / in SHUMWAY_EXE.");
                 return;
             }
 
             try
             {
-                Launch(engine, file, ShumwayOptionsPage.ResolveArguments(options.ExtraArguments));
+                Launch(engine, file, ShumwayLaunchOptions.ResolveArguments(configuredArguments));
             }
             catch (Exception ex)
             {
                 Complain("Could not start the debug session: " + ex.Message);
             }
+        }
+
+        /// <summary>The two configured values from Unified Settings. A read failure (or a
+        /// never-touched setting) degrades to empty — the environment/PATH fallbacks in
+        /// <see cref="ShumwayLaunchOptions"/> then decide, so the command keeps working
+        /// even if the settings store is unavailable.</summary>
+        private (string EnginePath, string ExtraArguments) ReadConfiguredSettings()
+        {
+#pragma warning disable VSEXTPREVIEW_SETTINGS // the settings API ships as preview
+            try
+            {
+                return ThreadHelper.JoinableTaskFactory.Run(async () =>
+                {
+                    var extensibility = await this.GetServiceAsync<
+                        Microsoft.VisualStudio.Extensibility.VisualStudioExtensibility,
+                        Microsoft.VisualStudio.Extensibility.VisualStudioExtensibility>();
+                    var enginePath = await extensibility.Settings().ReadEffectiveValueAsync(
+                        ShumwaySettingDefinitions.EnginePath, DisposalToken);
+                    var extraArguments = await extensibility.Settings().ReadEffectiveValueAsync(
+                        ShumwaySettingDefinitions.ExtraArguments, DisposalToken);
+                    return (enginePath.ValueOrDefault(""), extraArguments.ValueOrDefault(""));
+                });
+            }
+            catch (Exception)
+            {
+                return ("", "");
+            }
+#pragma warning restore VSEXTPREVIEW_SETTINGS
         }
 
         /// <summary>Hand the process to the CoreCLR engine. `--debug-wait` is what makes this

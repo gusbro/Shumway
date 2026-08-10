@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same shielding as the sibling Directory.Build.props: keeps the repo root
+     Directory.Build.targets (net48 polyfill wiring, opt-in TFM machinery) out
+     of the vs\ projects, which have their own framework story. -->
+<Project>
+</Project>
