@@ -35,6 +35,8 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Neutralize vcvars Platform
+        run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
       - name: Core
         run: dotnet test tests/Shumway.Tests.Core -f net10.0
       - name: Interpreter
@@ -58,6 +60,8 @@ jobs:
         with:
           # cl targets x86 so the native tests' DLLs load in the x86 testhost.
           arch: amd64_x86
+      - name: Neutralize vcvars Platform
+        run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
       - name: Core
         run: dotnet test tests/Shumway.Tests.Core -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: Interpreter
@@ -84,6 +88,8 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Neutralize vcvars Platform
+        run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
       - name: Core
         run: dotnet test tests/Shumway.Tests.Core -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: Interpreter
