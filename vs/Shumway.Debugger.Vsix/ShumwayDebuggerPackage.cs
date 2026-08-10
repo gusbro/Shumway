@@ -82,12 +82,13 @@ namespace Shumway.Debugger.Vsix
                 return;
             }
 
-            var (configuredEngine, configuredArguments) = ReadConfiguredSettings();
+            var (configuredEngine, configuredArguments) = ReadConfiguredSettings(out string? readError);
             string? engine = ShumwayLaunchOptions.Resolve(configuredEngine);
             if (engine == null)
             {
                 Complain("Cannot find shumway.exe. Set its path in Settings > Shumway "
-                    + "Prolog Debugger, or put it on PATH / in SHUMWAY_EXE.");
+                    + "Prolog Debugger, or put it on PATH / in SHUMWAY_EXE."
+                    + (readError is null ? "" : "\n\nSettings read failed: " + readError));
                 return;
             }
 
@@ -101,15 +102,22 @@ namespace Shumway.Debugger.Vsix
             }
         }
 
-        /// <summary>The two configured values from Unified Settings. A read failure (or a
-        /// never-touched setting) degrades to empty — the environment/PATH fallbacks in
-        /// <see cref="ShumwayLaunchOptions"/> then decide, so the command keeps working
-        /// even if the settings store is unavailable.</summary>
-        private (string EnginePath, string ExtraArguments) ReadConfiguredSettings()
+        /// <summary>The two configured values from Unified Settings. The typed API is
+        /// tried first, but in this VS 2026 build the VisualStudioExtensibility service
+        /// is NOT proffered to VSSDK packages (ServiceUnavailableException) — the
+        /// documented query-via-service-provider path is 17.9-era. The working route is
+        /// the settings STORE itself: the instance's settings.json (VS documents it as
+        /// the human-readable store), located via VSSPROPID_LocalAppDataDir. A failure of
+        /// both is REPORTED (<paramref name="readError"/>), not swallowed — a silent
+        /// catch here once hid a real read-path break behind a misleading
+        /// "cannot find shumway.exe".</summary>
+        private (string EnginePath, string ExtraArguments) ReadConfiguredSettings(out string? readError)
         {
+            ThreadHelper.ThrowIfNotOnUIThread();   // the store fallback queries IVsShell
 #pragma warning disable VSEXTPREVIEW_SETTINGS // the settings API ships as preview
             try
             {
+                readError = null;
                 return ThreadHelper.JoinableTaskFactory.Run(async () =>
                 {
                     var extensibility = await this.GetServiceAsync<
@@ -122,11 +130,83 @@ namespace Shumway.Debugger.Vsix
                     return (enginePath.ValueOrDefault(""), extraArguments.ValueOrDefault(""));
                 });
             }
-            catch (Exception)
+            catch (Exception apiFailure)
             {
-                return ("", "");
+                try
+                {
+                    return ReadFromSettingsStoreFile(out readError);
+                }
+                catch (Exception storeFailure)
+                {
+                    readError = "API: " + apiFailure.Message
+                        + " / store: " + storeFailure.GetType().Name + ": " + storeFailure.Message;
+                    return ("", "");
+                }
             }
 #pragma warning restore VSEXTPREVIEW_SETTINGS
+        }
+
+        /// <summary>Reads the two settings straight from the instance's Unified Settings
+        /// store (settings.json under VSSPROPID_LocalAppDataDir). Only OUR two flat
+        /// string keys are extracted, so a targeted match + JSON string unescape is
+        /// enough — no JSON library dependency. A missing file or key is simply the
+        /// default (empty), matching what the settings UI shows.</summary>
+        private (string EnginePath, string ExtraArguments) ReadFromSettingsStoreFile(out string? readError)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            readError = null;
+            var shell = GetService(typeof(SVsShell)) as IVsShell;
+            if (shell == null ||
+                shell.GetProperty((int)__VSSPROPID4.VSSPROPID_LocalAppDataDir, out object dirObj) != VSConstants.S_OK
+                || dirObj is not string localAppDataDir)
+            {
+                readError = "cannot resolve the instance's local settings directory";
+                return ("", "");
+            }
+            string storePath = Path.Combine(localAppDataDir, "settings.json");
+            if (!File.Exists(storePath))
+                return ("", "");   // untouched store: defaults
+            string json = File.ReadAllText(storePath);
+            return (ExtractJsonStringValue(json, "shumway.enginePath"),
+                    ExtractJsonStringValue(json, "shumway.extraArguments"));
+        }
+
+        private static string ExtractJsonStringValue(string json, string key)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(
+                json,
+                "\"" + System.Text.RegularExpressions.Regex.Escape(key)
+                     + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+            return match.Success ? UnescapeJsonString(match.Groups[1].Value) : "";
+        }
+
+        private static string UnescapeJsonString(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c != '\\' || i + 1 >= s.Length) { sb.Append(c); continue; }
+                char e = s[++i];
+                switch (e)
+                {
+                    case '"': sb.Append('"'); break;
+                    case '\\': sb.Append('\\'); break;
+                    case '/': sb.Append('/'); break;
+                    case 'b': sb.Append('\b'); break;
+                    case 'f': sb.Append('\f'); break;
+                    case 'n': sb.Append('\n'); break;
+                    case 'r': sb.Append('\r'); break;
+                    case 't': sb.Append('\t'); break;
+                    case 'u' when i + 4 < s.Length
+                        && ushort.TryParse(s.Substring(i + 1, 4),
+                            System.Globalization.NumberStyles.HexNumber,
+                            System.Globalization.CultureInfo.InvariantCulture, out ushort code):
+                        sb.Append((char)code); i += 4; break;
+                    default: sb.Append('\\').Append(e); break;
+                }
+            }
+            return sb.ToString();
         }
 
         /// <summary>Hand the process to the CoreCLR engine. `--debug-wait` is what makes this
