@@ -148,7 +148,8 @@ public class Adr035ResidualTests
             // copy_term/3 projects the frame variable's constraints.
             projected = s.EvaluateGoal(0, "copy_term(X, _C, G)");
             // Posting a NEW constraint narrows the transplanted copy (eval-local).
-            posted = s.EvaluateGoal(0, "X #< 5.");
+            // Trailing dot on purpose: the user types it that way.
+            posted = s.EvaluateGoal(0, "X #> 5.");
             s.Resume(StepMode.Continue);
         });
         engine.AttachDebugSession(svc);
@@ -158,9 +159,15 @@ public class Adr035ResidualTests
         _log.WriteLine("get_attr -> " + getAttr);
         _log.WriteLine("copy_term/3 -> " + projected);
         _log.WriteLine("post -> " + posted);
+        // "error:" excluded EVERYWHERE: these three once "passed" while every
+        // eval was broken (nested residual capture clearing the transplant
+        // source), because the old asserts only looked for specific words the
+        // error strings happened not to contain.
         Assert.Contains("A = ", getAttr);            // bound to the fd attribute term
-        Assert.Contains("in", projected);            // G = [_ in 1..9]
-        Assert.DoesNotContain("existence_error", posted);
+        Assert.DoesNotContain("error", getAttr);
+        Assert.Contains(" in ", projected);          // G = [_ in 1..9]
+        Assert.DoesNotContain("error", projected);
+        Assert.DoesNotContain("error", posted);
         Assert.DoesNotContain("false", posted);      // the post succeeded on the transplant
     }
 

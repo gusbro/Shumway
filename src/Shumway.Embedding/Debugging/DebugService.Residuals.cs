@@ -112,6 +112,12 @@ public sealed partial class DebugService
         var savedCurrent = Current;
         _mode = StepMode.Continue;
         _conditionEval = true;
+        // SAVE/RESTORE, never clear-to-null: this projection nests inside
+        // EvaluateGoal, which has already set the source for the USER's goal —
+        // clearing here left that goal's '$dbg_fix_foreign' a silent no-op, so a
+        // native-clpfd attribute reattached as its '$foreign'(N) marker and the
+        // first posting exploded with "Cell tag is Str, expected Foreign".
+        var savedSource = _engine.DebugTransplantSource;
         _engine.DebugTransplantSource = engine;
         var scope = _engine.BeginDebugEvaluation();
         try
@@ -155,7 +161,7 @@ public sealed partial class DebugService
         }
         finally
         {
-            _engine.DebugTransplantSource = null;
+            _engine.DebugTransplantSource = savedSource;
             _engine.EndDebugEvaluation(scope);
             _conditionEval = false;
             _mode = savedMode;
