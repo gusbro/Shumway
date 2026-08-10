@@ -57,14 +57,20 @@ The buffers are a small fixed set of `extern reftype par1ref … par10ref` globa
 
 ### The asymmetry that drives the design
 
-This whole apparatus exists in Arity because the C side works on an **opaque
-representation**. Arity's C is embedded in the engine — one process — but a term
-reaches C only by being **marshalled** into the reftype form and back
-(`fill_par` / `reftype_term`): the C code never touches the engine's own term
-representation, so every crossing pays a copy at the API boundary. In Shumway
-the ".NET" side runs against the engine itself with direct access to the heap.
-**The intermediate marshalling is unnecessary** — and eliminating it is exactly
-the interop advantage over GNU Prolog the project targets.
+The reftype apparatus is, in Arity, a thin **convenience layer**: the embedded C
+runs inside the engine — one process — and rather than have C code reach into
+the engine's internal structures, a term is marshalled into the "C world" and
+back (`fill_par` / `reftype_term`), with plain C accessors in between. The
+decoupling is the point: the interface exposes nothing engine-specific, which
+is what makes the SAME interface implementable over Shumway at all.
+
+Shumway keeps the interface and drops the marshalling where the consumer is
+.NET: managed code can work against the engine's heap safely through a cursor,
+so the convenience copy becomes pure overhead there — and eliminating it is
+exactly the interop advantage over GNU Prolog the project targets. The
+marshalling survives, deliberately, where it is still the right convenience: a
+real C function via P/Invoke gets the C-world struct from the materializer tier
+(ADR-024's Phase-32 arc).
 
 ### ntype codes (the shared source of truth)
 
