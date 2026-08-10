@@ -140,7 +140,20 @@ public static partial class ExecutableEmitter
         {
             string assemblyName = SanitiseAssemblyName(
                 Path.GetFileNameWithoutExtension(finalPath));
+#if NETFRAMEWORK
+            // No RID on the Framework path (and net48 has no
+            // RuntimeInformation.RuntimeIdentifier anyway): the stub is an
+            // AnyCPU folder app.
+            string rid = "";
+            if (mode == ExecutableDeploymentMode.SelfContained)
+                diagnostics.Add(new LinkDiagnostic(LinkSeverity.Warning,
+                    "self_contained_ignored",
+                    "--self-contained does not apply to a .NET Framework "
+                    + "executable (the runtime ships with Windows); emitting "
+                    + "the normal framework-dependent folder app."));
+#else
             string rid = RuntimeInformation.RuntimeIdentifier;
+#endif
 
             // Write wrapper sources.
             File.WriteAllText(Path.Combine(tempDir, "Program.cs"),
@@ -162,6 +175,65 @@ public static partial class ExecutableEmitter
 </configuration>
 ");
 
+#if NETFRAMEWORK
+            // App.config for the Framework exe: lift the 2 GB per-array cap
+            // (the engine's contiguous stacks hit it under heap-hungry
+            // queries on x64); the SDK merges the build's auto-generated
+            // binding redirects into the same file.
+            File.WriteAllText(Path.Combine(tempDir, "App.config"),
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n"
+                + "  <runtime>\n    <gcAllowVeryLargeObjects enabled=\"true\" />\n"
+                + "  </runtime>\n</configuration>\n");
+
+            verboseOut?.WriteLine($"shumway-exe: temp project at {tempDir}, "
+                + "target=net48 folder app.");
+
+            string publishDir = Path.Combine(tempDir, "out");
+            var (exitCode, stdout, stderr) = RunDotnetBuildFx(tempDir, assemblyName,
+                publishDir, verboseOut);
+            if (exitCode != 0)
+            {
+                diagnostics.Add(new LinkDiagnostic(LinkSeverity.Error,
+                    "build_failed",
+                    $"`dotnet build` exited with code {exitCode}.\n"
+                    + $"stdout:\n{stdout}\n"
+                    + $"stderr:\n{stderr}"));
+                return new ExecutableEmitResult(false, null, diagnostics);
+            }
+
+            string producedPath = Path.Combine(publishDir, assemblyName + ".exe");
+            if (!File.Exists(producedPath))
+            {
+                diagnostics.Add(new LinkDiagnostic(LinkSeverity.Error,
+                    "exe_not_found",
+                    $"Expected exe at '{producedPath}' but it does not exist."));
+                return new ExecutableEmitResult(false, null, diagnostics);
+            }
+
+            string? outputDir = Path.GetDirectoryName(finalPath);
+            if (!string.IsNullOrEmpty(outputDir))
+                Directory.CreateDirectory(outputDir);
+            File.Copy(producedPath, finalPath, overwrite: true);
+            string sideTargetDir = string.IsNullOrEmpty(outputDir)
+                ? Directory.GetCurrentDirectory() : outputDir!;
+            // Framework deployment is a FOLDER: the engine DLLs and the
+            // app config travel next to the exe (no single-file publish on
+            // net48). The config is renamed to match the final exe name.
+            foreach (string dll in Directory.GetFiles(publishDir, "*.dll"))
+            {
+                string dst = Path.Combine(sideTargetDir, Path.GetFileName(dll));
+                if (Path.GetFullPath(dll) != Path.GetFullPath(dst))
+                    File.Copy(dll, dst, overwrite: true);
+            }
+            string producedConfig = producedPath + ".config";
+            if (File.Exists(producedConfig))
+                File.Copy(producedConfig,
+                    Path.Combine(sideTargetDir, Path.GetFileName(finalPath) + ".config"),
+                    overwrite: true);
+            verboseOut?.WriteLine($"shumway-exe: wrote {finalPath} "
+                + $"({new FileInfo(finalPath).Length:N0} bytes) + engine DLLs "
+                + "+ config alongside (net48 folder deployment).");
+#else
             verboseOut?.WriteLine($"shumway-exe: temp project at {tempDir}, rid={rid}, "
                 + $"mode={(mode == ExecutableDeploymentMode.SelfContained ? "self-contained" : "framework-dependent")}.");
 
@@ -196,6 +268,7 @@ public static partial class ExecutableEmitter
             File.Copy(producedPath, finalPath, overwrite: true);
             verboseOut?.WriteLine($"shumway-exe: wrote {finalPath} "
                 + $"({new FileInfo(finalPath).Length:N0} bytes).");
+#endif
 
             // copy each --foreign-dll next to the
             // produced executable. The runtime's LoadBundle path
@@ -362,16 +435,11 @@ internal static class Program
     private static string GenerateProjectFile(string assemblyName, string rid,
         ExecutableDeploymentMode mode)
     {
-        string selfContained = mode == ExecutableDeploymentMode.SelfContained
-            ? "true" : "false";
-        // EnableCompressionInSingleFile requires SelfContained=true
-        // (NETSDK1176). Toggle the property accordingly.
-        string compressionProp = mode == ExecutableDeploymentMode.SelfContained
-            ? "    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>\n"
-            : "";
         // Locate the engine assemblies next to the running shumway-link
         // process. They are shipped alongside it; the temp project
-        // references them via absolute HintPath.
+        // references them via absolute HintPath. On net48 that directory
+        // holds the net48 flavors, so the stub inherits the toolchain's TFM
+        // by construction.
         string linkerDir = Path.GetDirectoryName(
             Assembly.GetExecutingAssembly().Location) ?? "";
         var references = new StringBuilder();
@@ -383,6 +451,37 @@ internal static class Program
             references.AppendLine($"      <Private>true</Private>");
             references.AppendLine($"    </Reference>");
         }
+#if NETFRAMEWORK
+        // Framework stub: no RID / single-file / self-contained — the output
+        // is a folder app (exe + DLLs + config). LangVersion latest because
+        // the generated wrapper uses modern syntax and net48 defaults to 7.3.
+        _ = rid; _ = mode;
+        return $@"<Project Sdk=""Microsoft.NET.Sdk"">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>{assemblyName}</AssemblyName>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+{references}
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include=""bundle.shum"" />
+  </ItemGroup>
+</Project>
+";
+#else
+        string selfContained = mode == ExecutableDeploymentMode.SelfContained
+            ? "true" : "false";
+        // EnableCompressionInSingleFile requires SelfContained=true
+        // (NETSDK1176). Toggle the property accordingly.
+        string compressionProp = mode == ExecutableDeploymentMode.SelfContained
+            ? "    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>\n"
+            : "";
         return $@"<Project Sdk=""Microsoft.NET.Sdk"">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -403,21 +502,97 @@ internal static class Program
   </ItemGroup>
 </Project>
 ";
+#endif
     }
 
     internal static IEnumerable<string> EnumerateRequiredAssemblies(string dir)
     {
         // Every Shumway.*.dll and Sigil.dll alongside the linker is a
         // candidate engine dependency. The publish step's reference
-        // resolution prunes anything actually unused.
+        // resolution prunes anything actually unused. On net48 the linker's
+        // own directory holds the net48 flavors plus the compatibility
+        // packages (System.Memory etc.) — include those too, since the
+        // Framework stub has no NuGet restore to bring them in.
         foreach (string file in Directory.GetFiles(dir, "Shumway.*.dll"))
             yield return file;
         string sigil = Path.Combine(dir, "Sigil.dll");
         if (File.Exists(sigil)) yield return sigil;
+#if NETFRAMEWORK
+        foreach (string file in Directory.GetFiles(dir, "System.*.dll"))
+            yield return file;
+        string bcl = Path.Combine(dir, "Microsoft.Bcl.AsyncInterfaces.dll");
+        if (File.Exists(bcl)) yield return bcl;
+#endif
     }
+
+    /// <summary>Appends process arguments portably: ArgumentList on modern
+    /// .NET; an escaped Arguments string on net48 (which lacks ArgumentList).</summary>
+    internal static void AddProcessArgs(ProcessStartInfo psi, params string[] args)
+    {
+#if NETFRAMEWORK
+        var sb = new StringBuilder(psi.Arguments);
+        foreach (string a in args)
+        {
+            if (sb.Length > 0) sb.Append(' ');
+            if (a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0)
+            {
+                sb.Append(a);
+                continue;
+            }
+            // Standard Windows quoting: backslashes double before a quote.
+            sb.Append('"');
+            int backslashes = 0;
+            foreach (char c in a)
+            {
+                if (c == '\\') { backslashes++; continue; }
+                if (c == '"') sb.Append('\\', backslashes * 2 + 1);
+                else sb.Append('\\', backslashes);
+                backslashes = 0;
+                sb.Append(c);
+            }
+            sb.Append('\\', backslashes * 2).Append('"');
+        }
+        psi.Arguments = sb.ToString();
+#else
+        foreach (string a in args) psi.ArgumentList.Add(a);
+#endif
+    }
+
+    internal static string DescribeProcessArgs(ProcessStartInfo psi)
+#if NETFRAMEWORK
+        => psi.Arguments;
+#else
+        => string.Join(" ", psi.ArgumentList);
+#endif
 
     // ----- Tool invocation -----
 
+#if NETFRAMEWORK
+    private static (int ExitCode, string Stdout, string Stderr) RunDotnetBuildFx(
+        string projectDir, string assemblyName, string outputDir, TextWriter? verboseOut)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            WorkingDirectory = projectDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        AddProcessArgs(psi,
+            "build", $"{assemblyName}.csproj",
+            "-c", "Release",
+            "-o", outputDir,
+            "--nologo", "-v", "quiet");
+        verboseOut?.WriteLine("shumway-exe: dotnet " + DescribeProcessArgs(psi));
+        using var proc = Process.Start(psi)!;
+        string stdout = proc.StandardOutput.ReadToEnd();
+        string stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        return (proc.ExitCode, stdout, stderr);
+    }
+#else
     private static (int ExitCode, string Stdout, string Stderr) RunDotnetPublish(
         string projectDir, string assemblyName, string rid,
         ExecutableDeploymentMode mode, string outputDir, TextWriter? verboseOut)
@@ -448,6 +623,7 @@ internal static class Program
         proc.WaitForExit();
         return (proc.ExitCode, stdout, stderr);
     }
+#endif
 
     private static string AdjustExecutableSuffix(string path)
     {

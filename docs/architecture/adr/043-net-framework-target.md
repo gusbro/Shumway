@@ -72,14 +72,35 @@ under `#if NETFRAMEWORK`; implementers supply explicit no-ops) and
 
 ### 3. Deliberate scope cuts (each stated where it bites)
 
-- **ExecutableEmitter / LibraryEmitter excluded from net48**: they shell out
-  to `dotnet publish` — a .NET 10 SDK affair. The net48 `shumway-link`
-  rejects `--exe` / `--dll` with a clear error. Goal parsing
-  (`TryCollectGoalRefs`) is linker logic and moved to a both-TFM partial file.
 - **Brotli**: no codec on net48 (same as browser-wasm). Writes are always
   plain; reading a compressed bundle throws naming `--no-compress`.
-- **REPL/toolchain cross-process tests** (13 files) excluded from the net48
+- **Toolchain cross-process tests** (13 files) excluded from the net48
   test flavor: they spawn the net10 CLIs and REPL.
+- **Single-file / self-contained exes**: .NET 10 publish features; the net48
+  `--exe` warns and ignores `--self-contained`.
+
+### 3b. `--exe` / `--dll` emit FRAMEWORK apps from the net48 toolchain
+
+The emitters compile for net48 too, and the generated stub project targets
+**the running toolchain's TFM** (its own directory holds the matching Shumway
+flavors, referenced by HintPath — on net48 that includes the compatibility
+packages, since the Framework stub has no NuGet restore). The build machine
+needs the .NET SDK either way (`dotnet build` compiles the stub); a net48
+TARGET machine only needs Framework. Differences on the Framework path:
+
+- `--exe` is a **folder deployment** (no single-file publish on Framework):
+  exe + engine DLLs + an `app.exe.config` carrying the build's auto-generated
+  binding redirects plus `gcAllowVeryLargeObjects`.
+- `--dll` additionally ships a `<name>.app.config.sample` with binding
+  redirects computed **from the assemblies actually deployed in the output
+  folder** — a consumer's own `AutoGenerateBindingRedirects` only walks the
+  references it was handed and can land BELOW the deployed versions
+  (observed: Unsafe 6.0.1.0 vs deployed 6.0.3.0 — FileLoadException),
+  overriding a correct hand-written config. SDK-style consumers use the
+  sample as `App.config` AND turn auto-redirects off; old-style csprojs
+  (the actual legacy audience) just copy it in.
+- Process arguments ride `AddProcessArgs` (net48 has no
+  `ProcessStartInfo.ArgumentList`; the helper does standard Windows quoting).
 
 ### 4. Tier-1 and persisted IL
 

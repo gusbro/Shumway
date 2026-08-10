@@ -149,6 +149,18 @@ public static class LibraryEmitter
                     verboseOut?.WriteLine($"shumway-dll: copied native dll '{Path.GetFileName(src)}'");
                 }
 
+#if NETFRAMEWORK
+            // A Framework CONSUMER exe needs binding redirects that match the
+            // versions DEPLOYED HERE — its own build's auto-generated ones can
+            // land lower (RAR only walks the references it was handed, not
+            // this folder). Ship a ready-to-merge sample computed from the
+            // actual files, plus the gcAllowVeryLargeObjects knob the
+            // Framework-hosts guide recommends.
+            string samplePath = Path.Combine(outputDir, assemblyName + ".app.config.sample");
+            File.WriteAllText(samplePath, BuildConsumerConfigSample(outputDir));
+            verboseOut?.WriteLine($"shumway-dll: wrote {Path.GetFileName(samplePath)} "
+                + "(merge into the consumer exe's app.config).");
+#endif
             verboseOut?.WriteLine($"shumway-dll: wrote {finalPath} ({new FileInfo(finalPath).Length:N0} bytes), "
                 + $"factory {factoryTypeName}.CreateEngine().");
             return new LibraryEmitResult(true, finalPath, factoryTypeName, diagnostics);
@@ -163,6 +175,34 @@ public static class LibraryEmitter
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
     }
+
+#if NETFRAMEWORK
+    /// <summary>Binding redirects for every strong-named assembly deployed in
+    /// <paramref name="dir"/>, each redirected to exactly the version that
+    /// sits there — the one configuration that is correct for THIS folder.</summary>
+    private static string BuildConsumerConfigSample(string dir)
+    {
+        var sb = new StringBuilder();
+        sb.Append("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n  <runtime>\n");
+        sb.Append("    <gcAllowVeryLargeObjects enabled=\"true\" />\n");
+        sb.Append("    <assemblyBinding xmlns=\"urn:schemas-microsoft-com:asm.v1\">\n");
+        foreach (string dll in Directory.GetFiles(dir, "*.dll"))
+        {
+            AssemblyName an;
+            try { an = AssemblyName.GetAssemblyName(dll); }
+            catch (BadImageFormatException) { continue; }   // native dll alongside
+            byte[]? token = an.GetPublicKeyToken();
+            if (token is null || token.Length == 0) continue;   // unsigned: simple-name binding, no redirect
+            string tokenHex = string.Concat(token.Select(b => b.ToString("x2")));
+            sb.Append("      <dependentAssembly>\n");
+            sb.Append($"        <assemblyIdentity name=\"{an.Name}\" publicKeyToken=\"{tokenHex}\" culture=\"neutral\" />\n");
+            sb.Append($"        <bindingRedirect oldVersion=\"0.0.0.0-{an.Version}\" newVersion=\"{an.Version}\" />\n");
+            sb.Append("      </dependentAssembly>\n");
+        }
+        sb.Append("    </assemblyBinding>\n  </runtime>\n</configuration>\n");
+        return sb.ToString();
+    }
+#endif
 
     private static string GenerateFactorySource(string ns, string cls) =>
         // Everything fully qualified so the chosen class name can collide with a
@@ -217,9 +257,20 @@ public static class LibraryEmitter
             references.AppendLine($"      <Private>true</Private>");
             references.AppendLine($"    </Reference>");
         }
+        // The stub inherits the RUNNING toolchain's TFM: the linker's own
+        // directory holds the matching Shumway flavors, and a net48 toolchain
+        // exists to serve Framework consumers. LangVersion latest on net48
+        // (the factory uses nullable annotations; net48 defaults to C# 7.3).
+#if NETFRAMEWORK
+        const string tfm = "net48";
+        const string langVersion = "\n    <LangVersion>latest</LangVersion>";
+#else
+        const string tfm = "net10.0";
+        const string langVersion = "";
+#endif
         return $@"<Project Sdk=""Microsoft.NET.Sdk"">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>{tfm}</TargetFramework>{langVersion}
     <AssemblyName>{assemblyName}</AssemblyName>
     <RootNamespace>{ns}</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -248,13 +299,12 @@ public static class LibraryEmitter
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("build");
-        psi.ArgumentList.Add($"{assemblyName}.csproj");
-        psi.ArgumentList.Add("-c"); psi.ArgumentList.Add("Release");
-        psi.ArgumentList.Add("-o"); psi.ArgumentList.Add(outputDir);
-        psi.ArgumentList.Add("--nologo");
-        psi.ArgumentList.Add("-v"); psi.ArgumentList.Add("quiet");
-        verboseOut?.WriteLine("shumway-dll: dotnet " + string.Join(" ", psi.ArgumentList));
+        ExecutableEmitter.AddProcessArgs(psi,
+            "build", $"{assemblyName}.csproj",
+            "-c", "Release",
+            "-o", outputDir,
+            "--nologo", "-v", "quiet");
+        verboseOut?.WriteLine("shumway-dll: dotnet " + ExecutableEmitter.DescribeProcessArgs(psi));
         using var proc = Process.Start(psi)!;
         string stdout = proc.StandardOutput.ReadToEnd();
         string stderr = proc.StandardError.ReadToEnd();
@@ -285,7 +335,7 @@ public static class LibraryEmitter
     {
         if (string.IsNullOrWhiteSpace(ns)) return null;
         var segs = new List<string>();
-        foreach (string p in ns.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        foreach (string p in ns!.Split('.', StringSplitOptions.RemoveEmptyEntries))   // ! for net48 (no NotNullWhen there)
             segs.Add(SanitiseIdentifier(p)!);
         return segs.Count == 0 ? null : string.Join(".", segs);
     }
@@ -294,7 +344,7 @@ public static class LibraryEmitter
     internal static string? SanitiseIdentifier(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
-        var sb = new StringBuilder(name.Length);
+        var sb = new StringBuilder(name!.Length);   // ! for net48 (no NotNullWhen there)
         foreach (char c in name)
             sb.Append(char.IsLetterOrDigit(c) || c == '_' ? c : '_');
         string s = sb.ToString();

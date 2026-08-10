@@ -29,8 +29,9 @@ binaries and tests needs Windows.
 | Tier-1 runtime IL promotion (`engine.IlPromotion.Threshold = N`) | ✅ unchanged |
 | Loading `.shum` bundles, including persisted IL | ✅ link them with the **net48 toolchain** (below) |
 | Producing bundles in-process (`BundleWriter`, `SaveState`) | ✅ (always uncompressed) |
-| `shumway-compile` / `shumway-link` (net48 builds) | ✅ except `--exe` / `--dll` |
-| `--exe` / `--dll`, Native AOT, Brotli-compressed bundles | ❌ .NET 10 toolchain only |
+| `shumway-compile` / `shumway-link` (net48 builds) | ✅ |
+| `--exe` / `--dll` from the net48 toolchain | ✅ emit **Framework** apps (folder deployment, below) |
+| Native AOT, Brotli-compressed bundles, single-file exes | ❌ .NET 10 toolchain only |
 
 ## Bundles: which toolchain links for which host
 
@@ -47,6 +48,27 @@ Persisted IL is emitted against the *linking* runtime's core library:
 Rule of thumb: **if a Framework host is among your targets, link with the
 net48 build of `shumway-link`** — one bundle serves everything. Remember
 `--no-compress` if a net48 process must also *read* the bundle.
+
+## `--exe` / `--dll`: Framework apps from the net48 toolchain
+
+`--exe` and `--dll` target **the toolchain you run**: the net10 build emits
+single-file .NET 10 apps; the net48 build emits .NET Framework apps. Both
+need the .NET SDK on the *build* machine (the generated stub compiles with
+`dotnet build`); the net48 output runs on machines with only Framework 4.8.
+
+- **`--exe`** produces the classic Framework **folder deployment**: the exe,
+  the Shumway engine DLLs, and an `app.exe.config` that already carries the
+  binding redirects and `gcAllowVeryLargeObjects`. Ship the folder;
+  `--self-contained` is meaningless there (warned and ignored).
+- **`--dll`** produces the factory class library plus the engine DLLs — and a
+  **`<name>.app.config.sample`** with binding redirects computed from the
+  versions actually deployed in that folder. The consumer exe uses it as its
+  `App.config`:
+  - old-style csproj: copy the sample in as `app.config`, done;
+  - SDK-style csproj: also set
+    `<AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>` —
+    the auto-generated redirects only see the references you declared, can
+    land *below* the deployed versions, and override the sample's entries.
 
 ## Host configuration (app.config)
 

@@ -34,12 +34,12 @@
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
     <PackageReference Include="System.Collections.Immutable" Version="8.0.0" />
-    <!-- Toolchain, not runtime: these shell out to `dotnet publish` to produce
-         MODERN .NET executables and class libraries. A net48 host consumes
-         bundles; it does not build .NET 10 apps. Nothing else references them
-         (checked), so they are simply not part of this target. -->
-    <Compile Remove="ExecutableEmitter.cs" />
-    <Compile Remove="LibraryEmitter.cs" />
+    <!-- The emitters compile for net48 too: the net48 toolchain emits
+         FRAMEWORK apps (the stub project targets the RUNNING toolchain's TFM;
+         net48 output is a folder — exe + DLLs + config — since Framework has
+         no single-file publish). The BUILD machine still needs the .NET SDK
+         (`dotnet build` compiles the stub); target machines only need
+         .NET Framework 4.8. -->
   </ItemGroup>
 
 </Project>

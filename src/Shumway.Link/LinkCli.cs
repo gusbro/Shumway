@@ -292,16 +292,11 @@ internal static class LinkCli
                 + $"bytes={result.Bytes!.Length}).");
         }
 
-#if NETFRAMEWORK
-        // The emitters shell out to `dotnet publish` (a .NET 10 SDK affair) —
-        // the net48 toolchain links bundles; it does not build executables.
-        if (!string.IsNullOrEmpty(opts.ExePath) || !string.IsNullOrEmpty(opts.DllPath))
-        {
-            Console.Error.WriteLine(
-                "shumway-link: --exe / --dll require the .NET 10 build of the toolchain.");
-            return ExitUsageError;
-        }
-#else
+        // --exe / --dll target the RUNNING toolchain's framework: the net10
+        // build emits single-file .NET 10 apps; the net48 build emits
+        // Framework folder apps (exe + engine DLLs + config). Both need the
+        // .NET SDK on the BUILD machine (the stub compiles via dotnet build);
+        // net48 TARGET machines only need .NET Framework 4.8.
         if (!string.IsNullOrEmpty(opts.ExePath))
         {
             var mode = opts.SelfContained
@@ -349,7 +344,6 @@ internal static class LinkCli
                 $"shumway-link: wrote {dllResult.OutputPath} "
                 + $"(factory {dllResult.FactoryTypeName}.CreateEngine()).");
         }
-#endif
         return ExitOk;
     }
 
