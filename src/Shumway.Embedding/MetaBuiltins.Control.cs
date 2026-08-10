@@ -278,6 +278,7 @@ public static partial class MetaBuiltins
                 "type_error(atom, _)");
 
         string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        path = ConsultPipeline.ResolveSourcePath(path);   // SWI-style: consult(algo) → algo.pl
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
                 $"existence_error(source_sink, '{path}')");
@@ -478,6 +479,7 @@ public static partial class MetaBuiltins
                 "type_error(atom, _)");
 
         string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        path = ConsultPipeline.ResolveSourcePath(path);   // SWI-style: reconsult(algo) → algo.pl
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
                 $"existence_error(source_sink, '{path}')");

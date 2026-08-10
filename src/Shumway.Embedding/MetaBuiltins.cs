@@ -458,7 +458,9 @@ public static partial class MetaBuiltins
             Database, "consult(+File)",
             "Loads File and adds its clauses to the database, appending to any "
             + "existing predicates. File is an atom path; a .shum extension routes "
-            + "through LoadBundle, everything else is read as Prolog source.");
+            + "through LoadBundle, everything else is read as Prolog source. An "
+            + "extensionless File that does not exist is retried as File.pl "
+            + "(SWI-style).");
         BuiltinsRegistry.Register("use_module", 1, UseModule,
             Database, "use_module(+Spec)",
             "Loads a library or file. Spec is either library(Name) — where Name "

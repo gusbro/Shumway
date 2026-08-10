@@ -52,12 +52,24 @@ internal sealed class ConsultPipeline
     public void ConsultFile(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
+        path = ResolveSourcePath(path);
         if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
         {
             E.LoadBundle(path);
             return;
         }
         LoadSourceFile(path, reconsult: false);
+    }
+
+    /// <summary>SWI-style extension defaulting: <c>consult(algo)</c> with no
+    /// extension resolves to <c>algo.pl</c> when <c>algo</c> itself does not
+    /// exist but <c>algo.pl</c> does. An existing exact path, or any path that
+    /// already carries an extension, is untouched.</summary>
+    internal static string ResolveSourcePath(string path)
+    {
+        if (File.Exists(path) || Path.HasExtension(path)) return path;
+        string withPl = path + ".pl";
+        return File.Exists(withPl) ? withPl : path;
     }
 
     /// <summary>The shared body of consulting and RE-consulting a source file:
@@ -502,6 +514,7 @@ internal sealed class ConsultPipeline
     public void ReconsultFile(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
+        path = ResolveSourcePath(path);
         if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
         {
             var bundle = BundleReader.ReadFromFile(path);
