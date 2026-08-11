@@ -47,6 +47,14 @@ jobs:
         run: dotnet test tests/Shumway.Tests.IsoConformance -f net10.0
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1
+      # A failed test's message lives in the per-bucket logs, which die with
+      # the runner — surface them (the job log only carries the test NAME).
+      - name: Upload parallel logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallel-logs-net10
+          path: TestResults/parallel/*.log
 
   net48-x86:
     runs-on: windows-latest
@@ -72,6 +80,12 @@ jobs:
         run: dotnet test tests/Shumway.Tests.IsoConformance -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Framework net48 -Platform x86
+      - name: Upload parallel logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallel-logs-net48-x86
+          path: TestResults/parallel/*.log
       - name: Smoke build (32-bit)
         run: dotnet build tests/Shumway.Smoke.Net48 -p:SmokeBitness=x86 -p:ShumwayNetFx=true -t:Rebuild -v q
       - name: Smoke run (32-bit process, Tier-0 + Tier-1)
@@ -100,3 +114,9 @@ jobs:
         run: dotnet test tests/Shumway.Tests.IsoConformance -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Framework net48 -Platform x64
+      - name: Upload parallel logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallel-logs-net48-x64
+          path: TestResults/parallel/*.log
