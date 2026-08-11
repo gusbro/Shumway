@@ -72,6 +72,9 @@ export function init(deps) {
   $('dbg-out').addEventListener('click', () => resume('out'));
   $('gutter').addEventListener('click', onGutterClick);
   $('gutter').addEventListener('contextmenu', onGutterMenu);
+  // The same line menu on the SOURCE itself — where the right hand already
+  // is. Only in debug mode: normal mode keeps the browser's own menu.
+  editorEl.addEventListener('contextmenu', onEditorMenu);
   for (const b of document.querySelectorAll('#debug-tabs .tab-bar button'))
     b.addEventListener('click', () => selectTab(b.dataset.tab));
   // The usual debugger keys, only while the mode is on — F5 must stay the
@@ -780,8 +783,29 @@ function onGutterMenu(e) {
   const file = getFile();
   if (!line || !file || !debugMode) return;
   e.preventDefault();
+  openLineMenu(e.clientX, e.clientY, line);
+}
+
+/** Right-click on the SOURCE: the line comes from the click's height, against
+ *  the same measured tops the gutter rows sit at — so wrapped lines resolve
+ *  to their logical line, not a visual row. */
+function onEditorMenu(e) {
+  const file = getFile();
+  if (!file || !debugMode) return;
+  e.preventDefault();
+  const { tops } = measureLineTops();
+  const yContent = e.clientY - $('gutter').getBoundingClientRect().top
+    + editorEl.scrollTop;
+  let line = 1;
+  for (let i = 0; i < tops.length; i++)
+    if (tops[i] <= yContent) line = i + 1; else break;
+  openLineMenu(e.clientX, e.clientY, line);
+}
+
+function openLineMenu(x, y, line) {
+  const file = getFile();
   const bp = breakpoints.get(file)?.get(line);
-  showMenu(e.clientX, e.clientY, [
+  showMenu(x, y, [
     { label: bp ? 'Remove breakpoint' : 'Set breakpoint',
       key: 'F9', run: () => toggleBreakpointAt(line) },
     bp && { label: bp.enabled ? 'Disable breakpoint' : 'Enable breakpoint',
