@@ -722,6 +722,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             engine.MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
         }
         engine.LoadBundleCore(bundle, bundleDir);
+        // ADR-035 — the BAKED prelude is still the prelude: not the user's code,
+        // never debuggable. Without this a debug-compiled program on a baked-
+        // prelude engine (the browser's stdlib bundle, every --exe) steps into
+        // permutation/2, and the prelude's re-compiled clauses take stop sites
+        // attributed to the user's file. Marked AFTER LoadBundleCore so the
+        // module's clauses exist to resolve.
+        if (bundleHasPrelude)
+            engine.MarkModuleNonDebuggable(Prelude.ModuleName);
 
         // Now the bundle's modules are consulted (and their source materialised + announced),
         // so an attach-to-debug-from-the-first-goal launcher can safely wait for the debugger.

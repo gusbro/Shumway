@@ -444,7 +444,23 @@ internal sealed class ConsultPipeline
         foreach (var clause in module.Clauses)
             if (TryReadClauseHead(clause, out var spec))
                 specs.Add(spec);
+        // A PRECOMPILED (bundle) module carries no AST at load time — its
+        // predicates are the manifest's defined sets instead. Without these, a
+        // baked prelude marked "non-debuggable" resolved zero functors, and a
+        // debug-compiled program stepped into permutation/2 with the prelude's
+        // recompiled sites attributed to the user's own file.
+        foreach (int fid in module.PublicFunctors) AddSpecOf(specs, fid);
+        foreach (int fid in module.DynamicFunctors) AddSpecOf(specs, fid);
+        if (E._precompiledModuleLocals.TryGetValue(moduleName, out var locals))
+            foreach (int fid in locals) AddSpecOf(specs, fid);
         E._nonDebuggableFunctors.UnionWith(ResolveNonDebuggableFids(specs, moduleName));
+    }
+
+    private static void AddSpecOf(HashSet<(string Name, int Arity)> specs, int fid)
+    {
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+        if (Shumway.Core.AtomTable.GetById(atomId) is { } atom)
+            specs.Add((atom.Name, arity));
     }
 
 
