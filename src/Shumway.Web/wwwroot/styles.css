@@ -55,7 +55,9 @@ h1 { font-size: 1.3rem; margin: 0; letter-spacing: -.01em; }
    furniture — the program side carries a workspace bar and a file list — so
    equal height means the TRANSCRIPT takes up the slack, which is where extra
    room is worth having. */
-.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: stretch; }
+/* The source side is a little wider: it now carries a line-number gutter, and
+   code is the thing that suffers first from a narrow column. */
+.panes { display: grid; grid-template-columns: 1.15fr 1fr; gap: 1.25rem; align-items: stretch; }
 @media (max-width: 62rem) { .panes { grid-template-columns: 1fr; } }
 
 .pane {
@@ -403,45 +405,57 @@ body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
 
 .editor-shell { position: relative; }
 
-#gutter { display: none; }
-.debug-mode #gutter {
-  display: block;
+/* The line-number column — always there, in both modes. Debug mode adds the
+   breakpoint dots and the position markers on top of it. */
+#gutter {
   position: absolute;
   /* Inside the editor's own border, over its widened left padding. */
   left: 1px; top: 1px; bottom: 1px;
-  width: 1.7rem;
+  width: 2.4rem;
   overflow: hidden;
   border-radius: .4rem 0 0 .4rem;
   background: color-mix(in srgb, currentColor 4%, transparent);
   border-right: 1px solid var(--line);
-  cursor: pointer;
   z-index: 1;
 }
-.debug-mode .editor { padding-left: 2.4rem; }
+.debug-mode #gutter { cursor: pointer; }
+.editor { padding-left: 2.9rem; }
 
 #gutter-lines { position: relative; will-change: transform; }
-.gutter-row { position: absolute; left: 0; width: 100%; }
+.gutter-row {
+  position: absolute; left: 0; width: 100%;
+  box-sizing: border-box;
+  display: flex; align-items: center; justify-content: flex-end;
+  padding-right: .45rem;
+  font: 10.5px var(--mono);
+  color: color-mix(in srgb, currentColor 38%, transparent);
+  user-select: none;
+}
 .gutter-row::before {
   content: '';
   position: absolute;
-  left: .35rem; top: 50%;
+  left: .3rem; top: 50%;
   width: .6rem; height: .6rem;
   margin-top: -.3rem;
   border-radius: 50%;
 }
-.gutter-row:hover::before { background: color-mix(in srgb, var(--error) 40%, transparent); }
+.debug-mode .gutter-row:hover::before { background: color-mix(in srgb, var(--error) 40%, transparent); }
 .gutter-row.bp::before { background: var(--error); }
 /* Placed but not attached to any compiled code (not consulted yet, or a line
    with nothing on it): shown hollow, the pending-breakpoint convention. */
 .gutter-row.bp.unbound::before { background: none; border: 2px solid var(--error); }
-.gutter-row.current::after {
-  content: '▶';
+/* The stop's line and the SELECTED frame's line: the arrow replaces the
+   number (both would not fit), solid accent for where the machine IS,
+   hollow green for the frame being looked at — the VS convention. */
+.gutter-row.current, .gutter-row.frame { color: transparent; }
+.gutter-row.current::after, .gutter-row.frame::after {
   position: absolute;
-  right: .1rem; top: 50%;
+  right: .3rem; top: 50%;
   transform: translateY(-50%);
   font-size: .6rem;
-  color: var(--accent);
 }
+.gutter-row.current::after { content: '▶'; color: var(--accent); }
+.gutter-row.frame::after { content: '▷'; color: var(--answer); }
 
 #debug-toolbar { display: none; }
 .debug-mode #debug-toolbar {
@@ -540,3 +554,12 @@ body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
   }
   .editor { flex: 1 1 0; height: auto; min-height: 0; }
 }
+
+/* The Immediate tab: the conversation with the suspended query. */
+pre#immediate-log { margin: 0; white-space: pre-wrap; word-break: break-word; }
+#immediate-log .query { color: var(--muted); }
+#immediate-log .answer { color: var(--answer); }
+#immediate-log .error { color: var(--error); }
+#immediate-form { display: flex; gap: .35rem; margin-top: .4rem; }
+#immediate-form input { flex: 1; min-width: 0; font: 12px var(--mono); }
+#immediate-form button { font-size: .82rem; padding: .3rem .6rem; }

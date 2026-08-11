@@ -127,7 +127,7 @@ internal static partial class WebShumwayApp
     /// <summary>The active workspace's file names, newline-separated, sorted.</summary>
     [JSExport]
     internal static Task<string> WorkspaceList()
-        => OnEngine(() =>
+        => OnEngineOrParked(() =>
         {
             EnsureWorkspace();
             var names = Directory.GetFiles(ActiveWorkspaceDir)
@@ -140,7 +140,7 @@ internal static partial class WebShumwayApp
     /// <summary>A file's contents, or null when there is no such file.</summary>
     [JSExport]
     internal static Task<string?> WorkspaceRead(string name)
-        => OnEngine(() =>
+        => OnEngineOrParked(() =>
         {
             string path = Resolve(name);
             return File.Exists(path) ? File.ReadAllText(path) : null;
@@ -149,7 +149,7 @@ internal static partial class WebShumwayApp
     /// <summary>Creates or replaces a file. Returns null, or the error text.</summary>
     [JSExport]
     internal static Task<string?> WorkspaceWrite(string name, string content)
-        => OnEngine(() =>
+        => OnEngineOrParked(() =>
         {
             try
             {

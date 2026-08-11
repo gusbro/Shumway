@@ -149,6 +149,16 @@ internal static partial class WebShumwayApp
     internal static Task<bool> DebugResume(string mode)
         => Task.FromResult(TryReleaseStop(mode));
 
+    /// <summary>Engine-gated normally, direct while a debug stop is pending: the
+    /// suspended search HOLDS the gate, and the engine is parked — reading or
+    /// writing workspace files then is safe and must not queue behind a gate
+    /// that only the debugger's own resume will release. This is what lets the
+    /// user browse the other files of the workspace while stopped.</summary>
+    private static Task<T> OnEngineOrParked<T>(Func<T> work)
+        => Volatile.Read(ref _debugStopPending) == 1
+            ? Task.Run(work)
+            : OnEngine(work);
+
     private static bool TryReleaseStop(string mode)
     {
         if (Interlocked.Exchange(ref _debugStopPending, 0) != 1) return false;

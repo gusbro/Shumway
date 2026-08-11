@@ -139,6 +139,7 @@ par(b, c)."></div>
           <button type="button" data-tab="tab-stack" class="active">Call stack</button>
           <button type="button" data-tab="tab-locals">Locals</button>
           <button type="button" data-tab="tab-watches">Watches</button>
+          <button type="button" data-tab="tab-immediate">Immediate</button>
         </div>
         <div id="tab-stack" class="tab-panel">
           <div id="debug-stack" class="debug-list"></div>
@@ -152,6 +153,17 @@ par(b, c)."></div>
             <input id="watch-input" type="text" spellcheck="false" autocapitalize="off"
                    placeholder="goal to watch, e.g. length(Xs, N)" />
             <button type="submit">Add</button>
+          </form>
+        </div>
+        <!-- The Immediate window: goals evaluated against the selected frame.
+             The ?- box routes here too while stopped — this is where the
+             conversation with the suspended query lives. -->
+        <div id="tab-immediate" class="tab-panel" hidden>
+          <pre id="immediate-log" class="debug-list"></pre>
+          <form id="immediate-form" autocomplete="off">
+            <input id="immediate-input" type="text" spellcheck="false" autocapitalize="off"
+                   placeholder="goal on the frame — ! binds for real, ; next solution" />
+            <button type="submit">Eval</button>
           </form>
         </div>
       </div>

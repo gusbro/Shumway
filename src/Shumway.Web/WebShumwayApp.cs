@@ -283,7 +283,7 @@ internal static partial class WebShumwayApp
     /// declared itself.</para></summary>
     [JSExport]
     internal static Task<string> Highlight(string source)
-        => OnEngine(() =>
+        => OnEngineOrParked(() =>
         {
             // Reads the LIVE operator table, which a consult mutates — hence the
             // gate. It also means highlighting waits behind a running search;

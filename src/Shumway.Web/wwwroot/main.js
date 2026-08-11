@@ -831,6 +831,19 @@ async function refreshWorkspaces() {
   document.getElementById('delete-workspace').disabled = all.length < 2;
 }
 
+/** Opens a workspace file in the editor, saving whatever was there first.
+ *  Returns false when there is no such file — which is also how the debugger
+ *  declines to navigate to a frame that lives outside the workspace. */
+async function openWorkspaceFile(name) {
+  const text = await workspace.read(name);
+  if (text === null) return false;
+  await saveBuffer();               // whichever place the open file lives in
+  editingWorkspaceFile(name);
+  await editor.setText(text);
+  await refreshFiles();
+  return true;
+}
+
 async function refreshFiles() {
   // Runs after every change of which file is on screen, so it is also the
   // one place that tells the debug gutter to show THAT file's dots.
@@ -842,12 +855,7 @@ async function refreshFiles() {
     item.className = 'file' + (currentLib === null && name === currentFile ? ' current' : '');
     item.textContent = name;
     item.title = `open ${name}`;
-    item.addEventListener('click', async () => {
-      await saveBuffer();               // whichever place the open file lives in
-      editingWorkspaceFile(name);
-      await editor.setText((await workspace.read(name)) ?? '');
-      await refreshFiles();
-    });
+    item.addEventListener('click', () => openWorkspaceFile(name));
     return item;
   });
 
@@ -1278,6 +1286,8 @@ debugUi.init({
   // The file whose lines the gutter's dots belong to — null for a library
   // file, where breakpoints are not offered.
   getFile: () => (currentLib === null ? currentFile : null),
+  // Clicking a stack frame in another workspace file navigates to it.
+  openFile: openWorkspaceFile,
 });
 
 // Settings of another version are discarded rather than guessed at (see

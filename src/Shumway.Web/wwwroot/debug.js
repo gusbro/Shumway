@@ -22,12 +22,14 @@
 
 import * as session from './session.js';
 
-let emit, statusEl, consultBuffer, editorEl, getText, getFile;
+let emit, statusEl, consultBuffer, editorEl, getText, getFile, openFile;
 
 let debugMode = false;
 let stopped = null;          // the current stop event while suspended
 let selectedFrame = 0;
 let currentLine = 0;         // 1-based stopped line in the CURRENT file, 0 = none
+let frameLine = 0;           // 1-based SELECTED-frame line in the current file
+let frameFile = '';          // ...and the file that line belongs to
 
 /** file name -> (1-based line -> {state:'bound'|'unbound', condition, log}).
  *  Kept across consults and across mode switches: a dot the user placed is a
@@ -43,7 +45,14 @@ const queryInput = () => $('query');
 const basename = (p) => p.slice(p.lastIndexOf('/') + 1);
 
 export function init(deps) {
-  ({ emit, statusEl, consultBuffer, editorEl, getText, getFile } = deps);
+  ({ emit, statusEl, consultBuffer, editorEl, getText, getFile, openFile } = deps);
+  $('immediate-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const goal = $('immediate-input').value.trim();
+    if (!goal) return;
+    $('immediate-input').value = '';
+    evaluate(goal);
+  });
   $('debug-toggle').addEventListener('click', () => toggle());
   $('dbg-continue').addEventListener('click', () => resume('continue'));
   $('dbg-into').addEventListener('click', () => resume('into'));
@@ -133,6 +142,7 @@ export async function toggle() {
   const err = await session.debugEnable();
   if (err) { emit(err + '\n', 'error'); return exit(); }
   emit('% debug mode: engine restarted debug-compiled\n', 'note');
+  $('immediate-log').replaceChildren();   // a fresh session, a fresh conversation
   // The program must be IN the debug engine before anything can stop in it.
   // consultBuffer calls back into afterConsult, which re-applies the dots.
   if (getText().trim()) await consultBuffer('% consulted (debuggable).\n');
@@ -154,6 +164,9 @@ async function exit() {
   if (err) emit(err + '\n', 'error');
   emit('% debug mode off: engine restarted\n', 'note');
   if (getText().trim()) await consultBuffer('% consulted.\n');
+  // The dots are KEPT (they come back with the mode) but must not be drawn
+  // in normal mode — re-render the now-plain number column.
+  renderGutter();
 }
 
 /** Called by consultBuffer after every successful consult: a reconsult
@@ -169,9 +182,9 @@ export async function afterConsult() {
 }
 
 /** The edited file changed (a chip, a new file, a share): the gutter now
- *  shows THAT file's dots. */
+ *  shows THAT file's numbers and dots. */
 export function fileChanged() {
-  if (debugMode) renderGutter();
+  renderGutter();
 }
 
 async function applyBreakpoint(file, line) {
@@ -198,6 +211,8 @@ export function onStop(stop) {
 
   stopped = stop;
   selectedFrame = 0;
+  frameLine = 0;
+  frameFile = '';
   const file = getFile();
   currentLine = file && basename(stop.file) === file ? stop.line : 0;
   $('debug-tabs').classList.remove('stale');
@@ -231,6 +246,8 @@ export function clearStopped() {
   if (!stopped) return;
   stopped = null;
   currentLine = 0;
+  frameLine = 0;
+  frameFile = '';
   setToolbar(false);
   restorePrompt();
   $('debug-tabs').classList.add('stale');
@@ -260,14 +277,27 @@ function setToolbar(enabled) {
 
 // --- the Immediate window ------------------------------------------------
 
-/** A goal typed into the ?- box while stopped: evaluated against the selected
- *  frame, with the engine's Immediate semantics — `!` on-frame, `;` for the
- *  parked evaluation's next solution. */
+/** Appends a line to the Immediate tab's log, scrolled to the tail. */
+function immLog(text, role = '') {
+  const log = $('immediate-log');
+  const span = document.createElement('span');
+  if (role) span.className = role;
+  span.textContent = text;
+  log.appendChild(span);
+  log.scrollTop = log.scrollHeight;
+}
+
+/** A goal from the Immediate tab or the ?- box while stopped: evaluated
+ *  against the selected frame, with the engine's Immediate semantics — `!`
+ *  on-frame, `;` for the parked evaluation's next solution. The conversation
+ *  lives in the Immediate tab, which is switched in so the answer is seen
+ *  whichever input it came from. */
 export async function evaluate(goalText) {
   if (!stopped) return;
-  emit('?- ' + goalText + '\n', 'query');
+  selectTab('tab-immediate');
+  immLog('?- ' + goalText + '\n', 'query');
   const result = await session.debugEvaluate(selectedFrame, goalText);
-  emit(result + '\n', /error/i.test(result) ? 'error' : 'answer');
+  immLog(result + '\n', /error/i.test(result) ? 'error' : 'answer');
   // `!` runs on the REAL frame: what Locals and the residual rows show may
   // just have changed. Re-capture rather than guess.
   if (goalText.trim().startsWith('!') && stopped) {
@@ -350,12 +380,21 @@ function renderStack() {
     const where = f.line > 0 ? `  ${basename(f.file)}:${f.line}` : '';
     row.textContent = `${f.name}${f.headArgs || ''}${where}`;
     row.title = `${f.name}/${f.arity}`;
-    row.addEventListener('click', () => {
+    row.addEventListener('click', async () => {
       selectedFrame = i;
       renderStack();
       renderLocals();
-      if (basename(f.file) === getFile() && f.line > 0) scrollEditorToLine(f.line);
       evalWatches();      // watches mean "in the frame I am looking at"
+      // Navigate to the frame: same file scrolls; another WORKSPACE file opens
+      // in the editor first (openFile declines files outside the workspace).
+      const base = basename(f.file);
+      if (f.line > 0
+          && (base === getFile() || (openFile && await openFile(base)))) {
+        frameFile = base;
+        frameLine = f.line;
+        scrollEditorToLine(f.line);
+      }
+      renderGutter();
     });
     list.appendChild(row);
   });
@@ -389,14 +428,15 @@ function renderLocals() {
 }
 
 // --- the gutter ----------------------------------------------------------
-// The editor wraps long lines (pre-wrap), so gutter rows sit at MEASURED line
-// tops, not at line-index × line-height. Rows live in an inner element that is
-// translated to follow the editor's own scroll.
+// Always visible: it is the editor's line-number column. Debug mode adds the
+// breakpoint dots and the position markers on top. The editor wraps long
+// lines (pre-wrap), so rows sit at MEASURED line tops, not at line-index ×
+// line-height; they live in an inner element translated to follow the
+// editor's own scroll.
 
 let gutterTimer = 0;
 
 function scheduleGutter() {
-  if (!debugMode) return;
   clearTimeout(gutterTimer);
   gutterTimer = setTimeout(renderGutter, 150);
 }
@@ -447,32 +487,35 @@ function measureLineTops() {
 }
 
 function renderGutter() {
-  if (!debugMode) return;
   const lines = $('gutter-lines');
   const file = getFile();
-  const fileBps = file ? breakpoints.get(file) : null;
+  const fileBps = debugMode && file ? breakpoints.get(file) : null;
   const { tops, lineHeight } = measureLineTops();
   const frag = document.createDocumentFragment();
   for (let i = 0; i < tops.length; i++) {
     const line = i + 1;
     const row = document.createElement('div');
     row.className = 'gutter-row';
+    row.textContent = line;
     const bp = fileBps?.get(line);
     if (bp) {
       row.classList.add('bp', bp.state);
       if (bp.log) row.classList.add('log');
       else if (bp.condition) row.classList.add('conditional');
     }
-    if (line === currentLine) row.classList.add('current');
+    if (debugMode && line === currentLine) row.classList.add('current');
+    else if (debugMode && line === frameLine && frameFile === file)
+      row.classList.add('frame');   // the SELECTED frame's line, VS-green style
     row.dataset.line = line;
     row.style.top = tops[i] + 'px';
     row.style.height = lineHeight + 'px';
-    row.title = bp
-      ? (bp.log ? `logpoint at line ${line}` : `breakpoint at line ${line}`)
-        + (bp.condition ? ` when ${bp.condition}` : '')
-        + (bp.state === 'unbound' ? ' (not bound to any code yet)' : '')
-        + ' — click removes, right-click edits'
-      : `set a breakpoint at line ${line} (right-click: condition / logpoint)`;
+    if (debugMode)
+      row.title = bp
+        ? (bp.log ? `logpoint at line ${line}` : `breakpoint at line ${line}`)
+          + (bp.condition ? ` when ${bp.condition}` : '')
+          + (bp.state === 'unbound' ? ' (not bound to any code yet)' : '')
+          + ' — click removes, right-click edits'
+        : `set a breakpoint at line ${line} (right-click: condition / logpoint)`;
     frag.appendChild(row);
   }
   lines.replaceChildren(frag);
@@ -481,12 +524,12 @@ function renderGutter() {
 
 async function onGutterClick(e) {
   const line = Number(e.target?.dataset?.line);
-  if (line) await toggleBreakpointAt(line);
+  if (line && debugMode) await toggleBreakpointAt(line);
 }
 
 async function toggleBreakpointAt(line) {
   const file = getFile();
-  if (!file) return;
+  if (!file || !debugMode) return;
   const fileBps = breakpoints.get(file);
   if (fileBps?.has(line)) {
     fileBps.delete(line);
@@ -504,7 +547,7 @@ async function toggleBreakpointAt(line) {
 async function onGutterMenu(e) {
   const line = Number(e.target?.dataset?.line);
   const file = getFile();
-  if (!line || !file) return;
+  if (!line || !file || !debugMode) return;
   e.preventDefault();
   if (!breakpoints.has(file)) breakpoints.set(file, new Map());
   const fileBps = breakpoints.get(file);
