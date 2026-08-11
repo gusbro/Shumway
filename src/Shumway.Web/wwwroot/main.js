@@ -1330,6 +1330,10 @@ await editor.setText((await workspace.read(currentFile)) ?? '');
 await openSharedFromHash();
 await editor.repaintNow();
 await refreshFiles();
+// The debugger's memory: breakpoints, watches, and the mode itself come back
+// the way the theme does. Re-entering the mode restarts the engine
+// debug-compiled and reconsults, which also re-binds the dots.
+if (debugUi.restore() && location.hash !== '#selftest') await debugUi.toggle();
 if (restored > 0) emit(`% ${restored} file(s) restored\n`, 'note');
 else if (!workspace.persistent())
   emit('% this browser has no origin-private storage — files last for this session only\n', 'note');

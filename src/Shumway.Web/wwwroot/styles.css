@@ -436,7 +436,11 @@ body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
   position: absolute;
   left: .3rem; top: 50%;
   width: .6rem; height: .6rem;
-  margin-top: -.3rem;
+  /* transform, not a fractional negative margin: margins round to layout
+     pixels and the dot landed one lower than the hover preview; border-box
+     keeps the hollow variants the same size as the solid dot. */
+  transform: translateY(-50%);
+  box-sizing: border-box;
   border-radius: 50%;
 }
 .debug-mode .gutter-row:hover::before { background: color-mix(in srgb, var(--error) 40%, transparent); }

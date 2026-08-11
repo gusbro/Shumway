@@ -21,6 +21,7 @@
 // directive.
 
 import * as session from './session.js';
+import * as settings from './settings.js';
 
 let emit, statusEl, consultBuffer, editorEl, getText, getFile, openFile;
 
@@ -87,6 +88,7 @@ export function init(deps) {
     $('watch-input').value = '';
     watches.push({ goal, result: '' });
     renderWatches();
+    persist();
     if (stopped) evalWatches();
   });
   editorEl.addEventListener('scroll', syncGutterScroll);
@@ -97,6 +99,46 @@ export function init(deps) {
 
 export const active = () => debugMode;
 export const isStopped = () => stopped !== null;
+
+// --- what survives a reload ----------------------------------------------
+// The debugger's memory rides the same envelope as the theme: mode,
+// breakpoints (condition, log, enabled), watch goals. Saved on every change,
+// reapplied by main.js at boot.
+
+function persist() {
+  const bps = {};
+  for (const [file, lines] of breakpoints) {
+    const perLine = {};
+    for (const [line, bp] of lines)
+      perLine[line] = { c: bp.condition, l: bp.log, e: bp.enabled };
+    if (Object.keys(perLine).length) bps[file] = perLine;
+  }
+  settings.update({
+    debug: { on: debugMode, bps, watches: watches.map((w) => w.goal) },
+  });
+}
+
+/** Restores the saved metadata into the page's model. Returns whether debug
+ *  MODE was on — the caller decides when it is safe to re-enter it. */
+export function restore() {
+  const d = settings.get().debug;
+  if (!d) return false;
+  for (const [file, lines] of Object.entries(d.bps || {})) {
+    const m = new Map();
+    for (const [line, bp] of Object.entries(lines))
+      m.set(Number(line), {
+        state: 'unbound',
+        condition: bp.c || '',
+        log: bp.l || '',
+        enabled: bp.e !== false,
+      });
+    if (m.size) breakpoints.set(file, m);
+  }
+  for (const goal of d.watches || [])
+    if (!watches.some((w) => w.goal === goal)) watches.push({ goal, result: '' });
+  renderWatches();
+  return !!d.on;
+}
 
 // Whether a query is SEARCHING right now (main.js reports it around each
 // pull of the next solution). Break is the one button that lives then.
@@ -186,9 +228,11 @@ export async function toggle() {
   debugMode = true;
   document.body.classList.add('debug-mode');
   $('debug-toggle').classList.add('active');
+  persist();                               // the INTENT survives an instant reload
   const err = await session.debugEnable();
   if (err) { emit(err + '\n', 'error'); return exit(); }
   emit('% debug mode: engine restarted debug-compiled\n', 'note');
+  persist();
   $('immediate-log').replaceChildren();   // a fresh session, a fresh conversation
   // The program must be IN the debug engine before anything can stop in it.
   // consultBuffer calls back into afterConsult, which re-applies the dots.
@@ -198,6 +242,7 @@ export async function toggle() {
 
 async function exit() {
   debugMode = false;
+  persist();
   stopped = null;
   currentLine = 0;
   document.body.classList.remove('debug-mode');
@@ -210,6 +255,7 @@ async function exit() {
   const err = await session.resetEngine();
   if (err) emit(err + '\n', 'error');
   emit('% debug mode off: engine restarted\n', 'note');
+  persist();
   if (getText().trim()) await consultBuffer('% consulted.\n');
   // The dots are KEPT (they come back with the mode) but must not be drawn
   // in normal mode — re-render the now-plain number column.
@@ -252,6 +298,7 @@ async function toggleEnableAt(line) {
   bp.enabled = !bp.enabled;
   await applyBreakpoint(file, line);
   renderGutter();
+  persist();
 }
 
 /** Run to Cursor: a one-shot engine breakpoint at the line, then continue.
@@ -292,11 +339,18 @@ export function onStop(stop) {
 
   clearTempBp();               // Run to Cursor's shot is spent, wherever we stopped
   stopped = stop;
-  selectedFrame = 0;
+  // A stop standing in library code selects the first USER frame — the one
+  // whose variables the person actually wants — the VS behaviour.
+  selectedFrame = Math.max(0, stop.frames.findIndex((f) => !isOpaqueFrame(f)));
   frameLine = 0;
   frameFile = '';
   const file = getFile();
   currentLine = file && basename(stop.file) === file ? stop.line : 0;
+  const sel = stop.frames[selectedFrame];
+  if (selectedFrame > 0 && sel && sel.line > 0 && basename(sel.file) === file) {
+    frameFile = file;
+    frameLine = sel.line;      // the hollow marker: where you are LOOKING
+  }
   $('debug-tabs').classList.remove('stale');
   renderStack();
   renderLocals();
@@ -503,6 +557,7 @@ function renderWatches() {
     remove.addEventListener('click', () => {
       watches.splice(i, 1);
       renderWatches();
+      persist();
     });
     row.append(text, remove);
     list.appendChild(row);
@@ -511,11 +566,32 @@ function renderWatches() {
 
 // --- call stack and locals -----------------------------------------------
 
+/** A real predicate frame standing in code that carries no source location:
+ *  the prelude, a library — code the user did not write. Shown collapsed. */
+const isOpaqueFrame = (f) => f.arity >= 0 && !f.file;
+
 function renderStack() {
   const list = $('debug-stack');
   list.replaceChildren();
   if (!stopped) return;
+  // Consecutive library frames collapse to one grey row — the VS [External
+  // Code] convention. The run's predicates go in the tooltip.
+  let opaqueRun = null;
+  const flushOpaque = () => {
+    if (!opaqueRun) return;
+    const row = document.createElement('div');
+    row.className = 'debug-row stack-row muted';
+    const goal = document.createElement('span');
+    goal.className = 'stack-goal';
+    goal.textContent = '[library code]';
+    row.appendChild(goal);
+    row.title = opaqueRun.map((f) => `${f.name}/${f.arity}`).join(', ');
+    list.appendChild(row);
+    opaqueRun = null;
+  };
   stopped.frames.forEach((f, i) => {
+    if (isOpaqueFrame(f)) { (opaqueRun ??= []).push(f); return; }
+    flushOpaque();
     const row = document.createElement('div');
     row.className = 'debug-row stack-row' + (i === selectedFrame ? ' selected' : '');
     const goal = document.createElement('span');
@@ -549,6 +625,7 @@ function renderStack() {
     });
     list.appendChild(row);
   });
+  flushOpaque();
 }
 
 function renderLocals() {
@@ -693,6 +770,7 @@ async function toggleBreakpointAt(line) {
     await applyBreakpoint(file, line);
   }
   renderGutter();
+  persist();
 }
 
 /** Right-click: the debugger's line menu — toggle, enable/disable, the
@@ -782,6 +860,7 @@ async function openBpDialog(line) {
     fileBps.delete(line);       // cancelled the creation
   }
   renderGutter();
+  persist();
 }
 
 function scrollEditorToLine(line) {
