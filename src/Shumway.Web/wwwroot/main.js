@@ -1213,7 +1213,33 @@ if (window.shumwayIsolationFailed) {
      + ' reload\n', 'error');
 }
 
-emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic) + '\n\n', 'note');
+// --- debug (spike) -------------------------------------------------------
+// Console-driven, no UI yet: `shumwayDebug.*` in the devtools console drives
+// the loop breakpoint → stop → frames → resume. The stop event lands here —
+// while stopped, the query's own promise simply stays pending.
+function onDebugStop(stop) {
+  // An installed hook takes the stop instead — the selftest awaits it this
+  // way, and a future debug UI will be exactly such a hook.
+  if (window.shumwayDebug.onStop) { window.shumwayDebug.onStop(stop); return; }
+  emit(`% stopped (${stop.reason}) at ${stop.file}:${stop.line} — ${stop.goal}\n`, 'note');
+  emit(`%   frames + vars in the devtools console; `
+     + `resume: shumwayDebug.resume('continue'|'into'|'over'|'out')\n`, 'note');
+  console.log('[shumway debug] stopped', stop);
+  console.table(stop.frames.map((f) => ({
+    frame: `${f.name}/${f.arity}`,
+    at: `${f.file}:${f.line}`,
+    vars: f.vars.map((v) => `${v.name} = ${v.value}`).join(', '),
+    residuals: f.residuals.map((r) => r.goals).join(', '),
+  })));
+}
+window.shumwayDebug = {
+  enable: () => session.debugEnable(),
+  bp: (line, file = '<string>') => session.debugBreakpoint(file, line, true),
+  bpOff: (line, file = '<string>') => session.debugBreakpoint(file, line, false),
+  resume: (mode = 'continue') => session.debugResume(mode),
+};
+
+emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop) + '\n\n', 'note');
 setPending(false);
 
 editor = attach(

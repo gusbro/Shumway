@@ -252,6 +252,9 @@ internal static partial class WebShumwayApp
     {
         bool wasRunning = _run is not null;
         _run?.Cancel();
+        // A search stopped at a breakpoint is BLOCKED, not running: the token
+        // alone would never be observed. Wake it so it can see the cancel.
+        TryReleaseStop("continue");
         // Task<bool> rather than a bare Task: a non-generic Task is not
         // marshalable, and a synchronous void is not callable under threads.
         return Task.FromResult(wasRunning);

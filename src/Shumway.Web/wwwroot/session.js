@@ -25,11 +25,14 @@ let engine = null;
  *        as it is written — a program that prints while it searches should be
  *        watchable while it runs.
  */
-export async function boot(onOutput, onAskForInput, onDiagnostic) {
+export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop) {
   const { dotnet } = await import('./_framework/dotnet.js');
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
   setModuleImports('main.js', {
-    ui: { write: onOutput, writeError: onDiagnostic, askForInput: onAskForInput },
+    ui: {
+      write: onOutput, writeError: onDiagnostic, askForInput: onAskForInput,
+      debugStopped: (json) => onDebugStop?.(JSON.parse(json)),
+    },
   });
   engine = (await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp;
   await runMain();
@@ -93,6 +96,24 @@ export async function shareDecode(encoded) {
   if (json === null) return null;
   try { return JSON.parse(json); } catch { return null; }
 }
+
+// --- debug (spike) --------------------------------------------------------
+// The stop itself arrives through boot()'s onDebugStop: it is an EVENT from a
+// search that is mid-flight — its queryNext promise stays pending while
+// stopped, and resolves after debugResume lets the search go on.
+
+/** Restarts the engine debug-compiled with a debug session attached. Consult
+ *  again afterwards — debuggability is decided when a clause compiles. */
+export const debugEnable = async () => engine.DebugEnable();
+
+/** Sets (or removes) a breakpoint. The editor's buffer is file `<string>`.
+ *  Resolves to null, or why it could not bind. */
+export const debugBreakpoint = async (file, line, set = true) =>
+  engine.DebugBreakpoint(file, line, set);
+
+/** Wakes a stopped search: 'continue' | 'into' | 'over' | 'out'.
+ *  Resolves false when nothing was stopped. */
+export const debugResume = async (mode = 'continue') => engine.DebugResume(mode);
 
 /** Flat [start, length, kind, …] spans covering `source`, from the engine's lexer. */
 export async function highlight(source) {

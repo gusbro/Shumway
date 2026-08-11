@@ -209,12 +209,15 @@ export async function run(session, emit, out, editor, workspace) {
   // a copy: the real preferences are put back afterwards.
   const saved = localStorage.getItem('shumway.settings');
   try {
-    localStorage.setItem('shumway.settings', JSON.stringify({ v: 0, theme: 'dark' }));
+    // The stored theme is 'light' PRECISELY because the default is 'dark':
+    // discarding and keeping must be distinguishable by the value that
+    // survives, or the check proves nothing.
+    localStorage.setItem('shumway.settings', JSON.stringify({ v: 0, theme: 'light' }));
     const fresh = settings.load();
     check('settings of another version are discarded', settings.wasDiscarded(), true);
-    check('and the defaults are used', fresh.theme, null);
-    localStorage.setItem('shumway.settings', JSON.stringify({ v: settings.SETTINGS_VERSION, theme: 'dark' }));
-    check('a current envelope is kept', settings.load().theme, 'dark');
+    check('and the defaults are used', fresh.theme, 'dark');
+    localStorage.setItem('shumway.settings', JSON.stringify({ v: settings.SETTINGS_VERSION, theme: 'light' }));
+    check('a current envelope is kept', settings.load().theme, 'light');
     check('and nothing was discarded', settings.wasDiscarded(), false);
   } finally {
     if (saved === null) localStorage.removeItem('shumway.settings');
@@ -292,6 +295,48 @@ export async function run(session, emit, out, editor, workspace) {
   check('example clpfd.pl consults',
         await session.consult(await (await fetch('examples/clpfd.pl')).text()), null);
   check('and its constraints hold', await solutions('X #> 3, X #< 7.'), 'X in 4..6');
+
+  // --- debug (spike) --------------------------------------------------------
+  // The whole loop, without a human: enable → consult debuggable → breakpoint
+  // → run → the stop event arrives while the query's promise stays pending →
+  // frames carry variables → resume → the query answers. Last, because enable
+  // restarts the engine (debuggability is decided at compile time).
+  {
+    check('debug enable', await session.debugEnable(), null);
+    // 1: dbg_run(Out) :-   2: dbg_mark(X),   3: Out = X.   4: dbg_mark(1).
+    check('debug consult', await session.consult(
+      'dbg_run(Out) :-\n    dbg_mark(X),\n    Out = X.\ndbg_mark(1).\n'), null);
+    // Line 3: at that goal dbg_mark has already exited, so X is 1 — the stop
+    // can prove the frame carries VALUES, not just names.
+    check('breakpoint binds', await session.debugBreakpoint('<string>', 3, true), null);
+
+    let stop = null;
+    const stopped = new Promise((resolve) => {
+      window.shumwayDebug.onStop = (s) => { stop = s; resolve('stopped'); };
+    });
+    const answer = solutions('dbg_run(Out).');   // deliberately NOT awaited yet
+    const arrived = await Promise.race([
+      stopped, new Promise((r) => setTimeout(() => r('timeout'), 15000))]);
+    window.shumwayDebug.onStop = null;
+
+    check('the stop event arrives', arrived, 'stopped');
+    if (stop) {
+      check('stopped at the breakpoint', `${stop.reason} ${stop.file}:${stop.line}`,
+            'breakpoint <string>:3');
+      const top = stop.frames.find((f) => f.name === 'dbg_run');
+      check('the caller is on the stack', top ? `${top.name}/${top.arity}` : '(missing)',
+            'dbg_run/1');
+      check('its variables are visible',
+            top && top.vars.some((v) => v.value === '1'), true);
+      check('resume wakes the search', await session.debugResume('continue'), true);
+      check('and the query answers', await answer, 'Out = 1');
+    }
+    // A fresh, non-debug engine for whatever runs after this file. Cancel
+    // first: it is ungated and wakes a stop, so even a query left stopped by
+    // a failed check cannot leave the engine gate held against the reset.
+    await session.cancel();
+    await session.resetEngine();
+  }
 
   // Persistence is reported rather than assumed: a browser may refuse storage,
   // and the session must still work when it does.
