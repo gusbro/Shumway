@@ -795,6 +795,8 @@ function editingWorkspaceFile(name) {
   currentLib = null;
   currentDialect = '';
   currentFile = name;
+  // Remembered like the theme: a reload reopens the file you were looking at.
+  settings.update({ openFile: name });
 }
 
 /** Writes the editor's buffer back to its file, then mirrors to storage. */
@@ -1321,7 +1323,10 @@ await workspace.setActive(known.includes(config.workspace) ? config.workspace : 
 await refreshWorkspaces();
 
 const inWorkspace = await workspace.list();
-editingWorkspaceFile(inWorkspace[0] ?? 'scratch.pl');
+// The file that was on screen, if it is still here; the first one otherwise.
+editingWorkspaceFile(
+  inWorkspace.includes(config.openFile) ? config.openFile
+    : inWorkspace[0] ?? 'scratch.pl');
 if (inWorkspace.length === 0) await workspace.write(currentFile, '');
 
 // A shared link brings its own files. They are ADDED — never written over what

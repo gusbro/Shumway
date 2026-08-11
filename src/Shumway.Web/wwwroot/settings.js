@@ -19,6 +19,7 @@ const DEFAULTS = {
   v: SETTINGS_VERSION,
   theme: 'dark',            // what a first visit gets; the toggle overrides it
   workspace: 'scratch',     // the one to open on load
+  openFile: null,           // the file that was on screen, reopened on load
   seededExamples: false,    // whether the examples workspace was ever created
   // The debugger's own memory: mode on/off, breakpoints per file (condition,
   // log message, enabled), watch goals. Written by debug.js; a reload

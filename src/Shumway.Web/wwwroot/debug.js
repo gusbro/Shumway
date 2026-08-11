@@ -340,6 +340,19 @@ export function onStop(stop) {
     }
   }
 
+  // Step landings in the top level's own scaffolding are noise, not places: the
+  // copy_term/3 the top level wraps EVERY query in (the residual-constraint
+  // display), and the step-abandoned ports of a query already yielding its
+  // answer. Stepping out of the last user frame runs to the answer — the VS
+  // behaviour — instead of touring the wrapper's plumbing goal by goal.
+  const topFrame = stop.frames[0];
+  if (stop.reason !== 'breakpoint'
+      && ((stop.reason === 'stepabandoned' && !stop.goal)
+          || (stop.goal === 'copy_term/3' && (!topFrame || topFrame.arity === -1)))) {
+    session.debugResume('continue');
+    return;
+  }
+
   clearTempBp();               // Run to Cursor's shot is spent, wherever we stopped
   stopped = stop;
   // A stop standing in library code selects the first USER frame — the one
