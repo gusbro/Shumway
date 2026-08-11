@@ -895,7 +895,10 @@ async function openWorkspace(name, { confirm = true } = {}) {
 
   const err = await workspace.setActive(name);
   if (err) { emit(`% ${err}\n`, 'error'); await refreshWorkspaces(); return; }
-  await session.resetEngine();
+  // In debug mode the fresh engine must be debug-compiled again for the new
+  // workspace (onWorkspaceChanged does that); otherwise a plain reset.
+  if (debugUi.active()) await debugUi.onWorkspaceChanged();
+  else await session.resetEngine();
   consultedSomething = false;
   // Different files, so possibly different imports: a background build should
   // re-aim at what THIS workspace uses.
@@ -938,6 +941,8 @@ document.getElementById('delete-workspace').addEventListener('click', async () =
   await openWorkspace(others[0], { confirm: false });
   const err = await workspace.removeWorkspace(doomed);
   emit(err ? `% ${err}\n` : `% deleted workspace ${doomed}\n`, err ? 'error' : 'note');
+  // The workspace is gone; its remembered breakpoints go with it.
+  if (!err) debugUi.forgetWorkspace(doomed);
   await refreshWorkspaces();
 });
 
@@ -1293,6 +1298,8 @@ debugUi.init({
   // The file whose lines the gutter's dots belong to — null for a library
   // file, where breakpoints are not offered.
   getFile: () => (currentLib === null ? currentFile : null),
+  // Which workspace the breakpoints belong to — deleting it forgets them.
+  getWorkspace: () => workspace.active(),
   // Clicking a stack frame in another workspace file navigates to it.
   openFile: openWorkspaceFile,
 });

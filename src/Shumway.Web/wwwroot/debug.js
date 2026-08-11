@@ -14,16 +14,17 @@
 // stop event; an on-frame `!` evaluation is followed by a re-capture
 // (debugFrames) because it can change what the frames hold.
 //
-// Breakpoints are kept PER FILE, by the workspace file's name. The engine
-// binds a breakpoint by file base name, and debug mode consults the buffer BY
-// ITS FILE (see main.js), so a dot in any file of the workspace matches
-// however that file gets loaded — directly or through another file's
-// directive.
+// Breakpoints are kept per WORKSPACE, then per file name. The engine binds a
+// breakpoint by file base name, and debug mode consults the buffer BY ITS FILE
+// (see main.js), so a dot in any file of the workspace matches however that
+// file gets loaded — directly or through another file's directive. Deleting a
+// workspace forgets its dots (forgetWorkspace); two workspaces may hold a file
+// of the same name with different code and different breakpoints.
 
 import * as session from './session.js';
 import * as settings from './settings.js';
 
-let emit, statusEl, consultBuffer, editorEl, getText, getFile, openFile;
+let emit, statusEl, consultBuffer, editorEl, getText, getFile, getWorkspace, openFile;
 
 let debugMode = false;
 let stopped = null;          // the current stop event while suspended
@@ -32,12 +33,22 @@ let currentLine = 0;         // 1-based stopped line in the CURRENT file, 0 = no
 let frameLine = 0;           // 1-based SELECTED-frame line in the current file
 let frameFile = '';          // ...and the file that line belongs to
 
-/** file name -> (1-based line ->
+/** workspace -> file name -> (1-based line ->
  *  {state:'bound'|'unbound', condition, log, enabled}).
  *  Kept across consults and across mode switches: a dot the user placed is a
  *  statement about the program, not about one engine's lifetime. A DISABLED
- *  one is removed from the engine but kept here, grey — the VS convention. */
-const breakpoints = new Map();
+ *  one is removed from the engine but kept here, grey — the VS convention.
+ *  Keyed by WORKSPACE first: two workspaces may hold a file of the same name
+ *  with different code, and a workspace's dots vanish when it is deleted. */
+const allBreakpoints = new Map();
+
+/** The current workspace's file→line→bp map, made on demand. */
+function breakpoints() {
+  const ws = getWorkspace();
+  let m = allBreakpoints.get(ws);
+  if (!m) { m = new Map(); allBreakpoints.set(ws, m); }
+  return m;
+}
 
 /** Run to Cursor's one-shot breakpoint: engine-side only, never drawn.
  *  Cleared at the next stop, or when the query ends without reaching it. */
@@ -52,7 +63,7 @@ const queryInput = () => $('query');
 const basename = (p) => p.slice(p.lastIndexOf('/') + 1);
 
 export function init(deps) {
-  ({ emit, statusEl, consultBuffer, editorEl, getText, getFile, openFile } = deps);
+  ({ emit, statusEl, consultBuffer, editorEl, getText, getFile, getWorkspace, openFile } = deps);
   $('immediate-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const goal = $('immediate-input').value.trim();
@@ -109,12 +120,16 @@ export const isStopped = () => stopped !== null;
 // reapplied by main.js at boot.
 
 function persist() {
-  const bps = {};
-  for (const [file, lines] of breakpoints) {
-    const perLine = {};
-    for (const [line, bp] of lines)
-      perLine[line] = { c: bp.condition, l: bp.log, e: bp.enabled };
-    if (Object.keys(perLine).length) bps[file] = perLine;
+  const bps = {};   // workspace -> file -> line -> {c,l,e}
+  for (const [ws, files] of allBreakpoints) {
+    const perFile = {};
+    for (const [file, lines] of files) {
+      const perLine = {};
+      for (const [line, bp] of lines)
+        perLine[line] = { c: bp.condition, l: bp.log, e: bp.enabled };
+      if (Object.keys(perLine).length) perFile[file] = perLine;
+    }
+    if (Object.keys(perFile).length) bps[ws] = perFile;
   }
   settings.update({
     debug: { on: debugMode, bps, watches: watches.map((w) => w.goal) },
@@ -126,21 +141,42 @@ function persist() {
 export function restore() {
   const d = settings.get().debug;
   if (!d) return false;
-  for (const [file, lines] of Object.entries(d.bps || {})) {
-    const m = new Map();
-    for (const [line, bp] of Object.entries(lines))
-      m.set(Number(line), {
-        state: 'unbound',
-        condition: bp.c || '',
-        log: bp.l || '',
-        enabled: bp.e !== false,
-      });
-    if (m.size) breakpoints.set(file, m);
+  for (const [ws, files] of Object.entries(d.bps || {})) {
+    const wsMap = new Map();
+    for (const [file, lines] of Object.entries(files)) {
+      const m = new Map();
+      for (const [line, bp] of Object.entries(lines))
+        m.set(Number(line), {
+          state: 'unbound',
+          condition: bp.c || '',
+          log: bp.l || '',
+          enabled: bp.e !== false,
+        });
+      if (m.size) wsMap.set(file, m);
+    }
+    if (wsMap.size) allBreakpoints.set(ws, wsMap);
   }
   for (const goal of d.watches || [])
     if (!watches.some((w) => w.goal === goal)) watches.push({ goal, result: '' });
   renderWatches();
   return !!d.on;
+}
+
+/** A workspace was deleted: its breakpoints go with it. */
+export function forgetWorkspace(name) {
+  if (allBreakpoints.delete(name)) persist();
+  renderGutter();
+}
+
+/** The active workspace changed. In debug mode the engine openWorkspace just
+ *  reset is a PLAIN one — it must be debug-compiled again for the new
+ *  workspace, or a consult there binds nothing. The caller consults the
+ *  buffer afterwards (afterConsult re-applies this workspace's dots). */
+export async function onWorkspaceChanged() {
+  clearStopped();
+  if (!debugMode) return;
+  const err = await session.debugEnable();
+  if (err) emit(err + '\n', 'error');
 }
 
 // Whether a query is SEARCHING right now (main.js reports it around each
@@ -272,7 +308,7 @@ async function exit() {
  *  them. */
 export async function afterConsult() {
   if (!debugMode) return;
-  for (const [file, lines] of breakpoints)
+  for (const [file, lines] of breakpoints())
     for (const line of [...lines.keys()]) await applyBreakpoint(file, line);
   renderGutter();
 }
@@ -284,7 +320,7 @@ export function fileChanged() {
 }
 
 async function applyBreakpoint(file, line) {
-  const bp = breakpoints.get(file)?.get(line);
+  const bp = breakpoints().get(file)?.get(line);
   if (!bp) return;
   if (!bp.enabled) {
     await session.debugBreakpoint(file, line, false);
@@ -296,7 +332,7 @@ async function applyBreakpoint(file, line) {
 
 async function toggleEnableAt(line) {
   const file = getFile();
-  const bp = file && breakpoints.get(file)?.get(line);
+  const bp = file && breakpoints().get(file)?.get(line);
   if (!bp || !debugMode) return;
   bp.enabled = !bp.enabled;
   await applyBreakpoint(file, line);
@@ -320,7 +356,7 @@ async function clearTempBp() {
   if (!tempBp) return;
   const { file, line } = tempBp;
   tempBp = null;
-  const real = breakpoints.get(file)?.get(line);
+  const real = breakpoints().get(file)?.get(line);
   if (real && real.enabled) await applyBreakpoint(file, line);
   else await session.debugBreakpoint(file, line, false);
 }
@@ -332,7 +368,7 @@ async function clearTempBp() {
 export function onStop(stop) {
   // A LOGPOINT's hit: say its message, never its stop (the DAP convention).
   if (stop.reason === 'breakpoint' && stop.breakFile) {
-    const bp = breakpoints.get(basename(stop.breakFile))?.get(stop.breakLine);
+    const bp = breakpoints().get(basename(stop.breakFile))?.get(stop.breakLine);
     if (bp?.log) {
       emit('% ' + interpolate(bp.log, stop.frames[0]) + '\n', 'note');
       session.debugResume('continue');
@@ -737,7 +773,7 @@ function measureLineTops() {
 function renderGutter() {
   const lines = $('gutter-lines');
   const file = getFile();
-  const fileBps = debugMode && file ? breakpoints.get(file) : null;
+  const fileBps = debugMode && file ? breakpoints().get(file) : null;
   const { tops, lineHeight } = measureLineTops();
   const frag = document.createDocumentFragment();
   for (let i = 0; i < tops.length; i++) {
@@ -779,13 +815,13 @@ async function onGutterClick(e) {
 async function toggleBreakpointAt(line) {
   const file = getFile();
   if (!file || !debugMode) return;
-  const fileBps = breakpoints.get(file);
+  const fileBps = breakpoints().get(file);
   if (fileBps?.has(line)) {
     fileBps.delete(line);
     await session.debugBreakpoint(file, line, false);
   } else {
-    if (!breakpoints.has(file)) breakpoints.set(file, new Map());
-    breakpoints.get(file).set(line,
+    if (!breakpoints().has(file)) breakpoints().set(file, new Map());
+    breakpoints().get(file).set(line,
       { state: 'unbound', condition: '', log: '', enabled: true });
     await applyBreakpoint(file, line);
   }
@@ -821,7 +857,7 @@ function onEditorMenu(e) {
 
 function openLineMenu(x, y, line) {
   const file = getFile();
-  const bp = breakpoints.get(file)?.get(line);
+  const bp = breakpoints().get(file)?.get(line);
   showMenu(x, y, [
     { label: bp ? 'Remove breakpoint' : 'Set breakpoint',
       key: 'F9', run: () => toggleBreakpointAt(line) },
@@ -874,8 +910,8 @@ function showMenu(x, y, items) {
 async function openBpDialog(line) {
   const file = getFile();
   if (!file) return;
-  if (!breakpoints.has(file)) breakpoints.set(file, new Map());
-  const fileBps = breakpoints.get(file);
+  if (!breakpoints().has(file)) breakpoints().set(file, new Map());
+  const fileBps = breakpoints().get(file);
   const existed = fileBps.has(line);
   const bp = fileBps.get(line)
     ?? { state: 'unbound', condition: '', log: '', enabled: true };
