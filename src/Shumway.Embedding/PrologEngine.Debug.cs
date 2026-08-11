@@ -488,6 +488,23 @@ public sealed partial class PrologEngine
         return i >= 0 ? _stopSiteIds[i] : -1;
     }
 
+    /// <summary>As <see cref="SiteAtOrBefore"/>, but only WITHIN the predicate that
+    /// contains <paramref name="pc"/> — the DISPLAY question. A frame inside code
+    /// compiled without sites (the prelude, a library, a <c>:- disable_debug.</c>
+    /// region) must answer "no location": the backward scan otherwise inherits the
+    /// last site of whatever debuggable predicate precedes it in the code space and
+    /// blames an unrelated file, line and all, with complete confidence.</summary>
+    public int SiteWithinPredicate(int pc)
+    {
+        if (_stopPcs.Length == 0) return -1;
+        int i = Array.BinarySearch(_stopPcs, pc);
+        if (i < 0) i = ~i - 1;
+        if (i < 0) return -1;
+        int predIdx = IndexOfPredicateAt(pc);
+        if (predIdx >= 0 && _stopPcs[i] < SortedPredicateEntries()[predIdx]) return -1;
+        return _stopSiteIds[i];
+    }
+
     // Every debuggable clause in the loaded program, by program address, sorted.
     // Built alongside _stopPcs; empty unless something was compiled debuggable.
     private int[] _clauseStarts = Array.Empty<int>();
@@ -1175,7 +1192,9 @@ public sealed partial class PrologEngine
             }
         }
 
-        int siteId = SiteAtOrBefore(pc);
+        // Bounded to THIS predicate: an opaque frame answers no location rather
+        // than inheriting its debuggable neighbour's last line.
+        int siteId = SiteWithinPredicate(pc);
         var site = siteId >= 0
             ? Shumway.Core.DebugSiteTable.Get(siteId)
             : default;

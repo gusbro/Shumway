@@ -268,7 +268,15 @@ public class Adr035SteppingTests
         Assert.Equal(7, frames[0].Line);            // stopped at leaf/1's clause, line 7
         Assert.Equal(6, frames[1].Line);            // mid/1 is waiting on leaf(X), line 6
         Assert.Equal(3, frames[2].Line);            // top/1 is waiting on mid(X), line 3
-        Assert.All(frames, f => Assert.Equal("<string>", f.File));
+        // The PREDICATE frames carry the file. The QUERY frame does not: the
+        // wrapper has no source of its own, and the old backward site scan
+        // "inherited" whatever debuggable code preceded it — right by luck in a
+        // one-file test, and confidently wrong in a real program (a query showed
+        // as standing in a LIBRARY's file). No location is the honest answer.
+        Assert.All(frames.Where(f => f.Arity >= 0),
+            f => Assert.Equal("<string>", f.File));
+        Assert.Equal("", frames[^1].File);
+        Assert.Equal(0, frames[^1].Line);
     }
 
     [Fact]

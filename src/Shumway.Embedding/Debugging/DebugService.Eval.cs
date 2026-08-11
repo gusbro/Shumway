@@ -1124,7 +1124,10 @@ public sealed partial class DebugService
 
     private (string File, int Line) SiteOf(int pc)
     {
-        int siteId = _engine.SiteAtOrBefore(pc);
+        // Bounded to the containing predicate: a stop standing in opaque code
+        // (an async break inside the prelude) reports no location, not the
+        // previous debuggable predicate's last line in the wrong file.
+        int siteId = _engine.SiteWithinPredicate(pc);
         if (siteId < 0) return ("", 0);
         var site = DebugSiteTable.Get(siteId);
         return (DebugSiteTable.FileName(site.FileId), site.Line);
