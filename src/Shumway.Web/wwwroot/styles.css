@@ -443,7 +443,9 @@ body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
   box-sizing: border-box;
   border-radius: 50%;
 }
-.debug-mode .gutter-row:hover::before { background: color-mix(in srgb, var(--error) 40%, transparent); }
+/* Only where there is NO dot yet: the preview outranked the real dot by
+   specificity, so a just-set breakpoint looked washed out under the mouse. */
+.debug-mode .gutter-row:hover:not(.bp)::before { background: color-mix(in srgb, var(--error) 40%, transparent); }
 .gutter-row.bp::before { background: var(--error); }
 /* Placed but not attached to any compiled code (not consulted yet, or a line
    with nothing on it): shown hollow, the pending-breakpoint convention. */
