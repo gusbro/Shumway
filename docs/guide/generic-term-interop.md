@@ -337,9 +337,9 @@ and `crep` stays at +24 — one declaration serves both bitnesses.
 Mark the function `:- native` and give it a `:- c` prototype:
 
 ```prolog
-:- native tbl_name/2.
+:- native star_label/2.
 :- c.
-char* tbl_name(short, short);     % a real native export
+char* star_label(short, short);   % a real native export
 :- prolog.
 ```
 
@@ -371,15 +371,15 @@ engine — must be byte-oriented; UTF-16/32 are rejected). For a text node the
 struct's `nelem` is the **encoded byte length** — the invariant native C can rely
 on is `nelem == strlen(crep.cstr)`. Under single-byte encodings (Arity's
 original world) that equals the character count; under UTF-8 it stays the
-`strlen`, by design. A `char*`-returning function yields a raw pointer, so the corpus pattern
-works directly:
+`strlen`, by design. A `char*`-returning function yields a raw pointer, so the
+classic Arity idiom works directly:
 
 ```prolog
-full_name(Mod, T, Name) :-
-    integer(Mod), integer(T),
-    { Ptr is 'tbl_name'(Mod, T) },   % Ptr is the returned char* (a pointer)
-    Ptr =\= 0,                       % NULL check
-    make_prolog_string(Ptr, Name).   % copy the native string into an atom
+star_name(Catalog, Index, Name) :-
+    integer(Catalog), integer(Index),
+    { Ptr is 'star_label'(Catalog, Index) },  % Ptr is the returned char* (a pointer)
+    Ptr =\= 0,                                % NULL check
+    make_prolog_string(Ptr, Name).            % copy the native string into an atom
 ```
 
 ### 10c. Memory ownership — who frees what
@@ -394,8 +394,9 @@ This is the contract. Read it before passing pointers.
 | **`char*` *return* value** | **The native side — borrowed.** Shumway **copies** the bytes into a Prolog atom and **never frees** the pointer. | Owned by the callee. |
 | **`char**` out-string** | **Split:** Shumway owns the pointer *cell* (allocated and freed around the call); the `char*` written into it is **borrowed** (native-owned), copied out, never freed. | Cell: the call. String: the callee. |
 
-The **borrowed** rule for returned strings matches Arity: functions like `tbl_name`
-/ `mdl_name` / `searchcfg` return pointers into **static buffers or internal tables**
+The **borrowed** rule for returned strings matches Arity: `char*`-returning
+functions like `star_label` above typically return pointers into **static
+buffers or internal tables**
 the library owns and reuses — Shumway must *not* free them (doing so would be a
 double-free or corrupt the library's state), and must copy the bytes before the next
 call can overwrite the buffer (which `make_prolog_string` does immediately).
@@ -445,7 +446,7 @@ responsibility, not the engine's:
   If two engines on two threads call the same native function concurrently, the C
   runs concurrently. That is safe only if the **library is reentrant / thread-safe**.
   In particular a **borrowed static-buffer return** (a `char*` into a reused internal
-  buffer — the Arity `tbl_name` / `mdl_name` / `searchcfg` style) is **not** safe
+  buffer — the classic style of `char*`-returning C APIs) is **not** safe
   under parallel calls: two threads race on the one buffer. Either keep such calls on
   a single engine/thread, or ensure the native side is thread-safe.
 

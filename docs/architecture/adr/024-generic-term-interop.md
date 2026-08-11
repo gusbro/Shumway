@@ -37,18 +37,17 @@ struct:
   then `newreftype(...)` for the term's kind, recursing into the arguments.
 - `reftype_functor/4`, `preftype/1` support those.
 
-The **usage pattern** in real sources (`i_form_e.pl`, `i_gxprg.pl`) is uniform —
-build a struct, call C, read the struct back; **no callback** (C never re-unifies
-in Prolog mid-call):
+The **usage pattern** in real sources is uniform — build a struct, call C, read
+the struct back; **no callback** (C never re-unifies in Prolog mid-call):
 
 ```prolog
-{ PtrExp is &par1ref },                              % a global reftype buffer
-fill_par(Exp, PtrExp),                               % term  → struct
-{ ret = 'i_form_exp'(Mod, For, ptype, par1ref) },    % call C with the struct
-reftype_term(Exp, PtrExp),                           % struct (C modified it) → term
+{ PtrExp is &par1ref },                       % a global reftype buffer
+fill_par(Exp, PtrExp),                        % term  → struct
+{ ret = 'eval_expr'(Kind, Depth, par1ref) },  % call C with the struct
+reftype_term(Exp, PtrExp),                    % struct (C modified it) → term
 ```
 
-The user's C functions (e.g. `i_form_exp`, `i_nxgxprgs`) manipulate the reftype
+The user's C functions manipulate the reftype
 through an **accessor API**: `getint_c`, `putint_c`, `gettxt_c`, `puttxt_c`,
 `putatm_c`, `getflt_c`, `putflt_c`, `getfunctor_c`, `putfunctor_c`,
 `getfuncarg_c`, `findtype_c`, `equrefs_c`. That accessor API is the real interface.

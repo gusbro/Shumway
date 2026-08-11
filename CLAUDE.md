@@ -747,7 +747,7 @@ product `#ifdef`, C under `#else`): the uniform pattern is `fill_par(Term,&parNr
   call**; `fill_par`/`reftype_term` stay the cursor builtins (Phase 30). At the call,
   each `:- c`-prototyped `reftype` arg is materialized to a blittable native
   `t_reftype`, the pointer passed, then dematerialized back (native C may build/modify
-  it — e.g. `i_nextinfo`→`menu_to_list` builds a list).
+  it — e.g. a native function that builds a list into the struct).
 - The native DLL is named by engine config / a CLI flag (`--native-dll` /
   `engine.UseNativeLibrary(...)`); `fn` resolves by name.
 - The **managed snapshot** path is the same core to a managed `Reftype`, triggered by
@@ -811,8 +811,7 @@ product `#ifdef`, C under `#else`): the uniform pattern is `fill_par(Term,&parNr
   reads the C-built graph unchanged. Test (real DLL): `build_list` allocates a cons
   list via `newreftype`, Shumway dematerializes `[1,2,3]` and `freepar`s it.
 - **Out-scalar pointer params (done).** `fn(..., &local)` — a native function writes
-  a scalar through a pointer (the corpus `i_form_exp(.., &type, ..)` /
-  `i_obj_id_native(.., &id)` pattern). `NativeCall.Kind` now distinguishes
+  a scalar through a pointer (the corpus's `fn(.., &out, ..)` out-param pattern). `NativeCall.Kind` now distinguishes
   `Scalar`/`Reftype`/`OutScalar`; a `short*`/`int*`/`long*`/`double*` param (incl.
   via typedef like `pshort`) maps to `OutScalar` with its element type. At the call,
   `PInvokeCall` allocates a native scalar (seeded from the block-local), passes the
@@ -839,8 +838,8 @@ product `#ifdef`, C under `#else`): the uniform pattern is `fill_par(Term,&parNr
   Prolog string into NUL-terminated native memory (via the engine's
   `NativeTextEncoding`, default UTF-8), passed and freed (`NativeCall.Kind.StringIn`).
   A `char*` **return** flows to the block as a raw pointer integer (the inference types
-  a char*-returning call as a pointer, not a string), so the corpus pattern
-  `{ Ptr is 'tbl_name'(M,T) }, Ptr \= 0, make_prolog_string(Ptr, Name)` works:
+  a char*-returning call as a pointer, not a string), so the classic idiom
+  `{ Ptr is 'star_label'(C,I) }, Ptr \= 0, make_prolog_string(Ptr, Name)` works:
   `make_prolog_string` reads the NUL-terminated native string from an integer source.
   Tested over a real DLL incl. byte-exact UTF-8. (`char**` / out-string still deferred.)
 - **IL emit for the materializer tier (done).** Both `:- native` backends now compile
