@@ -11,6 +11,7 @@ import * as libraries from './libraries.js';
 import * as settings from './settings.js';
 import * as theme from './theme.js';
 import { attach } from './editor.js';
+import * as debugUi from './debug.js';
 
 const out = document.getElementById('out');
 const queryInput = document.getElementById('query');
@@ -166,8 +167,9 @@ function runningIndicator() {
   let ticking = 0;
   const tick = () => {
     // The status line belongs to whoever needs it more: a program asking for
-    // input has something for the user to DO.
-    if (awaitingInput) return;
+    // input has something for the user to DO, and a query STOPPED at a
+    // breakpoint is not running — the debug UI owns the line then.
+    if (awaitingInput || debugUi.isStopped()) return;
     statusEl.textContent =
       `running goal… ${((performance.now() - started) / 1000).toFixed(0)}s   (Stop to abandon)`;
   };
@@ -185,6 +187,8 @@ async function step() {
   let tag, text;
   try { ({ tag, text } = await session.next(answerWidth())); }
   finally { stepping = false; searching(); }
+  // The promise resolving means the search is no longer suspended at a stop.
+  debugUi.clearStopped();
   // The goal may have written as it ran; an answer starts its own line.
   freshLine();
   if (aborted) { aborted = false; emit('% Execution aborted.\n\n', 'note'); setPending(false); return; }
@@ -1171,6 +1175,9 @@ async function consultBuffer(note) {
     // Operators the program declared are now in the table, so the buffer's
     // colouring can change on consult — repaint it.
     editor?.repaint();
+    // A reconsult replaced the compiled clauses: in debug mode the engine-side
+    // breakpoints are re-applied against the new code.
+    await debugUi.afterConsult();
     consultedSomething = true;
     // How long it took, when it took long enough to have been noticed: loading
     // a library is seconds of work and saying so is the difference between
@@ -1218,9 +1225,11 @@ if (window.shumwayIsolationFailed) {
 // the loop breakpoint → stop → frames → resume. The stop event lands here —
 // while stopped, the query's own promise simply stays pending.
 function onDebugStop(stop) {
-  // An installed hook takes the stop instead — the selftest awaits it this
-  // way, and a future debug UI will be exactly such a hook.
+  // An installed hook takes the stop first (the selftest awaits it this way);
+  // then the debug UI, when its mode is on; the console fallback serves
+  // whoever drove the engine directly through window.shumwayDebug.
   if (window.shumwayDebug.onStop) { window.shumwayDebug.onStop(stop); return; }
+  if (debugUi.active()) { debugUi.onStop(stop); return; }
   emit(`% stopped (${stop.reason}) at ${stop.file}:${stop.line} — ${stop.goal}\n`, 'note');
   emit(`%   frames + vars in the devtools console; `
      + `resume: shumwayDebug.resume('continue'|'into'|'over'|'out')\n`, 'note');
@@ -1237,6 +1246,7 @@ window.shumwayDebug = {
   bp: (line, file = '<string>') => session.debugBreakpoint(file, line, true),
   bpOff: (line, file = '<string>') => session.debugBreakpoint(file, line, false),
   resume: (mode = 'continue') => session.debugResume(mode),
+  toggle: () => debugUi.toggle(),
 };
 
 emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop) + '\n\n', 'note');
@@ -1247,6 +1257,11 @@ editor = attach(
 
 workspace.init(session.exports());
 libraries.init(session.exports());
+debugUi.init({
+  emit, statusEl, consultBuffer,
+  editorEl: programEl,
+  getText: program,
+});
 
 // Settings of another version are discarded rather than guessed at (see
 // settings.js), and the stored files were written against the layout they

@@ -393,3 +393,86 @@ dialog.wide .row input { flex: 1; max-width: 20rem; }
    another thread — so the only thing missing is saying so. */
 body.busy .status { color: var(--accent); }
 body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
+
+/* --- debug mode ---
+   One body class is the whole switch. Normal mode shows NONE of this: the
+   gutter, the toolbar and the pane all hang off .debug-mode, and the shell
+   around the editor is an unstyled wrapper without it. */
+
+.debug-mode #debug-toggle { color: var(--accent); border-color: var(--accent); }
+
+.editor-shell { position: relative; }
+
+#gutter { display: none; }
+.debug-mode #gutter {
+  display: block;
+  position: absolute;
+  /* Inside the editor's own border, over its widened left padding. */
+  left: 1px; top: 1px; bottom: 1px;
+  width: 1.7rem;
+  overflow: hidden;
+  border-radius: .4rem 0 0 .4rem;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  border-right: 1px solid var(--line);
+  cursor: pointer;
+  z-index: 1;
+}
+.debug-mode .editor { padding-left: 2.4rem; }
+
+#gutter-lines { position: relative; will-change: transform; }
+.gutter-row { position: absolute; left: 0; width: 100%; }
+.gutter-row::before {
+  content: '';
+  position: absolute;
+  left: .35rem; top: 50%;
+  width: .6rem; height: .6rem;
+  margin-top: -.3rem;
+  border-radius: 50%;
+}
+.gutter-row:hover::before { background: color-mix(in srgb, var(--error) 40%, transparent); }
+.gutter-row.bp::before { background: var(--error); }
+/* Placed but not attached to any compiled code (not consulted yet, or a line
+   with nothing on it): shown hollow, the pending-breakpoint convention. */
+.gutter-row.bp.unbound::before { background: none; border: 2px solid var(--error); }
+.gutter-row.current::after {
+  content: '▶';
+  position: absolute;
+  right: .1rem; top: 50%;
+  transform: translateY(-50%);
+  font-size: .6rem;
+  color: var(--accent);
+}
+
+#debug-toolbar { display: none; }
+.debug-mode #debug-toolbar {
+  display: flex;
+  gap: .4rem;
+  align-items: center;
+  margin-bottom: .5rem;
+}
+#debug-toolbar button { font-size: .82rem; padding: .3rem .6rem; }
+#debug-toolbar button:disabled { opacity: .45; }
+
+.debug-pane { display: none; }
+.debug-mode .debug-pane { display: flex; grid-column: 1 / -1; }
+.debug-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; width: 100%; }
+@media (max-width: 62rem) { .debug-cols { grid-template-columns: 1fr; } }
+
+.debug-list {
+  font: 12px/1.6 var(--mono);
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  background: var(--field);
+  min-height: 6rem;
+  max-height: 14rem;
+  overflow: auto;
+  padding: .3rem 0;
+}
+.debug-row { padding: 0 .6rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.debug-row.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+#debug-stack .debug-row { cursor: pointer; }
+#debug-stack .debug-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.debug-row.residual { color: var(--accent); }
+.debug-row.muted { color: var(--muted); }
+/* The query moved on: the last stop's stack stays readable but visibly past. */
+.debug-pane.stale .debug-list { opacity: .55; }

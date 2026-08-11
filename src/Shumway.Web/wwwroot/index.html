@@ -77,14 +77,20 @@
            behind a transparent textarea, which only works while the two lay out
            identically — and when they drift, the caret lands where the text is
            not. -->
-      <div id="program" class="editor" contenteditable="plaintext-only"
-           role="textbox" aria-multiline="true" aria-label="Program"
-           spellcheck="false" autocapitalize="off" autocorrect="off"
-           data-placeholder="anc(X, Y) :- par(X, Y).
+      <!-- The shell exists for debug mode's breakpoint gutter, which overlays
+           the editor's left edge and follows its scroll. In normal mode it is
+           an unstyled wrapper and the editor is exactly what it always was. -->
+      <div class="editor-shell">
+        <div id="gutter" aria-hidden="true"><div id="gutter-lines"></div></div>
+        <div id="program" class="editor" contenteditable="plaintext-only"
+             role="textbox" aria-multiline="true" aria-label="Program"
+             spellcheck="false" autocapitalize="off" autocorrect="off"
+             data-placeholder="anc(X, Y) :- par(X, Y).
 anc(X, Z) :- par(X, Y), anc(Y, Z).
 
 par(a, b).
 par(b, c)."></div>
+      </div>
 
       <div class="row">
         <button id="consult" type="button" class="primary"
@@ -93,6 +99,8 @@ par(b, c)."></div>
         <button id="open-file" type="button">Open…</button>
         <button id="download-file" type="button" title="save this file to your computer">Download</button>
         <button id="share" type="button" title="copy a link containing this program">Share</button>
+        <button id="debug-toggle" type="button"
+                title="debug mode: breakpoints, stepping, call stack">Debug</button>
         <span class="hint">Ctrl-Enter consults · Ctrl-S saves · Tab completes</span>
       </div>
     </section>
@@ -101,6 +109,17 @@ par(b, c)."></div>
       <h2>Answers
         <button id="clear" type="button" class="heading-action"
                 title="clear the transcript">Clear</button></h2>
+      <!-- Debug mode's step controls. Enabled only while a query is stopped;
+           hidden entirely outside debug mode. -->
+      <div id="debug-toolbar" class="debug-toolbar">
+        <button id="dbg-continue" type="button" class="primary"
+                title="run on to the next breakpoint">Continue</button>
+        <button id="dbg-into" type="button" title="stop at the very next goal">Step into</button>
+        <button id="dbg-over" type="button"
+                title="stop at the next goal no deeper than this one">Step over</button>
+        <button id="dbg-out" type="button"
+                title="run out of the current predicate">Step out</button>
+      </div>
       <pre id="out" tabindex="0">loading the engine…</pre>
       <p id="status" class="status" aria-live="polite"></p>
       <form id="query-form" autocomplete="off">
@@ -110,6 +129,22 @@ par(b, c)."></div>
         <button type="submit" class="primary">Run</button>
         <button id="stop" type="button" title="abandon the running query">Stop</button>
       </form>
+    </section>
+
+    <!-- Debug mode's third pane: where the suspended query is (click a frame)
+         and what its variables hold, residual constraints included. Dimmed
+         once the query moves on — what it shows is a moment ago, not now. -->
+    <section class="pane debug-pane" id="debug-pane">
+      <div class="debug-cols">
+        <div>
+          <h2>Call stack</h2>
+          <div id="debug-stack" class="debug-list"></div>
+        </div>
+        <div>
+          <h2>Locals</h2>
+          <div id="debug-locals" class="debug-list"></div>
+        </div>
+      </div>
     </section>
   </div>
 
@@ -276,6 +311,16 @@ puzzle([S,E,N,D,M,O,R,Y]) :-
         <p><b>Share</b> puts a file or a whole workspace INSIDE the link, in the
            part of a URL browsers never send to a server. Opening one never
            overwrites your files without asking.</p>
+
+        <h4>Debugging</h4>
+        <p><b>Debug</b> switches the page into debug mode: the engine restarts
+           compiled for debugging and your program is loaded again. Click the
+           strip left of the code to set a breakpoint, run a query, and when it
+           stops the <b>Call stack</b> and <b>Locals</b> panes show where it is
+           and what its variables hold — residual constraints included. Step
+           with the buttons above the answers; <b>Stop</b> abandons the query,
+           and <b>Debug</b> again returns to the normal top level. A hollow dot
+           is a breakpoint on a line the loaded program does not reach.</p>
 
         <h4>What is different here</h4>
         <p>The browser build runs the bytecode interpreter only: Shumway's
