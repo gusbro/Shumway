@@ -569,3 +569,47 @@ pre#immediate-log { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .stack-row { display: flex; gap: .8rem; align-items: baseline; }
 .stack-goal { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .stack-where { flex: none; color: var(--muted); font-size: 11px; }
+
+/* DISABLED breakpoint: kept but not armed — hollow grey, after the hollow-red
+   unbound rule so it wins when both would apply. */
+.gutter-row.bp.disabled::before {
+  background: none;
+  border: 2px solid var(--muted);
+}
+
+/* The gutter's right-click menu. */
+.gutter-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 13rem;
+  padding: .25rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: .45rem;
+  box-shadow: 0 6px 22px color-mix(in srgb, currentColor 18%, transparent);
+  display: flex;
+  flex-direction: column;
+}
+.gutter-menu button {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  justify-content: space-between;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: .85rem;
+  padding: .35rem .6rem;
+  border-radius: .3rem;
+}
+.gutter-menu button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.gutter-menu button:disabled { color: var(--muted); }
+.gutter-menu kbd {
+  font: 10.5px var(--mono);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: .25rem;
+  padding: 0 .3rem;
+}

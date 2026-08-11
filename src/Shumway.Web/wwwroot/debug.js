@@ -31,10 +31,16 @@ let currentLine = 0;         // 1-based stopped line in the CURRENT file, 0 = no
 let frameLine = 0;           // 1-based SELECTED-frame line in the current file
 let frameFile = '';          // ...and the file that line belongs to
 
-/** file name -> (1-based line -> {state:'bound'|'unbound', condition, log}).
+/** file name -> (1-based line ->
+ *  {state:'bound'|'unbound', condition, log, enabled}).
  *  Kept across consults and across mode switches: a dot the user placed is a
- *  statement about the program, not about one engine's lifetime. */
+ *  statement about the program, not about one engine's lifetime. A DISABLED
+ *  one is removed from the engine but kept here, grey — the VS convention. */
 const breakpoints = new Map();
+
+/** Run to Cursor's one-shot breakpoint: engine-side only, never drawn.
+ *  Cleared at the next stop, or when the query ends without reaching it. */
+let tempBp = null;
 
 /** Watch goals, re-evaluated against the selected frame at every stop.
  *  Each: { goal, result }. */
@@ -134,7 +140,8 @@ function onDebugKey(e) {
   switch (e.key) {
     case 'F9':
       e.preventDefault();
-      { const line = caretLine(); if (line > 0) toggleBreakpointAt(line); }
+      { const line = caretLine();
+        if (line > 0) (e.ctrlKey ? toggleEnableAt : toggleBreakpointAt)(line); }
       return;
     case 'F5':
       // Swallowed even when nothing is stopped: mid-session a reflex F5 would
@@ -143,6 +150,11 @@ function onDebugKey(e) {
       if (stopped) resume('continue');
       return;
     case 'F10':
+      if (e.ctrlKey) {         // Run to Cursor, the VS key
+        e.preventDefault();
+        { const line = caretLine(); if (line > 0) runToCursor(line); }
+        return;
+      }
       if (!stopped) return;
       e.preventDefault();
       resume('over');
@@ -225,8 +237,42 @@ export function fileChanged() {
 async function applyBreakpoint(file, line) {
   const bp = breakpoints.get(file)?.get(line);
   if (!bp) return;
+  if (!bp.enabled) {
+    await session.debugBreakpoint(file, line, false);
+    return;
+  }
   const err = await session.debugBreakpoint(file, line, true, bp.condition || '');
   bp.state = err ? 'unbound' : 'bound';
+}
+
+async function toggleEnableAt(line) {
+  const file = getFile();
+  const bp = file && breakpoints.get(file)?.get(line);
+  if (!bp || !debugMode) return;
+  bp.enabled = !bp.enabled;
+  await applyBreakpoint(file, line);
+  renderGutter();
+}
+
+/** Run to Cursor: a one-shot engine breakpoint at the line, then continue.
+ *  Meaningful while stopped (resume to there) or running (arm ahead). */
+async function runToCursor(line) {
+  const file = getFile();
+  if (!file || !debugMode || (!stopped && !running)) return;
+  tempBp = { file, line };
+  await session.debugBreakpoint(file, line, true, '');
+  if (stopped) await resume('continue');
+}
+
+/** Retires the one-shot breakpoint: gone from the engine, or handed back to
+ *  the REAL breakpoint at the same line (condition included). */
+async function clearTempBp() {
+  if (!tempBp) return;
+  const { file, line } = tempBp;
+  tempBp = null;
+  const real = breakpoints.get(file)?.get(line);
+  if (real && real.enabled) await applyBreakpoint(file, line);
+  else await session.debugBreakpoint(file, line, false);
 }
 
 // --- the stop ------------------------------------------------------------
@@ -244,6 +290,7 @@ export function onStop(stop) {
     }
   }
 
+  clearTempBp();               // Run to Cursor's shot is spent, wherever we stopped
   stopped = stop;
   selectedFrame = 0;
   frameLine = 0;
@@ -274,10 +321,17 @@ function interpolate(message, frame) {
   });
 }
 
-/** The search moved on — resumed into a solution, an end, or an abort. The
- *  last stack stays visible but dimmed: what it shows is a moment ago, not
- *  now. */
+/** The search came BACK — a solution, an end, an abort (main.js calls this
+ *  when the pending pull resolves). Run to Cursor's shot retires here: the
+ *  run is over and it was not hit. NOT called on resume — the whole point of
+ *  the one-shot breakpoint is to be armed while the search runs. */
 export function clearStopped() {
+  clearTempBp();
+  clearStoppedUi();
+}
+
+/** The UI side alone — used by resume, where the temp breakpoint must live. */
+function clearStoppedUi() {
   if (!stopped) return;
   stopped = null;
   currentLine = 0;
@@ -305,7 +359,7 @@ async function resume(mode) {
   // bounds a runaway evaluation at its own 15s timeout).
   await drainEvals();
   if (!stopped) return;      // the drain can outlive the stop (cancel won)
-  clearStopped();
+  clearStoppedUi();
   statusEl.textContent = 'running…';
   await session.debugResume(mode);
 }
@@ -597,7 +651,8 @@ function renderGutter() {
     const bp = fileBps?.get(line);
     if (bp) {
       row.classList.add('bp', bp.state);
-      if (bp.log) row.classList.add('log');
+      if (!bp.enabled) row.classList.add('disabled');
+      else if (bp.log) row.classList.add('log');
       else if (bp.condition) row.classList.add('conditional');
     }
     if (debugMode && line === currentLine) row.classList.add('current');
@@ -633,23 +688,78 @@ async function toggleBreakpointAt(line) {
     await session.debugBreakpoint(file, line, false);
   } else {
     if (!breakpoints.has(file)) breakpoints.set(file, new Map());
-    breakpoints.get(file).set(line, { state: 'unbound', condition: '', log: '' });
+    breakpoints.get(file).set(line,
+      { state: 'unbound', condition: '', log: '', enabled: true });
     await applyBreakpoint(file, line);
   }
   renderGutter();
 }
 
-/** Right-click: the breakpoint's extras — condition and log message. Creates
- *  the breakpoint if the line has none yet. */
-async function onGutterMenu(e) {
+/** Right-click: the debugger's line menu — toggle, enable/disable, the
+ *  condition/logpoint dialog, Run to Cursor. */
+function onGutterMenu(e) {
   const line = Number(e.target?.dataset?.line);
   const file = getFile();
   if (!line || !file || !debugMode) return;
   e.preventDefault();
+  const bp = breakpoints.get(file)?.get(line);
+  showMenu(e.clientX, e.clientY, [
+    { label: bp ? 'Remove breakpoint' : 'Set breakpoint',
+      key: 'F9', run: () => toggleBreakpointAt(line) },
+    bp && { label: bp.enabled ? 'Disable breakpoint' : 'Enable breakpoint',
+      key: 'Ctrl+F9', run: () => toggleEnableAt(line) },
+    { label: 'Condition / logpoint…', run: () => openBpDialog(line) },
+    { label: 'Run to cursor', key: 'Ctrl+F10',
+      disabled: !stopped && !running, run: () => runToCursor(line) },
+  ].filter(Boolean));
+}
+
+/** A small positioned menu; any click or Escape takes it down. */
+function showMenu(x, y, items) {
+  document.querySelector('.gutter-menu')?.remove();
+  const menu = document.createElement('div');
+  menu.className = 'gutter-menu';
+  for (const item of items) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.disabled = !!item.disabled;
+    const label = document.createElement('span');
+    label.textContent = item.label;
+    b.appendChild(label);
+    if (item.key) {
+      const key = document.createElement('kbd');
+      key.textContent = item.key;
+      b.appendChild(key);
+    }
+    b.addEventListener('click', () => { close(); item.run(); });
+    menu.appendChild(b);
+  }
+  const close = () => {
+    menu.remove();
+    removeEventListener('pointerdown', away, true);
+    removeEventListener('keydown', esc, true);
+  };
+  const away = (ev) => { if (!menu.contains(ev.target)) close(); };
+  const esc = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+  addEventListener('pointerdown', away, true);
+  addEventListener('keydown', esc, true);
+  document.body.appendChild(menu);
+  // On screen, then clamped: a menu opened near an edge stays readable.
+  const r = menu.getBoundingClientRect();
+  menu.style.left = Math.min(x, innerWidth - r.width - 8) + 'px';
+  menu.style.top = Math.min(y, innerHeight - r.height - 8) + 'px';
+}
+
+/** The breakpoint's extras — condition and log message. Creates the
+ *  breakpoint if the line has none yet. */
+async function openBpDialog(line) {
+  const file = getFile();
+  if (!file) return;
   if (!breakpoints.has(file)) breakpoints.set(file, new Map());
   const fileBps = breakpoints.get(file);
   const existed = fileBps.has(line);
-  const bp = fileBps.get(line) ?? { state: 'unbound', condition: '', log: '' };
+  const bp = fileBps.get(line)
+    ?? { state: 'unbound', condition: '', log: '', enabled: true };
 
   const dialog = $('bp-dialog');
   $('bp-title').textContent = `Breakpoint — ${file}:${line}`;
