@@ -138,41 +138,45 @@ public class Adr035LazyDebugTests
         //  7: loop.
         //  8: tick(30000) :- !, assertz(log(seen)).
         //  9: tick(_).
-        // (Trigger at I = 30000 ≈ hundreds of ms of debug-mode iterations —
-        // ~25× the armer's 30 ms sleep, same guarantee as the original 150000
-        // at a fraction of the wall time.)
+        // NO timing calibration: the loop's bound is effectively infinite, the
+        // breakpoint sits on a clause hit at EVERY iteration once the arm
+        // lands, and the FIRST stop cancels the query — so the test's wall
+        // time is the arm latency plus a handful of iterations, whatever the
+        // machine. (Its predecessor raced a fixed trigger iteration against
+        // the armer's sleep; on a contended CI runner the armer's wakeup
+        // slipped past the whole loop and stops was 0 — twice on GitHub.)
         var engine = DebugCompiledEngine(
-            ":- dynamic(log/1).\n" +
-            "loop :-\n    between(1, 40000, I),\n    tick(I),\n    fail.\nloop.\n" +
-            "tick(30000) :- !, assertz(log(seen)).\ntick(_).\n");
+            "loop :-\n    between(1, 1000000000, I),\n    tick(I),\n    fail.\nloop.\n" +
+            "tick(_).\n");
         int stops = 0;
+        using var cts = new System.Threading.CancellationTokenSource();
         ChannelDebugSession? session = null;
         session = new ChannelDebugSession(engine, _ =>
         {
             stops++;
+            cts.Cancel();   // the first stop proves the arm reached the query
             session!.Channel.WriteCommands(new DebugCommand(DebugCommandKind.Continue));
         }) { ActivateOnAttach = true };
         engine.DebugFullyArmed = false;
         engine.DebugLcoWhenArmed = false;
         engine.SetDebugLastCall(true);
-        // Inside the cut clause — reached exactly once, at I = 30000, long after the
-        // arm lands.
-        Assert.True(engine.AddBreakpoint("<string>", 8) > 0);
+        // tick(_)'s clause — hit on every iteration once the mid-run arm lands.
+        Assert.True(engine.AddBreakpoint("<string>", 7) > 0);
 
         using (session)
         {
             var armer = new System.Threading.Thread(() =>
             {
-                System.Threading.Thread.Sleep(30);   // let the loop get going, unarmed
+                System.Threading.Thread.Sleep(10);   // let the loop get going, unarmed
                 session.ActivateFullDebug();
             });
             armer.Start();
-            engine.QueryAll("loop.").ToList();
+            try { engine.QueryAll("loop.", cts.Token).ToList(); }
+            catch (OperationCanceledException) { /* the stop handler ended the run */ }
             armer.Join();
         }
 
         _log.WriteLine($"stops: {stops}");
         Assert.True(stops > 0, "the mid-run arm must reach the running query");
-        Assert.Single(engine.QueryAll("log(seen).").ToList());
     }
 }
