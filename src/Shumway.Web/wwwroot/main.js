@@ -781,7 +781,7 @@ let currentDialect = '';
 function editingWorkspaceFile(name) {
   currentLib = null;
   currentDialect = '';
-  editingWorkspaceFile(name);
+  currentFile = name;
 }
 
 /** Writes the editor's buffer back to its file, then mirrors to storage. */
