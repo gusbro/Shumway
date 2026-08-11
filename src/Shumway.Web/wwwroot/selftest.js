@@ -328,6 +328,12 @@ export async function run(session, emit, out, editor, workspace) {
             'dbg_run/1');
       check('its variables are visible',
             top && top.vars.some((v) => v.value === '1'), true);
+      // The Immediate window, engine-side: a goal naming a frame variable
+      // evaluates against the frame's CURRENT value (X is 1 here).
+      check('evaluate against the frame', await session.debugEvaluate(0, 'X =:= 1.'), 'true');
+      check('evaluate binds a copy', await session.debugEvaluate(0, 'Y = X.'), 'Y = 1');
+      check('frames re-capture while stopped',
+            (await session.debugFrames())?.frames.length > 0, true);
       check('resume wakes the search', await session.debugResume('continue'), true);
       check('and the query answers', await answer, 'Out = 1');
     }

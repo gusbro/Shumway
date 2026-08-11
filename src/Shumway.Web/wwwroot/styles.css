@@ -476,3 +476,25 @@ body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
 .debug-row.muted { color: var(--muted); }
 /* The query moved on: the last stop's stack stays readable but visibly past. */
 .debug-pane.stale .debug-list { opacity: .55; }
+
+/* Breakpoint variants. A condition marks the dot with a hole ring tint; a
+   logpoint is a different thing (it never stops) so it changes colour. */
+.gutter-row.bp.conditional::before {
+  background: var(--error);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--error) 35%, white);
+}
+.gutter-row.bp.log::before { background: var(--accent); }
+.gutter-row.bp.log.unbound::before { background: none; border-color: var(--accent); }
+
+#watch-form { display: flex; gap: .35rem; margin-top: .4rem; }
+#watch-form input { flex: 1; min-width: 0; font: 12px var(--mono); }
+#watch-form button { font-size: .82rem; padding: .3rem .6rem; }
+.watch-goal { color: inherit; }
+.watch-result { color: var(--muted); }
+.watch-row { display: flex; gap: .4rem; align-items: baseline; }
+.watch-row .watch-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.watch-remove {
+  border: 0; background: none; color: var(--muted);
+  cursor: pointer; font-size: .8rem; padding: 0 .15rem;
+}
+.watch-remove:hover { color: var(--error); }

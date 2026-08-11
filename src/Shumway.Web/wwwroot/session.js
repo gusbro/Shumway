@@ -106,14 +106,29 @@ export async function shareDecode(encoded) {
  *  again afterwards — debuggability is decided when a clause compiles. */
 export const debugEnable = async () => engine.DebugEnable();
 
-/** Sets (or removes) a breakpoint. The editor's buffer is file `<string>`.
+/** Sets (or removes) a breakpoint, optionally with a condition goal.
+ *  Breakpoints bind by file BASE NAME — pass the workspace file's name.
  *  Resolves to null, or why it could not bind. */
-export const debugBreakpoint = async (file, line, set = true) =>
-  engine.DebugBreakpoint(file, line, set);
+export const debugBreakpoint = async (file, line, set = true, condition = '') =>
+  engine.DebugBreakpoint(file, line, set, condition);
 
 /** Wakes a stopped search: 'continue' | 'into' | 'over' | 'out'.
  *  Resolves false when nothing was stopped. */
 export const debugResume = async (mode = 'continue') => engine.DebugResume(mode);
+
+/** Evaluates a goal against a frame of the SUSPENDED query — the Immediate
+ *  window. `!goal` runs on the real frame; a bare `;` asks the parked
+ *  evaluation for its next solution. Resolves to the result text. */
+export const debugEvaluate = async (frameIndex, goal) =>
+  engine.DebugEvaluate(frameIndex, goal);
+
+/** The suspended query's frames as they are NOW (same JSON as the stop
+ *  event), for refreshing after `!` changed the frame — or null. */
+export async function debugFrames() {
+  const json = await engine.DebugFramesNow();
+  if (!json || json.startsWith('error')) return null;
+  try { return JSON.parse(json); } catch { return null; }
+}
 
 /** Flat [start, length, kind, …] spans covering `source`, from the engine's lexer. */
 export async function highlight(source) {

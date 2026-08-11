@@ -267,6 +267,10 @@ document.getElementById('query-form').addEventListener('submit', async (e) => {
   if (queryHistory[queryHistory.length - 1] !== text) queryHistory.push(text);
   historyAt = queryHistory.length;
   draft = '';
+  // While a query is STOPPED at a breakpoint the box is the Immediate window:
+  // the goal evaluates against the selected frame (a real QueryStart would
+  // queue behind the engine gate the suspended search holds).
+  if (debugUi.isStopped()) { await debugUi.evaluate(text); return; }
   await run(text.endsWith('.') ? text : text + '.');
 });
 
@@ -828,6 +832,9 @@ async function refreshWorkspaces() {
 }
 
 async function refreshFiles() {
+  // Runs after every change of which file is on screen, so it is also the
+  // one place that tells the debug gutter to show THAT file's dots.
+  debugUi.fileChanged();
   const names = await workspace.list();
   const chips = names.map((name) => {
     const item = document.createElement('button');
@@ -1167,8 +1174,15 @@ async function consultBuffer(note) {
   await abandonQuery();
   await saveBuffer();
   const started = performance.now();
+  // In debug mode a workspace file is consulted BY ITS FILE (it was just
+  // saved), so its debug sites — and everyone's breakpoints — key by the
+  // file's name instead of the anonymous buffer. A library file keeps the
+  // buffer path either way.
   const err = await whileConsulting(
-    () => withBusy('consulting', () => session.consult(program(), currentDialect)));
+    () => withBusy('consulting', () =>
+      debugUi.active() && currentLib === null
+        ? workspace.consultFile(currentFile)
+        : session.consult(program(), currentDialect)));
   const took = Math.round(performance.now() - started);
   if (!err) {
     editor?.markError(null);
@@ -1261,6 +1275,9 @@ debugUi.init({
   emit, statusEl, consultBuffer,
   editorEl: programEl,
   getText: program,
+  // The file whose lines the gutter's dots belong to — null for a library
+  // file, where breakpoints are not offered.
+  getFile: () => (currentLib === null ? currentFile : null),
 });
 
 // Settings of another version are discarded rather than guessed at (see

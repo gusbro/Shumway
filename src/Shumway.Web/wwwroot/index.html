@@ -144,6 +144,15 @@ par(b, c)."></div>
           <h2>Locals</h2>
           <div id="debug-locals" class="debug-list"></div>
         </div>
+        <div>
+          <h2>Watches</h2>
+          <div id="debug-watches" class="debug-list"></div>
+          <form id="watch-form" autocomplete="off">
+            <input id="watch-input" type="text" spellcheck="false" autocapitalize="off"
+                   placeholder="goal to watch, e.g. length(Xs, N)" />
+            <button type="submit">Add</button>
+          </form>
+        </div>
       </div>
     </section>
   </div>
@@ -314,13 +323,24 @@ puzzle([S,E,N,D,M,O,R,Y]) :-
 
         <h4>Debugging</h4>
         <p><b>Debug</b> switches the page into debug mode: the engine restarts
-           compiled for debugging and your program is loaded again. Click the
-           strip left of the code to set a breakpoint, run a query, and when it
-           stops the <b>Call stack</b> and <b>Locals</b> panes show where it is
-           and what its variables hold — residual constraints included. Step
-           with the buttons above the answers; <b>Stop</b> abandons the query,
-           and <b>Debug</b> again returns to the normal top level. A hollow dot
-           is a breakpoint on a line the loaded program does not reach.</p>
+           compiled for debugging and your program is loaded again — by its
+           file name, so breakpoints work in every file of the workspace, not
+           just the one on screen. Click the strip left of the code to set a
+           breakpoint, run a query, and when it stops the <b>Call stack</b> and
+           <b>Locals</b> panes show where it is and what its variables hold —
+           residual constraints included. Step with the buttons above the
+           answers; <b>Stop</b> abandons the query, and <b>Debug</b> again
+           returns to the normal top level. A hollow dot is a breakpoint on a
+           line the loaded program does not reach.</p>
+        <p>While stopped, the <b>?-</b> box evaluates against the selected
+           frame: variables you name mean that frame's variables. A goal runs
+           on a copy — <code>;</code> asks for its next solution — and a goal
+           prefixed with <code>!</code> runs on the real frame, so a binding or
+           a posted constraint sticks (append <code>, fail</code> for a dry
+           run). <b>Watches</b> re-evaluate their goals at every stop.
+           Right-click a breakpoint dot for extras: a <i>condition</i> (stop
+           only when the goal succeeds) or a <i>log message</i> (print and keep
+           going — <code>{X}</code> holes fill from the frame).</p>
 
         <h4>What is different here</h4>
         <p>The browser build runs the bytecode interpreter only: Shumway's
@@ -349,6 +369,31 @@ puzzle([S,E,N,D,M,O,R,Y]) :-
         <button type="button" data-close>Cancel</button>
         <button value="file" class="primary">This file</button>
         <button value="workspace">Whole workspace</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- A breakpoint's extras: a condition goal (evaluated engine-side against
+       the frame — stop only when it succeeds) and a log message (the stop
+       prints and continues by itself; {Var} holes fill from the frame). -->
+  <dialog id="bp-dialog">
+    <form method="dialog">
+      <h3 id="bp-title">Breakpoint</h3>
+      <label class="field">Condition (a goal; empty = always stop)
+        <input id="bp-condition" type="text" spellcheck="false" autocapitalize="off"
+               placeholder="X > 3" />
+      </label>
+      <label class="field">Log message (makes it a logpoint: print and continue)
+        <input id="bp-log" type="text" spellcheck="false" autocapitalize="off"
+               placeholder="reached with X = {X}" />
+      </label>
+      <div class="row end">
+        <!-- Remove is NOT a submit button: in a method="dialog" form, Enter
+             presses the FIRST submit, and typing a condition then pressing
+             Enter must mean Apply, not Remove. -->
+        <button type="button" data-close>Cancel</button>
+        <button type="button" id="bp-remove">Remove breakpoint</button>
+        <button value="ok" class="primary">Apply</button>
       </div>
     </form>
   </dialog>

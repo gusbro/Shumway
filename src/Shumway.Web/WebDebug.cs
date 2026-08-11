@@ -65,34 +65,82 @@ internal static partial class WebShumwayApp
             catch (Exception ex) { return "error: " + ex.Message; }
         });
 
-    /// <summary>Sets or removes a breakpoint. The editor's buffer consults as
-    /// <c>&lt;string&gt;</c>; workspace files by their path. Only bindable AFTER the
-    /// file is consulted (debug-compiled code is what carries the line map), and
-    /// only while the engine is idle — not from inside a stop.</summary>
+    /// <summary>Sets or removes a breakpoint, optionally guarded by a condition goal
+    /// (empty = unconditional; a set REPLACES the previous condition — the page writes
+    /// its whole desired state each time). Breakpoints bind by file BASE NAME, so the
+    /// page passes the workspace file's name and it matches however the file was
+    /// consulted. WHILE STOPPED the engine gate is held by the suspended search, so
+    /// the call bypasses it — the engine is parked, and its breakpoint table is
+    /// arm-gate-serialized on its own (the flow every desktop debugger uses).</summary>
     [JSExport]
-    internal static Task<string?> DebugBreakpoint(string file, int line, bool set)
-        => OnEngine(() =>
+    internal static Task<string?> DebugBreakpoint(string file, int line, bool set, string condition)
+        => Volatile.Read(ref _debugStopPending) == 1
+            ? Task.FromResult(BreakpointCore(file, line, set, condition, warmUp: false))
+            : OnEngine(() => BreakpointCore(file, line, set, condition, warmUp: true));
+
+    private static string? BreakpointCore(
+        string file, int line, bool set, string condition, bool warmUp)
+    {
+        try
+        {
+            var engine = _session!.Engine;
+            if (!set) { engine.RemoveBreakpoint(file, line); return null; }
+            string? cond = condition.Length == 0 ? null : condition;
+            int bound = engine.AddBreakpoint(file, line, cond);
+            if (bound == 0 && warmUp)
+            {
+                // Once an engine has run a query, a consult defers compiling its
+                // clauses to the NEXT query's setup — and a breakpoint only binds
+                // to COMPILED sites. Force that setup and retry.
+                foreach (var _ in engine.QueryAll("true.")) { }
+                bound = engine.AddBreakpoint(file, line, cond);
+            }
+            return bound > 0
+                ? null
+                : "error: no debuggable code at " + file + ":" + line
+                  + " (consult first, with debug enabled)";
+        }
+        catch (Exception ex) { return "error: " + ex.Message; }
+    }
+
+    /// <summary>The Immediate window: evaluates <paramref name="goal"/> against display
+    /// frame <paramref name="frameIndex"/> of the SUSPENDED query — the engine-side
+    /// semantics of the desktop debuggers, including the <c>!</c> on-frame prefix and a
+    /// bare <c>;</c> for the next solution. Only meaningful while stopped. UNGATED (the
+    /// stop holds the engine gate) but on a pool thread: an evaluation may run to its
+    /// 15-second timeout, and the runtime thread must stay free.</summary>
+    [JSExport]
+    internal static Task<string> DebugEvaluate(int frameIndex, string goal)
+    {
+        var debug = _debug;
+        if (debug is null || Volatile.Read(ref _debugStopPending) != 1)
+            return Task.FromResult("nothing is stopped: no frame to evaluate against");
+        return Task.Run(() =>
+        {
+            try { return debug.EvaluateGoal(frameIndex, goal); }
+            catch (Exception ex) { return "error: " + ex.Message; }
+        });
+    }
+
+    /// <summary>Re-captures the suspended query's frames — variables and residual
+    /// constraints as they are NOW, after an on-frame <c>!</c> evaluation changed
+    /// them. Same JSON as the stop event; empty when nothing is stopped.</summary>
+    [JSExport]
+    internal static Task<string> DebugFramesNow()
+    {
+        var debug = _debug;
+        if (debug is null || Volatile.Read(ref _debugStopPending) != 1)
+            return Task.FromResult("");
+        return Task.Run(() =>
         {
             try
             {
-                var engine = _session!.Engine;
-                if (!set) { engine.RemoveBreakpoint(file, line); return (string?)null; }
-                int bound = engine.AddBreakpoint(file, line);
-                if (bound == 0)
-                {
-                    // Once an engine has run a query, a consult defers compiling
-                    // its clauses to the NEXT query's setup — and a breakpoint
-                    // only binds to COMPILED sites. Force that setup and retry.
-                    foreach (var _ in engine.QueryAll("true.")) { }
-                    bound = engine.AddBreakpoint(file, line);
-                }
-                return bound > 0
-                    ? (string?)null
-                    : "error: no debuggable code at " + file + ":" + line
-                      + " (consult first, with debug enabled)";
+                var now = debug.CaptureNow();
+                return now is null ? "" : SerializeStop(now);
             }
             catch (Exception ex) { return "error: " + ex.Message; }
         });
+    }
 
     /// <summary>Wakes the stopped search: <c>continue</c>, <c>into</c>, <c>over</c>
     /// or <c>out</c>. False when nothing was stopped. Deliberately NOT gated — see
@@ -153,6 +201,9 @@ internal static partial class WebShumwayApp
             // and BreakFile/BreakLine differ by design.
             w.WriteString("breakFile", e.BreakFile);
             w.WriteNumber("breakLine", e.BreakLine);
+            // Why a CONDITIONAL breakpoint stopped without its condition
+            // holding (it could not run); empty for every ordinary stop.
+            w.WriteString("conditionError", e.ConditionError);
             w.WriteStartArray("frames");
             foreach (var f in e.Frames)
             {
