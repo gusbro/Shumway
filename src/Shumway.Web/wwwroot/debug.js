@@ -51,8 +51,13 @@ export function init(deps) {
     const goal = $('immediate-input').value.trim();
     if (!goal) return;
     $('immediate-input').value = '';
+    if (immHistory[immHistory.length - 1] !== goal) immHistory.push(goal);
+    immAt = immHistory.length;
+    immDraft = '';
     evaluate(goal);
   });
+  $('immediate-input').addEventListener('keydown', onImmediateKey);
+  $('dbg-pause').addEventListener('click', () => session.debugBreakNow());
   $('debug-toggle').addEventListener('click', () => toggle());
   $('dbg-continue').addEventListener('click', () => resume('continue'));
   $('dbg-into').addEventListener('click', () => resume('into'));
@@ -86,6 +91,36 @@ export function init(deps) {
 
 export const active = () => debugMode;
 export const isStopped = () => stopped !== null;
+
+// Whether a query is SEARCHING right now (main.js reports it around each
+// pull of the next solution). Break is the one button that lives then.
+let running = false;
+export function setRunning(on) {
+  running = on;
+  updateButtons();
+}
+
+// --- the Immediate input's history, the query box's manners ---------------
+
+const immHistory = [];
+let immAt = 0;
+let immDraft = '';
+
+function onImmediateKey(e) {
+  const input = $('immediate-input');
+  if (e.key === 'ArrowUp') {
+    if (immAt === 0) return;
+    e.preventDefault();
+    if (immAt === immHistory.length) immDraft = input.value;
+    immAt--;
+    input.value = immHistory[immAt];
+  } else if (e.key === 'ArrowDown') {
+    if (immAt >= immHistory.length) return;
+    e.preventDefault();
+    immAt++;
+    input.value = immAt === immHistory.length ? immDraft : immHistory[immAt];
+  }
+}
 
 function selectTab(id) {
   for (const b of document.querySelectorAll('#debug-tabs .tab-bar button'))
@@ -265,14 +300,31 @@ function restorePrompt() {
 
 async function resume(mode) {
   if (!stopped) return;
+  // An evaluation still in flight runs ON the parked machine; resuming under
+  // it is the race that left the engine catatonic. Drain first (the engine
+  // bounds a runaway evaluation at its own 15s timeout).
+  await drainEvals();
+  if (!stopped) return;      // the drain can outlive the stop (cancel won)
   clearStopped();
   statusEl.textContent = 'running…';
   await session.debugResume(mode);
 }
 
+/** Waits for any in-flight Immediate/watch evaluations, capped so an
+ *  abandoning caller (Stop) is never held hostage by a slow goal. */
+export function drainEvals(capMs = 4000) {
+  return Promise.race([evalChain, new Promise((r) => setTimeout(r, capMs))]);
+}
+
 function setToolbar(enabled) {
   for (const id of ['dbg-continue', 'dbg-into', 'dbg-over', 'dbg-out'])
     $(id).disabled = !enabled;
+  updateButtons();
+}
+
+function updateButtons() {
+  // Break is the inverse of the steps: alive while the search runs free.
+  $('dbg-pause').disabled = !(debugMode && running && !stopped);
 }
 
 // --- the Immediate window ------------------------------------------------
@@ -287,6 +339,33 @@ function immLog(text, role = '') {
   log.scrollTop = log.scrollHeight;
 }
 
+/** ONE evaluation at a time, page-wide: the engine refuses overlapping
+ *  evaluations ("an evaluation is already running"), and a watch sweep
+ *  colliding with a typed goal produced exactly that. Everything that
+ *  evaluates goes through this chain. */
+let evalChain = Promise.resolve();
+
+function enqueueEval(fn) {
+  const run = evalChain.then(fn, fn);
+  evalChain = run.then(() => {}, () => {});
+  return run;
+}
+
+/** A bare variable name — `X` or `X.` — is a QUESTION about the frame, not a
+ *  goal (as a goal it is call(<value>), a nonsense the engine answers with an
+ *  existence error). Answered from the frame directly, residuals included.
+ *  Returns null when the text is not a bare variable. */
+function frameVariableAnswer(text) {
+  const m = /^([A-Z_][A-Za-z0-9_]*)\s*\.?$/.exec(text);
+  if (!m) return null;
+  const frame = stopped?.frames[selectedFrame];
+  if (!frame) return null;
+  const v = frame.vars.find((x) => x.name === m[1]);
+  if (!v) return `unknown variable ${m[1]} in this frame`;
+  const residual = frame.residuals.find((r) => r.var === m[1]);
+  return `${v.name} = ${v.value}` + (residual ? `  ⟨${residual.goals}⟩` : '');
+}
+
 /** A goal from the Immediate tab or the ?- box while stopped: evaluated
  *  against the selected frame, with the engine's Immediate semantics — `!`
  *  on-frame, `;` for the parked evaluation's next solution. The conversation
@@ -296,12 +375,17 @@ export async function evaluate(goalText) {
   if (!stopped) return;
   selectTab('tab-immediate');
   immLog('?- ' + goalText + '\n', 'query');
-  const result = await session.debugEvaluate(selectedFrame, goalText);
+
+  const direct = frameVariableAnswer(goalText.trim());
+  if (direct !== null) { immLog(direct + '\n', 'answer'); return; }
+
+  const result = await enqueueEval(
+    () => session.debugEvaluate(selectedFrame, goalText));
   immLog(result + '\n', /error/i.test(result) ? 'error' : 'answer');
   // `!` runs on the REAL frame: what Locals and the residual rows show may
   // just have changed. Re-capture rather than guess.
   if (goalText.trim().startsWith('!') && stopped) {
-    const now = await session.debugFrames();
+    const now = await enqueueEval(() => session.debugFrames());
     if (now && stopped) {
       stopped = { ...stopped, frames: now.frames };
       if (selectedFrame >= now.frames.length) selectedFrame = 0;
@@ -323,10 +407,13 @@ async function evalWatches() {
     if (stopped !== at || run !== watchRun) return;   // the world moved on
     if (w.goal.startsWith('!')) {
       // Re-running an on-frame goal at EVERY stop would repeat its effects
-      // silently; that gesture belongs to the ?- box, one shot at a time.
-      w.result = 'on-frame goals (!) are for the ?- box';
+      // silently; that gesture belongs to the Immediate box, one shot at a time.
+      w.result = 'on-frame goals (!) are for the Immediate box';
     } else {
-      w.result = await session.debugEvaluate(selectedFrame, w.goal);
+      const direct = frameVariableAnswer(w.goal);
+      w.result = direct !== null
+        ? direct
+        : await enqueueEval(() => session.debugEvaluate(selectedFrame, w.goal));
     }
     renderWatches();
   }
@@ -376,9 +463,19 @@ function renderStack() {
   if (!stopped) return;
   stopped.frames.forEach((f, i) => {
     const row = document.createElement('div');
-    row.className = 'debug-row' + (i === selectedFrame ? ' selected' : '');
-    const where = f.line > 0 ? `  ${basename(f.file)}:${f.line}` : '';
-    row.textContent = `${f.name}${f.headArgs || ''}${where}`;
+    row.className = 'debug-row stack-row' + (i === selectedFrame ? ' selected' : '');
+    const goal = document.createElement('span');
+    goal.className = 'stack-goal';
+    // total(...)!2 — the VS convention: WHICH clause of the predicate runs.
+    goal.textContent = `${f.name}${f.headArgs || ''}`
+      + (f.clause > 0 ? `!${f.clause}` : '');
+    row.appendChild(goal);
+    if (f.line > 0) {
+      const where = document.createElement('span');
+      where.className = 'stack-where';
+      where.textContent = `${basename(f.file).replace(/\.pl$/, '')}:${f.line}`;
+      row.appendChild(where);
+    }
     row.title = `${f.name}/${f.arity}`;
     row.addEventListener('click', async () => {
       selectedFrame = i;

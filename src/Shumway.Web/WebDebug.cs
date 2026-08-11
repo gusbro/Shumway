@@ -59,6 +59,15 @@ internal static partial class WebShumwayApp
                 // RUNTIME flag, set the way the debug test suites set it.
                 foreach (var _ in engine.QueryAll("set_prolog_flag(debug_lco, off).")) { }
                 _debug = new DebugService(engine, OnDebugStop);
+                // Break All: the page sets a flag (DebugBreakNow); the engine
+                // notices it at a port — the poll the desktop's F9-mid-run
+                // rides — and stops right there through the normal handler.
+                var debug = _debug;
+                debug.Poll = () =>
+                {
+                    if (Interlocked.Exchange(ref _breakNowRequested, 0) == 1)
+                        debug.BreakHereNow();
+                };
                 engine.AttachDebugSession(_debug);
                 return (string?)null;
             }
@@ -149,6 +158,20 @@ internal static partial class WebShumwayApp
     internal static Task<bool> DebugResume(string mode)
         => Task.FromResult(TryReleaseStop(mode));
 
+    /// <summary>Asks the RUNNING search to pause at its next goal (Break All).
+    /// Only a flag — the engine reads it at a port, on its own thread.</summary>
+    [JSExport]
+    internal static Task<bool> DebugBreakNow()
+    {
+        Interlocked.Exchange(ref _breakNowRequested, 1);
+        return Task.FromResult(true);
+    }
+
+    /// <summary>1 while the page has asked for a Break All the engine has not yet
+    /// honoured. Cleared when a run ends, so a pause requested too late cannot
+    /// ambush the NEXT query at its first goal.</summary>
+    private static int _breakNowRequested;
+
     /// <summary>Engine-gated normally, direct while a debug stop is pending: the
     /// suspended search HOLDS the gate, and the engine is parked — reading or
     /// writing workspace files then is safe and must not queue behind a gate
@@ -221,6 +244,8 @@ internal static partial class WebShumwayApp
                 w.WriteString("name", f.Name);
                 w.WriteNumber("arity", f.Arity);
                 w.WriteString("headArgs", f.HeadArgs);
+                // Which clause of its predicate is running, 1-based; 0 unknown.
+                w.WriteNumber("clause", f.ClauseNumber);
                 w.WriteString("file", f.File);
                 w.WriteNumber("line", f.Line);
                 w.WriteStartArray("vars");

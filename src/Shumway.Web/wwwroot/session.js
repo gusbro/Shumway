@@ -116,6 +116,9 @@ export const debugBreakpoint = async (file, line, set = true, condition = '') =>
  *  Resolves false when nothing was stopped. */
 export const debugResume = async (mode = 'continue') => engine.DebugResume(mode);
 
+/** Asks the RUNNING search to pause at its next goal (Break All). */
+export const debugBreakNow = async () => engine.DebugBreakNow();
+
 /** Evaluates a goal against a frame of the SUSPENDED query — the Immediate
  *  window. `!goal` runs on the real frame; a bare `;` asks the parked
  *  evaluation for its next solution. Resolves to the result text. */

@@ -563,3 +563,9 @@ pre#immediate-log { margin: 0; white-space: pre-wrap; word-break: break-word; }
 #immediate-form { display: flex; gap: .35rem; margin-top: .4rem; }
 #immediate-form input { flex: 1; min-width: 0; font: 12px var(--mono); }
 #immediate-form button { font-size: .82rem; padding: .3rem .6rem; }
+
+/* Stack rows: the goal on the left, where-it-is pinned to the right — the
+   alignment a stack is read by. */
+.stack-row { display: flex; gap: .8rem; align-items: baseline; }
+.stack-goal { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.stack-where { flex: none; color: var(--muted); font-size: 11px; }

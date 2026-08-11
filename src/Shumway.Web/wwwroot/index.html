@@ -119,6 +119,9 @@ par(b, c)."></div>
                 title="stop at the next goal no deeper than this one (F10)">Step over</button>
         <button id="dbg-out" type="button"
                 title="run out of the current predicate (Shift+F11)">Step out</button>
+        <!-- The inverse of the others: alive while the search RUNS. -->
+        <button id="dbg-pause" type="button"
+                title="pause the running query at its next goal">Break</button>
       </div>
       <pre id="out" tabindex="0">loading the engine…</pre>
       <p id="status" class="status" aria-live="polite"></p>
@@ -347,10 +350,13 @@ puzzle([S,E,N,D,M,O,R,Y]) :-
            included). Step with the buttons above the answers or the usual
            keys: <kbd>F5</kbd> continue, <kbd>F10</kbd> step over,
            <kbd>F11</kbd> step into, <kbd>Shift</kbd>+<kbd>F11</kbd> step out,
-           <kbd>F9</kbd> toggle a breakpoint on the caret's line. <b>Stop</b>
-           abandons the query, and <b>Debug</b> again returns to the normal
-           top level. A hollow dot is a breakpoint on a line the loaded
-           program does not reach.</p>
+           <kbd>F9</kbd> toggle a breakpoint on the caret's line. <b>Break</b>
+           pauses a running query at its next goal — it lands in your
+           program's code, so a goal made only of builtins offers it nowhere
+           to stop (Stop still works there). <b>Stop</b> abandons the query,
+           and <b>Debug</b> again returns to the normal top level. A hollow
+           dot is a breakpoint on a line the loaded program does not
+           reach.</p>
         <p>While stopped, the <b>?-</b> box evaluates against the selected
            frame: variables you name mean that frame's variables. A goal runs
            on a copy — <code>;</code> asks for its next solution — and a goal

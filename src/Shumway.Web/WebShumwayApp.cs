@@ -338,6 +338,8 @@ internal static partial class WebShumwayApp
     {
         _run?.Dispose();
         _run = null;
+        // A pause requested for a run that just ended must not ambush the next.
+        Volatile.Write(ref _breakNowRequested, 0);
     }
 
     /// <summary>The full diagnostic — the error plus the engine's call stack with

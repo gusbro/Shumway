@@ -183,10 +183,11 @@ function runningIndicator() {
 
 async function step() {
   stepping = true;
+  debugUi.setRunning(true);        // Break's moment, if the mode is on
   const searching = runningIndicator();
   let tag, text;
   try { ({ tag, text } = await session.next(answerWidth())); }
-  finally { stepping = false; searching(); }
+  finally { stepping = false; debugUi.setRunning(false); searching(); }
   // The promise resolving means the search is no longer suspended at a stop.
   debugUi.clearStopped();
   // The goal may have written as it ran; an answer starts its own line.
@@ -221,6 +222,10 @@ async function run(queryText) {
 async function abandonQuery() {
   if (stepping) {
     aborted = true;
+    // A query stopped at a breakpoint may have an Immediate/watch evaluation
+    // running ON the parked machine; cancelling under it races the engine.
+    // Drain (capped) so Stop stays a stop, not a coin toss.
+    if (debugUi.isStopped()) await debugUi.drainEvals();
     await session.cancel();
     // A goal blocked on input is not at a safe point and will never see the
     // cancellation. Closing the stream lets the read return so it can.
