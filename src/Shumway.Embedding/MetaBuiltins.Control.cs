@@ -23,10 +23,15 @@ public static partial class MetaBuiltins
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException("debugger_break/0 requires a PrologEngine host.");
-        if (!System.Diagnostics.Debugger.IsAttached)
-            return true;   // nobody is watching: this is a no-op, by design
 
-        Shumway.Embedding.Debugging.ShumwayDebugHelper.Session?.BreakHere(engine);
+        // The attached session decides HOW to stop: the channel session (VS) takes the
+        // managed Debugger.Break() path, gated on a debugger actually being attached; a
+        // direct-attach session (the web page, the tests) stops in place. With no debug
+        // session at all this is a no-op that succeeds — a program can be left with these
+        // in it. (The old code hard-wired the VS path AND gated the whole builtin on
+        // Debugger.IsAttached, so debugger_break never stopped a frontend-driven session.)
+        if (engine.Debug is Shumway.Embedding.Debugging.DebugService svc)
+            svc.RaiseDebuggerBreak(engine);
         return true;
     }
 

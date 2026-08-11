@@ -66,6 +66,14 @@ public sealed class ChannelDebugSession : IDisposable
             if (attached) BreakHere(act);
         };
 
+        // debugger_break/0 through the channel: the managed Debugger.Break() path, gated
+        // on a debugger actually being attached (BreakHere calls Debugger.Break()
+        // unconditionally — nobody there would trip the JIT debugger dialog).
+        _service.DebuggerBreakOverride = act =>
+        {
+            if (System.Diagnostics.Debugger.IsAttached) BreakHere(act);
+        };
+
         ShumwayDebugHelper.Channel = _channel;
         ShumwayDebugHelper.Session = this;
         engine.AttachDebugSession(_service);
