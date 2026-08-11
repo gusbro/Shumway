@@ -164,6 +164,8 @@ internal static class NativeCall
         else
             il.Emit(OpCodes.Box, retType);
         il.Emit(OpCodes.Ret);
-        return dm.CreateDelegate<Func<IntPtr, object?[], object?>>();
+        // Cast form: see BundleLoader — net48 blocks the generic call shape.
+        return (Func<IntPtr, object?[], object?>)dm.CreateDelegate(
+            typeof(Func<IntPtr, object?[], object?>));
     }
 }

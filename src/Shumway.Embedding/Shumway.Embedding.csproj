@@ -21,9 +21,25 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>$(ShumwayTargetFrameworks)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <!-- Framework-inbox from .NET Core on; packages here. System.Text.Json is
+         the DAP wire format; Bcl.AsyncInterfaces is IAsyncEnumerable for
+         QueryAsync. -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+    <PackageReference Include="System.Collections.Immutable" Version="8.0.0" />
+    <!-- The emitters compile for net48 too: the net48 toolchain emits
+         FRAMEWORK apps (the stub project targets the RUNNING toolchain's TFM;
+         net48 output is a folder — exe + DLLs + config — since Framework has
+         no single-file publish). The BUILD machine still needs the .NET SDK
+         (`dotnet build` compiles the stub); target machines only need
+         .NET Framework 4.8. -->
+  </ItemGroup>
 
 </Project>

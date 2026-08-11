@@ -376,6 +376,7 @@ public sealed partial class DebugService
         _engine.DebugTransplantSource = null;
         _pendingEnum = null;
         _pendingReport = null;
+        _pendingResidVars = null;
         _pendingCommit = null;
         _pendingCts = null;
         _outerScope = null;
@@ -548,6 +549,9 @@ public sealed partial class DebugService
         var savedCurrent = Current;
         _mode = StepMode.Continue;
         _conditionEval = true;
+        // SAVE/RESTORE discipline for the transplant source (see ProjectResiduals):
+        // a condition can evaluate while an Immediate goal's source is live.
+        Activation? savedTransplantSource = _engine.DebugTransplantSource;
         var scope = _engine.BeginDebugEvaluation();
         try
         {
@@ -611,7 +615,7 @@ public sealed partial class DebugService
         }
         finally
         {
-            _engine.DebugTransplantSource = null;
+            _engine.DebugTransplantSource = savedTransplantSource;
             _engine.EndDebugEvaluation(scope);
             _conditionEval = false;
             _mode = savedMode;
@@ -1035,7 +1039,7 @@ public sealed partial class DebugService
 
         _snsApplied = default;   // a fresh stop: any queued SNS from the last one is history
         _onStop(this, new DebugStopEvent(
-            reason, goal, site.File, site.Line, depth,
+            reason, goal!, site.File, site.Line, depth,
             WithSetNextLines(PresentFrames(engine, frames)))
         {
             BreakFile = _breakRequest?.File ?? "",

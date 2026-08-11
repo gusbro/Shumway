@@ -75,6 +75,12 @@ public sealed class DebugTracer : IDebugSession
 
     // ----- ports -----
 
+    // The two ports a tracer does not observe. On net10.0 the interface
+    // defaults them and these overrides are merely explicit; on net48 there are
+    // no default interface implementations and they are required.
+    void IDebugSession.OnInlineGoal(Activation engine) { }
+    void IDebugSession.OnLeaveProlog(Activation engine) { }
+
     void IDebugSession.OnCallAddress(Activation engine, int address, bool tailCall)
     {
         var pred = _owner.LookupPredicateByAddress(address);

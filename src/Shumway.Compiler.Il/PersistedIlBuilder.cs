@@ -95,13 +95,28 @@ public static class PersistedIlBuilder
         IReadOnlyList<IlPatchSite> Patches) Build(
         string assemblyName,
         IReadOnlyDictionary<int, CompiledPredicate> predicates,
-        IReadOnlySet<int>? prunableFids = null,
+        ISet<int>? prunableFids = null,
         Func<int, IReadOnlyList<double>?>? floatPoolProvider = null,
-        IReadOnlySet<int>? emitOnly = null)
+        ISet<int>? emitOnly = null)
     {
+#if NETFRAMEWORK
+        // Framework's native persisted emit: AssemblyBuilder in Save mode —
+        // the API PersistedAssemblyBuilder was designed to mirror. Same
+        // TypeBuilder / Sigil BuildMethod / patch-sentinel machinery below;
+        // only the assembly shell and the save differ (disk-only Save, so a
+        // per-call temp dir round-trips the bytes).
+        string tempDir = Path.Combine(Path.GetTempPath(),
+            "shumway-psab-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        string dllFileName = assemblyName + ".dll";
+        var psab = AppDomain.CurrentDomain.DefineDynamicAssembly(
+            new AssemblyName(assemblyName), AssemblyBuilderAccess.Save, tempDir);
+        var module = psab.DefineDynamicModule(assemblyName, dllFileName);
+#else
         var psab = new PersistedAssemblyBuilder(
             new AssemblyName(assemblyName), typeof(object).Assembly);
         var module = psab.DefineDynamicModule(assemblyName);
+#endif
         var typeBuilder = module.DefineType(
             TypeName,
             TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
@@ -243,9 +258,22 @@ public static class PersistedIlBuilder
         typeBuilder.CreateType();
         ic.EndPersistEmit();
 
+#if NETFRAMEWORK
+        byte[] bytes;
+        try
+        {
+            psab.Save(dllFileName);
+            bytes = File.ReadAllBytes(Path.Combine(tempDir, dllFileName));
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch (IOException) { }
+        }
+#else
         using var stream = new MemoryStream();
         psab.Save(stream);
         byte[] bytes = stream.ToArray();
+#endif
 
         // Locate each sentinel in the saved PE and record
         // its absolute byte offset. Each sentinel is unique and is
@@ -476,7 +504,9 @@ public static class PersistedIlBuilder
         {
             var slash = ind.IndexOf('/');
             if (slash < 0) continue;
-            if (!int.TryParse(ind.AsSpan(slash + 1), out int ar)) continue;
+            // Substring rather than AsSpan: net48 has no span TryParse, and this
+            // runs once per indicator at bundle-build time.
+            if (!int.TryParse(ind.Substring(slash + 1), out int ar)) continue;
             string nm = ind.Substring(0, slash);
             int aid = AtomTable.Intern(nm).Id;
             int fid = FunctorTable.Intern(aid, ar);

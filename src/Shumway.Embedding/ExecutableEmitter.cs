@@ -63,137 +63,10 @@ public enum ExecutableDeploymentMode
 /// on an uncaught Prolog exception or unexpected host error.</item>
 /// </list>
 /// </summary>
-public static class ExecutableEmitter
+public static partial class ExecutableEmitter
 {
-    /// <summary>Parses and validates <paramref name="goal"/>. A
-    /// trailing <c>.</c> (the Prolog clause terminator) is stripped
-    /// if present so users can pass <c>"main"</c> or <c>"main."</c>
-    /// interchangeably. Returns the normalised
-    /// <c>goal-as-Prolog-source</c> with a guaranteed trailing dot,
-    /// plus the head predicate's <see cref="PredicateRef"/> the linker
-    /// should treat as an additional reachability root.</summary>
-    public static bool TryValidateGoal(string goal,
-        out string normalisedGoal,
-        out PredicateRef headPred,
-        out string? error)
-    {
-        normalisedGoal = "";
-        headPred = default;
-        error = null;
-        if (string.IsNullOrWhiteSpace(goal))
-        {
-            error = "goal is empty.";
-            return false;
-        }
-        string trimmed = goal.Trim();
-        if (trimmed.EndsWith('.')) trimmed = trimmed[..^1].Trim();
-        if (trimmed.Length == 0)
-        {
-            error = "goal is empty after stripping trailing '.'.";
-            return false;
-        }
-        Term term;
-        try
-        {
-            var parser = new Parser(new Lexer(trimmed + " ."), OperatorTable.Default());
-            term = parser.ReadClauseTerm();
-        }
-        catch (ParseException ex)
-        {
-            error = $"goal parse error: {ex.Message}";
-            return false;
-        }
-        switch (term)
-        {
-            case AtomTerm a:
-                headPred = new PredicateRef(a.Name, 0);
-                break;
-            case CompoundTerm c:
-                headPred = new PredicateRef(c.Functor, c.Args.Length);
-                break;
-            default:
-                error = "goal must be a callable term (atom or compound), not a number / variable.";
-                return false;
-        }
-        normalisedGoal = trimmed + ".";
-        return true;
-    }
-
-    /// <summary>Collects the predicate references a runtime goal makes, so the
-    /// linker can treat the goal like a query typed at the REPL rather than
-    /// requiring its head to be a user predicate.
-    ///
-    /// <para><paramref name="callRefs"/> are the functors in CALL position —
-    /// the goal itself and the goals under the standard control constructs
-    /// (<c>,</c> <c>;</c> <c>-&gt;</c> <c>*-&gt;</c> <c>\+</c> <c>not</c>
-    /// <c>once</c> <c>ignore</c> <c>call/1</c>). Each must resolve somewhere
-    /// (user predicate, builtin or prelude) or the link fails — this keeps a
-    /// typo in the goal a link-time error.</para>
-    ///
-    /// <para><paramref name="termRefs"/> are every OTHER callable subterm, at
-    /// any depth — e.g. <c>mi_pred</c> in <c>time(mi_pred)</c> or a closure in
-    /// <c>findall/3</c>. They are speculative: one that resolves to a user
-    /// predicate becomes a reachability root; anything else (a data atom, a
-    /// builtin) is silently ignored. Over-collection only links more, never
-    /// breaks the link.</para></summary>
-    public static bool TryCollectGoalRefs(string goal,
-        out List<PredicateRef> callRefs,
-        out List<PredicateRef> termRefs,
-        out string? error)
-    {
-        callRefs = new List<PredicateRef>();
-        termRefs = new List<PredicateRef>();
-        if (!TryValidateGoal(goal, out _, out _, out error)) return false;
-        string trimmed = goal.Trim();
-        if (trimmed.EndsWith('.')) trimmed = trimmed[..^1].Trim();
-        var parser = new Parser(new Lexer(trimmed + " ."), OperatorTable.Default());
-        Term term = parser.ReadClauseTerm();
-        var seenCall = new HashSet<PredicateRef>();
-        var seenTerm = new HashSet<PredicateRef>();
-        CollectGoalRefs(term, callPosition: true, callRefs, termRefs, seenCall, seenTerm);
-        return true;
-    }
-
-    private static void CollectGoalRefs(Term t, bool callPosition,
-        List<PredicateRef> callRefs, List<PredicateRef> termRefs,
-        HashSet<PredicateRef> seenCall, HashSet<PredicateRef> seenTerm)
-    {
-        switch (t)
-        {
-            case AtomTerm a:
-                if (a.Name is "true" or "fail" or "false" or "!" or "[]") return;
-                Add(new PredicateRef(a.Name, 0));
-                return;
-            case CompoundTerm c:
-                // Control constructs: their goal arguments stay in call
-                // position; a variable goal there is fine (runtime meta-call).
-                if (callPosition && c.Args.Length == 2
-                    && c.Functor is "," or ";" or "->" or "*->")
-                {
-                    CollectGoalRefs(c.Args[0], true, callRefs, termRefs, seenCall, seenTerm);
-                    CollectGoalRefs(c.Args[1], true, callRefs, termRefs, seenCall, seenTerm);
-                    return;
-                }
-                if (callPosition && c.Args.Length == 1
-                    && c.Functor is "\\+" or "not" or "once" or "ignore" or "call")
-                {
-                    CollectGoalRefs(c.Args[0], true, callRefs, termRefs, seenCall, seenTerm);
-                    return;
-                }
-                Add(new PredicateRef(c.Functor, c.Args.Length));
-                foreach (var arg in c.Args)
-                    CollectGoalRefs(arg, false, callRefs, termRefs, seenCall, seenTerm);
-                return;
-            default:
-                return;   // variable / number / string — no reference
-        }
-
-        void Add(PredicateRef r)
-        {
-            if (callPosition) { if (seenCall.Add(r)) callRefs.Add(r); }
-            else { if (seenTerm.Add(r)) termRefs.Add(r); }
-        }
-    }
+    // TryValidateGoal / TryCollectGoalRefs live in ExecutableEmitter.GoalRefs.cs
+    // (compiled for net48 too; this file is net10-only).
 
     /// <summary>Builds a single-file executable that, on launch,
     /// loads <paramref name="bundleBytes"/> and runs
@@ -267,7 +140,20 @@ public static class ExecutableEmitter
         {
             string assemblyName = SanitiseAssemblyName(
                 Path.GetFileNameWithoutExtension(finalPath));
+#if NETFRAMEWORK
+            // No RID on the Framework path (and net48 has no
+            // RuntimeInformation.RuntimeIdentifier anyway): the stub is an
+            // AnyCPU folder app.
+            string rid = "";
+            if (mode == ExecutableDeploymentMode.SelfContained)
+                diagnostics.Add(new LinkDiagnostic(LinkSeverity.Warning,
+                    "self_contained_ignored",
+                    "--self-contained does not apply to a .NET Framework "
+                    + "executable (the runtime ships with Windows); emitting "
+                    + "the normal framework-dependent folder app."));
+#else
             string rid = RuntimeInformation.RuntimeIdentifier;
+#endif
 
             // Write wrapper sources.
             File.WriteAllText(Path.Combine(tempDir, "Program.cs"),
@@ -289,6 +175,65 @@ public static class ExecutableEmitter
 </configuration>
 ");
 
+#if NETFRAMEWORK
+            // App.config for the Framework exe: lift the 2 GB per-array cap
+            // (the engine's contiguous stacks hit it under heap-hungry
+            // queries on x64); the SDK merges the build's auto-generated
+            // binding redirects into the same file.
+            File.WriteAllText(Path.Combine(tempDir, "App.config"),
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n"
+                + "  <runtime>\n    <gcAllowVeryLargeObjects enabled=\"true\" />\n"
+                + "  </runtime>\n</configuration>\n");
+
+            verboseOut?.WriteLine($"shumway-exe: temp project at {tempDir}, "
+                + "target=net48 folder app.");
+
+            string publishDir = Path.Combine(tempDir, "out");
+            var (exitCode, stdout, stderr) = RunDotnetBuildFx(tempDir, assemblyName,
+                publishDir, verboseOut);
+            if (exitCode != 0)
+            {
+                diagnostics.Add(new LinkDiagnostic(LinkSeverity.Error,
+                    "build_failed",
+                    $"`dotnet build` exited with code {exitCode}.\n"
+                    + $"stdout:\n{stdout}\n"
+                    + $"stderr:\n{stderr}"));
+                return new ExecutableEmitResult(false, null, diagnostics);
+            }
+
+            string producedPath = Path.Combine(publishDir, assemblyName + ".exe");
+            if (!File.Exists(producedPath))
+            {
+                diagnostics.Add(new LinkDiagnostic(LinkSeverity.Error,
+                    "exe_not_found",
+                    $"Expected exe at '{producedPath}' but it does not exist."));
+                return new ExecutableEmitResult(false, null, diagnostics);
+            }
+
+            string? outputDir = Path.GetDirectoryName(finalPath);
+            if (!string.IsNullOrEmpty(outputDir))
+                Directory.CreateDirectory(outputDir);
+            File.Copy(producedPath, finalPath, overwrite: true);
+            string sideTargetDir = string.IsNullOrEmpty(outputDir)
+                ? Directory.GetCurrentDirectory() : outputDir!;
+            // Framework deployment is a FOLDER: the engine DLLs and the
+            // app config travel next to the exe (no single-file publish on
+            // net48). The config is renamed to match the final exe name.
+            foreach (string dll in Directory.GetFiles(publishDir, "*.dll"))
+            {
+                string dst = Path.Combine(sideTargetDir, Path.GetFileName(dll));
+                if (Path.GetFullPath(dll) != Path.GetFullPath(dst))
+                    File.Copy(dll, dst, overwrite: true);
+            }
+            string producedConfig = producedPath + ".config";
+            if (File.Exists(producedConfig))
+                File.Copy(producedConfig,
+                    Path.Combine(sideTargetDir, Path.GetFileName(finalPath) + ".config"),
+                    overwrite: true);
+            verboseOut?.WriteLine($"shumway-exe: wrote {finalPath} "
+                + $"({new FileInfo(finalPath).Length:N0} bytes) + engine DLLs "
+                + "+ config alongside (net48 folder deployment).");
+#else
             verboseOut?.WriteLine($"shumway-exe: temp project at {tempDir}, rid={rid}, "
                 + $"mode={(mode == ExecutableDeploymentMode.SelfContained ? "self-contained" : "framework-dependent")}.");
 
@@ -323,6 +268,7 @@ public static class ExecutableEmitter
             File.Copy(producedPath, finalPath, overwrite: true);
             verboseOut?.WriteLine($"shumway-exe: wrote {finalPath} "
                 + $"({new FileInfo(finalPath).Length:N0} bytes).");
+#endif
 
             // copy each --foreign-dll next to the
             // produced executable. The runtime's LoadBundle path
@@ -489,16 +435,11 @@ internal static class Program
     private static string GenerateProjectFile(string assemblyName, string rid,
         ExecutableDeploymentMode mode)
     {
-        string selfContained = mode == ExecutableDeploymentMode.SelfContained
-            ? "true" : "false";
-        // EnableCompressionInSingleFile requires SelfContained=true
-        // (NETSDK1176). Toggle the property accordingly.
-        string compressionProp = mode == ExecutableDeploymentMode.SelfContained
-            ? "    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>\n"
-            : "";
         // Locate the engine assemblies next to the running shumway-link
         // process. They are shipped alongside it; the temp project
-        // references them via absolute HintPath.
+        // references them via absolute HintPath. On net48 that directory
+        // holds the net48 flavors, so the stub inherits the toolchain's TFM
+        // by construction.
         string linkerDir = Path.GetDirectoryName(
             Assembly.GetExecutingAssembly().Location) ?? "";
         var references = new StringBuilder();
@@ -510,6 +451,37 @@ internal static class Program
             references.AppendLine($"      <Private>true</Private>");
             references.AppendLine($"    </Reference>");
         }
+#if NETFRAMEWORK
+        // Framework stub: no RID / single-file / self-contained — the output
+        // is a folder app (exe + DLLs + config). LangVersion latest because
+        // the generated wrapper uses modern syntax and net48 defaults to 7.3.
+        _ = rid; _ = mode;
+        return $@"<Project Sdk=""Microsoft.NET.Sdk"">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>{assemblyName}</AssemblyName>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+{references}
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include=""bundle.shum"" />
+  </ItemGroup>
+</Project>
+";
+#else
+        string selfContained = mode == ExecutableDeploymentMode.SelfContained
+            ? "true" : "false";
+        // EnableCompressionInSingleFile requires SelfContained=true
+        // (NETSDK1176). Toggle the property accordingly.
+        string compressionProp = mode == ExecutableDeploymentMode.SelfContained
+            ? "    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>\n"
+            : "";
         return $@"<Project Sdk=""Microsoft.NET.Sdk"">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -530,21 +502,97 @@ internal static class Program
   </ItemGroup>
 </Project>
 ";
+#endif
     }
 
     internal static IEnumerable<string> EnumerateRequiredAssemblies(string dir)
     {
         // Every Shumway.*.dll and Sigil.dll alongside the linker is a
         // candidate engine dependency. The publish step's reference
-        // resolution prunes anything actually unused.
+        // resolution prunes anything actually unused. On net48 the linker's
+        // own directory holds the net48 flavors plus the compatibility
+        // packages (System.Memory etc.) — include those too, since the
+        // Framework stub has no NuGet restore to bring them in.
         foreach (string file in Directory.GetFiles(dir, "Shumway.*.dll"))
             yield return file;
         string sigil = Path.Combine(dir, "Sigil.dll");
         if (File.Exists(sigil)) yield return sigil;
+#if NETFRAMEWORK
+        foreach (string file in Directory.GetFiles(dir, "System.*.dll"))
+            yield return file;
+        string bcl = Path.Combine(dir, "Microsoft.Bcl.AsyncInterfaces.dll");
+        if (File.Exists(bcl)) yield return bcl;
+#endif
     }
+
+    /// <summary>Appends process arguments portably: ArgumentList on modern
+    /// .NET; an escaped Arguments string on net48 (which lacks ArgumentList).</summary>
+    internal static void AddProcessArgs(ProcessStartInfo psi, params string[] args)
+    {
+#if NETFRAMEWORK
+        var sb = new StringBuilder(psi.Arguments);
+        foreach (string a in args)
+        {
+            if (sb.Length > 0) sb.Append(' ');
+            if (a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0)
+            {
+                sb.Append(a);
+                continue;
+            }
+            // Standard Windows quoting: backslashes double before a quote.
+            sb.Append('"');
+            int backslashes = 0;
+            foreach (char c in a)
+            {
+                if (c == '\\') { backslashes++; continue; }
+                if (c == '"') sb.Append('\\', backslashes * 2 + 1);
+                else sb.Append('\\', backslashes);
+                backslashes = 0;
+                sb.Append(c);
+            }
+            sb.Append('\\', backslashes * 2).Append('"');
+        }
+        psi.Arguments = sb.ToString();
+#else
+        foreach (string a in args) psi.ArgumentList.Add(a);
+#endif
+    }
+
+    internal static string DescribeProcessArgs(ProcessStartInfo psi)
+#if NETFRAMEWORK
+        => psi.Arguments;
+#else
+        => string.Join(" ", psi.ArgumentList);
+#endif
 
     // ----- Tool invocation -----
 
+#if NETFRAMEWORK
+    private static (int ExitCode, string Stdout, string Stderr) RunDotnetBuildFx(
+        string projectDir, string assemblyName, string outputDir, TextWriter? verboseOut)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            WorkingDirectory = projectDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        AddProcessArgs(psi,
+            "build", $"{assemblyName}.csproj",
+            "-c", "Release",
+            "-o", outputDir,
+            "--nologo", "-v", "quiet");
+        verboseOut?.WriteLine("shumway-exe: dotnet " + DescribeProcessArgs(psi));
+        using var proc = Process.Start(psi)!;
+        string stdout = proc.StandardOutput.ReadToEnd();
+        string stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        return (proc.ExitCode, stdout, stderr);
+    }
+#else
     private static (int ExitCode, string Stdout, string Stderr) RunDotnetPublish(
         string projectDir, string assemblyName, string rid,
         ExecutableDeploymentMode mode, string outputDir, TextWriter? verboseOut)
@@ -575,6 +623,7 @@ internal static class Program
         proc.WaitForExit();
         return (proc.ExitCode, stdout, stderr);
     }
+#endif
 
     private static string AdjustExecutableSuffix(string path)
     {

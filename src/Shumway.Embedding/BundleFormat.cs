@@ -111,7 +111,15 @@ public static class BundleFormat
     {
         const int headerBytes = 8;   // magic + version
         int bodyLen = raw.Length - headerBytes;
-        if (bodyLen < CompressionThresholdBytes || DisableCompression)
+#if NETFRAMEWORK
+        // No Brotli codec on .NET Framework — the browser situation again, at
+        // write time: everything this runtime produces goes uncompressed, which
+        // every reader accepts.
+        bool forcePlain = true;
+#else
+        bool forcePlain = DisableCompression;
+#endif
+        if (bodyLen < CompressionThresholdBytes || forcePlain)
         {
             var plain = new byte[raw.Length + 1];
             Array.Copy(raw, 0, plain, 0, headerBytes);
@@ -119,6 +127,9 @@ public static class BundleFormat
             Array.Copy(raw, headerBytes, plain, headerBytes + 1, bodyLen);
             return plain;
         }
+#if NETFRAMEWORK
+        throw new InvalidOperationException("unreachable: forcePlain is constant true");
+#else
         using var ms = new MemoryStream(headerBytes + 1 + bodyLen / 3);
         ms.Write(raw, 0, headerBytes);
         ms.WriteByte(CompressionBrotli);
@@ -126,6 +137,7 @@ public static class BundleFormat
                    ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
             brotli.Write(raw, headerBytes, bodyLen);
         return ms.ToArray();
+#endif
     }
 
     /// <summary>reader counterpart: given the flag byte and the
@@ -139,6 +151,15 @@ public static class BundleFormat
                 return new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
             case CompressionBrotli:
             {
+#if NETFRAMEWORK
+                // Same story as browser-wasm, and the same words: the fix is to
+                // produce the bundle uncompressed, not to find a codec.
+                throw new NotSupportedException(
+                    "This bundle is Brotli-compressed and .NET Framework has no Brotli "
+                    + "codec. Produce it with compression disabled (shumway-link "
+                    + "--no-compress) — an uncompressed bundle is a normal bundle every "
+                    + "reader accepts.");
+#else
                 var body = new MemoryStream();
                 try
                 {
@@ -160,6 +181,7 @@ public static class BundleFormat
                 }
                 body.Position = 0;
                 return new BinaryReader(body, System.Text.Encoding.UTF8, leaveOpen: false);
+#endif
             }
             default:
                 throw new InvalidDataException(

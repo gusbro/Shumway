@@ -296,7 +296,7 @@ public sealed class NativeReftypeTests
     [Theory]
     [InlineData("prlg_ifce.pl")]   // the interface definition
     [InlineData("i_form_e.pl")]    // a user (fill_par → call C → reftype_term)
-    [InlineData("i_gxprg.pl")]     // a user (multiple reftype globals)
+    [InlineData("i_SupTyp.pl")]    // a user (multiple reftype globals)
     public void RealAritySource_CompilesCleanly(string file)
     {
         string path = System.IO.Path.Combine(@"C:\temp\test", file);

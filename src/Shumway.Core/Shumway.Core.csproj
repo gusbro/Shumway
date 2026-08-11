@@ -1,10 +1,17 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Multi-targeted for the .NET Framework spike (branch netfx-target).
+         TargetFramework must be CLEARED: Directory.Build.props sets the
+         singular one for every project, and singular wins over plural. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>$(ShumwayTargetFrameworks)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <!-- The net48 polyfills and packages come from Directory.Build.targets,
+       shared by every multi-targeted project. -->
 
   <ItemGroup>
     <InternalsVisibleTo Include="Shumway.Tests.Core" />
@@ -12,6 +19,26 @@
     <InternalsVisibleTo Include="Shumway.Tests.Interpreter" />
     <!-- IL emission for Execute needs SetPc / SetB0. -->
     <InternalsVisibleTo Include="Shumway.Compiler.Il" />
+  </ItemGroup>
+
+  <!-- net48 ONLY: Core is the single carrier of the framework polyfills
+       (src/Shared, linked in by Directory.Build.targets), and these let the
+       sibling assemblies use them. Conditional so the net10.0 build's
+       encapsulation is exactly what it was. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <InternalsVisibleTo Include="Shumway.Compiler" />
+    <InternalsVisibleTo Include="Shumway.Builtins" />
+    <InternalsVisibleTo Include="Shumway.Embedding" />
+    <InternalsVisibleTo Include="Shumway.TopLevel" />
+    <!-- The toolchain CLIs + REPL (assembly names, not project names). -->
+    <InternalsVisibleTo Include="shumway-compile" />
+    <InternalsVisibleTo Include="shumway-link" />
+    <InternalsVisibleTo Include="shumway" />
+    <!-- Multi-targeted TEST assemblies also lean on the polyfills (Index/Range
+         from ^1 slicing, char-overload extensions, ...). -->
+    <InternalsVisibleTo Include="Shumway.Tests.Compiler" />
+    <InternalsVisibleTo Include="Shumway.Tests.IsoConformance" />
+    <InternalsVisibleTo Include="Shumway.Tests.Embedding" />
   </ItemGroup>
 
 </Project>

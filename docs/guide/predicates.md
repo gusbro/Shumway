@@ -160,7 +160,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate. |
 | `compact_dynamic_buffer` | Invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
 | `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Validates Name/Arity names a dynamic predicate, then triggers the same full rebuild as the 0-arg form. The single buffer holds every dynamic predicate's bytecode interleaved, so independent per-predicate reclamation isn't currently feasible without partial-relink support — the API surface is per-predicate for forward compatibility. |
-| `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. |
+| `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl (SWI-style). |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators. |
 | `erase(+Ref)` | Removes the recorded entry with reference Ref. Fails on an unknown / already-erased reference. |
 | `eraseall(+Key)` | Removes every recorded entry stored under Key. |

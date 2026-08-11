@@ -747,7 +747,7 @@ product `#ifdef`, C under `#else`): the uniform pattern is `fill_par(Term,&parNr
   call**; `fill_par`/`reftype_term` stay the cursor builtins (Phase 30). At the call,
   each `:- c`-prototyped `reftype` arg is materialized to a blittable native
   `t_reftype`, the pointer passed, then dematerialized back (native C may build/modify
-  it — e.g. `i_nextinfo`→`menu_to_list` builds a list).
+  it — e.g. a native function that builds a list into the struct).
 - The native DLL is named by engine config / a CLI flag (`--native-dll` /
   `engine.UseNativeLibrary(...)`); `fn` resolves by name.
 - The **managed snapshot** path is the same core to a managed `Reftype`, triggered by
@@ -811,8 +811,7 @@ product `#ifdef`, C under `#else`): the uniform pattern is `fill_par(Term,&parNr
   reads the C-built graph unchanged. Test (real DLL): `build_list` allocates a cons
   list via `newreftype`, Shumway dematerializes `[1,2,3]` and `freepar`s it.
 - **Out-scalar pointer params (done).** `fn(..., &local)` — a native function writes
-  a scalar through a pointer (the corpus `i_form_exp(.., &type, ..)` /
-  `i_obj_id_native(.., &id)` pattern). `NativeCall.Kind` now distinguishes
+  a scalar through a pointer (the corpus's `fn(.., &out, ..)` out-param pattern). `NativeCall.Kind` now distinguishes
   `Scalar`/`Reftype`/`OutScalar`; a `short*`/`int*`/`long*`/`double*` param (incl.
   via typedef like `pshort`) maps to `OutScalar` with its element type. At the call,
   `PInvokeCall` allocates a native scalar (seeded from the block-local), passes the
@@ -839,8 +838,8 @@ product `#ifdef`, C under `#else`): the uniform pattern is `fill_par(Term,&parNr
   Prolog string into NUL-terminated native memory (via the engine's
   `NativeTextEncoding`, default UTF-8), passed and freed (`NativeCall.Kind.StringIn`).
   A `char*` **return** flows to the block as a raw pointer integer (the inference types
-  a char*-returning call as a pointer, not a string), so the corpus pattern
-  `{ Ptr is 'tbl_name'(M,T) }, Ptr \= 0, make_prolog_string(Ptr, Name)` works:
+  a char*-returning call as a pointer, not a string), so the classic idiom
+  `{ Ptr is 'star_label'(C,I) }, Ptr \= 0, make_prolog_string(Ptr, Name)` works:
   `make_prolog_string` reads the NUL-terminated native string from an integer source.
   Tested over a real DLL incl. byte-exact UTF-8. (`char**` / out-string still deferred.)
 - **IL emit for the materializer tier (done).** Both `:- native` backends now compile
@@ -1349,6 +1348,7 @@ When proposing changes:
 | Rational numbers (`rdiv`, `Tag.Rational` + side table, `prefer_rationals` flag) — ACCEPTED (Phase 36): exact `Num/Den` as a new cell tag (0xE) mirroring BigInt (per-activation `_rationalTable`, backtrack-trailed via `TrailType.RationalAlloc`, GC leaf); canonical form (den>1, reduced) so an integral value collapses to Int/BigInt. `Number` gains `Kind.Rat`; promotion lattice Int⊂Big⊂Rat⊂Float. `rdiv` (yfx 400) always exact; `/` governed by the `prefer_rationals` prolog_flag (default FALSE = float/GProlog, no conformance churn; TRUE = SWI/Scryer rational). `rational/1` (integer counts), `numerator`/`denominator`/`rationalize`. Constant folding defers rationals + integer `/` to runtime (the flag is a runtime property). Unblocks Scryer `library(arithmetic)` parse (was: `rdiv` operator undefined) | ADR-039 |
 | Multi-dialect library shims + per-module attribute hook ("unite worlds") — ACCEPTED, core implemented (per-search-path threading D5.2, content sniff D5.3, fuller SWI pack deferred): load libraries from different Prolog systems (Scryer, SWI, …) side by side in one engine. Dialect is a per-SUBTREE resolution context (travels with each top-level `use_module`'s dependency graph: name map + `double_quotes` + atts API), NOT a sticky engine mode — so `clpz`(Scryer)+`http`(SWI) coexist. Shims become dialect-scoped export-qualified modules (ADR-038 namespacing → `scryer$format`/`swi$format` coexist), replacing the flat Scryer-only `CompatLibraries` switch. `verify_attributes(Module,…)` formalised as THE hook, dispatched PER attribute module — removes the bare-global-public collision, so the "CLP(R)/CLP(FD) cannot share an engine" restriction is LIFTED. No dialect-level conflict guard; only genuine same-bare-global collisions error (`ValidatePublicUniqueness`). Selection layered: explicit flag/CLI/API > per-search-path tag > announced content-sniff (deferred). Breaking changes OK (private repo) IF docs track the new state | ADR-040 |
 | WebShumway — the engine in a browser — SHIPPED (phase 38): `browser-wasm`, no backend, Tier-0 only (a browser forbids runtime codegen; `RuntimeCaps` folds Tier-1 out); THREADS because the search blocks its thread, which forces Task-returning exports, posted output (JS interop is thread-affine), one engine gate, and COOP/COEP `credentialless` on the host; MEMFS mirrored to OPFS so `System.IO` works unmodified; the editor holds ONE copy of the text (`contenteditable`, not a two-copy overlay); libraries imported as dialect-tagged COLLECTIONS and compiled per library, compiled-beats-source by LAYOUT | ADR-042 |
+| .NET Framework 4.8 target — SHIPPED (branch netfx-target): OPT-IN multi-target `net10.0;net48` across engine + toolchain (default build stays net10-only; activate with -p:ShumwayNetFx=true); ONE polyfill carrier (Core) with net48-only IVT (two visible copies = CS0121/CS8356); C#14 static extension members carry the BCL gaps; DIM + IReadOnlySet are the only true runtime gaps; Tier-1 via Sigil unchanged; persisted IL emitted natively on Framework (AssemblyBuilder Save mode) — link with the net48 toolchain when a Framework host is targeted (mscorlib refs bind on BOTH runtimes; net10-linked IL falls back to bytecode on net48, with a warning); --exe/--dll from the net48 toolchain emit FRAMEWORK apps (folder deployment; --dll ships a computed app.config sample); t_reftype offsets hold on x86 (union aligns at 8); testhost bitness must be forced (AnyCPU runs x64); no strong naming | ADR-043 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

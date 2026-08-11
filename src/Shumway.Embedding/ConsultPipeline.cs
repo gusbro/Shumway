@@ -52,12 +52,24 @@ internal sealed class ConsultPipeline
     public void ConsultFile(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
+        path = ResolveSourcePath(path);
         if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
         {
             E.LoadBundle(path);
             return;
         }
         LoadSourceFile(path, reconsult: false);
+    }
+
+    /// <summary>SWI-style extension defaulting: <c>consult(algo)</c> with no
+    /// extension resolves to <c>algo.pl</c> when <c>algo</c> itself does not
+    /// exist but <c>algo.pl</c> does. An existing exact path, or any path that
+    /// already carries an extension, is untouched.</summary>
+    internal static string ResolveSourcePath(string path)
+    {
+        if (File.Exists(path) || Path.HasExtension(path)) return path;
+        string withPl = path + ".pl";
+        return File.Exists(withPl) ? withPl : path;
     }
 
     /// <summary>The shared body of consulting and RE-consulting a source file:
@@ -502,6 +514,7 @@ internal sealed class ConsultPipeline
     public void ReconsultFile(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
+        path = ResolveSourcePath(path);
         if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
         {
             var bundle = BundleReader.ReadFromFile(path);
@@ -748,7 +761,7 @@ internal sealed class ConsultPipeline
         // plain ConsultString (no fallback) keeps the historic behaviour.
         string moduleName = string.IsNullOrEmpty(moduleNameFallback)
             ? PrologEngine.DefaultModuleName
-            : moduleNameFallback;
+            : moduleNameFallback!;   // ! for net48: its IsNullOrEmpty lacks the NotNullWhen flow annotation
         // prolog_load_context(module, _): the module of the file being loaded,
         // updated when the :- module directive is seen below.
         E._currentLoadModule = moduleName;

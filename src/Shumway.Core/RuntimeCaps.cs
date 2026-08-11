@@ -33,6 +33,13 @@ public static class RuntimeCaps
     /// survives.</para></summary>
     [FeatureSwitchDefinition("Shumway.RuntimeCodegen")]
     public static bool SupportsRuntimeCodegen =>
+#if NETFRAMEWORK
+        // .NET Framework has neither of those APIs, and needs neither: it always
+        // JITs, there is no trimmer to fold this, and it does not run in a
+        // browser. The one runtime where the answer is a constant by nature.
+        true;
+#else
         System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported
         && !OperatingSystem.IsBrowser();
+#endif
 }

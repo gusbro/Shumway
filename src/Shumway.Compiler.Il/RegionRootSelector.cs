@@ -43,7 +43,7 @@ public static class RegionRootSelector
     /// <param name="onPromote">Optional per-promotion trace (fid, dup, regionSize).</param>
     public static HashSet<int> ComputeForcedRoots(
         IReadOnlyCollection<int> fids,
-        Func<int, IReadOnlySet<int>, IReadOnlyCollection<int>> regionMembersOf,
+        Func<int, ISet<int>, IReadOnlyCollection<int>> regionMembersOf,
         Func<int, long> predicateSize,
         long minSaving,
         Action<int, int, long>? onPromote = null)

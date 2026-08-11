@@ -68,10 +68,4 @@
   <data name="112" xml:space="preserve">
     <value>Source-level debugger for Shumway Prolog: mixed Prolog + C# + native call stack, breakpoints in .pl files, port-based stepping.</value>
   </data>
-  <data name="120" xml:space="preserve">
-    <value>Shumway</value>
-  </data>
-  <data name="121" xml:space="preserve">
-    <value>Prolog Debugger</value>
-  </data>
 </root>

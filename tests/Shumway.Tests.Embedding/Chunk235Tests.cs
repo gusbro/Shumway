@@ -34,6 +34,36 @@ public class Chunk235Tests
     }
 
     [Fact]
+    public void Consult_WithoutExtension_TriesAddingPl()
+    {
+        // SWI-style: consult(algo) resolves to algo.pl when `algo` itself does
+        // not exist. Covers the builtin, the API and reconsult/1.
+        string dir = Path.Combine(Path.GetTempPath(), "shumway_plext_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string plPath = Path.Combine(dir, "algo.pl");
+        string bare = Path.Combine(dir, "algo").Replace('\\', '/');
+        File.WriteAllText(plPath, ":- public saludo/1.\nsaludo(hola).\n");
+        try
+        {
+            var engine = new PrologEngine();
+            Assert.Contains(engine.QueryAll($"consult('{bare}'), saludo(X), X == hola."), s => s.Success);
+
+            var engine2 = new PrologEngine();
+            engine2.ConsultFile(Path.Combine(dir, "algo"));
+            Assert.Contains(engine2.QueryAll("saludo(hola)."), s => s.Success);
+
+            // An extensionless file that EXISTS still wins over the .pl probe.
+            string exact = Path.Combine(dir, "exacto");
+            File.WriteAllText(exact, ":- public pino/1.\npino(si).\n");
+            File.WriteAllText(exact + ".pl", ":- public pino/1.\npino(no).\n");
+            var engine3 = new PrologEngine();
+            engine3.ConsultFile(exact);
+            Assert.Contains(engine3.QueryAll("pino(si)."), s => s.Success);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
     public void ConsultBuiltin_LoadsFileFromInsideQuery()
     {
         var tmp = Path.GetTempFileName() + ".pl";

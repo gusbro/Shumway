@@ -26,7 +26,7 @@ public class Chunk394Tests
 
     // Region of `root` = BFS over call edges, NOT absorbing anything in `excluded`
     // (those stay cross-region roots) — mirrors IlRegionBuilder + the 9c exclusion.
-    private static IReadOnlyCollection<int> Region(int root, IReadOnlySet<int> excluded)
+    private static IReadOnlyCollection<int> Region(int root, ISet<int> excluded)
     {
         var members = new HashSet<int> { root };
         var q = new Queue<int>();
@@ -58,7 +58,7 @@ public class Chunk394Tests
     }
 
     private static IReadOnlyCollection<int> RegionOf(
-        Dictionary<int, int[]> g, int root, IReadOnlySet<int> excluded)
+        Dictionary<int, int[]> g, int root, ISet<int> excluded)
     {
         var m = new HashSet<int> { root };
         var q = new Queue<int>(); q.Enqueue(root);

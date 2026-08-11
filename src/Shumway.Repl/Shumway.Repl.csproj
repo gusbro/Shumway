@@ -20,6 +20,14 @@
          Pass `-p:PublishAot=true` to `dotnet publish` for an AOT-native
          build; omit it everywhere else. -->
     <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- Under -p:ShumwayNetFx=true (ADR-043) the REPL also builds for net48,
+         so the engine can be exercised interactively on .NET Framework
+         (bin\<cfg>\net48\shumway.exe — AnyCPU: the OS bitness decides, or
+         host it in a 32-bit process to test x86). Default stays net10-only. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>$(ShumwayTargetFrameworks)</TargetFrameworks>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
   </PropertyGroup>
 
   <ItemGroup>

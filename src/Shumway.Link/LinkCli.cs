@@ -292,6 +292,11 @@ internal static class LinkCli
                 + $"bytes={result.Bytes!.Length}).");
         }
 
+        // --exe / --dll target the RUNNING toolchain's framework: the net10
+        // build emits single-file .NET 10 apps; the net48 build emits
+        // Framework folder apps (exe + engine DLLs + config). Both need the
+        // .NET SDK on the BUILD machine (the stub compiles via dotnet build);
+        // net48 TARGET machines only need .NET Framework 4.8.
         if (!string.IsNullOrEmpty(opts.ExePath))
         {
             var mode = opts.SelfContained
@@ -775,9 +780,13 @@ internal static class LinkCli
         var dirs = new List<string>(flagged);
         string? env = Environment.GetEnvironmentVariable("SHUMWAY_LIBRARY_PATH");
         if (!string.IsNullOrEmpty(env))
-            foreach (string d in env.Split(System.IO.Path.PathSeparator,
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                dirs.Add(d);
+            // Manual Trim: net48 has no StringSplitOptions.TrimEntries.
+            foreach (string raw in env.Split(System.IO.Path.PathSeparator,
+                StringSplitOptions.RemoveEmptyEntries))
+            {
+                string d = raw.Trim();
+                if (d.Length > 0) dirs.Add(d);
+            }
         return dirs;
     }
 

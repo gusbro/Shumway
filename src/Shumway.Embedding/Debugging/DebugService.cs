@@ -292,6 +292,13 @@ public sealed partial class DebugService : IDebugSession
     private System.Collections.Generic.IEnumerator<Solution>? _pendingEnum;
     private List<string>? _pendingReport;                        // var names to render per solution
 
+    /// <summary>Hidden variables smuggling the residual-constraint projection out of a
+    /// wrapped evaluation goal (the REPL's QueryWrapper recipe), plus the display-name
+    /// pairs the renderer needs. Null when the goal named no variables.</summary>
+    private const string EvalCopiesVar = "_DbgEvalCopies_8f2c";
+    private const string EvalResidualsVar = "_DbgEvalResiduals_8f2c";
+    private List<(string Display, string Var)>? _pendingResidVars;
+
     /// <summary>ADR-035 D5+ — one frame variable a solution may bind INTO the suspended
     /// frame: the name the user wrote, the name its substituted variable carries in the
     /// solution, and the frame cell's heap address on the suspended activation.</summary>
@@ -371,6 +378,20 @@ public sealed partial class DebugService : IDebugSession
         if (outer is null) return "nothing is stopped: no frame to evaluate against";
         if (string.IsNullOrWhiteSpace(trimmed)) return "nothing to evaluate";
 
+        // A leading '!' runs the goal ON the suspended activation itself — frame
+        // variables are the REAL cells, so a posted constraint narrows them and a
+        // binding sticks, with once-semantics and Prolog's own trail as the
+        // transaction: failure (append `, fail` for a dry run) or an error
+        // unwinds to the entry marks and the frame is untouched. Side effects
+        // (assertz, output) follow normal Prolog rules and do not undo.
+        if (trimmed.StartsWith("!", StringComparison.Ordinal))
+        {
+            string rest = trimmed.Substring(1).Trim();
+            if (rest.Length == 0 || rest == ".")
+                return "prefix a goal with ! to run it on the real frame, e.g. !X #> 5.";
+            return EvaluateGoalOnFrame(outer, frameIndex, rest);
+        }
+
         // Parse first — nothing is saved or run for a goal that does not read.
         Term goal;
         IReadOnlyList<string> names;
@@ -400,6 +421,11 @@ public sealed partial class DebugService : IDebugSession
         List<CommitVar>? commit = null;
         string? commitRefusal = null;
         List<int>? attVarRoots = null;
+        // Display-name -> goal-variable-name pairs for the residual projection:
+        // every variable the answer could talk about, under the name the USER
+        // typed (a frame variable substitutes as _G<addr>, but the answer must
+        // say `A in 6..9`, not `_G123 in 6..9`).
+        var residVars = new List<(string Display, string Var)>();
         if (_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
         {
             frameModule = _engine.ModuleForFrame(pc);
@@ -409,12 +435,14 @@ public sealed partial class DebugService : IDebugSession
                 if (!names.Contains(name)) continue;
                 goal = SubstituteVariable(goal, name, value);
                 substituted.Add(name);
+                if (value is VarTerm frameVt) residVars.Add((name, frameVt.Name));
                 if (value is VarTerm vt && addr >= 0)
                 {
                     if (isAttVar)
                     {
                         commitRefusal = " [" + name + " is an attributed variable: "
-                            + "binding into the frame is disabled]";
+                            + "evaluated on a copy — prefix the goal with ! to bind or "
+                            + "post on the real frame]";
                         (attVarRoots ??= new List<int>()).Add(addr);
                     }
                     else
@@ -447,6 +475,30 @@ public sealed partial class DebugService : IDebugSession
         var report = new List<string>();
         foreach (string n in names)
             if (!substituted.Contains(n) && !report.Contains(n)) report.Add(n);
+
+        // Residual display, the REPL's recipe (QueryWrapper/SolutionFormatter):
+        // conjoin copy_term/3 over every visible variable, so a constraint
+        // library projects the residual goals the answer should show —
+        // `A in 6..9` after `A #> 5` instead of a silent `true`.
+        foreach (string n in report) residVars.Add((n, n));
+        if (residVars.Count > 0)
+        {
+            Term varsList = new AtomTerm("[]");
+            for (int i = residVars.Count - 1; i >= 0; i--)
+                varsList = new CompoundTerm(".", new Term[]
+                    { new VarTerm(residVars[i].Var), varsList });
+            goal = new CompoundTerm(",", new Term[]
+            {
+                goal,
+                new CompoundTerm("copy_term", new Term[]
+                {
+                    varsList,
+                    new VarTerm(EvalCopiesVar),
+                    new VarTerm(EvalResidualsVar),
+                }),
+            });
+        }
+        _pendingResidVars = residVars.Count > 0 ? residVars : null;
         _pendingCommit = commitRefusal is null ? commit : null;
         _pendingCommitRefusal = commitRefusal;
         _commitLocked = false;
@@ -555,6 +607,34 @@ public sealed partial class DebugService : IDebugSession
                             value, 999, _engine.Operators, quoted: true), 2048));
                 }
                 rendered = text.ToString();
+            }
+            if (_pendingResidVars is { } residVars)
+            {
+                var extraLines = new List<string>();
+                var evalSolution = _pendingEnum!.Current;
+                // A FRAME variable the goal BOUND shows its new (eval-local) value
+                // under the user's name — `label([A])` answers `A = 5`, and each
+                // `;` shows the next labeling, instead of an unreadable run of
+                // bare `true`s. Frame pairs are the ones whose goal-side name is
+                // the substituted _G alias (Var != Display); still-unbound ones
+                // stay silent (Locals and the residual lines cover them).
+                foreach (var (display, varName) in residVars)
+                {
+                    if (varName == display) continue;         // a plain goal var: already in report
+                    Term? value = evalSolution[varName];
+                    if (value is null or VarTerm) continue;
+                    extraLines.Add(display + " = " + Ellipsize(AstTermRenderer.Render(
+                        value, 999, _engine.Operators, quoted: true), 2048));
+                }
+                // The residual constraints the solution left on the goal's variables
+                // — `A in 6..9` after a post — in the user's own variable names.
+                string residLines = RenderEvalResiduals(evalSolution, residVars);
+                if (residLines.Length > 0) extraLines.Add(residLines);
+                if (extraLines.Count > 0)
+                {
+                    string extra = string.Join(",\n", extraLines);
+                    rendered = rendered == "true" ? extra : rendered + ",\n" + extra;
+                }
             }
 
             // ADR-035 D5+ — commit this solution's bindings INTO THE SUSPENDED FRAME. Read
@@ -1047,4 +1127,159 @@ public sealed partial class DebugService : IDebugSession
     /// around to a breakpoint on the moved-to line stops normally.</summary>
     private int _snsMovedToSite = -1;
 
+    /// <summary>The Immediate window's <c>!goal</c>: runs the goal ON the suspended
+    /// activation via the re-entrant solve (the SolveOnce machinery — a nested
+    /// once-semantics Dispatch on the live machine, register-transparent). Frame
+    /// variables resolve to their REAL heap cells through the sharing materializer, so
+    /// a posted constraint narrows the frame's own variable and a binding sticks —
+    /// trailed, so a later backtrack of the program past this point undoes it exactly
+    /// as if the program had posted it here itself. Failure or an error unwinds to the
+    /// entry marks: the frame is untouched (which makes <c>!(G, fail)</c> the free
+    /// dry-run). No timeout: on-frame execution is an explicit request on the real
+    /// machine.</summary>
+    private string EvaluateGoalOnFrame(Activation outer, int frameIndex, string goalText)
+    {
+        Term goal;
+        IReadOnlyList<string> names;
+        try
+        {
+            string text = goalText;
+            if (!text.EndsWith(".", StringComparison.Ordinal)) text += ".";
+            (goal, names) = _engine.ParseGoal(text);
+        }
+        catch (Exception ex)
+        {
+            return "syntax error: " + ex.Message;
+        }
+
+        var solve = outer.ReentrantSolve;
+        if (solve is null)
+            return "the stopped activation cannot run a nested goal here";
+
+        // Frame variables: a free (or attributed) one seeds the sharing map by its
+        // heap ADDRESS — real sharing, the whole point of '!'; a bound one whose
+        // address is unavailable substitutes as its value (plain data either way).
+        string? frameModule = null;
+        var shared = new Dictionary<string, int>();
+        var frameNames = new HashSet<string>(StringComparer.Ordinal);
+        if (_engine.TryGetDisplayFrameContext(outer, frameIndex, out int framePc, out int frameEnv))
+        {
+            frameModule = _engine.ModuleForFrame(framePc);
+            foreach (var (name, value, addr, _)
+                in _engine.MaterializeFrameVariablesWithAddresses(outer, framePc, frameEnv))
+            {
+                if (!names.Contains(name)) continue;
+                frameNames.Add(name);
+                if (addr >= 0) shared[name] = addr;
+                else goal = SubstituteVariable(goal, name, value);
+            }
+        }
+        goal = _engine.ResolveGoalModule(goal, frameModule);
+
+        // The transaction marks. Success KEEPS bindings (they are trailed against the
+        // program's own older choice points); failure and error restore everything.
+        int savedB = outer.B, savedB0 = outer.B0, savedH = outer.HeapTop;
+        int savedBindingTop = outer.BindingTrailTop, savedExtraTop = outer.ExtraTrailTop;
+        bool ok;
+        try
+        {
+            Cell goalCell = Materializer.MaterializeAsCellSharing(outer, goal, shared);
+            ok = solve(goalCell);
+        }
+        catch (Exception ex)
+        {
+            RestoreOnFrameMarks(outer, savedB, savedB0, savedBindingTop, savedExtraTop, savedH);
+            return "error: " + ex.Message + " [frame restored]";
+        }
+        if (!ok)
+        {
+            RestoreOnFrameMarks(outer, savedB, savedB0, savedBindingTop, savedExtraTop, savedH);
+            return "false [frame unchanged]";
+        }
+
+        // The suspended state visibly changed: the front ends re-pull frames, locals
+        // and constraints (same signal as Set Next Statement / a committed edit).
+        FrameStateChanged = true;
+
+        var parts = new List<string>();
+        foreach (var kv in shared)
+        {
+            if (frameNames.Contains(kv.Key)) continue;   // frame vars: Locals shows them
+            parts.Add(kv.Key + " = " + AstTermRenderer.Render(
+                TermReader.Materialize(outer, kv.Value), 999, _engine.Operators, quoted: true));
+        }
+        string result = (parts.Count == 0 ? "true" : string.Join(",\n", parts))
+            + " [applied to the frame]";
+
+        // The residual constraints the goal left ON THE FRAME's variables —
+        // the same projection the Constraints view runs, rendered under the
+        // user's names so `!X in 1..8` answers with the resulting `X in 6..8`.
+        if (shared.Count > 0
+            && ProjectResiduals(outer, shared.Values.ToList()) is { } projected)
+        {
+            var addrToDisplay = new Dictionary<int, string>();
+            foreach (var kv in shared) addrToDisplay[kv.Value] = kv.Key;
+            var renames = new Dictionary<string, string>();
+            foreach (var kv in projected.AddrToCopyName)
+                if (addrToDisplay.TryGetValue(kv.Key, out string? display))
+                    renames[kv.Value] = display;
+            var residLines = new List<string>();
+            foreach (var goals in projected.ByOwner.Values)
+                foreach (Term g in goals)
+                    residLines.Add(Ellipsize(AstTermRenderer.Render(
+                        ResidualProjection.SubstituteVarNames(g, renames),
+                        999, _engine.Operators, quoted: true), 512));
+            if (residLines.Count > 0)
+                result += "\n" + string.Join(",\n", residLines);
+        }
+        return result;
+    }
+
+    private static void RestoreOnFrameMarks(
+        Activation outer, int b, int b0, int bindingTop, int extraTop, int heapTop)
+    {
+        outer.SetB(b);
+        outer.UnwindTrails(bindingTop, extraTop);
+        outer.SetHeapTop(heapTop);
+        outer.SetB0(b0);
+    }
+
+    /// <summary>Renders the residual goals a wrapped evaluation projected
+    /// (<see cref="EvalResidualsVar"/>), with the copy variables mapped back to
+    /// the names the user typed — the lean port of the REPL's
+    /// SolutionFormatter naming walk. Empty string when nothing residual.</summary>
+    private string RenderEvalResiduals(
+        Solution solution, List<(string Display, string Var)> residVars)
+    {
+        // Copy-name -> display name: the copies list is aligned with residVars;
+        // then each copy is walked against the value it was copied from so a
+        // name nested inside a larger value still resolves.
+        var copyToDisplay = new Dictionary<string, string>();
+        var copies = new List<Term>();
+        Term cursor = solution[EvalCopiesVar] ?? new AtomTerm("[]");
+        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+        {
+            copies.Add(cons.Args[0]);
+            cursor = cons.Args[1];
+        }
+        for (int i = 0; i < copies.Count && i < residVars.Count; i++)
+            if (copies[i] is VarTerm cv) copyToDisplay.TryAdd(cv.Name, residVars[i].Display);
+        for (int i = 0; i < copies.Count && i < residVars.Count; i++)
+            ResidualProjection.MapCopyNames(
+                copies[i], solution[residVars[i].Var], residVars[i].Display, copyToDisplay);
+        // An unbound goal variable's engine name also reads as the user's name.
+        foreach (var (display, varName) in residVars)
+            if (solution[varName] is VarTerm ov) copyToDisplay.TryAdd(ov.Name, display);
+
+        var parts = new List<string>();
+        Term resCursor = solution[EvalResidualsVar] ?? new AtomTerm("[]");
+        while (resCursor is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+        {
+            parts.Add(Ellipsize(AstTermRenderer.Render(
+                ResidualProjection.SubstituteVarNames(cons.Args[0], copyToDisplay),
+                999, _engine.Operators, quoted: true), 512));
+            resCursor = cons.Args[1];
+        }
+        return parts.Count == 0 ? "" : string.Join(",\n", parts);
+    }
 }

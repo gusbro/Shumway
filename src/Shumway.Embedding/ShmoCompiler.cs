@@ -455,7 +455,7 @@ public static class ShmoCompiler
         {
             var cDecls = string.IsNullOrEmpty(nativeDecls)
                 ? new List<Shumway.Compiler.NativeC.CDecl>()
-                : Shumway.Compiler.NativeC.CParser.ParseDeclarations(nativeDecls);
+                : Shumway.Compiler.NativeC.CParser.ParseDeclarations(nativeDecls!);
             try
             {
                 rawClauses = NativeTransform.Apply(rawClauses, cDecls,

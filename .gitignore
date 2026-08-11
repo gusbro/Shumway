@@ -489,5 +489,6 @@ vs/smoke/*-trace.txt
 
 # Local-only, not part of the repo
 buildall.bat
+buildNetFx.bat
 nuget.config
 ShumwayDocs_*.zip

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net48-only console smoke for the netfx-target branch (milestone 3):
+         proves Tier-0 actually RUNS on .NET Framework, in a genuinely 32-bit
+         process. Build it twice from the CLI:
+           dotnet build -p:ShumwayNetFx=true -p:SmokeBitness=x86   (32-bit)
+           dotnet build -p:ShumwayNetFx=true -p:SmokeBitness=x64   (parity)
+         ShumwayNetFx=true is REQUIRED: this project references the net48
+         flavor of Shumway.Embedding, which only exists under the opt-in
+         switch (Directory.Build.props).
+         Both land in bin\<cfg>\net48 (last build wins) — run between builds.
+         TWO TRAPS: (1) obj\ is split by Platform (AnyCPU), NOT PlatformTarget,
+         so switching bitness needs a non-incremental build (/t:Rebuild) or the
+         stale exe survives; (2) the bitness rides a PRIVATE property, never a
+         global PlatformTarget: a global one flows into every referenced
+         project and stamps Shumway.Core.dll etc. as x86/x64-required, which
+         then poisons OTHER consumers' incremental builds
+         (BadImageFormatException in tests). -->
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>shumway-smoke-net48</AssemblyName>
+    <!-- x86laa = 32-bit but LARGEADDRESSAWARE (AnyCPU + Prefer32Bit): 4GB of
+         address space on a 64-bit OS instead of plain x86's 2GB. Both flags
+         stay LOCAL to this exe — global ones break the library builds. -->
+    <PlatformTarget Condition="'$(SmokeBitness)' == 'x86laa'">AnyCPU</PlatformTarget>
+    <Prefer32Bit Condition="'$(SmokeBitness)' == 'x86laa'">true</Prefer32Bit>
+    <PlatformTarget Condition="'$(PlatformTarget)' == '' AND '$(SmokeBitness)' != ''">$(SmokeBitness)</PlatformTarget>
+    <PlatformTarget Condition="'$(PlatformTarget)' == ''">x86</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
+  </ItemGroup>
+
+</Project>

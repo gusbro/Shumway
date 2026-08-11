@@ -1,8 +1,11 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <!-- Shumway debugger - the "Debug Prolog File" command (ADR-035, phase D4).
-     It lives in two places, because there are two ways a person looks for it: on the Debug
-     menu, where every other way of starting a session is; and on the editor's context menu,
-     where the file itself is. -->
+     It lives everywhere a person looks for it: the Debug menu (where every other way of
+     starting a session is), the editor's context menu and the document TAB's context menu
+     (where the open file is — right-clicking a tab activates its document, so these three
+     share the active-document command), and the Solution Explorer item's context menu,
+     which operates on the SELECTION rather than the active document and is therefore a
+     second command with its own visibility/resolution. -->
 <CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable"
               xmlns:xs="http://www.w3.org/2001/XMLSchema">
 
@@ -16,6 +19,12 @@
       </Group>
       <Group guid="guidShumwayCommandSet" id="ShumwayContextGroup" priority="0x0600">
         <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_CODEWIN"/>
+      </Group>
+      <Group guid="guidShumwayCommandSet" id="ShumwayTabGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_EZDOCWINTAB"/>
+      </Group>
+      <Group guid="guidShumwayCommandSet" id="ShumwayItemNodeGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_ITEMNODE"/>
       </Group>
     </Groups>
 
@@ -36,13 +45,31 @@
           <LocCanonicalName>Shumway.DebugPrologFile</LocCanonicalName>
         </Strings>
       </Button>
+      <!-- The Solution Explorer flavor: same caption, SELECTION-based. -->
+      <Button guid="guidShumwayCommandSet" id="DebugPrologFileFromExplorerCommand"
+              priority="0x0100" type="Button">
+        <Parent guid="guidShumwayCommandSet" id="ShumwayItemNodeGroup"/>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <Strings>
+          <ButtonText>Debug Prolog File (Shumway)</ButtonText>
+          <CommandName>DebugPrologFileFromExplorer</CommandName>
+          <CanonicalName>Shumway.DebugPrologFileFromExplorer</CanonicalName>
+          <LocCanonicalName>Shumway.DebugPrologFileFromExplorer</LocCanonicalName>
+        </Strings>
+      </Button>
     </Buttons>
   </Commands>
 
   <CommandPlacements>
-    <!-- The same command, also on the editor's right-click menu. -->
+    <!-- The same command, also on the editor's right-click menu... -->
     <CommandPlacement guid="guidShumwayCommandSet" id="DebugPrologFileCommand" priority="0x0100">
       <Parent guid="guidShumwayCommandSet" id="ShumwayContextGroup"/>
+    </CommandPlacement>
+    <!-- ...and on the document tab's (right-clicking a tab activates it first,
+         so the active-document logic holds). -->
+    <CommandPlacement guid="guidShumwayCommandSet" id="DebugPrologFileCommand" priority="0x0100">
+      <Parent guid="guidShumwayCommandSet" id="ShumwayTabGroup"/>
     </CommandPlacement>
   </CommandPlacements>
 
@@ -51,7 +78,10 @@
     <GuidSymbol name="guidShumwayCommandSet" value="{C74E33BF-2316-41CF-A971-B3BC83745619}">
       <IDSymbol name="ShumwayDebugGroup" value="0x1020" />
       <IDSymbol name="ShumwayContextGroup" value="0x1021" />
+      <IDSymbol name="ShumwayTabGroup" value="0x1022" />
+      <IDSymbol name="ShumwayItemNodeGroup" value="0x1023" />
       <IDSymbol name="DebugPrologFileCommand" value="0x0100" />
+      <IDSymbol name="DebugPrologFileFromExplorerCommand" value="0x0101" />
     </GuidSymbol>
   </Symbols>
 </CommandTable>

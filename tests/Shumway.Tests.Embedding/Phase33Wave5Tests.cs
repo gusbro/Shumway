@@ -90,6 +90,8 @@ public class Phase33Wave5Tests
 
     // ---- T2: whole-body Brotli compression of the .shum stream ----
 
+#if !NETFRAMEWORK  // net48 has no Brotli codec: writes are always plain, so
+                   // "compresses and shrinks" cannot hold there by design.
     [Fact]
     public void T2_CompressedBundle_RoundTrips_AndShrinks()
     {
@@ -120,6 +122,7 @@ public class Phase33Wave5Tests
         Assert.True(bytes.Length < rawApprox / 2,
             $"expected <50% of raw payload, got {bytes.Length} vs {rawApprox}");
     }
+#endif
 
     [Fact]
     public void T2_TinyBundle_StaysRaw()
@@ -242,6 +245,7 @@ public class Phase33Wave5Tests
 
     // ---- T6: .shmo whole-body compression (same framing as the .shum) ----
 
+#if !NETFRAMEWORK  // Same Brotli cut as T2.
     [Fact]
     public void T6_ShmoCompression_RoundTrips_AndLinks()
     {
@@ -271,6 +275,7 @@ public class Phase33Wave5Tests
         e.LoadBundle(BundleReader.FromBytes(result.Bytes!));
         Assert.True(e.Query("big(k42, V), V == v42.").Success);
     }
+#endif
 
     [Fact]
     public void T6_TinyShmo_StaysRaw()

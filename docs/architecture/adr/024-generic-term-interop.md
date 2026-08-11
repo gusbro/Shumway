@@ -37,18 +37,17 @@ struct:
   then `newreftype(...)` for the term's kind, recursing into the arguments.
 - `reftype_functor/4`, `preftype/1` support those.
 
-The **usage pattern** in real sources (`i_form_e.pl`, `i_gxprg.pl`) is uniform —
-build a struct, call C, read the struct back; **no callback** (C never re-unifies
-in Prolog mid-call):
+The **usage pattern** in real sources is uniform — build a struct, call C, read
+the struct back; **no callback** (C never re-unifies in Prolog mid-call):
 
 ```prolog
-{ PtrExp is &par1ref },                              % a global reftype buffer
-fill_par(Exp, PtrExp),                               % term  → struct
-{ ret = 'i_form_exp'(Mod, For, ptype, par1ref) },    % call C with the struct
-reftype_term(Exp, PtrExp),                           % struct (C modified it) → term
+{ PtrExp is &par1ref },                       % a global reftype buffer
+fill_par(Exp, PtrExp),                        % term  → struct
+{ ret = 'eval_expr'(Kind, Depth, par1ref) },  % call C with the struct
+reftype_term(Exp, PtrExp),                    % struct (C modified it) → term
 ```
 
-The user's C functions (e.g. `i_form_exp`, `i_nxgxprgs`) manipulate the reftype
+The user's C functions manipulate the reftype
 through an **accessor API**: `getint_c`, `putint_c`, `gettxt_c`, `puttxt_c`,
 `putatm_c`, `getflt_c`, `putflt_c`, `getfunctor_c`, `putfunctor_c`,
 `getfuncarg_c`, `findtype_c`, `equrefs_c`. That accessor API is the real interface.
@@ -57,11 +56,20 @@ The buffers are a small fixed set of `extern reftype par1ref … par10ref` globa
 
 ### The asymmetry that drives the design
 
-This whole apparatus exists in Arity for **one reason**: the C code runs in a
-separate process and **cannot touch the Prolog heap**, so it must **copy** the term
-to/from a C struct. In Shumway the "C" is **.NET running in-process** with direct
-access to the engine and the heap. **The copy is unnecessary** — and eliminating it
-is exactly the interop advantage over GNU Prolog the project targets.
+The reftype apparatus is, in Arity, a thin **convenience layer**: the embedded C
+runs inside the engine — one process — and rather than have C code reach into
+the engine's internal structures, a term is marshalled into the "C world" and
+back (`fill_par` / `reftype_term`), with plain C accessors in between. The
+decoupling is the point: the interface exposes nothing engine-specific, which
+is what makes the SAME interface implementable over Shumway at all.
+
+Shumway keeps the interface and drops the marshalling where the consumer is
+.NET: managed code can work against the engine's heap safely through a cursor,
+so the convenience copy becomes pure overhead there — and eliminating it is
+exactly the interop advantage over GNU Prolog the project targets. The
+marshalling survives, deliberately, where it is still the right convenience: a
+real C function via P/Invoke gets the C-world struct from the materializer tier
+(ADR-024's Phase-32 arc).
 
 ### ntype codes (the shared source of truth)
 

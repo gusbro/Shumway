@@ -48,8 +48,9 @@ The `vs\` solution builds with **desktop MSBuild only** — it references the VS
 `dotnet build` cannot resolve. It is deliberately not part of `Shumway.slnx`: nothing in
 the engine depends on it, and a Linux build never sees it.
 
-Then tell the extension where the engine is, in **Tools > Options > Shumway > Prolog
-Debugger**:
+Then tell the extension where the engine is, in VS 2026's settings editor
+(**Tools > Settings**, category **Shumway Prolog Debugger** — the extension uses
+the Unified Settings scheme, not the legacy Options dialog):
 
 | Setting | Meaning |
 |---|---|
@@ -65,7 +66,7 @@ stops at your breakpoint.
 Everything else is ordinary Visual Studio: F5 continues, F10/F11 step, the Call Stack and
 Locals windows work, and double-clicking a frame navigates to its source.
 
-The command is on the editor context menu and appears only for `.pl` files.
+The command appears only for `.pl` files, wherever you look for it: the editor context menu, the document tab's context menu, the file's context menu in Solution Explorer, and the Debug menu.
 
 ## Attaching to an engine you started yourself
 
@@ -85,7 +86,10 @@ to show. Attaching to an engine started without `--debug` looks like a debugger 
 nothing.
 
 **Attach as managed code.** Debug > Attach to Process, pick the process, and make sure
-"Attach to:" says **Managed (.NET Core)** (press *Select...* if it does not).
+"Attach to:" says **Managed (.NET Core)** — or **Managed (.NET Framework)** when the
+engine is the net48 build (press *Select...* if it does not). The **Debug Prolog File**
+command picks the right engine by itself, from the target exe's runtime (a CoreCLR
+build carries a `.runtimeconfig.json` next to the exe; a Framework build does not).
 
 You can attach to an engine that is doing nothing — sitting at the prompt, waiting for a
 query — and set breakpoints on predicates that have never run. They bind, and they are hit
@@ -283,9 +287,29 @@ An **attributed** frame variable goes in *with its constraints*: the engine tran
 its attribute graph onto the evaluation's copy, so `get_attr(X, clpfd, A)`,
 `copy_term(X, C, G)` and `frozen(Z, G)` answer the real thing, and posting a new
 constraint (`X #< 5`) narrows the copy and propagates. What you post lives in the
-evaluation — the suspended program's own variable is never touched (binding an
-attributed variable into the frame stays refused: its unification hooks cannot run in a
-suspended machine).
+evaluation — the suspended program's own variable is untouched, which makes the plain
+Immediate a consequence-free "what if". The answer shows the **residual constraints**
+the goal left on its variables, exactly like the REPL's answers — `X #> 5` on an
+`X in 1..9` frame variable answers `X in 6..9` — so a what-if tells you not just
+*whether* it is consistent but *what would remain*.
+
+To affect the **real frame**, prefix the goal with `!`:
+
+```prolog
+!X #> 5.
+true [applied to the frame]
+X in 6..9
+```
+
+That runs the goal *on the suspended machine itself*, once-committed: the constraint
+narrows the frame's own `X` (watch its `⟨constraints⟩` row update), a binding sticks,
+and when you press F5 the program continues with it — trailed, so if the program later
+backtracks past this point it is undone exactly as if the program had posted it here.
+A goal that **fails** leaves no trace, so Prolog's own idiom is the dry run:
+`!(X #> 7, fail).` answers `false [frame unchanged]`. An error also restores the frame.
+The usual caveat is the language's own: side effects (`assertz`, output) are not
+transactional and stay done. `!` also lifts the attributed-variable binding refusal —
+`!X = 7.` unifies on the frame and wakes the propagators.
 
 It is a real query against the live database, so **side effects are real**:
 

@@ -50,7 +50,7 @@ public sealed class ModuleCompiler
     /// sites. A debugger sees them as one opaque step, and the predicates they
     /// call are debugged normally — which is the point of being able to switch
     /// debugging off for part of a module rather than all of it.</summary>
-    public IReadOnlySet<int>? NonDebuggableFunctors { get; set; }
+    public ISet<int>? NonDebuggableFunctors { get; set; }
 
     /// <summary>ADR-030 — when set, run <see cref="DeterminismAnalysis"/> over the
     /// whole clause set (which this compiler already sees in full) and drop the
@@ -70,7 +70,7 @@ public sealed class ModuleCompiler
     /// cache.</summary>
     public CompiledModule Compile(
         IEnumerable<Clause> clauses,
-        IReadOnlySet<int>? unindexedFunctors)
+        ISet<int>? unindexedFunctors)
         => Compile(clauses, cache: null, unindexedFunctors);
 
     /// <summary><paramref name="cache"/> short-circuits compilation: any
@@ -98,22 +98,22 @@ public sealed class ModuleCompiler
     public CompiledModule Compile(
         IEnumerable<Clause> clauses,
         IReadOnlyDictionary<int, CompiledPredicate>? cache,
-        IReadOnlySet<int>? unindexedFunctors)
+        ISet<int>? unindexedFunctors)
         => Compile(clauses, cache, unindexedFunctors, pools: null, dynamicFunctors: null, failStubAddr: 0);
 
     public CompiledModule Compile(
         IEnumerable<Clause> clauses,
         IReadOnlyDictionary<int, CompiledPredicate>? cache,
-        IReadOnlySet<int>? unindexedFunctors,
+        ISet<int>? unindexedFunctors,
         LiteralPools? pools)
         => Compile(clauses, cache, unindexedFunctors, pools, dynamicFunctors: null, failStubAddr: 0);
 
     public CompiledModule Compile(
         IEnumerable<Clause> clauses,
         IReadOnlyDictionary<int, CompiledPredicate>? cache,
-        IReadOnlySet<int>? unindexedFunctors,
+        ISet<int>? unindexedFunctors,
         LiteralPools? pools,
-        IReadOnlySet<int>? dynamicFunctors)
+        ISet<int>? dynamicFunctors)
         => Compile(clauses, cache, unindexedFunctors, pools, dynamicFunctors, failStubAddr: 0);
 
     /// <summary><paramref name="pools"/> (ADR-015 chunk B) lets the caller
@@ -131,9 +131,9 @@ public sealed class ModuleCompiler
     public CompiledModule Compile(
         IEnumerable<Clause> clauses,
         IReadOnlyDictionary<int, CompiledPredicate>? cache,
-        IReadOnlySet<int>? unindexedFunctors,
+        ISet<int>? unindexedFunctors,
         LiteralPools? pools,
-        IReadOnlySet<int>? dynamicFunctors,
+        ISet<int>? dynamicFunctors,
         int failStubAddr)
     {
         ArgumentNullException.ThrowIfNull(clauses);

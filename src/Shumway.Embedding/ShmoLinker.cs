@@ -1834,7 +1834,7 @@ public static class ShmoLinker
         IReadOnlyList<ShmoObject> explicitObjects,
         IReadOnlyList<LinkLibrary> libraries,
         IReadOnlyList<PredicateRef> entryPoints,
-        IReadOnlySet<PredicateRef> foreignIndicators,
+        ISet<PredicateRef> foreignIndicators,
         Action<LinkSeverity, string, string, string?> emit)
     {
         // FIFO-ordered flat list of every library member.

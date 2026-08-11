@@ -77,7 +77,7 @@ Two flavours of the same gap:
 
 1. **Sibling argument** — the bucket's clauses differ at a *later argument* `j`
    (`h/3` above; the Arity property/method/type tables `control_has_property/3`,
-   `object_has_method/2`, `define_property_type/4`, the `gx_to_*_type2/4` family,
+   `object_has_method/2`, `define_property_type/4`, the type-mapping families,
    `sql_*` tables — `f(Category, Key, Value)` called Category+Key bound). The keys
    are atoms/ints (mostly) or **compound functors**.
 2. **Structure-keyed sub-argument** — the bucket is a list/struct bucket whose

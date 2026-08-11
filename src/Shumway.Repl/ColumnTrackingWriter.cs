@@ -37,7 +37,7 @@ internal sealed class ColumnTrackingWriter : TextWriter, ILineStartAware
     {
         if (string.IsNullOrEmpty(value)) return;
         _inner.Write(value);
-        AtLineStart = value[^1] == '\n';
+        AtLineStart = value![value.Length - 1] == '\n';   // ! for net48 (no NotNullWhen on IsNullOrEmpty there)
     }
 
     public override void Write(char[] buffer, int index, int count)

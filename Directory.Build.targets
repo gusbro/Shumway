@@ -1,0 +1,44 @@
+<Project>
+
+  <!-- The .NET Framework target (branch netfx-target). Everything the port
+       needs, in one place, active ONLY when a project builds for net48 — a
+       net10.0 build compiles as if none of this existed.
+
+       The polyfill file is COMPILED INTO each net48 assembly rather than shared
+       from Core: polyfills of System types must be internal (public ones would
+       collide with the consumer's own), and internal types do not cross
+       assembly boundaries. Each assembly carrying its own copy is how every
+       polyfill package works.
+
+       CS0436 is silenced for these builds only: Core grants InternalsVisibleTo
+       to a few sibling assemblies, so those see Core's copy of a polyfill AND
+       their own. The compiler resolves that in favour of the local one — which
+       is correct — and warns; under warnings-as-errors the warning would fail
+       the build for behaviour we chose. -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net48'">
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
+  </PropertyGroup>
+
+  <!-- ONE assembly carries the polyfills: Core, which grants net48-only
+       InternalsVisibleTo to the rest. Two visible copies make every extension
+       lookup and every predefined-type lookup ambiguous (CS0121 / CS8356,
+       errors NoWarn cannot reach), so per-assembly copies — the usual polyfill
+       model — cannot coexist with the IVT graph this codebase already has. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48' AND '$(MSBuildProjectName)' == 'Shumway.Core'">
+    <Compile Include="$(MSBuildThisFileDirectory)src\Shared\NetFrameworkPolyfills.cs"
+             Link="NetFrameworkPolyfills.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <!-- Span<T>, ArrayPool<T> and friends: framework-inbox from .NET Core on,
+         packages on .NET Framework. Same types, same shapes. -->
+    <PackageReference Include="System.Memory" Version="4.6.0" />
+    <!-- Pinned explicitly ABOVE what System.Memory pulls transitively: the
+         test platform's net48 assemblies bind to assembly 6.0.3.0 (package
+         6.1.2) while the transitive resolution restored 6.1.0 (assembly
+         6.0.1.0) — strict Framework binding then kills every test in
+         FileLoadException. One version everywhere ends the conflict. -->
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.1.2" />
+  </ItemGroup>
+
+</Project>

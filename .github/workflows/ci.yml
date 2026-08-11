@@ -1,0 +1,102 @@
+name: CI
+
+# Three lanes: net10.0, net48/x86 and net48/x64 — the netfx-target matrix
+# (ADR-043). Each lane arms MSVC for its OWN bitness so the real-DLL native
+# interop tests compile a host-matching DLL and actually run (they self-skip
+# without a C compiler on PATH — which is how they silently skipped in every
+# pre-CI gate). Individual test projects are built directly; the solution is
+# NOT built wholesale because Shumway.Web needs the wasm-tools workload.
+# One suite per step: pwsh only propagates the LAST command's exit code, so
+# stacking suites in one step would mask an intermediate failure.
+#
+# Shumway.Tests.DialectInterop is deliberately absent: it consults real
+# Scryer/SWI library trees from local paths that CI does not have.
+
+on:
+  push:
+    branches: [main, netfx-target]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  net10:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Neutralize vcvars Platform
+        run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
+      - name: Core
+        run: dotnet test tests/Shumway.Tests.Core -f net10.0
+      - name: Interpreter
+        run: dotnet test tests/Shumway.Tests.Interpreter -f net10.0
+      - name: Compiler
+        run: dotnet test tests/Shumway.Tests.Compiler -f net10.0
+      - name: IsoConformance
+        run: dotnet test tests/Shumway.Tests.IsoConformance -f net10.0
+      - name: Embedding (parallel)
+        run: powershell -File tests/test-embedding-parallel.ps1
+
+  net48-x86:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          # cl targets x86 so the native tests' DLLs load in the x86 testhost.
+          arch: amd64_x86
+      - name: Neutralize vcvars Platform
+        run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
+      - name: Core
+        run: dotnet test tests/Shumway.Tests.Core -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
+      - name: Interpreter
+        run: dotnet test tests/Shumway.Tests.Interpreter -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
+      - name: Compiler
+        run: dotnet test tests/Shumway.Tests.Compiler -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
+      - name: IsoConformance
+        run: dotnet test tests/Shumway.Tests.IsoConformance -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
+      - name: Embedding (parallel)
+        run: powershell -File tests/test-embedding-parallel.ps1 -Framework net48 -Platform x86
+      - name: Smoke build (32-bit)
+        run: dotnet build tests/Shumway.Smoke.Net48 -p:SmokeBitness=x86 -p:ShumwayNetFx=true -t:Rebuild -v q
+      - name: Smoke run (32-bit process, Tier-0 + Tier-1)
+        run: .\tests\Shumway.Smoke.Net48\bin\Debug\net48\shumway-smoke-net48.exe
+
+  net48-x64:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Neutralize vcvars Platform
+        run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
+      - name: Core
+        run: dotnet test tests/Shumway.Tests.Core -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
+      - name: Interpreter
+        run: dotnet test tests/Shumway.Tests.Interpreter -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
+      - name: Compiler
+        run: dotnet test tests/Shumway.Tests.Compiler -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
+      - name: IsoConformance
+        run: dotnet test tests/Shumway.Tests.IsoConformance -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
+      - name: Embedding (parallel)
+        run: powershell -File tests/test-embedding-parallel.ps1 -Framework net48 -Platform x64

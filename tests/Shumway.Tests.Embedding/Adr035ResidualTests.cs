@@ -148,7 +148,8 @@ public class Adr035ResidualTests
             // copy_term/3 projects the frame variable's constraints.
             projected = s.EvaluateGoal(0, "copy_term(X, _C, G)");
             // Posting a NEW constraint narrows the transplanted copy (eval-local).
-            posted = s.EvaluateGoal(0, "X #< 5.");
+            // Trailing dot on purpose: the user types it that way.
+            posted = s.EvaluateGoal(0, "X #> 5.");
             s.Resume(StepMode.Continue);
         });
         engine.AttachDebugSession(svc);
@@ -158,10 +159,138 @@ public class Adr035ResidualTests
         _log.WriteLine("get_attr -> " + getAttr);
         _log.WriteLine("copy_term/3 -> " + projected);
         _log.WriteLine("post -> " + posted);
+        // "error:" excluded EVERYWHERE: these three once "passed" while every
+        // eval was broken (nested residual capture clearing the transplant
+        // source), because the old asserts only looked for specific words the
+        // error strings happened not to contain.
         Assert.Contains("A = ", getAttr);            // bound to the fd attribute term
-        Assert.Contains("in", projected);            // G = [_ in 1..9]
-        Assert.DoesNotContain("existence_error", posted);
+        Assert.DoesNotContain("error", getAttr);
+        Assert.Contains(" in ", projected);          // G = [_ in 1..9]
+        Assert.DoesNotContain("error", projected);
+        Assert.DoesNotContain("error", posted);
         Assert.DoesNotContain("false", posted);      // the post succeeded on the transplant
+        // The sandbox note advertises the on-frame gesture.
+        Assert.Contains("prefix the goal with !", posted);
+        // The sandbox answer shows the residuals the post left on the copy —
+        // X in 1..9 narrowed by #> 5 — under the user's own variable name.
+        Assert.Contains("X in 6..9", posted);
+    }
+
+    [Fact]
+    public void OnFrameGoal_PostsOnTheRealVariable_AndFailureRollsBack()
+    {
+        var engine = DebugEngine(
+            ":- use_module(library(clpfd)).\n"
+            + "p(X) :-\n    X in 0..9,\n    mark(X),\n    once(labeling([up], [X])).\n"
+            + "mark(_).\n");
+        engine.AddBreakpoint("<string>", 5);
+
+        string posted = "", dryRun = "", probeLow = "", probeHigh = "";
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            // '!' = the REAL frame: the post narrows X itself (0..9 -> 6..9).
+            posted = s.EvaluateGoal(0, "!X #> 5.");
+            // A failing on-frame goal leaves NO trace — the user's dry-run idiom.
+            dryRun = s.EvaluateGoal(0, "!(X #> 7, fail).");
+            // Sandbox probes against the (now narrowed) real attribute:
+            // 3 is outside 6..9; 8 is inside (proving the dry-run rolled back).
+            probeLow = s.EvaluateGoal(0, "X #= 3");
+            probeHigh = s.EvaluateGoal(0, "X #= 8");
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var solutions = engine.QueryAll("p(V).").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("posted   -> " + posted);
+        _log.WriteLine("dry-run  -> " + dryRun);
+        _log.WriteLine("probeLow -> " + probeLow);
+        _log.WriteLine("probeHigh-> " + probeHigh);
+        Assert.Contains("[applied to the frame]", posted);
+        Assert.DoesNotContain("error", posted);
+        // The on-frame answer shows the resulting residuals, in the user's name.
+        Assert.Contains("X in 6..9", posted);
+        Assert.StartsWith("false", dryRun);
+        Assert.Contains("[frame unchanged]", dryRun);
+        Assert.Contains("false", probeLow);          // 3 excluded: the post REALLY narrowed X
+        Assert.DoesNotContain("error", probeHigh);
+        Assert.DoesNotContain("false", probeHigh);   // 8 still in: the dry-run left no trace
+        // The program CONTINUED with the posted constraint: labeling starts at 6.
+        Assert.Single(solutions);
+        Assert.Equal(6L, solutions[0].Get<long>("V"));
+    }
+
+    [Fact]
+    public void SandboxLabeling_ShowsTheBindingPerSolution_AndBacktracksWithSemicolon()
+    {
+        var engine = DebugEngine(
+            ":- use_module(library(clpfd)).\n"
+            + "p(X) :-\n    X in 6..9,\n    mark(X),\n    once(labeling([up], [X])).\n"
+            + "mark(_).\n");
+        engine.AddBreakpoint("<string>", 5);
+
+        string first = "", second = "", third = "";
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            // label/1 on a frame attvar: the answer names the labeled value —
+            // and ';' backtracks into the labeling for the next one. All
+            // eval-local: the suspended X stays 6..9.
+            first = s.EvaluateGoal(0, "label([X])");
+            second = s.EvaluateGoal(0, ";");
+            third = s.EvaluateGoal(0, ";");
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var solutions = engine.QueryAll("p(V).").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("1st -> " + first);
+        _log.WriteLine("2nd -> " + second);
+        _log.WriteLine("3rd -> " + third);
+        Assert.Contains("X = 6", first);
+        Assert.Contains("X = 7", second);
+        Assert.Contains("X = 8", third);
+        // The labeling lived in the sandbox: the resumed program labels 6 itself.
+        Assert.Single(solutions);
+        Assert.Equal(6L, solutions[0].Get<long>("V"));
+    }
+
+    [Fact]
+    public void OnFrameGoals_SurviveTier1Promotion()
+    {
+        // The user's session shape: REPL --debug arms IlPromotion (threshold 32);
+        // repeated evals promote clpfd internals mid-stop, and the SECOND
+        // on-frame post once died with "CallIl: no IL delegate for functor id N".
+        // Threshold 1 makes every eval a promotion trigger.
+        var engine = DebugEngine(
+            ":- use_module(library(clpfd)).\n"
+            + "p(X) :-\n    X in 6..9,\n    mark(X),\n    once(labeling([up], [X])).\n"
+            + "mark(_).\n");
+        engine.IlPromotion.Threshold = 1;
+        engine.AddBreakpoint("<string>", 5);
+
+        var outputs = new List<string>();
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            outputs.Add(s.EvaluateGoal(0, "X #> 8, X #< 5."));   // sandbox: false
+            outputs.Add(s.EvaluateGoal(0, "!X in 1..9."));
+            // Sandbox evals BETWEEN the posts: each runs the residual
+            // re-capture + transplant, the way a front end refreshes after
+            // FrameStateChanged — the mix that broke the user's session.
+            outputs.Add(s.EvaluateGoal(0, "X #= 7"));
+            outputs.Add(s.EvaluateGoal(0, "!X in 1..8."));
+            outputs.Add(s.EvaluateGoal(0, "copy_term(X, _C, G)"));
+            outputs.Add(s.EvaluateGoal(0, "!X #> 6."));
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var solutions = engine.QueryAll("p(V).").ToList();
+        engine.AttachDebugSession(null);
+
+        foreach (var o in outputs) _log.WriteLine("-> " + o);
+        Assert.All(outputs.Skip(1), o => Assert.DoesNotContain("error", o));
+        Assert.Single(solutions);
+        Assert.Equal(7L, solutions[0].Get<long>("V"));   // 6..9 ∩ 1..8 ∩ >6 = 7..8
     }
 
     [Fact]

@@ -494,7 +494,7 @@ public static class BundleWriter
             // no alias: existence_error in the shipped bundle. A foreign root
             // is a singleton: its calls into E are real by-fid trampolines.
             System.Collections.Generic.IReadOnlyCollection<int> MembersForAnalysis(
-                int f, System.Collections.Generic.IReadOnlySet<int>? ex) =>
+                int f, System.Collections.Generic.ISet<int>? ex) =>
                 emitOnly.Contains(f)
                     ? ic.RegionMemberFids(predicates[f], predicates, ex)
                     : new[] { f };
@@ -663,7 +663,7 @@ public static class BundleWriter
     /// bytecode callers, the marker for IL callers), never through a
     /// WAM address — so the body is pure dead weight. JIT-only: under Native
     /// AOT the IL can't load and these predicates would be unrunnable.</summary>
-    private static byte[] StripIlBodies(byte[] compiledModuleBytes, IReadOnlySet<int> ilFids)
+    private static byte[] StripIlBodies(byte[] compiledModuleBytes, ISet<int> ilFids)
     {
         var module = CompiledModuleCodec.Decode(compiledModuleBytes);
         var kept = new List<Shumway.Compiler.Wam.CompiledPredicate>(module.Predicates.Count);

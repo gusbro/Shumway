@@ -565,7 +565,7 @@ internal sealed class DapConnection
                 if (f.File.Length > 0)
                 {
                     w.WriteStartObject("source");
-                    w.WriteString("name", Path.GetFileName(f.File));
+                    w.WriteString("name", FileDisplayName(f.File));
                     w.WriteString("path", f.File);
                     w.WriteEndObject();
                 }
@@ -576,6 +576,16 @@ internal sealed class DapConnection
             w.WriteEndArray();
             w.WriteNumber("totalFrames", frames.Count);
         });
+    }
+
+    /// <summary>Not Path.GetFileName: an in-memory source's File is a
+    /// '&lt;consult&gt;'-style pseudo-path, and .NET Framework's Path.GetFileName
+    /// VALIDATES (throws on '&lt;'); slicing at the last separator is what the
+    /// modern one does anyway.</summary>
+    private static string FileDisplayName(string file)
+    {
+        int i = file.LastIndexOfAny(new[] { '\\', '/' });
+        return i < 0 ? file : file.Substring(i + 1);
     }
 
     /// <summary>A variables reference above this bit addresses a frame's CONSTRAINTS

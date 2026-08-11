@@ -2,6 +2,10 @@
 
   <PropertyGroup>
     <RootNamespace>Shumway.TopLevel</RootNamespace>
+    <!-- Multi-targeted for the .NET Framework spike (branch netfx-target);
+         see src/Shumway.Core/Shumway.Core.csproj for the pattern. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>$(ShumwayTargetFrameworks)</TargetFrameworks>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1401,7 +1401,7 @@ public sealed partial class PrologEngine
         // while the persistent regions are reused.
         if (builtPersistentNow || _persistentAddressesCache is null)
         {
-            var pa = new Dictionary<int, int>(staticLink.Addresses);
+            var pa = CollectionsCompat.Copy(staticLink.Addresses);
             foreach (var (fid, a) in _dynamicLink!.Addresses) pa[fid] = a;
             _persistentAddressesCache = pa;
 
@@ -1417,8 +1417,7 @@ public sealed partial class PrologEngine
             AddBareLocalAliases(baseMap, pa);
             _persistentAddressBaseCache = baseMap;
 
-            var pba = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
-                staticLink.PredicatesByAddress);
+            var pba = CollectionsCompat.Copy(staticLink.PredicatesByAddress);
             foreach (var (a, p) in _dynamicLink.PredicatesByAddress) pba[a] = p;
             _persistentPredsByAddressCache = pba;
         }
@@ -1457,7 +1456,7 @@ public sealed partial class PrologEngine
         // trampoline installs; overlay wins on lookup, preserving the old
         // construction order (a query-region REAL address shadows a
         // colliding persistent alias).
-        var queryAddrOverlay = new Dictionary<int, int>(queryLink.Addresses);
+        var queryAddrOverlay = CollectionsCompat.Copy(queryLink.Addresses);
         var mergedAddresses = new Shumway.Core.LayeredIntMap<int>(
             queryAddrOverlay, _persistentAddressBaseCache!);
         // keep the functor→address map of the most recent
@@ -1480,8 +1479,7 @@ public sealed partial class PrologEngine
         // the split — but the layered lookup doesn't rely on that).
         var mergedPredicatesByAddress =
             new Shumway.Core.LayeredIntMap<Shumway.Compiler.Wam.CompiledPredicate>(
-                new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
-                    queryLink.PredicatesByAddress),
+                CollectionsCompat.Copy(queryLink.PredicatesByAddress),
                 _persistentPredsByAddressCache!);
         // The "program" in the LinkResult is now a logical concept —
         // the live bytes live across two physical buffers. Downstream
@@ -1903,8 +1901,7 @@ public sealed partial class PrologEngine
             {
                 RebuildDebugTables();
                 _debugTablesBuiltFor =
-                    new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
-                        _currentPredicatesByAddress);
+                    CollectionsCompat.Copy(_currentPredicatesByAddress);
             }
         }
         // A freshly-rebuilt persistent buffer carries no Break bytes and the recorded originals

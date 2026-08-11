@@ -415,7 +415,7 @@ public sealed partial class PrologEngine
     {
         var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
         string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
-        return !string.IsNullOrEmpty(name) && name[0] != '$';
+        return !string.IsNullOrEmpty(name) && name![0] != '$';
     }
 
     /// <summary>Removes every clause of a dynamic functor while KEEPING its

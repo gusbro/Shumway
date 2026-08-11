@@ -12,8 +12,14 @@ namespace Shumway.Debugger.Vsix
 
         public static readonly Guid CommandSet = new Guid(CommandSetString);
 
-        /// <summary>The command the user sees: "Debug Prolog File".</summary>
+        /// <summary>The command the user sees: "Debug Prolog File". Active-document
+        /// based: the Debug menu, the editor context menu and the document tab's
+        /// (right-clicking a tab activates its document first).</summary>
         public const int DebugPrologFileCommandId = 0x0100;
+
+        /// <summary>The Solution Explorer flavor of the same command — operates on
+        /// the SELECTED item rather than the active document.</summary>
+        public const int DebugPrologFileFromExplorerCommandId = 0x0101;
 
         /// <summary>The CoreCLR debug engine. Shumway is a .NET program: the engine that
         /// launches it is the ordinary managed one, and our Concord components layer on top
@@ -21,5 +27,10 @@ namespace Shumway.Debugger.Vsix
         /// the whole point of the Concord model, and the reason this file has no engine id
         /// of its own.</summary>
         public static readonly Guid CoreClrEngine = new Guid("2E36F1D4-B23C-435D-AB41-18E608940038");
+
+        /// <summary>The classic managed engine (.NET Framework 4.x). A net48 shumway.exe
+        /// launched under the CORECLR engine never attaches — the engine-side
+        /// --debug-wait then waits forever — so the launcher picks per target runtime.</summary>
+        public static readonly Guid ClrV4Engine = new Guid("FB0D4648-F776-4980-95F8-BB7F36EBC1EE");
     }
 }

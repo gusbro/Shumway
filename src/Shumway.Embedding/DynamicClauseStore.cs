@@ -28,7 +28,7 @@ internal sealed class DynamicClauseStore
     // ----- dynamic marks -----
 
     /// <summary>Live read-only view of every functor marked dynamic.</summary>
-    public IReadOnlySet<int> Functors => _functors;
+    public ISet<int> Functors => _functors;
 
     public bool IsDynamic(int fid) => _functors.Contains(fid);
     public bool MarkDynamic(int fid) => _functors.Add(fid);
