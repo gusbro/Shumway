@@ -231,6 +231,12 @@ function onDebugKey(e) {
       if (stopped) resume('continue');
       return;
     case 'F10':
+      if (e.ctrlKey && e.shiftKey) {   // Set Next Statement, the VS key
+        e.preventDefault();
+        { const line = caretLine();
+          if (canSetNext(line)) setNextStatement(line); }
+        return;
+      }
       if (e.ctrlKey) {         // Run to Cursor, the VS key
         e.preventDefault();
         { const line = caretLine(); if (line > 0) runToCursor(line); }
@@ -338,6 +344,26 @@ async function toggleEnableAt(line) {
   await applyBreakpoint(file, line);
   renderGutter();
   persist();
+}
+
+/** Whether Set Next Statement accepts this line on the selected frame: the
+ *  engine says which lines are valid targets, per frame, in the stop event. */
+function canSetNext(line) {
+  const f = stopped?.frames[selectedFrame];
+  return !!f && (f.setNextLines || []).includes(line)
+    && basename(f.file) === getFile();
+}
+
+/** Set Next Statement: move where the query resumes to `line` on the selected
+ *  frame — nothing runs; the arrow moves. The engine returns the re-captured
+ *  stop, which we render in place. */
+async function setNextStatement(line) {
+  if (!stopped) return;
+  const result = await session.debugSetNext(selectedFrame, line);
+  if (result.error) { emit(`% set next statement: ${result.error}\n`, 'error'); return; }
+  // Render the moved arrow like a fresh stop at the same place — the machine
+  // did not run, but its position (and so the frames) changed.
+  onStop(result);
 }
 
 /** Run to Cursor: a one-shot engine breakpoint at the line, then continue.
@@ -866,6 +892,8 @@ function openLineMenu(x, y, line) {
     { label: 'Condition / logpoint…', run: () => openBpDialog(line) },
     { label: 'Run to cursor', key: 'Ctrl+F10',
       disabled: !stopped && !running, run: () => runToCursor(line) },
+    { label: 'Set next statement', key: 'Ctrl+Shift+F10',
+      disabled: !canSetNext(line), run: () => setNextStatement(line) },
   ].filter(Boolean));
 }
 

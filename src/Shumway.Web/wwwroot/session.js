@@ -119,6 +119,15 @@ export const debugResume = async (mode = 'continue') => engine.DebugResume(mode)
 /** Asks the RUNNING search to pause at its next goal (Break All). */
 export const debugBreakNow = async () => engine.DebugBreakNow();
 
+/** Set Next Statement: move where the suspended query resumes to `line` on
+ *  `frame`, running nothing. Resolves to the re-captured stop (the arrow has
+ *  moved), or `{ error }`. */
+export async function debugSetNext(frame, line) {
+  const reply = await engine.DebugSetNextStatement(frame, line);
+  if (reply.startsWith('error:')) return { error: reply.slice(6).trim() };
+  try { return JSON.parse(reply); } catch { return { error: reply }; }
+}
+
 /** Evaluates a goal against a frame of the SUSPENDED query — the Immediate
  *  window. `!goal` runs on the real frame; a bare `;` asks the parked
  *  evaluation for its next solution. Resolves to the result text. */

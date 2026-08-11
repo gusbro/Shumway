@@ -131,6 +131,31 @@ internal static partial class WebShumwayApp
         });
     }
 
+    /// <summary>Set Next Statement: move where the suspended query will RESUME to
+    /// <paramref name="line"/> on display frame <paramref name="frame"/>, without
+    /// running anything (ADR-035 D5+). The machine is parked, so this mutates its P
+    /// directly, the way evaluation reads it. Returns the re-captured stop as JSON
+    /// (the arrow has moved) on success, or "error: &lt;why&gt;" — the engine refuses a
+    /// line that is not a valid target, a redo/fail stop, or LCO left on.</summary>
+    [JSExport]
+    internal static Task<string> DebugSetNextStatement(int frame, int line)
+    {
+        var debug = _debug;
+        if (debug is null || Volatile.Read(ref _debugStopPending) != 1)
+            return Task.FromResult("error: nothing is stopped");
+        return Task.Run(() =>
+        {
+            try
+            {
+                string err = debug.SetNextStatement(frame, line);
+                if (err.Length > 0) return "error: " + err;
+                var now = debug.CaptureNow();
+                return now is null ? "error: nothing is stopped" : SerializeStop(now);
+            }
+            catch (Exception ex) { return "error: " + ex.Message; }
+        });
+    }
+
     /// <summary>Re-captures the suspended query's frames — variables and residual
     /// constraints as they are NOW, after an on-frame <c>!</c> evaluation changed
     /// them. Same JSON as the stop event; empty when nothing is stopped.</summary>
@@ -265,6 +290,11 @@ internal static partial class WebShumwayApp
                     w.WriteString("goals", goals);
                     w.WriteEndObject();
                 }
+                w.WriteEndArray();
+                // The lines Set Next Statement accepts ON THIS frame (moving
+                // execution there is valid); the page offers them and no others.
+                w.WriteStartArray("setNextLines");
+                foreach (int ln in f.SetNextLines) w.WriteNumberValue(ln);
                 w.WriteEndArray();
                 w.WriteEndObject();
             }
