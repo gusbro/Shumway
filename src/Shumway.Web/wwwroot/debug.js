@@ -709,18 +709,22 @@ function measureLineTops() {
   const walker = document.createTreeWalker(editorEl, NodeFilter.SHOW_TEXT);
   let node, seen = 0, want = 0;
   while (want < starts.length && (node = walker.nextNode())) {
-    while (want < starts.length && starts[want] - seen <= node.data.length) {
+    // STRICTLY inside this node: a start sitting exactly at its end (the
+    // newline closed a coloured span) belongs to the NEXT node's first
+    // character. Measuring it here collapsed the range at the node's end,
+    // whose rect is the END of the previous line — the line then drew at
+    // its neighbour's height, numberless.
+    while (want < starts.length && starts[want] - seen < node.data.length) {
       const at = starts[want] - seen;
       // A one-character range gives the character's own box; a collapsed range
       // at a line start often reports the END of the previous line instead.
       range.setStart(node, at);
-      range.setEnd(node, Math.min(at + 1, node.data.length));
+      range.setEnd(node, at + 1);
       const r = range.getClientRects()[0] || range.getBoundingClientRect();
       tops.push(r.height > 0 || r.top !== 0
         ? r.top - base
         : (tops.length ? tops[tops.length - 1] + lineHeight : 0));
       want++;
-      if (at >= node.data.length) break;   // next start is in a later node
     }
     seen += node.data.length;
   }

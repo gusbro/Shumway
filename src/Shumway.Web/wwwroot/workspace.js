@@ -246,10 +246,11 @@ export const EXAMPLE_FILES = [
 export const EXAMPLES_WORKSPACE = 'examples';
 
 /**
- * Fills the examples workspace, leaving the active one where it was. Seeding is
- * a one-time act the settings remember: an examples workspace the user deleted
- * should stay deleted, and reappearing on every load is exactly the behaviour
- * that makes a page feel like it is not listening.
+ * Fills the examples workspace, leaving the active one where it was. Runs
+ * whenever the workspace is ABSENT at boot: deleting it and reloading is how a
+ * fresh, current copy is asked for. (It was once-ever, "respecting" deletion —
+ * which also meant an updated example could never reach an existing profile,
+ * and deleting it left you with no way back.)
  */
 export async function seedExamples() {
   const was = active();

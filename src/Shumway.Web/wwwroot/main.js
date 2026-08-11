@@ -1314,10 +1314,11 @@ const restored = await workspace.restoreAll();
 // is use_module(library(…)) must find it.
 const restoredLibs = await libraries.restoreAll();
 if (restoredLibs > 0) emit(`% ${restoredLibs} library(ies) restored\n`, 'note');
-if (!config.seededExamples) {
-  await workspace.seedExamples();
-  settings.update({ seededExamples: true });
-}
+// The examples workspace reappears whenever it is ABSENT: deleting it and
+// reloading is how you ask for a fresh, current copy of the examples. (The
+// old once-ever flag respected deletion forever — which also meant an updated
+// example could never reach an existing profile.)
+if (!(await workspace.names()).includes('examples')) await workspace.seedExamples();
 const known = await workspace.names();
 await workspace.setActive(known.includes(config.workspace) ? config.workspace : 'scratch');
 await refreshWorkspaces();
