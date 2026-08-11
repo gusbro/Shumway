@@ -91,6 +91,31 @@ public class Adr035ConditionalBreakpointTests
     }
 
     [Fact]
+    public void ConditionSetUnderAnotherSpellingOfTheFile_StillGoverns()
+    {
+        // The engine consulted the FULL path; the debugger names the file by its
+        // base name. One file, one id, two spellings — and the condition must
+        // follow the breakpoint across them. It was once keyed by the spelling
+        // the debugger used, which the hit never reports: the breakpoint stopped
+        // as if unconditional, silently.
+        string dir = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "shumway_condspell");
+        System.IO.Directory.CreateDirectory(dir);
+        string file = System.IO.Path.Combine(dir, "condspell.pl");
+        System.IO.File.WriteAllText(file, Program);   // use(X) is on line 3 here
+
+        var engine = new PrologEngine();
+        engine.ConsultString(":- set_prolog_flag(compile_mode, debug).\n");
+        engine.ReconsultFile(file);
+        engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
+        Assert.True(engine.AddBreakpoint("condspell.pl", 3, "X > 100") > 0);
+
+        var stops = Run(engine);
+
+        Assert.Empty(stops);   // the condition governs: it never holds
+    }
+
+    [Fact]
     public void ConditionCanCallAUserPredicate()
     {
         // The condition is a full Prolog goal, not just arithmetic: it can call the

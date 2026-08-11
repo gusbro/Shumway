@@ -99,13 +99,18 @@ public sealed partial class PrologEngine
             // ran clean through every breakpoint in it. It binds in
             // RebindPendingBreakpoints, when the code arrives.
             _requestedBreakpoints.Add((file, line));
+            // Keyed by FILE ID, not by the string: the id is the file's canonical
+            // identity (base-name interned), where the string is one SPELLING of it.
+            // The page/IDE says "probe.pl", the consult said "/dir/probe.pl" — one
+            // file, one id, two spellings, and a string-keyed condition stored under
+            // one spelling was invisible to a hit reported under the other.
+            int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
             if (string.IsNullOrWhiteSpace(condition))
-                _breakpointConditions.Remove((file, line));
+                _breakpointConditions.Remove((fileId, line));
             else
-                _breakpointConditions[(file, line)] = condition!;
+                _breakpointConditions[(fileId, line)] = condition!;
 
             EnsureCodeLinked();
-            int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
 
             int target = SnapToCompiledLine(fileId, line);
             if (target < 0) return 0;
@@ -133,9 +138,10 @@ public sealed partial class PrologEngine
     // derived from these; these are the truth.
     private readonly HashSet<(string File, int Line)> _requestedBreakpoints = new();
 
-    // ADR-035 D5 — the condition each requested breakpoint carries, keyed like the request.
+    // ADR-035 D5 — the condition each requested breakpoint carries, keyed by FILE ID +
+    // line (see AddBreakpoint: an id is the file, a string is a spelling of it).
     // Absent = unconditional (the ordinary case pays one failed lookup per hit, nothing more).
-    private readonly Dictionary<(string File, int Line), string> _breakpointConditions = new();
+    private readonly Dictionary<(int FileId, int Line), string> _breakpointConditions = new();
 
     /// <summary>ADR-035 D5 — the condition of the breakpoint armed at this address, or null
     /// when the breakpoint is unconditional (or the stop is not a breakpoint's). Looked up
@@ -146,8 +152,7 @@ public sealed partial class PrologEngine
         int siteId = SiteAt(pc);
         if (siteId >= 0 && _breakpointRequests.TryGetValue(siteId, out var request)
             && _breakpointConditions.TryGetValue(
-                (Shumway.Core.DebugSiteTable.FileName(request.FileId), request.Line),
-                out string? condition))
+                (request.FileId, request.Line), out string? condition))
             return condition;
         return null;
     }
@@ -177,7 +182,9 @@ public sealed partial class PrologEngine
         // 2-arg overload would silently strip it.
         foreach ((string file, int line) in _requestedBreakpoints.ToArray())
             AddBreakpoint(file, line,
-                _breakpointConditions.TryGetValue((file, line), out string? c) ? c : null);
+                _breakpointConditions.TryGetValue(
+                    (Shumway.Core.DebugSiteTable.InternFile(file), line), out string? c)
+                    ? c : null);
     }
 
     /// <summary>ADR-035 — the breakpoint (as the user asked for it) armed at this
@@ -337,8 +344,8 @@ public sealed partial class PrologEngine
         lock (_debugArmGate)   // vs query setup: see AddBreakpoint
         {
             _requestedBreakpoints.Remove((file, line));
-            _breakpointConditions.Remove((file, line));
             int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
+            _breakpointConditions.Remove((fileId, line));
             int target = SnapToCompiledLine(fileId, line);
             if (target < 0) target = line;
 
