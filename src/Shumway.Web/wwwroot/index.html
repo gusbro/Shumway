@@ -34,7 +34,6 @@
   <header>
     <div class="title">
       <h1>WebShumway</h1>
-      <p class="sub">Prolog in the browser — the Shumway engine compiled to WebAssembly.</p>
     </div>
     <nav class="tools">
       <button id="guide" type="button" class="icon-button" title="About WebShumway"
@@ -113,12 +112,13 @@ par(b, c)."></div>
            hidden entirely outside debug mode. -->
       <div id="debug-toolbar" class="debug-toolbar">
         <button id="dbg-continue" type="button" class="primary"
-                title="run on to the next breakpoint">Continue</button>
-        <button id="dbg-into" type="button" title="stop at the very next goal">Step into</button>
+                title="run on to the next breakpoint (F5)">Continue</button>
+        <button id="dbg-into" type="button"
+                title="stop at the very next goal (F11)">Step into</button>
         <button id="dbg-over" type="button"
-                title="stop at the next goal no deeper than this one">Step over</button>
+                title="stop at the next goal no deeper than this one (F10)">Step over</button>
         <button id="dbg-out" type="button"
-                title="run out of the current predicate">Step out</button>
+                title="run out of the current predicate (Shift+F11)">Step out</button>
       </div>
       <pre id="out" tabindex="0">loading the engine…</pre>
       <p id="status" class="status" aria-live="polite"></p>
@@ -129,23 +129,24 @@ par(b, c)."></div>
         <button type="submit" class="primary">Run</button>
         <button id="stop" type="button" title="abandon the running query">Stop</button>
       </form>
-    </section>
 
-    <!-- Debug mode's third pane: where the suspended query is (click a frame)
-         and what its variables hold, residual constraints included. Dimmed
-         once the query moves on — what it shows is a moment ago, not now. -->
-    <section class="pane debug-pane" id="debug-pane">
-      <div class="debug-cols">
-        <div>
-          <h2>Call stack</h2>
+      <!-- Debug mode's bottom half of this pane: what the suspended query is
+           doing, one tab at a time — the stack (click a frame), its variables
+           (residual constraints included), the watches. Dimmed once the query
+           moves on: what it shows is a moment ago, not now. -->
+      <div id="debug-tabs" class="debug-tabs">
+        <div class="tab-bar" role="tablist">
+          <button type="button" data-tab="tab-stack" class="active">Call stack</button>
+          <button type="button" data-tab="tab-locals">Locals</button>
+          <button type="button" data-tab="tab-watches">Watches</button>
+        </div>
+        <div id="tab-stack" class="tab-panel">
           <div id="debug-stack" class="debug-list"></div>
         </div>
-        <div>
-          <h2>Locals</h2>
+        <div id="tab-locals" class="tab-panel" hidden>
           <div id="debug-locals" class="debug-list"></div>
         </div>
-        <div>
-          <h2>Watches</h2>
+        <div id="tab-watches" class="tab-panel" hidden>
           <div id="debug-watches" class="debug-list"></div>
           <form id="watch-form" autocomplete="off">
             <input id="watch-input" type="text" spellcheck="false" autocapitalize="off"
@@ -249,6 +250,8 @@ par(b, c)."></div>
     <form method="dialog">
       <div class="row">
         <h3>WebShumway</h3>
+        <span class="sub">Prolog in the browser — the Shumway engine compiled to
+          WebAssembly.</span>
         <button type="button" data-close>Close</button>
       </div>
       <div class="doc prose">
@@ -326,12 +329,16 @@ puzzle([S,E,N,D,M,O,R,Y]) :-
            compiled for debugging and your program is loaded again — by its
            file name, so breakpoints work in every file of the workspace, not
            just the one on screen. Click the strip left of the code to set a
-           breakpoint, run a query, and when it stops the <b>Call stack</b> and
-           <b>Locals</b> panes show where it is and what its variables hold —
-           residual constraints included. Step with the buttons above the
-           answers; <b>Stop</b> abandons the query, and <b>Debug</b> again
-           returns to the normal top level. A hollow dot is a breakpoint on a
-           line the loaded program does not reach.</p>
+           breakpoint, run a query, and when it stops the tabs under the
+           transcript show where it is (<b>Call stack</b> — click a frame) and
+           what its variables hold (<b>Locals</b> — residual constraints
+           included). Step with the buttons above the answers or the usual
+           keys: <kbd>F5</kbd> continue, <kbd>F10</kbd> step over,
+           <kbd>F11</kbd> step into, <kbd>Shift</kbd>+<kbd>F11</kbd> step out,
+           <kbd>F9</kbd> toggle a breakpoint on the caret's line. <b>Stop</b>
+           abandons the query, and <b>Debug</b> again returns to the normal
+           top level. A hollow dot is a breakpoint on a line the loaded
+           program does not reach.</p>
         <p>While stopped, the <b>?-</b> box evaluates against the selected
            frame: variables you name mean that frame's variables. A goal runs
            on a copy — <code>;</code> asks for its next solution — and a goal

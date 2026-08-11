@@ -51,6 +51,12 @@ export function init(deps) {
   $('dbg-out').addEventListener('click', () => resume('out'));
   $('gutter').addEventListener('click', onGutterClick);
   $('gutter').addEventListener('contextmenu', onGutterMenu);
+  for (const b of document.querySelectorAll('#debug-tabs .tab-bar button'))
+    b.addEventListener('click', () => selectTab(b.dataset.tab));
+  // The usual debugger keys, only while the mode is on — F5 must stay the
+  // browser's refresh in normal mode. All of these are preventDefault-able
+  // in current browsers (F11's fullscreen and F5's reload included).
+  addEventListener('keydown', onDebugKey);
   $('bp-dialog').querySelector('[data-close]')
     .addEventListener('click', () => $('bp-dialog').close(''));
   $('bp-remove').addEventListener('click', () => $('bp-dialog').close('remove'));
@@ -71,6 +77,51 @@ export function init(deps) {
 
 export const active = () => debugMode;
 export const isStopped = () => stopped !== null;
+
+function selectTab(id) {
+  for (const b of document.querySelectorAll('#debug-tabs .tab-bar button'))
+    b.classList.toggle('active', b.dataset.tab === id);
+  for (const p of document.querySelectorAll('#debug-tabs .tab-panel'))
+    p.hidden = p.id !== id;
+}
+
+function onDebugKey(e) {
+  if (!debugMode) return;
+  switch (e.key) {
+    case 'F9':
+      e.preventDefault();
+      { const line = caretLine(); if (line > 0) toggleBreakpointAt(line); }
+      return;
+    case 'F5':
+      // Swallowed even when nothing is stopped: mid-session a reflex F5 would
+      // throw the whole debug session away. Ctrl+R still reloads.
+      e.preventDefault();
+      if (stopped) resume('continue');
+      return;
+    case 'F10':
+      if (!stopped) return;
+      e.preventDefault();
+      resume('over');
+      return;
+    case 'F11':
+      if (!stopped) return;
+      e.preventDefault();
+      resume(e.shiftKey ? 'out' : 'into');
+      return;
+  }
+}
+
+/** The 1-based editor line the caret is on, or 0 when the caret is elsewhere. */
+function caretLine() {
+  const sel = document.getSelection();
+  if (!sel || sel.rangeCount === 0) return 0;
+  const range = sel.getRangeAt(0);
+  if (!editorEl.contains(range.startContainer)) return 0;
+  const r = document.createRange();
+  r.selectNodeContents(editorEl);
+  r.setEnd(range.startContainer, range.startOffset);
+  return r.toString().split('\n').length;
+}
 
 // --- entering and leaving ------------------------------------------------
 
@@ -149,7 +200,7 @@ export function onStop(stop) {
   selectedFrame = 0;
   const file = getFile();
   currentLine = file && basename(stop.file) === file ? stop.line : 0;
-  $('debug-pane').classList.remove('stale');
+  $('debug-tabs').classList.remove('stale');
   renderStack();
   renderLocals();
   renderGutter();
@@ -182,7 +233,7 @@ export function clearStopped() {
   currentLine = 0;
   setToolbar(false);
   restorePrompt();
-  $('debug-pane').classList.add('stale');
+  $('debug-tabs').classList.add('stale');
   renderGutter();
   if (statusEl.textContent.startsWith('stopped')) statusEl.textContent = '';
 }
@@ -365,7 +416,10 @@ function measureLineTops() {
     if (text[i] === '\n') starts.push(i + 1);
 
   const lineHeight = parseFloat(getComputedStyle(editorEl).lineHeight) || 19.5;
-  const base = editorEl.getBoundingClientRect().top - editorEl.scrollTop;
+  // Content-relative tops, measured against the GUTTER's own origin: the rows
+  // are positioned inside it. Measuring against the editor's border-box put
+  // every dot one border-width too low.
+  const base = $('gutter').getBoundingClientRect().top - editorEl.scrollTop;
   const tops = [];
   const range = document.createRange();
   const walker = document.createTreeWalker(editorEl, NodeFilter.SHOW_TEXT);
@@ -427,8 +481,12 @@ function renderGutter() {
 
 async function onGutterClick(e) {
   const line = Number(e.target?.dataset?.line);
+  if (line) await toggleBreakpointAt(line);
+}
+
+async function toggleBreakpointAt(line) {
   const file = getFile();
-  if (!line || !file) return;
+  if (!file) return;
   const fileBps = breakpoints.get(file);
   if (fileBps?.has(line)) {
     fileBps.delete(line);
