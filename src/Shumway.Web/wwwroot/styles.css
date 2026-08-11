@@ -363,6 +363,17 @@ dialog.wide .row input { flex: 1; max-width: 20rem; }
   color: var(--accent);
 }
 .prose h4:first-child { margin-top: 0; }
+.prose h5 {
+  margin: 1rem 0 .1rem;
+  font-size: .82rem;
+  font-weight: 600;
+  color: inherit;
+}
+.prose ul { margin: .35rem 0 .55rem; padding-left: 1.3rem; }
+.prose li { margin: .2rem 0; line-height: 1.55; }
+/* The keyboard-shortcut list reads as rows, not bullets. */
+.prose ul.keys { list-style: none; padding-left: 0; }
+.prose ul.keys li { margin: .3rem 0; }
 .prose code { font: 12px var(--mono); }
 .prose pre {
   font: 12px/1.5 var(--mono);

@@ -343,36 +343,72 @@ puzzle([S,E,N,D,M,O,R,Y]) :-
         <p><b>Debug</b> switches the page into debug mode: the engine restarts
            compiled for debugging and your program is loaded again — by its
            file name, so breakpoints work in every file of the workspace, not
-           just the one on screen. Click the strip left of the code to set a
-           breakpoint, run a query, and when it stops the tabs under the
-           transcript show where it is (<b>Call stack</b> — click a frame) and
-           what its variables hold (<b>Locals</b> — residual constraints
-           included). Step with the buttons above the answers or the usual
-           keys: <kbd>F5</kbd> continue, <kbd>F10</kbd> step over,
-           <kbd>F11</kbd> step into, <kbd>Shift</kbd>+<kbd>F11</kbd> step out,
-           <kbd>F9</kbd> toggle a breakpoint on the caret's line,
-           <kbd>Ctrl</kbd>+<kbd>F9</kbd> enable/disable it,
-           <kbd>Ctrl</kbd>+<kbd>F10</kbd> run to the caret's line.
-           <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F10</kbd> set the next
-           statement to the caret's line (move where execution resumes,
-           running nothing). <b>Break</b>
-           pauses a running query at its next goal — it lands in your
-           program's code, so a goal made only of builtins offers it nowhere
-           to stop (Stop still works there). <b>Stop</b> abandons the query,
-           and <b>Debug</b> again returns to the normal top level. A hollow
-           dot is a breakpoint on a line the loaded program does not
-           reach.</p>
-        <p>While stopped, the <b>?-</b> box evaluates against the selected
-           frame: variables you name mean that frame's variables. A goal runs
-           on a copy — <code>;</code> asks for its next solution — and a goal
-           prefixed with <code>!</code> runs on the real frame, so a binding or
-           a posted constraint sticks (append <code>, fail</code> for a dry
-           run). <b>Watches</b> re-evaluate their goals at every stop.
-           Right-click the gutter — or the source itself — for the line's menu: toggle the breakpoint,
-           enable/disable it (kept but grey), <i>Run to cursor</i>, and its
-           extras — a <i>condition</i> (stop only when the goal succeeds) or a
-           <i>log message</i> (print and keep going — <code>{X}</code> holes
-           fill from the frame).</p>
+           just the one on screen. <b>Debug</b> again returns to the normal top
+           level.</p>
+
+        <h5>Breakpoints</h5>
+        <p>Click the strip left of the code to set one; click it again to
+           remove it. A <b>hollow dot</b> is a breakpoint on a line the loaded
+           program does not reach. Right-click the gutter — or the source
+           itself — for the line's menu:</p>
+        <ul>
+          <li><b>Set / remove breakpoint.</b></li>
+          <li><b>Enable / disable</b> — kept but greyed out, so a breakpoint
+              you want back later need not be redrawn.</li>
+          <li><b>Condition</b> — a goal; the breakpoint stops only when it
+              succeeds.</li>
+          <li><b>Log message</b> — makes it a <i>logpoint</i>: it prints the
+              message and keeps going instead of stopping.
+              <code>{X}</code> holes fill from the frame.</li>
+          <li><b>Run to cursor</b> — run to this line and stop, once.</li>
+          <li><b>Set next statement</b> — move where execution will resume to
+              this line, running nothing in between.</li>
+        </ul>
+        <p>Breakpoints are remembered per workspace and survive a reload; a
+           deleted workspace forgets its own.</p>
+
+        <h5>Stopping and stepping</h5>
+        <p>When a query stops, the tabs under the transcript show where it is
+           and what it holds:</p>
+        <ul>
+          <li><b>Call stack</b> — click a frame to go to it; library and prelude
+              frames collapse into one <i>[library code]</i> row.</li>
+          <li><b>Locals</b> — the frame's variables, residual constraints
+              included.</li>
+          <li><b>Watches</b> — goals you add, re-evaluated at every stop.</li>
+          <li><b>Immediate</b> — see below.</li>
+        </ul>
+        <p>Step with the buttons above the answers, or the usual keys:</p>
+        <ul class="keys">
+          <li><kbd>F5</kbd> continue</li>
+          <li><kbd>F10</kbd> step over · <kbd>F11</kbd> step into ·
+              <kbd>Shift</kbd>+<kbd>F11</kbd> step out</li>
+          <li><kbd>F9</kbd> toggle a breakpoint on the caret's line ·
+              <kbd>Ctrl</kbd>+<kbd>F9</kbd> enable/disable it</li>
+          <li><kbd>Ctrl</kbd>+<kbd>F10</kbd> run to the caret's line ·
+              <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F10</kbd> set the next
+              statement there</li>
+        </ul>
+        <p><b>Break</b> pauses a running query at its next goal — it lands in
+           your own program's code, so a goal made only of builtins offers it
+           nowhere to stop (<b>Stop</b> still abandons the query there).</p>
+        <p>Calling <code>debugger_break</code> from your program stops in debug
+           mode exactly as a breakpoint on that line would — a breakpoint you
+           write into the code, useful for a spot a click is awkward to place.
+           Outside debug mode it does nothing and succeeds, so it can be left
+           in.</p>
+
+        <h5>The Immediate window</h5>
+        <p>While stopped, the <b>?-</b> box (and the <b>Immediate</b> tab)
+           evaluate a goal against the selected frame — the variables you name
+           are that frame's:</p>
+        <ul>
+          <li>A goal runs on a <b>copy</b>; <code>;</code> asks for its next
+              solution.</li>
+          <li>A goal prefixed with <code>!</code> runs on the <b>real
+              frame</b>, so a binding or a posted constraint sticks (append
+              <code>, fail</code> for a dry run).</li>
+        </ul>
 
         <h4>What is different here</h4>
         <p>The browser build runs the bytecode interpreter only: Shumway's
