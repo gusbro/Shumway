@@ -369,7 +369,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `tell(+File)` | Opens File for writing and makes it the current output stream. An already-open tell-stream is closed first. |
 | `telling(?File)` | Unifies File with the name of the current output stream's file (or `user` when current output is user_output). |
 | `told` | Closes the current output stream (if not user_output) and reverts current output to user_output. |
-| `with_output_to(+Sink, :Goal)` | Runs a goal, capturing its output into an atom, string or code list. |
+| `with_output_to(+Sink, :Goal)` | Runs Goal once, capturing its output into the atom(A) or string(S) sink. |
 | `working_directory(-Old, +New)` | Unifies Old with the current working directory; if New differs, changes the cwd to it. Use working_directory(D, D) to read without changing. |
 | `write(+Term)` | Writes a term to the current output stream. |
 | `write(+Stream, +Term)` | Writes a term to the given stream. |

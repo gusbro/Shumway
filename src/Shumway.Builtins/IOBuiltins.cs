@@ -291,7 +291,9 @@ public static class IOBuiltins
     /// <para>The format string may be an atom or a PSTR. The args list
     /// must be a proper list — pass <c>[]</c> when no args are needed.</para></summary>
     public static bool Format(Activation engine) =>
-        FormatImpl(engine, engine.Out, fmtReg: 0, argsReg: 1, "format/2");
+        // Current output via the registry (like every other output builtin):
+        // set_output/1 and with_output_to/2 must redirect format/2 too.
+        FormatImpl(engine, CurrentWriter(engine), fmtReg: 0, argsReg: 1, "format/2");
 
     /// <summary><c>format(Stream, FormatString, Args)</c> — stream-aware
     /// variant of <see cref="Format"/>. The stream handle must be a

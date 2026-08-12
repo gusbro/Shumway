@@ -27,6 +27,12 @@ public class Adr035BlintDisableBp
         var engine = new PrologEngine();
         engine.Flags.EmitDebugInfo = true;
         engine.Flags.DebugCodegen = true;
+        // Blint is an ARITY-era program (`Char = '/'`-style quoted operator-atom
+        // operands throughout its tokenizer): give it the quoted-operand
+        // leniency alone — full arity_compat would change its LEXING too
+        // (Arity $...$ strings, backslash not an escape), which this file
+        // never consulted under.
+        engine.Flags.LenientBareOperatorOperands = true;
         engine.ConsultString(":- set_prolog_flag(compile_mode, debug).\n");
         engine.ConsultFile(BlintPath);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();

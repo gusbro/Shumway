@@ -386,8 +386,13 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("module_property", 2, ModuleProperty,
             Reflect, "module_property(?Module, ?Property)",
             "Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound.");
-        BuiltinsRegistry.Register("with_output_to", 2, WithOutputTo,
-            Io, "with_output_to(+Sink, :Goal)", "Runs a goal, capturing its output into an atom, string or code list.");
+        // with_output_to/2 itself is a PRELUDE predicate (the goal must run in
+        // the LIVE engine so its side effects — op/3, assertz — survive);
+        // these are its redirection primitives.
+        BuiltinsRegistry.Register("$wot_begin", 1, WotBegin,
+            Io, "'$wot_begin'(+Sink)", "Internal: begins a with_output_to capture.");
+        BuiltinsRegistry.Register("$wot_end", 1, WotEnd,
+            Io, "'$wot_end'(+Sink)", "Internal: ends a with_output_to capture and unifies the sink.");
         BuiltinsRegistry.Register("atom_to_term",   3, AtomToTerm,
             Term, "atom_to_term(+Atom, -Term, -Bindings)", "Parses an atom into a term plus its variable bindings.");
         BuiltinsRegistry.Register("read_term_from_stream", 2, ReadTermFromStream,

@@ -795,6 +795,7 @@ public static partial class MetaBuiltins
         if (nameCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "";
+            ValidateOpDefine(host, name, precedence, opType);
             host.DefineOperator(name, precedence, opType);
             return true;
         }
@@ -807,12 +808,45 @@ public static partial class MetaBuiltins
                 if (head.Tag != Tag.Atom)
                     throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
                 string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
+                ValidateOpDefine(host, name, precedence, opType);
                 host.DefineOperator(name, precedence, opType);
                 cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
             }
             return true;
         }
         throw new ShumwayPrologException(IsoError.TypeError("atom_or_list", new VarTerm("_")));
+    }
+
+    /// <summary>ISO §8.14.3.3 (+ Cor.2) op/3 permission rules: <c>','</c> is
+    /// untouchable; <c>'|'</c> may only be infix with priority &gt; 1000 (or
+    /// removed); <c>'[]'</c>/<c>'{}'</c> can never be operators; and no atom
+    /// may be both an infix and a postfix operator.</summary>
+    private static void ValidateOpDefine(
+        PrologEngine host, string name, int precedence,
+        Shumway.Compiler.Parsing.OperatorType opType)
+    {
+        bool isInfix = opType is Shumway.Compiler.Parsing.OperatorType.Xfx
+            or Shumway.Compiler.Parsing.OperatorType.Xfy
+            or Shumway.Compiler.Parsing.OperatorType.Yfx;
+        bool isPostfix = opType is Shumway.Compiler.Parsing.OperatorType.Xf
+            or Shumway.Compiler.Parsing.OperatorType.Yf;
+        if (name == ",")
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("modify", "operator", new AtomTerm(",")));
+        if (name == "|" && (!isInfix || (precedence != 0 && precedence <= 1000)))
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("create", "operator", new AtomTerm("|")));
+        if (name is "[]" or "{}")
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("create", "operator", new AtomTerm(name)));
+        if (precedence != 0 && isInfix
+            && host.Operators.TryGetPostfix(name, out _, out _))
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("create", "operator", new AtomTerm(name)));
+        if (precedence != 0 && isPostfix
+            && host.Operators.TryGetInfix(name, out _, out _))
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("create", "operator", new AtomTerm(name)));
     }
 
     /// <summary><c>current_op(?Priority, ?Type, ?Name)</c> — ISO §8.17.3.

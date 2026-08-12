@@ -212,6 +212,7 @@ public sealed partial class PrologEngine
         bool savedLenientOps = Flags.LenientBareOperatorOperands;
         bool savedLenientQuote = Flags.LenientQuoteCharLiteral;
         bool savedLenientArgs = Flags.LenientArgumentPriority;
+        bool savedLenientEsc = Flags.LenientEscapes;
         // SWI-only OPERATORS, scoped like the flags: `as` (dynamic/table
         // decorations) would otherwise break user programs that use `as` as a
         // predicate or DCG-nonterminal head. Save prior definitions so nested
@@ -225,6 +226,7 @@ public sealed partial class PrologEngine
             Flags.LenientBareOperatorOperands = true;
             Flags.LenientQuoteCharLiteral = true;
             Flags.LenientArgumentPriority = true;
+            Flags.LenientEscapes = true;
             Operators.Define("as", 700, Shumway.Compiler.Parsing.OperatorType.Xfx);
             Operators.Define("thread_local", 1150, Shumway.Compiler.Parsing.OperatorType.Fx);
         }
@@ -243,6 +245,7 @@ public sealed partial class PrologEngine
             Flags.LenientBareOperatorOperands = savedLenientOps;
             Flags.LenientQuoteCharLiteral = savedLenientQuote;
             Flags.LenientArgumentPriority = savedLenientArgs;
+            Flags.LenientEscapes = savedLenientEsc;
             if (swiOps)
             {
                 Operators.Define("as", hadAs ? asPrec : 0,

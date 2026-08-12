@@ -49,6 +49,7 @@ public sealed class ClauseReader
         lexer.ArityCompat = flags.ArityCompat;
         lexer.DigitSeparators = flags.DigitSeparators;
         lexer.LenientQuoteCharLiteral = flags.LenientQuoteCharLiteral;
+        lexer.LenientEscapes = flags.LenientEscapes;
         if (flags.ArityCompat) DefineArityCompatOperators(operators);
         _parser = new Parser(lexer, operators, flags);
     }

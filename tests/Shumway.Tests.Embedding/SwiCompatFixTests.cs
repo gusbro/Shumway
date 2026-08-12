@@ -23,7 +23,11 @@ public sealed class SwiCompatFixTests
     [Fact]
     public void LexerEscapes_e_and_u()
     {
+        // \e / \u / \U are SWI extensions, not ISO — the conformance suite
+        // requires strict rejection by default, so they ride the
+        // LenientEscapes flag the swi dialect scope sets (ADR-040).
         var e = new PrologEngine();
+        e.Flags.LenientEscapes = true;
         Assert.True(e.Query("0'\\e =:= 27.").Success);           // ESC
         Assert.True(e.Query("0'\\u0041 =:= 65.").Success);       // 'A'
         Assert.True(e.Query("0'\\U00000041 =:= 65.").Success);   // 'A' (8-digit)

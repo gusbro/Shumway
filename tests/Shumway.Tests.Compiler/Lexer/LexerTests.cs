@@ -141,9 +141,15 @@ public class LexerTests
     }
 
     [Fact]
-    public void Integer_HexWithNoDigits_Throws()
+    public void Integer_HexWithNoDigits_IsZeroThenAtom()
     {
-        Assert.Throws<LexerException>(() => Tokens("0x"));
+        // ISO greedy-longest-VALID token: `0x` with no hex digit is the
+        // integer 0 followed by the atom x (Neumerkel #255 `0xor 2`).
+        var toks = Tokens("0x");
+        Assert.Equal(TokenKind.Integer, toks[0].Kind);
+        Assert.Equal(0L, toks[0].IntValue);
+        Assert.Equal(TokenKind.Atom, toks[1].Kind);
+        Assert.Equal("x", toks[1].Text);
     }
 
     [Theory]
@@ -187,9 +193,16 @@ public class LexerTests
     }
 
     [Fact]
-    public void Float_RequiresDigitsAfterE()
+    public void Float_IncompleteExponent_BacktracksToFloat()
     {
-        Assert.Throws<LexerException>(() => Tokens("1.5e"));
+        // ISO greedy-longest-VALID token: `1.5e` is the float 1.5 followed
+        // by the atom e — under `op(9, xf, e)` a live operator expression
+        // (Neumerkel #51/#52/#220) — not a lexing error.
+        var toks = Tokens("1.5e");
+        Assert.Equal(TokenKind.Float, toks[0].Kind);
+        Assert.Equal(1.5, toks[0].FloatValue);
+        Assert.Equal(TokenKind.Atom, toks[1].Kind);
+        Assert.Equal("e", toks[1].Text);
     }
 
     // ---------- Strings ----------
@@ -250,11 +263,14 @@ public class LexerTests
     }
 
     [Fact]
-    public void Escape_BareNul_StillDecodesToZero()
+    public void Escape_OctalZero_RequiresTerminator()
     {
-        // \0 with no digits/terminator is the legacy NUL shorthand.
-        Token t = First("'\\0'");
+        // ISO: `\0\` is the octal NUL escape — the terminating backslash is
+        // mandatory (Neumerkel #300/#301); the legacy bare-`\0` shorthand is
+        // gone (it swallowed `'\33\'`-style octal escapes).
+        Token t = First("'\\0\\'");
         Assert.Equal("\0", t.Text);
+        Assert.Throws<LexerException>(() => Tokens("'\\0'"));
     }
 
     // ---------- Punctuation ----------

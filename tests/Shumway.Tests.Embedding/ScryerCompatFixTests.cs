@@ -11,9 +11,11 @@ public sealed class ScryerCompatFixTests
     [Fact]
     public void BarAsAtom_Parses()
     {
-        // ISO: `|` is an atom. `(|)` is that atom — Scryer's builtins.pl op/3
-        // permission-error term relies on it.
+        // Scryer parses `(|)` as the bar atom — its builtins.pl op/3
+        // permission-error term relies on it. Strict ISO has no bar atom
+        // (Neumerkel #360/#361), so the shape is dialect-gated.
         var e = new PrologEngine();
+        e.Flags.LenientBareOperatorOperands = true;
         Assert.True(e.Query("X = (|), X == '|'.").Success);
         Assert.True(e.Query("functor((|), N, 0), N == '|'.").Success);
     }

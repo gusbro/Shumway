@@ -93,6 +93,8 @@ internal static class Prelude
         :- public listing/1.
         :- public format/1.
         :- public format_to_atom/3.
+        :- public with_output_to/2.
+        :- public '$wot_recover'/2.
         :- public '$call_conj'/3.
         :- public '$call_disj'/3.
         :- public '$call_arrow'/3.
@@ -763,8 +765,8 @@ internal static class Prelude
         '$predsort_ins'([], _, X, [X]).
         '$predsort_ins'([Y|Ys], P, X, Out) :-
             call(P, Ord, X, Y),
-            ( Ord == '<' -> Out = [X, Y|Ys]
-            ; Ord == '=' -> Out = [Y|Ys]
+            ( Ord == ('<') -> Out = [X, Y|Ys]
+            ; Ord == ('=') -> Out = [Y|Ys]
             ; Out = [Y|Out1], '$predsort_ins'(Ys, P, X, Out1)
             ).
 
@@ -772,10 +774,10 @@ internal static class Prelude
         sort(Key, Order, List, Sorted) :-
             '$sort4_tag'(List, Key, 0, Tagged),
             msort(Tagged, Asc),
-            ( ( Order == '@<' ; Order == '@>' ) -> '$sort4_dedup'(Asc, Uniq)
+            ( ( Order == ('@<') ; Order == ('@>') ) -> '$sort4_dedup'(Asc, Uniq)
             ; Uniq = Asc
             ),
-            ( ( Order == '@>' ; Order == '@>=' ) -> reverse(Uniq, Ordered)
+            ( ( Order == ('@>') ; Order == ('@>=') ) -> reverse(Uniq, Ordered)
             ; Ordered = Uniq
             ),
             '$sort4_elems'(Ordered, Sorted).
@@ -920,7 +922,10 @@ internal static class Prelude
         '$phrase'(!, S0, S) :- !, S0 = S.
         '$phrase'((A, B), S0, S) :- !, '$phrase'(A, S0, S1), '$phrase'(B, S1, S).
         '$phrase'((A ; B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
-        '$phrase'((A | B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
+        % '|'(A,B) written canonically: `|` is only an operator inside a DCG
+        % rule body (strict ISO has no bar operator), and this is a plain
+        % clause matching the alternation a DCG body term carries at runtime.
+        '$phrase'('|'(A, B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
         '$phrase'((A -> B), S0, S) :- !, ( '$phrase'(A, S0, S1) -> '$phrase'(B, S1, S) ).
         '$phrase'({G}, S0, S) :- !, call(G), S0 = S.
         '$phrase'(\+ A, S0, S) :- !, \+ '$phrase'(A, S0, _), S0 = S.
@@ -1030,6 +1035,23 @@ internal static class Prelude
         %! format_to_atom(-Atom, +Format, +Args) | Input / output | Like format/2 but captures the formatted output into an atom.
         format_to_atom(Atom, Format, Args) :-
             with_output_to(atom(Atom), format(Format, Args)).
+
+        %! with_output_to(+Sink, :Goal) | Input / output | Runs Goal once, capturing its output into the atom(A) or string(S) sink.
+        % The goal runs in the LIVE engine (its op/3 / assertz side effects
+        % survive — a sub-engine would swallow them); the capture is exposed
+        % whether the goal succeeded, failed or raised (the SWI convention),
+        % which is why every arm passes through '$wot_end'. Uses
+        % '$catch_begin'/'$catch_end' with a stable-address public recovery —
+        % an inline catch(...) in a prelude clause has no compiled address
+        % (see setup_call_cleanup above).
+        with_output_to(Sink, Goal) :-
+            '$wot_begin'(Sink),
+            '$catch_begin'(E, '$wot_recover'(Sink, E)),
+            ( call(Goal) -> R = t ; R = f ),
+            '$catch_end',
+            '$wot_end'(Sink),
+            R == t.
+        '$wot_recover'(Sink, E) :- '$wot_end'(Sink), throw(E).
 
         % ===== tabling =====
         % A `:- table p/N` predicate is transformed at consult time. Its

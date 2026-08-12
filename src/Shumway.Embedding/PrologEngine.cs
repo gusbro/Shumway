@@ -336,6 +336,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// output in tests.</summary>
     public System.IO.TextWriter Out { get; set; } = Console.Out;
 
+    /// <summary>The output redirections <c>with_output_to/2</c> has open —
+    /// its goal runs in the LIVE engine with the stream registry's current
+    /// output pointed at an in-memory stream; <c>'$wot_end'</c> restores the
+    /// displaced handle. A stack, because captures nest.</summary>
+    internal System.Collections.Generic.Stack<(Shumway.Core.StreamHandle Prev,
+        Shumway.Core.StreamHandle Mem, System.IO.StringWriter Sw,
+        System.IO.TextWriter PrevOut)>? WotStack;
+
     /// <summary>Where load-time warnings go: a directive that failed, a
     /// <c>use_module</c> target that is not there, a directive nobody
     /// recognises. Defaults to standard error, which is right for a console

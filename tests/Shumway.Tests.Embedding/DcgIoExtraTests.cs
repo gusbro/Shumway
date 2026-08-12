@@ -102,11 +102,13 @@ public class DcgIoExtraTests
     // ---------- write_canonical/1 + print/1 ----------
 
     [Fact]
-    public void WriteCanonical_OutputsSameAsWrite()
+    public void WriteCanonical_UnfoldsListsToFunctionalNotation()
     {
+        // ISO §7.10.5 ignore_ops: canonical form writes the list compound
+        // '.'(H,T) in functional notation (Neumerkel #34), unlike write/1.
         var engine = WithCaptureOut(out var sw);
         engine.Query("write_canonical(foo(a, 1, [b])).");
-        Assert.Equal("foo(a,1,[b])", sw.ToString());   // Phase 33: compact ISO layout
+        Assert.Equal("foo(a,1,'.'(b,[]))", sw.ToString());
     }
 
     [Fact]
