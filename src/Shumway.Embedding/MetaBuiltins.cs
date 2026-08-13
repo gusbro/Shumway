@@ -425,6 +425,10 @@ public static partial class MetaBuiltins
             Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).");
         BuiltinsRegistry.Register("read",      2, Read2,
             Io, "read(+Stream, -Term)", "Reads one term from a stream (ISO §8.14.2).");
+        BuiltinsRegistry.Register("http_download", 2, HttpDownload,
+            Io, "http_download(+URL, +File)",
+            "Downloads URL's raw bytes to File (HTTP/HTTPS); a network or "
+            + "HTTP failure raises existence_error(url, URL).");
         BuiltinsRegistry.Register("prolog_load_context", 2, PrologLoadContext2,
             Io, "prolog_load_context(?Key, ?Value)",
             "SWI/Scryer load-context introspection (module / file / source / "

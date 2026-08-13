@@ -159,7 +159,8 @@ public static class StandardBuiltins
             Io, "open(+File, +Mode, -Stream)", "Opens a file as a stream handle.");
         BuiltinsRegistry.Register("open",      4, StreamBuiltins.OpenWithOptions,
             Io, "open(+File, +Mode, -Stream, +Options)",
-            "Opens a file with options (alias, type, eof_action) — ISO §8.11.5.");
+            "Opens a file with options (alias, type, encoding(utf8|iso_latin_1|ascii), "
+            + "eof_action) — ISO §8.11.5.");
         BuiltinsRegistry.Register("close",     1, StreamBuiltins.Close,
             Io, "close(+Stream)", "Closes an open stream.");
         BuiltinsRegistry.Register("close",     2, StreamBuiltins.Close2,

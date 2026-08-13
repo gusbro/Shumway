@@ -34,6 +34,8 @@
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
     <PackageReference Include="System.Collections.Immutable" Version="8.0.0" />
+    <!-- http_download/2: HttpClient is not in net48's default reference set. -->
+    <Reference Include="System.Net.Http" />
     <!-- The emitters compile for net48 too: the net48 toolchain emits
          FRAMEWORK apps (the stub project targets the RUNNING toolchain's TFM;
          net48 output is a folder — exe + DLLs + config — since Framework has

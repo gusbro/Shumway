@@ -120,7 +120,9 @@ public static class StreamBuiltins
     /// The four-argument form takes an options list, recognising
     /// <c>alias(Name)</c> (registers the stream under a user-chosen
     /// atom), <c>type(text|binary)</c> (binary opens a raw byte
-    /// stream for the §8.13 byte I/O builtins) and
+    /// stream for the §8.13 byte I/O builtins),
+    /// <c>encoding(utf8|iso_latin_1|ascii)</c> (SWI-style text
+    /// encoding; default UTF-8) and
     /// <c>eof_action(error|eof_code|reset)</c> (accepted; reads at EOF
     /// follow the default end_of_file handling). Any other option
     /// raises <c>domain_error(stream_option, _)</c>.
@@ -144,6 +146,7 @@ public static class StreamBuiltins
         // anything else is a stream_option domain error.
         string? alias = null;
         bool binary = false;
+        System.Text.Encoding? encoding = null;
         Cell cur = optsCell;
         while (cur.Tag == Tag.Lis)
         {
@@ -183,6 +186,27 @@ public static class StreamBuiltins
                     if (typeName == "binary") binary = true;
                     else if (typeName != "text")
                         throw new PrologRuntimeException("domain_error", "stream_option");
+                    break;
+                case "encoding":
+                    // SWI-style: encoding(utf8 | iso_latin_1 | ascii). The
+                    // default StreamReader/Writer is UTF-8; iso_latin_1 maps
+                    // bytes 0x80–0xFF to the SAME code points (Latin-1 is the
+                    // first 256 of Unicode), so reading a Latin-1 file with
+                    // it is byte-value-faithful — a UTF-8 read turns each
+                    // such byte into U+FFFD.
+                    if (argCell.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (argCell.Tag != Tag.Atom)
+                        throw new PrologRuntimeException("domain_error", "stream_option");
+                    string encName = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
+                    encoding = encName switch
+                    {
+                        "utf8" => new System.Text.UTF8Encoding(false),
+                        "iso_latin_1" => System.Text.Encoding.Latin1,
+                        "ascii" => System.Text.Encoding.ASCII,
+                        _ => throw new PrologRuntimeException(
+                            "domain_error", "stream_option"),
+                    };
                     break;
                 case "eof_action":
                     // Recognised but not yet plumbed through the read
@@ -239,11 +263,25 @@ public static class StreamBuiltins
             }
             else
             {
+                // With no encoding option, keep the platform defaults
+                // (StreamReader's UTF-8 with BOM detection).
                 handle = mode switch
                 {
-                    "write"  => new StreamHandle(id, new StreamWriter(path, append: false) { NewLine = "\n" }, "write", path, alias),
-                    "append" => new StreamHandle(id, new StreamWriter(path, append: true) { NewLine = "\n" }, "append", path, alias),
-                    "read"   => new StreamHandle(id, new StreamReader(path), "read", path, alias),
+                    "write"  => new StreamHandle(id,
+                        encoding is null
+                            ? new StreamWriter(path, append: false) { NewLine = "\n" }
+                            : new StreamWriter(path, false, encoding) { NewLine = "\n" },
+                        "write", path, alias),
+                    "append" => new StreamHandle(id,
+                        encoding is null
+                            ? new StreamWriter(path, append: true) { NewLine = "\n" }
+                            : new StreamWriter(path, true, encoding) { NewLine = "\n" },
+                        "append", path, alias),
+                    "read"   => new StreamHandle(id,
+                        encoding is null
+                            ? new StreamReader(path)
+                            : new StreamReader(path, encoding),
+                        "read", path, alias),
                     _ => throw new PrologRuntimeException("domain_error",
                         "stream_mode (Phase 1 supports write / append / read)"),
                 };

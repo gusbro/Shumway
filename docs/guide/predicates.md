@@ -321,11 +321,12 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `get_code(-Code)` | Reads one character code from the current input stream (ISO §8.12.4). |
 | `get_code(+Stream, -Code)` | Reads one character code from a stream (ISO §8.12.4). |
 | `getenv(+Name, -Value)` | Unifies Value with the environment variable Name's contents as an atom; fails (does not raise) when Name is unset — SWI-compatible, so `(getenv(X,V) ; V = Default)` works. |
+| `http_download(+URL, +File)` | Downloads URL's raw bytes to File (HTTP/HTTPS); a network or HTTP failure raises existence_error(url, URL). |
 | `mkdir(+Path)` | Creates the directory Path (and any missing parents). Succeeds silently when the directory already exists. |
 | `nl` | Writes a newline to the current output stream. |
 | `nl(+Stream)` | Writes a newline to the given stream. |
 | `open(+File, +Mode, -Stream)` | Opens a file as a stream handle. |
-| `open(+File, +Mode, -Stream, +Options)` | Opens a file with options (alias, type, eof_action) — ISO §8.11.5. |
+| `open(+File, +Mode, -Stream, +Options)` | Opens a file with options (alias, type, encoding(utf8\|iso_latin_1\|ascii), eof_action) — ISO §8.11.5. |
 | `peek_byte(-Byte)` | Peeks one byte from the current input binary stream (ISO §8.13.2). |
 | `peek_byte(+Stream, -Byte)` | Peeks one byte from a binary stream (ISO §8.13.2). |
 | `peek_char(-Char)` | Peeks one character from the current input stream (ISO §8.12.2). |
