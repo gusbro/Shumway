@@ -1,0 +1,9 @@
+# gplc build output (see README.md — GNU Prolog runs as a compiled console
+# executable on Windows).
+conformity_gprolog.exe
+
+# The repo root ignores any artifacts/ directory; re-include ours so its
+# .gitignore is committed (contents stay generated-only).
+!artifacts/
+artifacts/*
+!artifacts/.gitignore

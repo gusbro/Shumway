@@ -1,0 +1,6 @@
+# Everything in artifacts/ is generated at run time: pages fetched from
+# Neumerkel's site, extracted tsv, generated fact files, capture temp files
+# and the results log. Nothing here is committed — the repository carries no
+# third-party content.
+*
+!.gitignore
