@@ -102,9 +102,11 @@ internal static partial class WebShumwayApp
             try
             {
                 StartEngine();
+                // Same version the desktop banner and version_data report.
                 return Tier0Only
-                    ? "Shumway ready (Tier-0 interpreter)."
-                    : "Shumway ready.";
+                    ? $"Shumway Prolog {PrologEngine.VersionString} ready "
+                      + "(Tier-0 interpreter)."
+                    : $"Shumway Prolog {PrologEngine.VersionString} ready.";
             }
             catch (Exception ex)
             {

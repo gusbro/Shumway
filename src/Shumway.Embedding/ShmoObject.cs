@@ -162,6 +162,12 @@ public sealed class ShmoObject
     /// objects that didn't carry the flag.</summary>
     public ShmoBuildMode BuildMode { get; }
 
+    /// <summary>The Shumway version that wrote this object — so a file can
+    /// always say which build produced it, whatever happens to the format
+    /// later. <see cref="ShumwayVersion.None"/> only for an object built in
+    /// memory with the stamp explicitly suppressed.</summary>
+    public ShumwayVersion GeneratorVersion { get; }
+
     /// <summary><c>true</c> when the module was compiled in
     /// Arity compatibility mode (<c>shumway-compile --arity</c>, or an
     /// in-file <c>:- set_prolog_flag(arity_compat, true)</c> at any
@@ -238,8 +244,10 @@ public sealed class ShmoObject
         IReadOnlyList<PredicateRef>? exports = null,
         IReadOnlyList<ShmoImportEntry>? imports = null,
         IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
-        string? dialect = null)
+        string? dialect = null,
+        ShumwayVersion? generatorVersion = null)
     {
+        GeneratorVersion = generatorVersion ?? ShumwayVersion.Current;
         ModuleName = moduleName;
         Source = source;
         Bytecode = bytecode;

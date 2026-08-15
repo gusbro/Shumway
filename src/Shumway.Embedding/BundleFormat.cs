@@ -19,6 +19,9 @@ namespace Shumway.Embedding;
 ///             body below is ONE Brotli stream (bodies ≥ 4 KB compress;
 ///             typical ratio ~4-6× on real corpora)
 ///   [9..]     Body (raw or decompressed):
+///                 genMajor         : uint32  \
+///                 genMinor         : uint32   > the Shumway that WROTE this
+///                 genPatch         : uint32  /  file (see ShumwayVersion)
 ///                 Module count (uint32)
 ///             then for each module:
 ///                 nameLength       : uint32
@@ -106,6 +109,22 @@ public static class BundleFormat
     /// accepts; only the size differs, and a web server re-compresses in
     /// transport anyway.</summary>
     public static bool DisableCompression { get; set; }
+
+    /// <summary>Writes the producing Shumway version — the FIRST field of a
+    /// <c>.shum</c> body. Shared by the two writers (BundleWriter.ToBytes and
+    /// ShmoLinker.SerialiseBundle) precisely so they cannot drift apart; the
+    /// reader is <see cref="ReadGeneratorVersion"/>.</summary>
+    internal static void WriteGeneratorVersion(System.IO.BinaryWriter bw)
+    {
+        var v = ShumwayVersion.Current;
+        bw.Write((uint)v.Major);
+        bw.Write((uint)v.Minor);
+        bw.Write((uint)v.Patch);
+    }
+
+    /// <summary>Reads the version written by <see cref="WriteGeneratorVersion"/>.</summary>
+    internal static ShumwayVersion ReadGeneratorVersion(System.IO.BinaryReader br) =>
+        new((int)br.ReadUInt32(), (int)br.ReadUInt32(), (int)br.ReadUInt32());
 
     internal static byte[] FinalizeImage(byte[] raw)
     {

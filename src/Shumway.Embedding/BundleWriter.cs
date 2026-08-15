@@ -166,6 +166,10 @@ public static class BundleWriter
         using var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
         bw.Write(BundleFormat.Magic);
         bw.Write((uint)BundleFormat.CurrentVersion);
+        // First body field: the producing Shumway. MUST stay identical to
+        // ShmoLinker.SerialiseBundle — the .shum has two writers and they are
+        // required to emit the same layout.
+        BundleFormat.WriteGeneratorVersion(bw);
         bw.Write((uint)effective.Length);
         foreach (var entry in effective)
         {

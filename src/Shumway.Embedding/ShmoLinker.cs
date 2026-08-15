@@ -1713,7 +1713,7 @@ public static class ShmoLinker
                         pulled = ShmoReader.FromBytes(System.IO.File.ReadAllBytes(path));
                     else
                         pulled = ShmoCompiler.CompileSource(
-                            System.IO.File.ReadAllText(path), dep.LibName);
+                            Shumway.Core.TextFile.ReadAllText(path), dep.LibName);
                 }
                 catch (Exception ex)
                 {
@@ -2018,6 +2018,8 @@ public static class ShmoLinker
         using var bw = new BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true);
         bw.Write(BundleFormat.Magic);
         bw.Write((uint)BundleFormat.CurrentVersion);
+        // Must match BundleWriter.ToBytes byte for byte — see the note there.
+        BundleFormat.WriteGeneratorVersion(bw);
         bw.Write((uint)bundle.Entries.Count);
         foreach (var e in bundle.Entries)
         {

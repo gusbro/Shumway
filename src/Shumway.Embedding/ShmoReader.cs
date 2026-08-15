@@ -43,6 +43,12 @@ public static class ShmoReader
         byte compression = headerReader.ReadByte();
         using var br = BundleFormat.OpenBody(compression, ms);
 
+        // The producing Shumway (see ShmoWriter) — recorded, never enforced:
+        // deciding what to do about a version difference is a policy question,
+        // not this reader's.
+        var generatorVersion = new ShumwayVersion(
+            (int)br.ReadUInt32(), (int)br.ReadUInt32(), (int)br.ReadUInt32());
+
         string moduleName = ReadLengthPrefixedUtf8(br);
         string source = ReadLengthPrefixedUtf8(br);
         uint bytecodeLength = br.ReadUInt32();
@@ -260,7 +266,8 @@ public static class ShmoReader
             clauseTerms, arityCompat, nativeBlocks, nativeFunctions, nativeDecls,
             operators,
             isExportQualified: isExportQualified, exports: exports,
-            imports: imports, libraryDeps: libraryDeps, dialect: dialect);
+            imports: imports, libraryDeps: libraryDeps, dialect: dialect,
+            generatorVersion: generatorVersion);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

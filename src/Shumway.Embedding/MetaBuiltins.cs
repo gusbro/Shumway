@@ -71,6 +71,9 @@ public static partial class MetaBuiltins
             "Unifies Vars with the attributed variables reachable from Term.");
         BuiltinsRegistry.Register("$dif_check", 3, DifCheck);
         BuiltinsRegistry.Register("$attv_snapshot", 1, AttvSnapshot);
+        // call_with_timeout/2,3 live in the prelude; these carry the deadline.
+        BuiltinsRegistry.Register("$timeout_push", 1, TimeoutPush);
+        BuiltinsRegistry.Register("$timeout_pop", 0, TimeoutPop);
         BuiltinsRegistry.Register("$attv_new_since", 2, AttvNewSince);
         BuiltinsRegistry.Register("?=", 2, DecidedUnify,
             Term, "?=(@X, @Y)",
@@ -444,6 +447,11 @@ public static partial class MetaBuiltins
             Io, "working_directory(-Old, +New)",
             "Unifies Old with the current working directory; if New differs, changes "
             + "the cwd to it. Use working_directory(D, D) to read without changing.");
+        BuiltinsRegistry.Register("prolog_to_os_filename", 2, PrologToOsFilename2,
+            Io, "prolog_to_os_filename(?PrologPath, ?OsPath)",
+            "Converts between Shumway's canonical '/'-separated path form and the "
+            + "host's native form (ADR-044). Either argument may be the bound one; "
+            + "on Unix both forms are the same.");
         // Unshadowable alias for shim internals: a loaded library may EXPORT
         // working_directory/2 (Scryer files.pl), and imports win over builtins
         // at resolution — a shim emulation calling the builtin by its public
@@ -470,6 +478,13 @@ public static partial class MetaBuiltins
             + "through LoadBundle, everything else is read as Prolog source. An "
             + "extensionless File that does not exist is retried as File.pl "
             + "(SWI-style).");
+        BuiltinsRegistry.Register("ensure_loaded", 1, EnsureLoaded,
+            Database, "ensure_loaded(+File)",
+            "Loads File unless it is already loaded, in which case it does "
+            + "nothing (ISO 7.4.2.8). Lets several files each name their own "
+            + "dependencies without any of them being loaded twice. A File "
+            + "that CHANGED on disk since it was loaded is reloaded. Argument "
+            + "and errors are as consult/1.");
         BuiltinsRegistry.Register("use_module", 1, UseModule,
             Database, "use_module(+Spec)",
             "Loads a library or file. Spec is either library(Name) — where Name "

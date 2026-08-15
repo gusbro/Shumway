@@ -62,8 +62,12 @@ internal static class ReplTopLevel
         // Ctrl+D on Unix/macOS — Console.ReadLine() returns null for
         // both, but the key combo differs, so name the right one.
         string eofKey = OperatingSystem.IsWindows() ? "Ctrl-Z" : "Ctrl-D";
+        // Name and version first, as every Prolog top level does — the
+        // version reported here is the same one `current_prolog_flag(
+        // version_data, V)` gives, both from PrologEngine's constants.
+        Console.WriteLine(PrologEngine.VersionBanner);
         Console.WriteLine(
-            $"Shumway Prolog top-level.  End a query with '.'  —  'halt.' or {eofKey} exits.");
+            $"End a query with '.'  —  'halt.' or {eofKey} exits.");
 
         // Split args at "--": everything before is a file to consult,
         // everything after is exposed to the program as the argv

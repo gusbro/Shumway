@@ -129,6 +129,54 @@ public sealed partial class Activation
     private const int BacktrackCancelInterval = 4096;
     private int _backtrackCancelCountdown = BacktrackCancelInterval;
 
+    // call_with_timeout/2,3 deadlines, checked at the same safe points as
+    // cancellation — which is what lets `(repeat, fail)` time out: it grows no
+    // heap and never crosses a call boundary, so only the backtrack poll sees
+    // it. A stack, because the calls nest; the EFFECTIVE deadline is the
+    // EARLIEST, so an inner call can tighten the budget but never extend past
+    // a promise an outer one already made.
+    private long[] _deadlines = new long[4];
+    private int _deadlineCount;
+    private long _deadlineAt;   // 0 = none active; the earliest of the stack
+
+    /// <summary>Starts a deadline <paramref name="seconds"/> from now.</summary>
+    public void PushDeadline(double seconds)
+    {
+        if (_deadlineCount == _deadlines.Length)
+            System.Array.Resize(ref _deadlines, _deadlineCount * 2);
+        long at = System.Environment.TickCount64 + (long)(seconds * 1000.0);
+        _deadlines[_deadlineCount++] = at;
+        if (_deadlineAt == 0 || at < _deadlineAt) _deadlineAt = at;
+    }
+
+    /// <summary>Ends the innermost deadline. Idempotent on an empty stack so an
+    /// unwinding path can pop without first proving it pushed.</summary>
+    public void PopDeadline()
+    {
+        if (_deadlineCount == 0) return;
+        _deadlineCount--;
+        // Recompute rather than restore: the popped one may not have been the
+        // earliest (an outer, tighter deadline still governs).
+        _deadlineAt = 0;
+        for (int i = 0; i < _deadlineCount; i++)
+            if (_deadlineAt == 0 || _deadlines[i] < _deadlineAt)
+                _deadlineAt = _deadlines[i];
+    }
+
+    /// <summary>True while any <c>call_with_timeout</c> is in progress.</summary>
+    public bool HasDeadline => _deadlineAt != 0;
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void CheckDeadline()
+    {
+        if (System.Environment.TickCount64 < _deadlineAt) return;
+        // A bare ball, not an error/2: call_with_timeout/2 in the prelude
+        // catches it and rethrows it as timeout(Goal), which is the only
+        // shape a program should ever see.
+        throw new PrologRuntimeException("$timeout_expired");
+    }
+
     /// <summary>Cheap cancellation poll for the backtrackable-builtin resume
     /// path — see <see cref="RequestCancellation"/>. Throttled by a counter so
     /// the volatile flag is read only periodically; throws
@@ -140,6 +188,7 @@ public sealed partial class Activation
         if (--_backtrackCancelCountdown > 0) return;
         _backtrackCancelCountdown = BacktrackCancelInterval;
         if (_cancelRequested) ThrowQueryCancelled();
+        if (_deadlineAt != 0) CheckDeadline();
     }
 
     // hot/cold split. The guard is AggressiveInlining so each
@@ -163,6 +212,10 @@ public sealed partial class Activation
         // point.
         if (_cancelRequested)
             ThrowQueryCancelled();
+        // call_with_timeout/2,3 — same cost class as the cancel flag (one field
+        // read, predicted not-taken) whenever no deadline is active.
+        if (_deadlineAt != 0)
+            CheckDeadline();
         // ADR-035 D5+ — a lazily-opened debug session arming itself mid-run (a
         // debugger just attached): applied HERE, on the engine's own thread at a
         // goal boundary, because the watcher thread that noticed the attach must

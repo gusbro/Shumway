@@ -294,6 +294,68 @@ public static partial class MetaBuiltins
         return true;
     }
 
+    /// <summary><c>'$timeout_push'(+Seconds)</c> — starts the deadline that
+    /// <c>call_with_timeout/2</c> enforces. Seconds may be an integer or a
+    /// float; a non-positive one times the goal out immediately, which is what
+    /// asking for no time should mean.</summary>
+    public static bool TimeoutPush(Activation engine)
+    {
+        Term arg = MaterializeRegister(engine, 0);
+        double seconds = arg switch
+        {
+            Shumway.Compiler.Ast.IntTerm i => i.Value,
+            Shumway.Compiler.Ast.FloatTerm f => f.Value,
+            Shumway.Compiler.Ast.VarTerm =>
+                throw new Shumway.Core.PrologRuntimeException("instantiation_error"),
+            _ => throw new Shumway.Core.PrologRuntimeException(
+                "type_error", "number"),
+        };
+        engine.PushDeadline(seconds);
+        return true;
+    }
+
+    /// <summary><c>'$timeout_pop'</c> — ends the innermost deadline.</summary>
+    public static bool TimeoutPop(Activation engine)
+    {
+        engine.PopDeadline();
+        return true;
+    }
+
+    /// <summary><c>ensure_loaded(+File)</c> — ISO §7.4.2.8. Loads File unless
+    /// it is already loaded, so a file naming its own dependencies can be
+    /// consulted from several places without its clauses being added twice.
+    /// Same argument and error contract as <see cref="Consult"/>.</summary>
+    public static bool EnsureLoaded(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "ensure_loaded/1 requires the engine to be hosted by a PrologEngine.");
+
+        Cell cell = MaterializeRegisterAsCell(engine, 0);
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (cell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error(atom, _)");
+
+        string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        path = ConsultPipeline.ResolveSourcePath(path);
+        if (!System.IO.File.Exists(path))
+            throw new Shumway.Core.PrologRuntimeException(
+                $"existence_error(source_sink, '{path}')");
+
+        // The whole difference from consult/1.
+        if (host.IsLoadedAndUnchanged(path)) return true;
+
+        // Loaded but CHANGED: reloading has to REPLACE what the file defines,
+        // not append to it — otherwise the stale clauses stay and the file is
+        // effectively loaded twice, which is the one thing this predicate
+        // exists to prevent.
+        if (host.WasConsulted(path)) host.ReconsultFile(path);
+        else host.ConsultFileLive(path, engine);
+        return true;
+    }
+
     /// <summary><c>use_module(+Spec)</c> — SWI-style library loader, the goal
     /// (query) form of the <c>:- use_module</c> directive. <c>library(Name)</c>
     /// loads a baked constraint/compatibility library or resolves a

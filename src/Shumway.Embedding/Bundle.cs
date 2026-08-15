@@ -66,14 +66,22 @@ public sealed class Bundle
         IReadOnlyList<string>? foreignAssemblies,
         BundleSnapshot? snapshot,
         IReadOnlyList<BundleArchiveMember>? archiveMembers = null,
-        IReadOnlyList<string>? nativeLibraries = null)
+        IReadOnlyList<string>? nativeLibraries = null,
+        ShumwayVersion? generatorVersion = null)
     {
         Entries = entries;
         ForeignAssemblies = foreignAssemblies ?? Array.Empty<string>();
         Snapshot = snapshot;
         ArchiveMembers = archiveMembers ?? Array.Empty<BundleArchiveMember>();
         NativeLibraries = nativeLibraries ?? Array.Empty<string>();
+        GeneratorVersion = generatorVersion ?? ShumwayVersion.Current;
     }
+
+    /// <summary>The Shumway version that wrote this bundle. Every writer
+    /// stamps it, so a <c>.shum</c> can always say which build produced it —
+    /// what a future format change needs in order to diagnose an old file
+    /// instead of only rejecting it.</summary>
+    public ShumwayVersion GeneratorVersion { get; }
 }
 
 /// <summary>One member of a <c>shumway-lib</c> librarian archive: the

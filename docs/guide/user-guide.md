@@ -390,6 +390,14 @@ shumway-compile [options] input1.pl [input2.pl ...]
   (currently `3`). The format is frozen pre-release: writer and reader
   require exactly this version — there is no backward compatibility with
   older `.shmo` versions until the first public release.
+- Every `.shmo` and `.shum` also records **the Shumway version that wrote
+  it** (three `uint32`s at the start of the body). That is a different
+  question from the format version: the format version says whether a
+  reader can read the file at all, the generator version says which build
+  produced it — so an old artifact can be identified and diagnosed when the
+  format eventually changes, rather than only rejected. `shumway-link
+  --map` prints it, and it is on `Bundle.GeneratorVersion` /
+  `ShmoObject.GeneratorVersion` for embedders.
 
 Flags:
 

@@ -92,7 +92,7 @@ public static class ShmoCompiler
         ShmoBuildMode buildMode = ShmoBuildMode.Release)
     {
         ArgumentNullException.ThrowIfNull(path);
-        string source = File.ReadAllText(path);
+        string source = Shumway.Core.TextFile.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
         var result = TryCompileSource(source, fallback, buildMode,
             includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)));
@@ -873,7 +873,7 @@ public static class ShmoCompiler
         bool arityCompat = false)
     {
         ArgumentNullException.ThrowIfNull(path);
-        string source = File.ReadAllText(path);
+        string source = Shumway.Core.TextFile.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
         return TryCompileSource(source, fallback, buildMode, maxErrors, arityCompat,
             includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)));

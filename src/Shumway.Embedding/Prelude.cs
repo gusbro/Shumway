@@ -70,6 +70,8 @@ internal static class Prelude
         :- public false/0.
         :- public once/1.
         :- public ignore/1.
+        :- public time_out/3.
+        :- meta_predicate(time_out(0, *, *)).
         :- public call_residue_vars/2.
         :- public time/1.
         :- public chdir/1.
@@ -884,6 +886,48 @@ internal static class Prelude
 
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
         ignore(Goal) :- ( call(Goal) -> true ; true ).
+
+        %! time_out(:Goal, +MilliSeconds, -Result) | Control | Runs Goal under a time limit (SICStus-compatible). Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted.
+        time_out(Goal, MilliSeconds, Result) :-
+            Seconds is MilliSeconds / 1000,
+            '$catch_begin'(Ball, '$time_out_recover'(Ball, Result)),
+            '$time_out_run'(Goal, Seconds),
+            '$catch_end',
+            (   var(Result) ->
+                Result = success
+            ;   true
+            ).
+
+        '$time_out_run'(Goal, Seconds) :-
+            '$timeout_start'(Seconds),
+            call(Goal),
+            '$timeout_stop'(Seconds).
+
+        % Stable-address public, like '$scc_recover'/2 and '$wot_recover'/2: a
+        % catch/3 recovery in a PRELUDE clause is resolved by functor id, and a
+        % module-local one has no compiled address there.
+        :- public '$time_out_recover'/2.
+        '$time_out_recover'(Ball, Result) :-
+            '$timeout_pop',
+            (   '$timeout_ball'(Ball) ->
+                Result = time_out
+            ;   throw(Ball)
+            ).
+
+        % Starting and stopping the clock are BACKTRACKABLE, which is what makes
+        % the restart happen: leaving Goal stops it, re-entering Goal on redo
+        % starts a fresh one, and exhausting Goal unwinds the whole thing.
+        '$timeout_start'(Seconds) :- '$timeout_push'(Seconds).
+        '$timeout_start'(_) :- '$timeout_pop', fail.
+
+        '$timeout_stop'(_) :- '$timeout_pop'.
+        '$timeout_stop'(Seconds) :- '$timeout_push'(Seconds), fail.
+
+        % The engine throws a bare '$timeout_expired' — it does not know which
+        % goal it interrupted. Matched under both spellings because a catcher
+        % may wrap a ball in error/2 on the way out.
+        '$timeout_ball'('$timeout_expired').
+        '$timeout_ball'(error('$timeout_expired', _)).
 
         %! call_residue_vars(:Goal, -Vars) | Attributed variables | Runs Goal, then unifies Vars with the attributed variables created during Goal that are still constrained (carry residual attributes). Needs an attribute library (e.g. use_module(library(coroutining)) for dif/2) to produce any.
         call_residue_vars(Goal, Vars) :-
