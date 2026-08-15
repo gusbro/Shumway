@@ -2,7 +2,8 @@
 
 Status of running **Logtalk 3.101.0's bundled libraries** on Shumway, measured
 by executing each library's own lgtunit test suite (`tester.lgt`) on a fresh
-Logtalk-on-Shumway boot — all 240 library test suites swept. Logtalk itself
+Logtalk-on-Shumway boot — all 240 library test suites swept. (The sweep tree
+is the `3.101.0-b01` snapshot; the one place that matters is noted below.) Logtalk itself
 boots and runs fully on Shumway (see [`logtalk.md`](logtalk.md) for setup);
 this document is about its **library** collection, which in 3.101.x is large
 and includes machine-learning, geospatial, telemetry (CCSDS) and web-format
@@ -29,12 +30,16 @@ that runs to completion, **os 140/141**, **tzif 56/56** and
 **mime_types 14/14** (on both of which SWI-Prolog itself fails tests on
 Windows), grammars, meta/meta_compiler, and the classic data structures.
 
-## The 2 known failing tests — neither is a Shumway bug
+## 100% — every runnable test passes
 
-| suite | failing test | cause |
+All 10,319 tests across the 194 runnable suites pass. Two of them need
+something OUTSIDE Shumway to be in place (verified by cross-checking
+against SWI-Prolog on the same tree, which failed both identically):
+
+| suite | test | external requirement |
 |---|---|---|
-| `geojson` | `geojson_parse_invalid_json_text_01` | **Upstream library bug**: `geojson::parse/2` only catches `domain_error(json_source, _)`, but the json library throws `domain_error(json, _)` for malformed text. SWI-Logtalk fails this identically (102/103). |
-| `os` | `os_operating_system_release_1_01` | The library shells out to `pwsh.exe` (PowerShell 7), not installed on the test machine. SWI fails identically. |
+| `geojson` | `geojson_parse_invalid_json_text_01` | The **released** 3.101.0. Our sweep ran against the `3.101.0-b01` beta snapshot, whose `geojson::parse/2` caught `domain_error(json_source, _)` while the json library throws `domain_error(json, _)`; upstream fixed it on 2026-07-07, before the 3.101.0 tag of 2026-07-23. On 3.101.0 proper the test passes — 103/103, nothing to patch. |
+| `os` | `os_operating_system_release_1_01` | `pwsh.exe` (PowerShell 7) reachable on PATH — the library shells out to it. A portable PowerShell zip suffices; with it, 141 passed / 0 failed. |
 
 Verification method: every failing test was cross-checked against
 **SWI-Prolog running the same Logtalk tree** (`swipl -g

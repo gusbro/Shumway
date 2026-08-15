@@ -49,10 +49,11 @@ intermediate files, or in your `.lgt` sources' consulted forms.
 ## Status
 
 - **Test suites**: all 240 of Logtalk 3.101.0 library testers swept —
-  **192 of the 194 runnable suites fully green, 99.98 % of all individual
-  tests pass** (10,317 of 10,319; the 2 remaining failures are an upstream
-  geojson bug and a missing host tool, both verified by running the same
-  tests on SWI — see
+  **all 194 runnable suites fully green: 100 % of the 10,319 individual
+  tests pass** (two of them need something outside Shumway: the released
+  3.101.0 rather than the `3.101.0-b01` beta the sweep ran on — the beta
+  predates an upstream geojson fix — and `pwsh.exe` on PATH; both verified
+  by running the same tests on SWI; see
   [`logtalk-library-support.md`](logtalk-library-support.md)). Highlights:
   random 457/457, types 149/149, linear_algebra 72/72, crypto 121/121, the
   CCSDS stack and ieee_754 at zero failures; on `os`, `tzif` and

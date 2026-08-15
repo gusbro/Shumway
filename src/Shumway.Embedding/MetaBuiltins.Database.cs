@@ -20,6 +20,12 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "predicate_property/2 requires a PrologEngine host.");
         Term head = MaterializeRegister(engine, 0);
+        // SWI-compat: a Module:Head query answers for the bare predicate.
+        // Logtalk's compiler asks exactly this shape when it compiles a
+        // module-qualified call (`user:freeze(X, G)`) to learn whether the
+        // callee is a meta-predicate.
+        while (head is CompoundTerm { Functor: ":", Args.Length: 2 } qualified)
+            head = qualified.Args[1];
         int fid;
         switch (head)
         {
@@ -35,11 +41,18 @@ public static partial class MetaBuiltins
             default:
                 throw new ShumwayPrologException(IsoError.TypeError("callable", head));
         }
-        var props = host.PredicatePropertyAtomIds(fid);
-        if (props.Count == 0) return false;
+        var atomProps = host.PredicatePropertyAtomIds(fid);
+        if (atomProps.Count == 0) return false;
+        var props = new List<Term>(atomProps.Count + 1);
+        foreach (int atomId in atomProps)
+            props.Add(new AtomTerm(AtomTable.GetById(atomId)?.Name ?? "?"));
+        // The declared meta-template, when one was recorded (`:- meta_predicate`).
+        if (host._metaPredicateTemplates.TryGetValue(fid, out Term? template))
+            props.Add(new CompoundTerm("meta_predicate", new[] { template }));
         int returnPc = engine.BuiltinReturnPc;
         return Shumway.Core.IndexEnumCursor.Start(engine, props.Count, 2, returnPc,
-            (e, i) => e.UnifyRegisterWithCell(1, Cell.Atom(props[i])));
+            (e, i) => e.UnifyRegisterWithCell(
+                1, Materializer.MaterializeAsCell(e, props[i])));
     }
 
     /// <summary>Promotes a Core-level <see cref="PrologRuntimeException"/>

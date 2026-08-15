@@ -98,18 +98,20 @@ Per-engine notes:
   skipped. `number_chars` #46 (a cyclic char list) segfaults the engine —
   an uncatchable crash — so the driver lists it in `conformity_skips`.
 
-## Results (2026-08-12, this machine)
+## Results (2026-08-12)
 
-| Suite | Shumway | Scryer e7ac3ae | GNU Prolog 1.5.0 | SWI 10.0.2 |
+| Suite | Shumway | Scryer 0.10.0 (e7ac3ae) | GNU Prolog 1.5.0 | SWI 10.0.2 |
 |---|---|---|---|---|
 | syntax (365) | **365** | 357 | 357 | 276 |
 | number_chars (67) | **67** | 66 | 59 (+1 crash-skip) | 50 |
 | variable_names (63) | **63** | 60 | 57 | 38 |
 | dif (26) | **26** | 25 | n/a | 25 |
 
-Cross-check: the conformity page's own scoreboard lists Scryer at 357 —
-this runner reproduces that number exactly. (It lists GNU at 360; the
-3-test gap is version / protocol fine print.)
+Cross-check: the conformity page's own scoreboard lists Scryer 0.10.0 at
+357, and this runner reproduces that number exactly. It lists GNU Prolog
+at 360 for 1.6.0, which GNU distributes as "unstable" (sources plus
+ARM64 installers only); the 1.5.0 tested here is the current stable
+release, which likely accounts for the 3-test difference.
 
 ## Licensing note
 

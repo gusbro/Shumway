@@ -338,6 +338,22 @@ public static partial class MetaBuiltins
             case "dialect":
                 return UnifyAtom(engine, 1, "shumway");
 
+            case "pid":   // read-only, as in SWI; same value pid/1 reports
+                return engine.UnifyRegisterWithCell(1,
+                    Cell.Int(System.Environment.ProcessId));
+
+            // SWI's platform flags: each EXISTS only on its platform (reading
+            // it elsewhere fails silently), which is what portable code's
+            // `( current_prolog_flag(windows, true) -> ... ; ... )` relies on.
+            case "windows":
+                return OperatingSystem.IsWindows() && UnifyAtom(engine, 1, "true");
+            case "unix":
+                return (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()
+                        || OperatingSystem.IsFreeBSD())
+                    && UnifyAtom(engine, 1, "true");
+            case "apple":
+                return OperatingSystem.IsMacOS() && UnifyAtom(engine, 1, "true");
+
             case "version_data":
             {
                 Term versionTerm = new CompoundTerm("shumway", new Term[]
@@ -409,7 +425,7 @@ public static partial class MetaBuiltins
     {
         "bounded", "max_arity", "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
-        "debug", "dialect", "library_dialect", "version_data", "argv",
+        "debug", "dialect", "library_dialect", "version_data", "argv", "pid",
         "implicit_dynamic", "arity_compat",
         "compile_mode", "debug_lco", "prefer_rationals", "answer_max_depth",
     };
@@ -556,11 +572,14 @@ public static partial class MetaBuiltins
         if (keyTerm is not AtomTerm key)
             throw new ShumwayPrologException(
                 IsoError.TypeError("atom", keyTerm));
+        // ADR-044: the file/directory answers are paths, so canonical form.
         string? value = key.Name switch
         {
             "module" => host._currentLoadModule,
-            "file" or "source" => host._currentLoadFile,
-            "directory" => host._consultBaseDir,
+            "file" or "source" => host._currentLoadFile is { } f
+                ? PrologPath.ToCanonical(f) : null,
+            "directory" => host._consultBaseDir is { } d
+                ? PrologPath.ToCanonicalDirectory(d) : null,
             _ => null,
         };
         if (value is null) return false;
@@ -603,6 +622,11 @@ public static partial class MetaBuiltins
         try
         {
             string absolute = Path.GetFullPath(spec);
+            // ADR-044: a directory answers with its trailing separator, so the
+            // result can have a file name concatenated onto it.
+            absolute = Directory.Exists(absolute)
+                ? PrologPath.ToCanonicalDirectory(absolute)
+                : PrologPath.ToCanonical(absolute);
             int aid = AtomTable.Intern(absolute, permanent: true).Id;
             return engine.UnifyRegisterWithCell(1, Cell.Atom(aid));
         }
@@ -689,19 +713,18 @@ public static partial class MetaBuiltins
     /// is <c>working_directory(D, D)</c>.</summary>
     public static bool WorkingDirectory2(Activation engine)
     {
-        string oldCwd = Directory.GetCurrentDirectory();
-        // Ensure a trailing separator so it matches SWI's convention.
-        if (!oldCwd.EndsWith(Path.DirectorySeparatorChar)
-            && !oldCwd.EndsWith(Path.AltDirectorySeparatorChar))
-            oldCwd += Path.DirectorySeparatorChar;
+        // ADR-044: canonical form, ending in '/' (SWI's convention too).
+        string oldCwd = PrologPath.ToCanonicalDirectory(Directory.GetCurrentDirectory());
         int oldAid = AtomTable.Intern(oldCwd, permanent: true).Id;
         if (!engine.UnifyRegisterWithCell(0, Cell.Atom(oldAid)))
             return false;
 
         if (!TryGetStringArg(engine, 1, out string newCwd))
             throw new ShumwayPrologException(IsoError.InstantiationError());
-        if (newCwd != oldCwd && newCwd != oldCwd.TrimEnd(Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar))
+        // Compare in canonical form: the caller may hand back either what we
+        // returned or the same directory in native form.
+        string newCanonical = PrologPath.ToCanonicalDirectory(newCwd);
+        if (newCanonical != oldCwd)
         {
             try { Directory.SetCurrentDirectory(newCwd); }
             catch (DirectoryNotFoundException)
@@ -1067,6 +1090,10 @@ public static partial class MetaBuiltins
             Cell head = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex));
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException("type_error", "character_code");
+            // BMP-only, as char_code/2 (truncating builds another char).
+            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+                throw new PrologRuntimeException(
+                    "representation_error", "character_code");
             sb.Append((char)head.AsInt);
             cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
         }

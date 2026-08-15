@@ -482,6 +482,76 @@ public static class AtomCharBuiltins
         }
     }
 
+    // ---------- unicode_property/2 ----------
+
+    /// <summary><c>unicode_property(+Code, ?Property)</c> — the subset of
+    /// SWI's <c>library(unicode)</c> the Logtalk libraries use (json_path's
+    /// iregexp <c>\p{...}</c> filters, library(types)): <c>category(C)</c>
+    /// with C the two-letter Unicode general category, exact from the .NET
+    /// Unicode tables rather than approximated over char_type.</summary>
+    public static bool UnicodeProperty(Activation engine)
+    {
+        Cell codeCell = Resolve(engine, engine.GetRegister(0));
+        if (codeCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        if (codeCell.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer");
+        long code = codeCell.AsInt;
+        if (code < 0 || code > 0x10FFFF)
+            throw new PrologRuntimeException(
+                "representation_error", "character_code");
+
+        string category = char.ConvertFromUtf32((int)code) is { } s && s.Length > 0
+            ? CategoryCode(CharUnicodeInfo.GetUnicodeCategory(s, 0))
+            : "Cn";
+
+        // category(C) — built on the heap and unified with the Property arg,
+        // so a bound category('Nd') acts as a test and a variable receives it.
+        int catAtom = AtomTable.Intern(category, permanent: true).Id;
+        int fid = FunctorTable.Intern(
+            AtomTable.Intern("category", permanent: true).Id, 1);
+        int idx = engine.AllocateHeap(2);
+        engine.SetHeap(idx, Cell.Functor(fid));
+        engine.SetHeap(idx + 1, Cell.Atom(catAtom));
+        return engine.UnifyRegisterWithCell(1, Cell.Str(idx));
+    }
+
+    /// <summary>The standard two-letter spelling of each .NET
+    /// <see cref="UnicodeCategory"/> value.</summary>
+    private static string CategoryCode(UnicodeCategory c) => c switch
+    {
+        UnicodeCategory.UppercaseLetter => "Lu",
+        UnicodeCategory.LowercaseLetter => "Ll",
+        UnicodeCategory.TitlecaseLetter => "Lt",
+        UnicodeCategory.ModifierLetter => "Lm",
+        UnicodeCategory.OtherLetter => "Lo",
+        UnicodeCategory.NonSpacingMark => "Mn",
+        UnicodeCategory.SpacingCombiningMark => "Mc",
+        UnicodeCategory.EnclosingMark => "Me",
+        UnicodeCategory.DecimalDigitNumber => "Nd",
+        UnicodeCategory.LetterNumber => "Nl",
+        UnicodeCategory.OtherNumber => "No",
+        UnicodeCategory.SpaceSeparator => "Zs",
+        UnicodeCategory.LineSeparator => "Zl",
+        UnicodeCategory.ParagraphSeparator => "Zp",
+        UnicodeCategory.Control => "Cc",
+        UnicodeCategory.Format => "Cf",
+        UnicodeCategory.Surrogate => "Cs",
+        UnicodeCategory.PrivateUse => "Co",
+        UnicodeCategory.ConnectorPunctuation => "Pc",
+        UnicodeCategory.DashPunctuation => "Pd",
+        UnicodeCategory.OpenPunctuation => "Ps",
+        UnicodeCategory.ClosePunctuation => "Pe",
+        UnicodeCategory.InitialQuotePunctuation => "Pi",
+        UnicodeCategory.FinalQuotePunctuation => "Pf",
+        UnicodeCategory.OtherPunctuation => "Po",
+        UnicodeCategory.MathSymbol => "Sm",
+        UnicodeCategory.CurrencySymbol => "Sc",
+        UnicodeCategory.ModifierSymbol => "Sk",
+        UnicodeCategory.OtherSymbol => "So",
+        _ => "Cn",
+    };
+
     // ---------- atom_number/2 ----------
 
     /// <summary><c>atom_number(?Atom, ?Number)</c> — converts between an
@@ -745,6 +815,11 @@ public static class AtomCharBuiltins
             {
                 if (head.Tag != Tag.Int)
                     throw new PrologRuntimeException("type_error", "character_code");
+                // BMP-only, same contract as char_code/2: silently casting
+                // would BUILD A DIFFERENT CHARACTER (0x10400 → 0x400).
+                if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+                    throw new PrologRuntimeException(
+                        "representation_error", "character_code");
                 if (!hasUnbound) sb.Append((char)head.AsInt);
             }
             else
@@ -787,6 +862,10 @@ public static class AtomCharBuiltins
                 throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException("type_error", "character_code");
+            // BMP-only, same contract as char_code/2 (see AtomCodes above).
+            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+                throw new PrologRuntimeException(
+                    "representation_error", "character_code");
             sb.Append((char)head.AsInt);
             cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
         }
