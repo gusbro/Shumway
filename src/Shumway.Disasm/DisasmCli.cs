@@ -107,7 +107,7 @@ internal static class DisasmCli
 
         if (source is null)
         {
-            try { source = File.ReadAllText(inputPath!); }
+            try { source = Shumway.Core.TextFile.ReadAllText(inputPath!); }
             catch (Exception ex) { return Usage($"cannot read {inputPath}: {ex.Message}"); }
         }
 

@@ -79,7 +79,7 @@ public static class ShmoViaConsult
         var rootModuleSet = new HashSet<string>(System.StringComparer.Ordinal);
         foreach (string rp in rootPaths)
         {
-            string text = System.IO.File.ReadAllText(rp);
+            string text = Shumway.Core.TextFile.ReadAllText(rp);
             var m = System.Text.RegularExpressions.Regex.Match(
                 text, @"^\s*:-\s*module\(\s*'?([^,)'\s]+)",
                 System.Text.RegularExpressions.RegexOptions.Multiline);

@@ -112,6 +112,17 @@ public sealed class StreamHandle
 /// count stays exact for every read shape.</summary>
 public sealed class PositionTrackingReader : TextReader
 {
+    /// <summary>Sentinel for "nothing buffered" — distinct from -1, which is
+    /// a real end-of-input answer.</summary>
+    private const int Empty = int.MinValue;
+
+    /// <summary>A translated character produced by <see cref="Peek"/> ahead of
+    /// its <see cref="Read"/>. Only ever set on the CR path (see
+    /// <see cref="BufferAcrossCr"/>); end-of-input is deliberately NOT
+    /// buffered, because a reader like the REPL's may answer -1 now and yield
+    /// more once the user types.</summary>
+    private int _buffered = Empty;
+
     /// <summary>The wrapped reader (typically a <c>StreamReader</c> for a
     /// file stream, or <c>Console.In</c> for <c>user_input</c>).</summary>
     public TextReader Inner { get; }
@@ -120,27 +131,95 @@ public sealed class PositionTrackingReader : TextReader
     /// position.</summary>
     public long CharsConsumed { get; private set; }
 
-    public PositionTrackingReader(TextReader inner) => Inner = inner;
+    /// <summary>True when a CR-LF pair reads as the single character
+    /// <c>\n</c> (ADR-045). Binary streams never reach this class, so the
+    /// ISO rule "text converts, binary does not" is structural here.</summary>
+    public bool TranslatesNewlines { get; }
 
-    public override int Peek() => Inner.Peek();
+    /// <summary>The platform default: on Windows a text stream's line
+    /// terminator is CR-LF, and C stdio's text mode — hence GNU Prolog —
+    /// presents it to the program as <c>\n</c>. Elsewhere the external form
+    /// already IS <c>\n</c> and nothing is translated.</summary>
+    public static bool TranslateNewlinesByDefault => OperatingSystem.IsWindows();
+
+    public PositionTrackingReader(TextReader inner)
+        : this(inner, TranslateNewlinesByDefault) { }
+
+    public PositionTrackingReader(TextReader inner, bool translateNewlines)
+    {
+        Inner = inner;
+        TranslatesNewlines = translateNewlines;
+    }
+
+    /// <summary>Consumes the CR the caller has already peeked and returns the
+    /// character it stands for: <c>\n</c> when an LF follows, the CR itself
+    /// otherwise. A LONE CR is data — only the pair is a line terminator,
+    /// matching C stdio (a classic-Mac file therefore reads unchanged).</summary>
+    private int BufferAcrossCr()
+    {
+        int c = Inner.Read();
+        if (c < 0) return -1;
+        if (c == '\r' && Inner.Peek() == '\n') { Inner.Read(); c = '\n'; }
+        return _buffered = c;
+    }
+
+    public override int Peek()
+    {
+        if (_buffered != Empty) return _buffered;
+        if (!TranslatesNewlines) return Inner.Peek();
+        int p = Inner.Peek();
+        // Only a CR forces a consuming look-ahead; every other character is
+        // answered without touching the stream, so a reader whose Peek is the
+        // cheap "is input available" probe keeps that property.
+        return p == '\r' ? BufferAcrossCr() : p;
+    }
 
     public override int Read()
     {
-        int c = Inner.Read();
+        int c;
+        if (_buffered != Empty)
+        {
+            c = _buffered;
+            _buffered = Empty;
+        }
+        else
+        {
+            c = Inner.Read();
+            if (c == '\r' && TranslatesNewlines && Inner.Peek() == '\n')
+            {
+                Inner.Read();
+                c = '\n';
+            }
+        }
         if (c >= 0) CharsConsumed++;
         return c;
     }
 
     public override int Read(char[] buffer, int index, int count)
     {
-        int n = Inner.Read(buffer, index, count);
-        if (n > 0) CharsConsumed += n;
-        return n;
+        if (!TranslatesNewlines && _buffered == Empty)
+        {
+            int n = Inner.Read(buffer, index, count);
+            if (n > 0) CharsConsumed += n;
+            return n;
+        }
+        int i = 0;
+        while (i < count)
+        {
+            int c = Read();
+            if (c < 0) break;
+            buffer[index + i++] = (char)c;
+        }
+        return i;
     }
 
     /// <summary>Resets the consumed-character count after the caller has
     /// rewound the underlying stream (see <c>set_stream_position/2</c>).</summary>
-    public void ResetCount() => CharsConsumed = 0;
+    public void ResetCount()
+    {
+        CharsConsumed = 0;
+        _buffered = Empty;
+    }
 
     protected override void Dispose(bool disposing)
     {
