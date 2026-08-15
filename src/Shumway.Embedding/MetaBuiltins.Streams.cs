@@ -6,19 +6,11 @@ namespace Shumway.Embedding;
 
 public static partial class MetaBuiltins
 {
-    /// <summary><c>is_stream(@Term)</c> (SWI) — succeeds iff Term is a stream
-    /// handle (a Foreign cell wrapping a <see cref="Shumway.Core.StreamHandle"/>)
-    /// or a registered stream alias atom. Never throws — a non-stream fails.</summary>
+    /// <summary><c>is_stream(@Term)</c> (SWI) — succeeds iff Term is the
+    /// stream-term of an open stream (<c>'$stream'(Id)</c>) or a registered
+    /// stream alias atom. Never throws — a non-stream fails.</summary>
     public static bool IsStream(Activation engine)
-    {
-        Cell d = engine.GetRegister(0);
-        if (d.Tag == Tag.Ref) d = engine.GetHeap(engine.Deref(d.AsHeapIndex));
-        if (d.Tag == Tag.Foreign)
-            return engine.AsForeign<Shumway.Core.StreamHandle>(d) is not null;
-        if (d.Tag == Tag.Atom)
-            return engine.Streams?.GetByAlias(AtomTable.GetById(d.AsAtomId)?.Name ?? "") is not null;
-        return false;
-    }
+        => Shumway.Builtins.StreamBuiltins.IsOpenStream(engine, engine.GetRegister(0));
 
     /// <summary><c>current_stream(?Filename, ?Mode, ?Stream)</c> —
     /// ISO §8.11.8.1. Enumerates every registered stream on
@@ -43,10 +35,11 @@ public static partial class MetaBuiltins
         Activation engine, Shumway.Core.StreamHandle[] handles, int idx)
     {
         var h = handles[idx];
-        string fnText = h.Filename ?? h.Alias ?? "";
+        string fnText = h.Filename is string f
+            ? Shumway.Core.PrologPath.ToCanonical(f) : (h.Alias ?? "");
         Cell fnCell = Cell.Atom(AtomTable.Intern(fnText, permanent: false).Id);
         Cell modeCell = Cell.Atom(AtomTable.Intern(h.Mode, permanent: true).Id);
-        Cell streamCell = engine.MakeForeign(h);
+        Cell streamCell = Shumway.Builtins.StreamBuiltins.MakeStreamTerm(engine, h);
 
         if (!engine.UnifyRegisterWithCell(0, fnCell)) return false;
         if (!engine.UnifyRegisterWithCell(1, modeCell)) return false;
@@ -67,7 +60,8 @@ public static partial class MetaBuiltins
         foreach (var h in registry.All())
         {
             if (h.Filename is string fn)
-                pairs.Add((h, new CompoundTerm("file_name", new Term[] { new AtomTerm(fn) })));
+                pairs.Add((h, new CompoundTerm("file_name",
+                    new Term[] { new AtomTerm(Shumway.Core.PrologPath.ToCanonical(fn)) })));
             pairs.Add((h, new CompoundTerm("mode", new Term[] { new AtomTerm(h.Mode) })));
             if (h.Alias is string al)
                 pairs.Add((h, new CompoundTerm("alias", new Term[] { new AtomTerm(al) })));
@@ -98,7 +92,7 @@ public static partial class MetaBuiltins
         Activation engine, (Shumway.Core.StreamHandle Handle, Term Property)[] pairs, int idx)
     {
         var (h, prop) = pairs[idx];
-        Cell streamCell = engine.MakeForeign(h);
+        Cell streamCell = Shumway.Builtins.StreamBuiltins.MakeStreamTerm(engine, h);
         Cell propCell = Materializer.MaterializeAsCell(engine, prop);
 
         if (!engine.UnifyRegisterWithCell(0, streamCell)) return false;

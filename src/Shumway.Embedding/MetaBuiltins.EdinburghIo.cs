@@ -149,41 +149,18 @@ public static partial class MetaBuiltins
     public static bool Skip1(Activation engine) => SkipImpl(engine, useStreamReg: false);
     public static bool Skip2(Activation engine) => SkipImpl(engine, useStreamReg: true);
 
+    // Both resolvers delegate to the ONE canonical stream-arg resolver:
+    // a stream-term is `'$stream'(Id)` looked up in the registry, and there
+    // must not be a second place that decides what a stream argument is.
     private static StreamHandle ResolveInputStream(Activation engine, bool fromStreamArg)
-    {
-        if (!fromStreamArg)
-            return engine.Streams!.CurrentInput;
-        Cell streamCell = MaterializeRegisterAsCell(engine, 0);
-        if (streamCell.Tag == Tag.Foreign
-            && engine.AsForeign(streamCell) is StreamHandle h)
-            return h;
-        if (streamCell.Tag == Tag.Atom)
-        {
-            string alias = AtomTable.GetById(streamCell.AsAtomId)?.Name ?? "";
-            var aliased = engine.Streams!.GetByAlias(alias);
-            if (aliased is not null) return aliased;
-        }
-        throw new Shumway.Core.PrologRuntimeException(
-            "type_error(stream, _)");
-    }
+        => fromStreamArg
+            ? Shumway.Builtins.StreamBuiltins.ResolveStream(engine, engine.GetRegister(0))
+            : engine.Streams!.CurrentInput;
 
     private static StreamHandle ResolveOutputStream(Activation engine, bool fromStreamArg)
-    {
-        if (!fromStreamArg)
-            return engine.Streams!.CurrentOutput;
-        Cell streamCell = MaterializeRegisterAsCell(engine, 0);
-        if (streamCell.Tag == Tag.Foreign
-            && engine.AsForeign(streamCell) is StreamHandle h)
-            return h;
-        if (streamCell.Tag == Tag.Atom)
-        {
-            string alias = AtomTable.GetById(streamCell.AsAtomId)?.Name ?? "";
-            var aliased = engine.Streams!.GetByAlias(alias);
-            if (aliased is not null) return aliased;
-        }
-        throw new Shumway.Core.PrologRuntimeException(
-            "type_error(stream, _)");
-    }
+        => fromStreamArg
+            ? Shumway.Builtins.StreamBuiltins.ResolveStream(engine, engine.GetRegister(0))
+            : engine.Streams!.CurrentOutput;
 
     private static bool ReadPrintableCodeImpl(Activation engine, bool useStreamReg)
     {

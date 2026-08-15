@@ -157,14 +157,18 @@ public class StreamControlConformance : IDisposable
     // ---------- close/1 ----------
 
     [Fact]
-    public void Close_NonStreamArg_RaisesTypeError()
+    public void Close_NonStreamArg_RaisesDomainError()
     {
-        // ISO §8.11.6.3.b: type_error(stream_or_alias, _).
+        // ISO §8.11: an argument that is neither a stream-term nor an alias
+        // is domain_error(stream_or_alias, Culprit) — `stream_or_alias` names
+        // a DOMAIN, not a type. GNU Prolog 1.5 and SWI 10 both raise exactly
+        // this (measured); the earlier type_error here was ours alone.
         var e = new PrologEngine();
         var sol = e.Query(
-            "catch(close(123), error(type_error(T, _), _), true).");
+            "catch(close(123), error(domain_error(T, C), _), true).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("stream_or_alias"), sol["T"]);
+        Assert.Equal(new IntTerm(123), sol["C"]);
     }
 
     [Fact]
@@ -234,7 +238,9 @@ public class StreamControlConformance : IDisposable
     public void CurrentStream_OverFreshFile()
     {
         File.WriteAllText(_tempPath, "x");
-        var path = _tempPath.Replace("\\", "\\\\");
+        // ADR-044: paths are canonical ('/'), which is also what makes this
+        // literal writable without escaping every separator.
+        var path = _tempPath.Replace('\\', '/');
         var e = new PrologEngine();
         // Open a file then assert current_stream sees it by file name.
         Assert.True(e.Query(

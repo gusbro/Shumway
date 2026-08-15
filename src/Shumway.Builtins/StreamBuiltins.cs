@@ -5,20 +5,42 @@ namespace Shumway.Builtins;
 
 /// <summary>
 /// File and terminal text streams, backed by the per-engine
-/// <see cref="StreamRegistry"/>. Foreign cells holding a
-/// <see cref="StreamHandle"/> are the canonical stream-arg form; the
-/// conventional atom <c>user_input</c> / <c>user_output</c> and any
-/// user-defined alias also resolve to a registered handle.
+/// <see cref="StreamRegistry"/>. The stream-term is the ordinary ground
+/// compound <c>'$stream'(Id)</c> (the same shape GNU Prolog uses), whose
+/// argument is the registry id; the conventional atom <c>user_input</c> /
+/// <c>user_output</c> and any user-defined alias also resolve to a
+/// registered handle.
 /// </summary>
 public static class StreamBuiltins
 {
+    /// <summary>The stream-term's functor name. A stream-term is an
+    /// ORDINARY ground term on purpose: it must survive everything a term
+    /// survives — <c>copy_term/2</c>, <c>findall/3</c>, and above all
+    /// <c>assertz/1</c> followed by a later <c>clause</c>/<c>retract</c>,
+    /// across queries. A managed handle inside a cell cannot (the payload
+    /// side table is per-activation), and a foreign-cell stream-term used
+    /// to lose its identity when the clause was compiled to bytecode.</summary>
+    public const string StreamFunctor = "$stream";
+
     // ---------- Stream-arg resolution ----------
 
+    /// <summary>Builds the stream-term for <paramref name="h"/> —
+    /// <c>'$stream'(Id)</c> on the heap.</summary>
+    public static Cell MakeStreamTerm(Activation engine, StreamHandle h)
+    {
+        int fid = FunctorTable.Intern(
+            AtomTable.Intern(StreamFunctor, permanent: true).Id, 1);
+        int idx = engine.AllocateHeap(2);
+        engine.SetHeap(idx, Cell.Functor(fid));
+        engine.SetHeap(idx + 1, Cell.Int(h.Id));
+        return Cell.Str(idx);
+    }
+
     /// <summary>Resolves a stream argument cell to its
-    /// <see cref="StreamHandle"/>. Accepts a Foreign cell holding the
-    /// handle directly, or an atom matching a registered alias.
+    /// <see cref="StreamHandle"/>. Accepts the stream-term
+    /// <c>'$stream'(Id)</c> or an atom matching a registered alias.
     /// Throws ISO-shaped errors for the failure modes ISO §8.11
-    /// specifies.</summary>
+    /// specifies, matching what GNU Prolog and SWI both raise.</summary>
     public static StreamHandle ResolveStream(Activation engine, Cell cell)
     {
         Cell d = Resolve(engine, cell);
@@ -28,11 +50,15 @@ public static class StreamBuiltins
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
 
-        if (d.Tag == Tag.Foreign)
+        if (TryReadStreamId(engine, d, out int id))
         {
-            var h = engine.AsForeign<StreamHandle>(d);
+            // Well-formed stream-term: a closed / unknown id is
+            // existence_error(stream, Culprit) — ISO §8.11, and what GNU
+            // and SWI both raise for '$stream'(999).
+            var h = registry.GetById(id);
             if (h is null || h.Closed)
-                throw new PrologRuntimeException("existence_error", "stream");
+                throw new PrologRuntimeException(
+                    "existence_error", "stream", engine, d);
             return h;
         }
         if (d.Tag == Tag.Atom)
@@ -40,12 +66,54 @@ public static class StreamBuiltins
             string name = AtomTable.GetById(d.AsAtomId)?.Name ?? "";
             var h = registry.GetByAlias(name);
             if (h is null || h.Closed)
-                throw new PrologRuntimeException("existence_error", "stream");
+                throw new PrologRuntimeException(
+                    "existence_error", "stream", engine, d);
             return h;
         }
-        // ISO §8.11.6.3.b: a bound non-stream-non-alias is
-        // type_error(stream_or_alias, _).
-        throw new PrologRuntimeException("type_error", "stream_or_alias");
+        // Neither a stream-term nor an alias: ISO §8.11 domain_error
+        // (`stream_or_alias` names a DOMAIN, not a type — GNU and SWI agree).
+        throw new PrologRuntimeException(
+            "domain_error", "stream_or_alias", engine, d);
+    }
+
+    /// <summary>True when <paramref name="d"/> is the stream-term
+    /// <c>'$stream'(Id)</c> with an integer id — a malformed
+    /// <c>'$stream'(foo)</c> or <c>'$stream'(1,2)</c> is NOT a stream-term
+    /// and falls through to the domain error.</summary>
+    private static bool TryReadStreamId(Activation engine, Cell d, out int id)
+    {
+        id = 0;
+        if (d.Tag != Tag.Str) return false;
+        int fIdx = d.AsHeapIndex;
+        var (atomId, arity) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
+        if (arity != 1) return false;
+        if ((AtomTable.GetById(atomId)?.Name ?? "") != StreamFunctor) return false;
+        Cell arg = Resolve(engine, engine.GetHeap(fIdx + 1));
+        if (arg.Tag != Tag.Int) return false;
+        long v = arg.AsInt;
+        if (v < 0 || v > int.MaxValue) return false;
+        id = (int)v;
+        return true;
+    }
+
+    /// <summary>True when <paramref name="cell"/> resolves to an open
+    /// stream — the <c>is_stream/1</c> test, which never throws.</summary>
+    public static bool IsOpenStream(Activation engine, Cell cell)
+    {
+        Cell d = Resolve(engine, cell);
+        var registry = engine.Streams;
+        if (registry is null) return false;
+        if (TryReadStreamId(engine, d, out int id))
+        {
+            var h = registry.GetById(id);
+            return h is not null && !h.Closed;
+        }
+        if (d.Tag == Tag.Atom)
+        {
+            var h = registry.GetByAlias(AtomTable.GetById(d.AsAtomId)?.Name ?? "");
+            return h is not null && !h.Closed;
+        }
+        return false;
     }
 
     private static StreamHandle ResolveReader(Activation engine, Cell cell)
@@ -112,8 +180,7 @@ public static class StreamBuiltins
         }
 
         registry.Add(handle);
-        Cell foreignCell = engine.MakeForeign(handle);
-        return engine.UnifyRegisterWithCell(2, foreignCell);
+        return engine.UnifyRegisterWithCell(2, MakeStreamTerm(engine, handle));
     }
 
     /// <summary><c>open(+File, +Mode, -Stream, +Options)</c> — ISO §8.11.5.
@@ -301,8 +368,7 @@ public static class StreamBuiltins
         }
 
         registry.Add(handle);
-        Cell foreignCell = engine.MakeForeign(handle);
-        return engine.UnifyRegisterWithCell(2, foreignCell);
+        return engine.UnifyRegisterWithCell(2, MakeStreamTerm(engine, handle));
     }
 
     /// <summary>.NET's FileStream refuses device paths, but portable Prolog
@@ -310,9 +376,7 @@ public static class StreamBuiltins
     /// "nul"/"nul:" on Windows map to <see cref="Stream.Null"/>; /dev/null
     /// opens natively on Unix so no mapping is needed there.</summary>
     private static bool IsWindowsNullDevice(string path) =>
-        OperatingSystem.IsWindows()
-        && (path.Equals("nul", StringComparison.OrdinalIgnoreCase)
-            || path.Equals("nul:", StringComparison.OrdinalIgnoreCase));
+        PrologPath.IsNullDevice(path);
 
     private static StreamHandle NullDeviceHandle(int id, string mode, string path, string? alias) =>
         mode switch
@@ -727,8 +791,8 @@ public static class StreamBuiltins
     {
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
-        Cell handleCell = engine.MakeForeign(registry.CurrentInput);
-        return engine.UnifyRegisterWithCell(0, handleCell);
+        return engine.UnifyRegisterWithCell(
+            0, MakeStreamTerm(engine, registry.CurrentInput));
     }
 
     /// <summary><c>current_output(Stream)</c> — ISO §8.11.2.</summary>
@@ -736,8 +800,8 @@ public static class StreamBuiltins
     {
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
-        Cell handleCell = engine.MakeForeign(registry.CurrentOutput);
-        return engine.UnifyRegisterWithCell(0, handleCell);
+        return engine.UnifyRegisterWithCell(
+            0, MakeStreamTerm(engine, registry.CurrentOutput));
     }
 
     /// <summary><c>set_input(Stream)</c> — ISO §8.11.3. Reassigns the
