@@ -134,7 +134,7 @@ execution, but the exe is `LARGEADDRESSAWARE` and gets 4 GB on a 64-bit OS.
 The `t_reftype` declaration in
 [generic-term-interop §10](generic-term-interop.md) serves 32-bit builds
 unchanged: MSVC x86 aligns the `int64_t`/`double` members at 8, so the field
-offsets (0/8/16/24) and `sizeof` (32) are identical — `pars` is simply a
+offsets (0/8/16/24) and `sizeof` (32) are identical — `pars` is just a
 4-byte pointer at +16. Compile your native library for the **same bitness as
 the host process** and nothing else changes.
 

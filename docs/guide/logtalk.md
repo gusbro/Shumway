@@ -4,8 +4,10 @@ Shumway runs [Logtalk](https://logtalk.org/) — the OO logic-programming layer
 that compiles to plain Prolog — as a backend compiler. The glue lives in this
 repository under [`logtalk/`](../logtalk/): a backend **adapter**
 (`adapters/shumway.pl`) and a one-file **launcher**
-(`integration/logtalk_shumway.pl`). Verified against **Logtalk 3.101.0** on
-Windows; nothing in the glue is OS-specific.
+(`integration/logtalk_shumway.pl`). The Logtalk tree itself is never patched:
+everything Shumway needs travels in the adapter we ship. Verified against
+**Logtalk 3.101.0** (the released tag) on Windows; nothing in the glue is
+OS-specific.
 
 ## Setup
 
@@ -46,26 +48,43 @@ interpreter (the backend Logtalk uses on GProlog). Debugging works too: add
 `--debug` / `--dap <port>` and set breakpoints in the Logtalk-generated
 intermediate files, or in your `.lgt` sources' consulted forms.
 
+## The dialect
+
+Logtalk selects backend-specific code by `prolog_dialect`, and it does not
+know Shumway (yet — that is Paulo Moura's call, not ours). The adapter
+announces **`swi`**, chosen by running the full library test sweep under four
+candidate dialects and keeping the one that closed at zero failures; the
+whole comparison is documented in the adapter's header. Override it with the
+`SHUMWAY_LOGTALK_DIALECT` environment variable. Everything else —
+`prolog_version`, error messages, `current_prolog_flag` — keeps reporting
+Shumway; only that one selector borrows SWI's name.
+
 ## Status
 
-- **Test suites**: all 240 of Logtalk 3.101.0 library testers swept —
-  **all 194 runnable suites fully green: 100 % of the 10,319 individual
-  tests pass** (two of them need something outside Shumway: the released
-  3.101.0 rather than the `3.101.0-b01` beta the sweep ran on — the beta
-  predates an upstream geojson fix — and `pwsh.exe` on PATH; both verified
-  by running the same tests on SWI; see
-  [`logtalk-library-support.md`](logtalk-library-support.md)). Highlights:
-  random 457/457, types 149/149, linear_algebra 72/72, crypto 121/121, the
-  CCSDS stack and ieee_754 at zero failures; on `os`, `tzif` and
-  `mime_types` Shumway passes tests SWI itself fails on Windows.
+- **Test suites**: the full 242-tester sweep of Logtalk 3.101.0's library
+  collection, on a pristine tree, closes at **100% of the structurally
+  supported set — 204 suites all fully green, 11,417 tests, 0 failures**
+  (plus five compute-heavy ML suites that pass when run without machine
+  contention). The three libraries whose *operation* needs an OS capability
+  Shumway does not provide — `process` (OS processes), `redis` (sockets),
+  `java` (a JVM) — are excluded as structurally N/A, documented rather than
+  hidden. Details and reproduction in
+  [`logtalk-library-support.md`](logtalk-library-support.md).
 - **Benchmarks** (`examples/benchmarks`): Shumway Tier-0 matches or beats
   GProlog-interpreted on every shape; Tier-1 wins 4–7× across the board.
   Message dispatch (`::`) runs at parity with plain calls — Logtalk
   static-binds it under `optimize(on)`.
-- The adapter carries small shims for predicates Shumway lacks natively
-  (`term_hash/2,4`); everything else — including `format/2,3`,
-  `predicate_property/2` and the full ISO surface Logtalk's compiler needs —
-  is native.
+- **Capabilities announced**: `tabling` (the engine's `:- table` works inside
+  objects) and native coroutining (`dif/2`, `freeze/2`, `when/2`) with the
+  meta-argument wrapping Logtalk expects — the compiler reads our
+  `predicate_property/2` meta-predicate templates exactly as it does SWI's.
+- The adapter carries the backend compatibility layer: the OS predicate
+  spellings each dialect arm expects (`path_sysop/2,3`, `access_file/2`,
+  `size_file/2`, …), time-limited calls (`call_with_timeout/2,3`,
+  `call_with_time_limit/2`, `timed_call/2` — all over the engine's
+  `time_out/3`), and small shims like `term_hash/2,4`. Everything else —
+  `format/2,3`, `predicate_property/2` and the full ISO surface Logtalk's
+  compiler needs — is native.
 
 ## Notes
 

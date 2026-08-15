@@ -129,7 +129,7 @@ A **no-op (native)** load means Shumway intercepts and its own implementation
 serves — the library *works*. A **no-op (unsupported)** load means the library
 is inert because the capability is absent — called out explicitly below.
 
-## ✅ Supported — loads clean and runtime-validated
+## Supported — loads clean and runtime-validated
 
 lists, apply (incl. yall lambdas), pairs, assoc, ordsets, **error** (`must_be`,
 `is_of_type`, incl. `acyclic`), aggregate, gensym, heaps, rbtrees, nb_rbtrees,
@@ -163,7 +163,7 @@ git, explain, obfuscate, rwlocks, www_browser, tty, vm.
 | `settings` | loads clean; the runtime `setting/4` machinery is unverified |
 | `crypto`-adjacent uses | random-derived values come from a seedable PRNG, **not cryptographically secure** |
 
-## ❌ Not supported — needs a capability Shumway does not have
+## Not supported — needs a capability Shumway does not have
 
 The engine capabilities behind these gaps, so it is clear what is missing and
 that none of it is a defect to report:

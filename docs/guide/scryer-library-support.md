@@ -119,7 +119,7 @@ puzzle([S,E,N,D]+[M,O,R,E] = [M,O,N,E,Y]) :-
 %     TS = [a,b,c,d], N = [b,c], and a reaches [b,c,d].
 ```
 
-## ✅ Supported — loads clean and runtime-validated
+## Supported — loads clean and runtime-validated
 
 | library | exercised |
 |---|---|
@@ -161,7 +161,7 @@ puzzle([S,E,N,D]+[M,O,R,E] = [M,O,N,E,Y]) :-
 material**. `atts` is validated indirectly: it is the foundation the whole
 clpz/dif/freeze stack runs on.
 
-## ❌ Not supported — needs a capability Shumway does not have
+## Not supported — needs a capability Shumway does not have
 
 The engine capabilities behind these gaps, so it is clear what is missing and
 that none of it is a defect to report:
