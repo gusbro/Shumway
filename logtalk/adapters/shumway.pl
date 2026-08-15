@@ -78,7 +78,7 @@
 	(	catch(getenv('SHUMWAY_LOGTALK_DIALECT', Name), _, fail),
 		Name \== '' ->
 		Dialect = Name
-	;	Dialect = xsb
+	;	Dialect = swi
 	).
 '$lgt_prolog_feature'(prolog_version, v(Major, Minor, Patch)) :-
 	current_prolog_flag(version_data, shumway(Major, Minor, Patch, _)).
