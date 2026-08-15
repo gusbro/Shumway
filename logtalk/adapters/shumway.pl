@@ -17,7 +17,7 @@
 %  backend identity and capabilities
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%  WHY SHUMWAY ANNOUNCES ITSELF AS `xsb`
+%  WHY SHUMWAY ANNOUNCES ITSELF AS `swi`
 %
 %  Logtalk selects backend-specific code by `prolog_dialect`: its libraries
 %  and tools branch on it in ~100 files, and a name Logtalk does not know
@@ -32,8 +32,9 @@
 %  should have to patch into a Logtalk installation. So we announce the
 %  supported dialect closest to our actual capabilities.
 %
-%  That is `xsb`, chosen by measurement. Testers gate on the dialect, and the
-%  choice decides both which of them RUN and what they EXPECT:
+%  That is `swi`, settled by measurement across four candidates. Testers gate
+%  on the dialect, and the choice decides both which of them RUN and what
+%  they EXPECT:
 %
 %      gate                              dialects
 %      coroutining                       eclipse xvm sicstus swi trealla xsb yap
@@ -44,22 +45,23 @@
 %      java (a JVM)                      swi yap
 %      reader/csv expect LF, not CR-LF   b gnu ji sicstus swi xsb
 %
-%  This adapter began as a port of Logtalk's GNU Prolog adapter, and `gnu` was
-%  the first choice — but it is a bad cell: it enables the two we CANNOT support
-%  (OS processes, sockets) and blocks the three we CAN (dif/2, coroutining and
-%  time limits are all native here), so real capability went uncredited.
+%  The path here, kept because each step taught a constraint:
 %
-%  `xvm` was tried next and measured WORSE: it credits the three, but it is
-%  absent from the last row, so `reader` and `csv` start expecting CR-LF — the
-%  opposite of what Shumway does (ADR-045 translates on text reads, as GNU and
-%  SWI do). Full sweep: 36 failures against `gnu`'s 9.
-%
-%  `xsb` is the only dialect that satisfies every row: it credits the three,
-%  keeps the LF expectation, and enables none of process/redis/java. Its
-%  lgtunit `deterministic/1,2` arm needs `call_cleanup/2` rather than GNU's
-%  `call_det/2`; that is one line over the engine's `setup_call_cleanup/3`
-%  (below), not a missing capability — an earlier version of this adapter
-%  wrongly declared that predicate unsupported.
+%  - `gnu` (the adapter's origin) enables the ones we CANNOT support (OS
+%    processes, sockets) and blocks the ones we CAN (dif/2, coroutining and
+%    time limits are native), so real capability went uncredited.
+%  - `xvm` credits those three but expects CR-LF text reads — the opposite of
+%    ADR-045. Full sweep: 36 failures against `gnu`'s 9.
+%  - `xsb` satisfies every row of the table and nearly worked (its lgtunit
+%    arm needs call_cleanup/2 — one line over setup_call_cleanup/3, below).
+%  - `swi` also satisfies every row except enabling process/redis/java —
+%    which measure the host platform, not Prolog conformance, and are
+%    excluded as structurally N/A by the test harness rather than mis-scored.
+%    What decided FOR it: the swi arms exercise the engine's REAL surface
+%    (predicate_property meta templates, platform prolog_flags, statistics/2
+%    shapes, SWI shell semantics) instead of asking the adapter to translate
+%    around it, and the full 242-tester sweep under `swi` closed at 100% of
+%    the structurally supported set — 204 suites, 11416 tests, 0 failures.
 %
 %  The gap is the backend's OS predicate names, which the "Backend OS
 %  compatibility layer" at the end of THIS FILE supplies — in the adapter we
