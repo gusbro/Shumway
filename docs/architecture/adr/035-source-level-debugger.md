@@ -1,6 +1,10 @@
 # ADR-035: Source-level debugger (Visual Studio / Concord, interpreter-aware)
 
-**Status:** ACCEPTED and **IMPLEMENTED** — the arc is closed (D0–D4 delivered in
+## Status
+
+Shipped ([Phase 34](../../history/phase-34-closure.md)).
+
+The arc is closed (D0–D4 delivered in
 full; every D5 deferred item except the project system shipped too; see *Final
 state* at the end). The VS Code / DAP frontend is **ADR-036**, which reuses this
 ADR's engine-side core unchanged.

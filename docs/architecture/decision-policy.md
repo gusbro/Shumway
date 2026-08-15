@@ -27,7 +27,7 @@ ordinary change: implement, test, commit.
 
 ## Where to look things up
 
-- [`adr/`](adr/) — the decisions themselves, numbered 001–041 with
+- [`adr/`](adr/) — the decisions themselves, numbered sequentially with
   descriptive filenames; the Status line at the top of each is kept current.
   An ADR is a *decision record*: it may keep a superseded or never-built design
   in place, clearly marked, since its value is the history. Reference docs

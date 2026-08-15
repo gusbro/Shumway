@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted — implemented (Phase 36): Tag.Rational, `rdiv`, the `prefer_rationals` flag and the numeric tower shipped.
+Shipped ([Phase 36](../../history/phase-36-closure.md)).
+
+Tag.Rational, `rdiv`, the `prefer_rationals` flag and the numeric tower.
 
 ## Context
 

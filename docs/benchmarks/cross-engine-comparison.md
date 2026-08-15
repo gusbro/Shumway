@@ -17,6 +17,19 @@ heap cells, which a native engine structurally cannot offer — wins by 3–180�
 Nothing here is marketing: every table is measured and the losses are called
 out.
 
+## Environment
+
+_Measured_: July–August 2026 (clp(Z) and Logtalk suites July 2026, interop
+August 2026), on the same machine as [the baseline](baseline.md): GUSBRO-NB,
+8 cores, Windows 10 (10.0.19044), .NET 10.0.10.
+
+| Engine | Version | Mode |
+|---|---|---|
+| Shumway | the build at the cited commit | Tier-0 and Tier-1 as marked per table |
+| GNU Prolog | 1.5.0 | Native compiled (`gplc` + MSVC), and P/Invoke-embedded for §Interop |
+| Scryer Prolog | 0.10.0 (`e7ac3ae`) | Release build, its own `clpz` |
+| SWI-Prolog | 10.0.2 (x64) | Stock Windows install |
+
 ## Method
 
 - **Self-timed CPU.** Each program times only its own solve loop with

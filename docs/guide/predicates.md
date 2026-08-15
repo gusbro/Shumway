@@ -7,6 +7,8 @@ Predicates available to programs embedding Shumway, grouped by area. The CLP(FD)
 
 Each template names its parameters and their mode: `+` bound at call, `-` an output, `?` either, `@` not modified, `:` a meta-called goal.
 
+Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [CLP(FD) — domains](#clpfd--domains) · [CLP(FD) — arithmetic constraints](#clpfd--arithmetic-constraints) · [CLP(FD) — global constraints](#clpfd--global-constraints) · [CLP(FD) — labeling](#clpfd--labeling) · [CLP(FD) — reification](#clpfd--reification) · [Atoms](#atoms) · [Coroutining](#coroutining) · [Global variables](#global-variables) · [Grammar](#grammar) · [Messages](#messages) · [Reflection](#reflection) · [Term comparison](#term-comparison) · [Threads](#threads) · [Time](#time)
+
 ## Unification & comparison
 
 | Predicate | Description |

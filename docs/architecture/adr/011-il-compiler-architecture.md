@@ -2,9 +2,11 @@
 
 ## Status
 
-Accepted (Phase 1). The tiered Tier-0/Tier-1 split, the Sigil-based runtime
-emitter and the persisted build-time backend all shipped, and the Tier-1 arc
-went far past this ADR.
+Accepted ([Phase 1](../../history/phase-1-closure.md)).
+
+The tiered Tier-0/Tier-1 split, the Sigil-based runtime emitter and the
+persisted build-time backend all shipped, and the Tier-1 arc went far past
+this ADR.
 
 > **Read the mechanism sketches below as the original Phase-1 design, not the
 > as-built code.** Several concrete mechanisms described in the Decision are

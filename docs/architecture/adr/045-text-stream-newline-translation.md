@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-08-14). Lands with [ADR-044](044-canonical-path-separator.md)
+Accepted (2026-08-14; ships with 1.0.0).
+
+Lands with [ADR-044](044-canonical-path-separator.md)
 before 1.0.0 reaches `main`, so no released version changes behavior.
 
 ## Context

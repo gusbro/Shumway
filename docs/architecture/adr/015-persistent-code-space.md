@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (Phase 8) — complete. Implemented in chunks 114–128:
+Shipped ([Phase 8](../../history/phase-8-closure.md)).
+
+Implemented in chunks 114–128 (the closure doc maps them):
 
 - A (114) generation counter, B (115–117) persistent code space,
 - C (118) initial recompile-on-modify dispatch — the headline bug fix,

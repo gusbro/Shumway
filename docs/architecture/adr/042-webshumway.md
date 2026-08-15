@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-08-07). SHIPPED: `src/Shumway.Web/`, a static site that runs the
+Shipped ([Phase 38](../../history/phase-38-closure.md), 2026-08-07).
+
+`src/Shumway.Web/`, a static site that runs the
 full engine (Tier-0), with an editor, workspaces, imported libraries and offline
 support. The user-facing guide is [`docs/guide/webshumway.md`](../../guide/webshumway.md).
 

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (Phase 30) — implemented. `IlPromotionStore` gains `DynamicSnapshotProvider`,
+Shipped ([Phase 30](../../history/phase-30-closure.md)).
+
+`IlPromotionStore` gains `DynamicSnapshotProvider`,
 `EvictDelegate`, and the eviction-churn limit; `RecordInvocation` compiles a
 static-style snapshot for the `enter_dynamic` shape instead of rejecting it;
 `PrologEngine.BuildDynamicSnapshot` produces the snapshot from the rewrite cache

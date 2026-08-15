@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted — implemented (cursor tier in Phase 30; the
+Shipped ([Phase 30](../../history/phase-30-closure.md) cursor tier,
+[Phase 32](../../history/phase-32-closure.md) materializer tier).
+
+(Cursor tier in Phase 30; the
 materializer/dematerializer tier completed in Phase 32). This is the
 term/reftype tier that ADR-022 deferred: its int/float/string tier shipped
 first, and whole-term marshalling — Arity's `reftype` / `preftype` machinery —

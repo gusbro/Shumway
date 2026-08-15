@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted — implemented: the directive has been parsed and stored since Phase 1; mode inference and mode-specialized code generation shipped in Phase 3.
+Shipped ([Phase 3](../../history/phase-3-closure.md)).
+
+The directive has been parsed and stored since Phase 1; mode inference and
+mode-specialized code generation shipped in Phase 3.
 
 ## Context
 

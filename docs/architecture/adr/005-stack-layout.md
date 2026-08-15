@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Phase 1).
+Accepted ([Phase 1](../../history/phase-1-closure.md)).
 
 ## Context
 

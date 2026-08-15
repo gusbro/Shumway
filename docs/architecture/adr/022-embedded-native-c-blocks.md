@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted — implemented (Phase 30): `:- c` prototypes and `{...}` blocks compile
+Shipped ([Phase 30](../../history/phase-30-closure.md)).
+
+`:- c` prototypes and `{...}` blocks compile
 to IL, run at runtime and persist in bundles. The document below is the design
 as agreed before implementation began.
 

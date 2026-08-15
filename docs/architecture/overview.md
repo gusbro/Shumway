@@ -10,7 +10,7 @@ Shumway implements a Prolog compiler and interpreter that runs natively on .NET.
 
 2. **Embedded rules engines**: applications that need symbolic reasoning, decision rules, or logic programming as part of a larger .NET system. Frequent crossing of the C# ↔ Prolog boundary is expected.
 
-The performance **target** is to be comparable to or better than GNU Prolog in real-world scenarios. As measured today ([the benchmarks](../benchmarks/analysis.md)), the Tier-1 IL engine runs within a small factor of native-compiled GNU Prolog (roughly 1–4× by shape) and beats SWI-Prolog on the recursion/backtracking benchmarks; the Tier-0 interpreter is ~7.5× of native GProlog. Outperforming GNU Prolog on interop-heavy workloads — where the cost of crossing the C# ↔ Prolog boundary dominates raw throughput — is a **design goal that has not yet been benchmarked**.
+The performance **target** is to be comparable to or better than GNU Prolog in real-world scenarios. As measured today ([the benchmarks](../benchmarks/analysis.md)), the Tier-1 IL engine runs within a small factor of native-compiled GNU Prolog (roughly 1–4× by shape) and beats SWI-Prolog on the recursion/backtracking benchmarks; the Tier-0 interpreter is ~7.5× of native GProlog. On interop-heavy workloads — where the cost of crossing the C# ↔ Prolog boundary dominates raw throughput — the zero-copy foreign-predicate path **measures 3–180× faster than GNU Prolog embedded via P/Invoke** (the convenience Term-AST API loses 3–34× on composites; see [the interop section of the cross-engine comparison](../benchmarks/cross-engine-comparison.md)).
 
 ## Architectural layers
 
@@ -347,10 +347,9 @@ Shipped subsystems this overview does not detail (each has its own doc):
 | Builtins | [../guide/predicates.md](../guide/predicates.md) (generated, current) |
 
 What counts as a major decision, and how decisions are recorded, is defined in
-[`decision-policy.md`](decision-policy.md). The decisions themselves —
-ADR-001 through ADR-041 — live under [`adr/`](adr/), each with a current
-Status line; the maintainers' working decision → ADR table is in the
-repository-root CLAUDE.md.
+[`decision-policy.md`](decision-policy.md). The decisions themselves live
+under [`adr/`](adr/), each with a current Status line; the maintainers'
+working decision → ADR table is in the repository-root CLAUDE.md.
 
 ## Phase chronology
 
@@ -396,3 +395,6 @@ Development proceeded in numbered phases; ADR Status lines cite them
 | [34](../history/phase-34-closure.md) | 2026-07-20 | Source-level debugger (VS + VS Code) |
 | [35](../history/phase-35-closure.md) | 2026-07-25 | ISO conformance (Neumerkel), soft cut |
 | [36](../history/phase-36-closure.md) | 2026-08-02 | Third-party ecosystem (libraries, dialects, ADR-041) |
+| [37](../history/phase-37-closure.md) | 2026-08-05 | Documentation truth, licensing, toolchain, interop measurement |
+| [38](../history/phase-38-closure.md) | 2026-08-07 | WebShumway — the engine in a browser (ADR-042) |
+| [39](../history/phase-39-closure.md) | 2026-08-10 | .NET Framework 4.8 target + debugger round (ADR-043) |

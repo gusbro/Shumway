@@ -1,7 +1,10 @@
 # ADR-031: Delayed choice point (CP-free guard commit)
 
-**Status:** **Accepted — SHIPPED default ON through five widening rounds**
-(2026-07-09/10). The delayed choice point landed as a **Tier-1 codegen
+## Status
+
+Shipped (default on) ([Phase 33](../../history/phase-33-closure.md); five widening rounds).
+
+The delayed choice point landed as a **Tier-1 codegen
 recogniser** (`IlPredicateCompiler.TryGetCpFreeGuard`), not the originally
 sketched clause→ITE AST fold (proven a structural no-op — see Investigation).
 A non-last chain clause of the shape `Head :- Guard, !, Body.` is emitted

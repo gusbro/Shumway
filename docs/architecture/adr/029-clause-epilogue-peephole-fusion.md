@@ -1,6 +1,10 @@
 # ADR-029: Clause-epilogue peephole fusion (`deallocate;execute`, `cut;deallocate_proceed`, `cut;proceed`)
 
-**Status:** Accepted — **`CutDeallocateProceed` implemented and shipped**
+## Status
+
+Shipped (partial — see below) ([Phase 33](../../history/phase-33-closure.md)).
+
+`CutDeallocateProceed` implemented and shipped
 (the deep-cut deterministic-clause epilogue). Tier-0 dispatch reduction; Tier-1
 reads the un-fused bytecode, so promotion is preserved and IL codegen is
 byte-for-byte the pre-fusion shape. `DeallocateExecute` and the neck-cut variants

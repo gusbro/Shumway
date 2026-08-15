@@ -2,7 +2,9 @@
 
 ## Status
 
-**Accepted — implemented (Phase 33).** Tier-0 (WAM interpreter) and Tier-1 (IL,
+Shipped ([Phase 33](../../history/phase-33-closure.md)).
+
+Tier-0 (WAM interpreter) and Tier-1 (IL,
 including `--strip-wam` persisted bundles). Two new opcodes, `switch_on_atom_sub`
 and `switch_on_integer_sub`.
 

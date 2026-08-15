@@ -2,7 +2,7 @@
 
 Shumway runs [Logtalk](https://logtalk.org/) — the OO logic-programming layer
 that compiles to plain Prolog — as a backend compiler. The glue lives in this
-repository under [`logtalk/`](../logtalk/): a backend **adapter**
+repository under [`logtalk/`](../../logtalk/): a backend **adapter**
 (`adapters/shumway.pl`) and a one-file **launcher**
 (`integration/logtalk_shumway.pl`). The Logtalk tree itself is never patched:
 everything Shumway needs travels in the adapter we ship. Verified against

@@ -2,7 +2,9 @@
 
 ## Status
 
-**Decided — REJECTED on a measured ceiling** (Phase 33, item I6). The soundness
+Rejected ([Phase 33](../../history/phase-33-closure.md); on a measured ceiling).
+
+The soundness
 analysis and the implementation blueprint below are kept complete so the
 decision can be revisited cheaply if the workload evidence ever changes (see
 *Revisit triggers*). The one change that shipped from this ADR is

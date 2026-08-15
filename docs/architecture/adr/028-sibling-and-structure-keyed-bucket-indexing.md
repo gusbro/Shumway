@@ -2,7 +2,9 @@
 
 ## Status
 
-**Accepted — implemented.** Tier-0 (WAM interpreter) and Tier-1 (IL, incl.
+Shipped ([Phase 33](../../history/phase-33-closure.md)).
+
+Tier-0 (WAM interpreter) and Tier-1 (IL, incl.
 `--strip-wam` persisted bundles). One new opcode, `switch_on_structure_sub`; the
 rest reuses the existing `switch_on_{atom,integer,structure}_arg` and ADR-027's
 `switch_on_{atom,integer}_sub`. Completes the indexing work ADR-007 (first/multi-arg)

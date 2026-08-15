@@ -1,6 +1,10 @@
 # ADR-032: Dynamic guard fail-continuation (engine continuation stack)
 
-**Status:** **SOFT-REJECTED (revisable).** Not a hard rejection: the design is
+## Status
+
+Soft-rejected (revisable) ([Phase 33](../../history/phase-33-closure.md)).
+
+Not a hard rejection: the design is
 recorded in full and the decision is explicitly open to revisiting once the
 promotion-time accept/reject statistics (`IlPredicateCompiler.CpFreeGuardStats`,
 surfaced by `shumway-link --verbose` and `SHUMWAY_CPFREE_STATS=1`) show, on

@@ -2,7 +2,15 @@
 
 ## Status
 
-Accepted (Phase 1) — and since extended well past this ADR.s scope: multi-argument indexing and dynamic-predicate index caching shipped in Phase 2, JIT indexing in Phase 3, in-place extensible indexed layouts for dynamics in Phases 10-11, and second-level / bucket indexing in ADR-027/028. What follows is the Phase-1 decision as made.
+Accepted ([Phase 1](../../history/phase-1-closure.md)).
+
+Since extended well past this ADR's scope: multi-argument indexing and
+dynamic-predicate index caching shipped in [Phase 2](../../history/phase-2-closure.md),
+JIT indexing in [Phase 3](../../history/phase-3-closure.md), in-place
+extensible indexed layouts for dynamics in Phases
+[10](../../history/phase-10-closure.md)–[11](../../history/phase-11-closure.md),
+and second-level / bucket indexing in ADR-027/028. What follows is the
+Phase-1 decision as made.
 
 ## Context
 

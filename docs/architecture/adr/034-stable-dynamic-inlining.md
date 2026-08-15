@@ -1,7 +1,10 @@
 # ADR-034: Sound stable-dynamic inlining (checked caller-inline of dynamic snapshots)
 
-**Status:** SHIPPED (default ON — it is a soundness fix plus the fast path that
-keeps the optimization).
+## Status
+
+Shipped (default on) ([Phase 33](../../history/phase-33-closure.md)).
+
+It is a soundness fix plus the fast path that keeps the optimization.
 
 ## Context
 

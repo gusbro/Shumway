@@ -1,6 +1,10 @@
 # ADR-036: VS Code debugger frontend (DAP, in-process, cross-platform)
 
-**Status:** ACCEPTED and **IMPLEMENTED** — the arc is closed (V1–V5 delivered
+## Status
+
+Shipped ([Phase 34](../../history/phase-34-closure.md)).
+
+The arc is closed (V1–V5 delivered
 and user-verified in real VS Code; the one open item is an end-to-end smoke on
 a physical Linux machine, pending a box — the code and the protocol suite are
 cross-platform by construction). Together with ADR-035 this completes the

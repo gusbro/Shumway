@@ -22,7 +22,13 @@ reference see [`predicates.md`](predicates.md).
 6. [Module directives reference](#module-directives-reference)
 7. [Worked example: tiny rules engine](#worked-example-tiny-rules-engine)
 8. [Native AOT publishing](#native-aot-publishing)
-9. [Embedded native C (`:- c` / `{…}`)](embedded-native-c.md) — calling .NET methods from Arity-style native blocks
+9. [.NET Framework hosts](#net-framework-hosts)
+10. [Logtalk](#logtalk)
+11. [Debugging](#debugging)
+
+Related guides outside this document: [embedded native C](embedded-native-c.md)
+(`:- c` / `{…}` blocks), [the interop guide](interop.md) (every C# ↔ Prolog
+mechanism, routed), and [WebShumway](webshumway.md) (the engine in a browser).
 
 ---
 
@@ -278,8 +284,10 @@ engine.AddLibraryDirectory("/path/to/swipl/library", "swi");
 
 Coexistence is the default: a name unique to one system always resolves; the
 dialect only disambiguates a name two systems both define. (The
-`Shumway.Tests.DialectInterop` opt-in test project exercises this against a real
-Scryer / SWI checkout — see its project header for how to run it.)
+`Shumway.Tests.DialectInterop` project — part of the regular test gate —
+exercises this; its deeper end-to-end sweeps against a real Scryer / SWI
+checkout are the opt-in part, gated on `SHUMWAY_SCRYER_LIB` /
+`SHUMWAY_SWI_LIB`.)
 
 At the REPL you load a library the same way, as a goal:
 

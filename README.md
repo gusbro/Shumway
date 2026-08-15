@@ -27,7 +27,7 @@ modules and produce bundles, .NET libraries and executables.
 The linker applies Link Time Optimization (LTO) techniques to improve
 performance on produced .NET libraries and executables.
 
-Shumway provides source-level debuggers for Visual Studio Code and Visual Studio
+Shumway provides source-level debuggers for Visual Studio and Visual Studio Code
 allowing you to set (conditional) breakpoints, execute step-by-step, inspect the
 call stack showing each frame's local variables and attributed-variable
 residues. Debugging sessions run in a special tier-0 mode which turns off some
@@ -43,14 +43,18 @@ including libraries written for Scryer and SWI.
 Shumway's web engine also supports debug mode with an embedded web debugger
 featuring the same set of debugging capabilities provided in VS Code / VS.
 
+Shumway runs wherever .NET 10 runs — Windows, Linux, macOS — plus any modern
+browser via WebAssembly, and .NET Framework 4.8 hosts through an opt-in
+multi-target build. The test gate currently runs on Windows.
+
 ## Try it online: [gusbro.github.io/Shumway](https://gusbro.github.io/Shumway/)
 
 ## Highlights
 
-- **ISO Prolog** passing all four of [Neumerkel conformity suites](tests/conformity/README.md)(Aug 2026): syntax (365/365), number_chars/2 (67/67), variable_names/1 (63/63), and dif/2 (26/26).
+- **ISO Prolog** passing all four of [Neumerkel conformity suites](tests/conformity/README.md) (Aug 2026): syntax (365/365), number_chars/2 (67/67), variable_names/1 (63/63), and dif/2 (26/26).
 - **Prolog extensions** including attributed variables, coroutining (`dif/2`,
   `freeze/2`, `when/2`), tabling with well-founded negation, CLP(FD) and CLP(R),
-  rationals, module system, and exceptions with full error terms.
+  rationals, module system, partial strings, and exceptions with full error terms.
 - **Performance measurement**: ~2× faster than Scryer on typical CLP(Z) models, running Scryer's own clpz library; see
   [the benchmarks](docs/benchmarks/cross-engine-comparison.md).
 - **A full toolchain**: `shumway-compile` (`.pl` → `.shmo`), `shumway-link`
@@ -59,7 +63,7 @@ featuring the same set of debugging capabilities provided in VS Code / VS.
 - **Link-time optimization**: Shumway's JIT promotes hot predicates knowing only what it can see. The linker knows the whole program, so bundles get cross-module unfolding, cross-module cut elision, and larger [deterministic regions](docs/design/il-region-compilation.md). So a linked bundle isn't just precompiled, it's compiled better.
 - **Builtin predicates**: check the [current list](docs/guide/predicates.md).
 - **Support for third-party libraries**: SWI-Prolog and Scryer Prolog libraries
-  load under per-subtree dialects, [Logtalk](docs/guide/logtalk.md)(3.101.0) runs as a
+  load under per-subtree dialects, [Logtalk](docs/guide/logtalk.md) (3.101.0) runs as a
   first-class backend.
 - **Source-level debugging** in [Visual Studio and VS Code](docs/guide/debugger.md): breakpoints
   (conditional, logpoints), port-based stepping, the real Prolog call stack
@@ -70,15 +74,18 @@ featuring the same set of debugging capabilities provided in VS Code / VS.
 - **A .NET embedding API**: `PrologEngine`, typed term conversion
   (`ToTerm<T>`/`FromTerm<T>`, source-generated mappers), foreign predicates via
   `[PrologPredicate]`, async queries, engine pooling.
-- **Interop three ways**: typed C# foreign predicates, embedded native C blocks
+- **Interop**: typed C# foreign predicates, embedded native C blocks
   (`:- c` / `{...}` compiled to IL), and whole-term marshalling to native
-  `t_reftype` graphs (P/Invoke).
+  `t_reftype` graphs (P/Invoke) — [the interop guide](docs/guide/interop.md)
+  routes every mechanism.
 
 ## Quick start
 
 Nothing to install: [try it in the browser](https://gusbro.github.io/Shumway/).
 
-To build locally and launch the REPL:
+There are no published packages yet — NuGet publication comes with the first
+tagged release. Until then it is the browser build above, or building from
+source:
 
 ```
 dotnet build
@@ -127,9 +134,9 @@ Everything lives under [`docs/`](docs/README.md):
 dotnet test
 ```
 
-The gate is six projects (Core, Interpreter, Compiler, IsoConformance,
-Embedding, DialectInterop). No phase closes with failing tests or compiler
- warnings.
+The gate is six projects; [CONTRIBUTING.md](CONTRIBUTING.md) is the source of
+truth for what it contains. No phase closes with failing tests or compiler
+warnings.
 
 ## Contributing
 

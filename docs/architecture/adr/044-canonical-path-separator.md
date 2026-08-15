@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-08-14). Landing before 1.0.0 reaches `main`, so no released
+Accepted (2026-08-14; ships with 1.0.0).
+
+Landing before 1.0.0 reaches `main`, so no released
 version changes behavior: the version bump and this convention ship together.
 
 ## Context

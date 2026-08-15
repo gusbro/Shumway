@@ -1,6 +1,8 @@
 # ADR-038: Library loading (`use_module(library(X))`) + scoped module qualification
 
-**Status:** Accepted — implemented in Phase 36.
+## Status
+
+Shipped ([Phase 36](../../history/phase-36-closure.md)).
 
 ## Implementation status
 

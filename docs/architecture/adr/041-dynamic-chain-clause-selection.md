@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-08-01). SHIPPED including live-link coverage: mid-query trampolines register their address in the chain table (TrampolineFids), so the selector serves consult-compiled AND live-linked chains. Measured: Logtalk linear_algebra 27/72 -> 72/72, types 148/149 -> 149/149 (the long-standing determinism edge closed).
+Shipped ([Phase 36](../../history/phase-36-closure.md), 2026-08-01).
+
+Includes live-link coverage: mid-query trampolines register their address in the chain table (TrampolineFids), so the selector serves consult-compiled AND live-linked chains. Measured: Logtalk linear_algebra 27/72 -> 72/72, types 148/149 -> 149/149 (the long-standing determinism edge closed).
 
 ## Context
 
