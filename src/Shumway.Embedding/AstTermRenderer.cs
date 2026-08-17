@@ -40,6 +40,12 @@ public static class AstTermRenderer
     public static string Render(Term term, int maxPrec)
         => Render(term, maxPrec, DefaultOps);
 
+    /// <summary>The <c>writeq</c>-flavoured render with the default operator
+    /// table — what <c>listing</c>/<c>portray_clause</c> emit, where an atom
+    /// that would not re-read as itself must be quoted.</summary>
+    public static string RenderQuoted(Term term, int maxPrec = 1200)
+        => Render(term, maxPrec, DefaultOps, quoted: true);
+
     /// <summary>Operator-aware overload using a caller-supplied table —
     /// pass <see cref="PrologEngine.Operators"/> to render terms that
     /// mention operators introduced at runtime (e.g. CLP(FD)'s
