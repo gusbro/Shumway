@@ -20,12 +20,26 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "predicate_property/2 requires a PrologEngine host.");
         Term head = MaterializeRegister(engine, 0);
-        // SWI-compat: a Module:Head query answers for the bare predicate.
-        // Logtalk's compiler asks exactly this shape when it compiles a
-        // module-qualified call (`user:freeze(X, G)`) to learn whether the
-        // callee is a meta-predicate.
+        // A Module:Head query answers from M's VIEWPOINT (the SICStus
+        // doctrine: current_predicate(M:PI) is strictly M's definitions,
+        // predicate_property is where visibility — imports included — shows).
+        // Innermost module wins for a nested qualification. Logtalk's
+        // compiler asks exactly this shape (`user:freeze(X, G)`) to learn
+        // whether the callee is a meta-predicate.
+        string? module = null;
         while (head is CompoundTerm { Functor: ":", Args.Length: 2 } qualified)
+        {
+            switch (qualified.Args[0])
+            {
+                case AtomTerm ma: module = ma.Name; break;
+                case VarTerm:
+                    throw new ShumwayPrologException(IsoError.InstantiationError());
+                default:
+                    throw new ShumwayPrologException(
+                        IsoError.TypeError("atom", qualified.Args[0]));
+            }
             head = qualified.Args[1];
+        }
         int fid;
         switch (head)
         {
@@ -41,11 +55,44 @@ public static partial class MetaBuiltins
             default:
                 throw new ShumwayPrologException(IsoError.TypeError("callable", head));
         }
-        var atomProps = host.PredicatePropertyAtomIds(fid);
-        if (atomProps.Count == 0) return false;
-        var props = new List<Term>(atomProps.Count + 1);
-        foreach (int atomId in atomProps)
-            props.Add(new AtomTerm(AtomTable.GetById(atomId)?.Name ?? "?"));
+        // M's viewpoint: its own definition; else the import's SOURCE
+        // predicate plus imported_from(Source); else the bare-global /
+        // builtin the module sees like everyone else.
+        string? importedFrom = null;
+        List<Term> props;
+        if (module is not null && host.ModuleDefinesFunctor(module, fid))
+        {
+            props = new List<Term>
+            {
+                new AtomTerm(host.IsDynamic(fid) ? "dynamic" : "static"),
+                new AtomTerm("defined"),
+            };
+        }
+        else
+        {
+            if (module is not null
+                && host.ModuleImportSource(module, fid) is { } src
+                && host.ModuleDefinesFunctor(src, fid))
+            {
+                importedFrom = src;
+                props = new List<Term>
+                {
+                    new AtomTerm(host.IsDynamic(fid) ? "dynamic" : "static"),
+                    new AtomTerm("defined"),
+                };
+            }
+            else
+            {
+                var atomProps = host.PredicatePropertyAtomIds(fid);
+                if (atomProps.Count == 0) return false;
+                props = new List<Term>(atomProps.Count + 2);
+                foreach (int atomId in atomProps)
+                    props.Add(new AtomTerm(AtomTable.GetById(atomId)?.Name ?? "?"));
+            }
+        }
+        if (importedFrom is not null)
+            props.Add(new CompoundTerm("imported_from",
+                new Term[] { new AtomTerm(importedFrom) }));
         // The declared meta-template, when one was recorded (`:- meta_predicate`).
         if (host._metaPredicateTemplates.TryGetValue(fid, out Term? template))
             props.Add(new CompoundTerm("meta_predicate", new[] { template }));

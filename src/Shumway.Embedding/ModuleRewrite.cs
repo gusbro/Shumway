@@ -262,6 +262,33 @@ public static class ModuleRewrite
                 && TryResolveImport(c.Functor, c.Args.Length, ctx, out string cSrc))
                 return new CompoundTerm(ImportedName(cSrc, c.Functor), c.Args)
                     { Position = c.Position };
+            // The module-sensitive reflection builtins: the TEXTUAL module is
+            // their context, stamped at compile time exactly as $mqual stamps
+            // meta-goals — there is no runtime context register. Runs only
+            // after the local/import resolution above, so a module defining
+            // its own clause/2 keeps it. Explicit qualification in the
+            // argument nests and the innermost module wins, so the blind
+            // wrap stays correct.
+            if (ctx.ModuleName != PrologEngine.DefaultModuleName
+                && ctx.ModuleName.Length > 0 && ctx.ModuleName[0] != '$')
+            {
+                switch (c.Functor, c.Args.Length)
+                {
+                    case ("current_predicate", 1):
+                        return new CompoundTerm("$cp_ctx", new[]
+                            { (Term)new AtomTerm(ctx.ModuleName), c.Args[0] })
+                            { Position = c.Position };
+                    case ("clause", 2):
+                    case ("predicate_property", 2):
+                        return new CompoundTerm(c.Functor, new[]
+                            {
+                                (Term)new CompoundTerm(":", new[]
+                                    { (Term)new AtomTerm(ctx.ModuleName), c.Args[0] }),
+                                c.Args[1],
+                            })
+                            { Position = c.Position };
+                }
+            }
             if (IsBuiltin(c.Functor, c.Args.Length)) return c;
             return c;
         }

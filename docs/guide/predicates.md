@@ -162,7 +162,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `assert(+Clause)` | Synonym for assertz/1 (historical SWI/GProlog name). |
 | `asserta(+Clause)` | Adds a clause to the front of its dynamic predicate. |
 | `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
-| `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate. |
+| `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate; Module:Head reads from that module's viewpoint. |
 | `compact_dynamic_buffer` | Invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
 | `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Validates Name/Arity names a dynamic predicate, then triggers the same full rebuild as the 0-arg form. The single buffer holds every dynamic predicate's bytecode interleaved, so independent per-predicate reclamation isn't currently feasible without partial-relink support — the API surface is per-predicate for forward compatibility. |
 | `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl (SWI-style). |
@@ -178,7 +178,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `key_count(+Key, -Count)` | Unifies Count with the number of recorded entries stored under Key. |
 | `keys(?Key)` | Enumerates on backtracking every key currently in the recorded database. If Key is ground, succeeds iff at least one entry is stored under it. |
 | `listing` | Lists the clauses of every user-defined predicate — consulted or asserted, never builtins or library predicates. |
-| `listing(+Spec)` | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity). |
+| `listing(+Spec)` | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec). |
 | `nref(+Ref, -Next)` | Unifies Next with the reference of the entry immediately after Ref in its key's chain. Fails if Ref is the last entry. |
 | `pref(+Ref, -Prev)` | Unifies Prev with the reference of the entry immediately before Ref in its key's chain. Fails if Ref is the first entry. |
 | `reconsult(+File)` | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched (classical GProlog / SICStus semantics). |

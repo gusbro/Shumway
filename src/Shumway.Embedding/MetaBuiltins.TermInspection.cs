@@ -793,6 +793,9 @@ public static partial class MetaBuiltins
     }
 
     private static bool ClauseEnumUnify(Activation engine, Clause candidate)
+        => ClauseEnumUnify(engine, candidate, pairRegister: 1);
+
+    private static bool ClauseEnumUnify(Activation engine, Clause candidate, int pairRegister)
     {
         Term head = candidate.Kind == ClauseKind.Rule
             ? ((CompoundTerm)candidate.Term).Args[0]
@@ -801,10 +804,11 @@ public static partial class MetaBuiltins
             ? ((CompoundTerm)candidate.Term).Args[1]
             : new AtomTerm("true");
         // One materialisation so the clause's Head and Body share variables;
-        // unify the query's Head-Body pair (register 1) against it.
+        // unify the query's Head-Body pair against it (the pair register is
+        // 1 for '$clause_enum'/2, 2 for '$module_clause_enum'/3).
         Cell pairCell = Materializer.MaterializeAsCell(
             engine, new CompoundTerm("-", new[] { head, body }));
-        return engine.UnifyRegisterWithCell(1, pairCell);
+        return engine.UnifyRegisterWithCell(pairRegister, pairCell);
     }
 
     /// <summary><c>'$all_predicate_indicators'(List)</c> — returns a list
@@ -872,6 +876,76 @@ public static partial class MetaBuiltins
         int returnPc = engine.BuiltinReturnPc;
         return Shumway.Core.IndexEnumCursor.Start(engine, indicators.Count, 1, returnPc,
             (e, i) => e.UnifyRegisterWithCell(0, Materializer.MaterializeAsCell(e, indicators[i])));
+    }
+
+    /// <summary><c>'$module_clause_enum'(+Module, +Head, ?Head-Body)</c> —
+    /// the qualified <c>clause(M:H, B)</c>: the head resolved from M's
+    /// VIEWPOINT. A dynamic is flat-global (the qualifier peels to the shared
+    /// store); M's own definition reads M's clauses only; an import reads its
+    /// source module's; anything else fails.</summary>
+    public static bool ModuleClauseEnum(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$module_clause_enum'/3 requires a PrologEngine host.");
+        if (MaterializeRegister(engine, 0) is not AtomTerm mod)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        Term headPattern = MaterializeRegister(engine, 1);
+        int fid = ExtractCallableFunctorId(headPattern, "clause/2");
+
+        var candidates = new List<Clause>();
+        if (host.IsDynamic(fid))
+            candidates.AddRange(host.DynamicClausesFor(fid));
+        else if (host.ModuleDefinesFunctor(mod.Name, fid))
+            candidates.AddRange(host.StaticClausesInModule(mod.Name, fid));
+        else if (host.ModuleImportSource(mod.Name, fid) is { } src)
+            candidates.AddRange(host.StaticClausesInModule(src, fid));
+
+        int returnPc = engine.BuiltinReturnPc;
+        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 3, returnPc,
+            (e, i) => ClauseEnumUnify(e, candidates[i], pairRegister: 2));
+    }
+
+    /// <summary><c>'$ctx_predicate_enum'(+Module, ?PI)</c> — the in-module
+    /// view behind the context-injected <c>current_predicate/1</c>: the
+    /// module's OWN definitions united with the global view, deduplicated.
+    /// (The qualified form stays strictly per-module — SICStus doctrine;
+    /// this union is only what an UNqualified call inside the module
+    /// sees.)</summary>
+    public static bool CtxPredicateEnum(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$ctx_predicate_enum'/2 requires a PrologEngine host.");
+        Term modTerm = MaterializeRegister(engine, 0);
+        var seen = new HashSet<(string, int)>();
+        var indicators = new List<Term>();
+        void Add(string name, int arity)
+        {
+            if (!seen.Add((name, arity))) return;
+            indicators.Add(new CompoundTerm("/", new Term[]
+                { new AtomTerm(name), new IntTerm(arity) }));
+        }
+        if (modTerm is AtomTerm ma)
+            foreach (var (_, fid) in host.DefinedModulePredicates(ma.Name))
+            {
+                var (atomId, arity) = FunctorTable.Lookup(fid);
+                Add(AtomTable.GetById(atomId)?.Name ?? "?", arity);
+            }
+        foreach (int fid in Shumway.Builtins.BuiltinsRegistry.AllRegisteredFunctorIds())
+        {
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            Add(AtomTable.GetById(atomId)?.Name ?? "?", arity);
+        }
+        foreach (int fid in host.AllStaticAndDynamicFunctors())
+        {
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            Add(AtomTable.GetById(atomId)?.Name ?? "?", arity);
+        }
+        int returnPc = engine.BuiltinReturnPc;
+        return Shumway.Core.IndexEnumCursor.Start(engine, indicators.Count, 2, returnPc,
+            (e, i) => e.UnifyRegisterWithCell(
+                1, Materializer.MaterializeAsCell(e, indicators[i])));
     }
 
     /// <summary><c>'$module_predicate_enum'(?Module, ?PI)</c> — the backing

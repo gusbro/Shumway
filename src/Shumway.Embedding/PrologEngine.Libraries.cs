@@ -1083,6 +1083,36 @@ public sealed partial class PrologEngine
         }
     }
 
+    /// <summary>Whether <paramref name="module"/> DEFINES the functor — the
+    /// membership form of <see cref="DefinedModulePredicates"/>.</summary>
+    internal bool ModuleDefinesFunctor(string module, int fid)
+    {
+        foreach (var (_, f) in DefinedModulePredicates(module))
+            if (f == fid) return true;
+        return false;
+    }
+
+    /// <summary>The module <paramref name="module"/> imports the functor
+    /// from, or null — one hop of the import table, for the M:X viewpoint
+    /// resolution (predicate_property's imported_from, clause's view).</summary>
+    internal string? ModuleImportSource(string module, int fid)
+        => _modules.TryGetValue(module, out ModuleManifest? m)
+           && m.Imports.TryGetValue(fid, out string? src)
+            ? src : null;
+
+    /// <summary>Static clauses with head functor <paramref name="fid"/> in
+    /// ONE module — <see cref="StaticClausesFor"/> restricted to
+    /// <paramref name="module"/>, for the qualified <c>clause(M:H, B)</c>.</summary>
+    internal IEnumerable<Clause> StaticClausesInModule(string module, int fid)
+    {
+        if (!_modules.TryGetValue(module, out ModuleManifest? manifest)) yield break;
+        foreach (var c in manifest.Clauses)
+        {
+            if (c.Kind == Shumway.Compiler.Ast.ClauseKind.Directive) continue;
+            if (ConsultPipeline.HeadFunctorIdOf(c) == fid) yield return c;
+        }
+    }
+
     /// <summary>The consult-direct bare-call fallback (the agreed top-level
     /// semantics, uniform across REPL / web / embedding). Runs only where a
     /// bare goal is otherwise about to raise <c>existence_error</c>, so it

@@ -29,6 +29,7 @@ internal static class Prelude
         :- public member/2.
         :- public clause/2.
         :- public current_predicate/1.
+        :- public '$cp_ctx'/2.
         :- public length/2.
         :- public sub_atom/5.
         :- public maplist/2.
@@ -264,12 +265,24 @@ internal static class Prelude
             '$catch_end'.
         '$catch_run'(Recovery) :- call(Recovery).
 
-        %! clause(+Head, ?Body) | Database | Enumerates the clauses (Head :- Body) of a predicate.
+        %! clause(+Head, ?Body) | Database | Enumerates the clauses (Head :- Body) of a predicate; Module:Head reads from that module's viewpoint.
         % '$clause_enum' yields matching clauses lazily (a backtrackable
         % builtin): only the candidate being tried is materialised on the heap,
         % instead of building the whole O(#clauses) Head-Body pair list up front
         % for member/2 to walk. The Head-Body pair is built here so its
-        % variables are the caller's.
+        % variables are the caller's. The qualified form resolves the head
+        % from M's viewpoint: a dynamic is flat-global (the qualifier peels),
+        % M's own definition reads M's clauses only, an import reads its
+        % source's; anything else fails.
+        clause(H0, B) :-
+            nonvar(H0), H0 = ':'(_, _), !,
+            '$strip_module'(H0, M, H),
+            (   var(M) -> throw(error(instantiation_error, _))
+            ;   \+ atom(M) -> throw(error(type_error(atom, M), _))
+            ;   true
+            ),
+            nonvar(H),
+            '$module_clause_enum'(M, H, H-B).
         clause(H, B) :-
             nonvar(H),
             '$clause_enum'(H, H-B).
@@ -311,6 +324,17 @@ internal static class Prelude
         '$strip_module'(':'(M0, R), M, I) :-
             (   nonvar(R), R = ':'(_, _) -> '$strip_module'(R, M, I)
             ;   M = M0, I = R
+            ).
+
+        % The compile-time context for an in-module current_predicate/1 call
+        % (ModuleRewrite injects the textual module, the $mqual idea): an
+        % explicitly qualified spec keeps its own module; a plain one answers
+        % for the module's OWN definitions plus the global view.
+        '$cp_ctx'(M, Spec) :-
+            (   nonvar(Spec), '$qualified_indicator'(Spec, _, _) ->
+                current_predicate(Spec)
+            ;   '$check_predicate_indicator'(Spec),
+                '$ctx_predicate_enum'(M, Spec)
             ).
 
         '$check_predicate_indicator'(I) :- var(I), !.
@@ -1061,9 +1085,29 @@ internal static class Prelude
             '$listable_predicates'(All),
             '$listing_all'(All).
 
-        %! listing(+Spec) | Database | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity).
+        %! listing(+Spec) | Database | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec).
         % when no predicate matches, print a comment so
         % the user sees feedback instead of a silent `true.`
+        % The qualified form M:Spec must come first: M:Name/Arity parses as
+        % (M:Name)/Arity, which the plain Name/Arity clause would swallow.
+        % It lists what M itself defines (the current_predicate(M:PI) set).
+        listing(Spec) :-
+            nonvar(Spec), '$listing_qualified'(Spec, M, Name, Arity), !,
+            (   var(M) -> throw(error(instantiation_error, _))
+            ;   \+ atom(M) -> throw(error(type_error(atom, M), _))
+            ;   true
+            ),
+            findall(qpi(N, A),
+                    ( '$module_predicate_enum'(M, N/A),
+                      N = Name,
+                      ( var(Arity) -> true ; A = Arity ) ),
+                    PIs),
+            (   PIs == [] ->
+                write('% nothing to list for '), write(M), write(':'),
+                write(Name),
+                ( integer(Arity) -> write('/'), write(Arity) ; true ), nl
+            ;   '$listing_qpis'(PIs)
+            ).
         listing(Name/Arity) :-
             !,
             '$listable_predicates'(All),
@@ -1080,6 +1124,28 @@ internal static class Prelude
             ;
                 write('% no predicate matches '), write(Name), nl
             ).
+
+        % The two spellings of a qualified listing spec: (M:Name)/Arity — the
+        % operator parse of M:Name/Arity — and M:Name / M:(Name/Arity).
+        % Fails for an unqualified spec (the plain clauses then apply).
+        '$listing_qualified'(':'(Q, R), M, Name, Arity) :- !,
+            '$strip_module'(':'(Q, R), M, I),
+            (   var(I)  -> Name = I
+            ;   I = N/A -> Name = N, Arity = A
+            ;   atom(I) -> Name = I
+            ;   throw(error(type_error(predicate_indicator, ':'(Q, R)), _))
+            ).
+        '$listing_qualified'('/'(Q, Arity), M, Name, Arity) :-
+            nonvar(Q), Q = ':'(_, _),
+            '$strip_module'(Q, M, Name).
+
+        '$listing_qpis'([]).
+        '$listing_qpis'([qpi(N, A)|Rest]) :-
+            '$listable_predicates'(All),
+            (   member(pi(N, A, Dyn), All) -> '$listing_pred'(N, A, Dyn)
+            ;   true
+            ),
+            '$listing_qpis'(Rest).
 
         '$listing_all'([]).
         '$listing_all'([pi(Name, Arity, Dyn)|Rest]) :-
