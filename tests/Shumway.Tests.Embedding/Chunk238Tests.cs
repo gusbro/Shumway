@@ -119,7 +119,10 @@ public class Chunk238Tests
     public void Solution_Get_TypedBindingExtraction()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public p/3.\np(7, 3.5, atom_value).\n");
+        engine.ConsultString("""
+            :- public p/3.
+            p(7, 3.5, atom_value).
+            """);
         var sol = engine.Query("p(I, F, A).");
         Assert.True(sol.Success);
         Assert.Equal(7, sol.Get<int>("I"));
@@ -131,7 +134,10 @@ public class Chunk238Tests
     public void Solution_TryGet_MissingVariable_ReturnsFalse()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public p/1.\np(42).\n");
+        engine.ConsultString("""
+            :- public p/1.
+            p(42).
+            """);
         var sol = engine.Query("p(X).");
         Assert.True(sol.TryGet<int>("X", out int x));
         Assert.Equal(42, x);
@@ -142,7 +148,10 @@ public class Chunk238Tests
     public void Solution_Get_MissingVariable_Throws()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public p/1.\np(42).\n");
+        engine.ConsultString("""
+            :- public p/1.
+            p(42).
+            """);
         var sol = engine.Query("p(X).");
         Assert.Throws<KeyNotFoundException>(() => sol.Get<int>("DoesNotExist"));
     }
@@ -216,7 +225,10 @@ public class Chunk238Tests
                     ((AtomTerm)c.Args[1]).Name);
             });
 
-        engine.ConsultString(":- public price/1.\nprice(money(100, 'EUR')).\n");
+        engine.ConsultString("""
+            :- public price/1.
+            price(money(100, 'EUR')).
+            """);
         var sol = engine.Query("price(M).");
         var m = sol.Get<Money>("M");
         Assert.Equal(new Money(100m, "EUR"), m);

@@ -185,7 +185,7 @@ public class Chunk38Tests
     public void BigIntLiteral_InFact_RoundTripsThroughHead()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("big(1000000000000000000000).\n");
+        engine.ConsultString("big(1000000000000000000000).");
         var sol = engine.Query("big(X).");
         Assert.True(sol.Success);
         Assert.Equal(Big(BigInteger.Pow(10, 21)), sol["X"]);
@@ -195,9 +195,10 @@ public class Chunk38Tests
     public void BigIntLiteral_InClauseHead_MatchesOnUnification()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "is_huge(1000000000000000000000) :- !, true.\n" +
-            "is_huge(_) :- fail.\n");
+        engine.ConsultString("""
+            is_huge(1000000000000000000000) :- !, true.
+            is_huge(_) :- fail.
+            """);
         Assert.True(engine.Query("is_huge(1000000000000000000000).").Success);
         Assert.False(engine.Query("is_huge(42).").Success);
     }

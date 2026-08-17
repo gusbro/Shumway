@@ -78,9 +78,10 @@ public class StringLiteralTests
         // Same literal twice in the source — both should resolve to the same
         // pooled string, observable by the round-trip yielding equal terms.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "p(\"shared\").\n" +
-            "q(\"shared\").\n");
+        engine.ConsultString("""
+            p("shared").
+            q("shared").
+            """);
         var solP = engine.Query("p(X).");
         var solQ = engine.Query("q(Y).");
         Assert.Equal(Str("shared"), solP["X"]);

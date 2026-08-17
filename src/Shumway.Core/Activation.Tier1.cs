@@ -680,13 +680,11 @@ public sealed partial class Activation
         // up the call tree.
         //
         // The first environment on the chain is the CURRENT clause's, when it has one, and
-        // `allocate` saved cp into it — so its stored CP is the address we have just yielded
-        // and would be a duplicate. Only THAT one is. The test used to be a value comparison
-        // against cp anywhere on the chain, and in a RECURSIVE predicate every frame stores
-        // the same address (the instruction after the recursive call), so every one of them
-        // matched and was dropped: a 500-deep recursion produced a two-frame stack, and the
-        // frame the debugger then paired with the query's variable map belonged to a
-        // stranger. Skip the first if it duplicates; take the rest as they come.
+        // `allocate` saved cp into it — so its stored CP duplicates the address just
+        // yielded. Only THAT one does: don't generalize the skip to a value comparison
+        // anywhere on the chain — in a recursive predicate every frame stores the same
+        // address, so all of them match and a 500-deep recursion collapses to a
+        // two-frame stack. Skip the first if it duplicates; take the rest as they come.
         if (cp >= 0) yield return cp;
         bool first = true;
         while (e >= 0)

@@ -50,11 +50,12 @@ public class Chunk189Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public lookup/2.\n"
-            + "lookup(red, hot).\n"
-            + "lookup(green, cool).\n"
-            + "lookup(blue, cold).\n");
+        engine.ConsultString("""
+            :- public lookup/2.
+            lookup(red, hot).
+            lookup(green, cool).
+            lookup(blue, cold).
+            """);
 
         Assert.Equal("hot",
             engine.Query("lookup(red, X).").Bindings["X"].ToString());
@@ -70,11 +71,12 @@ public class Chunk189Tests
         // backtracking through the indexed path.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public step/2.\n"
-            + "pair(1, a). pair(1, b). pair(2, c).\n"
-            + "step(K, V) :- pair(K, V), atom(V).\n"
-            + "step(_, fallback).\n");
+        engine.ConsultString("""
+            :- public step/2.
+            pair(1, a). pair(1, b). pair(2, c).
+            step(K, V) :- pair(K, V), atom(V).
+            step(_, fallback).
+            """);
 
         // Collect all solutions for step(1, V).
         var sols = engine.QueryAll("step(1, V).")
@@ -91,12 +93,13 @@ public class Chunk189Tests
         // switch_on_integer sub-dispatches.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public tag/2.\n"
-            + "tag(1, one).\n"
-            + "tag(2, two).\n"
-            + "tag(red, color).\n"
-            + "tag(blue, color).\n");
+        engine.ConsultString("""
+            :- public tag/2.
+            tag(1, one).
+            tag(2, two).
+            tag(red, color).
+            tag(blue, color).
+            """);
 
         Assert.Equal("one",
             engine.Query("tag(1, X).").Bindings["X"].ToString());

@@ -26,7 +26,11 @@ public class Phase33Wave4Tests
     {
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 3;
-        e.ConsultString(":- public inc/2.\ninc(0, 1).\ninc(X, Y) :- X > 0, Y is X + 1.\n");
+        e.ConsultString("""
+            :- public inc/2.
+            inc(0, 1).
+            inc(X, Y) :- X > 0, Y is X + 1.
+            """);
         int fid = Fid("inc", 2);
         for (int i = 0; i < 5; i++)
             Assert.True(e.Query("inc(1, Y), Y == 2.").Success);
@@ -44,7 +48,11 @@ public class Phase33Wave4Tests
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 3;
         e.IlPromotion.BackgroundCompilation = true;
-        e.ConsultString(":- public inc/2.\ninc(0, 1).\ninc(X, Y) :- X > 0, Y is X + 1.\n");
+        e.ConsultString("""
+            :- public inc/2.
+            inc(0, 1).
+            inc(X, Y) :- X > 0, Y is X + 1.
+            """);
         int fid = Fid("inc", 2);
         // Results are correct from the first call regardless of when the
         // delegate lands.
@@ -72,7 +80,10 @@ public class Phase33Wave4Tests
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 2;
         e.IlPromotion.BackgroundCompilation = true;
-        e.ConsultString(":- dynamic d/1.\nd(1).\n");
+        e.ConsultString("""
+            :- dynamic d/1.
+            d(1).
+            """);
         // Warm to the threshold (queues a snapshot compile), then mutate
         // immediately — whatever the interleaving, results must reflect the
         // mutation afterwards.
@@ -154,10 +165,11 @@ public class Phase33Wave4Tests
     {
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 10;
-        e.ConsultString(
-            ":- public sumd/3.\n" +
-            "sumd(0, A, A) :- !.\n" +
-            "sumd(N, A, S) :- N > 0, D is N * 2, A2 is A + D, N2 is N - 1, sumd(N2, A2, S).\n");
+        e.ConsultString("""
+            :- public sumd/3.
+            sumd(0, A, A) :- !.
+            sumd(N, A, S) :- N > 0, D is N * 2, A2 is A + D, N2 is N - 1, sumd(N2, A2, S).
+            """);
         int fid = Fid("sumd", 3);
         Assert.False(e.IlPromotion.IsPromoted(fid));
         // ONE query recursing 100 deep — the self-call dispatches per iteration,

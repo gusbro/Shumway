@@ -62,8 +62,12 @@ internal static class ReplTopLevel
         // Ctrl+D on Unix/macOS — Console.ReadLine() returns null for
         // both, but the key combo differs, so name the right one.
         string eofKey = OperatingSystem.IsWindows() ? "Ctrl-Z" : "Ctrl-D";
+        // Name and version first, as every Prolog top level does — the
+        // version reported here is the same one `current_prolog_flag(
+        // version_data, V)` gives, both from PrologEngine's constants.
+        Console.WriteLine(PrologEngine.VersionBanner);
         Console.WriteLine(
-            $"Shumway Prolog top-level.  End a query with '.'  —  'halt.' or {eofKey} exits.");
+            $"End a query with '.'  —  'halt.' or {eofKey} exits.");
 
         // Split args at "--": everything before is a file to consult,
         // everything after is exposed to the program as the argv
@@ -126,6 +130,12 @@ internal static class ReplTopLevel
             .ToArray();
 
         var engine = new PrologEngine();
+        // user_input reads the REPL's shared type-ahead buffer: what the typed
+        // line left unconsumed feeds the next query — or an in-query read/1
+        // (`?- read(X). write(b).` binds X = write(b)). Must be set before the
+        // first query: the stream registry snapshots it at query setup.
+        _pendingInput = new ReplPendingReader(AcquireEngineInputLine);
+        engine.In = _pendingInput;
         // ADR-038 — the shipped lib/ (beside the executable) is on the library
         // search path by default, so use_module(library(X)) finds a bundled
         // library with no configuration. SHUMWAY_LIBRARY_PATH and
@@ -513,22 +523,71 @@ internal static class ReplTopLevel
     private static Func<string, IReadOnlyList<string>> BuildCompleter() =>
         prefix => PredicateCompletion.Matching(_session?.Engine, prefix);
 
-    /// <summary>Reads one query from standard input, joining lines until a
-    /// line ends with the <c>.</c> clause terminator. Returns the empty
+    /// <summary>The shared type-ahead buffer <c>user_input</c> also reads —
+    /// see <see cref="ReplPendingReader"/>.</summary>
+    private static ReplPendingReader? _pendingInput;
+
+    /// <summary>Set while a goal is blocked reading a fresh console line for
+    /// <c>user_input</c>; parks the ESC watcher, which otherwise intercepts
+    /// (and drops) the keys the user types for <c>read/1</c>.</summary>
+    private static volatile bool _engineReadingInput;
+
+    /// <summary>More input for a goal reading <c>user_input</c> once the
+    /// type-ahead is dry: prompt SWI-style <c>|: </c> and read a fresh
+    /// console line.</summary>
+    private static string? AcquireEngineInputLine()
+    {
+        if (Console.IsInputRedirected) return Console.In.ReadLine();
+        _engineReadingInput = true;
+        try
+        {
+            Console.Write("|: ");
+            return Console.ReadLine();
+        }
+        finally { _engineReadingInput = false; }
+    }
+
+    /// <summary>Reads one query — ONE SENTENCE — from the type-ahead buffer,
+    /// prompting for (and joining) more lines until the buffer holds a
+    /// complete sentence. Text beyond the sentence stays buffered: it is the
+    /// next query, or an in-query <c>read/1</c>'s input. Returns the empty
     /// string for a blank entry and <c>null</c> at end of input.</summary>
     private static string? ReadQuery()
     {
-        var buffer = new System.Text.StringBuilder();
+        var pending = _pendingInput!;
         while (true)
         {
-            string prompt = buffer.Length == 0 ? "?- " : "   ";
+            string buffered = pending.Buffered;
+            if (buffered.AsSpan().Trim().Length == 0)
+            {
+                pending.Clear();
+            }
+            else
+            {
+                string? s = Shumway.Embedding.SentenceScanner.ReadSentenceText(
+                    new System.IO.StringReader(buffered), out bool complete);
+                if (s is not null && complete)
+                {
+                    pending.Consume(s.Length);
+                    return s.Trim();
+                }
+                // Incomplete sentence buffered: prompt for its continuation.
+            }
+
+            string prompt = pending.Buffered.Length == 0 ? "?- " : "   ";
             string? line = LineEd.ReadLine(prompt);
             if (line is null)
-                return buffer.Length == 0 ? null : buffer.ToString().Trim();
-            buffer.Append(line).Append('\n');
-            string accumulated = buffer.ToString().Trim();
-            if (accumulated.Length == 0) return "";
-            if (accumulated.EndsWith('.')) return accumulated;
+            {
+                string rest = pending.Buffered.Trim();
+                pending.Clear();
+                return rest.Length == 0 ? null : rest;
+            }
+            pending.Push(line + "\n");
+            if (pending.Buffered.AsSpan().Trim().Length == 0)
+            {
+                pending.Clear();
+                return "";   // blank entry
+            }
         }
     }
 
@@ -655,6 +714,13 @@ internal static class ReplTopLevel
         {
             try
             {
+                // A goal is reading user_input from the console: the keys
+                // belong to it, not to us.
+                if (_engineReadingInput)
+                {
+                    stop.Wait(25);
+                    continue;
+                }
                 if (Console.KeyAvailable)
                 {
                     ConsoleKeyInfo k = Console.ReadKey(intercept: true);

@@ -72,7 +72,7 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_RunsOnDeterministicSuccess()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(log/1).\n");
+        e.ConsultString(":- dynamic(log/1).");
         Assert.True(e.Query(
             "setup_call_cleanup(assertz(log(setup)), true, assertz(log(cleaned))).").Success);
         // Both setup and cleanup ran, cleanup exactly once.
@@ -106,7 +106,7 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_RunsOnFailure()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(mark/1).\n");
+        e.ConsultString(":- dynamic(mark/1).");
         Assert.False(e.Query("setup_call_cleanup(true, fail, assertz(mark(f))).").Success);
         Assert.Single(e.QueryAll("mark(f)."));   // cleanup ran despite Goal failing
     }
@@ -115,7 +115,7 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_RunsOnError_ThenReRaises()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(mark/1).\n");
+        e.ConsultString(":- dynamic(mark/1).");
         Assert.True(e.Query(
             "catch(setup_call_cleanup(true, throw(boom), assertz(mark(e))), boom, true).").Success);
         Assert.Single(e.QueryAll("mark(e)."));   // cleanup ran, then boom re-raised
@@ -125,7 +125,7 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_RunsWhenCallerCutsNondetGoal()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(closed/0).\n");
+        e.ConsultString(":- dynamic(closed/0).");
         // Nondet goal, caller commits to the first solution with a cut: the
         // engine fires the cleanup when the leftover choice points are pruned.
         Assert.True(e.Query(
@@ -137,7 +137,7 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_RunsWhenOnceCommitsNondetGoal()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(oc/0).\n");
+        e.ConsultString(":- dynamic(oc/0).");
         // once/1 around a nondet setup_call_cleanup: the once-cut fires cleanup.
         Assert.True(e.Query(
             "once(setup_call_cleanup(true, member(_,[1,2,3]), assertz(oc))).").Success);
@@ -148,7 +148,12 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_NondetGoal_IsTransparent_CleanupAfterExhaustion()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(done/1).\np(1).\np(2).\np(3).\n");
+        e.ConsultString("""
+            :- dynamic(done/1).
+            p(1).
+            p(2).
+            p(3).
+            """);
         // Goal is nondeterministic: setup_call_cleanup must yield all three
         // solutions (transparency), and Cleanup runs exactly once.
         var sols = e.QueryAll("setup_call_cleanup(true, p(X), assertz(done(yes))).")
@@ -204,7 +209,7 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_RunsOnExceptionFromBelow_CaughtByOuter()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(closed/0).\n");
+        e.ConsultString(":- dynamic(closed/0).");
         // A nondet Goal succeeds leaving choice points, then an exception is
         // thrown AFTER it and caught by an outer catch — unwinding past the
         // leftover scope must fire cleanup.
@@ -217,10 +222,11 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_RunsOnExceptionFromDeeperPredicate()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- dynamic(cl/0).\n"
-            + "boom_below :- throw(deep).\n"
-            + "p :- setup_call_cleanup(true, member(_,[1,2,3]), assertz(cl)), boom_below.\n");
+        e.ConsultString("""
+            :- dynamic(cl/0).
+            boom_below :- throw(deep).
+            p :- setup_call_cleanup(true, member(_,[1,2,3]), assertz(cl)), boom_below.
+            """);
         Assert.True(e.Query("catch(p, deep, true).").Success);
         Assert.Single(e.QueryAll("cl."));
     }
@@ -229,7 +235,7 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_RunsOnUncaughtException()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(cl/0).\n");
+        e.ConsultString(":- dynamic(cl/0).");
         // The exception is uncaught (propagates out of the query); cleanup still
         // fires during teardown and the ball still propagates.
         var ex = Assert.ThrowsAny<System.Exception>(() =>
@@ -242,7 +248,7 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_RunsWhenCallerStopsAtFirstSolution()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(closed/0).\n");
+        e.ConsultString(":- dynamic(closed/0).");
         // The caller takes the FIRST solution and stops (no cut) — the leftover
         // choice points are abandoned at query teardown, firing cleanup (the SWI
         // toplevel-cancel case).
@@ -255,7 +261,7 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_HasOnceSemantics_ChoicePointsDestroyed()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(k/1).\n");
+        e.ConsultString(":- dynamic(k/1).");
         // A non-deterministic Cleanup runs with once/1 semantics: only its first
         // solution, choice points destroyed.
         e.Query("setup_call_cleanup(true, true, (member(V,[a,b,c]), assertz(k(V)))).");
@@ -276,7 +282,7 @@ public sealed class FlagAndCleanupTests
     public void CallCleanup_IsSetupCallCleanupWithoutSetup()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(cc/1).\n");
+        e.ConsultString(":- dynamic(cc/1).");
         // Deterministic goal: cleanup runs immediately on success.
         Assert.True(e.Query("call_cleanup(memberchk(2, [1,2,3]), assertz(cc(ok))).").Success);
         Assert.Single(e.QueryAll("cc(ok)."));
@@ -286,7 +292,7 @@ public sealed class FlagAndCleanupTests
     public void Cleanup_NondetGoal_RunsOnceAfterFullEnumeration()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic(cc2/1).\n");
+        e.ConsultString(":- dynamic(cc2/1).");
         // A non-deterministic goal whose choice points are fully backtracked:
         // one solution, cleanup exactly once (on exhaustion). (Cleanup on an
         // ABANDONED first solution is the documented limitation.)

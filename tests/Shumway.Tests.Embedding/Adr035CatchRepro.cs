@@ -60,9 +60,15 @@ public class Adr035CatchRepro
         //   6: work :- writeln(working).
         //   7: recover :- writeln(recovered).
         //   8: done.
-        var engine = DebugEngine(
-            "main :-\n    writeln(hello),\n    catch(work, _E, recover),\n    done.\n" +
-            "work :- writeln(working).\nrecover :- writeln(recovered).\ndone.\n");
+        var engine = DebugEngine("""
+            main :-
+                writeln(hello),
+                catch(work, _E, recover),
+                done.
+            work :- writeln(working).
+            recover :- writeln(recovered).
+            done.
+            """);
         engine.AddBreakpoint("<string>", 3);   // writeln(hello)
 
         var stops = Walk(engine, "main.", StepMode.Over, StepMode.Over);
@@ -85,9 +91,14 @@ public class Adr035CatchRepro
         //   3:     writeln(hello),
         //   4:     \+ absent,
         //   5:     done.
-        var engine = DebugEngine(
-            "main :-\n    writeln(hello),\n    \\+ absent,\n    done.\n" +
-            "absent :- fail.\ndone.\n");
+        var engine = DebugEngine("""
+            main :-
+                writeln(hello),
+                \+ absent,
+                done.
+            absent :- fail.
+            done.
+            """);
         engine.AddBreakpoint("<string>", 3);
 
         var stops = Walk(engine, "main.", StepMode.Over);
@@ -103,9 +114,15 @@ public class Adr035CatchRepro
         //   3:     writeln(hello),
         //   4:     findall(X, item(X), _Xs),
         //   5:     done.
-        var engine = DebugEngine(
-            "main :-\n    writeln(hello),\n    findall(X, item(X), _Xs),\n    done.\n" +
-            "item(1).\nitem(2).\ndone.\n");
+        var engine = DebugEngine("""
+            main :-
+                writeln(hello),
+                findall(X, item(X), _Xs),
+                done.
+            item(1).
+            item(2).
+            done.
+            """);
         engine.AddBreakpoint("<string>", 3);
 
         var stops = Walk(engine, "main.", StepMode.Over);
@@ -130,11 +147,21 @@ public class Adr035CatchRepro
         //  12: use(_).
         //  13: recover.
         //  14: done.
-        var engine = DebugEngine(
-            "main :-\n    writeln(hello),\n    catch(work, _E, recover),\n    done.\n" +
-            "work :-\n    inner(V),\n    use(V).\n" +
-            "inner(V) :-\n    leaf(V).\n" +
-            "leaf(1).\nuse(_).\nrecover.\ndone.\n");
+        var engine = DebugEngine("""
+            main :-
+                writeln(hello),
+                catch(work, _E, recover),
+                done.
+            work :-
+                inner(V),
+                use(V).
+            inner(V) :-
+                leaf(V).
+            leaf(1).
+            use(_).
+            recover.
+            done.
+            """);
         engine.AddBreakpoint("<string>", 10);   // leaf(V), inside inner, inside work, inside catch
 
         var stops = Walk(engine, "main.", StepMode.Out);
@@ -165,10 +192,18 @@ public class Adr035CatchRepro
         //   9: second(_).
         //  10: recover.
         //  11: done.
-        var engine = DebugEngine(
-            "main :-\n    writeln(hello),\n    catch((first(V), second(V)), _E, recover),\n    done.\n" +
-            "first(V) :-\n    leaf(V).\n" +
-            "leaf(1).\nsecond(_).\nrecover.\ndone.\n");
+        var engine = DebugEngine("""
+            main :-
+                writeln(hello),
+                catch((first(V), second(V)), _E, recover),
+                done.
+            first(V) :-
+                leaf(V).
+            leaf(1).
+            second(_).
+            recover.
+            done.
+            """);
         engine.AddBreakpoint("<string>", 7);   // leaf(V), inside first, inside the catch conjunction
 
         var stops = Walk(engine, "main.", StepMode.Out);
@@ -199,11 +234,19 @@ public class Adr035CatchRepro
         //  10: leaf(1).
         //  11: recover.
         //  12: done.
-        var engine = DebugEngine(
-            "main :-\n    writeln(hello),\n    catch((first(V), last(V)), _E, recover),\n    done.\n" +
-            "first(V) :-\n    V = 1.\n" +
-            "last(V) :-\n    leaf(V).\n" +
-            "leaf(1).\nrecover.\ndone.\n");
+        var engine = DebugEngine("""
+            main :-
+                writeln(hello),
+                catch((first(V), last(V)), _E, recover),
+                done.
+            first(V) :-
+                V = 1.
+            last(V) :-
+                leaf(V).
+            leaf(1).
+            recover.
+            done.
+            """);
         engine.AddBreakpoint("<string>", 9);   // leaf(V), inside last — the catch's final goal
 
         var stops = Walk(engine, "main.", StepMode.Out);
@@ -234,10 +277,21 @@ public class Adr035CatchRepro
         //  12: after.
         //  13: recover.
         //  14: done.
-        var engine = DebugEngine(
-            "main :-\n    writeln(hello),\n    catch(body, _E, recover),\n    done.\n" +
-            "body :-\n    concat(a, b, _R),\n    after.\n" +
-            "concat(_, _, r) :-\n    join.\njoin.\nafter.\nrecover.\ndone.\n");
+        var engine = DebugEngine("""
+            main :-
+                writeln(hello),
+                catch(body, _E, recover),
+                done.
+            body :-
+                concat(a, b, _R),
+                after.
+            concat(_, _, r) :-
+                join.
+            join.
+            after.
+            recover.
+            done.
+            """);
         engine.AddBreakpoint("<string>", 3);   // writeln(hello)
 
         var stops = Walk(engine, "main.",
@@ -272,9 +326,14 @@ public class Adr035CatchRepro
         //   5:     post.
         //   6: pre --> [hello].
         //   7: post --> [end].
-        var engine = DebugEngine(
-            "greet -->\n    pre,\n    [world],\n    post.\n" +
-            "pre --> [hello].\npost --> [end].\n");
+        var engine = DebugEngine("""
+            greet -->
+                pre,
+                [world],
+                post.
+            pre --> [hello].
+            post --> [end].
+            """);
         engine.AddBreakpoint("<string>", 3);   // the `pre` non-terminal
 
         var stops = Walk(engine, "phrase(greet, [hello, world, end]).",

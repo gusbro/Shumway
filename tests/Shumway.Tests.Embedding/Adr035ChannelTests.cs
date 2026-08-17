@@ -54,8 +54,13 @@ public class Adr035ChannelTests
         //   4:     use(B).
         //   5: mid(In, out(In)).
         //   6: use(_).
-        var engine = DebugEngine(
-            "top(A) :-\n    mid(A, B),\n    use(B).\nmid(In, out(In)).\nuse(_).\n");
+        var engine = DebugEngine("""
+            top(A) :-
+                mid(A, B),
+                use(B).
+            mid(In, out(In)).
+            use(_).
+            """);
         engine.AddBreakpoint("<string>", 5);   // inside mid/2
 
         DebugSnapshot? seen = null;
@@ -91,8 +96,13 @@ public class Adr035ChannelTests
     [Fact]
     public void TheDebuggerStepsByWritingACommandBack()
     {
-        var engine = DebugEngine(
-            "top(A) :-\n    mid(A, B),\n    use(B).\nmid(In, out(In)).\nuse(_).\n");
+        var engine = DebugEngine("""
+            top(A) :-
+                mid(A, B),
+                use(B).
+            mid(In, out(In)).
+            use(_).
+            """);
         engine.AddBreakpoint("<string>", 3);   // the call to mid/2
 
         var stops = new List<DebugSnapshot>();
@@ -247,8 +257,15 @@ public class Adr035ChannelTests
         // one -- and paused 60 frames deep it waited for a port at depth <= 0. No port
         // qualifies; the program runs out; the step is abandoned. If the machine is shallower
         // than where the step was taken, the step MUST stop.
-        var engine = DebugEngine(
-            "down(0) :- !.\ndown(N) :-\n    N > 0,\n    N1 is N - 1,\n    down(N1),\n    tick(N).\ntick(_).\n");
+        var engine = DebugEngine("""
+            down(0) :- !.
+            down(N) :-
+                N > 0,
+                N1 is N - 1,
+                down(N1),
+                tick(N).
+            tick(_).
+            """);
 
         var stops = new List<DebugSnapshot>();
         ChannelDebugSession? session = null;
@@ -281,7 +298,11 @@ public class Adr035ChannelTests
     [Fact]
     public void TheSequenceNumberRisesOnEveryStop_SoAMissedOneShows()
     {
-        var engine = DebugEngine("p(1).\np(2).\np(3).\n");
+        var engine = DebugEngine("""
+            p(1).
+            p(2).
+            p(3).
+            """);
         engine.AddBreakpoint("<string>", 2);
         engine.AddBreakpoint("<string>", 3);
 
@@ -298,7 +319,7 @@ public class Adr035ChannelTests
     [Fact]
     public void AttachHandsOutTheAddresses_AndTheyAreTheOnesTheChannelUses()
     {
-        var engine = DebugEngine("p(1).\n");
+        var engine = DebugEngine("p(1).");
         using var session = new ChannelDebugSession(engine, notify: _ => { });
 
         string handshake = ShumwayDebugHelper.Attach();
@@ -323,8 +344,13 @@ public class Adr035ChannelTests
         // that would be a lie. So the debugger asks, and the engine answers from the
         // machine that was last running. This is the one thing the port model cannot do
         // on its own, and the reason DebugService.Current outlives a stop.
-        var engine = DebugEngine(
-            "top(A) :-\n    mid(A, B),\n    use(B).\nmid(In, out(In)).\nuse(_).\n");
+        var engine = DebugEngine("""
+            top(A) :-
+                mid(A, B),
+                use(B).
+            mid(In, out(In)).
+            use(_).
+            """);
         engine.AddBreakpoint("<string>", 5);   // inside mid/2
 
         DebugSnapshot? onBreakAll = null;
@@ -351,7 +377,7 @@ public class Adr035ChannelTests
     [Fact]
     public void AnAsynchronousBreakWithNothingRunningSaysSo()
     {
-        var engine = DebugEngine("p(1).\n");
+        var engine = DebugEngine("p(1).");
         using var session = new ChannelDebugSession(engine, notify: _ => { });
 
         // Between queries there is no machine to ask, and inventing one would be worse
@@ -433,8 +459,13 @@ public class Adr035ChannelTests
         // What debug_lastcall being an opcode that reads a flag — rather than a decision
         // baked in at compile time — is FOR. The debugger arrives, finds a flat stack,
         // and asks for the frames back without recompiling or restarting anything.
-        var engine = DebugEngine(
-            "top(X) :-\n    mid(X).\nmid(X) :-\n    leaf(X).\nleaf(7).\n");
+        var engine = DebugEngine("""
+            top(X) :-
+                mid(X).
+            mid(X) :-
+                leaf(X).
+            leaf(7).
+            """);
         engine.QueryAll("set_prolog_flag(debug_lco, on).").ToList();   // LCO on: flat
         engine.AddBreakpoint("<string>", 6);   // inside leaf/1
 
@@ -478,8 +509,14 @@ public class Adr035ChannelTests
         //  5:     fail.
         //  6: run.
         //  7: use(_).
-        var engine = DebugEngine(
-            "run :-\n    between(1, 50, X),\n    use(X),\n    fail.\nrun.\nuse(_).\n");
+        var engine = DebugEngine("""
+            run :-
+                between(1, 50, X),
+                use(X),
+                fail.
+            run.
+            use(_).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 4) > 0);
 
         using (var session = new ChannelDebugSession(engine))   // default notify: detach-aware
@@ -501,8 +538,14 @@ public class Adr035ChannelTests
         // and the condition rides the AddBreakpoint command — the same-key rewrite is how a
         // condition is set, changed and cleared. The engine evaluates it at the Break, and
         // only the hits where it holds reach the notify afterwards.
-        var engine = DebugEngine(
-            "run :-\n    between(1, 5, X),\n    use(X),\n    fail.\nrun.\nuse(_).\n");
+        var engine = DebugEngine("""
+            run :-
+                between(1, 5, X),
+                use(X),
+                fail.
+            run.
+            use(_).
+            """);
         engine.AddBreakpoint("<string>", 4);   // unconditional at first, like a fresh F9
 
         var stops = new List<DebugSnapshot>();
@@ -547,8 +590,16 @@ public class Adr035ChannelTests
         //  7: helper(2).
         //  8: use(_).
         //  9: done.
-        var engine = DebugEngine(
-            "run :-\n    helper(X),\n    use(X),\n    done.\nhelper(1).\nhelper(2).\nuse(_).\ndone.\n");
+        var engine = DebugEngine("""
+            run :-
+                helper(X),
+                use(X),
+                done.
+            helper(1).
+            helper(2).
+            use(_).
+            done.
+            """);
         engine.AddBreakpoint("<string>", 4);   // use(X) — helper returned, its CP alive
 
         DebugSnapshot? snap = null;
@@ -586,8 +637,13 @@ public class Adr035ChannelTests
         //  4:     member(X, [1, 2]),
         //  5:     mark(b).
         //  6: mark(_).
-        var engine = DebugEngine(
-            "run(X) :-\n    mark(a),\n    member(X, [1, 2]),\n    mark(b).\nmark(_).\n");
+        var engine = DebugEngine("""
+            run(X) :-
+                mark(a),
+                member(X, [1, 2]),
+                mark(b).
+            mark(_).
+            """);
         engine.AddBreakpoint("<string>", 3);
 
         var stops = new List<(string Goal, int Line)>();
@@ -734,10 +790,18 @@ public class Adr035ChannelTests
         // at line 7 (three's call, one+two already ran): forward = 8, backward = 5 and 6
         // (their marks are live), the CURRENT line 7 is a no-op accept (as in C#), and the
         // head line 4 is offered because the first goal is reachable.
-        var engine = DebugEngine(
-            ":- dynamic(c/1).\nc(0).\n" +
-            "run(Out) :-\n    one(A),\n    two(B),\n    three(C),\n    Out = t(A, B, C).\n" +
-            "one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).\ntwo(20).\nthree(30).\n");
+        var engine = DebugEngine("""
+            :- dynamic(c/1).
+            c(0).
+            run(Out) :-
+                one(A),
+                two(B),
+                three(C),
+                Out = t(A, B, C).
+            one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).
+            two(20).
+            three(30).
+            """);
         engine.AddBreakpoint("<string>", 7);   // three(C) — one and two have run
 
         DebugSnapshot? snap = null;
@@ -769,10 +833,18 @@ public class Adr035ChannelTests
         // one. Same program as above, breakpoint on line 5 (one(A), the first goal —
         // nothing has run in the clause yet): head 4 and current 5 are valid, plus all
         // forward lines; nothing else.
-        var engine = DebugEngine(
-            ":- dynamic(c/1).\nc(0).\n" +
-            "run(Out) :-\n    one(A),\n    two(B),\n    three(C),\n    Out = t(A, B, C).\n" +
-            "one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).\ntwo(20).\nthree(30).\n");
+        var engine = DebugEngine("""
+            :- dynamic(c/1).
+            c(0).
+            run(Out) :-
+                one(A),
+                two(B),
+                three(C),
+                Out = t(A, B, C).
+            one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).
+            two(20).
+            three(30).
+            """);
         engine.AddBreakpoint("<string>", 5);
 
         DebugSnapshot? snap = null;
@@ -811,10 +883,16 @@ public class Adr035ChannelTests
         //  7:     Out = pair(A, B).
         //  8: one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).
         //  9: two(20).
-        var engine = DebugEngine(
-            ":- dynamic(c/1).\nc(0).\n" +
-            "run(Out) :-\n    one(A),\n    two(B),\n    Out = pair(A, B).\n" +
-            "one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).\ntwo(20).\n");
+        var engine = DebugEngine("""
+            :- dynamic(c/1).
+            c(0).
+            run(Out) :-
+                one(A),
+                two(B),
+                Out = pair(A, B).
+            one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).
+            two(20).
+            """);
         engine.AddBreakpoint("<string>", 6);   // the two(B) call — one(A) has run, A = 1
 
         int stops = 0;

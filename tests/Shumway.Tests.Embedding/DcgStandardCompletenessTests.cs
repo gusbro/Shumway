@@ -21,9 +21,10 @@ public class DcgStandardCompletenessTests
     public void Dcg_VariableBody_CallsPhraseAtRuntime()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public emit/3.\n" +
-            "emit(X) --> X.\n");   // X is a variable non-terminal (a terminal list here)
+        engine.ConsultString("""
+            :- public emit/3.
+            emit(X) --> X.
+            """);   // X is a variable non-terminal (a terminal list here)
         // emit([a,b], S0, S) means: phrase([a,b], S0, S) → S0 = [a,b|S].
         Assert.True(engine.Query("emit([a, b], [a, b, c], [c]).").Success);
         Assert.False(engine.Query("emit([a, b], [a, x, c], [c]).").Success);
@@ -35,9 +36,10 @@ public class DcgStandardCompletenessTests
     public void Dcg_SemicontextHead_PushesTokenBack()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public peek/3.\n" +
-            "peek(T), [T] --> [T].\n");   // lookahead: consume T then push it back
+        engine.ConsultString("""
+            :- public peek/3.
+            peek(T), [T] --> [T].
+            """);   // lookahead: consume T then push it back
         // peek(X, [a,b], R): X = a and R = [a,b] (nothing actually consumed).
         Assert.True(engine.Query("peek(X, [a, b], _), X == a.").Success);
         Assert.True(engine.Query("peek(_, [a, b], R), R == [a, b].").Success);
@@ -50,9 +52,10 @@ public class DcgStandardCompletenessTests
     {
         var engine = new PrologEngine();
         // Default String mode: "\n" is a DCG terminal for the code list [10].
-        engine.ConsultString(
-            ":- public nl_seq/2.\n" +
-            "nl_seq --> \"\\n\" | \"\\r\" | \"\\r\\n\".\n");
+        engine.ConsultString("""
+            :- public nl_seq/2.
+            nl_seq --> "\n" | "\r" | "\r\n".
+            """);
         Assert.True(engine.Query("nl_seq([10], []).").Success);       // \n
         Assert.True(engine.Query("nl_seq([13], []).").Success);       // \r
         Assert.True(engine.Query("nl_seq([13, 10], []).").Success);   // \r\n
@@ -65,9 +68,10 @@ public class DcgStandardCompletenessTests
     public void Phrase_RuntimeInterpreter_HandlesVariableAndControlBody()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public ab/2.\n" +
-            "ab --> [a], [b].\n");
+        engine.ConsultString("""
+            :- public ab/2.
+            ab --> [a], [b].
+            """);
         // phrase/2 with a statically-unknown (variable) body.
         Assert.True(engine.Query("G = ab, phrase(G, [a, b]).").Success);
         // phrase/3 over a conjunction body built at runtime.
@@ -82,9 +86,10 @@ public class DcgStandardCompletenessTests
     public void ModuleQualifiedCall_IsTransparentOverPublicPredicate()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public greet/1.\n" +
-            "greet(hello).\n");
+        engine.ConsultString("""
+            :- public greet/1.
+            greet(hello).
+            """);
         Assert.True(engine.Query("user:greet(hello).").Success);
         Assert.False(engine.Query("user:greet(bye).").Success);
     }
@@ -123,9 +128,10 @@ public class DcgStandardCompletenessTests
         // A `{ }`-led (render-direction) rule must be unaffected by the
         // fail-fast lowering — its head arg stays in place.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public render/3.\n" +
-            "render(n(V)) --> { W is V + 1 }, [W].\n");
+        engine.ConsultString("""
+            :- public render/3.
+            render(n(V)) --> { W is V + 1 }, [W].
+            """);
         Assert.True(engine.Query("render(n(41), [42], []).").Success);
         Assert.False(engine.Query("render(n(41), [43], []).").Success);
     }

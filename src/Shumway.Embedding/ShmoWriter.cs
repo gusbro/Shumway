@@ -31,6 +31,14 @@ public static class ShmoWriter
         // own tools.
         bw.Write(ShmoFormat.Magic);
         bw.Write((uint)ShmoFormat.CurrentVersion);
+        // First field of the body: the Shumway that wrote this file. The
+        // FORMAT version above says whether this reader can read it; this
+        // says which build produced it — the thing a future format change
+        // needs in order to diagnose an old file rather than just reject it.
+        var gen = ShumwayVersion.Current;
+        bw.Write((uint)gen.Major);
+        bw.Write((uint)gen.Minor);
+        bw.Write((uint)gen.Patch);
         WriteLengthPrefixedUtf8(bw, obj.ModuleName);
         WriteLengthPrefixedUtf8(bw, obj.Source);
         bw.Write((uint)obj.Bytecode.Length);

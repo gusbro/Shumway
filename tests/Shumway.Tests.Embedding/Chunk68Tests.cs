@@ -55,7 +55,12 @@ public class Chunk68Tests
     public void Cache_PopulatesAfterFirstQuery()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic d/1.\nd(a).\nd(b).\nd(c).");
+        engine.ConsultString("""
+            :- dynamic d/1.
+            d(a).
+            d(b).
+            d(c).
+            """);
         // No queries yet → cache is empty.
         Assert.False(engine.DynamicPredicateCache.ContainsKey(Fid("d", 1)));
         // First query populates.
@@ -67,7 +72,10 @@ public class Chunk68Tests
     public void Cache_InvalidatesOnAssertz()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic d/1.\nd(a).");
+        engine.ConsultString("""
+            :- dynamic d/1.
+            d(a).
+            """);
         engine.Query("d(a).");
         Assert.True(engine.DynamicPredicateCache.ContainsKey(Fid("d", 1)));
         engine.Query("assertz(d(b)).");
@@ -81,7 +89,10 @@ public class Chunk68Tests
     public void Cache_InvalidatesOnAsserta()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic d/1.\nd(a).");
+        engine.ConsultString("""
+            :- dynamic d/1.
+            d(a).
+            """);
         engine.Query("d(a).");
         Assert.True(engine.DynamicPredicateCache.ContainsKey(Fid("d", 1)));
         engine.Query("asserta(d(z)).");
@@ -92,7 +103,11 @@ public class Chunk68Tests
     public void Cache_InvalidatesOnRetract()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic d/1.\nd(a).\nd(b).");
+        engine.ConsultString("""
+            :- dynamic d/1.
+            d(a).
+            d(b).
+            """);
         engine.Query("d(a).");
         Assert.True(engine.DynamicPredicateCache.ContainsKey(Fid("d", 1)));
         engine.Query("retract(d(a)).");
@@ -106,7 +121,12 @@ public class Chunk68Tests
     public void Cache_InvalidatesOnAbolish()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic d/1.\nd(a).\nd(b).\nd(c).");
+        engine.ConsultString("""
+            :- dynamic d/1.
+            d(a).
+            d(b).
+            d(c).
+            """);
         engine.Query("d(a).");
         Assert.True(engine.DynamicPredicateCache.ContainsKey(Fid("d", 1)));
         engine.Query("abolish(d/1).");
@@ -119,7 +139,10 @@ public class Chunk68Tests
         // Long modify-query cycle: each modification must invalidate
         // the cache so subsequent queries see the current clause set.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic counter/1.\ncounter(0).");
+        engine.ConsultString("""
+            :- dynamic counter/1.
+            counter(0).
+            """);
         for (int i = 1; i <= 5; i++)
         {
             engine.Query($"retract(counter({i - 1})).");

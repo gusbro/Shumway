@@ -81,6 +81,12 @@ public sealed class Lexer
     /// the swi dialect load scope.</summary>
     public bool LenientQuoteCharLiteral { get; set; }
 
+    /// <summary>SWI-extension escapes in quoted tokens (<c>\e \s \c \uXXXX
+    /// \UXXXXXXXX</c>): accepted only under the swi dialect scope. Strict ISO
+    /// rejects them as unknown escapes — the conformance suite checks it.
+    /// See <c>PrologFlags.LenientEscapes</c>.</summary>
+    public bool LenientEscapes { get; set; }
+
     public Lexer(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -494,11 +500,22 @@ public sealed class Lexer
         int start = _offset;
         char c = _source[_offset];
 
-        // 0'<char>: character code literal.
+        // 0'<char>: character code literal. When what follows `0'` cannot
+        // complete one (a lone quote, a line-continuation escape), the
+        // longest-VALID token is the integer `0` and the quote starts a fresh
+        // token — `0''` is `0` + `''` (Neumerkel #120/#197), `0'\<NL>+'` is
+        // `0` + the atom `'+'` (#213/#259).
         if (c == '0' && Peek(1) == '\'')
         {
+            int markOffset = _offset, markLine = _line, markColumn = _column;
             Advance(); Advance();
             int code = ReadCharCodeLiteral(pos);
+            if (code == NotACharCode)
+            {
+                _offset = markOffset; _line = markLine; _column = markColumn;
+                Advance();   // just the '0'
+                return new Token(TokenKind.Integer, pos, "0") { IntValue = 0 };
+            }
             return new Token(TokenKind.Integer, pos, _source[start.._offset])
                 { IntValue = code };
         }
@@ -521,13 +538,11 @@ public sealed class Lexer
                 'b' => 2,
                 _ => 0,
             };
-            if (radix == 16 && RadixDigitValue(Peek(2)) < 0)
-                throw new LexerException(
-                    $"Expected hex digits after 0x at {pos}.", pos);
-            // For 0o / 0b require a valid digit to follow; otherwise fall
-            // through and lex the '0' as a plain decimal zero (the 'o'/'b'
-            // becomes a separate token), preserving pre-existing behaviour
-            // for sources that happen to juxtapose 0 and an atom.
+            // Require a valid digit after the marker; otherwise fall through
+            // and lex the '0' as a plain decimal zero (the 'x'/'o'/'b' becomes
+            // a separate token) — ISO greedy-longest-VALID: `0xor 2` is
+            // `xor(0, 2)` under `op(9, yfx, xor)` (Neumerkel #255), not an
+            // error.
             if (radix != 0)
             {
                 int d0 = RadixDigitValue(Peek(2));
@@ -574,14 +589,21 @@ public sealed class Lexer
 
             if (_offset < _source.Length && (_source[_offset] == 'e' || _source[_offset] == 'E'))
             {
+                int expMark = _offset;
                 Advance();
                 if (_offset < _source.Length && (_source[_offset] == '+' || _source[_offset] == '-'))
                     Advance();
                 int expStart = _offset;
                 ScanDecimalDigits();
                 if (_offset == expStart)
-                    throw new LexerException(
-                        $"Expected exponent digits at {CurrentPosition()}.", CurrentPosition());
+                {
+                    // ISO greedy-longest-VALID token: `1.0e` / `1.0e-` are the
+                    // float `1.0` followed by the atom `e` (Neumerkel #51/#52/
+                    // #220 lean on `op(9, xf, e)`), not a lexing error. Rewind
+                    // over the consumed 'e'/sign (never newlines).
+                    _column -= _offset - expMark;
+                    _offset = expMark;
+                }
             }
 
             string floatSource = StripSeparators(_source[start.._offset]);
@@ -667,23 +689,24 @@ public sealed class Lexer
             Advance();
             int code = ReadEscapeSequence(pos);
             if (code == EscapeContinuation)
-                throw new LexerException(
-                    $"0' line continuation is not a character at {pos}.", pos);
+                // A continuation stands for NO character, so `0'\<NL>` is not
+                // a char literal — fall back to the integer 0 (the caller
+                // rewinds; `0'\<NL>+'` reads as `0` + the atom '+').
+                return NotACharCode;
             return code;
         }
         if (c == '\'')
         {
             // ISO 6.3.7: a quote inside a 0' character-code constant must be
             // written doubled (0''') or escaped (0'\'). A lone quote is not a
-            // valid single-quoted character — `0''` is `0'` followed by the
-            // opening of a quoted atom, not the code of the quote.
+            // valid single-quoted character — `0''` is `0` followed by the
+            // empty atom `''` (the caller rewinds).
             if (Peek(1) == '\'') { Advance(); Advance(); return '\''; }
             // SWI leniency (swi dialect loads only): `0''` NOT followed by a
             // third quote is the quote character itself — url.pl's
             // `sub_delim(0'').` — where ISO requires 0''' or 0'\'.
             if (LenientQuoteCharLiteral) { Advance(); return '\''; }
-            throw new LexerException(
-                $"0' quote must be written '' or \\' at {pos}.", pos);
+            return NotACharCode;
         }
         if ((c < ' ' || c == '\x7f') && !ArityCompat)
         {
@@ -702,6 +725,11 @@ public sealed class Lexer
     /// stands for NO character. Callers building a string skip it.</summary>
     internal const int EscapeContinuation = -1;
 
+    /// <summary>The sentinel <see cref="ReadCharCodeLiteral"/> returns when
+    /// what follows <c>0'</c> cannot complete a character-code literal; the
+    /// caller rewinds and lexes the plain integer <c>0</c> instead.</summary>
+    internal const int NotACharCode = -2;
+
     private int ReadEscapeSequence(SourcePosition pos)
     {
         if (_offset >= _source.Length)
@@ -719,11 +747,11 @@ public sealed class Lexer
         }
 
         // SWI `\c` — line continuation that removes ALL following layout (spaces,
-        // tabs, newlines) up to the next non-layout character. Not ISO; a pure
-        // extension (a previously-invalid sequence), so it does not affect an
-        // ISO-valid program. Lets SWI library sources with `\c`-joined strings
-        // lex (ADR-040 SWI triage).
-        if (c == 'c')
+        // tabs, newlines) up to the next non-layout character. Not ISO — strict
+        // reading rejects it as an unknown escape (the conformance suite
+        // checks) — so it is gated on the swi dialect scope, which is where
+        // the `\c`-joined library strings live (ADR-040 SWI triage).
+        if (c == 'c' && LenientEscapes)
         {
             Advance();   // consume 'c'
             while (_offset < _source.Length
@@ -741,16 +769,17 @@ public sealed class Lexer
             return ReadNumericEscape(pos, radix: 16, name: "hexadecimal");
         }
         // \uXXXX (4 hex) / \UXXXXXXXX (8 hex) — a Unicode code point, SWI/Java
-        // style: a FIXED-width hex escape with NO terminating backslash. Not ISO;
-        // a pure extension over a previously-invalid sequence, so it does not
-        // affect an ISO-valid program. Many SWI library sources use `\u` (ADR-040).
-        if (c == 'u') { Advance(); return ReadFixedHexEscape(pos, 4); }
-        if (c == 'U') { Advance(); return ReadFixedHexEscape(pos, 8); }
+        // style: a FIXED-width hex escape with NO terminating backslash. Not
+        // ISO — strict reading rejects it (the conformance suite checks) — so
+        // it is gated on the swi dialect scope, where the `\u`-using library
+        // sources live (ADR-040).
+        if (c == 'u' && LenientEscapes) { Advance(); return ReadFixedHexEscape(pos, 4); }
+        if (c == 'U' && LenientEscapes) { Advance(); return ReadFixedHexEscape(pos, 8); }
         // Octal escape (ISO): `\` followed by octal digits and a terminating
-        // backslash, e.g. `\33\`. A bare `\0` (no digits, no terminator) is
-        // kept below as the NUL shorthand for backward compatibility, so the
-        // octal path only starts on 1–7.
-        if (c >= '1' && c <= '7')
+        // backslash, e.g. `\33\` or `\0\`. There is NO bare-`\0` NUL
+        // shorthand — ISO requires the terminator (Neumerkel #300/#301
+        // `'\0\'`, #18 `'\33\'`).
+        if (c >= '0' && c <= '7')
             return ReadNumericEscape(pos, radix: 8, name: "octal");
 
         Advance();
@@ -763,9 +792,11 @@ public sealed class Lexer
             'r' => 13,
             't' => 9,
             'v' => 11,
-            'e' => 27,    // escape (ESC) — SWI/GNU extension, not ISO
-            '0' => 0,
-            's' => 32,    // space — Quintus extension
+            // ESC / space — SWI/GNU/Quintus extensions, not ISO: strict
+            // reading rejects them (the conformance suite checks); the swi
+            // dialect scope accepts them.
+            'e' when LenientEscapes => 27,
+            's' when LenientEscapes => 32,
             '\\' => '\\',
             '\'' => '\'',
             '"' => '"',

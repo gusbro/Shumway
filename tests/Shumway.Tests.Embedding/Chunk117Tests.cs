@@ -20,9 +20,10 @@ public class Chunk117Tests
     public void StaticPredicateCallingDynamic_Resolves()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- dynamic d/1.\n" +
-            "uses(X) :- d(X).");          // static 'uses' calls dynamic 'd'
+        engine.ConsultString("""
+            :- dynamic d/1.
+            uses(X) :- d(X).
+            """);          // static 'uses' calls dynamic 'd'
         engine.Query("assertz(d(7)).");
         Assert.True(engine.Query("uses(7).").Success);
     }
@@ -33,9 +34,10 @@ public class Chunk117Tests
         // The static region (with 'uses') is linked once and reused; the
         // static -> dynamic call site is re-patched on every query.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- dynamic d/1.\n" +
-            "uses(X) :- d(X).");
+        engine.ConsultString("""
+            :- dynamic d/1.
+            uses(X) :- d(X).
+            """);
         for (int i = 1; i <= 20; i++)
         {
             engine.Query($"assertz(d({i})).");
@@ -53,7 +55,10 @@ public class Chunk117Tests
         engine.ConsultString("greet(hello).");
         Assert.True(engine.Query("greet(hello).").Success);
 
-        engine.ConsultString("greet(goodbye).\nextra(here).");
+        engine.ConsultString("""
+            greet(goodbye).
+            extra(here).
+            """);
         Assert.True(engine.Query("greet(hello).").Success);
         Assert.True(engine.Query("greet(goodbye).").Success);
         Assert.True(engine.Query("extra(here).").Success);
@@ -64,10 +69,11 @@ public class Chunk117Tests
     {
         // Within the static region, calls resolve at link time as before.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "a(N) :- b(N).\n" +
-            "b(N) :- c(N).\n" +
-            "c(42).");
+        engine.ConsultString("""
+            a(N) :- b(N).
+            b(N) :- c(N).
+            c(42).
+            """);
         Assert.True(engine.Query("a(42).").Success);
         Assert.False(engine.Query("a(0).").Success);
     }

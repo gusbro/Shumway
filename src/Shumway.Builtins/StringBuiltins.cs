@@ -388,6 +388,10 @@ public static class StringBuiltins
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException("type_error",
                     $"{builtinName}: list element must be a character code");
+            // BMP-only, as char_code/2 (truncating builds another char).
+            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+                throw new PrologRuntimeException(
+                    "representation_error", "character_code");
             sb.Append((char)head.AsInt);
             cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
         }

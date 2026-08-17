@@ -1048,10 +1048,11 @@ public class Adr031BindingGuardTests
             : new PrologEngine { };
         e.IlPromotion.Threshold = m == Adr031CpFreeGuardTests.Mode.Tier0 ? 0 : 1;
         e.UseClpfd();
-        e.ConsultString(
-            ":- public g/2.\n"
-            + "g(X, hit) :- X = 5, !.\n"
-            + "g(_, miss).\n");
+        e.ConsultString("""
+            :- public g/2.
+            g(X, hit) :- X = 5, !.
+            g(_, miss).
+            """);
         // X in 1..3: the guard's X=5 queues the clpfd verify_attributes wakeup;
         // the CP-free commit sees pending wakeups → pushes the LAZY CP with the
         // clause-entry marks → the hook FAILS (5 ∉ 1..3) → backtrack into the

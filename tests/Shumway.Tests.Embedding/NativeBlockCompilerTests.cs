@@ -91,12 +91,15 @@ public sealed class NativeBlockCompilerTests
     {
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nint strcmp(const char*, const char*);\nlong sum(int, int);\n:- prolog.\n" +
-            "cmp(A, B, R) :- atom(A), atom(B), { R is 'strcmp'(A, B) }, integer(R).\n" +
-            "calc(A, B, R) :- integer(A), integer(B), " +
-            "{ T: long; T is 'sum'(A, B); R is T * 2 }, integer(R).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            int strcmp(const char*, const char*);
+            long sum(int, int);
+            :- prolog.
+            cmp(A, B, R) :- atom(A), atom(B), { R is 'strcmp'(A, B) }, integer(R).
+            calc(A, B, R) :- integer(A), integer(B), { T: long; T is 'sum'(A, B); R is T * 2 }, integer(R).
+            """);
         Assert.True(e.Query("cmp(abc, abd, R), R == -1.").Success);
         Assert.True(e.Query("cmp(abc, abc, R), R == 0.").Success);
         Assert.Equal(14L, e.Query("calc(3, 4, R).").Get<long>("R"));

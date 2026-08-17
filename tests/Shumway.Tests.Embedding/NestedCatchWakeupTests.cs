@@ -109,18 +109,19 @@ public class NestedCatchWakeupTests
         // send_more_money phantom-functor crash), and plain bindings
         // survived the rollback too.
         var e = new PrologEngine();
-        e.ConsultString(
-            "t1(R) :- put_attr(V, m, orig),\n" +
-            "         catch(( put_attr(V, m, scratch(V)),\n" +
-            "                 once(member(_, [a, b])),\n" +
-            "                 throw(ball) ),\n" +
-            "               ball, true),\n" +
-            "         ( get_attr(V, m, X) -> R = X ; R = none ).\n" +
-            "t2(R) :- catch(( Y = bound_inside,\n" +
-            "                 once(member(_, [a, b])),\n" +
-            "                 throw(ball) ),\n" +
-            "               ball, true),\n" +
-            "         ( var(Y) -> R = still_var ; R = leaked(Y) ).");
+        e.ConsultString("""
+            t1(R) :- put_attr(V, m, orig),
+                     catch(( put_attr(V, m, scratch(V)),
+                             once(member(_, [a, b])),
+                             throw(ball) ),
+                           ball, true),
+                     ( get_attr(V, m, X) -> R = X ; R = none ).
+            t2(R) :- catch(( Y = bound_inside,
+                             once(member(_, [a, b])),
+                             throw(ball) ),
+                           ball, true),
+                     ( var(Y) -> R = still_var ; R = leaked(Y) ).
+            """);
         var s1 = e.Query("t1(R).");
         Assert.True(s1.Success);
         Assert.Equal("orig", Assert.IsType<AtomTerm>(s1["R"]).Name);

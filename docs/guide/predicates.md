@@ -7,6 +7,8 @@ Predicates available to programs embedding Shumway, grouped by area. The CLP(FD)
 
 Each template names its parameters and their mode: `+` bound at call, `-` an output, `?` either, `@` not modified, `:` a meta-called goal.
 
+Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [CLP(FD) — domains](#clpfd--domains) · [CLP(FD) — arithmetic constraints](#clpfd--arithmetic-constraints) · [CLP(FD) — global constraints](#clpfd--global-constraints) · [CLP(FD) — labeling](#clpfd--labeling) · [CLP(FD) — reification](#clpfd--reification) · [Atoms](#atoms) · [Coroutining](#coroutining) · [Global variables](#global-variables) · [Grammar](#grammar) · [Messages](#messages) · [Reflection](#reflection) · [Term comparison](#term-comparison) · [Threads](#threads) · [Time](#time)
+
 ## Unification & comparison
 
 | Predicate | Description |
@@ -134,6 +136,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `setup_call_cleanup(:Setup, :Goal, :Cleanup)` | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. |
 | `throw(+Exception)` | Throws an exception term, unwinding to the nearest catch/3. |
 | `time(:Goal)` | Calls Goal like call/1 and prints a per-answer resource report (SWI-style): inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers. |
+| `time_out(:Goal, +MilliSeconds, -Result)` | Runs Goal under a time limit (SICStus-compatible). Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
 | `trace` | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. |
 | `true` | Always succeeds. |
 
@@ -162,6 +165,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Validates Name/Arity names a dynamic predicate, then triggers the same full rebuild as the 0-arg form. The single buffer holds every dynamic predicate's bytecode interleaved, so independent per-predicate reclamation isn't currently feasible without partial-relink support — the API surface is per-predicate for forward compatibility. |
 | `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl (SWI-style). |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators. |
+| `ensure_loaded(+File)` | Loads File unless it is already loaded, in which case it does nothing (ISO 7.4.2.8). Lets several files each name their own dependencies without any of them being loaded twice. A File that CHANGED on disk since it was loaded is reloaded. Argument and errors are as consult/1. |
 | `erase(+Ref)` | Removes the recorded entry with reference Ref. Fails on an unknown / already-erased reference. |
 | `eraseall(+Key)` | Removes every recorded entry stored under Key. |
 | `file_list(+File)` | Saves the entire user database (all listable predicates) to File as plain Prolog source. |
@@ -268,6 +272,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `string_length(+String, ?Length)` | Relates a string to its length in characters. |
 | `sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom)` | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom. |
 | `sub_string(+String, ?Before, ?Length, ?After, ?SubString)` | Backtracks over every substring decomposition of String; the parts are strings (SWI). |
+| `unicode_property(+Code, ?Property)` | Unicode properties of the character with code Code (SWI library(unicode) subset). Property is category(Category) with Category the two-letter Unicode general category ('Lu', 'Nd', 'Zs', ...), exact per the .NET Unicode tables. |
 | `upcase_atom(+Atom, -Upper)` | Relates an atom to its upper-cased form. |
 
 ## Attributed variables
@@ -321,11 +326,12 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `get_code(-Code)` | Reads one character code from the current input stream (ISO §8.12.4). |
 | `get_code(+Stream, -Code)` | Reads one character code from a stream (ISO §8.12.4). |
 | `getenv(+Name, -Value)` | Unifies Value with the environment variable Name's contents as an atom; fails (does not raise) when Name is unset — SWI-compatible, so `(getenv(X,V) ; V = Default)` works. |
+| `http_download(+URL, +File)` | Downloads URL's raw bytes to File (HTTP/HTTPS); a network or HTTP failure raises existence_error(url, URL). |
 | `mkdir(+Path)` | Creates the directory Path (and any missing parents). Succeeds silently when the directory already exists. |
 | `nl` | Writes a newline to the current output stream. |
 | `nl(+Stream)` | Writes a newline to the given stream. |
 | `open(+File, +Mode, -Stream)` | Opens a file as a stream handle. |
-| `open(+File, +Mode, -Stream, +Options)` | Opens a file with options (alias, type, eof_action) — ISO §8.11.5. |
+| `open(+File, +Mode, -Stream, +Options)` | Opens a file with options (alias, type, encoding(utf8\|iso_latin_1\|ascii), eof_action) — ISO §8.11.5. |
 | `peek_byte(-Byte)` | Peeks one byte from the current input binary stream (ISO §8.13.2). |
 | `peek_byte(+Stream, -Byte)` | Peeks one byte from a binary stream (ISO §8.13.2). |
 | `peek_char(-Char)` | Peeks one character from the current input stream (ISO §8.12.2). |
@@ -337,6 +343,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `portray_clause(+Stream, +Clause)` | Like portray_clause/1 but writes to the given stream. |
 | `print(+Term)` | Writes a term using print conventions. |
 | `prolog_load_context(?Key, ?Value)` | SWI/Scryer load-context introspection (module / file / source / directory), used by term_expansion/goal_expansion hooks to read the module being loaded. Fails outside a consult. |
+| `prolog_to_os_filename(?PrologPath, ?OsPath)` | Converts between Shumway's canonical '/'-separated path form and the host's native form (ADR-044). Either argument may be the bound one; on Unix both forms are the same. |
 | `put(+Code)` | Writes the character with the given code to the current output stream. Edinburgh-style alias of put_code/1. |
 | `put(+Stream, +Code)` | Stream variant of put/1. |
 | `put_byte(+Byte)` | Writes one byte to the current output binary stream (ISO §8.13.3). |
@@ -369,7 +376,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `tell(+File)` | Opens File for writing and makes it the current output stream. An already-open tell-stream is closed first. |
 | `telling(?File)` | Unifies File with the name of the current output stream's file (or `user` when current output is user_output). |
 | `told` | Closes the current output stream (if not user_output) and reverts current output to user_output. |
-| `with_output_to(+Sink, :Goal)` | Runs a goal, capturing its output into an atom, string or code list. |
+| `with_output_to(+Sink, :Goal)` | Runs Goal once, capturing its output into the atom(A) or string(S) sink. |
 | `working_directory(-Old, +New)` | Unifies Old with the current working directory; if New differs, changes the cwd to it. Use working_directory(D, D) to read without changing. |
 | `write(+Term)` | Writes a term to the current output stream. |
 | `write(+Stream, +Term)` | Writes a term to the given stream. |

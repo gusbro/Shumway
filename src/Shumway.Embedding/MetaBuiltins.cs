@@ -71,6 +71,9 @@ public static partial class MetaBuiltins
             "Unifies Vars with the attributed variables reachable from Term.");
         BuiltinsRegistry.Register("$dif_check", 3, DifCheck);
         BuiltinsRegistry.Register("$attv_snapshot", 1, AttvSnapshot);
+        // call_with_timeout/2,3 live in the prelude; these carry the deadline.
+        BuiltinsRegistry.Register("$timeout_push", 1, TimeoutPush);
+        BuiltinsRegistry.Register("$timeout_pop", 0, TimeoutPop);
         BuiltinsRegistry.Register("$attv_new_since", 2, AttvNewSince);
         BuiltinsRegistry.Register("?=", 2, DecidedUnify,
             Term, "?=(@X, @Y)",
@@ -386,8 +389,13 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("module_property", 2, ModuleProperty,
             Reflect, "module_property(?Module, ?Property)",
             "Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound.");
-        BuiltinsRegistry.Register("with_output_to", 2, WithOutputTo,
-            Io, "with_output_to(+Sink, :Goal)", "Runs a goal, capturing its output into an atom, string or code list.");
+        // with_output_to/2 itself is a PRELUDE predicate (the goal must run in
+        // the LIVE engine so its side effects — op/3, assertz — survive);
+        // these are its redirection primitives.
+        BuiltinsRegistry.Register("$wot_begin", 1, WotBegin,
+            Io, "'$wot_begin'(+Sink)", "Internal: begins a with_output_to capture.");
+        BuiltinsRegistry.Register("$wot_end", 1, WotEnd,
+            Io, "'$wot_end'(+Sink)", "Internal: ends a with_output_to capture and unifies the sink.");
         BuiltinsRegistry.Register("atom_to_term",   3, AtomToTerm,
             Term, "atom_to_term(+Atom, -Term, -Bindings)", "Parses an atom into a term plus its variable bindings.");
         BuiltinsRegistry.Register("read_term_from_stream", 2, ReadTermFromStream,
@@ -420,6 +428,10 @@ public static partial class MetaBuiltins
             Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).");
         BuiltinsRegistry.Register("read",      2, Read2,
             Io, "read(+Stream, -Term)", "Reads one term from a stream (ISO §8.14.2).");
+        BuiltinsRegistry.Register("http_download", 2, HttpDownload,
+            Io, "http_download(+URL, +File)",
+            "Downloads URL's raw bytes to File (HTTP/HTTPS); a network or "
+            + "HTTP failure raises existence_error(url, URL).");
         BuiltinsRegistry.Register("prolog_load_context", 2, PrologLoadContext2,
             Io, "prolog_load_context(?Key, ?Value)",
             "SWI/Scryer load-context introspection (module / file / source / "
@@ -435,6 +447,11 @@ public static partial class MetaBuiltins
             Io, "working_directory(-Old, +New)",
             "Unifies Old with the current working directory; if New differs, changes "
             + "the cwd to it. Use working_directory(D, D) to read without changing.");
+        BuiltinsRegistry.Register("prolog_to_os_filename", 2, PrologToOsFilename2,
+            Io, "prolog_to_os_filename(?PrologPath, ?OsPath)",
+            "Converts between Shumway's canonical '/'-separated path form and the "
+            + "host's native form (ADR-044). Either argument may be the bound one; "
+            + "on Unix both forms are the same.");
         // Unshadowable alias for shim internals: a loaded library may EXPORT
         // working_directory/2 (Scryer files.pl), and imports win over builtins
         // at resolution — a shim emulation calling the builtin by its public
@@ -461,6 +478,13 @@ public static partial class MetaBuiltins
             + "through LoadBundle, everything else is read as Prolog source. An "
             + "extensionless File that does not exist is retried as File.pl "
             + "(SWI-style).");
+        BuiltinsRegistry.Register("ensure_loaded", 1, EnsureLoaded,
+            Database, "ensure_loaded(+File)",
+            "Loads File unless it is already loaded, in which case it does "
+            + "nothing (ISO 7.4.2.8). Lets several files each name their own "
+            + "dependencies without any of them being loaded twice. A File "
+            + "that CHANGED on disk since it was loaded is reloaded. Argument "
+            + "and errors are as consult/1.");
         BuiltinsRegistry.Register("use_module", 1, UseModule,
             Database, "use_module(+Spec)",
             "Loads a library or file. Spec is either library(Name) — where Name "

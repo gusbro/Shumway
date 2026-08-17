@@ -91,6 +91,31 @@ public class Adr035ConditionalBreakpointTests
     }
 
     [Fact]
+    public void ConditionSetUnderAnotherSpellingOfTheFile_StillGoverns()
+    {
+        // The engine consulted the FULL path; the debugger names the file by its
+        // base name. One file, one id, two spellings — and the condition must
+        // follow the breakpoint across them. It was once keyed by the spelling
+        // the debugger used, which the hit never reports: the breakpoint stopped
+        // as if unconditional, silently.
+        string dir = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "shumway_condspell");
+        System.IO.Directory.CreateDirectory(dir);
+        string file = System.IO.Path.Combine(dir, "condspell.pl");
+        System.IO.File.WriteAllText(file, Program);   // use(X) is on line 3 here
+
+        var engine = new PrologEngine();
+        engine.ConsultString(":- set_prolog_flag(compile_mode, debug).");
+        engine.ReconsultFile(file);
+        engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
+        Assert.True(engine.AddBreakpoint("condspell.pl", 3, "X > 100") > 0);
+
+        var stops = Run(engine);
+
+        Assert.Empty(stops);   // the condition governs: it never holds
+    }
+
+    [Fact]
     public void ConditionCanCallAUserPredicate()
     {
         // The condition is a full Prolog goal, not just arithmetic: it can call the
@@ -211,15 +236,16 @@ public class Adr035ConditionalBreakpointTests
         //  7:     fail.
         //  8: run.
         //  9: use(_).
-        var engine = DebugEngine(
-            ":- dynamic(d/1).\n" +
-            "run :-\n" +
-            "    between(1, 1200, X),\n" +
-            "    assertz(d(X)),\n" +
-            "    use(X),\n" +
-            "    fail.\n" +
-            "run.\n" +
-            "use(_).\n");
+        var engine = DebugEngine("""
+            :- dynamic(d/1).
+            run :-
+                between(1, 1200, X),
+                assertz(d(X)),
+                use(X),
+                fail.
+            run.
+            use(_).
+            """);
         // 1200 mutations cross the default watermark (1000) mid-query, guaranteed
         // (the per-port condition eval makes each iteration expensive — 1200 keeps
         // the crossing + margin at ~half the wall time of the original 2000).
@@ -247,14 +273,15 @@ public class Adr035ConditionalBreakpointTests
         //  6:     fail.
         //  7: run.
         //  8: use(_).
-        var engine = DebugEngine(
-            "run :-\n" +
-            "    between(1, 40, X),\n" +
-            "    assertz(und(X)),\n" +
-            "    use(X),\n" +
-            "    fail.\n" +
-            "run.\n" +
-            "use(_).\n");
+        var engine = DebugEngine("""
+            run :-
+                between(1, 40, X),
+                assertz(und(X)),
+                use(X),
+                fail.
+            run.
+            use(_).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 5, "X > 35") > 0);
 
         var stops = Run(engine);
@@ -286,16 +313,17 @@ public class Adr035ConditionalBreakpointTests
         //  8: work.
         //  9: use(_).
         // 10: recover(E, caught(E)).
-        var engine = DebugEngine(
-            "main(R) :-\n" +
-            "    catch(work, E, recover(E, R)).\n" +
-            "work :-\n" +
-            "    between(1, 5, X),\n" +
-            "    use(X),\n" +
-            "    fail.\n" +
-            "work.\n" +
-            "use(_).\n" +
-            "recover(E, caught(E)).\n");
+        var engine = DebugEngine("""
+            main(R) :-
+                catch(work, E, recover(E, R)).
+            work :-
+                between(1, 5, X),
+                use(X),
+                fail.
+            work.
+            use(_).
+            recover(E, caught(E)).
+            """);
         // Y is unbound in the frame → is/2 raises → the condition ERRORS at every hit.
         Assert.True(engine.AddBreakpoint("<string>", 6, "Z is Y + 1, Z > 0") > 0);
 

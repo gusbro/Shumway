@@ -3,8 +3,9 @@
 Shumway runs the Prolog engine **in the same process and managed heap as your C#
 code**. That changes what interop can be: a term is not an opaque handle on the
 far side of a marshalling boundary — it *is* a value in a `Cell[]` your C# can
-read and write directly. This guide covers the four ways C# and Prolog exchange
-data, from the most ergonomic to the fastest, and when to reach for each.
+read and write directly. This guide is the router for the whole topic: the
+four managed mechanisms below in depth, and where the two native-code
+mechanisms (their own documents) fit.
 
 | Mechanism | Direction | Cost | Use when |
 |---|---|---|---|
@@ -12,6 +13,8 @@ data, from the most ergonomic to the fastest, and when to reach for each.
 | [Typed queries](#2-typed-queries) | C# → Prolog | Allocates (Term-AST) | Driving the engine from a host |
 | [Re-entrant `SolveOnce`](#3-re-entrant-solveonce) | C# → Prolog, mid-query | Low | A foreign method calling back into Prolog |
 | [**Zero-copy cell access**](#4-zero-copy-cell-access-hot-path) | both | **Lowest** | **Hot paths: traversing/building terms** |
+| [Embedded native C blocks](embedded-native-c.md) | Prolog → C#/native | Compiled to IL | Arity-style `{ … }` blocks inside clause bodies |
+| [Reftype term marshalling](generic-term-interop.md) | Prolog ↔ native C | Snapshot / P/Invoke | Whole terms into native `t_reftype` graphs |
 
 The first two are *convenience* interop: you work with ordinary C# values
 (`int`, `string`, `List<long>`, your own records) and Shumway converts. The last

@@ -43,7 +43,7 @@ public sealed class DialectScopedConsultTests
         e.WithLibraryDialect("scryer", () => { e.ConsultString(Probe); return true; });
         // The flag it set must not leak: a later consult is the user's own
         // program again.
-        e.ConsultString("after(K) :- ( \"a\" = [X], atom(X) -> K = chars ; K = codes ).\n");
+        e.ConsultString("after(K) :- ( \"a\" = [X], atom(X) -> K = chars ; K = codes ).");
         Assert.True(e.Query("after(codes).").Success);
     }
 

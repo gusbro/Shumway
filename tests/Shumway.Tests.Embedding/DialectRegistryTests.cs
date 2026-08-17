@@ -64,11 +64,12 @@ public sealed class DialectRegistryTests
         // blocked an SWI library from loading as the first library (before any
         // op-defining consult). Both are now accepted; the predicate works.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- meta_predicate mymap(1, ?), mymap(2, ?, ?).\n"
-            + ":- autoload(library(lists), [append/3]).\n"
-            + ":- autoload(library(apply)).\n"
-            + "mymap(_, []).\n");
+        e.ConsultString("""
+            :- meta_predicate mymap(1, ?), mymap(2, ?, ?).
+            :- autoload(library(lists), [append/3]).
+            :- autoload(library(apply)).
+            mymap(_, []).
+            """);
         Assert.True(e.Query("mymap(_, []).").Success);
     }
 

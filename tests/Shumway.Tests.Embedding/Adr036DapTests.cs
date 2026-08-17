@@ -125,12 +125,13 @@ public class Adr036DapTests
         //  4: loop(N) :- N =< 5, note(N), N1 is N + 1, loop(N1).
         //  5: loop(N) :- N > 5.
         //  6: note(T) :- assertz(log(T)).
-        var (engine, session, server) = StartDebuggee(
-            ":- dynamic(log/1).\n" +
-            "main :- loop(1).\n" +
-            "loop(N) :- N =< 5, note(N), N1 is N + 1, loop(N1).\n" +
-            "loop(N) :- N > 5.\n" +
-            "note(T) :- assertz(log(T)).\n");
+        var (engine, session, server) = StartDebuggee("""
+            :- dynamic(log/1).
+            main :- loop(1).
+            loop(N) :- N =< 5, note(N), N1 is N + 1, loop(N1).
+            loop(N) :- N > 5.
+            note(T) :- assertz(log(T)).
+            """);
         using (session)
         using (server)
         using (var client = new DapTestClient(server.Port))
@@ -199,8 +200,11 @@ public class Adr036DapTests
         // 60k debug-mode iterations ≈ seconds of runway; the pause lands ~250 ms
         // in (Sleep(200) + socket round-trip), leaving ~5/6 of the loop still to
         // run — same guarantee as the original 300k at a fifth of the wall time.
-        var (engine, session, server) = StartDebuggee(
-            "loop :- between(1, 60000, I), tick(I), fail.\nloop.\ntick(_).\n");
+        var (engine, session, server) = StartDebuggee("""
+            loop :- between(1, 60000, I), tick(I), fail.
+            loop.
+            tick(_).
+            """);
         using (session)
         using (server)
         using (var client = new DapTestClient(server.Port))

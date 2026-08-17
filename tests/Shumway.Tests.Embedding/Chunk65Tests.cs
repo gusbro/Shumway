@@ -41,11 +41,12 @@ public class Chunk65Tests
         // foo(X, Y) :- bar(Y, X). The classical swap — Warren needs one
         // cycle-breaking save (of X, the lower home in the 2-cycle).
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/2.\n" +
-            ":- public bar/2.\n" +
-            "foo(X, Y) :- bar(Y, X).\n" +
-            "bar(b, a).\n");
+        engine.ConsultString("""
+            :- public foo/2.
+            :- public bar/2.
+            foo(X, Y) :- bar(Y, X).
+            bar(b, a).
+            """);
         Assert.True(engine.Query("foo(a, b).").Success);
         Assert.False(engine.Query("foo(b, a).").Success);
     }
@@ -58,11 +59,12 @@ public class Chunk65Tests
         // to [0, 2, 1] — strictly fewer puts than the conservative
         // pass's 2 saves + 3 puts.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/3.\n" +
-            ":- public bar/3.\n" +
-            "foo(X, Y, Z) :- bar(Z, X, Y).\n" +
-            "bar(c, a, b).\n");
+        engine.ConsultString("""
+            :- public foo/3.
+            :- public bar/3.
+            foo(X, Y, Z) :- bar(Z, X, Y).
+            bar(c, a, b).
+            """);
         Assert.True(engine.Query("foo(a, b, c).").Success);
         Assert.False(engine.Query("foo(c, b, a).").Success);
     }
@@ -73,11 +75,12 @@ public class Chunk65Tests
         // foo(W, X, Y, Z) :- bar(Z, W, X, Y). A 4-cycle. Warren still
         // breaks with one save.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/4.\n" +
-            ":- public bar/4.\n" +
-            "foo(W, X, Y, Z) :- bar(Z, W, X, Y).\n" +
-            "bar(d, a, b, c).\n");
+        engine.ConsultString("""
+            :- public foo/4.
+            :- public bar/4.
+            foo(W, X, Y, Z) :- bar(Z, W, X, Y).
+            bar(d, a, b, c).
+            """);
         Assert.True(engine.Query("foo(a, b, c, d).").Success);
         Assert.False(engine.Query("foo(a, b, c, e).").Success);
     }
@@ -89,11 +92,12 @@ public class Chunk65Tests
         // home); arg 1 reads X[0] which is still original (no-op didn't
         // write). Warren emits zero saves.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/1.\n" +
-            ":- public bar/2.\n" +
-            "foo(X) :- bar(X, X).\n" +
-            "bar(7, 7).\n");
+        engine.ConsultString("""
+            :- public foo/1.
+            :- public bar/2.
+            foo(X) :- bar(X, X).
+            bar(7, 7).
+            """);
         Assert.True(engine.Query("foo(7).").Success);
         Assert.False(engine.Query("foo(8).").Success);
     }
@@ -106,11 +110,12 @@ public class Chunk65Tests
         // it. Self-loop save of X handles this. Arg 1 reads the saved
         // slot after the rebind.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/1.\n" +
-            ":- public bar/2.\n" +
-            "foo(X) :- bar([X], X).\n" +
-            "bar([7], 7).\n");
+        engine.ConsultString("""
+            :- public foo/1.
+            :- public bar/2.
+            foo(X) :- bar([X], X).
+            bar([7], 7).
+            """);
         Assert.True(engine.Query("foo(7).").Success);
         Assert.False(engine.Query("foo(8).").Success);
     }
@@ -126,11 +131,12 @@ public class Chunk65Tests
         // and Y (compound contains Y, conservative rule). Warren breaks
         // the cycle with one save (of X) and topo-sorts the remainder.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/2.\n" +
-            ":- public bar/2.\n" +
-            "foo(X, Y) :- bar([Y], X).\n" +
-            "bar([b], a).\n");
+        engine.ConsultString("""
+            :- public foo/2.
+            :- public bar/2.
+            foo(X, Y) :- bar([Y], X).
+            bar([b], a).
+            """);
         Assert.True(engine.Query("foo(a, b).").Success);
         Assert.False(engine.Query("foo(b, a).").Success);
     }
@@ -144,11 +150,12 @@ public class Chunk65Tests
         // X[0..N-1]. The Warren scheduler force-saves X upfront so the
         // drained read pulls from the safe slot.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/1.\n" +
-            ":- public bar/2.\n" +
-            "foo(X) :- bar([[X]], 7).\n" +
-            "bar([[5]], 7).\n");
+        engine.ConsultString("""
+            :- public foo/1.
+            :- public bar/2.
+            foo(X) :- bar([[X]], 7).
+            bar([[5]], 7).
+            """);
         Assert.True(engine.Query("foo(5).").Success);
         Assert.False(engine.Query("foo(6).").Success);
     }
@@ -166,11 +173,12 @@ public class Chunk65Tests
         // 2 → 2 (self at arg 2)? No, arg 2 reads X[2] and is itself a
         // no-op (Z.home=2 == dst 2). Topo emits cleanly.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/3.\n" +
-            ":- public bar/3.\n" +
-            "foo(X, Y, Z) :- bar([Y, Z], X, Z).\n" +
-            "bar([b, c], a, c).\n");
+        engine.ConsultString("""
+            :- public foo/3.
+            :- public bar/3.
+            foo(X, Y, Z) :- bar([Y, Z], X, Z).
+            bar([b, c], a, c).
+            """);
         Assert.True(engine.Query("foo(a, b, c).").Success);
         Assert.False(engine.Query("foo(a, c, b).").Success);
     }
@@ -184,11 +192,12 @@ public class Chunk65Tests
         // but arg 0 already clobbered it. After self-loop save of X,
         // both reads reference the safe slot.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/1.\n" +
-            ":- public bar/2.\n" +
-            "foo(X) :- bar([X], [X]).\n" +
-            "bar([7], [7]).\n");
+        engine.ConsultString("""
+            :- public foo/1.
+            :- public bar/2.
+            foo(X) :- bar([X], [X]).
+            bar([7], [7]).
+            """);
         Assert.True(engine.Query("foo(7).").Success);
         Assert.False(engine.Query("foo(8).").Success);
     }
@@ -201,13 +210,14 @@ public class Chunk65Tests
         // scheduler's "in X" filter skips them entirely — no saves, no
         // reordering. The bar/q chain still produces the right answer.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/2.\n" +
-            ":- public bar/2.\n" +
-            ":- public q/2.\n" +
-            "bar(b, a).\n" +
-            "q(a, b).\n" +
-            "foo(X, Y) :- bar(Y, X), q(X, Y).\n");
+        engine.ConsultString("""
+            :- public foo/2.
+            :- public bar/2.
+            :- public q/2.
+            bar(b, a).
+            q(a, b).
+            foo(X, Y) :- bar(Y, X), q(X, Y).
+            """);
         Assert.True(engine.Query("foo(a, b).").Success);
         Assert.False(engine.Query("foo(b, a).").Success);
     }

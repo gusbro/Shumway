@@ -2,8 +2,9 @@
 
 ## Status
 
-**Decided — the global register-allocator arc is REJECTED on quantified evidence**
-(Phase 29, chunk 405). The survey tool (`SHUMWAY_Y_SURVEY=1` on `shumway-compile`)
+Rejected ([Phase 29](../../history/phase-29-closure.md); on quantified evidence).
+
+The survey tool (`SHUMWAY_Y_SURVEY=1` on `shumway-compile`)
 stays in the tree so the numbers can be re-checked when the workload mix changes.
 
 ## Context

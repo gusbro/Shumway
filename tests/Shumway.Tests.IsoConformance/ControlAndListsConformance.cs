@@ -73,7 +73,11 @@ public class ControlAndListsConformance
     public void Cut_CommitsToFirstChoice()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public maybe/1.\nmaybe(yes).\nmaybe(no).");
+        engine.ConsultString("""
+            :- public maybe/1.
+            maybe(yes).
+            maybe(no).
+            """);
         // Without cut: both clauses match X.
         Assert.Equal(2, engine.QueryAll("maybe(X).").Count());
         // With cut after first match: only yes survives.

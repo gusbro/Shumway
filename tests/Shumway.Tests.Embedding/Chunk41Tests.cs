@@ -49,9 +49,10 @@ public class Chunk41Tests
         // doubles as a sanity check that the trail-aware allocation didn't
         // break observable behaviour.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public big/1.\n" +
-            "big(X) :- member(N, [1, 2, 3]), X is 1000000000000000000 * N.");
+        engine.ConsultString("""
+            :- public big/1.
+            big(X) :- member(N, [1, 2, 3]), X is 1000000000000000000 * N.
+            """);
         var sol = engine.Query("findall(X, big(X), L).");
         Assert.True(sol.Success);
         // L should be [10^18, 2*10^18, 3*10^18].
@@ -172,7 +173,12 @@ public class Chunk41Tests
         // — but written manually as a Func<Activation,int,bool> the way the
         // future IL emitter will lay it out.
         var engine = new PrologEngine();
-        engine.ConsultString(":- public color/1.\ncolor(red).\ncolor(green).\ncolor(blue).");
+        engine.ConsultString("""
+            :- public color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
 
         // Now hand-build the IL delegate. Use the prelude's atom interning
         // so we match what the rest of the engine sees.

@@ -127,7 +127,7 @@ internal static partial class WebShumwayApp
     /// <summary>The active workspace's file names, newline-separated, sorted.</summary>
     [JSExport]
     internal static Task<string> WorkspaceList()
-        => OnEngine(() =>
+        => OnEngineOrParked(() =>
         {
             EnsureWorkspace();
             var names = Directory.GetFiles(ActiveWorkspaceDir)
@@ -140,7 +140,7 @@ internal static partial class WebShumwayApp
     /// <summary>A file's contents, or null when there is no such file.</summary>
     [JSExport]
     internal static Task<string?> WorkspaceRead(string name)
-        => OnEngine(() =>
+        => OnEngineOrParked(() =>
         {
             string path = Resolve(name);
             return File.Exists(path) ? File.ReadAllText(path) : null;
@@ -149,7 +149,7 @@ internal static partial class WebShumwayApp
     /// <summary>Creates or replaces a file. Returns null, or the error text.</summary>
     [JSExport]
     internal static Task<string?> WorkspaceWrite(string name, string content)
-        => OnEngine(() =>
+        => OnEngineOrParked(() =>
         {
             try
             {
@@ -184,7 +184,10 @@ internal static partial class WebShumwayApp
             try
             {
                 EndRun();       // as ConsultBuffer: the program is changing
-                _session!.Engine.ConsultFile(Resolve(name));
+                // RE-consult, as the buffer path does: loading the same file
+                // twice must not define its predicates twice. Debug mode routes
+                // the Consult button here so breakpoints key by the file's name.
+                _session!.Engine.ReconsultFile(Resolve(name));
                 return (string?)null;
             }
             catch (Exception ex) { return Describe(ex); }

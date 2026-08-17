@@ -79,7 +79,10 @@ public class Chunk155cTests
         // clause so a query for the new key matches them too.
         var e = new PrologEngine();
         e.JitIndexing.Threshold = 1;
-        e.ConsultString(":- dynamic p/2.\np(X, generic) :- atom(X).");
+        e.ConsultString("""
+            :- dynamic p/2.
+            p(X, generic) :- atom(X).
+            """);
         // Note: the clause p(X, generic) has var arg-0.
         e.Query("assertz(p(a, 1)).");
         e.Query("assertz(p(b, 2)).");

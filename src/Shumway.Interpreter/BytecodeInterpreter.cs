@@ -376,13 +376,13 @@ public sealed partial class BytecodeInterpreter
         }
     }
 
-    // The old recursive RunSubroutine + floor-pin machinery is gone. The
-    // IL non-tail Call site is threaded
-    // (set Cp = resume marker, set Pc = callee, IlTailCallPending = true,
-    // return) so no recursive sub-Dispatch invocation is needed. The
-    // SubroutineSentinelCp constant survives because RunGoalInEngine
-    // (the in-engine sub-goal driver for findall/3 etc.) still
-    // uses the same Pc-negative trick to exit its dispatch loop.
+    // IL non-tail Calls are THREADED (set Cp = resume marker, Pc = callee,
+    // IlTailCallPending = true, return to this loop) — never dispatched by a
+    // recursive sub-Dispatch invocation, which would grow the C# stack with
+    // Prolog depth and let backtracking cascade past the IL caller's CPs.
+    // SubroutineSentinelCp is NOT a leftover of that rejected design:
+    // RunGoalInEngine (the in-engine sub-goal driver for findall/3 etc.)
+    // uses its Pc-negative trick to exit its dispatch loop.
 
     /// <summary>Cp sentinel used by in-engine sub-goal dispatch
     /// (<see cref="RunGoalInEngine"/>). Any negative value works because
@@ -2250,9 +2250,9 @@ public sealed partial class BytecodeInterpreter
                     // the post-call_builtin address — backtrackable
                     // builtins (between, append, atom_concat, repeat, retract,
                     // …) capture this on first invocation and pass it to
-                    // ResumeAtReturnPc on each retry success. Was previously
-                    // read as `engine.P + 9` inside each builtin, which broke
-                    // Tier-1 IL where Pc doesn't point at the opcode.
+                    // ResumeAtReturnPc on each retry success. Builtins must
+                    // not compute it as `engine.P + 9` themselves: under
+                    // Tier-1 IL, Pc doesn't point at the opcode.
                     _engine.BuiltinReturnPc = pc + 9;
                     bool implOk;
                     Shumway.Core.Profiler.BuiltinEnter(builtinId);

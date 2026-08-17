@@ -32,7 +32,12 @@ public sealed class DynamicIlPromotionTests
     [Fact]
     public void ReadHotDynamic_PromotesToIl_AndRunsCorrectly()
     {
-        var e = Activation(":- dynamic color/1.\ncolor(red).\ncolor(green).\ncolor(blue).\n");
+        var e = Activation("""
+            :- dynamic color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
         int fid = Fid("color", 1);
 
         for (int i = 0; i < 5; i++)
@@ -46,7 +51,12 @@ public sealed class DynamicIlPromotionTests
     [Fact]
     public void Mutation_EvictsSnapshot_AndReflectsNewState()
     {
-        var e = Activation(":- dynamic color/1.\ncolor(red).\ncolor(green).\ncolor(blue).\n");
+        var e = Activation("""
+            :- dynamic color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
         int fid = Fid("color", 1);
 
         for (int i = 0; i < 5; i++) Assert.True(e.Query("color(green).").Success);
@@ -67,7 +77,12 @@ public sealed class DynamicIlPromotionTests
     [Fact]
     public void Retract_EvictsAndReflectsRemoval()
     {
-        var e = Activation(":- dynamic n/1.\nn(1).\nn(2).\nn(3).\n");
+        var e = Activation("""
+            :- dynamic n/1.
+            n(1).
+            n(2).
+            n(3).
+            """);
         int fid = Fid("n", 1);
         for (int i = 0; i < 5; i++) Assert.True(e.Query("n(2).").Success);
         Assert.True(e.IlPromotion.IsPromoted(fid));
@@ -81,7 +96,10 @@ public sealed class DynamicIlPromotionTests
     [Fact]
     public void ChurnGuard_PinsToTier0AfterRepeatedMutation()
     {
-        var e = Activation(":- dynamic d/1.\nd(0).\n");
+        var e = Activation("""
+            :- dynamic d/1.
+            d(0).
+            """);
         int fid = Fid("d", 1);
         // each round: warm to promotion, then mutate to evict. Past the churn
         // limit (3) the predicate stays on Tier 0 even when hot. (Phase 33 L5:
@@ -103,7 +121,10 @@ public sealed class DynamicIlPromotionTests
         // Phase 33 L5 — the Arity load-mutate-then-read-forever profile: a
         // predicate churn-pinned during its startup mutation phase re-arms after
         // a long mutation-free read stretch and earns IL again.
-        var e = Activation(":- dynamic d/1.\nd(0).\n");
+        var e = Activation("""
+            :- dynamic d/1.
+            d(0).
+            """);
         e.IlPromotion.ChurnRearmCalls = 20;   // short streak for the test
         int fid = Fid("d", 1);
         for (int round = 0; round < 6; round++)
@@ -132,7 +153,12 @@ public sealed class DynamicIlPromotionTests
         // calls). It stays fully mutable + evictable.
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 1000;   // promotion ON, normal warm-up far away
-        e.ConsultString(":- dynamic color/1.\ncolor(red).\ncolor(green).\ncolor(blue).\n");
+        e.ConsultString("""
+            :- dynamic color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
         int fid = Fid("color", 1);
         Assert.False(e.IlPromotion.IsPromoted(fid));
         Assert.True(e.Query("color(green).").Success);   // ONE call
@@ -150,7 +176,7 @@ public sealed class DynamicIlPromotionTests
         // assertz) is NOT primed — under a high threshold one call won't promote it.
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 1000;
-        e.ConsultString(":- dynamic t/1.\n");
+        e.ConsultString(":- dynamic t/1.");
         Assert.True(e.Query("assertz(t(1)).").Success);
         int fid = Fid("t", 1);
         Assert.True(e.Query("t(1).").Success);
@@ -177,9 +203,13 @@ public sealed class DynamicIlPromotionTests
         // clause MID-ITERATION must still see only the snapshot as of when its goal
         // began (ADR-015) — the in-progress call finishes on the snapshot delegate;
         // the assert evicts it only for FUTURE calls.
-        var e = Activation(
-            ":- dynamic d/1.\nd(1).\nd(2).\nd(3).\n" +
-            "iter(L) :- findall(X, (d(X), (X =:= 2 -> assertz(d(99)) ; true)), L).\n");
+        var e = Activation("""
+            :- dynamic d/1.
+            d(1).
+            d(2).
+            d(3).
+            iter(L) :- findall(X, (d(X), (X =:= 2 -> assertz(d(99)) ; true)), L).
+            """);
         int fid = Fid("d", 1);
         for (int i = 0; i < 5; i++) Assert.True(e.Query("d(2).").Success);
         Assert.True(e.IlPromotion.IsPromoted(fid));                // snapshot active

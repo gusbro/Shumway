@@ -23,7 +23,11 @@ public class Chunk88Tests
     public void CutInCalledConjunction_CommitsToFirstSolution()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("m(1).\nm(2).\nm(3).\n");
+        engine.ConsultString("""
+            m(1).
+            m(2).
+            m(3).
+            """);
         var xs = engine.QueryAll("call((m(X), !)).").Select(s => s["X"]).ToList();
         Assert.Equal(new[] { Int(1) }, xs);
     }
@@ -35,10 +39,11 @@ public class Chunk88Tests
         // a(1) with the cut must stop a(2) from ever running — otherwise
         // a non-backtrackable assertz corrupts the database.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- dynamic ran/0.\n" +
-            "a(1).\n" +
-            "a(2) :- assertz(ran).\n");
+        engine.ConsultString("""
+            :- dynamic ran/0.
+            a(1).
+            a(2) :- assertz(ran).
+            """);
         var xs = engine.QueryAll("call((a(X), !)).").Select(s => s["X"]).ToList();
         Assert.Equal(new[] { Int(1) }, xs);
         Assert.False(engine.Query("ran.").Success);
@@ -49,7 +54,10 @@ public class Chunk88Tests
     {
         // The cut commits a(X) but the conjunction continues past it.
         var engine = new PrologEngine();
-        engine.ConsultString("a(1).\na(2).\n");
+        engine.ConsultString("""
+            a(1).
+            a(2).
+            """);
         var sol = engine.Query("call((a(X), !, Y = done)).");
         Assert.True(sol.Success);
         Assert.Equal(Int(1), sol["X"]);
@@ -64,7 +72,11 @@ public class Chunk88Tests
         // The `!` is inside call/1, so it commits the call's goal only —
         // the enclosing m(X) choice point keeps backtracking.
         var engine = new PrologEngine();
-        engine.ConsultString("m(1).\nm(2).\nm(3).\n");
+        engine.ConsultString("""
+            m(1).
+            m(2).
+            m(3).
+            """);
         var xs = engine.QueryAll("m(X), call((!, true)).").Select(s => s["X"]).ToList();
         Assert.Equal(new[] { Int(1), Int(2), Int(3) }, xs);
     }
@@ -74,7 +86,10 @@ public class Chunk88Tests
     {
         // call(!) on its own cuts to the call's own entry — nothing.
         var engine = new PrologEngine();
-        engine.ConsultString("m(1).\nm(2).\n");
+        engine.ConsultString("""
+            m(1).
+            m(2).
+            """);
         var xs = engine.QueryAll("m(X), call(!).").Select(s => s["X"]).ToList();
         Assert.Equal(new[] { Int(1), Int(2) }, xs);
     }
@@ -85,9 +100,11 @@ public class Chunk88Tests
         // p/1's body is a disjunction; a `!` inside a call in the first
         // branch must not cut it, so all three answers are produced.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "q(a).\nq(b).\n" +
-            "p(R) :- ( q(R), call((!, true)) ; R = other ).\n");
+        engine.ConsultString("""
+            q(a).
+            q(b).
+            p(R) :- ( q(R), call((!, true)) ; R = other ).
+            """);
         var rs = engine.QueryAll("p(R).").Select(s => s["R"]).ToList();
         Assert.Equal(new[] { Atom("a"), Atom("b"), Atom("other") }, rs);
     }
@@ -100,7 +117,11 @@ public class Chunk88Tests
         // A `!` in the first disjunct cuts the disjunction's own choice
         // point as well as m/1's, so X = 99 is never reached.
         var engine = new PrologEngine();
-        engine.ConsultString("m(1).\nm(2).\nm(3).\n");
+        engine.ConsultString("""
+            m(1).
+            m(2).
+            m(3).
+            """);
         var xs = engine.QueryAll("call(( (m(X), !) ; X = 99 )).").Select(s => s["X"]).ToList();
         Assert.Equal(new[] { Int(1) }, xs);
     }
@@ -109,7 +130,10 @@ public class Chunk88Tests
     public void CalledIfThenElse_TakesThenBranch()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("m(1).\nm(2).\n");
+        engine.ConsultString("""
+            m(1).
+            m(2).
+            """);
         var sol = engine.Query("call((m(X) -> Y = t ; Y = e)).");
         Assert.True(sol.Success);
         Assert.Equal(Int(1), sol["X"]);
@@ -131,7 +155,11 @@ public class Chunk88Tests
         // A `!` in the THEN branch is cut-transparent: it commits the
         // choice points created inside the call (m/1's), so only X = 1.
         var engine = new PrologEngine();
-        engine.ConsultString("m(1).\nm(2).\nm(3).\n");
+        engine.ConsultString("""
+            m(1).
+            m(2).
+            m(3).
+            """);
         var xs = engine.QueryAll("call((m(X), (true -> ! ; true))).")
             .Select(s => s["X"]).ToList();
         Assert.Equal(new[] { Int(1) }, xs);
@@ -141,7 +169,7 @@ public class Chunk88Tests
     public void CalledNegation_Works()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("m(1).\n");
+        engine.ConsultString("m(1).");
         Assert.True(engine.Query("call(\\+ m(2)).").Success);
         Assert.False(engine.Query("call(\\+ m(1)).").Success);
     }
@@ -150,7 +178,11 @@ public class Chunk88Tests
     public void CutInNestedCall_StillCommits()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("m(1).\nm(2).\nm(3).\n");
+        engine.ConsultString("""
+            m(1).
+            m(2).
+            m(3).
+            """);
         var xs = engine.QueryAll("call(call((m(X), !))).").Select(s => s["X"]).ToList();
         Assert.Equal(new[] { Int(1) }, xs);
     }

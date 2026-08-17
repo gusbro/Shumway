@@ -22,8 +22,8 @@ public class LiteralPoolsTests
     [Fact]
     public void WithoutSharedPools_EachCompilationStartsFresh()
     {
-        Compile("a(3.14).\n", pools: null);
-        var second = Compile("b(2.71).\n", pools: null);
+        Compile("a(3.14).", pools: null);
+        var second = Compile("b(2.71).", pools: null);
 
         Assert.DoesNotContain(3.14, second.FloatLiterals);
         Assert.Contains(2.71, second.FloatLiterals);
@@ -33,8 +33,8 @@ public class LiteralPoolsTests
     public void WithSharedPools_LiteralsAccumulate()
     {
         var pools = new LiteralPools();
-        Compile("a(3.14).\n", pools);
-        var second = Compile("b(2.71).\n", pools);
+        Compile("a(3.14).", pools);
+        var second = Compile("b(2.71).", pools);
 
         Assert.Contains(3.14, second.FloatLiterals);
         Assert.Contains(2.71, second.FloatLiterals);
@@ -44,9 +44,12 @@ public class LiteralPoolsTests
     public void WithSharedPools_AnExistingLiteralKeepsItsId()
     {
         var pools = new LiteralPools();
-        var first = Compile("a(3.14).\n", pools);
+        var first = Compile("a(3.14).", pools);
         // The second compilation re-uses 3.14 and introduces 2.71.
-        var second = Compile("b(2.71).\nc(3.14).\n", pools);
+        var second = Compile("""
+            b(2.71).
+            c(3.14).
+            """, pools);
 
         int idInFirst = first.FloatLiterals.ToList().IndexOf(3.14);
         int idInSecond = second.FloatLiterals.ToList().IndexOf(3.14);

@@ -57,8 +57,13 @@ public class Adr035ControlTests
         //   2: top(A) :-
         //   3:     mid(A, B),
         //   4:     use(B).
-        var engine = DebugEngine(
-            "top(A) :-\n    mid(A, B),\n    use(B).\nmid(In, out(In)).\nuse(_).\n");
+        var engine = DebugEngine("""
+            top(A) :-
+                mid(A, B),
+                use(B).
+            mid(In, out(In)).
+            use(_).
+            """);
 
         // F9 on the HEAD. There is no code there — a rule's entry point IS its first
         // goal — so it binds forward to line 3.
@@ -91,8 +96,13 @@ public class Adr035ControlTests
     [Fact]
     public void ABreakpointIsRemovedFromTheLineItWasSetOn()
     {
-        var engine = DebugEngine(
-            "top(A) :-\n    mid(A, B),\n    use(B).\nmid(In, out(In)).\nuse(_).\n");
+        var engine = DebugEngine("""
+            top(A) :-
+                mid(A, B),
+                use(B).
+            mid(In, out(In)).
+            use(_).
+            """);
 
         engine.AddBreakpoint("<string>", 2);      // set on the head...
         Assert.NotEmpty(engine.Breakpoints);
@@ -112,7 +122,11 @@ public class Adr035ControlTests
         //   2: loop(N) :- N > 0, tick(N), M is N - 1, loop(M).
         //   3: loop(0).
         //   4: tick(_).
-        var engine = DebugEngine("loop(N) :- N > 0, tick(N), M is N - 1, loop(M).\nloop(0).\ntick(_).\n");
+        var engine = DebugEngine("""
+            loop(N) :- N > 0, tick(N), M is N - 1, loop(M).
+            loop(0).
+            tick(_).
+            """);
 
         DebugSnapshot? seen = null;
         ChannelDebugSession? session = null;
@@ -221,15 +235,16 @@ public class Adr035ControlTests
         // grow/1 appends thousands of chunky dynamic clauses — far more than the persistent
         // buffer's doubling slack (which scales with the baked prelude), so a reallocation is
         // guaranteed BEFORE the breakpoint in step/1 is first hit.
-        var engine = DebugEngine(
-            ":- dynamic(seen/2).\n" +
-            "run :- grow(4000), each(4).\n" +
-            "grow(0) :- !.\n" +
-            "grow(N) :- N > 0, assertz(seen(N, [N,N,N,N,N,N,N,N,N,N])), M is N - 1, grow(M).\n" +
-            "each(0) :- !.\n" +
-            "each(N) :- N > 0, step(N), M is N - 1, each(M).\n" +
-            "step(N) :- work(N).\n" +
-            "work(_).\n");
+        var engine = DebugEngine("""
+            :- dynamic(seen/2).
+            run :- grow(4000), each(4).
+            grow(0) :- !.
+            grow(N) :- N > 0, assertz(seen(N, [N,N,N,N,N,N,N,N,N,N])), M is N - 1, grow(M).
+            each(0) :- !.
+            each(N) :- N > 0, step(N), M is N - 1, each(M).
+            step(N) :- work(N).
+            work(_).
+            """);
 
         Assert.True(engine.AddBreakpoint("<string>", 8) > 0);   // inside step/1
 
@@ -259,8 +274,13 @@ public class Adr035ControlTests
     [Fact]
     public void AStepWrittenAtAStopIsTakenOnce()
     {
-        var engine = DebugEngine(
-            "top(A) :-\n    mid(A, B),\n    use(B).\nmid(In, out(In)).\nuse(_).\n");
+        var engine = DebugEngine("""
+            top(A) :-
+                mid(A, B),
+                use(B).
+            mid(In, out(In)).
+            use(_).
+            """);
         engine.AddBreakpoint("<string>", 3);
 
         var stops = new List<DebugSnapshot>();

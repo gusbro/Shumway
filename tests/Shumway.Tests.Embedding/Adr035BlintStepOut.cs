@@ -25,6 +25,12 @@ public class Adr035BlintStepOut
         var engine = new PrologEngine();
         engine.Flags.EmitDebugInfo = true;
         engine.Flags.DebugCodegen = true;
+        // Blint is an ARITY-era program (`Char = '/'`-style quoted operator-atom
+        // operands throughout its tokenizer): give it the quoted-operand
+        // leniency alone — full arity_compat would change its LEXING too
+        // (Arity $...$ strings, backslash not an escape), which this file
+        // never consulted under.
+        engine.Flags.LenientBareOperatorOperands = true;
         engine.ConsultFile(blint);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
         return engine;

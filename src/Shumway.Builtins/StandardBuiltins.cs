@@ -159,7 +159,8 @@ public static class StandardBuiltins
             Io, "open(+File, +Mode, -Stream)", "Opens a file as a stream handle.");
         BuiltinsRegistry.Register("open",      4, StreamBuiltins.OpenWithOptions,
             Io, "open(+File, +Mode, -Stream, +Options)",
-            "Opens a file with options (alias, type, eof_action) — ISO §8.11.5.");
+            "Opens a file with options (alias, type, encoding(utf8|iso_latin_1|ascii), "
+            + "eof_action) — ISO §8.11.5.");
         BuiltinsRegistry.Register("close",     1, StreamBuiltins.Close,
             Io, "close(+Stream)", "Closes an open stream.");
         BuiltinsRegistry.Register("close",     2, StreamBuiltins.Close2,
@@ -255,6 +256,11 @@ public static class StandardBuiltins
             Strings, "atom_number(?Atom, ?Number)", "Converts between an atom and the number it denotes; fails if the atom is not numeric.");
         BuiltinsRegistry.Register("number_string",2, AtomCharBuiltins.NumberString,
             Strings, "number_string(?Number, ?String)", "Converts between a number and its string representation; fails if the string is not numeric.");
+        BuiltinsRegistry.Register("unicode_property", 2, AtomCharBuiltins.UnicodeProperty,
+            Strings, "unicode_property(+Code, ?Property)",
+            "Unicode properties of the character with code Code (SWI library(unicode) subset). "
+            + "Property is category(Category) with Category the two-letter Unicode general "
+            + "category ('Lu', 'Nd', 'Zs', ...), exact per the .NET Unicode tables.");
 
         // Multi-solution helpers called from the prelude.
         BuiltinsRegistry.Register("$list_length",              2, MultiSolutionHelpers.ListLength);

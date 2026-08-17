@@ -70,7 +70,12 @@ public class HeapBufferPoolTests
     public void OverlappingActivations_BothCorrect_PoolStaysConsistent()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic d/1.\nd(1).\nd(2).\nd(3).\n");
+        e.ConsultString("""
+            :- dynamic d/1.
+            d(1).
+            d(2).
+            d(3).
+            """);
         // Prime the pool, then open a lazy enumeration (adopts the buffer),
         // run a nested query mid-enumeration (pool empty → fresh alloc),
         // and finish both. Everything stays correct and the pool ends with
@@ -92,7 +97,11 @@ public class HeapBufferPoolTests
     public void AbandonedEnumeration_StillReturnsBuffer()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic d/1.\nd(1).\nd(2).\n");
+        e.ConsultString("""
+            :- dynamic d/1.
+            d(1).
+            d(2).
+            """);
         Assert.True(e.Query(BigQuery).Success);
         long big = e.PooledHeapCapacityCells;
         // foreach with break disposes the enumerator → the activation dies
@@ -122,7 +131,10 @@ public class HeapBufferPoolTests
         // Semantics with a recycled (stale-content) buffer: results identical
         // across many mixed queries.
         var e = new PrologEngine();
-        e.ConsultString("rev([], A, A).\nrev([H|T], A, R) :- rev(T, [H|A], R).\n");
+        e.ConsultString("""
+            rev([], A, A).
+            rev([H|T], A, R) :- rev(T, [H|A], R).
+            """);
         for (int i = 0; i < 5; i++)
         {
             Assert.True(e.Query(

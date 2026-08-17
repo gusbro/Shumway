@@ -109,18 +109,35 @@ public sealed class StreamRegistry
 
     /// <summary>Removes a handle from the registry. Idempotent.
     /// Marks the handle <c>Closed</c> rather than disposing — the
-    /// caller owns disposal of the underlying reader/writer.</summary>
+    /// caller owns disposal of the underlying reader/writer.
+    ///
+    /// <para>Closing the CURRENT input or output moves that cursor back to
+    /// <c>user_input</c> / <c>user_output</c> (ISO §8.11.6, and what GNU and
+    /// SWI both do). Without it the cursor keeps naming a handle that is no
+    /// longer registered, so the very next <c>current_output/1</c> hands the
+    /// program a stream term that resolves to nothing — a dangling reference
+    /// it can only discover by failing to use it. Done here rather than in
+    /// each caller so no future one can forget.</para></summary>
     public void Remove(StreamHandle h)
     {
         h.Closed = true;
         _byId.Remove(h.Id);
         if (h.Alias is not null) _byAlias.Remove(h.Alias);
+        if (ReferenceEquals(CurrentInput, h)) CurrentInput = UserInput;
+        if (ReferenceEquals(CurrentOutput, h)) CurrentOutput = UserOutput;
     }
 
     /// <summary>Looks up a handle by its alias; returns null when
     /// none.</summary>
     public StreamHandle? GetByAlias(string alias) =>
         _byAlias.TryGetValue(alias, out var h) ? h : null;
+
+    /// <summary>Looks up a handle by the id its stream-term carries
+    /// (<c>'$stream'(Id)</c>); null once the stream is closed. Ids are
+    /// allocated monotonically and never reused, so a stale id can never
+    /// name a different stream — it just stops resolving.</summary>
+    public StreamHandle? GetById(int id) =>
+        _byId.TryGetValue(id, out var h) ? h : null;
 
     /// <summary>True iff <paramref name="alias"/> is already taken —
     /// used by <c>open/4</c> to enforce ISO uniqueness.</summary>

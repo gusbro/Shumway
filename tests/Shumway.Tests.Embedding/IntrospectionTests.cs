@@ -21,7 +21,7 @@ public class IntrospectionTests
     public void Clause_StaticFact_BindsHeadAndTrueBody()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("greeting(hello).\n");
+        engine.ConsultString("greeting(hello).");
         var sol = engine.Query("clause(greeting(X), B).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("hello"), sol["X"]);
@@ -32,7 +32,7 @@ public class IntrospectionTests
     public void Clause_StaticRule_BindsBodyTerm()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("double(X, Y) :- Y is X * 2.\n");
+        engine.ConsultString("double(X, Y) :- Y is X * 2.");
         var sol = engine.Query("clause(double(A, B), Body).");
         Assert.True(sol.Success);
         // Body is `B is A * 2` — exact AST shape depends on parser, but it
@@ -46,7 +46,7 @@ public class IntrospectionTests
     public void Clause_DynamicFact_FoundAfterAssertz()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic note/1.\n");
+        engine.ConsultString(":- dynamic note/1.");
         engine.Query("assertz(note(first)).");
         var sol = engine.Query("clause(note(X), _).");
         Assert.True(sol.Success);
@@ -57,7 +57,7 @@ public class IntrospectionTests
     public void Clause_NoMatchingPredicate_Fails()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(1).\n");
+        engine.ConsultString("p(1).");
         // No predicate q/1 anywhere → clause/2 fails (doesn't throw in v1).
         Assert.False(engine.Query("clause(q(X), _).").Success);
     }
@@ -68,7 +68,10 @@ public class IntrospectionTests
     public void CurrentPredicate_StaticPredicate_Succeeds()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("foo(a).\nfoo(b).\n");
+        engine.ConsultString("""
+            foo(a).
+            foo(b).
+            """);
         Assert.True(engine.Query("current_predicate(foo/1).").Success);
     }
 
@@ -76,7 +79,7 @@ public class IntrospectionTests
     public void CurrentPredicate_DynamicPredicate_Succeeds()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic bar/2.\n");
+        engine.ConsultString(":- dynamic bar/2.");
         Assert.True(engine.Query("current_predicate(bar/2).").Success);
     }
 
@@ -122,7 +125,7 @@ public class IntrospectionTests
         // Under the default lenient path the next assertz would
         // simply re-promote the predicate.
         engine.Query("set_prolog_flag(implicit_dynamic, false).");
-        engine.ConsultString(":- dynamic counter/1.\n");
+        engine.ConsultString(":- dynamic counter/1.");
         engine.Query("assertz(counter(1)).");
         engine.Query("assertz(counter(2)).");
         engine.Query("assertz(counter(3)).");
@@ -164,7 +167,7 @@ public class IntrospectionTests
     public void Assertz_Then_CurrentPredicate_Sees()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic registered/1.\n");
+        engine.ConsultString(":- dynamic registered/1.");
         Assert.True(engine.Query("current_predicate(registered/1).").Success);
         engine.Query("assertz(registered(item)).");
         // current_predicate succeeds — registered/1 is in the dynamic set

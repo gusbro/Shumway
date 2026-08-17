@@ -70,6 +70,8 @@ internal static class Prelude
         :- public false/0.
         :- public once/1.
         :- public ignore/1.
+        :- public time_out/3.
+        :- meta_predicate(time_out(0, *, *)).
         :- public call_residue_vars/2.
         :- public time/1.
         :- public chdir/1.
@@ -93,6 +95,8 @@ internal static class Prelude
         :- public listing/1.
         :- public format/1.
         :- public format_to_atom/3.
+        :- public with_output_to/2.
+        :- public '$wot_recover'/2.
         :- public '$call_conj'/3.
         :- public '$call_disj'/3.
         :- public '$call_arrow'/3.
@@ -763,8 +767,8 @@ internal static class Prelude
         '$predsort_ins'([], _, X, [X]).
         '$predsort_ins'([Y|Ys], P, X, Out) :-
             call(P, Ord, X, Y),
-            ( Ord == '<' -> Out = [X, Y|Ys]
-            ; Ord == '=' -> Out = [Y|Ys]
+            ( Ord == ('<') -> Out = [X, Y|Ys]
+            ; Ord == ('=') -> Out = [Y|Ys]
             ; Out = [Y|Out1], '$predsort_ins'(Ys, P, X, Out1)
             ).
 
@@ -772,10 +776,10 @@ internal static class Prelude
         sort(Key, Order, List, Sorted) :-
             '$sort4_tag'(List, Key, 0, Tagged),
             msort(Tagged, Asc),
-            ( ( Order == '@<' ; Order == '@>' ) -> '$sort4_dedup'(Asc, Uniq)
+            ( ( Order == ('@<') ; Order == ('@>') ) -> '$sort4_dedup'(Asc, Uniq)
             ; Uniq = Asc
             ),
-            ( ( Order == '@>' ; Order == '@>=' ) -> reverse(Uniq, Ordered)
+            ( ( Order == ('@>') ; Order == ('@>=') ) -> reverse(Uniq, Ordered)
             ; Ordered = Uniq
             ),
             '$sort4_elems'(Ordered, Sorted).
@@ -883,6 +887,48 @@ internal static class Prelude
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
         ignore(Goal) :- ( call(Goal) -> true ; true ).
 
+        %! time_out(:Goal, +MilliSeconds, -Result) | Control | Runs Goal under a time limit (SICStus-compatible). Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted.
+        time_out(Goal, MilliSeconds, Result) :-
+            Seconds is MilliSeconds / 1000,
+            '$catch_begin'(Ball, '$time_out_recover'(Ball, Result)),
+            '$time_out_run'(Goal, Seconds),
+            '$catch_end',
+            (   var(Result) ->
+                Result = success
+            ;   true
+            ).
+
+        '$time_out_run'(Goal, Seconds) :-
+            '$timeout_start'(Seconds),
+            call(Goal),
+            '$timeout_stop'(Seconds).
+
+        % Stable-address public, like '$scc_recover'/2 and '$wot_recover'/2: a
+        % catch/3 recovery in a PRELUDE clause is resolved by functor id, and a
+        % module-local one has no compiled address there.
+        :- public '$time_out_recover'/2.
+        '$time_out_recover'(Ball, Result) :-
+            '$timeout_pop',
+            (   '$timeout_ball'(Ball) ->
+                Result = time_out
+            ;   throw(Ball)
+            ).
+
+        % Starting and stopping the clock are BACKTRACKABLE, which is what makes
+        % the restart happen: leaving Goal stops it, re-entering Goal on redo
+        % starts a fresh one, and exhausting Goal unwinds the whole thing.
+        '$timeout_start'(Seconds) :- '$timeout_push'(Seconds).
+        '$timeout_start'(_) :- '$timeout_pop', fail.
+
+        '$timeout_stop'(_) :- '$timeout_pop'.
+        '$timeout_stop'(Seconds) :- '$timeout_push'(Seconds), fail.
+
+        % The engine throws a bare '$timeout_expired' — it does not know which
+        % goal it interrupted. Matched under both spellings because a catcher
+        % may wrap a ball in error/2 on the way out.
+        '$timeout_ball'('$timeout_expired').
+        '$timeout_ball'(error('$timeout_expired', _)).
+
         %! call_residue_vars(:Goal, -Vars) | Attributed variables | Runs Goal, then unifies Vars with the attributed variables created during Goal that are still constrained (carry residual attributes). Needs an attribute library (e.g. use_module(library(coroutining)) for dif/2) to produce any.
         call_residue_vars(Goal, Vars) :-
             '$attv_snapshot'(S),
@@ -920,7 +966,10 @@ internal static class Prelude
         '$phrase'(!, S0, S) :- !, S0 = S.
         '$phrase'((A, B), S0, S) :- !, '$phrase'(A, S0, S1), '$phrase'(B, S1, S).
         '$phrase'((A ; B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
-        '$phrase'((A | B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
+        % '|'(A,B) written canonically: `|` is only an operator inside a DCG
+        % rule body (strict ISO has no bar operator), and this is a plain
+        % clause matching the alternation a DCG body term carries at runtime.
+        '$phrase'('|'(A, B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
         '$phrase'((A -> B), S0, S) :- !, ( '$phrase'(A, S0, S1) -> '$phrase'(B, S1, S) ).
         '$phrase'({G}, S0, S) :- !, call(G), S0 = S.
         '$phrase'(\+ A, S0, S) :- !, \+ '$phrase'(A, S0, _), S0 = S.
@@ -1030,6 +1079,23 @@ internal static class Prelude
         %! format_to_atom(-Atom, +Format, +Args) | Input / output | Like format/2 but captures the formatted output into an atom.
         format_to_atom(Atom, Format, Args) :-
             with_output_to(atom(Atom), format(Format, Args)).
+
+        %! with_output_to(+Sink, :Goal) | Input / output | Runs Goal once, capturing its output into the atom(A) or string(S) sink.
+        % The goal runs in the LIVE engine (its op/3 / assertz side effects
+        % survive — a sub-engine would swallow them); the capture is exposed
+        % whether the goal succeeded, failed or raised (the SWI convention),
+        % which is why every arm passes through '$wot_end'. Uses
+        % '$catch_begin'/'$catch_end' with a stable-address public recovery —
+        % an inline catch(...) in a prelude clause has no compiled address
+        % (see setup_call_cleanup above).
+        with_output_to(Sink, Goal) :-
+            '$wot_begin'(Sink),
+            '$catch_begin'(E, '$wot_recover'(Sink, E)),
+            ( call(Goal) -> R = t ; R = f ),
+            '$catch_end',
+            '$wot_end'(Sink),
+            R == t.
+        '$wot_recover'(Sink, E) :- '$wot_end'(Sink), throw(E).
 
         % ===== tabling =====
         % A `:- table p/N` predicate is transformed at consult time. Its

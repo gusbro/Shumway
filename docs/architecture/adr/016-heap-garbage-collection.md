@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted and implemented (Phase 20, chunks 210–213). Adding a heap GC
+Shipped ([Phase 20](../../history/phase-20-closure.md)).
+
+Adding a heap GC
 is a "major decision" under [the decision policy](../decision-policy.md) (comparable to the atom-GC
 strategy in ADR-003), so the design was settled here before code landed;
 see "Status of implementation" below for the as-built notes, including

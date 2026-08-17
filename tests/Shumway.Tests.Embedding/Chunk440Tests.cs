@@ -102,7 +102,10 @@ public class Chunk440Tests
     {
         // In-memory consult-style compiles (no file) keep "user" — only
         // the FILE path changed (per-file fallback = base name).
-        var obj = ShmoCompiler.CompileSource(":- public p/0.\np.\n");
+        var obj = ShmoCompiler.CompileSource("""
+            :- public p/0.
+            p.
+            """);
         Assert.Equal("user", obj.ModuleName);
         var empty = ShmoCompiler.CompileSource(":- public p/0.\np.\n", "");
         Assert.Equal("user", empty.ModuleName);

@@ -265,6 +265,38 @@ public sealed partial class DebugService : IDebugSession
         _lastStopWasRedo = false;
     }
 
+    /// <summary>Break All for a DIRECT-attach frontend: stops at the current port,
+    /// reporting through the constructor's stop handler. Call it FROM the engine
+    /// thread — the natural place is inside <see cref="Poll"/>, which is how a
+    /// frontend turns its own "pause" flag into a stop. Captures the truth on
+    /// demand (<see cref="CaptureNow"/>) and notes the depth so the next step is
+    /// measured from HERE, not from whatever the last real stop left behind —
+    /// the same discipline the channel session applies to its Break All.</summary>
+    public void BreakHereNow()
+    {
+        DebugStopEvent? here = CaptureNow();
+        if (here is null) return;
+        NoteStop(here.Depth);
+        _onStop(this, here);
+    }
+
+    /// <summary>How a <c>debugger_break/0</c> goal actually stops. The channel session
+    /// sets this to its own <c>Debugger.Break()</c> path (VS enters break mode); left
+    /// unset — a direct-attach frontend (the web page, the tests) — the break is a
+    /// normal in-place stop through the constructor's handler.</summary>
+    internal Action<Activation>? DebuggerBreakOverride { get; set; }
+
+    /// <summary>ADR-035 — the engine-side entry for <c>debugger_break/0</c>. Frontend-
+    /// agnostic: the channel path if one is wired, else a direct stop. Suppressed
+    /// inside an Immediate-window evaluation, like every other stop.</summary>
+    public void RaiseDebuggerBreak(Activation engine)
+    {
+        if (_evalActive && SuppressStopsDuringEvaluation) return;
+        if (DebuggerBreakOverride is { } channel) { channel(engine); return; }
+        Current = engine;
+        BreakHereNow();
+    }
+
     // ----- the Immediate window: evaluate a goal against the live engine -----
 
     /// <summary>An evaluation is in flight OR parked: the goal typed in the Immediate window

@@ -26,6 +26,12 @@ internal static class Coroutining
         :- public frozen/2.
         :- public dif/2.
         :- public when/2.
+
+        % Surfaced by predicate_property/2 as meta_predicate(T) — how an
+        % embedding layer (Logtalk's compiler) learns the goal argument must
+        % be wrapped for its calling context before handing it over.
+        :- meta_predicate(freeze(*, 0)).
+        :- meta_predicate(when(*, 0)).
         :- public verify_attributes/4.
         :- multifile verify_attributes/4.
         :- public coroutining_attr_goals/3.

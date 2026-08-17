@@ -10,7 +10,9 @@ import * as workspace from './workspace.js';
 import * as libraries from './libraries.js';
 import * as settings from './settings.js';
 import * as theme from './theme.js';
+import * as layout from './layout.js';
 import { attach } from './editor.js';
+import * as debugUi from './debug.js';
 
 const out = document.getElementById('out');
 const queryInput = document.getElementById('query');
@@ -166,8 +168,9 @@ function runningIndicator() {
   let ticking = 0;
   const tick = () => {
     // The status line belongs to whoever needs it more: a program asking for
-    // input has something for the user to DO.
-    if (awaitingInput) return;
+    // input has something for the user to DO, and a query STOPPED at a
+    // breakpoint is not running — the debug UI owns the line then.
+    if (awaitingInput || debugUi.isStopped()) return;
     statusEl.textContent =
       `running goal… ${((performance.now() - started) / 1000).toFixed(0)}s   (Stop to abandon)`;
   };
@@ -181,10 +184,13 @@ function runningIndicator() {
 
 async function step() {
   stepping = true;
+  debugUi.setRunning(true);        // Break's moment, if the mode is on
   const searching = runningIndicator();
   let tag, text;
   try { ({ tag, text } = await session.next(answerWidth())); }
-  finally { stepping = false; searching(); }
+  finally { stepping = false; debugUi.setRunning(false); searching(); }
+  // The promise resolving means the search is no longer suspended at a stop.
+  debugUi.clearStopped();
   // The goal may have written as it ran; an answer starts its own line.
   freshLine();
   if (aborted) { aborted = false; emit('% Execution aborted.\n\n', 'note'); setPending(false); return; }
@@ -217,6 +223,10 @@ async function run(queryText) {
 async function abandonQuery() {
   if (stepping) {
     aborted = true;
+    // A query stopped at a breakpoint may have an Immediate/watch evaluation
+    // running ON the parked machine; cancelling under it races the engine.
+    // Drain (capped) so Stop stays a stop, not a coin toss.
+    if (debugUi.isStopped()) await debugUi.drainEvals();
     await session.cancel();
     // A goal blocked on input is not at a safe point and will never see the
     // cancellation. Closing the stream lets the read return so it can.
@@ -263,6 +273,10 @@ document.getElementById('query-form').addEventListener('submit', async (e) => {
   if (queryHistory[queryHistory.length - 1] !== text) queryHistory.push(text);
   historyAt = queryHistory.length;
   draft = '';
+  // While a query is STOPPED at a breakpoint the box is the Immediate window:
+  // the goal evaluates against the selected frame (a real QueryStart would
+  // queue behind the engine gate the suspended search holds).
+  if (debugUi.isStopped()) { await debugUi.evaluate(text); return; }
   await run(text.endsWith('.') ? text : text + '.');
 });
 
@@ -782,6 +796,8 @@ function editingWorkspaceFile(name) {
   currentLib = null;
   currentDialect = '';
   currentFile = name;
+  // Remembered like the theme: a reload reopens the file you were looking at.
+  settings.update({ openFile: name });
 }
 
 /** Writes the editor's buffer back to its file, then mirrors to storage. */
@@ -823,7 +839,23 @@ async function refreshWorkspaces() {
   document.getElementById('delete-workspace').disabled = all.length < 2;
 }
 
+/** Opens a workspace file in the editor, saving whatever was there first.
+ *  Returns false when there is no such file — which is also how the debugger
+ *  declines to navigate to a frame that lives outside the workspace. */
+async function openWorkspaceFile(name) {
+  const text = await workspace.read(name);
+  if (text === null) return false;
+  await saveBuffer();               // whichever place the open file lives in
+  editingWorkspaceFile(name);
+  await editor.setText(text);
+  await refreshFiles();
+  return true;
+}
+
 async function refreshFiles() {
+  // Runs after every change of which file is on screen, so it is also the
+  // one place that tells the debug gutter to show THAT file's dots.
+  debugUi.fileChanged();
   const names = await workspace.list();
   const chips = names.map((name) => {
     const item = document.createElement('button');
@@ -831,12 +863,7 @@ async function refreshFiles() {
     item.className = 'file' + (currentLib === null && name === currentFile ? ' current' : '');
     item.textContent = name;
     item.title = `open ${name}`;
-    item.addEventListener('click', async () => {
-      await saveBuffer();               // whichever place the open file lives in
-      editingWorkspaceFile(name);
-      await editor.setText((await workspace.read(name)) ?? '');
-      await refreshFiles();
-    });
+    item.addEventListener('click', () => openWorkspaceFile(name));
     return item;
   });
 
@@ -869,7 +896,10 @@ async function openWorkspace(name, { confirm = true } = {}) {
 
   const err = await workspace.setActive(name);
   if (err) { emit(`% ${err}\n`, 'error'); await refreshWorkspaces(); return; }
-  await session.resetEngine();
+  // In debug mode the fresh engine must be debug-compiled again for the new
+  // workspace (onWorkspaceChanged does that); otherwise a plain reset.
+  if (debugUi.active()) await debugUi.onWorkspaceChanged();
+  else await session.resetEngine();
   consultedSomething = false;
   // Different files, so possibly different imports: a background build should
   // re-aim at what THIS workspace uses.
@@ -912,6 +942,8 @@ document.getElementById('delete-workspace').addEventListener('click', async () =
   await openWorkspace(others[0], { confirm: false });
   const err = await workspace.removeWorkspace(doomed);
   emit(err ? `% ${err}\n` : `% deleted workspace ${doomed}\n`, err ? 'error' : 'note');
+  // The workspace is gone; its remembered breakpoints go with it.
+  if (!err) debugUi.forgetWorkspace(doomed);
   await refreshWorkspaces();
 });
 
@@ -1163,14 +1195,24 @@ async function consultBuffer(note) {
   await abandonQuery();
   await saveBuffer();
   const started = performance.now();
+  // In debug mode a workspace file is consulted BY ITS FILE (it was just
+  // saved), so its debug sites — and everyone's breakpoints — key by the
+  // file's name instead of the anonymous buffer. A library file keeps the
+  // buffer path either way.
   const err = await whileConsulting(
-    () => withBusy('consulting', () => session.consult(program(), currentDialect)));
+    () => withBusy('consulting', () =>
+      debugUi.active() && currentLib === null
+        ? workspace.consultFile(currentFile)
+        : session.consult(program(), currentDialect)));
   const took = Math.round(performance.now() - started);
   if (!err) {
     editor?.markError(null);
     // Operators the program declared are now in the table, so the buffer's
     // colouring can change on consult — repaint it.
     editor?.repaint();
+    // A reconsult replaced the compiled clauses: in debug mode the engine-side
+    // breakpoints are re-applied against the new code.
+    await debugUi.afterConsult();
     consultedSomething = true;
     // How long it took, when it took long enough to have been noticed: loading
     // a library is seconds of work and saying so is the difference between
@@ -1198,6 +1240,7 @@ document.getElementById('consult').addEventListener('click',
 const config = settings.load();
 theme.attach(document.getElementById('theme'), config.theme,
              (choice) => settings.update({ theme: choice }));
+layout.init();
 
 out.textContent = '';
 
@@ -1213,7 +1256,36 @@ if (window.shumwayIsolationFailed) {
      + ' reload\n', 'error');
 }
 
-emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic) + '\n\n', 'note');
+// --- debug (spike) -------------------------------------------------------
+// Console-driven, no UI yet: `shumwayDebug.*` in the devtools console drives
+// the loop breakpoint → stop → frames → resume. The stop event lands here —
+// while stopped, the query's own promise simply stays pending.
+function onDebugStop(stop) {
+  // An installed hook takes the stop first (the selftest awaits it this way);
+  // then the debug UI, when its mode is on; the console fallback serves
+  // whoever drove the engine directly through window.shumwayDebug.
+  if (window.shumwayDebug.onStop) { window.shumwayDebug.onStop(stop); return; }
+  if (debugUi.active()) { debugUi.onStop(stop); return; }
+  emit(`% stopped (${stop.reason}) at ${stop.file}:${stop.line} — ${stop.goal}\n`, 'note');
+  emit(`%   frames + vars in the devtools console; `
+     + `resume: shumwayDebug.resume('continue'|'into'|'over'|'out')\n`, 'note');
+  console.log('[shumway debug] stopped', stop);
+  console.table(stop.frames.map((f) => ({
+    frame: `${f.name}/${f.arity}`,
+    at: `${f.file}:${f.line}`,
+    vars: f.vars.map((v) => `${v.name} = ${v.value}`).join(', '),
+    residuals: f.residuals.map((r) => r.goals).join(', '),
+  })));
+}
+window.shumwayDebug = {
+  enable: () => session.debugEnable(),
+  bp: (line, file = '<string>') => session.debugBreakpoint(file, line, true),
+  bpOff: (line, file = '<string>') => session.debugBreakpoint(file, line, false),
+  resume: (mode = 'continue') => session.debugResume(mode),
+  toggle: () => debugUi.toggle(),
+};
+
+emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop) + '\n\n', 'note');
 setPending(false);
 
 editor = attach(
@@ -1221,6 +1293,18 @@ editor = attach(
 
 workspace.init(session.exports());
 libraries.init(session.exports());
+debugUi.init({
+  emit, statusEl, consultBuffer,
+  editorEl: programEl,
+  getText: program,
+  // The file whose lines the gutter's dots belong to — null for a library
+  // file, where breakpoints are not offered.
+  getFile: () => (currentLib === null ? currentFile : null),
+  // Which workspace the breakpoints belong to — deleting it forgets them.
+  getWorkspace: () => workspace.active(),
+  // Clicking a stack frame in another workspace file navigates to it.
+  openFile: openWorkspaceFile,
+});
 
 // Settings of another version are discarded rather than guessed at (see
 // settings.js), and the stored files were written against the layout they
@@ -1239,16 +1323,20 @@ const restored = await workspace.restoreAll();
 // is use_module(library(…)) must find it.
 const restoredLibs = await libraries.restoreAll();
 if (restoredLibs > 0) emit(`% ${restoredLibs} library(ies) restored\n`, 'note');
-if (!config.seededExamples) {
-  await workspace.seedExamples();
-  settings.update({ seededExamples: true });
-}
+// The examples workspace reappears whenever it is ABSENT: deleting it and
+// reloading is how you ask for a fresh, current copy of the examples. (The
+// old once-ever flag respected deletion forever — which also meant an updated
+// example could never reach an existing profile.)
+if (!(await workspace.names()).includes('examples')) await workspace.seedExamples();
 const known = await workspace.names();
 await workspace.setActive(known.includes(config.workspace) ? config.workspace : 'scratch');
 await refreshWorkspaces();
 
 const inWorkspace = await workspace.list();
-editingWorkspaceFile(inWorkspace[0] ?? 'scratch.pl');
+// The file that was on screen, if it is still here; the first one otherwise.
+editingWorkspaceFile(
+  inWorkspace.includes(config.openFile) ? config.openFile
+    : inWorkspace[0] ?? 'scratch.pl');
 if (inWorkspace.length === 0) await workspace.write(currentFile, '');
 
 // A shared link brings its own files. They are ADDED — never written over what
@@ -1257,6 +1345,10 @@ await editor.setText((await workspace.read(currentFile)) ?? '');
 await openSharedFromHash();
 await editor.repaintNow();
 await refreshFiles();
+// The debugger's memory: breakpoints, watches, and the mode itself come back
+// the way the theme does. Re-entering the mode restarts the engine
+// debug-compiled and reconsults, which also re-binds the dots.
+if (debugUi.restore() && location.hash !== '#selftest') await debugUi.toggle();
 if (restored > 0) emit(`% ${restored} file(s) restored\n`, 'note');
 else if (!workspace.persistent())
   emit('% this browser has no origin-private storage — files last for this session only\n', 'note');

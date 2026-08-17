@@ -23,6 +23,7 @@ public static class ShmoBundleMap
 
         var sb = new StringBuilder();
         sb.AppendLine("# Shumway link map");
+        sb.AppendLine($"# shumway version: {ShumwayVersion.Current}");
         sb.AppendLine($"# generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}Z");
         sb.AppendLine($"# success: {result.Success}");
         if (result.Bytes is not null)

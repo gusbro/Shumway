@@ -23,10 +23,15 @@ public static partial class MetaBuiltins
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException("debugger_break/0 requires a PrologEngine host.");
-        if (!System.Diagnostics.Debugger.IsAttached)
-            return true;   // nobody is watching: this is a no-op, by design
 
-        Shumway.Embedding.Debugging.ShumwayDebugHelper.Session?.BreakHere(engine);
+        // The attached session decides HOW to stop: the channel session (VS) takes the
+        // managed Debugger.Break() path, gated on a debugger actually being attached; a
+        // direct-attach session (the web page, the tests) stops in place. With no debug
+        // session at all this is a no-op that succeeds — a program can be left with these
+        // in it. (The old code hard-wired the VS path AND gated the whole builtin on
+        // Debugger.IsAttached, so debugger_break never stopped a frontend-driven session.)
+        if (engine.Debug is Shumway.Embedding.Debugging.DebugService svc)
+            svc.RaiseDebuggerBreak(engine);
         return true;
     }
 
@@ -239,18 +244,6 @@ public static partial class MetaBuiltins
         }
     }
 
-    // (CallNCursor + AppendArgs removed — call/N is dispatched in the live
-    // engine by DispatchCall / IlMetaCallHelper; MetaBuiltins.CallN is now a
-    // dead-path guard that throws. See CallN.)
-
-    private static int ExtractAddrFromName(string name)
-    {
-        if (name.Length >= 3 && name[0] == '_' && name[1] == 'G'
-            && int.TryParse(name.AsSpan(2), out int addr))
-            return addr;
-        return -1;
-    }
-
     // ============================================================================
     // consult / reconsult
     // ============================================================================
@@ -286,6 +279,68 @@ public static partial class MetaBuiltins
         // Runtime consult: thread the live engine so source-declared dynamic
         // clauses become visible to a later call in the same query.
         host.ConsultFileLive(path, engine);
+        return true;
+    }
+
+    /// <summary><c>'$timeout_push'(+Seconds)</c> — starts the deadline that
+    /// <c>call_with_timeout/2</c> enforces. Seconds may be an integer or a
+    /// float; a non-positive one times the goal out immediately, which is what
+    /// asking for no time should mean.</summary>
+    public static bool TimeoutPush(Activation engine)
+    {
+        Term arg = MaterializeRegister(engine, 0);
+        double seconds = arg switch
+        {
+            Shumway.Compiler.Ast.IntTerm i => i.Value,
+            Shumway.Compiler.Ast.FloatTerm f => f.Value,
+            Shumway.Compiler.Ast.VarTerm =>
+                throw new Shumway.Core.PrologRuntimeException("instantiation_error"),
+            _ => throw new Shumway.Core.PrologRuntimeException(
+                "type_error", "number"),
+        };
+        engine.PushDeadline(seconds);
+        return true;
+    }
+
+    /// <summary><c>'$timeout_pop'</c> — ends the innermost deadline.</summary>
+    public static bool TimeoutPop(Activation engine)
+    {
+        engine.PopDeadline();
+        return true;
+    }
+
+    /// <summary><c>ensure_loaded(+File)</c> — ISO §7.4.2.8. Loads File unless
+    /// it is already loaded, so a file naming its own dependencies can be
+    /// consulted from several places without its clauses being added twice.
+    /// Same argument and error contract as <see cref="Consult"/>.</summary>
+    public static bool EnsureLoaded(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "ensure_loaded/1 requires the engine to be hosted by a PrologEngine.");
+
+        Cell cell = MaterializeRegisterAsCell(engine, 0);
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (cell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error(atom, _)");
+
+        string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        path = ConsultPipeline.ResolveSourcePath(path);
+        if (!System.IO.File.Exists(path))
+            throw new Shumway.Core.PrologRuntimeException(
+                $"existence_error(source_sink, '{path}')");
+
+        // The whole difference from consult/1.
+        if (host.IsLoadedAndUnchanged(path)) return true;
+
+        // Loaded but CHANGED: reloading has to REPLACE what the file defines,
+        // not append to it — otherwise the stale clauses stay and the file is
+        // effectively loaded twice, which is the one thing this predicate
+        // exists to prevent.
+        if (host.WasConsulted(path)) host.ReconsultFile(path);
+        else host.ConsultFileLive(path, engine);
         return true;
     }
 
@@ -507,8 +562,7 @@ public static partial class MetaBuiltins
         // take it from the return instead of re-extracting (a second
         // string intern per assert).
         int fid = prepend ? host.Asserta(clause) : host.Assertz(clause);
-        // ADR-015 chunk C step 4: incremental dispatch — the canonical
-        // path (the chunk-C redirect is gone).
+        // ADR-015 incremental dispatch — the canonical path:
         //   assertz → append a chunk and patch the tail's <next>.
         //   asserta → append a chunk, patch the trampoline's execute,
         //             and demote the old head's try_me_else in place to

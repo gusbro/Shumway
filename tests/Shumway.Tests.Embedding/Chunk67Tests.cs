@@ -22,11 +22,12 @@ public class Chunk67Tests
     {
         // All clauses have var arg 0. Arg 1 atom-discriminates.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public color/2.\n" +
-            "color(_, red).\n" +
-            "color(_, green).\n" +
-            "color(_, blue).\n");
+        engine.ConsultString("""
+            :- public color/2.
+            color(_, red).
+            color(_, green).
+            color(_, blue).
+            """);
         Assert.True(engine.Query("color(anything, red).").Success);
         Assert.True(engine.Query("color(anything, blue).").Success);
         Assert.False(engine.Query("color(anything, purple).").Success);
@@ -36,11 +37,12 @@ public class Chunk67Tests
     public void Arg1Indexed_UnboundQueryEnumeratesAll()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public color/2.\n" +
-            "color(_, red).\n" +
-            "color(_, green).\n" +
-            "color(_, blue).\n");
+        engine.ConsultString("""
+            :- public color/2.
+            color(_, red).
+            color(_, green).
+            color(_, blue).
+            """);
         var sols = engine.QueryAll("color(_, _).").ToList();
         Assert.Equal(3, sols.Count);
     }
@@ -53,12 +55,13 @@ public class Chunk67Tests
         // hits only one clause via arg-1 fallback (arg 0 is var, arg 1
         // bucket "perimeter" → {clause 2}).
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public shape/2.\n" +
-            "shape(circle, area).\n" +
-            "shape(square, area).\n" +
-            "shape(circle, perimeter).\n" +
-            "shape(triangle, area).\n");
+        engine.ConsultString("""
+            :- public shape/2.
+            shape(circle, area).
+            shape(square, area).
+            shape(circle, perimeter).
+            shape(triangle, area).
+            """);
         Assert.True(engine.Query("shape(circle, area).").Success);
         Assert.True(engine.Query("shape(triangle, area).").Success);
         Assert.False(engine.Query("shape(square, perimeter).").Success);
@@ -71,11 +74,12 @@ public class Chunk67Tests
     public void Arg1IntegerIndexed_DispatchesByInt()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public size/2.\n" +
-            "size(_, 10).\n" +
-            "size(_, 20).\n" +
-            "size(_, 30).\n");
+        engine.ConsultString("""
+            :- public size/2.
+            size(_, 10).
+            size(_, 20).
+            size(_, 30).
+            """);
         Assert.True(engine.Query("size(big_box, 20).").Success);
         Assert.False(engine.Query("size(big_box, 25).").Success);
     }
@@ -84,10 +88,11 @@ public class Chunk67Tests
     public void Arg1StructIndexed_DispatchesByFunctor()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public meta/2.\n" +
-            "meta(_, p(X)) :- X = found_p.\n" +
-            "meta(_, q(X)) :- X = found_q.\n");
+        engine.ConsultString("""
+            :- public meta/2.
+            meta(_, p(X)) :- X = found_p.
+            meta(_, q(X)) :- X = found_q.
+            """);
         var sol1 = engine.Query("meta(thing, p(Y)).");
         Assert.True(sol1.Success);
         Assert.Equal(new Shumway.Compiler.Ast.AtomTerm("found_p"), sol1["Y"]);
@@ -105,14 +110,18 @@ public class Chunk67Tests
         // call with arg 0 = a — for any arg 1.
         // mix(_, _) (var on both) matches everything.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public mix/2.\n" +
-            "mix(_, x) :- one.\n" +
-            "mix(a, _) :- two.\n" +
-            "mix(_, _) :- three.\n" +
-            ":- public one/0.\n one.\n" +
-            ":- public two/0.\n two.\n" +
-            ":- public three/0.\n three.\n");
+        engine.ConsultString("""
+            :- public mix/2.
+            mix(_, x) :- one.
+            mix(a, _) :- two.
+            mix(_, _) :- three.
+            :- public one/0.
+             one.
+            :- public two/0.
+             two.
+            :- public three/0.
+             three.
+            """);
         // mix(a, x) matches all three.
         Assert.Equal(3, engine.QueryAll("mix(a, x).").Count());
         // mix(b, x) matches clause 1 (var arg 0, atom x) and clause 3 (both var). NOT clause 2 (atom a, not b).
@@ -127,12 +136,13 @@ public class Chunk67Tests
         // All three args could discriminate; calling with one bound at
         // a time exercises each level's switch_on_arg in turn.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public triple/3.\n" +
-            "triple(a, x, 1).\n" +
-            "triple(a, y, 2).\n" +
-            "triple(b, x, 3).\n" +
-            "triple(b, y, 4).\n");
+        engine.ConsultString("""
+            :- public triple/3.
+            triple(a, x, 1).
+            triple(a, y, 2).
+            triple(b, x, 3).
+            triple(b, y, 4).
+            """);
         Assert.True(engine.Query("triple(a, x, 1).").Success);
         Assert.True(engine.Query("triple(b, y, 4).").Success);
         Assert.False(engine.Query("triple(a, x, 4).").Success);
@@ -148,11 +158,12 @@ public class Chunk67Tests
         // Arg 0 all var, arg 1 all var, arg 2 discriminates. Only arg 2
         // gets a switch layer.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public deep/3.\n" +
-            "deep(_, _, alpha).\n" +
-            "deep(_, _, beta).\n" +
-            "deep(_, _, gamma).\n");
+        engine.ConsultString("""
+            :- public deep/3.
+            deep(_, _, alpha).
+            deep(_, _, beta).
+            deep(_, _, gamma).
+            """);
         Assert.True(engine.Query("deep(any, thing, beta).").Success);
         Assert.False(engine.Query("deep(any, thing, delta).").Success);
         Assert.Equal(3, engine.QueryAll("deep(_, _, _).").Count());

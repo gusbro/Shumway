@@ -1,6 +1,10 @@
 # ADR-037: `soft_cut` opcode + inline `( Cond *-> Then ; Else )` lowering
 
-**Status:** Accepted — the `soft_cut` opcode, `Activation.SoftCut`, the
+## Status
+
+Shipped ([Phase 35](../../history/phase-35-closure.md)).
+
+The `soft_cut` opcode, `Activation.SoftCut`, the
 `TryBacktrack` dead-sentinel handling, and the inline lowering for the *eligible*
 `( Cond *-> Then ; Else )` (plain Then/Else, plain-or-`call` condition) are
 implemented and default-on; `time/1` uses `*->`. The disassembly matches

@@ -95,10 +95,10 @@ public class GarbageCollectBuiltinTests
         // q/1: get_level fires at clause entry; numlist makes ~5000 cells of
         // garbage; garbage_collect slides the heap; the later '!' must still
         // commit to the barrier captured before the GC. Exactly one solution.
-        e.ConsultString(
-            ":- public q/1.\n"
-            + "q(X) :- numlist(1, 5000, _), garbage_collect, "
-            + "member(X, [a, b, c]), X == b, !.");
+        e.ConsultString("""
+            :- public q/1.
+            q(X) :- numlist(1, 5000, _), garbage_collect, member(X, [a, b, c]), X == b, !.
+            """);
         var sols = e.QueryAll("q(X).").ToList();
         Assert.Single(sols);
         Assert.Equal("b", sols[0]["X"]!.ToString());
@@ -110,11 +110,10 @@ public class GarbageCollectBuiltinTests
         var e = new PrologEngine();
         // The '->' compiles to a get_level + cut around the condition; GC
         // runs inside the condition, between capture and commit.
-        e.ConsultString(
-            ":- public r/1.\n"
-            + "r(R) :- numlist(1, 5000, _), "
-            + "( garbage_collect, member(X, [a, b, c]), X == b "
-            + "  -> R = X ; R = none ).");
+        e.ConsultString("""
+            :- public r/1.
+            r(R) :- numlist(1, 5000, _), ( garbage_collect, member(X, [a, b, c]), X == b   -> R = X ; R = none ).
+            """);
         var sol = e.Query("r(R).");
         Assert.True(sol.Success);
         Assert.Equal("b", sol["R"]!.ToString());
@@ -127,7 +126,12 @@ public class GarbageCollectBuiltinTests
         // The downstream symptom of the cut-barrier bug was a goal aliased
         // to a '-'/2 answer-table pair under tabling/meta-call. findall over
         // '-'/2 pairs with a GC mid-query must return them intact.
-        e.ConsultString(":- public p/2.\np(a, 1).\np(b, 2).\np(c, 3).");
+        e.ConsultString("""
+            :- public p/2.
+            p(a, 1).
+            p(b, 2).
+            p(c, 3).
+            """);
         var sol = e.Query(
             "numlist(1, 5000, _), garbage_collect, "
             + "findall(K-V, p(K, V), L), garbage_collect, "

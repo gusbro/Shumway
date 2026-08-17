@@ -20,6 +20,12 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "predicate_property/2 requires a PrologEngine host.");
         Term head = MaterializeRegister(engine, 0);
+        // SWI-compat: a Module:Head query answers for the bare predicate.
+        // Logtalk's compiler asks exactly this shape when it compiles a
+        // module-qualified call (`user:freeze(X, G)`) to learn whether the
+        // callee is a meta-predicate.
+        while (head is CompoundTerm { Functor: ":", Args.Length: 2 } qualified)
+            head = qualified.Args[1];
         int fid;
         switch (head)
         {
@@ -35,11 +41,18 @@ public static partial class MetaBuiltins
             default:
                 throw new ShumwayPrologException(IsoError.TypeError("callable", head));
         }
-        var props = host.PredicatePropertyAtomIds(fid);
-        if (props.Count == 0) return false;
+        var atomProps = host.PredicatePropertyAtomIds(fid);
+        if (atomProps.Count == 0) return false;
+        var props = new List<Term>(atomProps.Count + 1);
+        foreach (int atomId in atomProps)
+            props.Add(new AtomTerm(AtomTable.GetById(atomId)?.Name ?? "?"));
+        // The declared meta-template, when one was recorded (`:- meta_predicate`).
+        if (host._metaPredicateTemplates.TryGetValue(fid, out Term? template))
+            props.Add(new CompoundTerm("meta_predicate", new[] { template }));
         int returnPc = engine.BuiltinReturnPc;
         return Shumway.Core.IndexEnumCursor.Start(engine, props.Count, 2, returnPc,
-            (e, i) => e.UnifyRegisterWithCell(1, Cell.Atom(props[i])));
+            (e, i) => e.UnifyRegisterWithCell(
+                1, Materializer.MaterializeAsCell(e, props[i])));
     }
 
     /// <summary>Promotes a Core-level <see cref="PrologRuntimeException"/>
@@ -235,27 +248,9 @@ public static partial class MetaBuiltins
         return true;
     }
 
-    /// <summary>Shared helper: walks a sub-engine solution's bindings and
-    /// unifies each caller-heap variable (identified by the <c>_GN</c> name
-    /// convention) with the bound value materialised onto the caller's
-    /// heap. Returns <c>false</c> at the first unification failure so the
-    /// outer builtin can give up its current iteration.</summary>
-    private static bool BindBack(Activation engine, IReadOnlyDictionary<string, Term> bindings)
-    {
-        foreach (var (name, value) in bindings)
-        {
-            int addr = ExtractAddrFromName(name);
-            if (addr < 0) continue;
-            Cell boundCell = Materializer.MaterializeAsCell(engine, value);
-            int slot = engine.AllocateHeap(1);
-            engine.SetHeap(slot, boundCell);
-            if (!engine.Unify(addr, slot)) return false;
-        }
-        return true;
-    }
-
     // ============================================================================
-    // call/N — runtime meta-call via sub-engine + bind-back of input vars
+    // call/N — registered so the compiler emits call_builtin; dispatched
+    // IN THE LIVE ENGINE (never these bodies)
     // ============================================================================
 
     public static bool Call1(Activation engine) => CallN(engine, totalArity: 1);
@@ -275,26 +270,10 @@ public static partial class MetaBuiltins
         throw new InvalidOperationException(
             "'$call'/2 must be dispatched by the interpreter, not invoked directly.");
 
-    /// <summary><c>call(Goal, ExtraArgs...)</c> — runs <c>Goal</c> (optionally
-    /// extended with extra args appended to its argument list) in a peer
-    /// sub-engine and propagates each solution's bindings back into the
-    /// caller's heap.
-    ///
-    /// <para>Implementation: the input registers are read as
-    /// <see cref="Term"/>s with synthetic <c>_GN</c> variable names that
-    /// encode the caller's heap address. The composed goal runs in the
-    /// sub-engine; the resulting <see cref="Solution"/> binds each
-    /// <c>_GN</c>, and we use the embedded address to find the caller's
-    /// variable cell and unify it with the materialised bound term.</para>
-    ///
-    /// <para><b>Multi-solution support</b>: when the goal has
-    /// alternatives the builtin pushes a runtime IL-style choice point
-    /// before binding the first solution. On backtrack the CP's resume
-    /// delegate advances the sub-engine's enumerator, undoing the current
-    /// bindings (via the standard trail unwind) and applying the next
-    /// solution. This is what makes <c>maplist</c>, <c>forall</c>, and
-    /// other prelude predicates that meta-call backtracking goals work
-    /// correctly when the goal has more than one solution.</para></summary>
+    /// <summary><c>call(Goal, ExtraArgs...)</c> — like <c>'$call'/2</c>
+    /// above, the registration exists so the compiler emits a
+    /// <c>call_builtin</c>; the interpreter's <c>IsCall</c> routing runs the
+    /// goal in the live engine and this body must never be reached.</summary>
     private static bool CallN(Activation engine, int totalArity)
     {
         // DEAD PATH — must never run. call/N is dispatched IN THE LIVE ENGINE:
@@ -316,25 +295,6 @@ public static partial class MetaBuiltins
             "not here.");
     }
 
-    /// <summary>Pulls the next solution from <paramref name="iter"/> and
-    /// binds it back into <paramref name="engine"/>. The first
-    /// invocation (<paramref name="isResume"/> <c>false</c>) is from
-    /// inside <see cref="CallN"/> — the interpreter's call_builtin
-    /// success path advances PC by 9 (the opcode's size) so we don't
-    /// need to set it ourselves. Subsequent invocations (from a
-    /// backtrack-popped CP) <em>do</em> need to set PC explicitly via
-    /// <see cref="Activation.ResumeAtReturnPc"/> because the
-    /// PopIlChoicePointAndRestore path would otherwise drop us at the
-    /// outer continuation (the saved Cp), not the next instruction
-    /// after the original call_builtin.
-    ///
-    /// <para>The CP push happens <em>before</em> the bind-back so the
-    /// trail unwind on backtrack peels off the current solution's
-    /// bindings and leaves the heap in the state expected by the next
-    /// solution.</para></summary>
-    /// <summary><c>repeat/0</c> — succeeds, and pushes a choice point that
-    /// re-succeeds on every backtrack, re-arming itself each time. The
-    /// classic non-terminating generator for failure-driven loops.</summary>
     /// <summary><c>garbage_collect/0</c> (ADR-016) — mark-compacts the
     /// heap. A no-op when attributed variables are in use (the collector
     /// bails) or when there is nothing to reclaim.</summary>

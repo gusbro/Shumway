@@ -101,7 +101,10 @@ public class Chunk75Tests
     public void CallCount_IsTracked()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic ping/0.\nping.");
+        engine.ConsultString("""
+            :- dynamic ping/0.
+            ping.
+            """);
         Assert.Equal(0, engine.JitIndexing.CallCountFor(Fid("ping", 0)));
         engine.Query("ping.");
         engine.Query("ping.");
@@ -232,7 +235,11 @@ public class Chunk75Tests
         var engine = new PrologEngine();
         // `rare` is just an arbitrary data predicate here — not once/1,
         // which is now a library control predicate in the prelude.
-        engine.ConsultString(":- dynamic rare/1.\nrare(a).\nrare(b).");
+        engine.ConsultString("""
+            :- dynamic rare/1.
+            rare(a).
+            rare(b).
+            """);
         engine.Query("rare(a).");
         Assert.False(engine.JitIndexing.IsHot(Fid("rare", 1)));
         Assert.True(engine.DynamicPredicateCache.TryGetValue(Fid("rare", 1), out var cached));

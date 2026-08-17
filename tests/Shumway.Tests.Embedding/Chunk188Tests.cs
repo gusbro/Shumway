@@ -52,14 +52,15 @@ public class Chunk188Tests
         // the same answers as the bytecode interpreter.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            "callee(a).\n"
-            + "callee(b).\n"
-            + ":- public caller/1.\n"
-            + "caller(X) :- callee(X), check(X).\n"
-            + "caller(fallback).\n"
-            + "check(a).\n"
-            + "check(b).\n");
+        engine.ConsultString("""
+            callee(a).
+            callee(b).
+            :- public caller/1.
+            caller(X) :- callee(X), check(X).
+            caller(fallback).
+            check(a).
+            check(b).
+            """);
 
         var sols = engine.QueryAll("caller(X).")
             .Select(s => s.Bindings["X"].ToString())
@@ -76,13 +77,14 @@ public class Chunk188Tests
         // Backtracking must walk the callee's alternatives too.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            "pair(1, a).\n"
-            + "pair(1, b).\n"
-            + "pair(2, c).\n"
-            + ":- public lookup/2.\n"
-            + "lookup(K, V) :- pair(K, V).\n"
-            + "lookup(_, none).\n");
+        engine.ConsultString("""
+            pair(1, a).
+            pair(1, b).
+            pair(2, c).
+            :- public lookup/2.
+            lookup(K, V) :- pair(K, V).
+            lookup(_, none).
+            """);
 
         var sols = engine.QueryAll("lookup(1, V).")
             .Select(s => s.Bindings["V"].ToString())

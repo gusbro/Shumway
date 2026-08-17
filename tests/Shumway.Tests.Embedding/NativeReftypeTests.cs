@@ -120,11 +120,12 @@ public sealed class NativeReftypeTests
         // These clauses carry reftype-struct-tier native blocks that would NOT
         // compile (`(*Ref)->ntype`). Under arity_compat they are dropped and the
         // builtins take over — consult succeeds and the predicates work.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "reftype_term(_, R) :- { Ref: preftype; Ref is R; T is ((*Ref)->ntype) }, fail.\n" +
-            "fill_par(_, R) :- { Ref: preftype; Ref is R; 'freepar'(Ref) }, fail.\n" +
-            "use(In, Out) :- '$new_reftype_slot'(S), fill_par(In, S), reftype_term(Out, S).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            reftype_term(_, R) :- { Ref: preftype; Ref is R; T is ((*Ref)->ntype) }, fail.
+            fill_par(_, R) :- { Ref: preftype; Ref is R; 'freepar'(Ref) }, fail.
+            use(In, Out) :- '$new_reftype_slot'(S), fill_par(In, S), reftype_term(Out, S).
+            """);
         Assert.True(e.Query("use(foo(1, 2), T), T == foo(1, 2).").Success);
     }
 
@@ -163,15 +164,19 @@ public sealed class NativeReftypeTests
         int before = NativeBlockCompiler.CompiledCount;
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(TermInterop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nreftype par1ref;\nint bump(reftype);\n:- prolog.\n" +
-            "go(In, Out) :-\n" +
-            "  { Ptr: preftype; Ptr is &par1ref },\n" +
-            "  fill_par(In, Ptr),\n" +
-            "  { ret: int; ret = 'bump'(par1ref); Ret is ret },\n" +
-            "  Ret =:= 1,\n" +
-            "  reftype_term(Out, Ptr).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            reftype par1ref;
+            int bump(reftype);
+            :- prolog.
+            go(In, Out) :-
+              { Ptr: preftype; Ptr is &par1ref },
+              fill_par(In, Ptr),
+              { ret: int; ret = 'bump'(par1ref); Ret is ret },
+              Ret =:= 1,
+              reftype_term(Out, Ptr).
+            """);
         Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
         // both reftype blocks compiled to delegates (didn't fall back).
         Assert.True(NativeBlockCompiler.CompiledCount >= before + 2);
@@ -186,16 +191,20 @@ public sealed class NativeReftypeTests
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(TermInterop));
         e.IlPromotion.Threshold = 1;
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- public go/2.\n" +
-            ":- c.\nreftype par1ref;\nint bump(reftype);\n:- prolog.\n" +
-            "go(In, Out) :-\n" +
-            "  { Ptr: preftype; Ptr is &par1ref },\n" +
-            "  fill_par(In, Ptr),\n" +
-            "  { ret: int; ret = 'bump'(par1ref); Ret is ret },\n" +
-            "  Ret =:= 1,\n" +
-            "  reftype_term(Out, Ptr).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- public go/2.
+            :- c.
+            reftype par1ref;
+            int bump(reftype);
+            :- prolog.
+            go(In, Out) :-
+              { Ptr: preftype; Ptr is &par1ref },
+              fill_par(In, Ptr),
+              { ret: int; ret = 'bump'(par1ref); Ret is ret },
+              Ret =:= 1,
+              reftype_term(Out, Ptr).
+            """);
         for (int i = 0; i < 6; i++)
             Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
         // Phase 33 L2 — promotion is background by default; settle the
@@ -211,15 +220,19 @@ public sealed class NativeReftypeTests
     {
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(TermInterop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nreftype par1ref;\nint bump(reftype);\n:- prolog.\n" +
-            "go(In, Out) :-\n" +
-            "  { Ptr: preftype; Ptr is &par1ref },\n" +
-            "  fill_par(In, Ptr),\n" +
-            "  { ret: int; ret = 'bump'(par1ref); Ret is ret },\n" +
-            "  Ret =:= 1,\n" +
-            "  reftype_term(Out, Ptr).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            reftype par1ref;
+            int bump(reftype);
+            :- prolog.
+            go(In, Out) :-
+              { Ptr: preftype; Ptr is &par1ref },
+              fill_par(In, Ptr),
+              { ret: int; ret = 'bump'(par1ref); Ret is ret },
+              Ret =:= 1,
+              reftype_term(Out, Ptr).
+            """);
         // In=10 → C reads 10, builds result(11) into the slot → Out = result(11).
         Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
     }
@@ -281,15 +294,19 @@ public sealed class NativeReftypeTests
     {
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(DocInterop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nreftype buf;\nint swap_pair(reftype);\n:- prolog.\n" +
-            "swap(P, Q) :-\n" +
-            "  { Ptr: preftype; Ptr is &buf },\n" +
-            "  fill_par(P, Ptr),\n" +
-            "  { ret: int; ret = 'swap_pair'(buf); Ret is ret },\n" +
-            "  Ret =:= 1,\n" +
-            "  reftype_term(Q, Ptr).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            reftype buf;
+            int swap_pair(reftype);
+            :- prolog.
+            swap(P, Q) :-
+              { Ptr: preftype; Ptr is &buf },
+              fill_par(P, Ptr),
+              { ret: int; ret = 'swap_pair'(buf); Ret is ret },
+              Ret =:= 1,
+              reftype_term(Q, Ptr).
+            """);
         Assert.True(e.Query("swap(pair(1, 2), Q), Q == pair(2, 1).").Success);
     }
 

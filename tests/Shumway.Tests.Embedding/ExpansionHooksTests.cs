@@ -15,10 +15,11 @@ public class ExpansionHooksTests
     public void PrologLoadContext_ReportsTheModuleBeingLoaded()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- module(m1, [dummy/0]).\n" +
-            ":- prolog_load_context(module, X), assertz(loaded_module(X)).\n" +
-            "dummy.\n");
+        e.ConsultString("""
+            :- module(m1, [dummy/0]).
+            :- prolog_load_context(module, X), assertz(loaded_module(X)).
+            dummy.
+            """);
         Assert.Equal("m1", Assert.IsType<AtomTerm>(e.Query("loaded_module(X).")["X"]).Name);
     }
 
@@ -26,9 +27,10 @@ public class ExpansionHooksTests
     public void PrologLoadContext_DefaultsToUserForAModulelessFile()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- prolog_load_context(module, X), assertz(lm(X)).\n" +
-            "p.\n");
+        e.ConsultString("""
+            :- prolog_load_context(module, X), assertz(lm(X)).
+            p.
+            """);
         Assert.Equal("user", Assert.IsType<AtomTerm>(e.Query("lm(X).")["X"]).Name);
     }
 
@@ -37,12 +39,13 @@ public class ExpansionHooksTests
     {
         var e = new PrologEngine();
         // A GLOBAL (user) term_expansion hook records the module it is invoked for.
-        e.ConsultString(
-            "term_expansion(mark(_), (:- assertz(loaded_from(M)))) :- "
-            + "prolog_load_context(module, M).");
+        e.ConsultString("term_expansion(mark(_), (:- assertz(loaded_from(M)))) :- prolog_load_context(module, M).");
         // Load a file with its OWN module; its mark(_) triggers the hook. The hook
         // must see clientmod (the file being loaded), NOT user (the hook's module).
-        e.ConsultString(":- module(clientmod, []).\nmark(here).");
+        e.ConsultString("""
+            :- module(clientmod, []).
+            mark(here).
+            """);
         Assert.Equal("clientmod",
             Assert.IsType<AtomTerm>(e.Query("loaded_from(X).")["X"]).Name);
     }
@@ -71,7 +74,10 @@ public class ExpansionHooksTests
         // One defcolor → two DISTINCT predicates (contiguous); a second defcolor
         // would interleave color/is_color (our engine enforces contiguity), which
         // real term_expansion avoids by grouping — so keep one here.
-        e.ConsultString("defcolor(red).\nplain(x).");
+        e.ConsultString("""
+            defcolor(red).
+            plain(x).
+            """);
         Assert.True(e.Query("color(red).").Success);
         Assert.True(e.Query("is_color(red).").Success);
         Assert.True(e.Query("plain(x).").Success);                    // untouched
@@ -86,7 +92,10 @@ public class ExpansionHooksTests
         // matching terms are expanded by it (the downloaded-library path — the
         // library's own term_expansion works once it is loaded).
         e.ConsultString("term_expansion(macro(X), expanded(X)).");
-        e.ConsultString("macro(hello).\nplain(y).");
+        e.ConsultString("""
+            macro(hello).
+            plain(y).
+            """);
         Assert.True(e.Query("expanded(hello).").Success);
         Assert.True(e.Query("plain(y).").Success);
         Assert.False(e.Query("catch(macro(hello), _, fail).").Success);
@@ -109,9 +118,7 @@ public class ExpansionHooksTests
         // Scryer's extended term_expansion/6: Term0, Layout0, Ids0, Term, Layout,
         // Ids. The Ids set is threaded to stop re-expansion (clpz's `++>` grammar
         // uses exactly this). \+ member guards a single application.
-        e.ConsultString(
-            "user:term_expansion(mark6(X), _L0, Ids, replaced6(X), [], [done6|Ids]) :- "
-            + "\\+ member(done6, Ids).");
+        e.ConsultString("user:term_expansion(mark6(X), _L0, Ids, replaced6(X), [], [done6|Ids]) :- \\+ member(done6, Ids).");
         e.ConsultString("mark6(hi).");
         Assert.True(e.Query("replaced6(hi).").Success);
         Assert.False(e.Query("catch(mark6(hi), _, fail).").Success);
@@ -123,7 +130,10 @@ public class ExpansionHooksTests
         var e = new PrologEngine();
         // A shim rewrites old_api(X) body goals to new_api(X) — the shared X must
         // survive the rewrite (the head's R and the rewritten goal's arg are one).
-        e.ConsultString("goal_expansion(old_api(X), new_api(X)).\nnew_api(ok).");
+        e.ConsultString("""
+            goal_expansion(old_api(X), new_api(X)).
+            new_api(ok).
+            """);
         e.ConsultString("run(R) :- old_api(R).");
         Assert.Equal("ok", Assert.IsType<AtomTerm>(e.Query("run(R).")["R"]).Name);
     }
@@ -153,7 +163,10 @@ public class ExpansionHooksTests
             }
                 ? new Term[] { new CompoundTerm("registered", new[] { x }) }
                 : null);
-        e.ConsultString(":- register(foo).\n:- register(bar).");
+        e.ConsultString("""
+            :- register(foo).
+            :- register(bar).
+            """);
         Assert.True(e.Query("registered(foo).").Success);
         Assert.True(e.Query("registered(bar).").Success);
     }

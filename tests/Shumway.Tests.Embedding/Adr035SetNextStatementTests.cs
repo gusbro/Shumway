@@ -230,9 +230,16 @@ public class Adr035SetNextStatementTests
         //  7: choice(1).
         //  8: choice(2).
         //  9: use(_).
-        var engine = DebugEngine(
-            "runc(Out) :-\n    choice(X),\n    use(X),\n    !,\n" +
-            "    Out = done(X).\nchoice(1).\nchoice(2).\nuse(_).\n");
+        var engine = DebugEngine("""
+            runc(Out) :-
+                choice(X),
+                use(X),
+                !,
+                Out = done(X).
+            choice(1).
+            choice(2).
+            use(_).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 6) > 0);
 
         var (results, _, sols) = Run(engine, "runc(Out).", 4);
@@ -298,9 +305,14 @@ public class Adr035SetNextStatementTests
         //  2: run(Out) :- first(A), big(B), Out = done(A, B).
         //  3: first(1).
         //  4: big(N) :- numlist(1, 400000, L), length(L, N).
-        var engine = DebugEngine(
-            "run(Out) :-\n    first(A),\n    big(B),\n    Out = done(A, B).\n" +
-            "first(1).\nbig(N) :- numlist(1, 400000, L), length(L, N).\n");
+        var engine = DebugEngine("""
+            run(Out) :-
+                first(A),
+                big(B),
+                Out = done(A, B).
+            first(1).
+            big(N) :- numlist(1, 400000, L), length(L, N).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 5) > 0);   // Out = done(A, B)
 
         var (results, stops, sols) = Run(engine, "run(Out).", 3, -1);
@@ -328,11 +340,18 @@ public class Adr035SetNextStatementTests
         //  2: :- dynamic(c/1).  3: c(0).
         //  4: run(Out) :- one(A), two(B), three(C), Out = t(A, B, C).
         //  5..: one/two/three, each ending in !.
-        var engine = DebugEngine(
-            ":- dynamic(c/1).\nc(0).\n" +
-            "run(Out) :-\n    one(A),\n    two(B),\n    three(C),\n    Out = t(A, B, C).\n" +
-            "one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)), !.\n" +
-            "two(20) :- !.\nthree(30) :- !.\n");
+        var engine = DebugEngine("""
+            :- dynamic(c/1).
+            c(0).
+            run(Out) :-
+                one(A),
+                two(B),
+                three(C),
+                Out = t(A, B, C).
+            one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)), !.
+            two(20) :- !.
+            three(30) :- !.
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 8) > 0);   // Out = t(...)
 
         var (results, stops, sols) = Run(engine, "run(Out).", 5, -1);
@@ -407,10 +426,15 @@ public class Adr035SetNextStatementTests
         //  6: p(two) :-
         //  7:     note(c2).
         //  8: note(T) :- assertz(log(T)).
-        var engine = DebugEngine(
-            ":- dynamic(log/1).\nrp(Out) :- p(Out).\n" +
-            "p(one) :-\n    note(c1).\np(two) :-\n    note(c2).\n" +
-            "note(T) :- assertz(log(T)).\n");
+        var engine = DebugEngine("""
+            :- dynamic(log/1).
+            rp(Out) :- p(Out).
+            p(one) :-
+                note(c1).
+            p(two) :-
+                note(c2).
+            note(T) :- assertz(log(T)).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 5) > 0);   // note(c1) in clause 1
 
         var results = new List<string>();
@@ -451,12 +475,17 @@ public class Adr035SetNextStatementTests
         //  8: q(_, third) :-
         //  9:     note(c3).
         // 10: note(T) :- assertz(log(T)).
-        var engine = DebugEngine(
-            ":- dynamic(log/1).\nrq(Out) :- q(a, Out).\n" +
-            "q(a, first) :-\n    note(c1).\n" +
-            "q(b, second) :-\n    note(c2).\n" +
-            "q(_, third) :-\n    note(c3).\n" +
-            "note(T) :- assertz(log(T)).\n");
+        var engine = DebugEngine("""
+            :- dynamic(log/1).
+            rq(Out) :- q(a, Out).
+            q(a, first) :-
+                note(c1).
+            q(b, second) :-
+                note(c2).
+            q(_, third) :-
+                note(c3).
+            note(T) :- assertz(log(T)).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 5) > 0);   // note(c1) in clause 1
 
         var results = new List<string>();
@@ -503,12 +532,19 @@ public class Adr035SetNextStatementTests
         // 10:     { note(c2) },
         // 11:     [i].
         // 12: note(T) :- assertz(log(T)).
-        var engine = DebugEngine(
-            ":- dynamic(log/1).\n" +
-            "run(Out) :- phrase(greet(Out), [h,i]).\n" +
-            "greet(one) -->\n    [h],\n    { note(c1) },\n    [i].\n" +
-            "greet(two) -->\n    [h],\n    { note(c2) },\n    [i].\n" +
-            "note(T) :- assertz(log(T)).\n");
+        var engine = DebugEngine("""
+            :- dynamic(log/1).
+            run(Out) :- phrase(greet(Out), [h,i]).
+            greet(one) -->
+                [h],
+                { note(c1) },
+                [i].
+            greet(two) -->
+                [h],
+                { note(c2) },
+                [i].
+            note(T) :- assertz(log(T)).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 6) > 0);   // { note(c1) } in clause 1
 
         IReadOnlyList<int>? valid = null;
@@ -556,10 +592,17 @@ public class Adr035SetNextStatementTests
         //  8: p(three) :-
         //  9:     note(c3).
         // 10: note(T) :- assertz(log(T)).
-        var engine = DebugEngine(
-            ":- dynamic(log/1).\nrp(Out) :- p(Out).\n" +
-            "p(one) :-\n    note(c1).\np(two) :-\n    note(c2).\np(three) :-\n    note(c3).\n" +
-            "note(T) :- assertz(log(T)).\n");
+        var engine = DebugEngine("""
+            :- dynamic(log/1).
+            rp(Out) :- p(Out).
+            p(one) :-
+                note(c1).
+            p(two) :-
+                note(c2).
+            p(three) :-
+                note(c3).
+            note(T) :- assertz(log(T)).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 5) > 0);   // note(c1) in clause 1
 
         var results = new List<string>();
@@ -604,10 +647,14 @@ public class Adr035SetNextStatementTests
         //  5: p(two) :-
         //  6:     note(c2).
         //  7: note(T) :- assertz(log(T)).
-        var engine = DebugEngine(
-            ":- dynamic(log/1).\nrp(Out) :- p(Out).\n" +
-            "p(one) :- note(c1).\np(two) :-\n    note(c2).\n" +
-            "note(T) :- assertz(log(T)).\n");
+        var engine = DebugEngine("""
+            :- dynamic(log/1).
+            rp(Out) :- p(Out).
+            p(one) :- note(c1).
+            p(two) :-
+                note(c2).
+            note(T) :- assertz(log(T)).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 6) > 0);   // note(c2) in clause 2
 
         var results = new List<string>();
@@ -647,10 +694,17 @@ public class Adr035SetNextStatementTests
         // armed predicate at the chosen head line with NO variables (nothing entered
         // yet), the caller as frame 1 with its own valid lines — and frame 0's valid
         // lines are exactly the clause heads (still re-targetable).
-        var engine = DebugEngine(
-            ":- dynamic(log/1).\nrp(Out) :- p(Out).\n" +
-            "p(one) :-\n    note(c1).\np(two) :-\n    note(c2).\np(three) :-\n    note(c3).\n" +
-            "note(T) :- assertz(log(T)).\n");
+        var engine = DebugEngine("""
+            :- dynamic(log/1).
+            rp(Out) :- p(Out).
+            p(one) :-
+                note(c1).
+            p(two) :-
+                note(c2).
+            p(three) :-
+                note(c3).
+            note(T) :- assertz(log(T)).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 5) > 0);
 
         DebugStopEvent? pending = null;

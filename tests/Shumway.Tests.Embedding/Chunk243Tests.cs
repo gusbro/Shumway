@@ -109,7 +109,10 @@ public class Chunk243Tests
         // The Prolog source defines c243_user/2 — the arity matches
         // the post-ignore mapping.
         var engine = new PrologEngine();
-        engine.ConsultString(":- public people/1.\npeople(c243_user(diana, 31)).\n");
+        engine.ConsultString("""
+            :- public people/1.
+            people(c243_user(diana, 31)).
+            """);
         var sol = engine.Query("people(P).");
         var u = sol.Get<C243User>("P");
         Assert.Equal("diana", u.Name);

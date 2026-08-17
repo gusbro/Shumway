@@ -77,6 +77,14 @@ public sealed class PrologFlags
     /// the swi dialect load scope.</summary>
     public bool LenientQuoteCharLiteral { get; set; }
 
+    /// <summary>SWI-extension escape sequences in quoted tokens — <c>\e</c>
+    /// (ESC), <c>\s</c> (space), <c>\c</c> (skip following layout),
+    /// <c>\uXXXX</c>/<c>\UXXXXXXXX</c>. Not ISO: strict reading rejects them
+    /// as unknown escapes, which the conformance suite checks. Off by default;
+    /// enabled by the swi dialect load scope (ADR-040 — SWI library sources
+    /// use them freely).</summary>
+    public bool LenientEscapes { get; set; }
+
     /// <summary>SWI argument priority: arguments and list elements are read at
     /// full 1200 priority with the separators suppressed as operators — comma
     /// always, bar only inside lists (where it marks the tail). Verified

@@ -39,10 +39,11 @@ public class Chunk64TrimTests
         // below the just-pushed CP and corrupt subsequent state.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public pick/1.\n" +
-            "pick(X) :- atom(X).\n" +
-            "pick(X) :- number(X).\n");
+        engine.ConsultString("""
+            :- public pick/1.
+            pick(X) :- atom(X).
+            pick(X) :- number(X).
+            """);
         engine.Query("pick(foo).");   // warm Tier 1
         var sols = engine.QueryAll("(X = foo ; X = 7), pick(X).").ToList();
         Assert.Equal(2, sols.Count);
@@ -57,11 +58,12 @@ public class Chunk64TrimTests
         // counts if any single trim invalidated an outstanding CP.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public color/1.\n" +
-            ":- public size/1.\n" +
-            "color(red). color(green). color(blue).\n" +
-            "size(small). size(large).\n");
+        engine.ConsultString("""
+            :- public color/1.
+            :- public size/1.
+            color(red). color(green). color(blue).
+            size(small). size(large).
+            """);
         // 3 colors * 2 sizes = 6 cross-products, exercised end-to-
         // end via the standard Tier-0 backtracker but with Tier-1
         // promotion active for color/1, size/1.
@@ -78,13 +80,14 @@ public class Chunk64TrimTests
         // multi-clause query backtracks correctly even when every
         // intermediate level has a CP-pushing try_me_else.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public a/1.\n" +
-            ":- public b/1.\n" +
-            ":- public c/1.\n" +
-            "a(1). a(2).\n" +
-            "b(1). b(2).\n" +
-            "c(1). c(2).\n");
+        engine.ConsultString("""
+            :- public a/1.
+            :- public b/1.
+            :- public c/1.
+            a(1). a(2).
+            b(1). b(2).
+            c(1). c(2).
+            """);
         // 2 * 2 * 2 = 8 solutions, each one tested via a chain of
         // multi-clause backtrack returns.
         Assert.Equal(8, engine.QueryAll("a(X), b(Y), c(Z).").Count());
@@ -101,13 +104,14 @@ public class Chunk64TrimTests
         // the third goal here read a corrupted L. The fix emits the
         // no-trim sentinel for a last goal.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public ff/2.\n" +
-            "ff(N, _) :- member(N, [1,2]), fail.\n" +
-            "ff(_, L) :- L = [1,2].\n" +
-            ":- public gg/2.\n" +
-            "gg(M, _) :- member(M, [3,4]), fail.\n" +
-            "gg(_, K) :- K = [3,4].\n");
+        engine.ConsultString("""
+            :- public ff/2.
+            ff(N, _) :- member(N, [1,2]), fail.
+            ff(_, L) :- L = [1,2].
+            :- public gg/2.
+            gg(M, _) :- member(M, [3,4]), fail.
+            gg(_, K) :- K = [3,4].
+            """);
         // L is bound by ff and must survive the gg call to reach the
         // L == [1,2] test; likewise K must survive nothing but still
         // not be corrupted by ff's earlier trim.

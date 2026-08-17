@@ -291,7 +291,9 @@ public static class IOBuiltins
     /// <para>The format string may be an atom or a PSTR. The args list
     /// must be a proper list — pass <c>[]</c> when no args are needed.</para></summary>
     public static bool Format(Activation engine) =>
-        FormatImpl(engine, engine.Out, fmtReg: 0, argsReg: 1, "format/2");
+        // Current output via the registry (like every other output builtin):
+        // set_output/1 and with_output_to/2 must redirect format/2 too.
+        FormatImpl(engine, CurrentWriter(engine), fmtReg: 0, argsReg: 1, "format/2");
 
     /// <summary><c>format(Stream, FormatString, Args)</c> — stream-aware
     /// variant of <see cref="Format"/>. The stream handle must be a
@@ -427,6 +429,10 @@ public static class IOBuiltins
                             throw new PrologRuntimeException("instantiation_error");
                         if (head.Tag != Tag.Int)
                             throw new PrologRuntimeException("type_error", "character_code");
+                        // BMP-only, as char_code/2 (truncating builds another char).
+                        if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+                            throw new PrologRuntimeException(
+                                "representation_error", "character_code");
                         sb.Append((char)head.AsInt);
                         cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
                     }
@@ -569,11 +575,62 @@ public static class IOBuiltins
             return AtomTable.GetById(d.AsAtomId)?.Name ?? "";
         if (d.Tag == Tag.Pstr)
             return engine.AsPstrString(engine.Deref(c.AsHeapIndex));
+        // A format string may equally be a list of character CODES or of
+        // one-char atoms — which is what `format("...", …)` becomes under
+        // every double_quotes setting other than `atom`.
+        if (d.Tag == Tag.Lis)
+            return ReadTextListArg(engine, d);
         // A missing format string is instantiation_error; a wrong-typed
         // one is type_error(atom).
         if (d.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         throw new PrologRuntimeException("type_error", "atom");
+    }
+
+    /// <summary>Reads a code list or char list into text. The two are not
+    /// mixed: the first element decides which, and an element that does not
+    /// match it is a type error — a mixed list is a caller bug, not a third
+    /// notation.</summary>
+    private static string ReadTextListArg(Activation engine, Cell list)
+    {
+        var sb = new System.Text.StringBuilder();
+        Cell cur = list;
+        bool? codes = null;
+        while (cur.Tag == Tag.Lis)
+        {
+            Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
+            if (head.Tag == Tag.Ref)
+                throw new PrologRuntimeException("instantiation_error");
+
+            bool isCode = head.Tag == Tag.Int;
+            codes ??= isCode;
+            if (isCode != codes.Value)
+                throw new PrologRuntimeException("type_error", "atom");
+
+            if (isCode)
+            {
+                long code = head.AsInt;
+                if (code < 0 || code > 0x10FFFF)
+                    throw new PrologRuntimeException(
+                        "representation_error", "character_code");
+                sb.Append(char.ConvertFromUtf32((int)code));
+            }
+            else
+            {
+                if (head.Tag != Tag.Atom)
+                    throw new PrologRuntimeException("type_error", "atom");
+                string ch = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
+                if (ch.Length == 0)
+                    throw new PrologRuntimeException("type_error", "character");
+                sb.Append(ch);
+            }
+            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        }
+        if (cur.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
+            throw new PrologRuntimeException("type_error", "atom");
+        return sb.ToString();
     }
 
     private static List<Cell> ReadProperListAsCells(Activation engine, Cell c, string builtinName)

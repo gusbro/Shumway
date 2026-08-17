@@ -101,6 +101,6 @@ public class Chunk171Tests
     {
         // Backwards-compatible: the exception-on-error API is kept.
         Assert.Throws<InvalidOperationException>(
-            () => ShmoCompiler.CompileSource("bad(1, 2.\n"));
+            () => ShmoCompiler.CompileSource("bad(1, 2."));
     }
 }

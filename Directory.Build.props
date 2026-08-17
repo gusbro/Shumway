@@ -20,6 +20,13 @@
     <ShumwayTargetFrameworks>net10.0</ShumwayTargetFrameworks>
     <ShumwayTargetFrameworks Condition="'$(ShumwayNetFx)' == 'true'">net10.0;net48</ShumwayTargetFrameworks>
     <Authors>Gustavo Brown</Authors>
+    <!--
+      Keep in step with PrologEngine.VersionMajor/Minor/Patch — the constants
+      are what `version_data` and the top-level banner report, this is what
+      stamps the assemblies and the NuGet package. VersionAgreementTests pins
+      the two together.
+    -->
+    <Version>1.0.0</Version>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Copyright>Copyright (c) 2026 Gustavo Brown</Copyright>
     <LangVersion>latest</LangVersion>

@@ -30,9 +30,10 @@ public class GrammarBuiltinsTests
     {
         // phrase(noun, [dog]) → noun([dog], []), DCG rule consumes the whole list.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "noun --> [dog].\n" +
-            "noun --> [cat].\n");
+        engine.ConsultString("""
+            noun --> [dog].
+            noun --> [cat].
+            """);
         Assert.True(engine.Query("phrase(noun, [dog]).").Success);
         Assert.True(engine.Query("phrase(noun, [cat]).").Success);
         Assert.False(engine.Query("phrase(noun, [fish]).").Success);
@@ -44,7 +45,7 @@ public class GrammarBuiltinsTests
         // phrase(noun, Tokens, Rest) → noun(Tokens, Rest); Rest is whatever's
         // left after noun consumes its prefix.
         var engine = new PrologEngine();
-        engine.ConsultString("noun --> [dog].\n");
+        engine.ConsultString("noun --> [dog].");
         var sol = engine.Query("phrase(noun, [dog, runs], Rest).");
         Assert.True(sol.Success);
         Assert.Equal(List(Atom("runs")), sol["Rest"]);
@@ -55,7 +56,7 @@ public class GrammarBuiltinsTests
     {
         // phrase(greet(X), [hello, world]) → greet(X, [hello, world], []).
         var engine = new PrologEngine();
-        engine.ConsultString("greet(X) --> [hello, X].\n");
+        engine.ConsultString("greet(X) --> [hello, X].");
         var sol = engine.Query("phrase(greet(X), [hello, world]).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("world"), sol["X"]);
@@ -68,9 +69,10 @@ public class GrammarBuiltinsTests
         // — the call goes to whatever the user defined as phrase/2. Here
         // that's the DCG rule for the non-terminal called 'phrase'.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "verb --> [runs].\n" +
-            "phrase --> [the, dog], verb.\n");
+        engine.ConsultString("""
+            verb --> [runs].
+            phrase --> [the, dog], verb.
+            """);
         Assert.True(engine.Query("phrase([the, dog, runs], []).").Success);
     }
 

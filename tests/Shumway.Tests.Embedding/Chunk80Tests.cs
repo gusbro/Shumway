@@ -212,11 +212,12 @@ public class Chunk80Tests
         // Dynamic predicates are never module-mangled, so the in-engine
         // meta-call still resolves check/1 by its bare functor.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public verify_attributes/4.\n" +
-            ":- dynamic check/1.\n" +
-            "verify_attributes(m, _, V, [check(V)]).\n" +
-            "check(ok).");
+        engine.ConsultString("""
+            :- public verify_attributes/4.
+            :- dynamic check/1.
+            verify_attributes(m, _, V, [check(V)]).
+            check(ok).
+            """);
         Assert.True(engine.Query("put_attr(X, m, _), X = ok.").Success);
         Assert.False(engine.Query("put_attr(X, m, _), X = bad.").Success);
     }

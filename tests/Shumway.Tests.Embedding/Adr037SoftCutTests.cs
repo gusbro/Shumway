@@ -22,14 +22,14 @@ public class Adr037SoftCutTests
     [Fact]
     public void SoftCut_TakesThen_WhenCondSucceeds()
     {
-        var e = Load("pick(X, R) :- ( member(X, [1,2,3]) *-> R = got(X) ; R = none ).\n");
+        var e = Load("pick(X, R) :- ( member(X, [1,2,3]) *-> R = got(X) ; R = none ).");
         Assert.True(e.Query("pick(X, R), X == 1, R == got(1).").Success);
     }
 
     [Fact]
     public void SoftCut_RunsElse_WhenCondFails()
     {
-        var e = Load("pick(X, R) :- ( member(X, []) *-> R = got(X) ; R = none ).\n");
+        var e = Load("pick(X, R) :- ( member(X, []) *-> R = got(X) ; R = none ).");
         Assert.True(e.Query("pick(_, R), R == none.").Success);
     }
 
@@ -37,7 +37,7 @@ public class Adr037SoftCutTests
     public void SoftCut_ElseNotReachedOnBacktrack_WhenCondSucceeded()
     {
         // Once Cond succeeds, Else is pruned even under full backtracking.
-        var e = Load("pick(X, R) :- ( member(X, [1,2,3]) *-> R = X ; R = none ).\n");
+        var e = Load("pick(X, R) :- ( member(X, [1,2,3]) *-> R = X ; R = none ).");
         Assert.True(e.Query("findall(R, pick(_, R), L), L == [1,2,3].").Success);
     }
 
@@ -46,7 +46,7 @@ public class Adr037SoftCutTests
     {
         // THE distinguishing case vs ->: Then runs once per Cond solution, so all
         // three are produced (-> would commit to the first and give [t(1)]).
-        var e = Load("go(X, R) :- ( member(X, [1,2,3]) *-> R = t(X) ; R = none ).\n");
+        var e = Load("go(X, R) :- ( member(X, [1,2,3]) *-> R = t(X) ; R = none ).");
         Assert.True(e.Query("findall(R, go(_, R), L), L == [t(1),t(2),t(3)].").Success);
     }
 
@@ -55,7 +55,7 @@ public class Adr037SoftCutTests
     {
         // A deterministic Cond leaves the *-> deterministic (no lingering CP that
         // would re-enter Else on backtracking): exactly one answer, from Then.
-        var e = Load("d(R) :- ( X = 1 *-> R = X ; R = none ).\n");
+        var e = Load("d(R) :- ( X = 1 *-> R = X ; R = none ).");
         Assert.True(e.Query("findall(R, d(R), L), L == [1].").Success);
     }
 
@@ -78,9 +78,11 @@ public class Adr037SoftCutTests
     [Fact]
     public void SoftCut_CondBindingsFlowIntoThen()
     {
-        var e = Load(
-            "p(1).\np(2).\n" +
-            "f(R) :- ( p(X) *-> R = seen(X) ; R = none ).\n");
+        var e = Load("""
+            p(1).
+            p(2).
+            f(R) :- ( p(X) *-> R = seen(X) ; R = none ).
+            """);
         // First Cond solution binds X=1; Then sees it.
         Assert.True(e.Query("f(R), R == seen(1).").Success);
         // And all solutions, since *-> keeps p/1's choice point.
@@ -90,8 +92,7 @@ public class Adr037SoftCutTests
     [Fact]
     public void SoftCut_CondBindingsUndone_WhenElseRuns()
     {
-        var e = Load(
-            "f(In, R) :- ( In = bound(X) *-> R = then(X) ; R = els ).\n");
+        var e = Load("f(In, R) :- ( In = bound(X) *-> R = then(X) ; R = els ).");
         // Cond fails to unify (In is a different shape); Else runs, X unbound.
         Assert.True(e.Query("f(other, R), R == els.").Success);
     }
@@ -100,7 +101,7 @@ public class Adr037SoftCutTests
     public void SoftCut_CallCondition_Eligible()
     {
         // The time/1 shape: the condition is a call/1 of a variable goal.
-        var e = Load("run(G, R) :- ( call(G) *-> R = ok ; R = no ).\n");
+        var e = Load("run(G, R) :- ( call(G) *-> R = ok ; R = no ).");
         Assert.True(e.Query("run(true, R), R == ok.").Success);
         Assert.True(e.Query("run(fail, R), R == no.").Success);
         // Non-determinism through call/1 survives too.

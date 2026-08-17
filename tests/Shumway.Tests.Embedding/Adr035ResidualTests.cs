@@ -67,9 +67,13 @@ public class Adr035ResidualTests
         //   4:     X in 1..9, X #< Y, Y in 3..7,
         //   5:     mark(X, Y).
         //   6: mark(_, _).
-        var engine = DebugEngine(
-            ":- use_module(library(clpfd)).\n"
-            + "p(X, Y) :-\n    X in 1..9, X #< Y, Y in 3..7,\n    mark(X, Y).\nmark(_, _).\n");
+        var engine = DebugEngine("""
+            :- use_module(library(clpfd)).
+            p(X, Y) :-
+                X in 1..9, X #< Y, Y in 3..7,
+                mark(X, Y).
+            mark(_, _).
+            """);
         engine.AddBreakpoint("<string>", 5);
 
         var stop = Walk(engine, "p(A, B).")[0];
@@ -89,9 +93,13 @@ public class Adr035ResidualTests
     [Fact]
     public void DifAndFreezeShowAsResiduals()
     {
-        var engine = DebugEngine(
-            ":- use_module(library(coroutining)).\n"
-            + "p(X, Y, Z) :-\n    dif(X, Y), freeze(Z, true),\n    mark(X, Y, Z).\nmark(_, _, _).\n");
+        var engine = DebugEngine("""
+            :- use_module(library(coroutining)).
+            p(X, Y, Z) :-
+                dif(X, Y), freeze(Z, true),
+                mark(X, Y, Z).
+            mark(_, _, _).
+            """);
         engine.AddBreakpoint("<string>", 5);
 
         var stop = Walk(engine, "p(A, B, C).")[0];
@@ -104,7 +112,12 @@ public class Adr035ResidualTests
     [Fact]
     public void AFrameWithNoAttributedVariablesCarriesNoResiduals()
     {
-        var engine = DebugEngine("p(X) :-\n    X = plain,\n    mark(X).\nmark(_).\n");
+        var engine = DebugEngine("""
+            p(X) :-
+                X = plain,
+                mark(X).
+            mark(_).
+            """);
         engine.AddBreakpoint("<string>", 3);
 
         var stop = Walk(engine, "p(A).")[0];
@@ -117,8 +130,12 @@ public class Adr035ResidualTests
     {
         // attribute_goals/4 is the dynamic dispatcher every library joins; a hook that
         // throws must cost the constraints display, never the stop.
-        var engine = DebugEngine(
-            "p(X) :-\n    put_attr(X, boommod, payload),\n    mark(X).\nmark(_).\n");
+        var engine = DebugEngine("""
+            p(X) :-
+                put_attr(X, boommod, payload),
+                mark(X).
+            mark(_).
+            """);
         engine.QueryAll("assertz((attribute_goals(boommod, _, _, _) :- throw(boom))).")
             .ToList();
         engine.AddBreakpoint("<string>", 3);
@@ -133,9 +150,13 @@ public class Adr035ResidualTests
     [Fact]
     public void TheImmediateWindowSeesTheFrameVariablesConstraints()
     {
-        var engine = DebugEngine(
-            ":- use_module(library(clpfd)).\n"
-            + "p(X) :-\n    X in 1..9,\n    mark(X).\nmark(_).\n");
+        var engine = DebugEngine("""
+            :- use_module(library(clpfd)).
+            p(X) :-
+                X in 1..9,
+                mark(X).
+            mark(_).
+            """);
         engine.AddBreakpoint("<string>", 5);
 
         string getAttr = "";
@@ -179,10 +200,14 @@ public class Adr035ResidualTests
     [Fact]
     public void OnFrameGoal_PostsOnTheRealVariable_AndFailureRollsBack()
     {
-        var engine = DebugEngine(
-            ":- use_module(library(clpfd)).\n"
-            + "p(X) :-\n    X in 0..9,\n    mark(X),\n    once(labeling([up], [X])).\n"
-            + "mark(_).\n");
+        var engine = DebugEngine("""
+            :- use_module(library(clpfd)).
+            p(X) :-
+                X in 0..9,
+                mark(X),
+                once(labeling([up], [X])).
+            mark(_).
+            """);
         engine.AddBreakpoint("<string>", 5);
 
         string posted = "", dryRun = "", probeLow = "", probeHigh = "";
@@ -223,10 +248,14 @@ public class Adr035ResidualTests
     [Fact]
     public void SandboxLabeling_ShowsTheBindingPerSolution_AndBacktracksWithSemicolon()
     {
-        var engine = DebugEngine(
-            ":- use_module(library(clpfd)).\n"
-            + "p(X) :-\n    X in 6..9,\n    mark(X),\n    once(labeling([up], [X])).\n"
-            + "mark(_).\n");
+        var engine = DebugEngine("""
+            :- use_module(library(clpfd)).
+            p(X) :-
+                X in 6..9,
+                mark(X),
+                once(labeling([up], [X])).
+            mark(_).
+            """);
         engine.AddBreakpoint("<string>", 5);
 
         string first = "", second = "", third = "";
@@ -262,10 +291,14 @@ public class Adr035ResidualTests
         // repeated evals promote clpfd internals mid-stop, and the SECOND
         // on-frame post once died with "CallIl: no IL delegate for functor id N".
         // Threshold 1 makes every eval a promotion trigger.
-        var engine = DebugEngine(
-            ":- use_module(library(clpfd)).\n"
-            + "p(X) :-\n    X in 6..9,\n    mark(X),\n    once(labeling([up], [X])).\n"
-            + "mark(_).\n");
+        var engine = DebugEngine("""
+            :- use_module(library(clpfd)).
+            p(X) :-
+                X in 6..9,
+                mark(X),
+                once(labeling([up], [X])).
+            mark(_).
+            """);
         engine.IlPromotion.Threshold = 1;
         engine.AddBreakpoint("<string>", 5);
 
@@ -296,9 +329,13 @@ public class Adr035ResidualTests
     [Fact]
     public void ABreakpointConditionCanReadTheAttribute()
     {
-        var engine = DebugEngine(
-            ":- use_module(library(clpfd)).\n"
-            + "p(X) :-\n    X in 1..9,\n    mark(X).\nmark(_).\n");
+        var engine = DebugEngine("""
+            :- use_module(library(clpfd)).
+            p(X) :-
+                X in 1..9,
+                mark(X).
+            mark(_).
+            """);
         engine.AddBreakpoint("<string>", 5, "get_attr(X, clpfd, _)");
 
         var stops = Walk(engine, "p(V).");
@@ -385,9 +422,13 @@ public class Adr035ResidualTests
     [Fact]
     public void TheChannelCarriesResidualsThroughTheWire()
     {
-        var engine = DebugEngine(
-            ":- use_module(library(clpfd)).\n"
-            + "p(X) :-\n    X in 1..9,\n    mark(X).\nmark(_).\n");
+        var engine = DebugEngine("""
+            :- use_module(library(clpfd)).
+            p(X) :-
+                X in 1..9,
+                mark(X).
+            mark(_).
+            """);
         engine.AddBreakpoint("<string>", 5);
 
         DebugSnapshot? decoded = null;

@@ -39,9 +39,10 @@ public class Chunk53Tests
         // Run a query that errors inside a user predicate; the frame
         // for that predicate should carry the predicate's source pos.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public divider/2.\n" +
-            "divider(N, D) :- _ is N / D.\n");
+        engine.ConsultString("""
+            :- public divider/2.
+            divider(N, D) :- _ is N / D.
+            """);
         Assert.Throws<PrologRuntimeException>(
             () => engine.Query("divider(10, 0)."));
         var frames = engine.LastErrorStackTraceWithPositions;
@@ -75,9 +76,10 @@ public class Chunk53Tests
         // Plain and with-positions traces should contain the same
         // predicates in the same order.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public top/0.\n" +
-            "top :- _ is 1 / 0.\n");
+        engine.ConsultString("""
+            :- public top/0.
+            top :- _ is 1 / 0.
+            """);
         try { engine.Query("top."); } catch (PrologRuntimeException) { }
         var plain = engine.LastErrorStackTrace;
         var withPos = engine.LastErrorStackTraceWithPositions;

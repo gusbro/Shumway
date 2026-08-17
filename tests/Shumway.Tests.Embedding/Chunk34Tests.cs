@@ -48,10 +48,11 @@ public class Chunk34Tests
     {
         // `-` applied to a non-numeric arg stays as a compound (the
         // negative-literal collapse only fires for Integer / Float
-        // tokens), so the renderer's prefix-op path kicks in.
+        // tokens), so the renderer's prefix-op path kicks in. Spacing is
+        // fuse-minimal (Neumerkel #140: `-a`, not `- a`).
         var engine = WithCaptureOut(out var sw);
         engine.Query("write_term(- foo, []).");
-        Assert.Equal("- foo", sw.ToString());
+        Assert.Equal("-foo", sw.ToString());
     }
 
     [Fact]
@@ -126,7 +127,7 @@ public class Chunk34Tests
     public void Halt_InsideQueryAll_StopsIterationGracefully()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic v/1.\n");
+        engine.ConsultString(":- dynamic v/1.");
         engine.Query("assertz(v(1)).");
         engine.Query("assertz(v(2)).");
 

@@ -164,12 +164,17 @@ public class Adr036GotoTests
         //  8:     mark(in1),
         //  9:     mark(in2).
         // 10: mark(X) :- assertz(log(X)).
-        var (engine, session, server) = StartDebuggee(
-            ":- dynamic(log/1).\n" +
-            "main :- outer.\n" +
-            "outer :-\n    inner,\n    mark(after_inner).\n" +
-            "inner :-\n    mark(in1),\n    mark(in2).\n" +
-            "mark(X) :- assertz(log(X)).\n");
+        var (engine, session, server) = StartDebuggee("""
+            :- dynamic(log/1).
+            main :- outer.
+            outer :-
+                inner,
+                mark(after_inner).
+            inner :-
+                mark(in1),
+                mark(in2).
+            mark(X) :- assertz(log(X)).
+            """);
         using (session)
         using (server)
         using (var client = new DapTestClient(server.Port))
@@ -219,10 +224,11 @@ public class Adr036GotoTests
         // ADR-036 V5 — a breakpoint with a logMessage stops the MACHINE but never the
         // USER: an output event per hit, {Var} holes filled from the frame, and the
         // program runs to completion with no `stopped` event and no continue requests.
-        var (engine, session, server) = StartDebuggee(
-            ":- dynamic(log/1).\n" +
-            "run :- work(1), work(2), work(3).\n" +
-            "work(N) :- assertz(log(N)).\n");
+        var (engine, session, server) = StartDebuggee("""
+            :- dynamic(log/1).
+            run :- work(1), work(2), work(3).
+            work(N) :- assertz(log(N)).
+            """);
         using (session)
         using (server)
         using (var client = new DapTestClient(server.Port))

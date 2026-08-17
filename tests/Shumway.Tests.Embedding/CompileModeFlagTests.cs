@@ -48,7 +48,7 @@ public class CompileModeFlagTests
         // `:- set_prolog_flag(compile_mode, debug)` at the top takes effect for
         // predicates compiled afterwards in the same consult.
         var engine = new PrologEngine();
-        engine.ConsultString(":- set_prolog_flag(compile_mode, debug).\n");
+        engine.ConsultString(":- set_prolog_flag(compile_mode, debug).");
         Assert.True(engine.Flags.EmitDebugInfo);
     }
 

@@ -6,19 +6,11 @@ namespace Shumway.Embedding;
 
 public static partial class MetaBuiltins
 {
-    /// <summary><c>is_stream(@Term)</c> (SWI) — succeeds iff Term is a stream
-    /// handle (a Foreign cell wrapping a <see cref="Shumway.Core.StreamHandle"/>)
-    /// or a registered stream alias atom. Never throws — a non-stream fails.</summary>
+    /// <summary><c>is_stream(@Term)</c> (SWI) — succeeds iff Term is the
+    /// stream-term of an open stream (<c>'$stream'(Id)</c>) or a registered
+    /// stream alias atom. Never throws — a non-stream fails.</summary>
     public static bool IsStream(Activation engine)
-    {
-        Cell d = engine.GetRegister(0);
-        if (d.Tag == Tag.Ref) d = engine.GetHeap(engine.Deref(d.AsHeapIndex));
-        if (d.Tag == Tag.Foreign)
-            return engine.AsForeign<Shumway.Core.StreamHandle>(d) is not null;
-        if (d.Tag == Tag.Atom)
-            return engine.Streams?.GetByAlias(AtomTable.GetById(d.AsAtomId)?.Name ?? "") is not null;
-        return false;
-    }
+        => Shumway.Builtins.StreamBuiltins.IsOpenStream(engine, engine.GetRegister(0));
 
     /// <summary><c>current_stream(?Filename, ?Mode, ?Stream)</c> —
     /// ISO §8.11.8.1. Enumerates every registered stream on
@@ -43,10 +35,11 @@ public static partial class MetaBuiltins
         Activation engine, Shumway.Core.StreamHandle[] handles, int idx)
     {
         var h = handles[idx];
-        string fnText = h.Filename ?? h.Alias ?? "";
+        string fnText = h.Filename is string f
+            ? Shumway.Core.PrologPath.ToCanonical(f) : (h.Alias ?? "");
         Cell fnCell = Cell.Atom(AtomTable.Intern(fnText, permanent: false).Id);
         Cell modeCell = Cell.Atom(AtomTable.Intern(h.Mode, permanent: true).Id);
-        Cell streamCell = engine.MakeForeign(h);
+        Cell streamCell = Shumway.Builtins.StreamBuiltins.MakeStreamTerm(engine, h);
 
         if (!engine.UnifyRegisterWithCell(0, fnCell)) return false;
         if (!engine.UnifyRegisterWithCell(1, modeCell)) return false;
@@ -67,7 +60,8 @@ public static partial class MetaBuiltins
         foreach (var h in registry.All())
         {
             if (h.Filename is string fn)
-                pairs.Add((h, new CompoundTerm("file_name", new Term[] { new AtomTerm(fn) })));
+                pairs.Add((h, new CompoundTerm("file_name",
+                    new Term[] { new AtomTerm(Shumway.Core.PrologPath.ToCanonical(fn)) })));
             pairs.Add((h, new CompoundTerm("mode", new Term[] { new AtomTerm(h.Mode) })));
             if (h.Alias is string al)
                 pairs.Add((h, new CompoundTerm("alias", new Term[] { new AtomTerm(al) })));
@@ -98,7 +92,7 @@ public static partial class MetaBuiltins
         Activation engine, (Shumway.Core.StreamHandle Handle, Term Property)[] pairs, int idx)
     {
         var (h, prop) = pairs[idx];
-        Cell streamCell = engine.MakeForeign(h);
+        Cell streamCell = Shumway.Builtins.StreamBuiltins.MakeStreamTerm(engine, h);
         Cell propCell = Materializer.MaterializeAsCell(engine, prop);
 
         if (!engine.UnifyRegisterWithCell(0, streamCell)) return false;
@@ -245,12 +239,6 @@ public static partial class MetaBuiltins
         return h.Reader!;
     }
 
-    /// <summary>ISO graphic (symbol) chars — a run of these forms one symbol
-    /// atom token, so a '.' preceded by one is part of that token
-    /// (<c>=..</c>, <c>:-.</c>-less edge shapes) and never ends the clause.</summary>
-    private static bool IsGraphicChar(char c) => c is '#' or '$' or '&' or '*' or '+'
-        or '-' or '.' or '/' or ':' or '<' or '=' or '>' or '?' or '@' or '^' or '~' or '\\';
-
     private static bool ReadOneTermInto(Activation engine, System.IO.TextReader reader, int regOut)
     {
         Term? parsed = ParseOneTerm(engine, reader);
@@ -264,122 +252,19 @@ public static partial class MetaBuiltins
     }
 
     /// <summary>Accumulates the source text of one clause from
-    /// <paramref name="reader"/> up to its terminating solo <c>.</c> and parses
+    /// <paramref name="reader"/> (see <see cref="SentenceScanner"/>) and parses
     /// it with the engine's live operator table. Returns the parsed AST, or
     /// <c>null</c> when only layout/comments remained before end-of-file (the
     /// <c>end_of_file</c> case).</summary>
     private static Term? ParseOneTerm(Activation engine, System.IO.TextReader reader)
     {
-        // the old accumulation rule was "stop
-        // at any '.' followed by whitespace", which sliced `?X =.. ?Y` in
-        // half at univ's second dot (and would equally mis-split a dot
-        // inside a quoted atom, a string, or a comment). The end-of-clause
-        // token is a SOLO '.' followed by layout/EOF, so track just enough
-        // lexical state to recognise it: quoted contexts (' " `, with ''
-        // doubling and \-escapes), % line comments, /* */ block comments,
-        // 0'c char literals, and symbol runs (a '.' glued to a preceding
-        // graphic char is part of that symbol atom, not the terminator).
-        var sb = new System.Text.StringBuilder();
-        char quote = '\0';            // inside 'x' / "x" / `x` when non-zero
-        bool lineComment = false, blockComment = false;
-        char prev = '\0';             // previous char in Normal state
-        while (true)
-        {
-            int ci = reader.Read();
-            if (ci < 0)
-            {
-                // end_of_file when nothing but layout/comments accumulated —
-                // a trailing-whitespace file must yield end_of_file, not a
-                // syntax error.
-                if (IsLayoutOnly(sb))
-                    return null;   // end_of_file — only layout/comments remained
-                break;
-            }
-            char c = (char)ci;
-            sb.Append(c);
-
-            if (lineComment)
-            {
-                if (c == '\n') lineComment = false;
-                continue;
-            }
-            if (blockComment)
-            {
-                if (c == '/' && prev == '*') { blockComment = false; prev = '\0'; }
-                else prev = c;
-                continue;
-            }
-            if (quote != '\0')
-            {
-                if (c == '\\' && prev != '\\') { prev = c; continue; }
-                if (c == quote && prev != '\\')
-                {
-                    // '' doubling: peek — a second quote continues the token.
-                    if (reader.Peek() == quote) { sb.Append((char)reader.Read()); prev = '\0'; continue; }
-                    quote = '\0';
-                }
-                prev = c == '\\' && prev == '\\' ? '\0' : c;   // \\ consumes the escape
-                continue;
-            }
-
-            switch (c)
-            {
-                case '%':
-                    lineComment = true;
-                    prev = '\0';
-                    continue;
-                case '*' when prev == '/':
-                    blockComment = true;
-                    prev = '\0';
-                    continue;
-                case '\'':
-                    // 0'c char literal: consume the (possibly escaped) char raw.
-                    if (char.IsDigit(prev))
-                    {
-                        int lit = reader.Read();
-                        if (lit >= 0)
-                        {
-                            sb.Append((char)lit);
-                            if ((char)lit == '\\')
-                            {
-                                int esc = reader.Read();   // escape body head
-                                if (esc >= 0) sb.Append((char)esc);
-                            }
-                        }
-                        prev = '\0';
-                        continue;
-                    }
-                    quote = '\'';
-                    prev = '\0';
-                    continue;
-                case '"':
-                case '`':
-                    quote = c;
-                    prev = '\0';
-                    continue;
-                case '.':
-                    // Solo dot + following layout/EOF = end of clause.
-                    if (!IsGraphicChar(prev))
-                    {
-                        int next = reader.Peek();
-                        if (next < 0 || char.IsWhiteSpace((char)next) || next == '%')
-                            goto done;
-                    }
-                    prev = c;
-                    continue;
-                default:
-                    prev = c;
-                    continue;
-            }
-        }
-        done: ;
-
-        // parse with the engine's LIVE operator
-        // table, not the static default: a runtime `op/3` (e.g. the classic
-        // `op(200, fy, ['#', '?'])` before reading a spec file) must be in
-        // force for read/1,2, exactly as it already is for consult and
-        // string_term/2 (the E3 fix).
-        return ParseClauseText(engine, sb.ToString());
+        string? text = SentenceScanner.ReadSentenceText(reader, out _);
+        if (text is null) return null;
+        // Parse with the engine's LIVE operator table, not the static
+        // default: a runtime `op/3` (e.g. the classic `op(200, fy, ['#'])`
+        // before reading a spec file) must be in force for read/1,2, exactly
+        // as it already is for consult and string_term/2.
+        return ParseClauseText(engine, text);
     }
 
     /// <summary><c>read_term(+Stream, -Term, +Options)</c> — ISO §8.14.1. Reads
@@ -533,17 +418,27 @@ public static partial class MetaBuiltins
         => (engine.Host as PrologEngine)?.Operators
            ?? Shumway.Compiler.Parsing.OperatorTable.Default();
 
+    /// <summary>The engine's live flags, for the same reason as
+    /// <see cref="LiveOperators"/>: a runtime
+    /// <c>set_prolog_flag(double_quotes, chars)</c> must govern how
+    /// <c>read/1</c> parses a following <c>"..."</c> (Neumerkel #171 — the
+    /// query parser honoured it, the read family did not).</summary>
+    private static Shumway.Compiler.Parsing.PrologFlags LiveFlags(Activation engine)
+        => (engine.Host as PrologEngine)?.Flags
+           ?? new Shumway.Compiler.Parsing.PrologFlags();
+
     /// <summary>Parses one clause from <paramref name="source"/> with the live
-    /// operator table, converting a parser/lexer failure into a catchable ISO
-    /// <c>syntax_error</c> instead of letting a raw .NET exception escape (ISO
-    /// §7.10.3 — a malformed term read is a syntax error, catchable by the
-    /// program).</summary>
+    /// operator table and flags, converting a parser/lexer failure into a
+    /// catchable ISO <c>syntax_error</c> instead of letting a raw .NET
+    /// exception escape (ISO §7.10.3 — a malformed term read is a syntax
+    /// error, catchable by the program).</summary>
     private static Term ParseClauseText(Activation engine, string source)
     {
         try
         {
             var parser = new Shumway.Compiler.Parsing.Parser(
-                new Shumway.Compiler.Lexer.Lexer(source), LiveOperators(engine));
+                new Shumway.Compiler.Lexer.Lexer(source), LiveOperators(engine),
+                LiveFlags(engine));
             return parser.ReadClauseTerm();
         }
         catch (Exception ex) when (ex is Shumway.Compiler.Parsing.ParseException
@@ -598,96 +493,99 @@ public static partial class MetaBuiltins
     internal static void WireNumberFromChars(Activation engine)
         => engine.NumberFromChars = s => NumberFromCharsHook(engine, s);
 
-    /// <summary>True when the accumulated read/1 text holds no term — only
-    /// whitespace, <c>%</c> line comments, and <c>/* */</c> block comments.</summary>
-    private static bool IsLayoutOnly(System.Text.StringBuilder sb)
+    /// <summary><c>'$wot_begin'(Sink)</c> — the primitive under the prelude's
+    /// <c>with_output_to/2</c>: validates the sink (<c>atom(_)</c> /
+    /// <c>string(_)</c>) and redirects CURRENT OUTPUT — the stream registry's,
+    /// which is where every write-family builtin actually writes — to an
+    /// in-memory stream, remembering the handle it displaced. The GOAL then
+    /// runs in the LIVE engine — the old C# implementation spawned a
+    /// sub-engine, and every side effect the goal made (an <c>op/3</c>, an
+    /// <c>assertz</c>, a flag) silently vanished with it.</summary>
+    public static bool WotBegin(Activation engine)
     {
-        int i = 0, n = sb.Length;
-        while (i < n)
-        {
-            char ch = sb[i];
-            if (char.IsWhiteSpace(ch)) { i++; continue; }
-            if (ch == '%')
-            {
-                while (i < n && sb[i] != '\n') i++;
-                continue;
-            }
-            if (ch == '/' && i + 1 < n && sb[i + 1] == '*')
-            {
-                i += 2;
-                while (i + 1 < n && !(sb[i] == '*' && sb[i + 1] == '/')) i++;
-                i = System.Math.Min(n, i + 2);
-                continue;
-            }
-            return false;
-        }
-        return true;
-    }
-
-    /// <summary><c>with_output_to(Sink, Goal)</c> — runs <c>Goal</c> with
-    /// the engine's output sink temporarily redirected. It
-    /// recognises <c>atom(A)</c> and <c>string(S)</c> sinks: both capture
-    /// everything <c>Goal</c> writes (via <c>write/1</c>, <c>format/2</c>,
-    /// etc.) and unify the result with their inner variable. The sub-
-    /// engine spawned for <c>Goal</c> uses the redirected sink for the
-    /// duration of the call; the parent's <see cref="PrologEngine.Out"/>
-    /// is untouched.</summary>
-    public static bool WithOutputTo(Activation engine)
-    {
-        if (engine.Host is not PrologEngine host)
-            throw new InvalidOperationException(
-                "with_output_to/2 requires the engine to be hosted by a PrologEngine.");
-
-        // Read the Sink term (X[0]) and the Goal term (X[1]).
-        Cell sinkCell = ResolveLocal(engine, engine.GetRegister(0));
-        if (sinkCell.Tag != Tag.Str)
-            throw new ShumwayPrologException(
-                IsoError.TypeError("output_sink_spec", new VarTerm("_")));
-        int functorIdx = sinkCell.AsHeapIndex;
-        var (atomId, arity) = FunctorTable.Lookup(
-            engine.GetHeap(functorIdx).AsFunctorId);
-        string sinkType = AtomTable.GetById(atomId)?.Name ?? "";
-        if (arity != 1 || (sinkType != "atom" && sinkType != "string"))
-            throw new ShumwayPrologException(
-                IsoError.DomainError("output_sink", new VarTerm("_")));
-
-        Term goal = MaterializeRegister(engine, 1);
+        ReadSink(engine, out _, out _);   // validate before touching anything
+        var reg = engine.Streams
+            ?? throw new InvalidOperationException(
+                "with_output_to/2 requires the engine's stream registry.");
         // Memory capture is not a Windows text file: nl / ~n inside the goal
         // must contribute "\n" to the captured atom (GNU/SWI behaviour —
         // sub_atom(Captured, _, _, _, '\n') patterns rely on it), while file
         // streams keep the platform newline.
         var sw = new System.IO.StringWriter { NewLine = "\n" };
-        var sub = host.CreateSubEngine();
-        sub.Out = sw;
+        var handle = reg.Add(new StreamHandle(
+            reg.NextId(), sw, "write", filename: null, alias: null));
+        var stack = WotStackOf(engine);
+        stack.Push((reg.CurrentOutput, handle, sw, engine.Out));
+        reg.SetCurrentOutput(handle);
+        // Also swap Activation.Out: listing/1, portray_clause/1 and friends
+        // write through it directly (registry-less fallback path), and their
+        // output must be captured too.
+        engine.Out = sw;
+        return true;
+    }
 
-        bool succeeded = false;
-        foreach (Solution sol in sub.QueryAll(goal))
-        {
-            BindBack(engine, sol.Bindings);
-            succeeded = true;
-            break;
-        }
+    private static System.Collections.Generic.Stack<
+        (StreamHandle Prev, StreamHandle Mem, System.IO.StringWriter Sw,
+         System.IO.TextWriter PrevOut)>
+        WotStackOf(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "with_output_to/2 requires the engine to be hosted by a PrologEngine.");
+        return host.WotStack ??= new();
+    }
 
-        // Whether or not Goal succeeded, expose the captured text — that's
-        // the SWI convention. (Caller can still observe failure via the
-        // return value.)
+    /// <summary><c>'$wot_end'(Sink)</c> — pops the redirection installed by
+    /// <c>'$wot_begin'</c> and unifies the sink's argument with the captured
+    /// text (atom or string per the sink functor). Runs whether or not the
+    /// goal succeeded — the SWI convention exposes the capture either way —
+    /// so the prelude calls it from every arm of its catch.</summary>
+    public static bool WotEnd(Activation engine)
+    {
+        var reg = engine.Streams
+            ?? throw new InvalidOperationException(
+                "with_output_to/2 requires the engine's stream registry.");
+        var stack = WotStackOf(engine);
+        if (stack.Count == 0)
+            throw new InvalidOperationException(
+                "'$wot_end' without a matching '$wot_begin'.");
+        var (prev, mem, sw, prevOut) = stack.Pop();
+        reg.SetCurrentOutput(prev);
+        reg.Remove(mem);
+        engine.Out = prevOut;
         string captured = sw.ToString();
+
+        ReadSink(engine, out string sinkType, out int functorIdx);
         int sinkArgAddr = functorIdx + 1;
         if (sinkType == "atom")
         {
             int aid = AtomTable.Intern(captured, permanent: false).Id;
             int slot = engine.AllocateHeap(1);
             engine.SetHeap(slot, Cell.Atom(aid));
-            if (!engine.Unify(sinkArgAddr, slot)) return false;
+            return engine.Unify(sinkArgAddr, slot);
         }
         else // string
         {
             int pstrIdx = engine.MakePstr(captured);
             int slot = engine.AllocateHeap(1);
             engine.SetHeap(slot, Cell.Ref(pstrIdx));
-            if (!engine.Unify(sinkArgAddr, slot)) return false;
+            return engine.Unify(sinkArgAddr, slot);
         }
-        return succeeded;
+    }
+
+    private static void ReadSink(Activation engine, out string sinkType, out int functorIdx)
+    {
+        Cell sinkCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (sinkCell.Tag != Tag.Str)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("output_sink_spec", new VarTerm("_")));
+        functorIdx = sinkCell.AsHeapIndex;
+        var (atomId, arity) = FunctorTable.Lookup(
+            engine.GetHeap(functorIdx).AsFunctorId);
+        sinkType = AtomTable.GetById(atomId)?.Name ?? "";
+        if (arity != 1 || (sinkType != "atom" && sinkType != "string"))
+            throw new ShumwayPrologException(
+                IsoError.DomainError("output_sink", new VarTerm("_")));
     }
 
 }

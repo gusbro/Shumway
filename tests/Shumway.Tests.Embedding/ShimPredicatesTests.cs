@@ -104,10 +104,11 @@ public sealed class ShimPredicatesTests
     public void ModuleProperty_Exports()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- module(mymod, [foo/1, bar/2]).\n"
-            + "foo(1).\n"
-            + "bar(a, b).\n");
+        e.ConsultString("""
+            :- module(mymod, [foo/1, bar/2]).
+            foo(1).
+            bar(a, b).
+            """);
         // exports/1 lists the module's exported indicators.
         Assert.True(e.Query("module_property(mymod, exports(Es)), memberchk(foo/1, Es).").Success);
         Assert.True(e.Query("module_property(mymod, exports(Es)), memberchk(bar/2, Es).").Success);
@@ -117,7 +118,10 @@ public sealed class ShimPredicatesTests
     public void ModuleProperty_Class()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- module(mymod, [foo/1]).\nfoo(1).\n");
+        e.ConsultString("""
+            :- module(mymod, [foo/1]).
+            foo(1).
+            """);
         Assert.True(e.Query("module_property(mymod, class(library)).").Success);
         Assert.True(e.Query("module_property(user, class(user)).").Success);
     }
@@ -133,7 +137,10 @@ public sealed class ShimPredicatesTests
     public void ModuleProperty_EnumeratesModules()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- module(mymod, [foo/1]).\nfoo(1).\n");
+        e.ConsultString("""
+            :- module(mymod, [foo/1]).
+            foo(1).
+            """);
         // Unbound module: backtracks over loaded modules, binding the class of
         // each. mymod must appear as a library-class module.
         Assert.True(e.Query("module_property(M, class(library)), M == mymod.").Success);

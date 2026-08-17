@@ -40,7 +40,86 @@ core needs `builtins:parse_write_options`; the pack's `format/2,3` shim
 serves) and `time` (wraps `$cpu_now`; Shumway's native `time/1` + `sleep/1`
 serve — `current_time`/`format_time//2` are not available).
 
-## ✅ Supported — loads clean and runtime-validated
+## Writing code against these libraries
+
+Three things differ from writing the same code in Scryer itself. They are the
+usual first stumbles.
+
+**1. Set `double_quotes` to `chars` in YOUR file.** Scryer's APIs are
+chars-based throughout, and the `chars` default is applied *while a
+scryer-dialect library loads* — it does not extend to your own source, which
+uses Shumway's default (`string`). Without the flag you hand a PSTR (or codes)
+to an API expecting a chars list, and it silently fails or returns raw
+character codes:
+
+```prolog
+:- set_prolog_flag(double_quotes, chars).      % ← put this first
+:- use_module(library(csv)).
+```
+
+**2. A native Shumway builtin wins over an imported library predicate of the
+same name.** Importing a library does not shadow a builtin, so where Scryer
+implements something in Prolog that Shumway has natively, you get Shumway's —
+with Shumway's argument vocabulary. The one that bites: `char_type/2` is a
+Shumway builtin using the SWI category names, so `library(charsio)`'s Scryer
+categories are not reachable from your code.
+
+| you write | you get |
+|---|---|
+| `char_type(C, decimal_digit(W))` | **fails** — not a Shumway category |
+| `char_type(C, digit(W))` | works — the equivalent |
+| `char_type(C, lower(U))` / `upper(L)` | work (same spelling in both) |
+
+The Scryer *libraries themselves* are unaffected: internally they bottom out
+in the shim's `$char_type`, which does implement Scryer's full vocabulary.
+
+**3. Lambdas are `library(lambda)`, not yall.** `\X^Y^Goal` is available;
+`[X,Y]>>Goal` is the SWI pack's syntax and is not in scope here.
+
+```prolog
+?- maplist(\X^Y^(Y #= X*X), [1,2,3,4], Sq).    % Sq = [1,4,9,16]
+```
+
+### Worked examples
+
+All verified on Shumway with `-L "scryer:C:/Scryer/lib"`.
+
+```prolog
+:- set_prolog_flag(double_quotes, chars).
+:- use_module(library(clpz)).
+:- use_module(library(reif)).
+:- use_module(library(dcgs)).
+:- use_module(library(csv)).
+:- use_module(library(ugraphs)).
+
+% clp(Z) — SEND + MORE = MONEY
+puzzle([S,E,N,D]+[M,O,R,E] = [M,O,N,E,Y]) :-
+    Vs = [S,E,N,D,M,O,R,Y], Vs ins 0..9, all_different(Vs),
+    S*1000+E*100+N*10+D + M*1000+O*100+R*10+E #= M*10000+O*1000+N*100+E*10+Y,
+    M #\= 0, S #\= 0.
+%  ?- puzzle(P), term_variables(P, Vs), label(Vs).
+%  P = [9,5,6,7]+[1,0,8,5] = [1,0,6,5,2].
+
+%  reif — reified control, no cut, no negation
+%  ?- tfilter(=(a), [a,b,a,c], L).        L = [a,a].
+%  ?- if_(1 = 1, R = yes, R = no).        R = yes.
+
+%  dcgs — seq//1 and ...//0 split text declaratively
+%  ?- phrase((seq(User), "@", seq(Host)), "ana@example.org").
+%     User = [a,n,a], Host = [e,x,a,m,p,l,e,.,o,r,g].
+%  ?- phrase((..., "key", ...), "there is a key here").   % succeeds
+
+%  csv — header + typed rows (33 and 41 come back as INTEGERS)
+%  ?- phrase(parse_csv(Rows), "name,age\nana,33\nluis,41\n").
+%     Rows = frame([[n,a,m,e],[a,g,e]], [[[a,n,a],33],[[l,u,i,s],41]]).
+
+%  ugraphs
+%  ?- vertices_edges_to_ugraph([a,b,c,d], [a-b,b-c,a-c,c-d], G),
+%     top_sort(G, TS), neighbours(a, G, N), transitive_closure(G, TC).
+%     TS = [a,b,c,d], N = [b,c], and a reaches [b,c,d].
+```
+
+## Supported — loads clean and runtime-validated
 
 | library | exercised |
 |---|---|
@@ -68,7 +147,7 @@ serve — `current_time`/`format_time//2` are not available).
 | `ugraphs` | `add_vertices/3` |
 | `xpath` | `xpath/3` over a term DOM (pure — no sgml needed) |
 | `arithmetic` | `lcm/3`, `msb/2` |
-| `charsio` | `char_type/2` incl. the `lower(L)`/`upper(U)` string forms |
+| `charsio` | loads; `char_type/2` calls reach **Shumway's builtin**, not the library — SWI category names (`digit(W)`, `lower(U)`, `upper(L)`), not Scryer's (`decimal_digit(W)`). See "Writing code against these libraries" |
 | `format` | `format/2,3` (via the pack shim) |
 | `files` | `file_exists/1` and the FS family, chars↔atom converted |
 | `os` | `getenv/2` |
@@ -82,9 +161,20 @@ serve — `current_time`/`format_time//2` are not available).
 material**. `atts` is validated indirectly: it is the foundation the whole
 clpz/dif/freeze stack runs on.
 
-## ❌ Not supported — needs a capability Shumway does not have
+## Not supported — needs a capability Shumway does not have
 
-These load (harmlessly) but their purpose cannot be served:
+The engine capabilities behind these gaps, so it is clear what is missing and
+that none of it is a defect to report:
+
+| capability | status in Shumway | what it blocks here |
+|---|---|---|
+| **delimited continuations** (`reset/3`, `shift/1`) | not implemented — an execution-model feature, not a library | `cont`, and Scryer's tabling which is built on it (Shumway's native `:- table` covers the feature) |
+| **Rust-side FFI / sockets / TLS / process control** | absent by construction — Shumway's foreign interface is .NET (`[PrologPredicate]`) and C (`:- native`, P/Invoke), not Scryer's Rust ABI | `ffi`, `sockets`, `tls`, `wasm`, `process`, `sgml` |
+| **cryptographic primitives** | no crypto backend; the randomness on offer is a seedable PRNG, **not a CSPRNG** | `crypto` hashes / HKDF / curves. `hex_bytes/2` and byte generation work, but never for key material |
+| **introspection of Scryer's own VM** | not applicable — Shumway has its own bytecode and `shumway-disasm` | `diag` (`wam_instructions/2`) |
+
+With those in mind, the libraries below load (harmlessly) but their purpose
+cannot be served:
 
 | group | libraries | why |
 |---|---|---|

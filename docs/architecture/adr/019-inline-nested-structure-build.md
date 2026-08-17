@@ -1,6 +1,10 @@
 # ADR-019: Inline nested structure construction (`unify_structure` / `unify_list`)
 
-**Status:** Accepted — implemented chunk 314. Blint: get_list/get_structure
+## Status
+
+Shipped ([Phase 26](../../history/phase-26-closure.md)).
+
+Blint: get_list/get_structure
 2812 → 1387 (−51%), total WAM instructions 16008 → 14582 (−8.9%); `unify_list`
 emitted 1401×. Green across Tier-0, in-process Tier-1 IL, and cross-process
 persisted IL.

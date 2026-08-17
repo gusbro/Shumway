@@ -102,9 +102,11 @@ internal static partial class WebShumwayApp
             try
             {
                 StartEngine();
+                // Same version the desktop banner and version_data report.
                 return Tier0Only
-                    ? "Shumway ready (Tier-0 interpreter)."
-                    : "Shumway ready.";
+                    ? $"Shumway Prolog {PrologEngine.VersionString} ready "
+                      + "(Tier-0 interpreter)."
+                    : $"Shumway Prolog {PrologEngine.VersionString} ready.";
             }
             catch (Exception ex)
             {
@@ -252,6 +254,9 @@ internal static partial class WebShumwayApp
     {
         bool wasRunning = _run is not null;
         _run?.Cancel();
+        // A search stopped at a breakpoint is BLOCKED, not running: the token
+        // alone would never be observed. Wake it so it can see the cancel.
+        TryReleaseStop("continue");
         // Task<bool> rather than a bare Task: a non-generic Task is not
         // marshalable, and a synchronous void is not callable under threads.
         return Task.FromResult(wasRunning);
@@ -280,7 +285,7 @@ internal static partial class WebShumwayApp
     /// declared itself.</para></summary>
     [JSExport]
     internal static Task<string> Highlight(string source)
-        => OnEngine(() =>
+        => OnEngineOrParked(() =>
         {
             // Reads the LIVE operator table, which a consult mutates — hence the
             // gate. It also means highlighting waits behind a running search;
@@ -335,6 +340,8 @@ internal static partial class WebShumwayApp
     {
         _run?.Dispose();
         _run = null;
+        // A pause requested for a run that just ended must not ambush the next.
+        Volatile.Write(ref _breakNowRequested, 0);
     }
 
     /// <summary>The full diagnostic — the error plus the engine's call stack with

@@ -25,11 +25,14 @@ let engine = null;
  *        as it is written — a program that prints while it searches should be
  *        watchable while it runs.
  */
-export async function boot(onOutput, onAskForInput, onDiagnostic) {
+export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop) {
   const { dotnet } = await import('./_framework/dotnet.js');
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
   setModuleImports('main.js', {
-    ui: { write: onOutput, writeError: onDiagnostic, askForInput: onAskForInput },
+    ui: {
+      write: onOutput, writeError: onDiagnostic, askForInput: onAskForInput,
+      debugStopped: (json) => onDebugStop?.(JSON.parse(json)),
+    },
   });
   engine = (await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp;
   await runMain();
@@ -91,6 +94,51 @@ export const shareWorkspace = (query) => engine.ShareEncodeWorkspace(query);
 export async function shareDecode(encoded) {
   const json = await engine.ShareDecode(encoded);
   if (json === null) return null;
+  try { return JSON.parse(json); } catch { return null; }
+}
+
+// --- debug (spike) --------------------------------------------------------
+// The stop itself arrives through boot()'s onDebugStop: it is an EVENT from a
+// search that is mid-flight — its queryNext promise stays pending while
+// stopped, and resolves after debugResume lets the search go on.
+
+/** Restarts the engine debug-compiled with a debug session attached. Consult
+ *  again afterwards — debuggability is decided when a clause compiles. */
+export const debugEnable = async () => engine.DebugEnable();
+
+/** Sets (or removes) a breakpoint, optionally with a condition goal.
+ *  Breakpoints bind by file BASE NAME — pass the workspace file's name.
+ *  Resolves to null, or why it could not bind. */
+export const debugBreakpoint = async (file, line, set = true, condition = '') =>
+  engine.DebugBreakpoint(file, line, set, condition);
+
+/** Wakes a stopped search: 'continue' | 'into' | 'over' | 'out'.
+ *  Resolves false when nothing was stopped. */
+export const debugResume = async (mode = 'continue') => engine.DebugResume(mode);
+
+/** Asks the RUNNING search to pause at its next goal (Break All). */
+export const debugBreakNow = async () => engine.DebugBreakNow();
+
+/** Set Next Statement: move where the suspended query resumes to `line` on
+ *  `frame`, running nothing. Resolves to the re-captured stop (the arrow has
+ *  moved), or `{ error }`. */
+export async function debugSetNext(frame, line) {
+  const reply = await engine.DebugSetNextStatement(frame, line);
+  if (reply.startsWith('error:')) return { error: reply.slice(6).trim() };
+  try { return JSON.parse(reply); } catch { return { error: reply }; }
+}
+
+/** Evaluates a goal against a frame of the SUSPENDED query — the Immediate
+ *  window. `!goal` runs on the real frame; a bare `;` asks the parked
+ *  evaluation for its next solution. Resolves to the result text. */
+export const debugEvaluate = async (frameIndex, goal) =>
+  engine.DebugEvaluate(frameIndex, goal);
+
+/** The suspended query's frames as they are NOW (same JSON as the stop
+ *  event), for refreshing after `!` changed the frame — or null. */
+export async function debugFrames() {
+  const json = await engine.DebugFramesNow();
+  if (!json || json.startsWith('error')) return null;
   try { return JSON.parse(json); } catch { return null; }
 }
 

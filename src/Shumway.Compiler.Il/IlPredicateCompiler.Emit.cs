@@ -1445,10 +1445,10 @@ public sealed partial class IlPredicateCompiler
                 // The marker encodes (this delegate's functor id,
                 // siteIdx), so the dispatcher knows to re-invoke us at
                 // the forward-resume cursor. No recursive C# stack
-                // frame; backtracking through the callee's CPs
-                // naturally lands at the caller's marker again. The
-                // meta-CP push is gone — backtracking
-                // semantics fall out of the natural CP cascade.
+                // frame, and deliberately NO meta-CP push: backtracking
+                // through the callee's CPs naturally lands at the
+                // caller's marker again — the CP cascade alone carries
+                // the semantics.
                 if (callSiteIndexCounter is null || resumeLabels is null)
                     throw new InvalidOperationException(
                         "Threaded non-tail Call requires callSiteIndexCounter + "

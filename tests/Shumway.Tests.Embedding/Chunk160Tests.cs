@@ -181,8 +181,10 @@ public class Chunk160Tests
         //  + 1 buildMode                                 ← V2 addition
         //  + 1 arityCompat                               ← chunk 441
         //  + 4 definedCount + 4 nameLen + 1 ('p') + 4 arity + 1 visibility
-        // visibility byte is at offset 4+4+1 + 4+1 + 4 + 4 + 1 + 1 + 4 + 4+1 + 4 = 37.
-        bytes[37] = 99;
+        // Plus 12 bytes of generator version (3 × uint32), the FIRST body
+        // field — see ShmoWriter.
+        // visibility byte is at 4+4+1 + 12 + 4+1 + 4 + 4 + 1 + 1 + 4 + 4+1 + 4 = 49.
+        bytes[49] = 99;
         var ex = Assert.Throws<InvalidDataException>(() => ShmoReader.FromBytes(bytes));
         Assert.Contains("visibility", ex.Message);
     }

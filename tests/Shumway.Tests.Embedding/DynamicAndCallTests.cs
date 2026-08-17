@@ -22,7 +22,7 @@ public class DynamicAndCallTests
         // A declared-but-empty dynamic predicate exists at link time but
         // every call to it fails — it has no clauses yet.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic colour/1.\n");
+        engine.ConsultString(":- dynamic colour/1.");
         Assert.False(engine.Query("colour(red).").Success);
     }
 
@@ -30,7 +30,7 @@ public class DynamicAndCallTests
     public void Assertz_AppendsClauseToDynamicStore()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic fact/1.\n");
+        engine.ConsultString(":- dynamic fact/1.");
         engine.Query("assertz(fact(1)).");
         engine.Query("assertz(fact(2)).");
         engine.Query("assertz(fact(3)).");
@@ -43,7 +43,7 @@ public class DynamicAndCallTests
     public void Asserta_PrependsClauseToDynamicStore()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic v/1.\n");
+        engine.ConsultString(":- dynamic v/1.");
         engine.Query("assertz(v(2)).");
         engine.Query("assertz(v(3)).");
         engine.Query("asserta(v(1)).");
@@ -56,7 +56,7 @@ public class DynamicAndCallTests
     public void Retract_FirstMatchingClause_Removes()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic n/1.\n");
+        engine.ConsultString(":- dynamic n/1.");
         engine.Query("assertz(n(10)).");
         engine.Query("assertz(n(20)).");
         engine.Query("assertz(n(30)).");
@@ -71,7 +71,7 @@ public class DynamicAndCallTests
     public void Retract_NonexistentClause_Fails()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic v/1.\n");
+        engine.ConsultString(":- dynamic v/1.");
         engine.Query("assertz(v(1)).");
 
         Assert.False(engine.Query("retract(v(99)).").Success);
@@ -83,7 +83,7 @@ public class DynamicAndCallTests
         // retract(v(X)) — finds the first clause for v/1, removes it, and
         // binds X to that clause's head argument.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic v/1.\n");
+        engine.ConsultString(":- dynamic v/1.");
         engine.Query("assertz(v(first)).");
         engine.Query("assertz(v(second)).");
 
@@ -116,7 +116,7 @@ public class DynamicAndCallTests
     public void DynamicList_Form_Accepted()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic [a/0, b/1, c/2].\n");
+        engine.ConsultString(":- dynamic [a/0, b/1, c/2].");
         engine.Query("assertz(a).");
         engine.Query("assertz(b(x)).");
         engine.Query("assertz(c(1, 2)).");
@@ -130,7 +130,7 @@ public class DynamicAndCallTests
     public void DynamicRule_Asserted_BodyExecutes()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic double/2.\n");
+        engine.ConsultString(":- dynamic double/2.");
         engine.Query("assertz((double(X, Y) :- Y is X * 2)).");
         Assert.Equal(Int(14), engine.Query("double(7, R).")["R"]);
     }
@@ -141,7 +141,7 @@ public class DynamicAndCallTests
     public void Call1_Atom_InvokesPredicate()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("greet :- true.\n");
+        engine.ConsultString("greet :- true.");
         Assert.True(engine.Query("call(greet).").Success);
     }
 
@@ -149,7 +149,10 @@ public class DynamicAndCallTests
     public void Call1_Compound_InvokesAndBinds()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("colour(red).\ncolour(green).\n");
+        engine.ConsultString("""
+            colour(red).
+            colour(green).
+            """);
         var sol = engine.Query("call(colour(X)).");
         Assert.True(sol.Success);
         // Query/1 reports the first solution; call/N is backtrackable for
@@ -162,7 +165,7 @@ public class DynamicAndCallTests
     {
         // call(greet, world) → greet(world).
         var engine = new PrologEngine();
-        engine.ConsultString("greet(X) :- X = world.\n");
+        engine.ConsultString("greet(X) :- X = world.");
         var sol = engine.Query("call(greet, R).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("world"), sol["R"]);
@@ -191,7 +194,7 @@ public class DynamicAndCallTests
     public void Call_GoalFails_CallFails()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(1).\n");
+        engine.ConsultString("p(1).");
         Assert.False(engine.Query("call(p(2)).").Success);
     }
 
@@ -212,7 +215,7 @@ public class DynamicAndCallTests
     {
         // Assertz a clause, then invoke it via call/1.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic kind/2.\n");
+        engine.ConsultString(":- dynamic kind/2.");
         engine.Query("assertz(kind(cat, mammal)).");
         engine.Query("assertz(kind(snake, reptile)).");
 

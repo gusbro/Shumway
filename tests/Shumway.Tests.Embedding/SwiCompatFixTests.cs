@@ -23,7 +23,11 @@ public sealed class SwiCompatFixTests
     [Fact]
     public void LexerEscapes_e_and_u()
     {
+        // \e / \u / \U are SWI extensions, not ISO — the conformance suite
+        // requires strict rejection by default, so they ride the
+        // LenientEscapes flag the swi dialect scope sets (ADR-040).
         var e = new PrologEngine();
+        e.Flags.LenientEscapes = true;
         Assert.True(e.Query("0'\\e =:= 27.").Success);           // ESC
         Assert.True(e.Query("0'\\u0041 =:= 65.").Success);       // 'A'
         Assert.True(e.Query("0'\\U00000041 =:= 65.").Success);   // 'A' (8-digit)
@@ -35,13 +39,14 @@ public sealed class SwiCompatFixTests
         var e = new PrologEngine();
         // A module declaring SWI-specific directives that Shumway no-ops still
         // loads and its predicate works.
-        e.ConsultString(
-            ":- module(m, [p/1]).\n"
-            + ":- module_transparent p/1.\n"
-            + ":- volatile p/1.\n"
-            + ":- predicate_options(p/1, 1, [verbose(boolean)]).\n"
-            + ":- redefine_system_predicate(p/1).\n"
-            + "p(ok).\n");
+        e.ConsultString("""
+            :- module(m, [p/1]).
+            :- module_transparent p/1.
+            :- volatile p/1.
+            :- predicate_options(p/1, 1, [verbose(boolean)]).
+            :- redefine_system_predicate(p/1).
+            p(ok).
+            """);
         Assert.True(e.Query("m:p(ok).").Success);
     }
 }

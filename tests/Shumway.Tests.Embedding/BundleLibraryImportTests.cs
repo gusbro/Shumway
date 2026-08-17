@@ -48,7 +48,10 @@ public sealed class BundleLibraryImportTests : IDisposable
 
         var e = new PrologEngine { Out = new StringWriter() };
         e.AddLibraryDirectory(_dir);
-        e.ConsultString(":- use_module(library(greetlib)).\nuse(X) :- greet(X).\n");
+        e.ConsultString("""
+            :- use_module(library(greetlib)).
+            use(X) :- greet(X).
+            """);
 
         Assert.True(e.Query("use(hello).").Success);
     }
@@ -61,7 +64,7 @@ public sealed class BundleLibraryImportTests : IDisposable
 
         var e = new PrologEngine { Out = new StringWriter() };
         e.AddLibraryDirectory(_dir);
-        e.ConsultString(":- use_module(library(hidelib)).\n");
+        e.ConsultString(":- use_module(library(hidelib)).");
 
         Assert.True(e.Query("shown(yes).").Success);
         Assert.False(e.Query("catch(hidden(yes), _, fail).").Success);
@@ -75,7 +78,7 @@ public sealed class BundleLibraryImportTests : IDisposable
 
         var e = new PrologEngine { Out = new StringWriter() };
         e.AddLibraryDirectory(_dir);
-        e.ConsultString(":- use_module(library(piecelib), [one/1]).\n");
+        e.ConsultString(":- use_module(library(piecelib), [one/1]).");
 
         Assert.True(e.Query("one(1).").Success);
         Assert.False(e.Query("catch(two(2), _, fail).").Success);

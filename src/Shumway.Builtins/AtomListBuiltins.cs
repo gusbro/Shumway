@@ -397,6 +397,11 @@ public static class AtomListBuiltins
                 throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException("type_error", "character_code");
+            // BMP-only, same contract as char_code/2: silently casting would
+            // BUILD A DIFFERENT CHARACTER (0x10400 → 0x400).
+            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+                throw new PrologRuntimeException(
+                    "representation_error", "character_code");
             sb.Append((char)head.AsInt);
             cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
         }

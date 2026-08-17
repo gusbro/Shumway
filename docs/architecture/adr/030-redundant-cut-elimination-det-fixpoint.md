@@ -1,6 +1,10 @@
 # ADR-030: Redundant-cut elimination via a whole-program determinism fixpoint
 
-**Status:** **Accepted — intra-module elision shipped (default ON).** A sound,
+## Status
+
+Shipped (default on) ([Phase 33](../../history/phase-33-closure.md)).
+
+Intra-module elision plus the linker whole-program closure. A sound,
 mode-independent, cut-aware **determinism fixpoint** used to elide a cut that
 provably prunes nothing — dropping the cut, its `get_level`, and (where the cut
 was the sole reason) the environment frame, and turning `Head :- …, call, !.`

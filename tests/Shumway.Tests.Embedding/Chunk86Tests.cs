@@ -137,7 +137,11 @@ public class Chunk86Tests
         // A module-local predicate is linked under a mangled functor; the
         // runtime call resolves it by its bare name.
         var engine = new PrologEngine();
-        engine.ConsultString("colour(red).\ncolour(green).\ncolour(blue).");
+        engine.ConsultString("""
+            colour(red).
+            colour(green).
+            colour(blue).
+            """);
         Assert.True(engine.Query(
             "findall(C, call(colour(C)), L), L == [red, green, blue].").Success);
     }

@@ -54,9 +54,10 @@ public class ExportQualifiedModuleTests
     {
         using var libs = new LibSet().Add("greetq", GreetQ);
         var e = EngineWith(libs);
-        e.ConsultString(
-            ":- use_module(library(greetq)).\n" +
-            "main(X) :- hello(X).");
+        e.ConsultString("""
+            :- use_module(library(greetq)).
+            main(X) :- hello(X).
+            """);
         Assert.True(e.Query("main(world).").Success);
     }
 
@@ -65,9 +66,10 @@ public class ExportQualifiedModuleTests
     {
         using var libs = new LibSet().Add("greetq", GreetQ);
         var e = EngineWith(libs);
-        e.ConsultString(
-            ":- use_module(library(greetq)).\n" +
-            "peek(X) :- secret(X).");
+        e.ConsultString("""
+            :- use_module(library(greetq)).
+            peek(X) :- secret(X).
+            """);
         // secret/1 is defined in greetq but not exported → not imported → the
         // bare call finds no predicate (existence_error, caught to false).
         Assert.False(Holds(e, "peek(hidden)"));
@@ -81,10 +83,11 @@ public class ExportQualifiedModuleTests
             "hello(world).\n" +
             "bye(gone).\n");
         var e = EngineWith(libs);
-        e.ConsultString(
-            ":- use_module(library(greetq), [hello/1]).\n" +
-            "a(X) :- hello(X).\n" +
-            "b(X) :- bye(X).");
+        e.ConsultString("""
+            :- use_module(library(greetq), [hello/1]).
+            a(X) :- hello(X).
+            b(X) :- bye(X).
+            """);
         Assert.True(e.Query("a(world).").Success);
         Assert.False(Holds(e, "b(gone)"));   // bye/1 not imported
     }
@@ -94,9 +97,10 @@ public class ExportQualifiedModuleTests
     {
         using var libs = new LibSet().Add("greetq", GreetQ);
         var e = EngineWith(libs);
-        var ex = Record.Exception(() => e.ConsultString(
-            ":- use_module(library(greetq), [secret/1]).\n" +
-            "p(X) :- secret(X)."));
+        var ex = Record.Exception(() => e.ConsultString("""
+            :- use_module(library(greetq), [secret/1]).
+            p(X) :- secret(X).
+            """));
         Assert.NotNull(ex);
         Assert.Contains("secret", ex!.Message);
     }
@@ -110,9 +114,10 @@ public class ExportQualifiedModuleTests
             ":- module(usesmember, [check/2]).\n" +
             "check(E, L) :- member(E, L).\n");
         var e = EngineWith(libs);
-        e.ConsultString(
-            ":- use_module(library(usesmember)).\n" +
-            "run(E, L) :- check(E, L).");
+        e.ConsultString("""
+            :- use_module(library(usesmember)).
+            run(E, L) :- check(E, L).
+            """);
         Assert.True(e.Query("run(2, [1,2,3]).").Success);
         Assert.False(e.Query("run(9, [1,2,3]).").Success);
     }
@@ -130,10 +135,11 @@ public class ExportQualifiedModuleTests
             ":- some_unrecognised_directive_xyz.\n" +   // runs as a goal, warns
             "g.\n");
         var e = EngineWith(libs);
-        e.ConsultString(
-            ":- use_module(library(gendir)).\n" +
-            "run :- g.\n" +
-            "self :- write(ok).");
+        e.ConsultString("""
+            :- use_module(library(gendir)).
+            run :- g.
+            self :- write(ok).
+            """);
         Assert.True(e.Query("self.").Success);   // the program's own predicate resolves
         Assert.True(e.Query("run.").Success);    // and its call into the library
     }
@@ -146,9 +152,10 @@ public class ExportQualifiedModuleTests
         // The body call is a VARIABLE meta-call (call(G) with G bound at runtime)
         // — resolution goes through the runtime $mqual import path, not the
         // compile-time ModuleRewrite one.
-        e.ConsultString(
-            ":- use_module(library(greetq)).\n" +
-            "run(X) :- G = hello(X), call(G).");
+        e.ConsultString("""
+            :- use_module(library(greetq)).
+            run(X) :- G = hello(X), call(G).
+            """);
         Assert.True(e.Query("run(world).").Success);
     }
 
@@ -165,9 +172,10 @@ public class ExportQualifiedModuleTests
             "mypred(ok).\n" +
             "grab(T, Vs) :- term_variables(T, Vs).\n");   // local using the re-export
         var e = EngineWith(libs);
-        e.ConsultString(
-            ":- use_module(library(reterms)).\n" +
-            "direct(T, Vs) :- term_variables(T, Vs).");   // bare, via user import
+        e.ConsultString("""
+            :- use_module(library(reterms)).
+            direct(T, Vs) :- term_variables(T, Vs).
+            """);   // bare, via user import
         // A term with two distinct variables yields a 2-element list.
         Assert.True(e.Query("direct(f(X,Y,X), Vs), Vs = [_,_].").Success);
         // grab/2 is a library-local caller of the re-exported builtin.
@@ -189,9 +197,10 @@ public class ExportQualifiedModuleTests
                 ":- use_module(library(defmod)).\n" +
                 "own(mine).\n");
         var e = EngineWith(libs);
-        e.ConsultString(
-            ":- use_module(library(remod)).\n" +
-            "run(X) :- pepe(X).");
+        e.ConsultString("""
+            :- use_module(library(remod)).
+            run(X) :- pepe(X).
+            """);
         Assert.Equal("defined_in_a", e.QueryFirst<string>("run(X).", "X"));
         Assert.True(e.Query("own(mine).").Success);
     }
@@ -210,7 +219,10 @@ public class ExportQualifiedModuleTests
                 ":- module(top, [val/1]).\n" +
                 ":- use_module(library(middle)).\n");
         var e = EngineWith(libs);
-        e.ConsultString(":- use_module(library(top)).\nget(X) :- val(X).");
+        e.ConsultString("""
+            :- use_module(library(top)).
+            get(X) :- val(X).
+            """);
         Assert.Equal("deep", e.QueryFirst<string>("get(X).", "X"));
     }
 
@@ -222,11 +234,17 @@ public class ExportQualifiedModuleTests
             .Add("libb", ":- module(libb, [foo/1]).\nfoo(from_b).\n");
 
         var ea = EngineWith(libs);
-        ea.ConsultString(":- use_module(library(liba)).\nget(X) :- foo(X).");
+        ea.ConsultString("""
+            :- use_module(library(liba)).
+            get(X) :- foo(X).
+            """);
         Assert.Equal("from_a", ea.QueryFirst<string>("get(X).", "X"));
 
         var eb = EngineWith(libs);
-        eb.ConsultString(":- use_module(library(libb)).\nget(X) :- foo(X).");
+        eb.ConsultString("""
+            :- use_module(library(libb)).
+            get(X) :- foo(X).
+            """);
         Assert.Equal("from_b", eb.QueryFirst<string>("get(X).", "X"));
     }
 
@@ -239,10 +257,11 @@ public class ExportQualifiedModuleTests
             .Add("liba", ":- module(liba, [foo/1]).\nfoo(from_a).\n")
             .Add("libb", ":- module(libb, [foo/1]).\nfoo(from_b).\n");
         var e = EngineWith(libs);
-        e.ConsultString(
-            ":- use_module(library(liba)).\n" +
-            ":- use_module(library(libb)).\n" +
-            "get(X) :- foo(X).");
+        e.ConsultString("""
+            :- use_module(library(liba)).
+            :- use_module(library(libb)).
+            get(X) :- foo(X).
+            """);
         // liba was imported first; foo resolves to liba$foo.
         Assert.Equal("from_a", e.QueryFirst<string>("get(X).", "X"));
     }
@@ -260,10 +279,11 @@ public class ExportQualifiedModuleTests
             "seq([E|Es]) --> [E], seq(Es).\n" +
             "greeting --> [h, i].\n");
         var e = EngineWith(libs);
-        e.ConsultString(
-            ":- use_module(library(grams)).\n" +
-            "roundtrip(L) :- phrase(seq(L), [a, b, c]).\n" +
-            "greets :- phrase(greeting, [h, i]).");
+        e.ConsultString("""
+            :- use_module(library(grams)).
+            roundtrip(L) :- phrase(seq(L), [a, b, c]).
+            greets :- phrase(greeting, [h, i]).
+            """);
         Assert.True(Holds(e, "roundtrip([a,b,c])"));
         Assert.True(Holds(e, "greets"));
     }
@@ -275,10 +295,11 @@ public class ExportQualifiedModuleTests
         // use_module dependency) imports its exports into `user`, so they
         // are callable bare right after loading.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- module(direct, [hello/1]).\n" +
-            "hello(world).\n" +
-            "secret(x).\n");
+        e.ConsultString("""
+            :- module(direct, [hello/1]).
+            hello(world).
+            secret(x).
+            """);
         Assert.True(Holds(e, "hello(world)"));
         // Non-exported predicates stay module-local.
         Assert.Throws<Shumway.Core.PrologRuntimeException>(
@@ -310,10 +331,11 @@ public class ExportQualifiedModuleTests
         // (no runtime ':'/2 dispatch), reaching module-locals like the
         // runtime chain does.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- module(qm, [entry/1]).\n" +
-            "entry(X) :- hidden(X).\n" +
-            "hidden(inner_value).\n");
+        e.ConsultString("""
+            :- module(qm, [entry/1]).
+            entry(X) :- hidden(X).
+            hidden(inner_value).
+            """);
         e.ConsultString("probe(X) :- qm:hidden(X).");
         var sol = e.Query("probe(X).");
         Assert.True(sol.Success);
@@ -329,7 +351,10 @@ public class ExportQualifiedModuleTests
         // resolves statically. Either way the call must succeed.
         var e = new PrologEngine();
         e.ConsultString("probe2(X) :- lateqm:answer(X).");
-        e.ConsultString(":- module(lateqm, []).\nanswer(late_value).\n");
+        e.ConsultString("""
+            :- module(lateqm, []).
+            answer(late_value).
+            """);
         var sol = e.Query("probe2(X).");
         Assert.True(sol.Success);
         Assert.Equal("late_value", Assert.IsType<AtomTerm>(sol["X"]).Name);
@@ -341,9 +366,10 @@ public class ExportQualifiedModuleTests
         // Runtime semantics for an unknown module: mangled miss → imports
         // miss → bare-global. The static path must preserve that.
         var e = new PrologEngine();
-        e.ConsultString(
-            "shared_pred(bare_one).\n" +
-            "probe3(X) :- nosuchmod:shared_pred(X).");
+        e.ConsultString("""
+            shared_pred(bare_one).
+            probe3(X) :- nosuchmod:shared_pred(X).
+            """);
         var sol = e.Query("probe3(X).");
         Assert.True(sol.Success);
         Assert.Equal("bare_one", Assert.IsType<AtomTerm>(sol["X"]).Name);
@@ -358,9 +384,10 @@ public class ExportQualifiedModuleTests
             "'$copy_term_without_attr_vars'(f(X, g(X), 7), C), C = f(A, g(B), 7), A == B.")
             .Success);
         // An attributed variable copies as a fresh PLAIN variable.
-        e.ConsultString(
-            "t :- put_attr(V, m, 1), '$copy_term_without_attr_vars'(h(V), h(C)),\n" +
-            "     var(C), \\+ attvar(C), V \\== C.");
+        e.ConsultString("""
+            t :- put_attr(V, m, 1), '$copy_term_without_attr_vars'(h(V), h(C)),
+                 var(C), \+ attvar(C), V \== C.
+            """);
         Assert.True(e.Query("t.").Success);
     }
 }

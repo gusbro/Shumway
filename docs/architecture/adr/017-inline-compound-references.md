@@ -2,7 +2,9 @@
 
 ## Status
 
-**Accepted — implemented** (Phase 25; stage 1 lists, stage 2 structures).
+Shipped ([Phase 25](../../history/wam-vs-gprolog-blint.md); stage 1 lists,
+stage 2 structures).
+
 Before this ADR, list and structure construction — core to a Prolog engine —
 allocated one more heap cell per compound than the standard WAM; the inline
 two-cell representation removed that cell. Changing the on-heap shape of every list and structure is a "major

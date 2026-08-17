@@ -45,7 +45,10 @@ public class ModuleSystemTests
     public void ExplicitModule_NameIsRegistered()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- module(parser).\np(a).");
+        engine.ConsultString("""
+            :- module(parser).
+            p(a).
+            """);
         Assert.True(engine.Modules.ContainsKey("parser"));
     }
 
@@ -56,7 +59,10 @@ public class ModuleSystemTests
         // reach it — calling the bare 'p/1' raises existence_error, just
         // like any other undefined predicate.
         var engine = new PrologEngine();
-        engine.ConsultString(":- module(parser).\np(a).");
+        engine.ConsultString("""
+            :- module(parser).
+            p(a).
+            """);
         var ex = Assert.Throws<PrologRuntimeException>(() => engine.Query("p(X)."));
         Assert.Equal("existence_error", ex.Kind);
     }
@@ -65,11 +71,12 @@ public class ModuleSystemTests
     public void PublicPredicate_CallableFromUser()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(parser).\n" +
-            ":- public token/1.\n" +
-            "token(hello).\n" +
-            "token(world).\n");
+        engine.ConsultString("""
+            :- module(parser).
+            :- public token/1.
+            token(hello).
+            token(world).
+            """);
 
         Assert.True(engine.Query("token(hello).").Success);
         Assert.True(engine.Query("token(world).").Success);
@@ -80,12 +87,13 @@ public class ModuleSystemTests
     public void PublicPredicate_EnumeratesAllClauses()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(items).\n" +
-            ":- public item/1.\n" +
-            "item(apple).\n" +
-            "item(banana).\n" +
-            "item(cherry).\n");
+        engine.ConsultString("""
+            :- module(items).
+            :- public item/1.
+            item(apple).
+            item(banana).
+            item(cherry).
+            """);
 
         var items = engine.QueryAll("item(X).").Select(s => s["X"]).ToList();
         Assert.Equal(new[] { Atom("apple"), Atom("banana"), Atom("cherry") }, items);
@@ -97,12 +105,13 @@ public class ModuleSystemTests
     public void PublicListForm_ExportsAllNamed()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(lib).\n" +
-            ":- public [a/0, b/1, c/2].\n" +
-            "a.\n" +
-            "b(x).\n" +
-            "c(1, 2).\n");
+        engine.ConsultString("""
+            :- module(lib).
+            :- public [a/0, b/1, c/2].
+            a.
+            b(x).
+            c(1, 2).
+            """);
 
         Assert.True(engine.Query("a.").Success);
         Assert.True(engine.Query("b(x).").Success);
@@ -115,14 +124,16 @@ public class ModuleSystemTests
     public void TwoModules_PublicCallsAcrossWorks()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(lib).\n" +
-            ":- public double/2.\n" +
-            "double(X, Y) :- Y is X * 2.\n");
-        engine.ConsultString(
-            ":- module(client).\n" +
-            ":- public describe/2.\n" +
-            "describe(X, R) :- double(X, R).\n");
+        engine.ConsultString("""
+            :- module(lib).
+            :- public double/2.
+            double(X, Y) :- Y is X * 2.
+            """);
+        engine.ConsultString("""
+            :- module(client).
+            :- public describe/2.
+            describe(X, R) :- double(X, R).
+            """);
 
         Assert.Equal(Int(14), engine.Query("describe(7, R).")["R"]);
     }
@@ -134,16 +145,18 @@ public class ModuleSystemTests
         // clash in the linker. The mangling makes each module own its own
         // helper.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(mod_a).\n" +
-            ":- public ka/1.\n" +
-            "helper(a_value).\n" +
-            "ka(X) :- helper(X).\n");
-        engine.ConsultString(
-            ":- module(mod_b).\n" +
-            ":- public kb/1.\n" +
-            "helper(b_value).\n" +
-            "kb(X) :- helper(X).\n");
+        engine.ConsultString("""
+            :- module(mod_a).
+            :- public ka/1.
+            helper(a_value).
+            ka(X) :- helper(X).
+            """);
+        engine.ConsultString("""
+            :- module(mod_b).
+            :- public kb/1.
+            helper(b_value).
+            kb(X) :- helper(X).
+            """);
 
         Assert.Equal(Atom("a_value"), engine.Query("ka(X).")["X"]);
         Assert.Equal(Atom("b_value"), engine.Query("kb(X).")["X"]);
@@ -155,14 +168,16 @@ public class ModuleSystemTests
     public void TwoModules_SamePublicFunctor_RejectedAtQuery()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(a).\n" +
-            ":- public shared/1.\n" +
-            "shared(from_a).\n");
-        engine.ConsultString(
-            ":- module(b).\n" +
-            ":- public shared/1.\n" +
-            "shared(from_b).\n");
+        engine.ConsultString("""
+            :- module(a).
+            :- public shared/1.
+            shared(from_a).
+            """);
+        engine.ConsultString("""
+            :- module(b).
+            :- public shared/1.
+            shared(from_b).
+            """);
 
         // Validation happens at query time — that's the first opportunity to
         // notice the conflict in the simpler ConsultString flow.
@@ -178,17 +193,19 @@ public class ModuleSystemTests
     public void ExplicitModule_Reload_ReplacesPreviousContents()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(counter).\n" +
-            ":- public value/1.\n" +
-            "value(1).\n");
+        engine.ConsultString("""
+            :- module(counter).
+            :- public value/1.
+            value(1).
+            """);
         Assert.Equal(Int(1), engine.Query("value(N).")["N"]);
 
         // Re-consult the same module — the old value/1 disappears entirely.
-        engine.ConsultString(
-            ":- module(counter).\n" +
-            ":- public value/1.\n" +
-            "value(99).\n");
+        engine.ConsultString("""
+            :- module(counter).
+            :- public value/1.
+            value(99).
+            """);
         Assert.Equal(Int(99), engine.Query("value(N).")["N"]);
     }
 
@@ -200,10 +217,11 @@ public class ModuleSystemTests
         // is/2, write/1, etc. live in a global "system" namespace and are
         // never mangled.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(calc).\n" +
-            ":- public square/2.\n" +
-            "square(X, Y) :- Y is X * X.\n");
+        engine.ConsultString("""
+            :- module(calc).
+            :- public square/2.
+            square(X, Y) :- Y is X * X.
+            """);
         Assert.Equal(Int(49), engine.Query("square(7, Y).")["Y"]);
     }
 
@@ -215,12 +233,13 @@ public class ModuleSystemTests
         // A local helper that recursively calls itself — mangling must be
         // consistent between head and body.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(arith).\n" +
-            ":- public sum_to/2.\n" +
-            "sum_to(N, S) :- sum_to(N, 0, S).\n" +
-            "sum_to(0, Acc, Acc) :- !.\n" +
-            "sum_to(N, Acc, S) :- N > 0, N1 is N - 1, Acc1 is Acc + N, sum_to(N1, Acc1, S).\n");
+        engine.ConsultString("""
+            :- module(arith).
+            :- public sum_to/2.
+            sum_to(N, S) :- sum_to(N, 0, S).
+            sum_to(0, Acc, Acc) :- !.
+            sum_to(N, Acc, S) :- N > 0, N1 is N - 1, Acc1 is Acc + N, sum_to(N1, Acc1, S).
+            """);
 
         Assert.Equal(Int(55), engine.Query("sum_to(10, S).")["S"]);
     }

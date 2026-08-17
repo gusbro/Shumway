@@ -100,9 +100,13 @@ public class Adr036ResidualTests
     {
         var engine = new PrologEngine();
         var session = new ChannelDebugSession(engine);
-        engine.ConsultString(
-            ":- set_prolog_flag(compile_mode, debug).\n"
-            + "q(X) :-\n    X = plain,\n    mark(X).\nmark(_).\n");
+        engine.ConsultString("""
+            :- set_prolog_flag(compile_mode, debug).
+            q(X) :-
+                X = plain,
+                mark(X).
+            mark(_).
+            """);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
         var server = new DapDebugServer(session, port: 0);
         using (session)

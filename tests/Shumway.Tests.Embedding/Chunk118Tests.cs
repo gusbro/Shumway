@@ -92,7 +92,10 @@ public class Chunk118Tests
     public void CounterIdiom_RetractAssertInLoop()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic ctr/1.\nctr(0).");
+        e.ConsultString("""
+            :- dynamic ctr/1.
+            ctr(0).
+            """);
         Assert.True(e.Query(
             "between(1, 50, _), retract(ctr(N)), N1 is N + 1, assertz(ctr(N1)), " +
             "fail ; true.").Success);

@@ -661,10 +661,10 @@ public sealed partial class Activation
     ///   decodes back to the IL caller.</item>
     /// </list>
     /// Builtins that call <see cref="ResumeAtReturnPc"/> from inside a
-    /// CP-resume delegate must capture this value at push time (was
-    /// previously <c>engine.P + 9</c>, which only worked under Tier-0
-    /// because Pc happened to be the <c>call_builtin</c> opcode addr;
-    /// under Tier-1 Pc was stale and the resume landed mid-instruction).
+    /// CP-resume delegate must capture this value at push time — don't
+    /// derive it from <c>engine.P</c>: that only holds under Tier-0, where
+    /// Pc happens to be the <c>call_builtin</c> opcode address; under
+    /// Tier-1 Pc is stale and the resume lands mid-instruction.
     /// Public so persisted IL (loaded without InternalsVisibleTo) can
     /// set it from emitted code.</summary>
     public int BuiltinReturnPc { get; set; }

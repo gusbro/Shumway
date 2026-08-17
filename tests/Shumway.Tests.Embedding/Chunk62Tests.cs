@@ -25,11 +25,12 @@ public class Chunk62Tests
         //   clobbers a position before it's read. No save needed.
         // (Verified end-to-end by the predicate working correctly.)
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/2.\n" +
-            ":- public bar/3.\n" +
-            "foo(X, Y) :- bar(X, Y, _).\n" +
-            "bar(a, b, _).\n");
+        engine.ConsultString("""
+            :- public foo/2.
+            :- public bar/3.
+            foo(X, Y) :- bar(X, Y, _).
+            bar(a, b, _).
+            """);
         Assert.True(engine.Query("foo(a, b).").Success);
     }
 
@@ -42,11 +43,12 @@ public class Chunk62Tests
         //   head vars to fresh slots, then issues the puts. Slower
         //   than the optimal swap-via-temp but correct.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/2.\n" +
-            ":- public bar/2.\n" +
-            "foo(X, Y) :- bar(Y, X).\n" +
-            "bar(b, a).\n");
+        engine.ConsultString("""
+            :- public foo/2.
+            :- public bar/2.
+            foo(X, Y) :- bar(Y, X).
+            bar(b, a).
+            """);
         Assert.True(engine.Query("foo(a, b).").Success);
         Assert.False(engine.Query("foo(b, a).").Success);
     }
@@ -59,11 +61,12 @@ public class Chunk62Tests
         //   conservatively flag as needs-save. Correctness-wise the
         //   predicate still runs fine either way.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/1.\n" +
-            ":- public bar/1.\n" +
-            "foo(X) :- bar([X | _]).\n" +
-            "bar([42 | _]).\n");
+        engine.ConsultString("""
+            :- public foo/1.
+            :- public bar/1.
+            foo(X) :- bar([X | _]).
+            bar([42 | _]).
+            """);
         Assert.True(engine.Query("foo(42).").Success);
         Assert.False(engine.Query("foo(7).").Success);
     }
@@ -79,15 +82,16 @@ public class Chunk62Tests
         //   instruction-counting — the simpler signal that nothing's
         //   broken.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public foo/2.\n" +
-            ":- public p/1.\n" +
-            ":- public q/1.\n" +
-            ":- public r/2.\n" +
-            "foo(X, Y) :- p(X), q(Y), r(X, Y).\n" +
-            "p(a).\n" +
-            "q(b).\n" +
-            "r(a, b).\n");
+        engine.ConsultString("""
+            :- public foo/2.
+            :- public p/1.
+            :- public q/1.
+            :- public r/2.
+            foo(X, Y) :- p(X), q(Y), r(X, Y).
+            p(a).
+            q(b).
+            r(a, b).
+            """);
         Assert.True(engine.Query("foo(a, b).").Success);
     }
 }

@@ -30,12 +30,26 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     public static bool IsKnownLibraryDialect(string name) =>
         DialectRegistry.IsKnownDialect(name);
 
-    /// <summary>Shumway's version, as reported by the <c>version_data</c>
-    /// Prolog flag — <c>shumway(Major, Minor, Patch, [])</c>. Pre-release:
-    /// stays 0.x until the first official release.</summary>
-    public const int VersionMajor = 0;
-    public const int VersionMinor = 1;
+    /// <summary>Shumway's version. THE single source: the
+    /// <c>version_data</c> Prolog flag (<c>shumway(Major, Minor, Patch,
+    /// [])</c>), the top-level banner and the assembly stamp all derive from
+    /// these three numbers, so they can never disagree.</summary>
+    public const int VersionMajor = 1;
+    public const int VersionMinor = 0;
     public const int VersionPatch = 0;
+
+    /// <summary>The version as <c>Major.Minor.Patch</c>.</summary>
+    public static string VersionString =>
+        $"{VersionMajor}.{VersionMinor}.{VersionPatch}";
+
+    /// <summary>The top-level greeting — <c>Shumway Prolog 1.0.0 (64
+    /// bits)</c>, in the shape GNU Prolog's banner uses. The bitness is the
+    /// PROCESS's, not the machine's: a 32-bit .NET Framework host says
+    /// <c>32 bits</c>, which is what a caller sizing a program to the address
+    /// space needs to know (see the memory knees in ADR-043).</summary>
+    public static string VersionBanner =>
+        $"Shumway Prolog {VersionString} "
+        + $"({(Environment.Is64BitProcess ? 64 : 32)} bits)";
 
     /// <summary>Per-engine global-variable store backing
     /// the SWI <c>nb_setval/2</c> / <c>nb_getval/2</c> family.
@@ -170,6 +184,27 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     internal bool FileDiffersFromLoad(string fullPath)
         => _loadStamps.TryGetValue(fullPath, out var loaded) && StampOf(fullPath) != loaded;
 
+    /// <summary>Whether a source file is already loaded AND unchanged since —
+    /// i.e. whether <c>ensure_loaded/1</c> has nothing left to do. Changed on
+    /// disk counts as not-loaded, the same reading <c>use_module</c> takes:
+    /// someone is editing it, and a program running against a version that no
+    /// longer exists is the worse outcome.</summary>
+    /// <summary>Whether this path has been loaded at all, regardless of
+    /// whether it has changed since.</summary>
+    internal bool WasConsulted(string path)
+    {
+        try { return _consultedPaths.Contains(System.IO.Path.GetFullPath(path)); }
+        catch { return false; }
+    }
+
+    internal bool IsLoadedAndUnchanged(string path)
+    {
+        string full;
+        try { full = System.IO.Path.GetFullPath(path); }
+        catch { return false; }
+        return _consultedPaths.Contains(full) && !FileDiffersFromLoad(full);
+    }
+
     /// <summary>ADR-035 — functors whose module was declared :- disable_debug.
     /// Engine-wide (fids are global) and additive across consults.</summary>
     internal readonly HashSet<int> _nonDebuggableFunctors = new();
@@ -211,6 +246,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// once — so each object is self-contained and no shared dependency is
     /// double-seeded.</summary>
     internal readonly Dictionary<int, string> _dynamicDeclaringModule = new();
+
+    /// <summary>Meta-predicate templates from <c>:- meta_predicate(Spec)</c>
+    /// directives, keyed by the template's functor id as written (the bare
+    /// public name — which is what a <c>predicate_property/2</c> query
+    /// resolves). Surfaced as the <c>meta_predicate(Template)</c> property;
+    /// Logtalk's compiler reads it there to know a goal argument must be
+    /// wrapped for the calling context.</summary>
+    internal readonly Dictionary<int, Term> _metaPredicateTemplates = new();
 
     /// <summary>The module that declared a dynamic functor <c>:- dynamic</c>,
     /// or <c>null</c> if it was auto-promoted (implicit_dynamic) with no
@@ -335,6 +378,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// swap in a <see cref="System.IO.StringWriter"/> to capture program
     /// output in tests.</summary>
     public System.IO.TextWriter Out { get; set; } = Console.Out;
+
+    /// <summary>The output redirections <c>with_output_to/2</c> has open —
+    /// its goal runs in the LIVE engine with the stream registry's current
+    /// output pointed at an in-memory stream; <c>'$wot_end'</c> restores the
+    /// displaced handle. A stack, because captures nest.</summary>
+    internal System.Collections.Generic.Stack<(Shumway.Core.StreamHandle Prev,
+        Shumway.Core.StreamHandle Mem, System.IO.StringWriter Sw,
+        System.IO.TextWriter PrevOut)>? WotStack;
 
     /// <summary>Where load-time warnings go: a directive that failed, a
     /// <c>use_module</c> target that is not there, a directive nobody
@@ -722,6 +773,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             engine.MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
         }
         engine.LoadBundleCore(bundle, bundleDir);
+        // ADR-035 — the BAKED prelude is still the prelude: not the user's code,
+        // never debuggable. Without this a debug-compiled program on a baked-
+        // prelude engine (the browser's stdlib bundle, every --exe) steps into
+        // permutation/2, and the prelude's re-compiled clauses take stop sites
+        // attributed to the user's file. Marked AFTER LoadBundleCore so the
+        // module's clauses exist to resolve.
+        if (bundleHasPrelude)
+            engine.MarkModuleNonDebuggable(Prelude.ModuleName);
 
         // Now the bundle's modules are consulted (and their source materialised + announced),
         // so an attach-to-debug-from-the-first-goal launcher can safely wait for the debugger.

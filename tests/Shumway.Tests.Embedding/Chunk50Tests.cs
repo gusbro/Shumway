@@ -33,12 +33,13 @@ public class Chunk50Tests
         // so the Call to q + Execute r body shape now promotes.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public p/0.\n" +
-            ":- public q/0.\n" +
-            ":- public r/0.\n" +
-            "q. r.\n" +
-            "p :- q, r.\n");
+        engine.ConsultString("""
+            :- public p/0.
+            :- public q/0.
+            :- public r/0.
+            q. r.
+            p :- q, r.
+            """);
         Assert.True(engine.Query("p.").Success);
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("p", 0)));
     }
@@ -49,13 +50,14 @@ public class Chunk50Tests
         // chain :- a, b, c. — two Calls (a, b) + Execute (c).
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public chain/0.\n" +
-            ":- public a/0.\n" +
-            ":- public b/0.\n" +
-            ":- public c/0.\n" +
-            "a. b. c.\n" +
-            "chain :- a, b, c.\n");
+        engine.ConsultString("""
+            :- public chain/0.
+            :- public a/0.
+            :- public b/0.
+            :- public c/0.
+            a. b. c.
+            chain :- a, b, c.
+            """);
         Assert.True(engine.Query("chain.").Success);
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("chain", 0)));
     }
@@ -66,11 +68,12 @@ public class Chunk50Tests
         // The callee has head args (uses get_atom + proceed). Still a leaf.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public main/1.\n" +
-            ":- public check/1.\n" +
-            "check(ok).\n" +
-            "main(X) :- check(X), check(ok).\n");
+        engine.ConsultString("""
+            :- public main/1.
+            :- public check/1.
+            check(ok).
+            main(X) :- check(X), check(ok).
+            """);
         Assert.True(engine.Query("main(ok).").Success);
         Assert.False(engine.Query("main(no).").Success);
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("main", 1)));
@@ -83,12 +86,13 @@ public class Chunk50Tests
         // call fails, p's IL must propagate the failure.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public p/1.\n" +
-            ":- public q/1.\n" +
-            ":- public r/0.\n" +
-            "q(ok). r.\n" +
-            "p(X) :- q(X), r.\n");
+        engine.ConsultString("""
+            :- public p/1.
+            :- public q/1.
+            :- public r/0.
+            q(ok). r.
+            p(X) :- q(X), r.
+            """);
         Assert.True(engine.Query("p(ok).").Success);
         Assert.False(engine.Query("p(fail).").Success);
     }
@@ -103,13 +107,14 @@ public class Chunk50Tests
         // result as Tier-0.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public foo/0.\n" +
-            ":- public mid/0.\n" +
-            ":- public a/0.\n" +
-            "a.\n" +
-            "mid :- a, a.\n" +
-            "foo :- mid, a.\n");
+        engine.ConsultString("""
+            :- public foo/0.
+            :- public mid/0.
+            :- public a/0.
+            a.
+            mid :- a, a.
+            foo :- mid, a.
+            """);
         engine.Query("foo.");
         Assert.False(engine.IlPromotion.IsUnpromotable(FunctorId("foo", 0)));
         Assert.True(engine.Query("foo.").Success);
@@ -149,7 +154,10 @@ public class Chunk50Tests
         // greet("hello"). — head match against a PSTR uses get_pstr.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public greet/1.\ngreet(\"hello\").");
+        engine.ConsultString("""
+            :- public greet/1.
+            greet("hello").
+            """);
         Assert.True(engine.Query("greet(\"hello\").").Success);
         Assert.False(engine.Query("greet(\"world\").").Success);
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("greet", 1)));
@@ -162,7 +170,10 @@ public class Chunk50Tests
         // write mode constructs the PSTR on the heap and binds the var.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public greet/1.\ngreet(\"hello\").");
+        engine.ConsultString("""
+            :- public greet/1.
+            greet("hello").
+            """);
         var sol = engine.Query("greet(S).");
         Assert.True(sol.Success);
         Assert.Equal(Pstr("hello"), sol["S"]);
@@ -176,10 +187,11 @@ public class Chunk50Tests
         // resolves them via engine.CurrentStringLiterals.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public phrase/1.\n" +
-            "phrase(\"hola\").\n" +
-            "phrase(\"adios\").\n");
+        engine.ConsultString("""
+            :- public phrase/1.
+            phrase("hola").
+            phrase("adios").
+            """);
         // Multi-clause, both strings → indexed-atom path doesn't apply
         // (PSTRs aren't atoms). Falls to the try_me_else chain — outside
         // the current IL subset. So both queries answer via Tier 0.

@@ -22,9 +22,10 @@ public class Chunk110Tests
     public void PlainTailRecursion_RunsDeepInConstantStack()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "count(0).\n" +
-            "count(N) :- N > 0, N1 is N - 1, count(N1).");
+        engine.ConsultString("""
+            count(0).
+            count(N) :- N > 0, N1 is N - 1, count(N1).
+            """);
         Assert.True(engine.Query("count(100000).").Success);
     }
 
@@ -34,8 +35,7 @@ public class Chunk110Tests
         // The recursive call sits in the then-branch of (->)/2 — still a
         // last call, still optimised.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "loop(N) :- ( N > 0 -> N1 is N - 1, loop(N1) ; true ).");
+        engine.ConsultString("loop(N) :- ( N > 0 -> N1 is N - 1, loop(N1) ; true ).");
         Assert.True(engine.Query("loop(100000).").Success);
     }
 }

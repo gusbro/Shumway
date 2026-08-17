@@ -80,7 +80,10 @@ public class Adr035BreakTests
     [Fact]
     public void ABreakpointOnAFactsLine_StopsWhenTheClauseIsTried()
     {
-        var engine = DebugEngine("p(a).\np(b).\n");   // lines 2, 3
+        var engine = DebugEngine("""
+            p(a).
+            p(b).
+            """);   // lines 2, 3
 
         Assert.Equal(1, engine.AddBreakpoint("<string>", 3));
         var hits = HitsFor(engine, "p(X).", out int solutions);
@@ -95,7 +98,11 @@ public class Adr035BreakTests
         //   2: top(X) :- mid(X), tail(X).
         //   3: mid(7).
         //   4: tail(7).
-        var engine = DebugEngine("top(X) :- mid(X), tail(X).\nmid(7).\ntail(7).\n");
+        var engine = DebugEngine("""
+            top(X) :- mid(X), tail(X).
+            mid(7).
+            tail(7).
+            """);
 
         Assert.True(engine.AddBreakpoint("<string>", 4) > 0);   // tail/1's clause entry
         var hits = HitsFor(engine, "top(A).", out int solutions);
@@ -109,7 +116,10 @@ public class Adr035BreakTests
     {
         // The whole point of the patch model: debug-compiled code that nobody is
         // stopping in runs the same instructions release code would.
-        var engine = DebugEngine("top(X) :- mid(X).\nmid(7).\n");
+        var engine = DebugEngine("""
+            top(X) :- mid(X).
+            mid(7).
+            """);
 
         var hits = HitsFor(engine, "top(A).", out int solutions);
 
@@ -122,7 +132,10 @@ public class Adr035BreakTests
     {
         //   2: loop(0) :- !.
         //   3: loop(N) :- M is N - 1, loop(M).
-        var engine = DebugEngine("loop(0) :- !.\nloop(N) :- M is N - 1, loop(M).\n");
+        var engine = DebugEngine("""
+            loop(0) :- !.
+            loop(N) :- M is N - 1, loop(M).
+            """);
 
         Assert.True(engine.AddBreakpoint("<string>", 3) > 0);
         var hits = HitsFor(engine, "loop(5).", out int solutions);
@@ -137,7 +150,10 @@ public class Adr035BreakTests
     [Fact]
     public void RemovingABreakpoint_RestoresTheOriginalInstruction()
     {
-        var engine = DebugEngine("p(a).\np(b).\n");
+        var engine = DebugEngine("""
+            p(a).
+            p(b).
+            """);
 
         engine.AddBreakpoint("<string>", 3);
         Assert.NotEmpty(HitsFor(engine, "p(X).", out _));
@@ -153,7 +169,10 @@ public class Adr035BreakTests
     {
         // The armed SITE is the truth; the byte patches are re-derived per query,
         // because the code space can be relinked or compacted between them.
-        var engine = DebugEngine("p(a).\np(b).\n");
+        var engine = DebugEngine("""
+            p(a).
+            p(b).
+            """);
         engine.AddBreakpoint("<string>", 2);
 
         Assert.Single(HitsFor(engine, "p(a).", out _));
@@ -166,7 +185,11 @@ public class Adr035BreakTests
     {
         // Zero sites is how a debugger learns to draw a hollow breakpoint instead
         // of pretending it took.
-        var engine = DebugEngine("p(a).\n\n% just a comment\n");
+        var engine = DebugEngine("""
+            p(a).
+
+            % just a comment
+            """);
 
         Assert.Equal(0, engine.AddBreakpoint("<string>", 3));
         Assert.Equal(0, engine.AddBreakpoint("<string>", 4));
@@ -177,7 +200,10 @@ public class Adr035BreakTests
     public void ReleaseCode_HasNoStopSites_SoNothingBinds()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(a).\np(b).\n");
+        engine.ConsultString("""
+            p(a).
+            p(b).
+            """);
 
         Assert.Equal(0, engine.AddBreakpoint("<string>", 1));
         Assert.Empty(HitsFor(engine, "p(X).", out int solutions));
@@ -187,9 +213,12 @@ public class Adr035BreakTests
     [Fact]
     public void BreakpointsDoNotChangeWhatTheProgramComputes()
     {
-        var engine = DebugEngine(
-            "app([], L, L).\napp([H|T], L, [H|R]) :- app(T, L, R).\n"
-            + "rev([], []).\nrev([H|T], R) :- rev(T, RT), app(RT, [H], R).\n");
+        var engine = DebugEngine("""
+            app([], L, L).
+            app([H|T], L, [H|R]) :- app(T, L, R).
+            rev([], []).
+            rev([H|T], R) :- rev(T, RT), app(RT, [H], R).
+            """);
 
         // Break inside the hot recursion, in both predicates.
         engine.AddBreakpoint("<string>", 3);
@@ -208,7 +237,7 @@ public class Adr035BreakTests
     public void SitesResolveBackToTheirSourceLocation()
     {
         int file = DebugSiteTable.InternFile("<string>");
-        var engine = DebugEngine("distinctly_named(42).\n");   // line 2
+        var engine = DebugEngine("distinctly_named(42).");   // line 2
         engine.QueryAll("distinctly_named(_).").ToList();
 
         var sites = DebugSiteTable.SitesOnLine(file, 2);

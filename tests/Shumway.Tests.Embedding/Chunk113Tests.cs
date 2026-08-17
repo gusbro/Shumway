@@ -30,7 +30,10 @@ public class Chunk113Tests
     public void Repeat_DrivesAGeneratorToACondition()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic ctr/1.\nctr(0).");
+        e.ConsultString("""
+            :- dynamic ctr/1.
+            ctr(0).
+            """);
         // A repeat-driven failure loop: bump the counter until it reaches 5.
         Assert.True(e.Query(
             "repeat, retract(ctr(N)), N1 is N + 1, assertz(ctr(N1)), N1 >= 5, !.")

@@ -108,7 +108,10 @@ public class Chunk54Tests
     public void Foldl_SumsList()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public sum_step/3.\nsum_step(X, Acc, Out) :- Out is Acc + X.");
+        engine.ConsultString("""
+            :- public sum_step/3.
+            sum_step(X, Acc, Out) :- Out is Acc + X.
+            """);
         var sol = engine.Query("foldl(sum_step, [1, 2, 3, 4], 0, Total).");
         Assert.True(sol.Success);
         Assert.Equal(Int(10), sol["Total"]);
@@ -120,7 +123,10 @@ public class Chunk54Tests
         // foldl with the accumulator passed through unchanged should yield
         // the initial accumulator at the end (the chain just observes).
         var engine = new PrologEngine();
-        engine.ConsultString(":- public noop/3.\nnoop(_, A, A).");
+        engine.ConsultString("""
+            :- public noop/3.
+            noop(_, A, A).
+            """);
         var sol = engine.Query("foldl(noop, [a, b, c], hello, Out).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("hello"), sol["Out"]);

@@ -74,7 +74,12 @@ public class Chunk83Tests
     public void Findall_OverAUserPredicate()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public color/1.\ncolor(red).\ncolor(green).\ncolor(blue).");
+        engine.ConsultString("""
+            :- public color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
         Assert.True(engine.Query(
             "findall(C, color(C), L), L == [red, green, blue].").Success);
     }

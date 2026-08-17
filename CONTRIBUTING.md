@@ -28,7 +28,7 @@ embedding API, and the `compile` → `link` → `exe` toolchain. The
 
 ## The test gate
 
-A change is expected to keep the full gate green. It is five test projects:
+A change is expected to keep the full gate green. It is six test projects:
 
 ```
 tests/Shumway.Tests.Core/
@@ -36,7 +36,14 @@ tests/Shumway.Tests.Interpreter/
 tests/Shumway.Tests.Compiler/
 tests/Shumway.Tests.IsoConformance/
 tests/Shumway.Tests.Embedding/
+tests/Shumway.Tests.DialectInterop/
 ```
+
+`DialectInterop` always runs in the gate; its deep library sweeps
+additionally self-skip unless `SHUMWAY_SCRYER_LIB` / `SHUMWAY_SWI_LIB` point
+at real library checkouts, so a machine without them still gets a green,
+meaningful run. This section is the single source of truth for the gate —
+if another document disagrees with it, this one wins.
 
 `dotnet test` at the repository root runs them all. For engine-internal changes,
 the `Embedding` project is the one that exercises Tier-1 IL and the higher-level

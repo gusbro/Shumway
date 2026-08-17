@@ -82,7 +82,10 @@ public class Chunk122Tests
     [Fact]
     public void StaticPredicate_HasNoEnterDynamicOrCheckVisible()
     {
-        var module = Compile("s(1).\ns(2).\n");      // no dynamic marker
+        var module = Compile("""
+            s(1).
+            s(2).
+            """);      // no dynamic marker
         var pred = module.Predicates.Single(p => p.FunctorId == Functor("s", 1));
 
         Assert.False(ContainsOpcode(pred.Bytecode, Opcode.EnterDynamic));

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (Phase 1) — and long since built on: Tier-1 IL emits multi-clause
+Accepted ([Phase 1](../../history/phase-1-closure.md)).
+
+Long since built on: Tier-1 IL emits multi-clause
 predicates over this ABI (including fully indexed dispatch, Phase 20), region
 compilation composes whole predicate closures over it (Phase 29), and
 backtrackable builtins and the debugger's clause re-enter use the same IL

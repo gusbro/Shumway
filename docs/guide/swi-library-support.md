@@ -34,6 +34,76 @@ plumbing, …). It can also be loaded explicitly with
 `use_module(library(swi))`. `:- autoload(Lib, Imports)` is honoured as an
 eager `use_module` with its import list.
 
+## Writing code against these libraries
+
+**`double_quotes` usually needs no change.** Shumway's default is `string`
+(a PSTR), which behaves as a list of codes wherever a library consumes text,
+so `phrase(csv(Rows), "a,1\n")` works as written. Set `codes` explicitly only
+if a library inspects the text with `is_list/1` or similar. (While a
+swi-dialect library itself loads the flag is `codes` — what those library
+sources are written against.)
+
+**A native Shumway builtin wins over an imported library predicate of the same
+name.** Importing a library never shadows a builtin. This is what makes the
+"no-op (native)" resolutions below work, and it is also why a library's
+alternative argument vocabulary for a name Shumway already has (`char_type/2`
+is the usual one) is not reachable — you get Shumway's, which follows SWI's
+conventions anyway.
+
+### Worked examples
+
+All verified on Shumway with `-L "swi:c:/Program Files/swipl/library"`.
+
+```prolog
+:- use_module(library(csv)).
+:- use_module(library(dcg/basics)).
+:- use_module(library(solution_sequences)).
+:- use_module(library(url)).
+:- use_module(library(rbtrees)).
+:- use_module(library(heaps)).
+:- use_module(library(yall)).
+:- use_module(library(error)).
+
+dato(uno). dato(dos). dato(uno). dato(tres).
+
+%  csv — typed rows
+%  ?- phrase(csv(Rows), "ana,33\nluis,41\n").
+%     Rows = [row(ana,33), row(luis,41)].
+
+%  dcg/basics — real parsers without hand-rolling the lexer
+%  ?- phrase((integer(A), ",", integer(B)), "12,34").      A = 12, B = 34.
+
+%  solution_sequences
+%  ?- findall(X, distinct(dato(X)), L).     L = [uno,dos,tres].
+%  ?- findall(X, limit(2, dato(X)), L).     L = [uno,dos].
+
+%  url
+%  ?- parse_url('http://example.org:8080/a/b?x=1', P).
+%     P = [protocol(http),host(example.org),port(8080),path(/a/b),search([x=1])].
+
+%  rbtrees / heaps — real O(log n) structures
+%  ?- list_to_rbtree([b-2,a-1,c-3], T), rb_lookup(b, V, T).      V = 2.
+%  ?- list_to_heap([3-c,1-a,2-b], H), get_from_heap(H, K, V, _). K = 1, V = a.
+
+%  yall lambdas
+%  ?- maplist([X,Y]>>(Y is X*X), [1,2,3,4], Sq).                 Sq = [1,4,9,16].
+
+%  error
+%  ?- catch(must_be(integer, foo), error(E, _), true).  E = type_error(integer,foo).
+```
+
+`library(record)` is worth its own mention — it generates code from a
+declaration:
+
+```prolog
+:- use_module(library(record)).
+:- record point(x:integer=0, y:integer=0, label:atom=unnamed).
+
+?- make_point([x(3), y(4)], P).        % P = point(3,4,unnamed)
+?- point_x(P, X).                      % X = 3
+?- set_x_of_point(10, P, P2).          % P2 = point(10,4,unnamed)
+```
+
 ## How a `use_module(library(X))` resolves — and what "no-op" means
 
 1. **Baked native library** (`clpfd`, `clpr`, `coroutining`) — Shumway's own
@@ -59,7 +129,7 @@ A **no-op (native)** load means Shumway intercepts and its own implementation
 serves — the library *works*. A **no-op (unsupported)** load means the library
 is inert because the capability is absent — called out explicitly below.
 
-## ✅ Supported — loads clean and runtime-validated
+## Supported — loads clean and runtime-validated
 
 lists, apply (incl. yall lambdas), pairs, assoc, ordsets, **error** (`must_be`,
 `is_of_type`, incl. `acyclic`), aggregate, gensym, heaps, rbtrees, nb_rbtrees,
@@ -93,10 +163,23 @@ git, explain, obfuscate, rwlocks, www_browser, tty, vm.
 | `settings` | loads clean; the runtime `setting/4` machinery is unverified |
 | `crypto`-adjacent uses | random-derived values come from a seedable PRNG, **not cryptographically secure** |
 
-## ❌ Not supported — needs a capability Shumway does not have
+## Not supported — needs a capability Shumway does not have
 
-These load (only warning about their unsupported dependencies) but their
-purpose cannot be served — **no-op (unsupported)**:
+The engine capabilities behind these gaps, so it is clear what is missing and
+that none of it is a defect to report:
+
+| capability | status in Shumway | what it blocks here |
+|---|---|---|
+| **dict syntax** (`Tag{k:v}`, `X.key`, `#{...}`) | not implemented — a language/reader feature, so the files do not even parse | `dicts`, `pprint`, `statistics`, `strings`, `prolog_source`, `prolog_trace`, `prolog_jiti`, `prolog_deps`, `prolog_profile`, `tableutil`, `zip`, `shell` |
+| **real OS threads** | engines are thread-AGILE but single-threaded inside (an invariant, see `docs/architecture/invariants.md`); `with_mutex/2` and the message queues are single-threaded stubs | `thread`, `thread_pool`, `threadutil` |
+| **loading foreign shared libraries the SWI way** | Shumway's foreign interface is .NET (`[PrologPredicate]`, `--foreign-dll`) and C (`:- native` + P/Invoke); it does not load SWI `.so`/`.dll` plugins or save SWI states | `shlib`, `qsave`, `progman` |
+| **SWI VM / IDE internals** | not applicable — Shumway has its own clause store, debugger (ADR-035/036) and toolchain | `check`, `edit`, `make`, `prolog_autoload`, `prolog_breakpoints`, `prolog_clause`, `prolog_codewalk`, `prolog_colour`, `prolog_coverage`, `prolog_pack`, `prolog_qlfmake`, `prolog_xref`, `sandbox`, `check_installation` |
+| **cryptographic randomness** | the PRNG is seedable, **not a CSPRNG** | anything deriving key material; ordinary `random/1` and id generation are fine |
+| **user-defined evaluable functions** | `is/2` evaluation is not user-extensible (it needs global goal_expansion + module introspection) | `arithmetic`'s `arithmetic_function/1` (accepted and ignored) |
+
+With those in mind, the libraries below load (only warning about their
+unsupported dependencies) but their purpose cannot be served — **no-op
+(unsupported)**:
 
 | group | libraries | why |
 |---|---|---|

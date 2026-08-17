@@ -27,11 +27,12 @@ public class Chunk240Tests
     public void Query_ExplicitVariable_MultiSolutionStream()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public colour/1.\n"
-            + "colour(red).\n"
-            + "colour(green).\n"
-            + "colour(blue).\n");
+        engine.ConsultString("""
+            :- public colour/1.
+            colour(red).
+            colour(green).
+            colour(blue).
+            """);
         var values = engine.Query<string>("colour(C).", "C").ToList();
         Assert.Equal(new[] { "red", "green", "blue" }, values);
     }
@@ -40,10 +41,11 @@ public class Chunk240Tests
     public void Query_TypedListResult_PerSolution()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public team/1.\n"
-            + "team([alice, bob]).\n"
-            + "team([carol]).\n");
+        engine.ConsultString("""
+            :- public team/1.
+            team([alice, bob]).
+            team([carol]).
+            """);
         var teams = engine.Query<List<string>>("team(L).", "L").ToList();
         Assert.Equal(2, teams.Count);
         Assert.Equal(new[] { "alice", "bob" }, teams[0]);
@@ -63,7 +65,10 @@ public class Chunk240Tests
     public void Query_AutoDetect_MultipleVariables_Throws()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public p/2.\np(1, 2).\n");
+        engine.ConsultString("""
+            :- public p/2.
+            p(1, 2).
+            """);
         var ex = Assert.Throws<InvalidOperationException>(
             () => engine.Query<int>("p(X, Y).").ToList());
         Assert.Contains("multiple variables", ex.Message);
@@ -73,7 +78,10 @@ public class Chunk240Tests
     public void Query_ExplicitVariable_UnknownName_Throws()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public p/1.\np(7).\n");
+        engine.ConsultString("""
+            :- public p/1.
+            p(7).
+            """);
         var ex = Assert.Throws<InvalidOperationException>(
             () => engine.Query<int>("p(X).", "Z").ToList());
         Assert.Contains("does not bind", ex.Message);
@@ -91,7 +99,10 @@ public class Chunk240Tests
     public void QueryFirst_FailedQuery_ReturnsDefault()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public p/1.\np(1).\n");
+        engine.ConsultString("""
+            :- public p/1.
+            p(1).
+            """);
         // No solution: p(99) doesn't unify with any clause.
         Assert.Equal(0, engine.QueryFirst<int>("p(99), p(X).", "X"));
     }
@@ -100,7 +111,10 @@ public class Chunk240Tests
     public void QueryFirst_ExplicitName()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public greet/2.\ngreet(hello, world).\n");
+        engine.ConsultString("""
+            :- public greet/2.
+            greet(hello, world).
+            """);
         var s = engine.QueryFirst<string>("greet(_, X).", "X");
         Assert.Equal("world", s);
     }
@@ -121,10 +135,11 @@ public class Chunk240Tests
                     (int)((Shumway.Compiler.Ast.IntTerm)c.Args[0]).Value,
                     (int)((Shumway.Compiler.Ast.IntTerm)c.Args[1]).Value);
             });
-        engine.ConsultString(
-            ":- public pt/1.\n"
-            + "pt(p(1, 2)).\n"
-            + "pt(p(3, 4)).\n");
+        engine.ConsultString("""
+            :- public pt/1.
+            pt(p(1, 2)).
+            pt(p(3, 4)).
+            """);
         var pts = engine.Query<Chunk239Tests.Point>("pt(P).", "P").ToList();
         Assert.Equal(2, pts.Count);
         Assert.Equal(new Chunk239Tests.Point(1, 2), pts[0]);

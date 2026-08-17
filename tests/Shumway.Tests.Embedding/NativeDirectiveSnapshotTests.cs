@@ -78,10 +78,11 @@ public class NativeDirectiveSnapshotTests
         // `:- native foo/2.` (operator form) consults without error and does not
         // shadow a normal predicate definition in the same program.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- native ext/2.\n" +
-            "p(ok).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- native ext/2.
+            p(ok).
+            """);
         Assert.True(e.Query("p(ok).").Success);
     }
 }

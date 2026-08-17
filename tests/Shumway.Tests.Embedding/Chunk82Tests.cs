@@ -42,7 +42,10 @@ public class Chunk82Tests
         var engine = new PrologEngine();
         engine.Query("true.");
         Assert.NotEmpty(engine.StaticPredicateCache);
-        engine.ConsultString(":- public p/1.\np(1).");
+        engine.ConsultString("""
+            :- public p/1.
+            p(1).
+            """);
         Assert.NotEmpty(engine.StaticPredicateCache);   // prelude entries survive
         Assert.True(engine.Query("p(1).").Success);      // new clause is live
     }
@@ -67,9 +70,15 @@ public class Chunk82Tests
         // A query warms the cache; a later consult must still take
         // effect (the cache is dropped, the new clause is picked up).
         var engine = new PrologEngine();
-        engine.ConsultString(":- public greet/1.\ngreet(hello).");
+        engine.ConsultString("""
+            :- public greet/1.
+            greet(hello).
+            """);
         Assert.True(engine.Query("greet(hello).").Success);
-        engine.ConsultString(":- public greet/1.\ngreet(bye).");
+        engine.ConsultString("""
+            :- public greet/1.
+            greet(bye).
+            """);
         Assert.True(engine.Query("greet(bye).").Success);
         Assert.True(engine.Query("greet(hello).").Success);
     }
@@ -89,7 +98,12 @@ public class Chunk82Tests
     public void RepeatedQueries_OfAConsultedPredicate_StayCorrect()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public color/1.\ncolor(red).\ncolor(green).\ncolor(blue).");
+        engine.ConsultString("""
+            :- public color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
         for (int i = 0; i < 5; i++)
             Assert.Equal(3, engine.QueryAll("color(C).").Count());
         Assert.True(engine.Query("color(green).").Success);

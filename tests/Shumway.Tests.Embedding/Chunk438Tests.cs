@@ -31,9 +31,10 @@ public class Chunk438Tests
         var e = new PrologEngine();
         // The corpus shape: X=$texto$ with no whitespace. Without the
         // chunk-438 fix the lexer munched `=$` into one symbolic atom.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "eq(X) :- X=$texto$.\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            eq(X) :- X=$texto$.
+            """);
         Assert.True(e.Query("eq(texto).").Success);
         Assert.False(e.Query("eq(otro).").Success);
     }
@@ -44,9 +45,10 @@ public class Chunk438Tests
         var e = new PrologEngine();
         // X=$$ — `=` followed by the EMPTY $-quoted atom (like '').
         // Pre-fix this munched `=$$` into one symbolic atom.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "emp(X) :- X=$$.\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            emp(X) :- X=$$.
+            """);
         Assert.True(e.Query("emp(X), atom_length(X, 0).").Success);
     }
 
@@ -56,9 +58,10 @@ public class Chunk438Tests
         var e = new PrologEngine();
         // Mid-run $ after a longer symbol prefix: `==$a$` must lex as
         // `==` + atom a.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "chk :- a==$a$.\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            chk :- a==$a$.
+            """);
         Assert.True(e.Query("chk.").Success);
     }
 
@@ -68,9 +71,10 @@ public class Chunk438Tests
         var e = new PrologEngine();
         // ISO maximal munch: with the flag OFF, `=$` is a single
         // symbolic atom — usable as an operator once declared.
-        e.ConsultString(
-            ":- op(700, xfx, =$).\n" +
-            "f(a =$ b).\n");
+        e.ConsultString("""
+            :- op(700, xfx, =$).
+            f(a =$ b).
+            """);
         Assert.True(e.Query("f(X), X = '=$'(a, b).").Success);
     }
 
@@ -91,9 +95,10 @@ public class Chunk438Tests
         var e = new PrologEngine();
         // ThrowsAny: the consult error is a NativeBlockCompileException (an
         // InvalidOperationException subclass carrying the block's line).
-        Assert.ThrowsAny<System.InvalidOperationException>(() => e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "p(X, Y) :- X = 1, { call_some_c_function(x, 1); }, Y is X + 1.\n"));
+        Assert.ThrowsAny<System.InvalidOperationException>(() => e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            p(X, Y) :- X = 1, { call_some_c_function(x, 1); }, Y is X + 1.
+            """));
     }
 
     [Fact]
@@ -102,9 +107,10 @@ public class Chunk438Tests
         var e = new PrologEngine();
         // Nested braces still balance under the raw skip (capture), but C control
         // flow is not compilable → a consult error, not a silent no-op.
-        Assert.ThrowsAny<System.InvalidOperationException>(() => e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "q(ok) :- { if (x) { y(); } else { z(); } }.\n"));
+        Assert.ThrowsAny<System.InvalidOperationException>(() => e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            q(ok) :- { if (x) { y(); } else { z(); } }.
+            """));
     }
 
 
@@ -129,9 +135,10 @@ public class Chunk438Tests
         var e = new PrologEngine();
         // `-->` appears before the body `{`, so the brace is a real
         // Prolog goal that must EXECUTE (Y is X * 2), not be skipped.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "double(X) --> [X], { Y is X * 2 }, [Y].\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            double(X) --> [X], { Y is X * 2 }, [Y].
+            """);
         Assert.True(e.Query("phrase(double(3), [3, 6]).").Success);
         Assert.False(e.Query("phrase(double(3), [3, 5]).").Success);
         var s = e.Query("phrase(double(4), [4, Y]).");
@@ -146,10 +153,11 @@ public class Chunk438Tests
         // The saw-arrow state is per clause: the DCG rule's braces are Prolog
         // (Y is X+1 as an ordinary goal); the NEXT (non-DCG) clause's braces are
         // native — here a compilable native-arithmetic block (R is 1+1).
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "inc(X) --> [X], { Y is X + 1 }, [Y].\n" +
-            "plain(R) :- { R is 1 + 1 }, integer(R).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            inc(X) --> [X], { Y is X + 1 }, [Y].
+            plain(R) :- { R is 1 + 1 }, integer(R).
+            """);
         Assert.True(e.Query("phrase(inc(1), [1, 2]).").Success);
         Assert.True(e.Query("plain(2).").Success);
     }
@@ -162,9 +170,10 @@ public class Chunk438Tests
     public void Braces_IsoTermMeaning_FlagOff()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            "iso(X) :- X = {a, b}.\n" +
-            "n({}).\n");
+        e.ConsultString("""
+            iso(X) :- X = {a, b}.
+            n({}).
+            """);
         Assert.True(e.Query("iso({a, b}).").Success);
         Assert.True(e.Query("iso(Y), Y = '{}'(','(a, b)).").Success);
         Assert.True(e.Query("n({}).").Success);
@@ -174,7 +183,7 @@ public class Chunk438Tests
     public void Braces_IsoDcgMeaning_FlagOff()
     {
         var e = new PrologEngine();
-        e.ConsultString("twice(X) --> [X], { Y is X * 2 }, [Y].\n");
+        e.ConsultString("twice(X) --> [X], { Y is X * 2 }, [Y].");
         Assert.True(e.Query("phrase(twice(5), [5, 10]).").Success);
     }
 }

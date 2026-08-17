@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted — implemented (Phase 25): the `a_eval_*` RPN instruction set and the
+Shipped ([Phase 25](../../history/wam-vs-gprolog-blint.md)).
+
+The `a_eval_*` RPN instruction set and the
 fused `a_int_bin`/`a_int_cmp` integer fast lane shipped in both tiers. New
 top-level opcodes are a "major decision" under
 [the decision policy](../decision-policy.md), which is why the design was

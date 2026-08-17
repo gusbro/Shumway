@@ -156,40 +156,69 @@ public static class TermRenderer
                     OperatorShape.Xfx or OperatorShape.Yfx => infixPrec - 1,
                     _ => infixPrec - 1,
                 };
+                // A y-LEFT operand of equal priority that is open on the right
+                // must be parenthesised — `yfx(fy(1),2)` prints `(fy 1)yfx 2`
+                // (Neumerkel #153); its bare text would re-read differently.
+                bool leftOpenParens = infixShape == OperatorShape.Yfx
+                    && OperandOpenRightAt(
+                        engine, engine.GetHeap(functorIdx + 1), infixPrec, options);
                 // The `,` operator renders tight and unquoted — `a,b`, not
                 // `a , b` or the quoted `a ',' b`. An operator in operator
-                // position is always written raw (unquoted): it is a valid
-                // token there, so quoting `,` / `|` would be wrong.
-                bool tight = options.TightSymbolicOperators
-                    && (IsSymbolicName(name) || name == ",");
-                if (tight)
+                // position is written raw when its name is a valid bare token
+                // there (quoting `,` / `|` would be wrong); a name that is NOT
+                // (the empty atom `''` as an operator — Neumerkel #119-family
+                // op(100,xfx,'') — or one with layout in it) must be quoted or
+                // the output is unreadable (and `itext[0]` on "" crashed).
+                string itext = (name == "," || name == "|" || NeedsNoQuoting(name))
+                    ? name : QuotedAtomName(name);
+                if (options.TightSymbolicOperators)
                 {
-                    // Tight symbolic operators emit no surrounding spaces, but two
-                    // adjacent tokens of the same character class fuse on re-read
-                    // (`1=\\` lexes `=\\` as one atom). Render the operands to
-                    // temp writers so we know their edge chars, and insert a space
-                    // ONLY where the operator would fuse with an operand — EXCEPT
-                    // when the operand is an unbound variable: its variable_names
-                    // name (or _Gn form) is written verbatim per §7.10.5, and
-                    // Neumerkel does not space it (`1+/*r*/V`, not `1+ /*r*/V`).
-                    bool leftVar = IsUnboundVarCell(engine, engine.GetHeap(functorIdx + 1));
-                    bool rightVar = IsUnboundVarCell(engine, engine.GetHeap(functorIdx + 2));
+                    // Fuse-aware spacing for EVERY infix operator: adjacent
+                    // tokens of the same character class fuse on re-read
+                    // (`1=\\` lexes `=\\` as one atom; `1 yfx 2` needs both
+                    // spaces, `(fy 1)yfx 2` neither side of the paren). Render
+                    // the operands to temp writers so we know their edge
+                    // chars, and insert a space ONLY where the operator would
+                    // fuse with an operand — EXCEPT (symbolic operators only)
+                    // when the operand is an unbound variable: its
+                    // variable_names name (or _Gn form) is written verbatim
+                    // per §7.10.5, and Neumerkel does not space it
+                    // (`1+/*r*/V`, not `1+ /*r*/V`).
+                    bool symbolic = IsSymbolicName(name);
+                    bool leftVar = symbolic && IsUnboundVarCell(engine, engine.GetHeap(functorIdx + 1));
+                    bool rightVar = symbolic && IsUnboundVarCell(engine, engine.GetHeap(functorIdx + 2));
                     var lw = new StringWriter();
-                    RenderOperand(engine, engine.GetHeap(functorIdx + 1), lw, options, leftMax);
+                    if (leftOpenParens)
+                    {
+                        lw.Write('(');
+                        Render(engine, engine.GetHeap(functorIdx + 1), lw, options, 1200);
+                        lw.Write(')');
+                    }
+                    else
+                        RenderOperand(engine, engine.GetHeap(functorIdx + 1), lw, options, leftMax);
                     var rw = new StringWriter();
                     RenderOperand(engine, engine.GetHeap(functorIdx + 2), rw, options, rightMax);
                     string ls = lw.ToString(), rs = rw.ToString();
                     output.Write(ls);
-                    if (ls.Length > 0 && !leftVar && CharsFuse(ls[^1], name[0])) output.Write(' ');
-                    output.Write(name);
-                    if (rs.Length > 0 && !rightVar && CharsFuse(name[^1], rs[0])) output.Write(' ');
+                    if (ls.Length > 0 && ((!leftVar && CharsFuse(ls[^1], itext[0]))
+                                          || ZeroThenQuote(ls, itext)))
+                        output.Write(' ');
+                    output.Write(itext);
+                    if (rs.Length > 0 && !rightVar && CharsFuse(itext[^1], rs[0])) output.Write(' ');
                     output.Write(rs);
                 }
                 else
                 {
-                    RenderOperand(engine, engine.GetHeap(functorIdx + 1), output, options, leftMax);
+                    if (leftOpenParens)
+                    {
+                        output.Write('(');
+                        Render(engine, engine.GetHeap(functorIdx + 1), output, options, 1200);
+                        output.Write(')');
+                    }
+                    else
+                        RenderOperand(engine, engine.GetHeap(functorIdx + 1), output, options, leftMax);
                     output.Write(' ');
-                    output.Write(name);
+                    output.Write(itext);
                     output.Write(' ');
                     RenderOperand(engine, engine.GetHeap(functorIdx + 2), output, options, rightMax);
                 }
@@ -217,18 +246,28 @@ public static class TermRenderer
                     || OperandIsOperatorPriorityAtLeast(
                            engine, engine.GetHeap(functorIdx + 1), prefixPrec, options);
                 if (needsParens) output.Write('(');
-                WriteAtomName(name, output, options);
-                // Even in tight mode a prefix symbolic operator needs a
-                // space before a numeric / symbolic argument, else
-                // `- 1` would fuse into the negative literal `-1` and
-                // `- (-a)` would mis-lex. Keep it simple: prefix ops
-                // always get one trailing space.
-                output.Write(' ');
+                string prefixText = (!options.Quoted || NeedsNoQuoting(name))
+                    ? name : QuotedAtomName(name);
+                output.Write(prefixText);
                 int argMax = prefixShape == OperatorShape.Fy ? prefixPrec : prefixPrec - 1;
-                if (operandParens) output.Write('(');
-                Render(engine, engine.GetHeap(functorIdx + 1), output, options,
+                var opw = new StringWriter();
+                if (operandParens) opw.Write('(');
+                Render(engine, engine.GetHeap(functorIdx + 1), opw, options,
                     operandParens ? 1200 : argMax);
-                if (operandParens) output.Write(')');
+                if (operandParens) opw.Write(')');
+                string os = opw.ToString();
+                // Space only where the tokens would otherwise fuse — `fy 1`
+                // but `--a` / `' op'[]` / `-A` (Neumerkel #274/#133/#279) —
+                // plus ALWAYS before a parenthesised operand: `fy(...)` would
+                // re-read as FUNCTIONAL notation, a different term
+                // (`fy (fy 1)yf` vs `fy(fy 1)yf`, #319; `- (1)`, `- (X^2)`).
+                bool prefixVar = IsSymbolicName(name)
+                    && IsUnboundVarCell(engine, engine.GetHeap(functorIdx + 1));
+                if (os.Length > 0
+                    && ((!prefixVar && CharsFuse(prefixText[^1], os[0]))
+                        || os[0] == '('))
+                    output.Write(' ');
+                output.Write(os);
                 if (needsParens) output.Write(')');
                 return;
             }
@@ -237,25 +276,51 @@ public static class TermRenderer
                 bool needsParens = postPrec > maxPriority;
                 if (needsParens) output.Write('(');
                 int argMax = postShape == OperatorShape.Yf ? postPrec : postPrec - 1;
-                bool tightPost = options.TightSymbolicOperators && IsSymbolicName(name);
-                if (tightPost)
+                // A y-LEFT operand of equal priority that is open on the right
+                // must be parenthesised — yf(fy(1)) prints `(fy 1)yf`
+                // (Neumerkel #150/#156/#319).
+                bool postOpenParens = postShape == OperatorShape.Yf
+                    && OperandOpenRightAt(
+                        engine, engine.GetHeap(functorIdx + 1), postPrec, options);
+                string postText = (!options.Quoted || NeedsNoQuoting(name))
+                    ? name : QuotedAtomName(name);
+                if (options.TightSymbolicOperators)
                 {
-                    // As for infix: a tight postfix operator still needs a space
-                    // when the operand's last char would fuse with the operator —
-                    // except when the operand is an unbound variable (verbatim name).
-                    bool postVar = IsUnboundVarCell(engine, engine.GetHeap(functorIdx + 1));
+                    // Fuse-aware spacing (as for infix): `1 yf` needs the
+                    // space, `(fy 1)yf` / `-1'$VAR'` do not (Neumerkel
+                    // #149/#150/#355). Variable operands stay verbatim under
+                    // a symbolic operator.
+                    bool postVar = IsSymbolicName(name)
+                        && IsUnboundVarCell(engine, engine.GetHeap(functorIdx + 1));
                     var pw = new StringWriter();
-                    RenderOperand(engine, engine.GetHeap(functorIdx + 1), pw, options, argMax);
+                    if (postOpenParens)
+                    {
+                        pw.Write('(');
+                        Render(engine, engine.GetHeap(functorIdx + 1), pw, options, 1200);
+                        pw.Write(')');
+                    }
+                    else
+                        RenderOperand(engine, engine.GetHeap(functorIdx + 1), pw, options, argMax);
                     string ps = pw.ToString();
                     output.Write(ps);
-                    if (ps.Length > 0 && !postVar && CharsFuse(ps[^1], name[0])) output.Write(' ');
-                    WriteAtomName(name, output, options);
+                    if (ps.Length > 0
+                        && ((!postVar && CharsFuse(ps[^1], postText[0]))
+                            || ZeroThenQuote(ps, postText)))
+                        output.Write(' ');
+                    output.Write(postText);
                 }
                 else
                 {
-                    RenderOperand(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
+                    if (postOpenParens)
+                    {
+                        output.Write('(');
+                        Render(engine, engine.GetHeap(functorIdx + 1), output, options, 1200);
+                        output.Write(')');
+                    }
+                    else
+                        RenderOperand(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
                     output.Write(' ');
-                    WriteAtomName(name, output, options);
+                    output.Write(postText);
                 }
                 if (needsParens) output.Write(')');
                 return;
@@ -277,6 +342,29 @@ public static class TermRenderer
 
     private static void RenderList(Activation engine, Cell lisCell, TextWriter output, TermRenderOptions options)
     {
+        if (options.IgnoreOps)
+        {
+            // ISO §7.10.5 canonical form (write_canonical): a list is the
+            // compound '.'(H, T) and ignore_ops means FUNCTIONAL notation —
+            // `'.'(a,[])`, not `[a]` (Neumerkel #34). Iterative over the
+            // spine — don't recurse per element: a deep list overflows the
+            // C# stack (same rule as the term materializers).
+            int depth = 0;
+            Cell cur = lisCell;
+            while (true)
+            {
+                Resolve(engine, ref cur);
+                if (cur.Tag != Tag.Lis) break;
+                output.Write("'.'(");
+                Render(engine, engine.GetHeap(cur.AsHeapIndex), output, options, 999);
+                output.Write(',');
+                depth++;
+                cur = engine.GetHeap(cur.AsHeapIndex + 1);
+            }
+            Render(engine, cur, output, options, 999);
+            for (int i = 0; i < depth; i++) output.Write(')');
+            return;
+        }
         output.Write('[');
         bool first = true;
         Cell cursor = lisCell;
@@ -481,6 +569,15 @@ public static class TermRenderer
                 int fIdx = cell.AsHeapIndex;
                 var (atomId, ar) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
                 string fname = AtomTable.GetById(atomId)?.Name ?? "";
+                // Under numbervars a '$VAR'(N≥0) renders as a LETTER, not the
+                // digit payload — `- '$VAR'(0)` is `-A` (Neumerkel #279), even
+                // when '$VAR' is also a registered operator.
+                if (options.Numbervars && ar == 1 && fname == "$VAR")
+                {
+                    Cell nCell = engine.GetHeap(fIdx + 1);
+                    Resolve(engine, ref nCell);
+                    if (nCell.Tag == Tag.Int && nCell.AsInt >= 0) return false;
+                }
                 if (ar == 2 && options.Operators.TryGetInfix(fname, out _, out _))
                     return RendersLeadingDigit(engine, engine.GetHeap(fIdx + 1), options);
                 if (ar == 1 && options.Operators.TryGetPostfix(fname, out _, out _))
@@ -498,6 +595,17 @@ public static class TermRenderer
     private static bool IsSymbolChar(char c)
         => "+-*/\\^<>=~:.?@#&$".IndexOf(c) >= 0;
 
+    /// <summary>True when the operand text ends with the lone integer token
+    /// <c>0</c> and the following operator token opens with a quote — glued,
+    /// <c>0'…</c> would re-lex as a character-code literal, so a space is
+    /// required (Neumerkel #208 <c>0 'f '</c>); <c>-1'$VAR'</c> stays tight
+    /// (#355, only <c>0'</c> is special).</summary>
+    private static bool ZeroThenQuote(string left, string opText)
+        => opText.Length > 0 && opText[0] == '\''
+        && left.Length > 0 && left[^1] == '0'
+        && (left.Length == 1
+            || !(char.IsLetterOrDigit(left[^2]) || left[^2] == '_'));
+
     /// <summary>True when two adjacent output characters would lex as a single
     /// token — both ISO graphic (symbol) chars (<c>=</c> then <c>\</c> → the one
     /// atom <c>=\</c>), or both alphanumeric / underscore (an identifier / number
@@ -505,7 +613,12 @@ public static class TermRenderer
     /// separating space from an operand so writeq round-trips.</summary>
     private static bool CharsFuse(char a, char b)
         => (IsSymbolChar(a) && IsSymbolChar(b))
-        || ((char.IsLetterOrDigit(a) || a == '_') && (char.IsLetterOrDigit(b) || b == '_'));
+        || ((char.IsLetterOrDigit(a) || a == '_') && (char.IsLetterOrDigit(b) || b == '_'))
+        // A closing quote met by an opening quote reads as a DOUBLED quote
+        // inside one token — `'.'' '` is the single atom `.' ` — so quoted
+        // tokens never touch (Neumerkel #333 `'.' ' '`).
+        || (a == '\'' && b == '\'')
+        || (a == '"' && b == '"');
 
     /// <summary>True when <paramref name="cell"/> dereferences to an unbound
     /// variable — its written form (a variable_names name, or the <c>_Gn</c>
@@ -531,10 +644,39 @@ public static class TermRenderer
         int fidx = cell.AsHeapIndex;
         var (atomId, arity) = FunctorTable.Lookup(engine.GetHeap(fidx).AsFunctorId);
         string nm = NameOfAtom(atomId);
-        if (arity == 2 && options.Operators.TryGetInfix(nm, out int ip, out _))
-            return ip >= threshold;
-        if (arity == 1 && options.Operators.TryGetPostfix(nm, out int pp, out _))
-            return pp >= threshold;
+        // At EQUAL priority a fy operand needs parens only when it is
+        // LEFT-CLOSED (its left position is x): `- (X^2)` (vn #43, ^ xfy),
+        // but `fy 1 yf` / `fy 1 yfx 2` stay bare (Neumerkel #149/#152 —
+        // yf/yfx have a y left position, so the reader rebuilds them).
+        if (arity == 2 && options.Operators.TryGetInfix(nm, out int ip, out OperatorShape ish))
+            return ip > threshold
+                || (ip == threshold
+                    && ish is OperatorShape.Xfy or OperatorShape.Xfx);
+        if (arity == 1 && options.Operators.TryGetPostfix(nm, out int pp, out OperatorShape psh))
+            return pp > threshold
+                || (pp == threshold && psh is OperatorShape.Xf);
+        return false;
+    }
+
+    /// <summary>True when <paramref name="cell"/> is an operator term of
+    /// priority exactly <paramref name="prec"/> that is OPEN ON THE RIGHT at
+    /// that priority — a prefix fy term or an infix xfy term. Rendered bare in
+    /// a y-LEFT operand position, the following operator token would bind
+    /// INSIDE it on re-read: `fy 1 yf` reads as fy(yf(1)), so yf(fy(1)) must
+    /// print `(fy 1)yf` (Neumerkel #150/#153/#156/#319).</summary>
+    private static bool OperandOpenRightAt(
+        Activation engine, Cell cell, int prec, TermRenderOptions options)
+    {
+        if (options.IgnoreOps || options.Operators is null) return false;
+        Resolve(engine, ref cell);
+        if (cell.Tag != Tag.Str) return false;
+        int fidx = cell.AsHeapIndex;
+        var (atomId, arity) = FunctorTable.Lookup(engine.GetHeap(fidx).AsFunctorId);
+        string nm = NameOfAtom(atomId);
+        if (arity == 1 && options.Operators.TryGetPrefix(nm, out int pp, out OperatorShape psh))
+            return pp == prec && psh == OperatorShape.Fy;
+        if (arity == 2 && options.Operators.TryGetInfix(nm, out int ip, out OperatorShape ish))
+            return ip == prec && ish == OperatorShape.Xfy;
         return false;
     }
 

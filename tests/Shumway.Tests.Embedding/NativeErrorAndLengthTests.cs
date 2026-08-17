@@ -44,11 +44,13 @@ public sealed class NativeErrorAndLengthTests
         // type — a variable assigned from another, already-typed, Prolog variable.
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(LenInterop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nint getcode(int);\n:- prolog.\n" +
-            "p(In, RetCode) :- integer(In), " +
-            "{ Ret is 'getcode'(In); RetCode is Ret }, integer(RetCode).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            int getcode(int);
+            :- prolog.
+            p(In, RetCode) :- integer(In), { Ret is 'getcode'(In); RetCode is Ret }, integer(RetCode).
+            """);
         Assert.Equal(50L, e.Query("p(5, R).").Get<long>("R"));
     }
 
@@ -60,11 +62,14 @@ public sealed class NativeErrorAndLengthTests
         // without an explicit atom/1 guard on Fact.
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(LenInterop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nint strlen(const char*);\n:- prolog.\n" +
-            "make_prolog_string(A, A) :- atom(A), !.\n" +
-            "g(Fact, L) :- make_prolog_string(Fact, _), { L is 'strlen'(Fact) }, integer(L).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            int strlen(const char*);
+            :- prolog.
+            make_prolog_string(A, A) :- atom(A), !.
+            g(Fact, L) :- make_prolog_string(Fact, _), { L is 'strlen'(Fact) }, integer(L).
+            """);
         Assert.Equal(5L, e.Query("g(hello, L).").Get<long>("L"));
     }
 
@@ -74,11 +79,13 @@ public sealed class NativeErrorAndLengthTests
         // string_buf_long pattern: Len is MakeCString's length arg AND used in
         // arithmetic. Its type is known (integer); inference must not fail.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nchar buf[10];\n:- prolog.\n" +
-            "sbl(S, In, L) :- atom(S), integer(In), Len = In, " +
-            "{ 'MakeCString'(buf, Len, &S); L is Len + 1 }, integer(L).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            char buf[10];
+            :- prolog.
+            sbl(S, In, L) :- atom(S), integer(In), Len = In, { 'MakeCString'(buf, Len, &S); L is Len + 1 }, integer(L).
+            """);
         Assert.Equal(6L, e.Query("sbl(hello, 5, L).").Get<long>("L"));
     }
 
@@ -88,9 +95,10 @@ public sealed class NativeErrorAndLengthTests
         // X and Y have no guards / type source — a genuine inference failure. The
         // message must name the predicate (foo/1) so the author can find it.
         var e = new PrologEngine();
-        var ex = Assert.ThrowsAny<Exception>(() => e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "foo(X) :- { Y is X + 1 }.\n"));
+        var ex = Assert.ThrowsAny<Exception>(() => e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            foo(X) :- { Y is X + 1 }.
+            """));
         Assert.Contains("foo/1", ex.Message);
     }
 

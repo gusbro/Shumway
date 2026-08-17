@@ -33,9 +33,11 @@ public class VisibleDirectiveTests
         // HAS clauses. It runs (the clauses are live), AND it is ISO-mutable:
         // assert/retract succeed and are visible (logical update view).
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public q/2. :- visible q/2.\n" +
-            "q(a, 1).\nq(b, 2).\n");
+        engine.ConsultString("""
+            :- public q/2. :- visible q/2.
+            q(a, 1).
+            q(b, 2).
+            """);
         Assert.True(engine.Query("q(b, X), X == 2.").Success);
         // mutable — a new clause is visible, an existing one can be retracted.
         Assert.True(engine.Query("assertz(q(c, 3)).").Success);

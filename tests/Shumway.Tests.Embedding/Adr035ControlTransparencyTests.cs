@@ -57,10 +57,16 @@ public class Adr035ControlTransparencyTests
         //  4: ifthenelse(X,Y,Z):-
         //  5:     X->Y;Z.
         //  6: cond(1). 7: used(1). 8: more(1). 9: other(0).
-        var engine = DebugEngine(
-            "top(A) :-\n    ifthenelse(cond(A), (used(A), more(A)), other(A)).\n" +
-            "ifthenelse(X,Y,Z):-\n    X->Y;Z.\n" +
-            "cond(1).\nused(1).\nmore(1).\nother(0).\n");
+        var engine = DebugEngine("""
+            top(A) :-
+                ifthenelse(cond(A), (used(A), more(A)), other(A)).
+            ifthenelse(X,Y,Z):-
+                X->Y;Z.
+            cond(1).
+            used(1).
+            more(1).
+            other(0).
+            """);
         var stops = Walk(engine, bpLine: 3, "top(A).", StepMode.Into);
 
         // The meta-wrapper unfold is off under debug, so the call to ifthenelse/3 stays a real
@@ -85,8 +91,14 @@ public class Adr035ControlTransparencyTests
         //  5: first. 6: a(1). 7: b(2).
         // The breakpoint sits on `first` (line 3), a goal BEFORE the disjunction, so the
         // branch goals' call ports are not deduped against the breakpoint's own site.
-        var engine = DebugEngine(
-            "pick(X) :-\n    first,\n    ( a(X) ; b(X) ).\nfirst.\na(1).\nb(2).\n");
+        var engine = DebugEngine("""
+            pick(X) :-
+                first,
+                ( a(X) ; b(X) ).
+            first.
+            a(1).
+            b(2).
+            """);
         var stops = Walk(engine, bpLine: 3, "pick(X).", StepMode.Into);
 
         // Step into the disjunction and land on the first branch's goal, not on a ;/2, and
@@ -102,7 +114,12 @@ public class Adr035ControlTransparencyTests
         //  2: run(Xs) :-
         //  3:     findall(X, item(X), Xs).
         //  4: item(1). 5: item(2).
-        var engine = DebugEngine("run(Xs) :-\n    findall(X, item(X), Xs).\nitem(1).\nitem(2).\n");
+        var engine = DebugEngine("""
+            run(Xs) :-
+                findall(X, item(X), Xs).
+            item(1).
+            item(2).
+            """);
         var stops = Walk(engine, bpLine: 3, "run(Xs).", StepMode.Into);
 
         // findall lowers to a `;` collect loop, but it IS a goal the user wrote: it stops at its

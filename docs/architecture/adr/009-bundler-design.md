@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted (Phase 1 CLI, Phase 2 API) — partially superseded. The `.shum` bundle
+Accepted ([Phase 1](../../history/phase-1-closure.md) CLI,
+[Phase 2](../../history/phase-2-closure.md) API); partially superseded.
+
+The `.shum` bundle
 format, `LoadBundle` and the bundling API live on and grew (compiled-IL
 bundles, archives, snapshots); the `shumway-bundler` CLI described below was
 RETIRED in Phase 23, replaced by the separate-compilation toolchain —

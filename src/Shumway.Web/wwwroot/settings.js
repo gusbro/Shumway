@@ -19,7 +19,14 @@ const DEFAULTS = {
   v: SETTINGS_VERSION,
   theme: 'dark',            // what a first visit gets; the toggle overrides it
   workspace: 'scratch',     // the one to open on load
-  seededExamples: false,    // whether the examples workspace was ever created
+  openFile: null,           // the file that was on screen, reopened on load
+  // The debugger's own memory: mode on/off, breakpoints per file (condition,
+  // log message, enabled), watch goals. Written by debug.js; a reload
+  // reapplies the lot. Additive over v1 — the merge fills it in.
+  debug: null,
+  // The dragged seams (layout.js): pane split and dock heights, as percentages.
+  // Only what differs from the defaults is stored; null = everything default.
+  layout: null,
 };
 
 /**

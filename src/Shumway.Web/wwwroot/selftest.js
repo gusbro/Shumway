@@ -209,12 +209,15 @@ export async function run(session, emit, out, editor, workspace) {
   // a copy: the real preferences are put back afterwards.
   const saved = localStorage.getItem('shumway.settings');
   try {
-    localStorage.setItem('shumway.settings', JSON.stringify({ v: 0, theme: 'dark' }));
+    // The stored theme is 'light' PRECISELY because the default is 'dark':
+    // discarding and keeping must be distinguishable by the value that
+    // survives, or the check proves nothing.
+    localStorage.setItem('shumway.settings', JSON.stringify({ v: 0, theme: 'light' }));
     const fresh = settings.load();
     check('settings of another version are discarded', settings.wasDiscarded(), true);
-    check('and the defaults are used', fresh.theme, null);
-    localStorage.setItem('shumway.settings', JSON.stringify({ v: settings.SETTINGS_VERSION, theme: 'dark' }));
-    check('a current envelope is kept', settings.load().theme, 'dark');
+    check('and the defaults are used', fresh.theme, 'dark');
+    localStorage.setItem('shumway.settings', JSON.stringify({ v: settings.SETTINGS_VERSION, theme: 'light' }));
+    check('a current envelope is kept', settings.load().theme, 'light');
     check('and nothing was discarded', settings.wasDiscarded(), false);
   } finally {
     if (saved === null) localStorage.removeItem('shumway.settings');
@@ -292,6 +295,110 @@ export async function run(session, emit, out, editor, workspace) {
   check('example clpfd.pl consults',
         await session.consult(await (await fetch('examples/clpfd.pl')).text()), null);
   check('and its constraints hold', await solutions('X #> 3, X #< 7.'), 'X in 4..6');
+
+  // --- debug (spike) --------------------------------------------------------
+  // The whole loop, without a human: enable → consult debuggable → breakpoint
+  // → run → the stop event arrives while the query's promise stays pending →
+  // frames carry variables → resume → the query answers. Last, because enable
+  // restarts the engine (debuggability is decided at compile time).
+  {
+    check('debug enable', await session.debugEnable(), null);
+    // 1: dbg_run(Out) :-   2: dbg_mark(X),   3: Out = X.   4: dbg_mark(1).
+    check('debug consult', await session.consult(
+      'dbg_run(Out) :-\n    dbg_mark(X),\n    Out = X.\ndbg_mark(1).\n'), null);
+    // Line 3: at that goal dbg_mark has already exited, so X is 1 — the stop
+    // can prove the frame carries VALUES, not just names.
+    check('breakpoint binds', await session.debugBreakpoint('<string>', 3, true), null);
+
+    let stop = null;
+    const stopped = new Promise((resolve) => {
+      window.shumwayDebug.onStop = (s) => { stop = s; resolve('stopped'); };
+    });
+    const answer = solutions('dbg_run(Out).');   // deliberately NOT awaited yet
+    const arrived = await Promise.race([
+      stopped, new Promise((r) => setTimeout(() => r('timeout'), 15000))]);
+    window.shumwayDebug.onStop = null;
+
+    check('the stop event arrives', arrived, 'stopped');
+    if (stop) {
+      check('stopped at the breakpoint', `${stop.reason} ${stop.file}:${stop.line}`,
+            'breakpoint <string>:3');
+      const top = stop.frames.find((f) => f.name === 'dbg_run');
+      check('the caller is on the stack', top ? `${top.name}/${top.arity}` : '(missing)',
+            'dbg_run/1');
+      check('its variables are visible',
+            top && top.vars.some((v) => v.value === '1'), true);
+      // The Immediate window, engine-side: a goal naming a frame variable
+      // evaluates against the frame's CURRENT value (X is 1 here).
+      check('evaluate against the frame', await session.debugEvaluate(0, 'X =:= 1.'), 'true');
+      check('evaluate binds a copy', await session.debugEvaluate(0, 'Y = X.'), 'Y = 1');
+      check('frames re-capture while stopped',
+            (await session.debugFrames())?.frames.length > 0, true);
+      check('resume wakes the search', await session.debugResume('continue'), true);
+      check('and the query answers', await answer, 'Out = 1');
+    }
+    // A fresh, non-debug engine for whatever runs after this file. Cancel
+    // first: it is ungated and wakes a stop, so even a query left stopped by
+    // a failed check cannot leave the engine gate held against the reset.
+    await session.cancel();
+    await session.resetEngine();
+  }
+
+  // --- debug view docks -----------------------------------------------------
+  // Pure page behaviour, no engine involved: the ⇄ button re-homes a view's
+  // BUTTON and PANEL into the other dock, an emptied dock collapses (.empty),
+  // and sending the view back restores the single-dock default.
+  {
+    const left = document.getElementById('debug-tabs-left');
+    const right = document.getElementById('debug-tabs');
+    check('left dock starts empty', left.classList.contains('empty'), true);
+    right.querySelector('[data-tab="tab-locals"]').click();       // make Locals current
+    right.querySelector('.tab-move').click();                     // send it left
+    check('locals moved to the left dock', !!left.querySelector('#tab-locals'), true);
+    check('left dock now shows', left.classList.contains('empty'), false);
+    check('locals panel is visible there',
+          left.querySelector('#tab-locals').hidden, false);
+    check('the stack stays on the right', !!right.querySelector('#tab-stack'), true);
+    left.querySelector('.tab-move').click();                      // send it back
+    check('left dock collapses again', left.classList.contains('empty'), true);
+    check('locals is home again', !!right.querySelector('#tab-locals'), true);
+  }
+
+  // --- resizable seams ------------------------------------------------------
+  // Synthetic pointer drags against the real handlers: the pane splitter and a
+  // dock handle resize by dragging, the shares persist (settings.layout), and
+  // a double-click gives the default back. Geometry under a REAL pointer is
+  // the visual harness's job; this checks the wiring.
+  {
+    const drag = (el, from, to) => {
+      const ev = (type, p) => new PointerEvent(type,
+        { bubbles: true, pointerId: 1, clientX: p.x, clientY: p.y });
+      el.dispatchEvent(ev('pointerdown', from));
+      el.dispatchEvent(ev('pointermove', to));
+      el.dispatchEvent(ev('pointerup', to));
+    };
+    const panes = document.querySelector('.panes');
+    const splitter = document.getElementById('split-panes');
+    const r = panes.getBoundingClientRect();
+    drag(splitter, { x: r.left + r.width * 0.5, y: r.top + 50 },
+                   { x: r.left + r.width * 0.65, y: r.top + 50 });
+    check('dragging the splitter sets the split',
+          panes.style.getPropertyValue('--split') !== '', true);
+    check('and the split persists', typeof settings.get().layout?.split, 'number');
+    splitter.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    check('double-click restores the default split',
+          panes.style.getPropertyValue('--split'), '');
+    check('and clears what was stored', settings.get().layout?.split ?? null, null);
+
+    const dock = document.getElementById('debug-tabs');
+    const handle = dock.querySelector('.dock-resize');
+    const d = dock.getBoundingClientRect();
+    drag(handle, { x: d.left + 40, y: d.top }, { x: d.left + 40, y: d.top - 80 });
+    check('dragging a dock handle sets its height', dock.style.flexBasis !== '', true);
+    check('and the height persists', typeof settings.get().layout?.rdock, 'number');
+    handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    check('double-click restores the dock default', dock.style.flexBasis, '');
+  }
 
   // Persistence is reported rather than assumed: a browser may refuse storage,
   // and the session must still work when it does.

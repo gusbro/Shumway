@@ -200,6 +200,30 @@ public static partial class MetaBuiltins
     /// process streams (matching SWI / GNU shell/1-2 behaviour).</summary>
     private static int RunShell(string command)
     {
+        // Diagnostic dry-run: record every command instead of executing it.
+        // A destructive command with a mis-resolved path (an `rmdir /S /Q`
+        // aimed at the wrong directory) can only be examined safely this way.
+        if (Environment.GetEnvironmentVariable("SHUMWAY_SHELL_TRACE")
+            is { Length: > 0 } tracePath)
+        {
+            System.IO.File.AppendAllText(tracePath, command + "\n");
+            return 0;
+        }
+        // Code written for SWI's shell/1 — which does NOT wrap in cmd —
+        // prepends its own "cmd.exe /C " (Logtalk's library(os) does). Adding
+        // OUR wrapper on top hands the operators (&&, &) to the OUTER cmd, so
+        // in `cd X && <destructive-op>` the cd runs in a throwaway inner cmd
+        // and the destructive op runs in the PROCESS cwd — observed deleting a
+        // whole test tree. Strip the caller's wrapper so exactly one cmd
+        // parses the command, which is every caller's intent.
+        if (OperatingSystem.IsWindows())
+        {
+            string trimmed = command.TrimStart();
+            if (trimmed.StartsWith("cmd.exe /c ", StringComparison.OrdinalIgnoreCase))
+                command = trimmed.Substring("cmd.exe /c ".Length);
+            else if (trimmed.StartsWith("cmd /c ", StringComparison.OrdinalIgnoreCase))
+                command = trimmed.Substring("cmd /c ".Length);
+        }
         var psi = OperatingSystem.IsWindows()
             ? new System.Diagnostics.ProcessStartInfo("cmd.exe", "/C " + command)
             : new System.Diagnostics.ProcessStartInfo("/bin/sh", "-c \"" + command.Replace("\"", "\\\"") + "\"");
@@ -266,9 +290,7 @@ public static partial class MetaBuiltins
         string path = RequireAtomPath(engine, register: 0, builtin: "file_size/2");
         // The Windows null device is not a file to .NET (FileInfo says it
         // doesn't exist) but portable code sizes it — always 0.
-        if (OperatingSystem.IsWindows()
-            && (path.Equals("nul", StringComparison.OrdinalIgnoreCase)
-                || path.Equals("nul:", StringComparison.OrdinalIgnoreCase)))
+        if (Shumway.Core.PrologPath.IsNullDevice(path))
             return engine.UnifyRegisterWithCell(1, Cell.Int(0));
         var info = new System.IO.FileInfo(path);
         if (!info.Exists)
@@ -384,4 +406,28 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(2, Cell.Int(v));
     }
 
+
+    /// <summary><c>prolog_to_os_filename(?PrologPath, ?OsPath)</c> — ADR-044.
+    /// Converts between the canonical <c>/</c>-separated form Shumway hands
+    /// out and the host's native form, for handing a path to something that
+    /// insists on the latter (a .bat file, a native library). SWI's name and
+    /// semantics; the identity on Unix. Either argument may be the bound
+    /// one.</summary>
+    public static bool PrologToOsFilename2(Activation engine)
+    {
+        Cell a = MaterializeRegisterAsCell(engine, 0);
+        if (a.Tag != Tag.Ref && a.Tag != Tag.AttVar)
+        {
+            string prologPath = RequireAtomPath(
+                engine, register: 0, builtin: "prolog_to_os_filename/2");
+            int id = AtomTable.Intern(
+                Shumway.Core.PrologPath.ToOs(prologPath), permanent: false).Id;
+            return engine.UnifyRegisterWithCell(1, Cell.Atom(id));
+        }
+        string osPath = RequireAtomPath(
+            engine, register: 1, builtin: "prolog_to_os_filename/2");
+        int cid = AtomTable.Intern(
+            Shumway.Core.PrologPath.ToCanonical(osPath), permanent: false).Id;
+        return engine.UnifyRegisterWithCell(0, Cell.Atom(cid));
+    }
 }

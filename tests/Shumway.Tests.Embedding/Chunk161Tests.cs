@@ -22,8 +22,10 @@ public class Chunk161Tests
     [Fact]
     public void ModuleDirective_SetsName()
     {
-        var obj = ShmoCompiler.CompileSource(
-            ":- module(mymod).\np(1). p(2).\n");
+        var obj = ShmoCompiler.CompileSource("""
+            :- module(mymod).
+            p(1). p(2).
+            """);
         Assert.Equal("mymod", obj.ModuleName);
     }
 
@@ -41,14 +43,18 @@ public class Chunk161Tests
         // The bare default (and the documented empty string) still mean
         // "user", so in-memory consult-style compiles are unchanged.
         Assert.Equal(PrologEngine.DefaultModuleName,
-            ShmoCompiler.CompileSource("p(1).\n").ModuleName);
+            ShmoCompiler.CompileSource("p(1).").ModuleName);
     }
 
     [Fact]
     public void PublicDirective_SingleSpec_Tagged()
     {
-        var obj = ShmoCompiler.CompileSource(
-            ":- public foo/2.\nfoo(a, b).\nfoo(c, d).\nbar(1).\n");
+        var obj = ShmoCompiler.CompileSource("""
+            :- public foo/2.
+            foo(a, b).
+            foo(c, d).
+            bar(1).
+            """);
         var foo = obj.Defined.Single(d => d.Indicator.Name == "foo");
         var bar = obj.Defined.Single(d => d.Indicator.Name == "bar");
         Assert.Equal(PredicateVisibility.Public, foo.Visibility);
@@ -58,15 +64,18 @@ public class Chunk161Tests
     [Fact]
     public void PublicDirective_ListSpec_Tagged()
     {
-        var obj = ShmoCompiler.CompileSource(
-            ":- public [foo/1, bar/2].\nfoo(x).\nbar(y, z).\n");
+        var obj = ShmoCompiler.CompileSource("""
+            :- public [foo/1, bar/2].
+            foo(x).
+            bar(y, z).
+            """);
         Assert.Equal(2, obj.Defined.Count(d => d.Visibility == PredicateVisibility.Public));
     }
 
     [Fact]
     public void DynamicDirective_NoClauses_StillDefined()
     {
-        var obj = ShmoCompiler.CompileSource(":- dynamic counter/1.\n");
+        var obj = ShmoCompiler.CompileSource(":- dynamic counter/1.");
         var d = Assert.Single(obj.Defined);
         Assert.Equal(new PredicateRef("counter", 1), d.Indicator);
         Assert.Equal(PredicateVisibility.Dynamic, d.Visibility);
@@ -75,8 +84,10 @@ public class Chunk161Tests
     [Fact]
     public void DynamicDirective_WithClauses_OverridesLocal()
     {
-        var obj = ShmoCompiler.CompileSource(
-            ":- dynamic d/1.\nd(1). d(2).\n");
+        var obj = ShmoCompiler.CompileSource("""
+            :- dynamic d/1.
+            d(1). d(2).
+            """);
         var d = Assert.Single(obj.Defined);
         Assert.Equal(PredicateVisibility.Dynamic, d.Visibility);
     }
@@ -84,8 +95,11 @@ public class Chunk161Tests
     [Fact]
     public void CallGraph_DirectCalls_Extracted()
     {
-        var obj = ShmoCompiler.CompileSource(
-            "foo(X) :- bar(X), baz(X, 1).\nbar(_).\nbaz(_, _).\n");
+        var obj = ShmoCompiler.CompileSource("""
+            foo(X) :- bar(X), baz(X, 1).
+            bar(_).
+            baz(_, _).
+            """);
         Assert.True(obj.CallGraph.TryGetValue(new PredicateRef("foo", 1), out var edges));
         var targets = Targets(edges!);
         Assert.Contains(new PredicateRef("bar", 1), targets);
@@ -101,9 +115,10 @@ public class Chunk161Tests
         // `$disj_N`/`$neg_N` helpers before the call-graph walk.
         // The helpers' OWN call-graph entries hold the original
         // branch goals; the caller's edge points at the helper.
-        var obj = ShmoCompiler.CompileSource(
-            "f(X) :- (a(X) ; b(X) -> c(X) ; d(X)), e(X).\n"
-            + "a(_). b(_). c(_). d(_). e(_).\n");
+        var obj = ShmoCompiler.CompileSource("""
+            f(X) :- (a(X) ; b(X) -> c(X) ; d(X)), e(X).
+            a(_). b(_). c(_). d(_). e(_).
+            """);
         var edges = Targets(obj.CallGraph[new PredicateRef("f", 1)]);
         // Conjunction is still flattened so e/1 is a direct edge.
         Assert.Contains(new PredicateRef("e", 1), edges);
@@ -129,8 +144,10 @@ public class Chunk161Tests
         // by the wrapper, but in the .shmo callgraph it stays as a
         // call/1 edge that the linker resolves via the builtin
         // table.
-        var obj = ShmoCompiler.CompileSource(
-            "f(X) :- \\+ g(X), call(h(X)).\ng(_). h(_).\n");
+        var obj = ShmoCompiler.CompileSource("""
+            f(X) :- \+ g(X), call(h(X)).
+            g(_). h(_).
+            """);
         var rawEdges = obj.CallGraph[new PredicateRef("f", 1)];
         var edges = Targets(rawEdges);
         // \+ now resolves through a $neg_N helper (no direct g/1).
@@ -154,8 +171,10 @@ public class Chunk161Tests
     [Fact]
     public void CallGraph_CutAndAtomGoal_NotEmittedAsBadCalls()
     {
-        var obj = ShmoCompiler.CompileSource(
-            "f :- !, done.\ndone.\n");
+        var obj = ShmoCompiler.CompileSource("""
+            f :- !, done.
+            done.
+            """);
         var edges = Targets(obj.CallGraph[new PredicateRef("f", 0)]);
         Assert.DoesNotContain(new PredicateRef("!", 0), edges);
         Assert.Contains(new PredicateRef("done", 0), edges);
@@ -168,8 +187,7 @@ public class Chunk161Tests
         // lets us evolve the builtin set without breaking old .shmo
         // files: a "builtin" that was once user-level just resolves
         // either way at link time.
-        var obj = ShmoCompiler.CompileSource(
-            "f(X) :- X is 1 + 2, write(X).\n");
+        var obj = ShmoCompiler.CompileSource("f(X) :- X is 1 + 2, write(X).");
         var edges = Targets(obj.CallGraph[new PredicateRef("f", 1)]);
         Assert.Contains(new PredicateRef("is", 2), edges);
         Assert.Contains(new PredicateRef("write", 1), edges);
@@ -178,8 +196,7 @@ public class Chunk161Tests
     [Fact]
     public void QualifiedRefs_ExtractedAndNotInUnqualifiedEdges()
     {
-        var obj = ShmoCompiler.CompileSource(
-            "f(L, R) :- lists:append(L, [x], R).\n");
+        var obj = ShmoCompiler.CompileSource("f(L, R) :- lists:append(L, [x], R).");
         var qref = Assert.Single(obj.QualifiedRefs);
         Assert.Equal("lists", qref.Module);
         Assert.Equal("append", qref.Name);
@@ -191,15 +208,18 @@ public class Chunk161Tests
     [Fact]
     public void Bytecode_NonEmptyAndDecodes()
     {
-        var obj = ShmoCompiler.CompileSource("p(1). p(2).\n");
+        var obj = ShmoCompiler.CompileSource("p(1). p(2).");
         Assert.NotEmpty(obj.Bytecode);
     }
 
     [Fact]
     public void DcgRule_ExpandedAndCallsEmittedAgainstExpandedHead()
     {
-        var obj = ShmoCompiler.CompileSource(
-            "sentence --> noun, verb.\nnoun --> [the], [dog].\nverb --> [runs].\n");
+        var obj = ShmoCompiler.CompileSource("""
+            sentence --> noun, verb.
+            noun --> [the], [dog].
+            verb --> [runs].
+            """);
         // DCG transform appends two diff-list args: sentence/0 becomes sentence/2.
         Assert.Contains(obj.Defined,
             d => d.Indicator.Name == "sentence" && d.Indicator.Arity == 2);
@@ -261,6 +281,6 @@ public class Chunk161Tests
     public void MalformedPublicDirective_Throws()
     {
         Assert.Throws<InvalidOperationException>(
-            () => ShmoCompiler.CompileSource(":- public foo.\n"));
+            () => ShmoCompiler.CompileSource(":- public foo."));
     }
 }

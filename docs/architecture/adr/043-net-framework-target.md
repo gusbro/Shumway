@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-08-08). SHIPPED on branch `netfx-target`: the embedding path,
+Shipped ([Phase 39](../../history/phase-39-closure.md), 2026-08-08; opt-in `-p:ShumwayNetFx=true`).
+
+On branch `netfx-target`: the embedding path,
 the Tier-1 IL runtime, the persisted-IL emitter and the compile/link toolchain
 all multi-target `net10.0;net48`, verified in genuinely 32-bit processes.
 The user-facing guide is [`docs/guide/net-framework-hosts.md`](../../guide/net-framework-hosts.md).

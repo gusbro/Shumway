@@ -38,9 +38,10 @@ public class Chunk111Tests
     public void TailRecursionBuildingALongList_DoesNotOverflow()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "build(0, Acc, Acc).\n" +
-            "build(N, Acc, Out) :- N > 0, N1 is N - 1, build(N1, [N|Acc], Out).");
+        engine.ConsultString("""
+            build(0, Acc, Acc).
+            build(N, Acc, Out) :- N > 0, N1 is N - 1, build(N1, [N|Acc], Out).
+            """);
         // The result is a 50 000-element list — materialising it as a
         // query binding must not recurse per element.
         var sols = engine.QueryAll("build(50000, [], L).").ToList();

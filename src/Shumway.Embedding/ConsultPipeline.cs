@@ -117,7 +117,7 @@ internal sealed class ConsultPipeline
             Debugging.ShumwayDebugHelper.NoteSourceFile(path);
         try
         {
-            ConsultStringInner(File.ReadAllText(path), recordInHistory: true,
+            ConsultStringInner(Shumway.Core.TextFile.ReadAllText(path), recordInHistory: true,
                                reconsult: reconsult);
         }
         finally
@@ -444,7 +444,23 @@ internal sealed class ConsultPipeline
         foreach (var clause in module.Clauses)
             if (TryReadClauseHead(clause, out var spec))
                 specs.Add(spec);
+        // A PRECOMPILED (bundle) module carries no AST at load time — its
+        // predicates are the manifest's defined sets instead. Without these, a
+        // baked prelude marked "non-debuggable" resolved zero functors, and a
+        // debug-compiled program stepped into permutation/2 with the prelude's
+        // recompiled sites attributed to the user's own file.
+        foreach (int fid in module.PublicFunctors) AddSpecOf(specs, fid);
+        foreach (int fid in module.DynamicFunctors) AddSpecOf(specs, fid);
+        if (E._precompiledModuleLocals.TryGetValue(moduleName, out var locals))
+            foreach (int fid in locals) AddSpecOf(specs, fid);
         E._nonDebuggableFunctors.UnionWith(ResolveNonDebuggableFids(specs, moduleName));
+    }
+
+    private static void AddSpecOf(HashSet<(string Name, int Arity)> specs, int fid)
+    {
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+        if (Shumway.Core.AtomTable.GetById(atomId) is { } atom)
+            specs.Add((atom.Name, arity));
     }
 
 
@@ -1154,16 +1170,16 @@ internal sealed class ConsultPipeline
                         E._dynStore[fid] = new List<Clause>();
                 }
             }
-            else if (body is CompoundTerm { Functor: "meta_predicate", Args.Length: 1 })
+            else if (body is CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } metaDir)
             {
-                // Scryer/SICStus/SWI compatibility — accept `:- meta_predicate(Spec)`
-                // (Spec is a term like `foo(0, ?, +)`; `0..9` mark meta args) and
-                // no-op it. Every Scryer library declares it, so recognising it
-                // stops the existence_error(meta_predicate/1) that would otherwise
-                // fire from running it as a goal. Our meta-call resolution already
-                // threads the caller's module through variable meta-args ($mqual +
-                // MetaTransform); acting on the declaration for module-transparency
-                // is future work.
+                // `:- meta_predicate(Spec)` (Spec is a template like `foo(0, ?, +)`,
+                // possibly a ','-conjunction of them; `0..9` mark meta args). The
+                // TEMPLATE is recorded and surfaced through predicate_property/2's
+                // meta_predicate(T) — which is how Logtalk's compiler learns that a
+                // goal argument needs wrapping for the calling context. Execution
+                // still ignores it: our meta-call resolution already threads the
+                // caller's module through variable meta-args ($mqual + MetaTransform).
+                RecordMetaPredicateTemplates(metaDir.Args[0]);
             }
             else if (body is CompoundTerm { Functor: "autoload" } autoDir
                      && (autoDir.Args.Length == 1 || autoDir.Args.Length == 2))
@@ -1874,6 +1890,33 @@ internal sealed class ConsultPipeline
     // (clpz calls it 6×) does not force clpz off the incremental path, where its
     // `:- use_module(library(atts))` must activate the `attribute` operator before
     // its later `:- attribute` line parses.
+    /// <summary>Records each template in a <c>:- meta_predicate</c> Spec — a
+    /// single template, a <c>','</c>-conjunction of them, or a
+    /// <c>Module:Template</c> (stored under the bare name: that is the form a
+    /// <c>predicate_property/2</c> query resolves). A malformed element is
+    /// skipped rather than failing the consult — the directive is advisory.</summary>
+    private void RecordMetaPredicateTemplates(Term spec)
+    {
+        switch (spec)
+        {
+            case CompoundTerm { Functor: ",", Args.Length: 2 } conj:
+                RecordMetaPredicateTemplates(conj.Args[0]);
+                RecordMetaPredicateTemplates(conj.Args[1]);
+                break;
+            case CompoundTerm { Functor: ":", Args.Length: 2 } qual:
+                RecordMetaPredicateTemplates(qual.Args[1]);
+                break;
+            case CompoundTerm template:
+            {
+                int fid = FunctorTable.Intern(
+                    AtomTable.Intern(template.Functor, permanent: true).Id,
+                    template.Args.Length);
+                E._metaPredicateTemplates[fid] = template;
+                break;
+            }
+        }
+    }
+
     private static bool HasIncludeDirective(string source) =>
         System.Text.RegularExpressions.Regex.IsMatch(
             source, @"(^|\n)\s*:-\s*include\s*\(");

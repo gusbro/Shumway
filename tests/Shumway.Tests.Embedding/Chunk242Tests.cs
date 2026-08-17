@@ -119,7 +119,10 @@ public class Chunk242Tests
     {
         var engine = new PrologEngine();
         engine.RegisterPredicates(typeof(C242PtMath));
-        engine.ConsultString(":- public start/1.\nstart(c242_pt(1, 2)).\n");
+        engine.ConsultString("""
+            :- public start/1.
+            start(c242_pt(1, 2)).
+            """);
         var pts = engine.Query<C242Pt>(
             "start(P), c242_translate(P, 10, R).", "R").ToList();
         Assert.Single(pts);

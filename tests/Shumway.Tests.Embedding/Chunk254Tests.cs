@@ -98,7 +98,7 @@ public class Chunk254Tests
         // lost. Listing emits the synthetic _Gn names — the user
         // gets *something* readable rather than nothing.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic(foo/2).\n");
+        engine.ConsultString(":- dynamic(foo/2).");
         engine.Query("assertz((foo(X, Y) :- Y = bar(X))).");
         var sw = new StringWriter();
         engine.Out = sw;
@@ -122,11 +122,12 @@ public class Chunk254Tests
             "_");  // placeholder, we'll re-do the call
         // Re-call with listing/0 (no arg) for the whole-engine view.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public a/0.\n"
-            + ":- public b/1.\n"
-            + "a :- true.\n"
-            + "b(X) :- X = 42.\n");
+        engine.ConsultString("""
+            :- public a/0.
+            :- public b/1.
+            a :- true.
+            b(X) :- X = 42.
+            """);
         var sw = new StringWriter();
         engine.Out = sw;
         engine.Query("listing.");

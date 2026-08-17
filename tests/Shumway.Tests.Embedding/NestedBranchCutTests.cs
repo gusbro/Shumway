@@ -19,8 +19,7 @@ public class NestedBranchCutTests
     public void NestedCutInThenInDisjunction_UnderFindall_DoesNotCrash()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            "sq :- ( true, ( 1 =< 1 -> ! ; true ) ; write(b2) ).\n");
+        e.ConsultString("sq :- ( true, ( 1 =< 1 -> ! ; true ) ; write(b2) ).");
         // Before the fix this threw IndexOutOfRangeException inside Cut.
         Assert.True(e.Query("findall(t, sq, L), L == [t].").Success);
     }
@@ -29,8 +28,7 @@ public class NestedBranchCutTests
     public void NestedCutInThenInDisjunction_DirectCall_Succeeds()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            "sq :- ( true, ( 1 =< 1 -> ! ; true ) ; fail ).\n");
+        e.ConsultString("sq :- ( true, ( 1 =< 1 -> ! ; true ) ; fail ).");
         Assert.True(e.Query("sq.").Success);
         // In a failure-driven loop it must terminate (no runaway).
         Assert.True(e.Query("( sq, fail ; true ).").Success);
@@ -43,9 +41,12 @@ public class NestedBranchCutTests
         // transparent to h prunes h's remaining solutions — only the first
         // survives. (A ! that only cut the helper would leave [1,2,3].)
         var e = new PrologEngine();
-        e.ConsultString(
-            "g(1).\ng(2).\ng(3).\n" +
-            "h(X) :- g(X), ( X >= 1 -> ! ; true ).\n");
+        e.ConsultString("""
+            g(1).
+            g(2).
+            g(3).
+            h(X) :- g(X), ( X >= 1 -> ! ; true ).
+            """);
         Assert.True(e.Query("findall(X, h(X), L), L == [1].").Success);
     }
 
@@ -55,10 +56,11 @@ public class NestedBranchCutTests
         // Cut nested two disjunctions deep, to exercise the barrier threading at
         // more than one helper level.
         var e = new PrologEngine();
-        e.ConsultString(
-            "p :- ( a ; ( b ; ( 1 =< 1 -> ! ; true ) ) ).\n" +
-            "a :- fail.\n" +
-            "b :- fail.\n");
+        e.ConsultString("""
+            p :- ( a ; ( b ; ( 1 =< 1 -> ! ; true ) ) ).
+            a :- fail.
+            b :- fail.
+            """);
         Assert.True(e.Query("findall(t, p, L), L == [t].").Success);
     }
 }

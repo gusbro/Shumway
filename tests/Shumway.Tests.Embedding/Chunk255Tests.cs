@@ -112,9 +112,10 @@ public class Chunk255Tests
         // Sanity: a non-stripped bundle takes the chunk-254 path,
         // not the chunk-255 fallback. Variable names from the
         // source must still appear.
-        var obj = ShmoCompiler.CompileSource(
-            ":- public greet/2.\n"
-            + "greet(X, Y) :- Y = hello(X).\n",
+        var obj = ShmoCompiler.CompileSource("""
+            :- public greet/2.
+            greet(X, Y) :- Y = hello(X).
+            """,
             buildMode: ShmoBuildMode.Debug);   // debug keeps source
         var result = ShmoLinker.Link(new LinkConfig
         {

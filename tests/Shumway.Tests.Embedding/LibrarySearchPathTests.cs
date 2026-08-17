@@ -80,7 +80,10 @@ public class LibrarySearchPathTests
         var engine = new PrologEngine();
         // No search path provides 'nosuchlib_xyz'; the import warns and is
         // skipped rather than aborting the consult.
-        engine.ConsultString(":- use_module(library(nosuchlib_xyz)).\np(ok).");
+        engine.ConsultString("""
+            :- use_module(library(nosuchlib_xyz)).
+            p(ok).
+            """);
         Assert.True(engine.Query("p(ok).").Success);
     }
 
@@ -118,9 +121,10 @@ public class LibrarySearchPathTests
         using var lib = new LibDir("greet", GreetSource);
         var engine = new PrologEngine();
         engine.AddLibraryDirectory(lib.Path);
-        engine.ConsultString(
-            ":- use_module(library(greet)).\n" +
-            ":- use_module(library(greet)).");
+        engine.ConsultString("""
+            :- use_module(library(greet)).
+            :- use_module(library(greet)).
+            """);
         // A single solution to hello/1 — the file was not double-consulted.
         Assert.Single(engine.QueryAll("hello(X)."));
     }

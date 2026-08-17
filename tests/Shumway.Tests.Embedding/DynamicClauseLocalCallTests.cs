@@ -17,10 +17,11 @@ public class DynamicClauseLocalCallTests
     public void DynamicClauseBody_CallsLocalPredicate_Resolves()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- dynamic main/0.\n"
-            + "main :- helper.\n"
-            + "helper :- true.\n");
+        e.ConsultString("""
+            :- dynamic main/0.
+            main :- helper.
+            helper :- true.
+            """);
         Assert.True(e.Query("main.").Success);
     }
 
@@ -30,11 +31,12 @@ public class DynamicClauseLocalCallTests
         // Sanity check: dynamic→dynamic still works (it did before
         // too — this is the "bare body call, bare target" case).
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- dynamic main/0.\n"
-            + ":- dynamic helper/0.\n"
-            + "main :- helper.\n"
-            + "helper.\n");
+        e.ConsultString("""
+            :- dynamic main/0.
+            :- dynamic helper/0.
+            main :- helper.
+            helper.
+            """);
         Assert.True(e.Query("main.").Success);
     }
 
@@ -43,9 +45,10 @@ public class DynamicClauseLocalCallTests
     {
         // A dynamic clause body that calls builtins.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- dynamic compute/1.\n"
-            + "compute(R) :- X is 1 + 2, R = X.\n");
+        e.ConsultString("""
+            :- dynamic compute/1.
+            compute(R) :- X is 1 + 2, R = X.
+            """);
         var sol = e.Query("compute(R).");
         Assert.True(sol.Success);
     }
@@ -56,9 +59,10 @@ public class DynamicClauseLocalCallTests
         // assertz at runtime of a clause whose body calls a static
         // user-module predicate. Same mangling concern.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- dynamic action/0.\n"
-            + "do_work :- true.\n");
+        e.ConsultString("""
+            :- dynamic action/0.
+            do_work :- true.
+            """);
         Assert.True(e.Query("assertz((action :- do_work)).").Success);
         Assert.True(e.Query("action.").Success);
     }
@@ -69,10 +73,11 @@ public class DynamicClauseLocalCallTests
         // Approximates Blint.pl's main/0 shape: dynamic main, body
         // wrapped in catch/3, body invokes a local predicate.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- dynamic main/0.\n"
-            + "main :- catch(version(V), _E, V = unknown), V = '1.0'.\n"
-            + "version('1.0').\n");
+        e.ConsultString("""
+            :- dynamic main/0.
+            main :- catch(version(V), _E, V = unknown), V = '1.0'.
+            version('1.0').
+            """);
         Assert.True(e.Query("main.").Success);
     }
 }

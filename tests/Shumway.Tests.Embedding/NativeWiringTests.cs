@@ -22,10 +22,13 @@ public sealed class NativeWiringTests
     {
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nint strcmp(const char*, const char*);\n:- prolog.\n" +
-            "cmp(A, B, R) :- atom(A), atom(B), { R is 'strcmp'(A, B) }, integer(R).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            int strcmp(const char*, const char*);
+            :- prolog.
+            cmp(A, B, R) :- atom(A), atom(B), { R is 'strcmp'(A, B) }, integer(R).
+            """);
 
         Assert.True(e.Query("cmp(abc, abc, R), R == 0.").Success);
         Assert.True(e.Query("cmp(abc, abd, R), R == -1.").Success);
@@ -41,11 +44,14 @@ public sealed class NativeWiringTests
         // the runtime store and runs the block exactly as a static clause would.
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- dynamic cmp/3.\n" +
-            ":- c.\nint strcmp(const char*, const char*);\n:- prolog.\n" +
-            "cmp(A, B, R) :- atom(A), atom(B), { R is 'strcmp'(A, B) }, integer(R).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- dynamic cmp/3.
+            :- c.
+            int strcmp(const char*, const char*);
+            :- prolog.
+            cmp(A, B, R) :- atom(A), atom(B), { R is 'strcmp'(A, B) }, integer(R).
+            """);
 
         Assert.True(e.Query("cmp(abc, abc, R), R == 0.").Success);
         Assert.True(e.Query("cmp(abd, abc, R), R == 1.").Success);
@@ -65,11 +71,14 @@ public sealed class NativeWiringTests
         // calls and are visible to other blocks. (embedded-native-c.md §2.)
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nint counter;\n:- prolog.\n" +
-            "incr(X) :- { counter = counter + 1; X is counter }, integer(X).\n" +
-            "readc(X) :- { X is counter }, integer(X).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            int counter;
+            :- prolog.
+            incr(X) :- { counter = counter + 1; X is counter }, integer(X).
+            readc(X) :- { X is counter }, integer(X).
+            """);
 
         Assert.Equal(0L, e.Query("readc(X).").Get<long>("X"));   // uninitialised → 0
         Assert.Equal(1L, e.Query("incr(X).").Get<long>("X"));
@@ -86,9 +95,10 @@ public sealed class NativeWiringTests
         // error, never a silently zero-initialised local.
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        var ex = Assert.ThrowsAny<InvalidOperationException>(() => e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "bump(X) :- { counter = counter + 1; X is counter }, integer(X).\n"));
+        var ex = Assert.ThrowsAny<InvalidOperationException>(() => e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            bump(X) :- { counter = counter + 1; X is counter }, integer(X).
+            """));
         Assert.Contains("undeclared native global", ex.Message);
         Assert.Contains("counter", ex.Message);
     }
@@ -100,10 +110,13 @@ public sealed class NativeWiringTests
         // is not the undeclared-error case; it uses the shared per-engine storage.
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nextern int counter;\n:- prolog.\n" +
-            "bump(X) :- { counter = counter + 1; X is counter }, integer(X).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            extern int counter;
+            :- prolog.
+            bump(X) :- { counter = counter + 1; X is counter }, integer(X).
+            """);
         Assert.Equal(1L, e.Query("bump(X).").Get<long>("X"));
         Assert.Equal(2L, e.Query("bump(X).").Get<long>("X"));
     }
@@ -116,14 +129,24 @@ public sealed class NativeWiringTests
         // writes — the cross-module C-linkage model.
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        e.ConsultString(
-            ":- module(a).\n:- set_prolog_flag(arity_compat, true).\n:- public bump_a/0.\n" +
-            ":- c.\nint counter;\n:- prolog.\n" +
-            "bump_a :- { counter = counter + 1 }.\n");
-        e.ConsultString(
-            ":- module(b).\n:- set_prolog_flag(arity_compat, true).\n:- public read_b/1.\n" +
-            ":- c.\nextern int counter;\n:- prolog.\n" +
-            "read_b(X) :- { X is counter }, integer(X).\n");
+        e.ConsultString("""
+            :- module(a).
+            :- set_prolog_flag(arity_compat, true).
+            :- public bump_a/0.
+            :- c.
+            int counter;
+            :- prolog.
+            bump_a :- { counter = counter + 1 }.
+            """);
+        e.ConsultString("""
+            :- module(b).
+            :- set_prolog_flag(arity_compat, true).
+            :- public read_b/1.
+            :- c.
+            extern int counter;
+            :- prolog.
+            read_b(X) :- { X is counter }, integer(X).
+            """);
 
         Assert.True(e.Query("bump_a.").Success);
         Assert.True(e.Query("bump_a.").Success);
@@ -135,10 +158,13 @@ public sealed class NativeWiringTests
     {
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\ndouble acc;\n:- prolog.\n" +
-            "add(D, X) :- float(D), { acc = acc + D; X is acc }, float(X).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            double acc;
+            :- prolog.
+            add(D, X) :- float(D), { acc = acc + D; X is acc }, float(X).
+            """);
 
         Assert.Equal(1.5, e.Query("add(1.5, X).").Get<double>("X"));
         Assert.Equal(4.0, e.Query("add(2.5, X).").Get<double>("X"));   // 1.5 + 2.5 persisted
@@ -149,10 +175,13 @@ public sealed class NativeWiringTests
     {
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nlong sum(int, int);\n:- prolog.\n" +
-            "calc(A, B, R) :- integer(A), integer(B), { T: long; T is 'sum'(A, B); R is T * 2 }, integer(R).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            long sum(int, int);
+            :- prolog.
+            calc(A, B, R) :- integer(A), integer(B), { T: long; T is 'sum'(A, B); R is T * 2 }, integer(R).
+            """);
 
         Assert.True(e.Query("calc(3, 4, R), R == 14.").Success);   // (3+4)*2
     }
@@ -163,9 +192,10 @@ public sealed class NativeWiringTests
         // A reftype block (the deferred tier) cannot be compiled — consulting must
         // FAIL, never silently no-op it (a no-op'd block would misbehave unnoticed).
         var e = new PrologEngine();
-        var ex = Assert.ThrowsAny<InvalidOperationException>(() => e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "p(ok) :- { X is ((*RefType)->ntype) }.\n"));
+        var ex = Assert.ThrowsAny<InvalidOperationException>(() => e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            p(ok) :- { X is ((*RefType)->ntype) }.
+            """));
         Assert.Contains("native block", ex.Message);
     }
 
@@ -176,10 +206,13 @@ public sealed class NativeWiringTests
         // that calls it must fail loudly, naming the missing function.
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        var ex = Assert.ThrowsAny<InvalidOperationException>(() => e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nint nope(int);\n:- prolog.\n" +
-            "f(A, R) :- integer(A), { R is 'nope'(A) }, integer(R).\n"));
+        var ex = Assert.ThrowsAny<InvalidOperationException>(() => e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            int nope(int);
+            :- prolog.
+            f(A, R) :- integer(A), { R is 'nope'(A) }, integer(R).
+            """));
         Assert.Contains("nope", ex.Message);
     }
 }

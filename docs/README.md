@@ -35,14 +35,23 @@ documentation index; start with the [user guide](guide/user-guide.md).
   non-negotiable invariants, by subsystem.
 - [decision-policy.md](architecture/decision-policy.md) — what counts as a
   major decision, and where decisions are recorded.
-- [adr/](architecture/adr/) — Architecture Decision Records 001–043, one per
+- [adr/](architecture/adr/) — the Architecture Decision Records, one per
   major design decision, each with its status.
 
 ## Subsystem designs (`design/`)
 
-Detailed designs referenced from the code: cell layout, WAM instruction set,
-bytecode/bundle formats, PSTR, IL emission/regions/inlining, atom GC
-coordination, debug info, foreign predicates, the embedding API reference.
+Detailed designs referenced from the code:
+
+- [cell-layout-detail.md](design/cell-layout-detail.md) — the 8-byte cell, tags, payloads.
+- [wam-instruction-set.md](design/wam-instruction-set.md) — every opcode and its encoding.
+- [bundle-format.md](design/bundle-format.md) — the `.shmo` / `.shum` file formats.
+- [pstr-design.md](design/pstr-design.md) — partial strings for grammar processing.
+- [il-emission-patterns.md](design/il-emission-patterns.md) · [il-region-compilation.md](design/il-region-compilation.md) · [il-local-inlining.md](design/il-local-inlining.md) — the Tier-1 IL backend.
+- [atom-gc-coordination.md](design/atom-gc-coordination.md) — atom GC and safe points.
+- [debug-info.md](design/debug-info.md) — positions, ports, the debugger's site tables.
+- [foreign-predicates.md](design/foreign-predicates.md) — the `[PrologPredicate]` bridge.
+- [api-reference.md](design/api-reference.md) — the embedding API reference.
+- [inline-caching.md](design/inline-caching.md) — NOT BUILT; kept as a redirect to what shipped instead.
 
 ## Benchmarks (`benchmarks/`)
 

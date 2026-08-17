@@ -89,7 +89,7 @@ public sealed class SwiEndToEndValidation
                 e.AddLibraryDirectory(dir, "swi");
                 e.ConsultString($":- use_module(library({lib})).");
                 if (lib == "record")
-                    e.ConsultString(":- record point(x:integer=0, y:integer=0).\n");
+                    e.ConsultString(":- record point(x:integer=0, y:integer=0).");
                 // Lambda-using smokes need yall pre-loaded as a separate step —
                 // the harness runs ONE query, and an in-query use_module cannot
                 // affect that same query's already-set-up resolution.

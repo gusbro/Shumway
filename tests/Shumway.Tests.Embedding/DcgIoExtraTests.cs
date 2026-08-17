@@ -30,7 +30,7 @@ public class DcgIoExtraTests
     {
         // colour --> [red] ; [green] ; [blue].
         var engine = new PrologEngine();
-        engine.ConsultString("colour --> [red] ; [green] ; [blue].\n");
+        engine.ConsultString("colour --> [red] ; [green] ; [blue].");
 
         Assert.True(engine.Query("colour([red], []).").Success);
         Assert.True(engine.Query("colour([green], []).").Success);
@@ -46,8 +46,7 @@ public class DcgIoExtraTests
         // the negative-literal parsing question (-3 parses as -(3), not the
         // integer cell the integer/1 test would need).
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "sign(P) --> [N], ( { N > 0 } -> { P = positive } ; { P = zero_or_neg } ).\n");
+        engine.ConsultString("sign(P) --> [N], ( { N > 0 } -> { P = positive } ; { P = zero_or_neg } ).");
 
         Assert.Equal(Atom("positive"), engine.Query("sign(P, [5], []).")["P"]);
         Assert.Equal(Atom("zero_or_neg"), engine.Query("sign(P, [0], []).")["P"]);
@@ -58,7 +57,7 @@ public class DcgIoExtraTests
     {
         // greeting --> ([hello] ; [hi]), [world].
         var engine = new PrologEngine();
-        engine.ConsultString("greeting --> ([hello] ; [hi]), [world].\n");
+        engine.ConsultString("greeting --> ([hello] ; [hi]), [world].");
 
         Assert.True(engine.Query("greeting([hello, world], []).").Success);
         Assert.True(engine.Query("greeting([hi, world], []).").Success);
@@ -102,11 +101,13 @@ public class DcgIoExtraTests
     // ---------- write_canonical/1 + print/1 ----------
 
     [Fact]
-    public void WriteCanonical_OutputsSameAsWrite()
+    public void WriteCanonical_UnfoldsListsToFunctionalNotation()
     {
+        // ISO §7.10.5 ignore_ops: canonical form writes the list compound
+        // '.'(H,T) in functional notation (Neumerkel #34), unlike write/1.
         var engine = WithCaptureOut(out var sw);
         engine.Query("write_canonical(foo(a, 1, [b])).");
-        Assert.Equal("foo(a,1,[b])", sw.ToString());   // Phase 33: compact ISO layout
+        Assert.Equal("foo(a,1,'.'(b,[]))", sw.ToString());
     }
 
     [Fact]

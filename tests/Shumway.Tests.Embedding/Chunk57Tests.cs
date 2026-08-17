@@ -119,9 +119,10 @@ public class Chunk57Tests
         // produce correct results across many alternatives. (When
         // the gate flips on, this same test should keep passing.)
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public choose/2.\n" +
-            "choose(X, Y) :- member(X, [1, 2, 3]), member(Y, [a, b, c]).\n");
+        engine.ConsultString("""
+            :- public choose/2.
+            choose(X, Y) :- member(X, [1, 2, 3]), member(Y, [a, b, c]).
+            """);
         Assert.Equal(9, engine.QueryAll("choose(_, _).").Count());
     }
 

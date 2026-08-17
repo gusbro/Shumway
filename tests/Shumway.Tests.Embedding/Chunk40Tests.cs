@@ -73,7 +73,10 @@ public class Chunk40Tests
         // doesn't satisfy p. With first-solution member this used to be
         // unusable; with multi-sol it works.
         var engine = new PrologEngine();
-        engine.ConsultString(":- public small/1.\nsmall(1). small(2). small(3).");
+        engine.ConsultString("""
+            :- public small/1.
+            small(1). small(2). small(3).
+            """);
         // Find any member of [1,2,3,10] that is NOT a small/1.
         var sol = engine.Query("member(X, [1, 2, 3, 10]), \\+ small(X).");
         Assert.True(sol.Success);
@@ -88,7 +91,10 @@ public class Chunk40Tests
     public void Clause_EnumeratesAllStaticClauses()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public colour/1.\ncolour(red). colour(green). colour(blue).");
+        engine.ConsultString("""
+            :- public colour/1.
+            colour(red). colour(green). colour(blue).
+            """);
         var sols = engine.QueryAll("clause(colour(X), true).").ToList();
         Assert.Equal(3, sols.Count);
         Assert.Equal(Atom("red"), sols[0]["X"]);
@@ -116,7 +122,10 @@ public class Chunk40Tests
     public void Clause_BindsBodyForRules()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public greet/1.\ngreet(X) :- write(X), nl.");
+        engine.ConsultString("""
+            :- public greet/1.
+            greet(X) :- write(X), nl.
+            """);
         var sol = engine.Query("clause(greet(_), B).");
         Assert.True(sol.Success);
         var body = Assert.IsType<CompoundTerm>(sol["B"]);
@@ -131,7 +140,10 @@ public class Chunk40Tests
     public void CurrentPredicate_GroundIndicator_StillSucceedsForKnown()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public foo/1.\nfoo(a).");
+        engine.ConsultString("""
+            :- public foo/1.
+            foo(a).
+            """);
         Assert.True(engine.Query("current_predicate(foo/1).").Success);
         Assert.True(engine.Query("current_predicate(is/2).").Success);   // builtin
     }

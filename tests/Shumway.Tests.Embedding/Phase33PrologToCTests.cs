@@ -118,8 +118,7 @@ public class Phase33PrologToCTests : IDisposable
     public void ModeDirective_CommaChain_Accepted()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- mode f(+, -),\n\tg(+),\n\th(?, -).\n"
+        e.ConsultString(":- mode f(+, -),\n\tg(+),\n\th(?, -).\n"
             + "f(X, X).\ng(_).\nh(_, done).\n");
         Assert.True(e.Query("f(1, Y), Y == 1.").Success);
     }

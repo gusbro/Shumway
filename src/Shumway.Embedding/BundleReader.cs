@@ -42,6 +42,10 @@ public static class BundleReader
         byte compression = headerReader.ReadByte();
         using var br = BundleFormat.OpenBody(compression, ms);
 
+        // The producing Shumway — recorded, never enforced: what to do about
+        // a version difference is a policy question, not this reader's.
+        var generatorVersion = BundleFormat.ReadGeneratorVersion(br);
+
         uint moduleCount = br.ReadUInt32();
         var entries = new BundleEntry[moduleCount];
         for (uint i = 0; i < moduleCount; i++)
@@ -237,7 +241,8 @@ public static class BundleReader
                     + $"{shmoLength} bytes, got {shmoBytes.Length}).");
             archiveMembers.Add(new BundleArchiveMember(fileName, shmoBytes));
         }
-        return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers, nativeLibraries);
+        return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers,
+            nativeLibraries, generatorVersion);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

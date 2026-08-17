@@ -20,10 +20,11 @@ public class IndexingTests
     {
         // Fact table dispatching on atom — the bread-and-butter indexed case.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "colour(red).\n" +
-            "colour(green).\n" +
-            "colour(blue).\n");
+        engine.ConsultString("""
+            colour(red).
+            colour(green).
+            colour(blue).
+            """);
 
         Assert.True(engine.Query("colour(red).").Success);
         Assert.True(engine.Query("colour(green).").Success);
@@ -36,10 +37,11 @@ public class IndexingTests
     {
         // A variable A1 routes through VarLbl and tries every clause.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "colour(red).\n" +
-            "colour(green).\n" +
-            "colour(blue).\n");
+        engine.ConsultString("""
+            colour(red).
+            colour(green).
+            colour(blue).
+            """);
 
         var all = engine.QueryAll("colour(X).").Select(s => s["X"]).ToList();
         Assert.Equal(
@@ -53,11 +55,12 @@ public class IndexingTests
         // Two clauses share the same atom key — indexing dispatches the
         // try/retry/trust chain inside the matching group.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "kind(cat,  pet).\n" +
-            "kind(dog,  pet).\n" +
-            "kind(cat,  feline).\n" +
-            "kind(lion, feline).\n");
+        engine.ConsultString("""
+            kind(cat,  pet).
+            kind(dog,  pet).
+            kind(cat,  feline).
+            kind(lion, feline).
+            """);
 
         var pets = engine.QueryAll("kind(cat, K).").Select(s => s["K"]).ToList();
         Assert.Equal(new[] { Atom("pet"), Atom("feline") }, pets);
@@ -67,11 +70,12 @@ public class IndexingTests
     public void Integers_SpecificCall_FindsMatchingClause()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "square(1, 1).\n" +
-            "square(2, 4).\n" +
-            "square(3, 9).\n" +
-            "square(4, 16).\n");
+        engine.ConsultString("""
+            square(1, 1).
+            square(2, 4).
+            square(3, 9).
+            square(4, 16).
+            """);
 
         Assert.Equal(Int(9), engine.Query("square(3, X).")["X"]);
         Assert.Equal(Int(16), engine.Query("square(4, X).")["X"]);
@@ -105,11 +109,12 @@ public class IndexingTests
         // Atom-headed calls go through switch_on_atom, integer-headed calls
         // through switch_on_integer, both chained via switch_on_term.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "labelled(red, colour).\n" +
-            "labelled(1,   number).\n" +
-            "labelled(green, colour).\n" +
-            "labelled(42,  number).\n");
+        engine.ConsultString("""
+            labelled(red, colour).
+            labelled(1,   number).
+            labelled(green, colour).
+            labelled(42,  number).
+            """);
 
         Assert.Equal(Atom("colour"), engine.Query("labelled(red, L).")["L"]);
         Assert.Equal(Atom("number"), engine.Query("labelled(42, L).")["L"]);
@@ -122,10 +127,11 @@ public class IndexingTests
     {
         // Discrimination by the functor of a compound first arg.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "describe(point(_, _),  twoD).\n" +
-            "describe(box(_, _, _), threeD).\n" +
-            "describe(line(_, _),   geometry).\n");
+        engine.ConsultString("""
+            describe(point(_, _),  twoD).
+            describe(box(_, _, _), threeD).
+            describe(line(_, _),   geometry).
+            """);
 
         Assert.Equal(Atom("twoD"), engine.Query("describe(point(1, 2), L).")["L"]);
         Assert.Equal(Atom("threeD"), engine.Query("describe(box(1, 2, 3), L).")["L"]);
@@ -138,9 +144,10 @@ public class IndexingTests
         // [] is an atom but a cons cell ([H|T]) is a list — they end up in
         // different buckets. The indexing path routes correctly to each.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "shape([],    empty).\n" +
-            "shape([_|_], nonempty).\n");
+        engine.ConsultString("""
+            shape([],    empty).
+            shape([_|_], nonempty).
+            """);
 
         Assert.Equal(Atom("empty"), engine.Query("shape([], X).")["X"]);
         Assert.Equal(Atom("nonempty"), engine.Query("shape([1, 2, 3], X).")["X"]);
@@ -169,10 +176,11 @@ public class IndexingTests
         // own choice point. Even though we entered through switch_on_atom,
         // the bucket's try/retry created a CP; cut must remove it.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "lookup(a, first) :- !.\n" +
-            "lookup(a, second).\n" +
-            "lookup(b, third).\n");
+        engine.ConsultString("""
+            lookup(a, first) :- !.
+            lookup(a, second).
+            lookup(b, third).
+            """);
 
         // Cut commits to clause 1; clause 2 isn't tried.
         var bindings = engine.QueryAll("lookup(a, X).").Select(s => s["X"]).ToList();

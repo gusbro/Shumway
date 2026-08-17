@@ -119,11 +119,17 @@ public class Adr036EvalTests
     [Fact]
     public void DebugConsole_Semicolon_PumpsTheNextSolution()
     {
-        var (engine, session, server) = StartDebuggee(
-            ":- dynamic(log/1).\n" +
-            "run(Out) :-\n    probe(X),\n    emit(X),\n    Out = X.\n" +
-            "probe(_).\nemit(_).\n" +
-            "color(rojo).\ncolor(verde).\n");
+        var (engine, session, server) = StartDebuggee("""
+            :- dynamic(log/1).
+            run(Out) :-
+                probe(X),
+                emit(X),
+                Out = X.
+            probe(_).
+            emit(_).
+            color(rojo).
+            color(verde).
+            """);
         using (session)
         using (server)
         using (var client = new DapTestClient(server.Port))
@@ -148,12 +154,17 @@ public class Adr036EvalTests
     [Fact]
     public void Evaluate_SuppressesNestedBreakpoints_NoDeadlock()
     {
-        var (engine, session, server) = StartDebuggee(
-            ":- dynamic(log/1).\n" +
-            "run(Out) :-\n    probe(X),\n    emit(X),\n    Out = X.\n" +
-            "probe(_).\nemit(_).\n" +
-            "helper(N) :- mark(N).\n" +
-            "mark(N) :- assertz(log(N)).\n");
+        var (engine, session, server) = StartDebuggee("""
+            :- dynamic(log/1).
+            run(Out) :-
+                probe(X),
+                emit(X),
+                Out = X.
+            probe(_).
+            emit(_).
+            helper(N) :- mark(N).
+            mark(N) :- assertz(log(N)).
+            """);
         using (session)
         using (server)
         using (var client = new DapTestClient(server.Port))
@@ -182,10 +193,15 @@ public class Adr036EvalTests
     public void DebugConsole_BareVariableName_PrintsItsValue()
     {
         //  X is BOUND at the stop (step(X) bound 1 before line 5).
-        var (engine, session, server) = StartDebuggee(
-            ":- dynamic(log/1).\n" +
-            "run(Out) :-\n    step(X),\n    emit(X),\n    Out = X.\n" +
-            "step(1).\nemit(_).\n");
+        var (engine, session, server) = StartDebuggee("""
+            :- dynamic(log/1).
+            run(Out) :-
+                step(X),
+                emit(X),
+                Out = X.
+            step(1).
+            emit(_).
+            """);
         using (session)
         using (server)
         using (var client = new DapTestClient(server.Port))
@@ -263,10 +279,15 @@ public class Adr036EvalTests
     public void SetVariable_Underscore_Uninstantiates()
     {
         //  program with X BOUND at the stop: step(X) binds 1, bp at line 5.
-        var (engine, session, server) = StartDebuggee(
-            ":- dynamic(log/1).\n" +
-            "run(Out) :-\n    step(X),\n    emit(X),\n    Out = X.\n" +
-            "step(1).\nemit(X) :- ( nonvar(X) -> assertz(log(X)) ; true ).\n");
+        var (engine, session, server) = StartDebuggee("""
+            :- dynamic(log/1).
+            run(Out) :-
+                step(X),
+                emit(X),
+                Out = X.
+            step(1).
+            emit(X) :- ( nonvar(X) -> assertz(log(X)) ; true ).
+            """);
         using (session)
         using (server)
         using (var client = new DapTestClient(server.Port))

@@ -27,7 +27,10 @@ public class Chunk44Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public pos/1.\npos(X) :- X > 0.");
+        engine.ConsultString("""
+            :- public pos/1.
+            pos(X) :- X > 0.
+            """);
         Assert.True(engine.Query("pos(5).").Success);
         Assert.False(engine.Query("pos(-3).").Success);
         // The threshold-1 promotion should have fired on the first call.
@@ -41,7 +44,10 @@ public class Chunk44Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public eq/2.\neq(X, Y) :- X = Y.");
+        engine.ConsultString("""
+            :- public eq/2.
+            eq(X, Y) :- X = Y.
+            """);
         Assert.True(engine.Query("eq(a, a).").Success);
         Assert.False(engine.Query("eq(a, b).").Success);
         Assert.True(engine.Query("eq(X, foo), X == foo.").Success);
@@ -52,10 +58,11 @@ public class Chunk44Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public maybe/1.\n" +
-            "maybe(X) :- atom(X), !.\n" +
-            "maybe(_).\n");
+        engine.ConsultString("""
+            :- public maybe/1.
+            maybe(X) :- atom(X), !.
+            maybe(_).
+            """);
         // With cut: the first matching clause commits.
         Assert.True(engine.Query("maybe(foo).").Success);
         // Second clause runs for non-atoms.
@@ -67,7 +74,10 @@ public class Chunk44Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public double/2.\ndouble(X, Y) :- Y is X * 2.");
+        engine.ConsultString("""
+            :- public double/2.
+            double(X, Y) :- Y is X * 2.
+            """);
         Assert.Equal(Int(10), engine.Query("double(5, R).")["R"]);
     }
 
@@ -78,7 +88,10 @@ public class Chunk44Tests
         // survives the first call.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public check/1.\ncheck(X) :- atom(X), atom_length(X, N), N > 0.");
+        engine.ConsultString("""
+            :- public check/1.
+            check(X) :- atom(X), atom_length(X, N), N > 0.
+            """);
         Assert.True(engine.Query("check(hello).").Success);
         Assert.False(engine.Query("check(42).").Success);
     }

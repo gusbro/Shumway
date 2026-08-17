@@ -1,6 +1,10 @@
 # ADR-025: Body `jump` opcode + inline deterministic if-then-else (Tier-0)
 
-**Status:** Accepted — stages (a) + (c) + (b) implemented (Phase 33): `jump`
+## Status
+
+Shipped ([Phase 33](../../history/phase-33-closure.md)).
+
+Stages (a) + (c) + (b): the `jump`
 opcode, interpreter dispatch, dispatch-site relocation, the ClauseCompiler
 inline lowering behind `PrologEngine.EnableInlineIte` (default OFF), and the
 Tier-1 IL describe/emit for the shape. Stage (b) specifics: the mid-body

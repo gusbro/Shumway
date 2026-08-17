@@ -23,6 +23,9 @@ namespace Shumway.Embedding;
 ///             .shum (see BundleFormat.FinalizeImage / OpenBody; bodies
 ///             &lt; 4 KB stay raw)
 ///   [9..]     Body (raw or decompressed):
+///                 genMajor         : uint32  \
+///                 genMinor         : uint32   > the Shumway that WROTE this
+///                 genPatch         : uint32  /  file (see ShumwayVersion)
 ///                 moduleName       : len-prefixed UTF-8
 ///                 source           : len-prefixed UTF-8 (may be empty)
 ///                 bytecodeLength   : uint32

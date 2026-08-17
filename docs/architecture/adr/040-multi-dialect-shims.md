@@ -1,6 +1,10 @@
 # ADR-040: Multi-dialect library shims + per-module attribute hook (uniting Prolog worlds)
 
-**Status:** Accepted — implemented (Components 1–4 + D5.2), including the
+## Status
+
+Shipped ([Phase 36](../../history/phase-36-closure.md); D5.3 content sniff deferred).
+
+Components 1–4 + D5.2, including the
 CLI / REPL `-L dir:dialect` surface. D5.3 content sniff and a fuller SWI shim
 are deferred (see below).
 

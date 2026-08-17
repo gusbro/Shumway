@@ -79,6 +79,14 @@ public sealed class Parser
         _lexer = lexer;
         _operators = operators;
         _flags = flags;
+        // Flags that affect LEXING travel to the lexer here, so every parse
+        // path (consult, runtime queries, read/1, term_from_atom) lexes the
+        // same way; ClauseReader can still flip them mid-file on a
+        // set_prolog_flag directive.
+        lexer.ArityCompat = flags.ArityCompat;
+        lexer.DigitSeparators = flags.DigitSeparators;
+        lexer.LenientQuoteCharLiteral = flags.LenientQuoteCharLiteral;
+        lexer.LenientEscapes = flags.LenientEscapes;
     }
 
     /// <summary>Reads a single term (no trailing dot expected). Returns when an
@@ -170,7 +178,19 @@ public sealed class Parser
             if (tok.Kind == TokenKind.Bar)
             {
                 if (_suppressBar) break;
-                if (!TryApplyInfix("|", 1100, OperatorType.Xfy, maxPrec, ref left, ref builtPrec, ref leftBareOp)) break;
+                // Strict ISO has no bar operator: `(a|b)` is a syntax error
+                // unless op/3 registered `|` (infix > 1000, Cor.2). Two
+                // sanctioned exceptions get the classic xfy 1100: a DCG rule
+                // body, where `|` is the TS 13211-3 alternation connective,
+                // and dialect leniency (SWI / Scryer / Arity sources).
+                if (!_operators.TryGetInfix("|", out int barPrec, out OperatorType barType))
+                {
+                    if (!_sawDcgArrow && !_flags.LenientBareOperatorOperands
+                        && !_flags.ArityCompat)
+                        break;
+                    barPrec = 1100; barType = OperatorType.Xfy;
+                }
+                if (!TryApplyInfix("|", barPrec, barType, maxPrec, ref left, ref builtPrec, ref leftBareOp)) break;
                 continue;
             }
 
@@ -293,7 +313,7 @@ public sealed class Parser
         int leftMax = opType == OperatorType.Yf ? opPrec : opPrec - 1;
         if (builtPrec > leftMax) return false;
 
-        if (leftBareOp)
+        if (leftBareOp && !_flags.LenientBareOperatorOperands)
             throw new ParseException(
                 $"Operator atom cannot be the operand of postfix '{name}' "
                 + "without parentheses.", PeekToken().Position);
@@ -404,7 +424,7 @@ public sealed class Parser
                 Term operand = ReadTermInternal(rightMax, out _);
                 // ISO §6.3.1.3: a prefix operator's operand may not be a bare
                 // operator-atom (`- =` must be `- (=)`).
-                if (_bareOp)
+                if (_bareOp && !_flags.LenientBareOperatorOperands)
                     throw new ParseException(
                         $"Operator atom cannot be the operand of prefix "
                         + $"'{tok.Text}' without parentheses.", pos);
@@ -422,15 +442,26 @@ public sealed class Parser
         // operator-operand position (maxPrec < 999): a bare operator-atom used
         // as a delimited ARGUMENT or list element (`f(:-)`, `[:-,-]`, read at
         // 999) or at the top level is a complete atom term and stays valid. A
-        // parenthesised `(*)` / compound `f(*)` reads as a non-atom (exempt),
-        // and a QUOTED atom (`'<'`) is a plain priority-0 atom (exempt).
+        // parenthesised `(*)` / compound `f(*)` reads as a non-atom (exempt).
+        //
+        // A QUOTED atom is NOT exempt: quotes change the token, not the atom —
+        // `'\\'` IS the operator `\` (Neumerkel syntax #106), so `X = '\\'` is
+        // the same error as `X = *`, and the conforming spelling is `X = ('\\')`.
+        // The leniencies that DO accept it: arity_compat (Arity sources use
+        // quoted operator atoms as plain operands) and the SWI dialect scope
+        // (LenientBareOperatorOperands — SWI accepts them everywhere).
         Token pk = PeekToken();
         Term prim = ReadPrimary();
         builtPrec = 0;
         _bareOp = false;
-        if (pk.Kind == TokenKind.Atom && !pk.WasQuoted
+        bool quotedExempt = pk.WasQuoted
+            && (_flags.ArityCompat || _flags.LenientBareOperatorOperands);
+        if (pk.Kind == TokenKind.Atom && !quotedExempt
             && prim is AtomTerm bareAt && bareAt.Name == pk.Text)
         {
+            // A bar atom only ever reaches here QUOTED (the bare bar lexes as
+            // TokenKind.Bar); the table decides whether it is an operator, so
+            // `op(0, xfy, '|')` lifts the operand restriction with it.
             int p = BareOperatorAtomPriority(bareAt.Name);
             if (p > 0)   // the atom is an operator
             {
@@ -540,6 +571,21 @@ public sealed class Parser
                     ExpectKind(TokenKind.RBracket);
                     return new CompoundTerm("once", new[] { snipBody }) { Position = pos };
                 }
+                // ISO 6.3.3: the `[]` atom (even spelled `[ ]`) immediately
+                // followed by `(` is functional notation — `[ ](X)` is the
+                // compound '[]'(X) (Neumerkel #97).
+                if (PeekToken().Kind == TokenKind.RBracket
+                    && PeekTokenAt(1).Kind == TokenKind.LParen
+                    && IsAdjacent(PeekToken(), PeekTokenAt(1)))
+                {
+                    NextToken();   // ']'
+                    NextToken();   // '('
+                    var nilArgs = ReadCommaSeparatedArgs(closing: TokenKind.RParen);
+                    if (nilArgs.Count == 0)
+                        throw new ParseException(
+                            "Compound term '[]' requires at least one argument.", pos);
+                    return new CompoundTerm("[]", nilArgs.ToArray()) { Position = pos };
+                }
                 return ReadList(pos);
 
             case TokenKind.LBrace:
@@ -547,10 +593,9 @@ public sealed class Parser
                 // native goal: in a NON-DCG clause a body goal can be raw
                 // native code between braces (`p :- g, { C code; }, h.`).
                 // The brace content is not Prolog-lexable, so it is
-                // skipped RAW by the lexer (naive brace counting) and the
-                // goal `true` is substituted. TODO: the real
-                // implementation (compiling/binding the native code)
-                // comes later — for now the goal is a no-op.
+                // skipped RAW by the lexer (naive brace counting) and
+                // carried as '$native_goal'(RawText); the consult-time
+                // NativeTransform (ADR-022) compiles it for real.
                 //
                 // In a DCG rule (`head --> body`) braces keep their ISO
                 // {}/1 meaning — detection is the per-clause _sawDcgArrow
@@ -577,12 +622,12 @@ public sealed class Parser
                             "internal: token lookahead extends past a native '{' goal "
                             + "(arity_compat); raw skip would start at the wrong position.",
                             pos);
-                    // ADR-022 — capture the raw C statement
-                    // text and carry it in a `'$native_goal'(RawText)` term (the
-                    // raw text as a non-interned StringTerm). Until the native
-                    // codegen lands (step 4), '$native_goal'/1 is a no-op builtin
-                    // — same runtime behaviour as the previous `true`, but the
-                    // span is no longer lost.
+                    // ADR-022 — capture the raw C statement text in a
+                    // `'$native_goal'(RawText)` term (a non-interned
+                    // StringTerm). NativeTransform rewrites it to a compiled
+                    // '$native_run' at consult; one that survives to
+                    // execution raises loudly (see its registration in
+                    // StandardBuiltins) rather than silently succeeding.
                     string nativeText = _lexer.SkipNativeGoalBlock(pos);
                     return new CompoundTerm("$native_goal",
                         new Term[] { new StringTerm(nativeText) { Position = pos } })
@@ -612,11 +657,16 @@ public sealed class Parser
                             $"Compound term '{sepName}' requires at least one argument.", pos);
                     return new CompoundTerm(sepName, sepArgs.ToArray()) { Position = pos };
                 }
-                // `|` in primary position is the ATOM '|' (ISO: the bar is an
-                // atom). `(|)` — Scryer's builtins.pl op/3 permission-error term —
-                // relies on it. The list-tail `[H|T]` bar is consumed by list
-                // parsing before it reaches here, so this never shadows it.
-                if (tok.Kind == TokenKind.Bar)
+                // `|` in primary position is the bar ATOM only under dialect
+                // leniency and only when DELIMITED-AND-CLOSED — the next token
+                // is `)` — the `(|)` / `f(|)` shape Scryer's builtins.pl op/3
+                // permission-error term relies on. Strict ISO has no bar atom
+                // token at all (Neumerkel #356 `{|}`, #360/#361 `(|)`); the
+                // list-tail `[H|T]` bar is consumed by list parsing before it
+                // reaches here, so this never shadows it.
+                if (tok.Kind == TokenKind.Bar
+                    && PeekToken().Kind == TokenKind.RParen
+                    && (_flags.ArityCompat || _flags.LenientBareOperatorOperands))
                     return new AtomTerm("|") { Position = pos };
                 goto default;
 

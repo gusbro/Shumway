@@ -17,17 +17,100 @@
 %  backend identity and capabilities
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-'$lgt_prolog_feature'(prolog_dialect, shumway).
+%  WHY SHUMWAY ANNOUNCES ITSELF AS `swi`
+%
+%  Logtalk selects backend-specific code by `prolog_dialect`: its libraries
+%  and tools branch on it in ~100 files, and a name Logtalk does not know
+%  falls into the `:- else.` arm — which, depending on the file, prints
+%  "backend Prolog compiler not supported!" (library/os), leaves random
+%  without a backend, or makes lgtunit raise `resource_error(deterministic/2)`
+%  and fail most tests of most suites. Announcing an unknown dialect is not a
+%  neutral act of honesty; it disables the library collection.
+%
+%  Shumway is not (yet) one of the backends Logtalk ships support for — that
+%  is Paulo Moura's call, not ours, and it is not something a user of Shumway
+%  should have to patch into a Logtalk installation. So we announce the
+%  supported dialect closest to our actual capabilities.
+%
+%  That is `swi`, settled by measurement across four candidates. Testers gate
+%  on the dialect, and the choice decides both which of them RUN and what
+%  they EXPECT:
+%
+%      gate                              dialects
+%      coroutining                       eclipse xvm sicstus swi trealla xsb yap
+%      dif                               b eclipse xvm sicstus swi trealla xsb yap
+%      timeout                           b eclipse xvm sicstus swi trealla xsb yap
+%      process (OS processes)            ciao eclipse gnu sicstus swi trealla xvm
+%      redis (sockets)                   eclipse gnu sicstus swi trealla xvm
+%      java (a JVM)                      swi yap
+%      reader/csv expect LF, not CR-LF   b gnu ji sicstus swi xsb
+%
+%  The path here, kept because each step taught a constraint:
+%
+%  - `gnu` (the adapter's origin) enables the ones we CANNOT support (OS
+%    processes, sockets) and blocks the ones we CAN (dif/2, coroutining and
+%    time limits are native), so real capability went uncredited.
+%  - `xvm` credits those three but expects CR-LF text reads — the opposite of
+%    ADR-045. Full sweep: 36 failures against `gnu`'s 9.
+%  - `xsb` satisfies every row of the table and nearly worked (its lgtunit
+%    arm needs call_cleanup/2 — one line over setup_call_cleanup/3, below).
+%  - `swi` also satisfies every row except enabling process/redis/java —
+%    which measure the host platform, not Prolog conformance, and are
+%    excluded as structurally N/A by the test harness rather than mis-scored.
+%    What decided FOR it: the swi arms exercise the engine's REAL surface
+%    (predicate_property meta templates, platform prolog_flags, statistics/2
+%    shapes, SWI shell semantics) instead of asking the adapter to translate
+%    around it, and the full 242-tester sweep under `swi` closed at 100% of
+%    the structurally supported set — 204 suites, 11416 tests, 0 failures.
+%
+%  The gap is the backend's OS predicate names, which the "Backend OS
+%  compatibility layer" at the end of THIS FILE supplies — in the adapter we
+%  ship, never in the Logtalk tree. It covers the `gnu` spellings too, so the
+%  override below keeps working.
+%
+%  Override the announced dialect with the SHUMWAY_LOGTALK_DIALECT
+%  environment variable, e.g. `shumway` once Logtalk knows that name:
+%
+%      set SHUMWAY_LOGTALK_DIALECT=shumway
+%
+%  Everything else — `prolog_version`, error messages, `current_prolog_flag`
+%  — keeps reporting Shumway; only this one selector borrows another name.
+
+'$lgt_prolog_feature'(prolog_dialect, Dialect) :-
+	(	catch(getenv('SHUMWAY_LOGTALK_DIALECT', Name), _, fail),
+		Name \== '' ->
+		Dialect = Name
+	;	Dialect = swi
+	).
 '$lgt_prolog_feature'(prolog_version, v(Major, Minor, Patch)) :-
 	current_prolog_flag(version_data, shumway(Major, Minor, Patch, _)).
-'$lgt_prolog_feature'(prolog_compatible_version, @>=(v(0, 1, 0))).
+'$lgt_prolog_feature'(prolog_compatible_version, @>=(v(1, 0, 0))).
 
-% Conservative capability set. Shumway does implement tabling, dif/2 and
-% friends natively, but announcing a capability here also commits the adapter
-% to the corresponding hook wiring — flip one only together with that work.
+% Capability set — each value is the MEASURED truth, not modesty and not
+% optimism, because library code changes behavior on it (library(types) caps
+% generable character codes by the unicode value; testers gate whole test
+% groups on tabling/threads).
+%
+% - tabling: supported — the engine's `:- table` (variant tabling,
+%   well-founded negation). Logtalk forwards the directive over the compiled
+%   names; the table/1 meta-directive declaration below is the required half.
+% - unicode: unsupported is deliberate, NOT modesty backwards. The engine is
+%   BMP-clean (a code above 0xFFFF raises representation_error everywhere —
+%   silently truncating used to build a DIFFERENT character), but Logtalk's
+%   `unicode_full` charset generates astral codes whenever the flag is not
+%   `unsupported`, and its own docs say only backends declaring `full` (SWI,
+%   XVM) handle that. `bmp` was measured: arbitrary 43/43 → 40/43. Flip to
+%   `full` only with real astral atoms (surrogate-pair build/decompose,
+%   code-point atom_length) — that also un-skips a yaml test.
+% - threads/engines/sockets: genuinely absent (single-threaded activations,
+%   no socket layer).
+% - modules: Logtalk-compiling Prolog MODULE FILES as objects is more than
+%   ADR-038 provides (no current_module/1 reflection, M:G only shimmed).
+% - coinduction: needs verified rational-tree unification end to end;
+%   revisit deliberately, not as a flag flip.
 '$lgt_prolog_feature'(encoding_directive, unsupported).
 '$lgt_prolog_feature'(sockets, unsupported).
-'$lgt_prolog_feature'(tabling, unsupported).
+'$lgt_prolog_feature'(tabling, supported).
 '$lgt_prolog_feature'(engines, unsupported).
 '$lgt_prolog_feature'(threads, unsupported).
 '$lgt_prolog_feature'(modules, unsupported).
@@ -119,9 +202,32 @@
 
 % consult/1 takes a goal-position argument the compiler must not touch
 '$lgt_prolog_meta_predicate'(consult(_), consult(*), predicate) :- !.
+% The coroutining predicates carry a goal that runs LATER, when the variable
+% is bound. Without these Logtalk passes that goal through uncompiled, so it
+% wakes up in `user` and cannot see the object predicates it was written
+% against — an existence_error at wake-up, far from the freeze/2 that caused it.
+'$lgt_prolog_meta_predicate'(freeze(_, _), freeze(*, 0), predicate) :- !.
+'$lgt_prolog_meta_predicate'(when(_, _), when(*, 0), predicate) :- !.
+% NB: the MODULE-QUALIFIED forwarding calls inside the library objects
+% (user:freeze, when:when, time:call_with_time_limit) must NOT be declared
+% meta here: their goal argument is already the caller's compiled closure,
+% and a meta declaration makes Logtalk wrap it AGAIN in the forwarding
+% object's own context — measured as freeze tests regressing.
+% Same reason for the time-limited calls: the goal must be compiled in the
+% caller's context, or it wakes up in `user` unable to see the predicates it
+% was written against.
+'$lgt_prolog_meta_predicate'(call_with_time_limit(_, _), call_with_time_limit(*, 0), predicate) :- !.
+'$lgt_prolog_meta_predicate'(time_out(_, _, _), time_out(0, *, *), predicate) :- !.
+% Declaring it here is also what tells Logtalk timed_call/2 is a BACKEND
+% predicate: without it the compiler takes the library's own meta_predicate
+% declaration to mean an object-local one and looks for `$timeout#0.timed_call#2`.
+'$lgt_prolog_meta_predicate'(timed_call(_, _), timed_call(0, *), predicate) :- !.
+'$lgt_prolog_meta_predicate'(call_with_timeout(_, _), call_with_timeout(0, *), predicate) :- !.
+'$lgt_prolog_meta_predicate'(call_with_timeout(_, _, _), call_with_timeout(0, *, *), predicate) :- !.
 '$lgt_prolog_meta_predicate'(_, _, _) :- fail.
 
 % Shumway directives whose argument is a predicate indicator
+'$lgt_prolog_meta_directive'(table(_), table(/)).
 '$lgt_prolog_meta_directive'(built_in(_), built_in(/)).
 '$lgt_prolog_meta_directive'(ensure_linked(_), ensure_linked(/)).
 
@@ -138,8 +244,62 @@
 '$lgt_prolog_deprecated_built_in_predicate_hook'(_, _) :- fail.
 '$lgt_prolog_deprecated_built_in_predicate_hook'(_) :- fail.
 
-% no backend-specific term/goal expansion, encodings, or string type
+% `:- use_module/1,2` directives in dialect-conditional code. Logtalk only
+% accepts a Prolog directive the adapter declares, so without these clauses a
+% tester opening with `:- use_module(library(dif), [])` dies with
+% `Domain error: use_module/2 is not in domain directive` — even though the
+% ENGINE supports the directive fine (ADR-038). Three cases:
+%
+% - constraintLib (XSB's constraint library): our equivalent is
+%   library(coroutining), loaded by this adapter above — dropped, nothing to do.
+% - a library this engine resolves on its search path: loaded NOW (the
+%   compiler may need its ops/predicates) and re-emitted verbatim so the
+%   generated file records the dependency.
+% - a library we don't have (SWI's filesex, apply, ...): the load fails
+%   quietly and the directive is dropped — if a predicate from it is really
+%   needed, its call site raises a clear existence_error later, which beats
+%   aborting the whole compilation here.
+'$lgt_prolog_term_expansion'((:- use_module(constraintLib, _)), []) :- !.
+'$lgt_prolog_term_expansion'((:- use_module(Library)), Expansion) :- !,
+	'$shumway_expand_use_module'(Library, Expansion).
+'$lgt_prolog_term_expansion'((:- use_module(Library, Imports)), Expansion) :- !,
+	(	'$shumway_provided_library'(Library) ->
+		Expansion = []
+	;	catch(use_module(Library), _, fail) ->
+		Expansion = {:- use_module(Library)}
+	;	nonvar(Imports), Imports = [_| _] ->
+		% A module we cannot resolve, imported for SPECIFIC predicates
+		% (json_path/types import unicode_property/2 from SWI's `unicode`):
+		% route those names to `user`, where this adapter or the engine may
+		% supply them. On this module-less backend that is what the import
+		% MEANS; a predicate genuinely absent still raises a clear
+		% existence_error at its call site, instead of the confusing
+		% object-local '$obj#0.name#arity' one that dropping the directive
+		% produced.
+		Expansion = (:- uses(user, Imports))
+	;	Expansion = []
+	).
+% no other backend-specific term/goal expansion, encodings, or string type
 '$lgt_prolog_term_expansion'(_, _) :- fail.
+
+'$shumway_expand_use_module'(Library, []) :-
+	'$shumway_provided_library'(Library),
+	!.
+'$shumway_expand_use_module'(Library, Expansion) :-
+	(	catch(use_module(Library), _, fail) ->
+		Expansion = {:- use_module(Library)}
+	;	Expansion = []
+	).
+
+% Libraries whose predicates this adapter already supplies. These must be
+% DROPPED rather than resolved: the engine's search path can carry another
+% dialect's copy (the Scryer collection ships dif.pl), and loading it on top
+% of ours collides on the shared public names.
+'$shumway_provided_library'(library(dif)).      % library(coroutining), above
+'$shumway_provided_library'(library(when)).
+'$shumway_provided_library'(library(freeze)).
+'$shumway_provided_library'(library(atts)).
+'$shumway_provided_library'(library(time)).     % call_with_time_limit/2, below
 '$lgt_prolog_goal_expansion'(_, _) :- fail.
 '$lgt_logtalk_prolog_encoding'(_, _, _) :- fail.
 '$lgt_string'(_) :- fail.
@@ -339,9 +499,11 @@ term_hash(Term, _Depth, _Range, Hash) :-
 	Acc is (Acc0 * 33 + Code) /\ 0x3fffffff,
 	'$shumway_hash_fold'(Codes, Acc, Hash).
 
-% Not provided by this backend; a loud error beats a silent wrong answer.
-setup_call_cleanup(_, _, _) :-
-	throw(not_supported(setup_call_cleanup/3)).
+% setup_call_cleanup/3 is native (prelude). lgtunit's deterministic/1,2 for
+% this dialect family is written over call_cleanup/2, which is the same thing
+% without a setup.
+call_cleanup(Goal, Cleanup) :-
+	setup_call_cleanup(true, Goal, Cleanup).
 
 '$lgt_format'(Stream, Format, Arguments) :-
 	format(Stream, Format, Arguments).
@@ -378,3 +540,338 @@ atomic_concat(A, B, Atom) :-
 {Files} :-
 	'$lgt_conjunction_to_list'(Files, List),
 	logtalk_load(List).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  Backend OS compatibility layer
+%
+%  Logtalk's library(os) calls the announced backend's OS predicates, and
+%  Shumway's own OS family carries different names — it grew from the
+%  Arity/SWI side. The spellings both the `xvm` arm (what we announce) and
+%  the `gnu` arm (reachable via SHUMWAY_LOGTALK_DIALECT) expect are defined
+%  here, in the adapter WE ship, rather than by patching Logtalk's tree or by
+%  adding foreign aliases to the engine's global builtin surface.
+%
+%  Both arms are kept so the override stays usable. Nothing here is engine
+%  surface: these names exist only while this adapter is loaded.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% The dialects that carry coroutining expect `dif/2`, `freeze/2`, `when/2`
+% and friends to answer as plain predicates. In Shumway they are an opt-in
+% library, so the adapter opts in on the program's behalf — announcing the
+% capability and then not having it is worse than not announcing it.
+:- use_module(library(coroutining)).
+
+% SWI-arm code reaches plain-Prolog land with MODULE-QUALIFIED goals
+% (library(timeout) calls time:call_with_time_limit/2). Shumway has no M:Goal
+% (ADR-038 defers it), so the module is dropped and the goal called — correct
+% for these uses, where the predicate itself is supplied by this adapter.
+':'(_Module, Goal) :-
+	call(Goal).
+
+% Registered so predicate_property/2 reports meta_predicate(T) for them —
+% which is where Logtalk's compiler looks when it compiles the qualified
+% forwarding calls (time:call_with_time_limit) in library(timeout).
+:- meta_predicate(call_with_time_limit(*, 0)).
+:- meta_predicate(timed_call(0, *)).
+
+% SWI's call_with_time_limit/2: Time in SECONDS, throws the bare atom
+% time_limit_exceeded, and — per SWI's documentation — runs Goal AS ONCE/1,
+% hence the cut. Over time_out/3 like the other wrappers.
+call_with_time_limit(Time, Goal) :-
+	MilliSeconds is truncate(Time * 1000),
+	time_out(Goal, MilliSeconds, Result),
+	!,
+	(	Result == time_out ->
+		throw(time_limit_exceeded)
+	;	true
+	).
+
+% library(timeout)'s xsb arm calls XSB's timed_call/2: a goal plus an option
+% list, of which only max(MilliSeconds, OnTimeout) is used — run the goal, and
+% call OnTimeout instead of giving up silently if the budget runs out. Over
+% our time_out/3, so it inherits the same clock-restarts-on-backtracking rule.
+timed_call(Goal, Options) :-
+	'$shumway_timed_call_max'(Options, MilliSeconds, OnTimeout),
+	time_out(Goal, MilliSeconds, Result),
+	(	Result == time_out ->
+		call(OnTimeout)
+	;	true
+	).
+
+'$shumway_timed_call_max'([max(MilliSeconds, OnTimeout)| _], MilliSeconds, OnTimeout) :- !.
+'$shumway_timed_call_max'([_| Options], MilliSeconds, OnTimeout) :-
+	'$shumway_timed_call_max'(Options, MilliSeconds, OnTimeout).
+
+% library(timeout)'s xvm arm calls these in `user`. Shumway's own primitive is
+% time_out/3 (SICStus semantics: milliseconds, nondet, clock restarts on
+% backtracking); call_with_timeout/2-3 are Logtalk's SECONDS-based, committed
+% shape, so they belong here rather than in the engine's predicate surface.
+% Deliberately the same construction Logtalk's own sicstus arm uses — the cut
+% is what makes call_with_timeout/2 deterministic over a non-deterministic Goal.
+call_with_timeout(Goal, Time) :-
+	MilliSeconds is truncate(Time * 1000),
+	time_out(Goal, MilliSeconds, Result),
+	!,
+	(	Result == time_out ->
+		throw(timeout(Goal))
+	;	true
+	).
+
+call_with_timeout(Goal, Time, Result) :-
+	MilliSeconds is truncate(Time * 1000),
+	(	catch(time_out(Goal, MilliSeconds, Result0), Error, true) ->
+		(	Result0 == time_out ->
+			Result = timeout
+		;	var(Error) ->
+			Result = true
+		;	Result = error(Error)
+		)
+	;	Result = fail
+	).
+
+% --- the swi arm ---
+%
+% library(os)'s SWI arm is the closest to Shumway's native surface (the OS
+% family here grew from the Arity/SWI side): atomic_list_concat, copy_file,
+% directory_files, exists_file/exists_directory, get_time, getenv,
+% prolog_to_os_filename, shell, sleep, stamp_date_time and the SWI shapes of
+% statistics/2 (cputime seconds, walltime [Ms,_]) are all native. Only the
+% four below need spelling out.
+
+% SWI's options form. relative_to(Base) is HONORED — a relative path joins
+% Base before resolving, never the process CWD (an earlier shim ignored it,
+% and a recursive delete over the mis-resolved path ate a test tree — path
+% resolution feeding deletes has no room for "close enough"). expand(true),
+% file_errors(fail) and file_type(_) change nothing here: Shumway expands
+% nothing and appends no extensions, and /2 fails rather than throws.
+absolute_file_name(Path, Options, ExpandedPath) :-
+	(	member(relative_to(Base), Options),
+		\+ '$shumway_absolute_path'(Path) ->
+		atom_concat(Base, '/', Slashed),
+		atom_concat(Slashed, Path, Joined),
+		absolute_file_name(Joined, ExpandedPath)
+	;	absolute_file_name(Path, ExpandedPath)
+	).
+
+% Absolute under either convention: rooted (`/...`) or drive-qualified
+% (`C:...`). A doubled slash from joining is harmless downstream.
+'$shumway_absolute_path'(Path) :-
+	(	sub_atom(Path, 0, 1, _, '/') ->
+		true
+	;	sub_atom(Path, 1, 1, _, ':')
+	).
+
+size_file(File, Size) :-
+	file_size(File, Size).
+
+time_file(File, Time) :-
+	file_modification_time(File, Time).
+
+% Only the modes library(os) asks for; `exist` is true for a directory too,
+% the others are about a regular file. An UNBOUND mode must raise (SWI does;
+% the first clause would otherwise quietly unify it with `exist` and turn a
+% caller's error into a plain failure), and an unknown one is a domain error.
+access_file(_, Permission) :-
+	var(Permission),
+	!,
+	throw(error(instantiation_error, access_file/2)).
+access_file(Path, exist) :-
+	!,
+	(	exists_file(Path) ->
+		true
+	;	exists_directory(Path)
+	).
+access_file(Path, read) :- !, file_permission(Path, read).
+access_file(Path, write) :- !, file_permission(Path, write).
+access_file(Path, append) :- !, file_permission(Path, write).
+access_file(Path, execute) :- !, file_permission(Path, execute).
+access_file(_, Permission) :-
+	throw(error(domain_error(access, Permission), access_file/2)).
+
+% --- the xsb arm ---
+%
+% library(os)'s XSB arm rests almost entirely on one predicate family: XSB's
+% path_sysop/2-3, an operation atom plus its arguments. Every operation maps
+% onto something Shumway already has under a different name.
+
+path_sysop(exists, Path) :-
+	!,
+	(	exists_file(Path) ->
+		true
+	;	exists_directory(Path)
+	).
+path_sysop(isdir, Path) :- !, exists_directory(Path).
+path_sysop(isplain, Path) :- !, exists_file(Path).
+path_sysop(readable, Path) :- !, file_permission(Path, read).
+path_sysop(writable, Path) :- !, file_permission(Path, write).
+path_sysop(executable, Path) :- !, file_permission(Path, execute).
+path_sysop(mkdir, Path) :- !, mkdir(Path).
+path_sysop(rmdir, Path) :- !, rmdir(Path).
+path_sysop(rm, Path) :- !, delete(Path).
+path_sysop(chdir, Path) :- !, working_directory(_, Path).
+% cwd READS the current directory (Shumway's /2 is read-and-set, so passing
+% the same variable twice leaves it unchanged).
+path_sysop(cwd, Directory) :- !, working_directory(Directory, Directory).
+
+% The rest of what the arm imports, in XSB's spellings.
+
+sys_pid(PID) :-
+	pid(PID).
+
+% Backtrackable entry enumeration — the arm wraps it in findall/3.
+list_directory(Path, File) :-
+	directory_files(Path, Files),
+	member(File, Files).
+
+% Environment-variable expansion inside a path. Shumway resolves paths without
+% a separate expansion step, so this is the identity — kept because the arm
+% calls it before every absolute_file_name.
+expand_atom(Atom, Atom).
+
+% XSB reports both in SECONDS; Shumway's get_cpu_time/1 is milliseconds.
+cputime(Seconds) :-
+	get_cpu_time(Milliseconds),
+	Seconds is Milliseconds / 1000.
+
+walltime(Seconds) :-
+	get_time(Seconds).
+
+% Current time split into whole seconds and the leftover milliseconds.
+epoch_milliseconds(Seconds, Milliseconds) :-
+	get_time(Now),
+	Seconds is truncate(Now),
+	Milliseconds is truncate((Now - Seconds) * 1000).
+
+get_localdate(Year, Month, Day, Hours, Minutes, Seconds) :-
+	get_time(Stamp),
+	stamp_date_time(Stamp, date(Year, Month, Day, Hours, Minutes, SecondsFloat, _, _, _), local),
+	Seconds is integer(SecondsFloat).
+
+sleep_ms(Milliseconds) :-
+	Seconds is Milliseconds / 1000,
+	sleep(Seconds).
+
+% Only the key library(os) asks for. COMSPEC is the same probe Logtalk's own
+% arms use to tell Windows from the rest.
+xsb_configuration(os_type, Type) :-
+	(	getenv('COMSPEC', _) ->
+		Type = windows
+	;	Type = unix
+	).
+
+path_sysop(rename, Old, New) :- !, rename(Old, New).
+path_sysop(copy, From, To) :- !, copy_file(From, To).
+path_sysop(size, Path, Size) :- !, file_size(Path, Size).
+path_sysop(modtime, Path, Time) :- !, file_modification_time(Path, Time).
+path_sysop(expand, Path, Expanded) :- !, absolute_file_name(Path, Expanded).
+
+% --- the xvm arm ---
+
+% Reads the current directory (Shumway's /2 is the SWI-style read-and-set,
+% so passing the same value twice leaves it unchanged).
+current_directory(Directory) :-
+	working_directory(Directory, Directory).
+
+% Creates a directory INCLUDING any missing parents, which is what Shumway's
+% mkdir/1 already does.
+make_directory_path(Directory) :-
+	mkdir(Directory).
+
+directory_exists(Directory) :-
+	exists_directory(Directory).
+
+% Positional, where gnu's date_time/1 wraps the same fields in dt/6.
+date_time(Year, Month, Day, Hours, Minutes, Seconds) :-
+	get_time(Stamp),
+	stamp_date_time(Stamp, date(Year, Month, Day, Hours, Minutes, SecondsFloat, _, _, _), local),
+	Seconds is integer(SecondsFloat).
+
+wall_time(Seconds) :-
+	get_time(Seconds).
+
+% An opaque monotonic-enough stamp; library(os) only ever compares these.
+time_stamp(Stamp) :-
+	get_time(Stamp).
+
+% --- shared by both arms, with the units each one expects ---
+
+% One name, two contracts: xvm reads seconds, gnu reads milliseconds. Follow
+% the ANNOUNCED dialect rather than silently hand one of them the other's
+% numbers — a wrong-by-1000 duration is the kind of bug that survives a test
+% suite.
+cpu_time(Time) :-
+	get_cpu_time(Milliseconds),
+	(	'$lgt_prolog_feature'(prolog_dialect, gnu) ->
+		Time = Milliseconds
+	;	Time is Milliseconds / 1000
+	).
+
+% --- the gnu arm ---
+
+prolog_pid(PID) :-
+	pid(PID).
+
+% GNU's working_directory/1 reads the current directory; Shumway's /2 is the
+% SWI-style read-and-set, so pass the same value twice to leave it unchanged.
+working_directory(Directory) :-
+	working_directory(Directory, Directory).
+
+change_directory(Directory) :-
+	working_directory(_, Directory).
+
+make_directory(Directory) :-
+	mkdir(Directory).
+
+delete_directory(Directory) :-
+	rmdir(Directory).
+
+delete_file(File) :-
+	delete(File).
+
+rename_file(Old, New) :-
+	rename(Old, New).
+
+% Another name with two contracts: GNU's file_exists/1 is true for ANY
+% directory entry, xvm's only for a regular file. library(os) leans on the
+% difference — it asks file_exists/1 before deleting, so the GNU reading would
+% have it try to delete a directory as a file.
+file_exists(Path) :-
+	(	'$lgt_prolog_feature'(prolog_dialect, gnu) ->
+		(	exists_file(Path) ->
+			true
+		;	exists_directory(Path)
+		)
+	;	exists_file(Path)
+	).
+
+% Only the four properties library(os) asks for.
+file_property(Path, type(Type)) :-
+	(	exists_directory(Path) ->
+		Type = directory
+	;	exists_file(Path),
+		Type = regular
+	).
+file_property(Path, size(Size)) :-
+	file_size(Path, Size).
+file_property(Path, last_modification(Time)) :-
+	file_modification_time(Path, Time).
+file_property(Path, absolute_file_name(Absolute)) :-
+	absolute_file_name(Path, Absolute).
+
+environ(Variable, Value) :-
+	getenv(Variable, Value).
+
+% GNU reports real_time in MILLISECONDS too (cpu_time is shared, above).
+real_time(Milliseconds) :-
+	get_time(Seconds),
+	Milliseconds is integer(Seconds * 1000).
+
+% GNU's date_time/1 yields dt(Year, Month, Day, Hours, Minutes, Seconds).
+date_time(dt(Year, Month, Day, Hours, Minutes, Seconds)) :-
+	get_time(Stamp),
+	stamp_date_time(Stamp, date(Year, Month, Day, Hours, Minutes, SecondsFloat, _, _, _), local),
+	Seconds is integer(SecondsFloat).
+
+argument_list(Arguments) :-
+	current_prolog_flag(argv, Arguments).

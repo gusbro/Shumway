@@ -3,7 +3,9 @@
 WebShumway is the Shumway engine compiled to WebAssembly, with a Prolog top level
 around it. The engine, the files and the search all live in the page; there is no
 server behind it, and nothing to upload anything to. It is served as static
-files — with one header requirement, described under [Hosting](#hosting).
+files — with one requirement that CAN break a deploy: the page must be
+cross-origin isolated (the COOP/COEP headers, or the service-worker fallback
+when the host cannot set them), described under [Hosting](#hosting).
 
 The source is `src/Shumway.Web/`; the design decisions behind it are
 [ADR-042](../architecture/adr/042-webshumway.md).

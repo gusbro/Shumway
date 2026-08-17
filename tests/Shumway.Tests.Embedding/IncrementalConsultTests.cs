@@ -20,9 +20,10 @@ public class IncrementalConsultTests
         // whole file was parsed before the directive ran, so `X in 1..5` was a
         // syntax error.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- use_module(library(clpfd)).\n" +
-            "solve(Xs) :- [X,Y] = Xs, X in 1..3, Y in 1..3, X #> Y, label([X,Y]).");
+        e.ConsultString("""
+            :- use_module(library(clpfd)).
+            solve(Xs) :- [X,Y] = Xs, X in 1..3, Y in 1..3, X #> Y, label([X,Y]).
+            """);
         Assert.True(e.Query("solve([X, Y]).").Success);
     }
 
@@ -34,10 +35,11 @@ public class IncrementalConsultTests
         // forces the eager path. Here the use_module operators must reach the later
         // clause even though the file also mentions include(.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- use_module(library(clpfd)).\n" +
-            "evens(Xs, Es) :- include([X]>>(0 is X mod 2), Xs, Es).\n" +
-            "solve(X) :- X in 1..3, X #> 2, label([X]).");
+        e.ConsultString("""
+            :- use_module(library(clpfd)).
+            evens(Xs, Es) :- include([X]>>(0 is X mod 2), Xs, Es).
+            solve(X) :- X in 1..3, X #> 2, label([X]).
+            """);
         Assert.True(e.Query("solve(3).").Success);
     }
 
@@ -46,10 +48,11 @@ public class IncrementalConsultTests
     {
         // double_quotes set mid-file changes how a later clause's "..." reads.
         var e = new PrologEngine();
-        e.ConsultString(
-            "before(X) :- X = \"ab\".\n" +
-            ":- set_prolog_flag(double_quotes, chars).\n" +
-            "after(X) :- X = \"ab\".");
+        e.ConsultString("""
+            before(X) :- X = "ab".
+            :- set_prolog_flag(double_quotes, chars).
+            after(X) :- X = "ab".
+            """);
         // `after` reads "ab" as a char list under the flag set just before it.
         Assert.Equal("[a,b]", RenderList(e.Query("after(X).")["X"]!));
     }
@@ -60,9 +63,10 @@ public class IncrementalConsultTests
         // A term_expansion defined in a file must expand that file's OWN later
         // clauses — the in-file case (clpz's `++>` grammar depends on it).
         var e = new PrologEngine();
-        e.ConsultString(
-            "term_expansion(macro(X), expanded(X)).\n" +
-            "macro(hi).");
+        e.ConsultString("""
+            term_expansion(macro(X), expanded(X)).
+            macro(hi).
+            """);
         Assert.True(e.Query("expanded(hi).").Success);
     }
 
@@ -73,10 +77,11 @@ public class IncrementalConsultTests
         // clauses AFTER its definition. A matching term before the definition
         // survives unexpanded.
         var e = new PrologEngine();
-        e.ConsultString(
-            "special(before).\n" +
-            "term_expansion(special(X), handled(X)).\n" +
-            "special(after).");
+        e.ConsultString("""
+            special(before).
+            term_expansion(special(X), handled(X)).
+            special(after).
+            """);
         Assert.True(e.Query("special(before).").Success);   // before def: not expanded
         Assert.False(e.Query("handled(before).").Success);  // never created
         Assert.False(e.Query("special(after).").Success);   // after def: expanded away
@@ -89,12 +94,13 @@ public class IncrementalConsultTests
         // clpz's shape: a term_expansion/6 whose body calls file-local helpers to
         // translate a custom `++>` grammar operator, defined and used in one file.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- op(1200, xfx, (++>)).\n" +
-            "user:term_expansion((H ++> B), _, Ids, (H :- Body), [], [d|Ids]) :- \\+ member(d, Ids), mk(B, Body).\n" +
-            "mk(G, call(G)).\n" +
-            "greet ++> hello.\n" +
-            "hello.");
+        e.ConsultString("""
+            :- op(1200, xfx, (++>)).
+            user:term_expansion((H ++> B), _, Ids, (H :- Body), [], [d|Ids]) :- \+ member(d, Ids), mk(B, Body).
+            mk(G, call(G)).
+            greet ++> hello.
+            hello.
+            """);
         Assert.True(e.Query("greet.").Success);
     }
 
@@ -107,14 +113,14 @@ public class IncrementalConsultTests
         // once so the local mangles) — NOT be routed to the dynamic store, whose
         // pre-mangle leaves the once-nested call bare.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- op(1200, xfx, (++>)).\n" +
-            ":- multifile user:term_expansion/6.\n" +
-            "user:term_expansion((H ++> B), _, Ids, (H :- Body), [], [d|Ids]) :- " +
-            "\\+ member(d, Ids), once(mk(B, Body)).\n" +
-            "mk(G, call(G)).\n" +
-            "greet ++> hello.\n" +
-            "hello.");
+        e.ConsultString("""
+            :- op(1200, xfx, (++>)).
+            :- multifile user:term_expansion/6.
+            user:term_expansion((H ++> B), _, Ids, (H :- Body), [], [d|Ids]) :- \+ member(d, Ids), once(mk(B, Body)).
+            mk(G, call(G)).
+            greet ++> hello.
+            hello.
+            """);
         Assert.True(e.Query("greet.").Success);
     }
 
@@ -124,10 +130,11 @@ public class IncrementalConsultTests
         // atts.pl's shape: a hook that builds its output via phrase of a local DCG.
         // Its own (top-level) re-expansion pass must not corrupt it.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- op(1150, fx, decl).\n" +
-            "user:term_expansion((:- decl X), Clauses) :- phrase(gen(X), Clauses).\n" +
-            "gen(X) --> [marked(X)].");
+        e.ConsultString("""
+            :- op(1150, fx, decl).
+            user:term_expansion((:- decl X), Clauses) :- phrase(gen(X), Clauses).
+            gen(X) --> [marked(X)].
+            """);
         e.ConsultString(":- decl hi.");
         Assert.True(e.Query("marked(hi).").Success);
     }
@@ -151,7 +158,10 @@ public class IncrementalConsultTests
             var e = new PrologEngine();
             e.AddLibraryDirectory(dir);
             // use_module AND the hook's use in ONE consult.
-            e.ConsultString(":- use_module(library(declmac)).\n:- decl hi.");
+            e.ConsultString("""
+                :- use_module(library(declmac)).
+                :- decl hi.
+                """);
             Assert.True(e.Query("marked(hi).").Success);
         }
         finally { try { System.IO.Directory.Delete(dir, recursive: true); } catch { } }
@@ -236,10 +246,11 @@ public class IncrementalConsultTests
         // goal must run in the defining module's context so the local resolves
         // (before this it ran in `user`, so a module-local was existence_error).
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- module(genlib, []).\n" +
-            ":- initialization((gen(C), assertz(C))).\n" +
-            "gen(fact(generated)).");
+        e.ConsultString("""
+            :- module(genlib, []).
+            :- initialization((gen(C), assertz(C))).
+            gen(fact(generated)).
+            """);
         Assert.True(e.Query("fact(generated).").Success);
     }
 
@@ -258,9 +269,10 @@ public class IncrementalConsultTests
         // Cross the threshold OUTSIDE any consult so the promotion installs.
         for (int i = 0; i < 4; i++) e.Query("\\+ term_expansion(nomatch, _).");
         // A later consult adds a second hook clause AND uses it.
-        e.ConsultString(
-            "term_expansion(second(X), got_second(X)).\n" +
-            "second(a).");
+        e.ConsultString("""
+            term_expansion(second(X), got_second(X)).
+            second(a).
+            """);
         Assert.True(e.Query("got_second(a).").Success);
     }
 
@@ -290,9 +302,10 @@ public class IncrementalConsultTests
             e.IlPromotion.Threshold = 2;
             e.IlPromotion.BackgroundCompilation = false;
             e.AddLibraryDirectory(dir);
-            e.ConsultString(
-                ":- use_module(library(promolib2)).\n" +
-                "marker2(b).");
+            e.ConsultString("""
+                :- use_module(library(promolib2)).
+                marker2(b).
+                """);
             Assert.True(e.Query("got2(b).").Success);
         }
         finally { try { System.IO.Directory.Delete(dir, recursive: true); } catch { } }
@@ -306,11 +319,12 @@ public class IncrementalConsultTests
         // and must still RUN the hook for a matching term (and keep, unharmed,
         // terms the index skips — the numeric fact and other(b)).
         var e = new PrologEngine();
-        e.ConsultString(
-            "term_expansion(T0, done(A)) :- nonvar(T0), T0 = special(A).\n" +
-            "special(a).\n" +
-            "other(b).\n" +
-            "num(42).");
+        e.ConsultString("""
+            term_expansion(T0, done(A)) :- nonvar(T0), T0 = special(A).
+            special(a).
+            other(b).
+            num(42).
+            """);
         Assert.True(e.Query("done(a).").Success);       // matched + expanded
         // Expanded away entirely: special/1 no longer exists (a bare call
         // would raise existence_error under the default unknown=error).
@@ -326,12 +340,13 @@ public class IncrementalConsultTests
         // starts with an opaque call). The family must fall back to always-try:
         // the opaque hook still fires for the shape only IT accepts.
         var e = new PrologEngine();
-        e.ConsultString(
-            "term_expansion(T0, done1(A)) :- nonvar(T0), T0 = alpha(A).\n" +
-            "term_expansion(T0, done2(A)) :- match_beta(T0, A).\n" +
-            "match_beta(beta(A), A).\n" +
-            "alpha(x).\n" +
-            "beta(y).");
+        e.ConsultString("""
+            term_expansion(T0, done1(A)) :- nonvar(T0), T0 = alpha(A).
+            term_expansion(T0, done2(A)) :- match_beta(T0, A).
+            match_beta(beta(A), A).
+            alpha(x).
+            beta(y).
+            """);
         Assert.True(e.Query("done1(x).").Success);
         Assert.True(e.Query("done2(y).").Success);
     }
@@ -345,12 +360,13 @@ public class IncrementalConsultTests
         // and skipping it wholesale left the macro as a runtime
         // existence_error (clpz$$disj/cis_leq).
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- op(700, xfx, mleq).\n" +
-            "goal_expansion(A mleq B, leq(A, B)).\n" +
-            "leq(X, Y) :- X =< Y.\n" +
-            "check(N) --> { N mleq 5 }, [ok].\n" +
-            "run(N, L) :- phrase(check(N), L).");
+        e.ConsultString("""
+            :- op(700, xfx, mleq).
+            goal_expansion(A mleq B, leq(A, B)).
+            leq(X, Y) :- X =< Y.
+            check(N) --> { N mleq 5 }, [ok].
+            run(N, L) :- phrase(check(N), L).
+            """);
         Assert.True(e.Query("run(3, [ok]).").Success);
         Assert.False(e.Query("run(9, [ok]).").Success);
     }
@@ -364,10 +380,11 @@ public class IncrementalConsultTests
         // replaced clpz's `( Repeat -> ... )` condition with an orphaned
         // phrase/3 and destroyed the goal.
         var e = new PrologEngine();
-        e.ConsultString(
-            "goal_expansion(phr(B, S), phr(B, S, [])).\n" +
-            "phr(_, _, _).\n" +
-            "t(Cond, R) :- ( Cond -> R = yes ; R = no ).");
+        e.ConsultString("""
+            goal_expansion(phr(B, S), phr(B, S, [])).
+            phr(_, _, _).
+            t(Cond, R) :- ( Cond -> R = yes ; R = no ).
+            """);
         Assert.True(e.Query("t(true, R), R == yes.").Success);
         Assert.True(e.Query("t(fail, R), R == no.").Success);
     }
@@ -379,10 +396,11 @@ public class IncrementalConsultTests
         // elsewhere in the clause (heap-address _G names repeat across
         // materialisations): each expansion's fresh vars are uniquified.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- op(700, xfx, gets).\n" +
-            "goal_expansion(X gets E, (T = E, X = f(T))).\n" +
-            "use(A, B, Out) :- A gets one, B gets two, Out = A-B.");
+        e.ConsultString("""
+            :- op(700, xfx, gets).
+            goal_expansion(X gets E, (T = E, X = f(T))).
+            use(A, B, Out) :- A gets one, B gets two, Out = A-B.
+            """);
         Assert.True(e.Query("use(A, B, Out), Out == f(one)-f(two).").Success);
     }
 
@@ -391,9 +409,10 @@ public class IncrementalConsultTests
     {
         // The baseline the others generalise — a plain `:- op` from that point on.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- op(700, xfx, ===>).\n" +
-            "rule(a ===> b).");
+        e.ConsultString("""
+            :- op(700, xfx, ===>).
+            rule(a ===> b).
+            """);
         Assert.True(e.Query("rule(a ===> b).").Success);
     }
 

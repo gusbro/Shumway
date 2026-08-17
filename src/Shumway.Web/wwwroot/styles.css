@@ -55,8 +55,57 @@ h1 { font-size: 1.3rem; margin: 0; letter-spacing: -.01em; }
    furniture — the program side carries a workspace bar and a file list — so
    equal height means the TRANSCRIPT takes up the slack, which is where extra
    room is worth having. */
-.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: stretch; }
-@media (max-width: 62rem) { .panes { grid-template-columns: 1fr; } }
+/* The source side is a little wider: it now carries a line-number gutter, and
+   code is the thing that suffers first from a narrow column. The middle column
+   is the draggable seam (layout.js): --split is the source side's share, and
+   its default keeps the old 1.15fr/1fr proportion. */
+.panes {
+  display: grid;
+  grid-template-columns: minmax(16rem, var(--split, 53.5%)) .9rem minmax(16rem, 1fr);
+  align-items: stretch;
+}
+@media (max-width: 62rem) {
+  .panes { grid-template-columns: 1fr; gap: 1.25rem; }
+  /* The stacked layout has no seams to drag: panes flow, docks size to content. */
+  .splitter-v, .dock-resize { display: none !important; }
+}
+
+/* --- the resizable seams (layout.js) ------------------------------------- */
+
+.splitter-v { cursor: col-resize; position: relative; touch-action: none; }
+.splitter-v::before {
+  content: '';
+  position: absolute;
+  left: 50%; top: 0; bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+.splitter-v:hover::before, .splitter-v:active::before {
+  width: 3px; margin-left: -1px;
+  background: var(--accent);
+}
+
+/* A dock's top edge. It IS the dock's separator line — the border the dock
+   used to draw — grown into a grab strip. */
+.dock-resize {
+  flex: none;
+  height: .55rem;
+  cursor: row-resize;
+  position: relative;
+  touch-action: none;
+  margin-bottom: .15rem;
+}
+.dock-resize::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  height: 1px;
+  background: var(--line);
+}
+.dock-resize:hover::before, .dock-resize:active::before {
+  height: 3px; margin-top: -1px;
+  background: var(--accent);
+}
 
 .pane {
   min-width: 0;
@@ -361,6 +410,17 @@ dialog.wide .row input { flex: 1; max-width: 20rem; }
   color: var(--accent);
 }
 .prose h4:first-child { margin-top: 0; }
+.prose h5 {
+  margin: 1rem 0 .1rem;
+  font-size: .82rem;
+  font-weight: 600;
+  color: inherit;
+}
+.prose ul { margin: .35rem 0 .55rem; padding-left: 1.3rem; }
+.prose li { margin: .2rem 0; line-height: 1.55; }
+/* The keyboard-shortcut list reads as rows, not bullets. */
+.prose ul.keys { list-style: none; padding-left: 0; }
+.prose ul.keys li { margin: .3rem 0; }
 .prose code { font: 12px var(--mono); }
 .prose pre {
   font: 12px/1.5 var(--mono);
@@ -393,3 +453,231 @@ dialog.wide .row input { flex: 1; max-width: 20rem; }
    another thread — so the only thing missing is saying so. */
 body.busy .status { color: var(--accent); }
 body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
+
+/* --- debug mode ---
+   One body class is the whole switch. Normal mode shows NONE of this: the
+   gutter, the toolbar and the pane all hang off .debug-mode, and the shell
+   around the editor is an unstyled wrapper without it. */
+
+.debug-mode #debug-toggle { color: var(--accent); border-color: var(--accent); }
+
+.editor-shell { position: relative; }
+
+/* The line-number column — always there, in both modes. Debug mode adds the
+   breakpoint dots and the position markers on top of it. */
+#gutter {
+  position: absolute;
+  /* Inside the editor's own border, over its widened left padding. */
+  left: 1px; top: 1px; bottom: 1px;
+  width: 2.4rem;
+  overflow: hidden;
+  border-radius: .4rem 0 0 .4rem;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  border-right: 1px solid var(--line);
+  z-index: 1;
+}
+.debug-mode #gutter { cursor: pointer; }
+.editor { padding-left: 2.9rem; }
+
+#gutter-lines { position: relative; will-change: transform; }
+.gutter-row {
+  position: absolute; left: 0; width: 100%;
+  box-sizing: border-box;
+  display: flex; align-items: center; justify-content: flex-end;
+  padding-right: .45rem;
+  font: 10.5px var(--mono);
+  color: color-mix(in srgb, currentColor 38%, transparent);
+  user-select: none;
+}
+.gutter-row::before {
+  content: '';
+  position: absolute;
+  left: .3rem; top: 50%;
+  width: .6rem; height: .6rem;
+  /* transform, not a fractional negative margin: margins round to layout
+     pixels and the dot landed one lower than the hover preview; border-box
+     keeps the hollow variants the same size as the solid dot. */
+  transform: translateY(-50%);
+  box-sizing: border-box;
+  border-radius: 50%;
+}
+/* Only where there is NO dot yet: the preview outranked the real dot by
+   specificity, so a just-set breakpoint looked washed out under the mouse. */
+.debug-mode .gutter-row:hover:not(.bp)::before { background: color-mix(in srgb, var(--error) 40%, transparent); }
+.gutter-row.bp::before { background: var(--error); }
+/* Placed but not attached to any compiled code (not consulted yet, or a line
+   with nothing on it): shown hollow, the pending-breakpoint convention. */
+.gutter-row.bp.unbound::before { background: none; border: 2px solid var(--error); }
+/* The stop's line and the SELECTED frame's line: the arrow replaces the
+   number (both would not fit), solid accent for where the machine IS,
+   hollow green for the frame being looked at — the VS convention. */
+.gutter-row.current, .gutter-row.frame { color: transparent; }
+.gutter-row.current::after, .gutter-row.frame::after {
+  position: absolute;
+  right: .3rem; top: 50%;
+  transform: translateY(-50%);
+  font-size: .6rem;
+}
+.gutter-row.current::after { content: '▶'; color: var(--accent); }
+.gutter-row.frame::after { content: '▷'; color: var(--answer); }
+
+#debug-toolbar { display: none; }
+.debug-mode #debug-toolbar {
+  display: flex;
+  gap: .4rem;
+  align-items: center;
+  margin-bottom: .5rem;
+}
+#debug-toolbar button { font-size: .82rem; padding: .3rem .6rem; }
+#debug-toolbar button:disabled { opacity: .45; }
+
+/* The bottom half of the answers pane while debugging: one tab at a time —
+   the stack, the locals, the watches — so the page never needs to scroll to
+   see them. */
+.debug-tabs { display: none; }
+/* A dock with no views collapses even in debug mode: the editor (left) or
+   the transcript (right) takes the space back. */
+/* The 40% is only the DEFAULT share: dragging the .dock-resize strip sets an
+   inline flex-basis over it (layout.js), which is also what a reload restores. */
+.debug-mode .debug-tabs:not(.empty) {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 40%;
+  min-height: 8rem;
+  margin-top: .3rem;
+}
+.tab-bar { display: flex; gap: .3rem; flex: none; margin-bottom: .4rem; align-items: center; }
+.tab-strip { display: flex; gap: .3rem; flex: 1 1 auto; min-width: 0; }
+.tab-bar button { font-size: .78rem; padding: .22rem .7rem; color: var(--muted); }
+.tab-bar button.active { color: var(--accent); border-color: var(--accent); }
+.tab-bar .tab-move { flex: none; padding: .22rem .45rem; }
+.tab-panel { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.tab-panel[hidden] { display: none; }
+
+.debug-list {
+  font: 12px/1.6 var(--mono);
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  background: var(--field);
+  flex: 1 1 0;
+  min-height: 5rem;
+  overflow: auto;
+  padding: .3rem 0;
+}
+.debug-row { padding: 0 .6rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.debug-row.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+#debug-stack .debug-row { cursor: pointer; }
+#debug-stack .debug-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.debug-row.residual { color: var(--accent); }
+.debug-row.muted { color: var(--muted); }
+/* The query moved on: the last stop's stack stays readable but visibly past. */
+.debug-tabs.stale .debug-list { opacity: .55; }
+
+/* Breakpoint variants. A condition marks the dot with a hole ring tint; a
+   logpoint is a different thing (it never stops) so it changes colour. */
+.gutter-row.bp.conditional::before {
+  background: var(--error);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--error) 35%, white);
+}
+.gutter-row.bp.log::before { background: var(--accent); }
+.gutter-row.bp.log.unbound::before { background: none; border-color: var(--accent); }
+
+#watch-form { display: flex; gap: .35rem; margin-top: .4rem; }
+#watch-form input { flex: 1; min-width: 0; font: 12px var(--mono); }
+#watch-form button { font-size: .82rem; padding: .3rem .6rem; }
+.watch-goal { color: inherit; }
+.watch-result { color: var(--muted); }
+.watch-row { display: flex; gap: .4rem; align-items: baseline; }
+.watch-row .watch-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.watch-remove {
+  border: 0; background: none; color: var(--muted);
+  cursor: pointer; font-size: .8rem; padding: 0 .15rem;
+}
+.watch-remove:hover { color: var(--error); }
+
+/* --- the app fills the viewport (wide screens) ---
+   Everything visible at once, no page scroll: the transcript, the editor and
+   the debug tabs scroll INSIDE their boxes. Narrow screens keep the normal
+   flowing page — a stacked layout inside a fixed viewport would leave every
+   pane a sliver. */
+@media (min-width: 62.01rem) {
+  html, body { height: 100%; }
+  body {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: .9rem 1rem 1rem;
+  }
+  header { flex: none; margin-bottom: .8rem; }
+  .panes { flex: 1 1 0; min-height: 0; }
+  .pane { overflow: hidden; }
+  /* The editor takes the slack on its side, as the transcript does on its
+     own — the fixed height only exists for the flowing (narrow) layout. */
+  .editor-shell {
+    flex: 1 1 0;
+    min-height: 8rem;
+    display: flex;
+    flex-direction: column;
+  }
+  .editor { flex: 1 1 0; height: auto; min-height: 0; }
+}
+
+/* The Immediate tab: the conversation with the suspended query. */
+pre#immediate-log { margin: 0; white-space: pre-wrap; word-break: break-word; }
+#immediate-log .query { color: var(--muted); }
+#immediate-log .answer { color: var(--answer); }
+#immediate-log .error { color: var(--error); }
+#immediate-form { display: flex; gap: .35rem; margin-top: .4rem; }
+#immediate-form input { flex: 1; min-width: 0; font: 12px var(--mono); }
+#immediate-form button { font-size: .82rem; padding: .3rem .6rem; }
+
+/* Stack rows: the goal on the left, where-it-is pinned to the right — the
+   alignment a stack is read by. */
+.stack-row { display: flex; gap: .8rem; align-items: baseline; }
+.stack-goal { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.stack-where { flex: none; color: var(--muted); font-size: 11px; }
+
+/* DISABLED breakpoint: kept but not armed — hollow grey, after the hollow-red
+   unbound rule so it wins when both would apply. */
+.gutter-row.bp.disabled::before {
+  background: none;
+  border: 2px solid var(--muted);
+}
+
+/* The gutter's right-click menu. */
+.gutter-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 13rem;
+  padding: .25rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: .45rem;
+  box-shadow: 0 6px 22px color-mix(in srgb, currentColor 18%, transparent);
+  display: flex;
+  flex-direction: column;
+}
+.gutter-menu button {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  justify-content: space-between;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: .85rem;
+  padding: .35rem .6rem;
+  border-radius: .3rem;
+}
+.gutter-menu button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.gutter-menu button:disabled { color: var(--muted); }
+.gutter-menu kbd {
+  font: 10.5px var(--mono);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: .25rem;
+  padding: 0 .3rem;
+}

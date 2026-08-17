@@ -184,7 +184,7 @@ public class Adr035TracerTests
     public void NoSession_MeansNoPorts()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(1).\n");
+        engine.ConsultString("p(1).");
         var sink = new StringWriter();
         engine.SetTracing(true, sink);
         engine.SetTracing(false);
@@ -198,7 +198,10 @@ public class Adr035TracerTests
     public void TracePredicate_TurnsTracingOnMidQuery()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(1).\nq :- trace, p(_), notrace.\n");
+        engine.ConsultString("""
+            p(1).
+            q :- trace, p(_), notrace.
+            """);
         var sink = new StringWriter();
         engine.Out = sink;
 

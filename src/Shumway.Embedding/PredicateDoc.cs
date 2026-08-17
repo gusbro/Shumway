@@ -147,6 +147,24 @@ public static class PredicateDoc
         sb.Append("Each template names its parameters and their mode: `+` bound at call, ");
         sb.Append("`-` an output, `?` either, `@` not modified, `:` a meta-called goal.\n");
 
+        // Contents — this is a reference people land in looking for ONE
+        // predicate; a section row beats scrolling 27 headings. Anchors follow
+        // the GitHub slug rule: lowercase, spaces to hyphens, punctuation
+        // dropped.
+        sb.Append("\nSections: ");
+        bool first = true;
+        foreach (string category in OrderedCategories(entries))
+        {
+            if (!first) sb.Append(" · ");
+            first = false;
+            string anchor = new string(category.ToLowerInvariant()
+                .Select(ch => ch == ' ' ? '-' : ch)
+                .Where(ch => char.IsLetterOrDigit(ch) || ch == '-')
+                .ToArray());
+            sb.Append('[').Append(category).Append("](#").Append(anchor).Append(')');
+        }
+        sb.Append('\n');
+
         foreach (string category in OrderedCategories(entries))
         {
             sb.Append("\n## ").Append(category).Append("\n\n");

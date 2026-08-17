@@ -142,9 +142,10 @@ public class Chunk241Tests
         // Real query: define a Prolog clause emitting the compound
         // structure, then extract it as the C# type via Solution.Get.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public origin/1.\n"
-            + "origin(c241_point(0, 0)).\n");
+        engine.ConsultString("""
+            :- public origin/1.
+            origin(c241_point(0, 0)).
+            """);
         var sol = engine.Query("origin(P).");
         Assert.True(sol.Success);
         var p = sol.Get<C241Point>("P");
@@ -155,10 +156,11 @@ public class Chunk241Tests
     public void Query_OfPrologTermStream()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public pt/1.\n"
-            + "pt(c241_point(1, 2)).\n"
-            + "pt(c241_point(3, 4)).\n");
+        engine.ConsultString("""
+            :- public pt/1.
+            pt(c241_point(1, 2)).
+            pt(c241_point(3, 4)).
+            """);
         var pts = engine.Query<C241Point>("pt(P).", "P").ToList();
         Assert.Equal(2, pts.Count);
         Assert.Equal(new C241Point(1, 2), pts[0]);

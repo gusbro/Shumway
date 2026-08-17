@@ -39,7 +39,10 @@ public class Chunk56Tests
         // call(member, [1, 2, 3], X) is call(member(X, [1, 2, 3])) after
         // arg-appending. Same enumeration.
         var engine = new PrologEngine();
-        engine.ConsultString(":- public membr/2.\nmembr(X, L) :- member(X, L).\n");
+        engine.ConsultString("""
+            :- public membr/2.
+            membr(X, L) :- member(X, L).
+            """);
         var sols = engine.QueryAll("call(membr, X, [10, 20, 30]).").ToList();
         Assert.Equal(3, sols.Count);
         Assert.Equal(Int(10), sols[0]["X"]);
@@ -78,11 +81,12 @@ public class Chunk56Tests
         // user-defined forall using the classic Prolog pattern should now
         // also work, since call/N backtracks.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public myforall/2.\n" +
-            ":- public counter/2.\n" +
-            "myforall(C, T) :- \\+ counter(C, T).\n" +
-            "counter(C, T) :- call(C), \\+ call(T).\n");
+        engine.ConsultString("""
+            :- public myforall/2.
+            :- public counter/2.
+            myforall(C, T) :- \+ counter(C, T).
+            counter(C, T) :- call(C), \+ call(T).
+            """);
         // All ints — no counter-example.
         Assert.True(engine.Query(
             "myforall(member(X, [1, 2, 3]), integer(X)).").Success);

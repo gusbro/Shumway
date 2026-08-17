@@ -24,7 +24,7 @@ public class Adr025InlineIteTests
     [Fact]
     public void Ite_TakesThen_WhenCondSucceeds()
     {
-        var e = Activation("classify(X, R) :- (X > 0 -> R = pos ; R = nonpos).\n");
+        var e = Activation("classify(X, R) :- (X > 0 -> R = pos ; R = nonpos).");
         Assert.True(e.Query("classify(5, R), R == pos.").Success);
         Assert.True(e.Query("classify(-1, R), R == nonpos.").Success);
         Assert.True(e.Query("classify(0, R), R == nonpos.").Success);
@@ -33,7 +33,7 @@ public class Adr025InlineIteTests
     [Fact]
     public void Ite_IsDeterministic_NoElseOnBacktrack()
     {
-        var e = Activation("classify(X, R) :- (X > 0 -> R = pos ; R = nonpos).\n");
+        var e = Activation("classify(X, R) :- (X > 0 -> R = pos ; R = nonpos).");
         // ISO: once the condition succeeds, the else branch is unreachable.
         Assert.True(e.Query("findall(R, classify(5, R), L), L == [pos].").Success);
         Assert.True(e.Query("findall(R, classify(0, R), L), L == [nonpos].").Success);
@@ -42,9 +42,11 @@ public class Adr025InlineIteTests
     [Fact]
     public void Ite_CondBindings_FlowIntoThen_AndAreUndoneInElse()
     {
-        var e = Activation(
-            "p(1).\np(2).\n" +
-            "pick(X, R) :- (p(X) -> R = found(X) ; R = none(X)).\n");
+        var e = Activation("""
+            p(1).
+            p(2).
+            pick(X, R) :- (p(X) -> R = found(X) ; R = none(X)).
+            """);
         // Cond binds X=1 (first solution, committed); then sees the binding.
         Assert.True(e.Query("pick(X, R), X == 1, R == found(1).").Success);
         // Cond fails for X=9; the else runs with X still 9 (cond made no binding).
@@ -54,9 +56,11 @@ public class Adr025InlineIteTests
     [Fact]
     public void Ite_CommitsFirstCondSolution()
     {
-        var e = Activation(
-            "q(a).\nq(b).\n" +
-            "first(R) :- (q(X) -> R = X ; R = none).\n");
+        var e = Activation("""
+            q(a).
+            q(b).
+            first(R) :- (q(X) -> R = X ; R = none).
+            """);
         // ISO ->/2 commits the condition's FIRST solution.
         Assert.True(e.Query("findall(R, first(R), L), L == [a].").Success);
     }
@@ -64,8 +68,7 @@ public class Adr025InlineIteTests
     [Fact]
     public void Ite_ConjunctionsInAllParts()
     {
-        var e = Activation(
-            "r(X, R) :- (X > 0, X < 10 -> Y is X * 2, R = small(Y) ; Y is X + 100, R = big(Y)).\n");
+        var e = Activation("r(X, R) :- (X > 0, X < 10 -> Y is X * 2, R = small(Y) ; Y is X + 100, R = big(Y)).");
         Assert.True(e.Query("r(3, R), R == small(6).").Success);
         Assert.True(e.Query("r(50, R), R == big(150).").Success);
     }
@@ -73,7 +76,7 @@ public class Adr025InlineIteTests
     [Fact]
     public void Ite_BareIfThen_FailsWhenCondFails()
     {
-        var e = Activation("only_pos(X, R) :- (X > 0 -> R = pos).\n");
+        var e = Activation("only_pos(X, R) :- (X > 0 -> R = pos).");
         Assert.True(e.Query("only_pos(1, R), R == pos.").Success);
         Assert.False(e.Query("only_pos(-1, _).").Success);
     }
@@ -81,11 +84,12 @@ public class Adr025InlineIteTests
     [Fact]
     public void Ite_MidClause_AndMultiplePerClause()
     {
-        var e = Activation(
-            "grade(N, G) :-\n" +
-            "  (N >= 90 -> A = high ; A = low),\n" +
-            "  (N >= 50 -> B = pass ; B = fail_grade),\n" +
-            "  G = g(A, B).\n");
+        var e = Activation("""
+            grade(N, G) :-
+              (N >= 90 -> A = high ; A = low),
+              (N >= 50 -> B = pass ; B = fail_grade),
+              G = g(A, B).
+            """);
         Assert.True(e.Query("grade(95, G), G == g(high, pass).").Success);
         Assert.True(e.Query("grade(60, G), G == g(low, pass).").Success);
         Assert.True(e.Query("grade(10, G), G == g(low, fail_grade).").Success);
@@ -96,7 +100,7 @@ public class Adr025InlineIteTests
     [Fact]
     public void Disjunction_BacktracksThroughBothBranches()
     {
-        var e = Activation("d(X) :- (X = a ; X = b).\n");
+        var e = Activation("d(X) :- (X = a ; X = b).");
         Assert.True(e.Query("findall(X, d(X), L), L == [a, b].").Success);
         Assert.True(e.Query("d(b).").Success);
         Assert.False(e.Query("d(c).").Success);
@@ -105,8 +109,7 @@ public class Adr025InlineIteTests
     [Fact]
     public void Disjunction_ElseSeesCleanState()
     {
-        var e = Activation(
-            "s(X, R) :- (X = 1, R = one ; R = other(X)).\n");
+        var e = Activation("s(X, R) :- (X = 1, R = one ; R = other(X)).");
         Assert.True(e.Query("s(1, R), R == one.").Success);
         // First branch fails for X=2 (X=1 unifiable? no) — bindings undone,
         // second branch sees the original X.
@@ -120,9 +123,10 @@ public class Adr025InlineIteTests
     public void Ineligible_BranchCut_StillWorksViaHelper()
     {
         // A `!` in a branch needs the chunk-408 barrier — helper path.
-        var e = Activation(
-            "h(X, R) :- (X > 0 -> !, R = pos ; R = other).\n" +
-            "h(_, fallback).\n");
+        var e = Activation("""
+            h(X, R) :- (X > 0 -> !, R = pos ; R = other).
+            h(_, fallback).
+            """);
         Assert.True(e.Query("h(1, R), R == pos.").Success);
         Assert.True(e.Query("findall(R, h(1, R), L), L == [pos].").Success);   // cut committed host
         Assert.True(e.Query("findall(R, h(-1, R), L), L == [other, fallback].").Success);
@@ -131,8 +135,7 @@ public class Adr025InlineIteTests
     [Fact]
     public void Ineligible_NestedControl_StillWorks()
     {
-        var e = Activation(
-            "n(X, R) :- (X > 0 -> (X > 10 -> R = big ; R = small) ; R = neg).\n");
+        var e = Activation("n(X, R) :- (X > 0 -> (X > 10 -> R = big ; R = small) ; R = neg).");
         Assert.True(e.Query("n(20, R), R == big.").Success);
         Assert.True(e.Query("n(5, R), R == small.").Success);
         Assert.True(e.Query("n(-1, R), R == neg.").Success);
@@ -176,7 +179,10 @@ public class Adr025InlineIteTests
     {
         var e = new PrologEngine { EnableInlineIte = true };
         e.IlPromotion.Threshold = 1;
-        e.ConsultString(":- public c2/2.\nc2(X, R) :- (X > 0 -> R = pos ; R = nonpos).\n");
+        e.ConsultString("""
+            :- public c2/2.
+            c2(X, R) :- (X > 0 -> R = pos ; R = nonpos).
+            """);
         // Repeated calls: correct answers throughout, no crash — the predicate
         // just stays on Tier-0 (the IL describe path rejects the jump opcode).
         for (int i = 0; i < 10; i++)
@@ -191,9 +197,10 @@ public class Adr025InlineIteTests
     [Fact]
     public void Ite_RecursionThroughInlineIte()
     {
-        var e = Activation(
-            "count(0, Acc, Acc).\n" +
-            "count(N, Acc, R) :- N > 0, (N mod 2 =:= 0 -> A2 is Acc + N ; A2 = Acc), N2 is N - 1, count(N2, A2, R).\n");
+        var e = Activation("""
+            count(0, Acc, Acc).
+            count(N, Acc, R) :- N > 0, (N mod 2 =:= 0 -> A2 is Acc + N ; A2 = Acc), N2 is N - 1, count(N2, A2, R).
+            """);
         // sum of evens 1..100 = 2550.
         Assert.True(e.Query("count(100, 0, R), R == 2550.").Success);
     }

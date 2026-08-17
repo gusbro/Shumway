@@ -75,9 +75,10 @@ public class Chunk81Tests
     public void CopyTerm3_CollectsGoalsFromEveryModule()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "attribute_goals(a, Av, V, [ga(V, Av)]).\n" +
-            "attribute_goals(b, Bv, V, [gb(V, Bv)]).");
+        engine.ConsultString("""
+            attribute_goals(a, Av, V, [ga(V, Av)]).
+            attribute_goals(b, Bv, V, [gb(V, Bv)]).
+            """);
         Assert.True(engine.Query(
             "put_attr(X, a, 1), put_attr(X, b, 2), copy_term(X, _, Goals), " +
             "member(ga(_, 1), Goals), member(gb(_, 2), Goals).").Success);
@@ -101,9 +102,10 @@ public class Chunk81Tests
         // The residual goal is a real goal: bind the copy and call it,
         // and it checks the value against the captured domain.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "attribute_goals(dom, D, V, [in(V, D)]).\n" +
-            "in(V, D) :- member(V, D).");
+        engine.ConsultString("""
+            attribute_goals(dom, D, V, [in(V, D)]).
+            in(V, D) :- member(V, D).
+            """);
         Assert.True(engine.Query(
             "put_attr(X, dom, [1,2,3]), copy_term(X, Copy, [G]), Copy = 2, call(G).").Success);
         Assert.False(engine.Query(
@@ -119,13 +121,14 @@ public class Chunk81Tests
         // variables TRANSITIVELY and re-attaches everything before any hook
         // runs, so the hook's get_attr on the sibling copy succeeds.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "constrain(X, R) :- put_attr(R, meta, rel([a, b])),\n" +
-            "                   put_attr(X, dom, linked(R)).\n" +
-            "attribute_goals(V) -->\n" +
-            "    { get_attr(V, dom, linked(R)), get_attr(R, meta, rel(Rel)) },\n" +
-            "    [in_rel(V, Rel)],\n" +
-            "    { del_attr(V, dom) }.\n");
+        engine.ConsultString("""
+            constrain(X, R) :- put_attr(R, meta, rel([a, b])),
+                               put_attr(X, dom, linked(R)).
+            attribute_goals(V) -->
+                { get_attr(V, dom, linked(R)), get_attr(R, meta, rel(Rel)) },
+                [in_rel(V, Rel)],
+                { del_attr(V, dom) }.
+            """);
         var sol = engine.Query(
             "constrain(X, _), copy_term(X, C, Gs)," +
             " Gs = [in_rel(V, [a, b])], ( V == C -> R = ok ; R = wrong ).");
@@ -143,10 +146,11 @@ public class Chunk81Tests
         // propagator references (Scryer parity: copy_term(A, C, Gs) with
         // A #< B emits B's copy's domain too). Legacy-hook shape.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "attribute_goals(dom, D, V, [in(V, D)]).\n" +
-            "link(X, Y) :- put_attr(Y, dom, [1, 2]),\n" +
-            "              put_attr(X, dom, [pair_with(Y)]).");
+        engine.ConsultString("""
+            attribute_goals(dom, D, V, [in(V, D)]).
+            link(X, Y) :- put_attr(Y, dom, [1, 2]),
+                          put_attr(X, dom, [pair_with(Y)]).
+            """);
         var sol = engine.Query(
             "link(X, _), copy_term(X, _, Gs), Gs = [_, _], R = ok.");
         Assert.True(sol.Success);
@@ -162,12 +166,13 @@ public class Chunk81Tests
         // copied attribute value to the copy's variable and runs the module's
         // DCG on it, so the goals come out over the copy's variables.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "constrain(X) :- put_attr(X, mylib, level(3)).\n" +
-            "attribute_goals(V) -->\n" +
-            "    { get_attr(V, mylib, level(N)) },\n" +
-            "    [mylib_level(V, N)],\n" +
-            "    { del_attr(V, mylib) }.\n");
+        engine.ConsultString("""
+            constrain(X) :- put_attr(X, mylib, level(3)).
+            attribute_goals(V) -->
+                { get_attr(V, mylib, level(N)) },
+                [mylib_level(V, N)],
+                { del_attr(V, mylib) }.
+            """);
         var sol = engine.Query(
             "constrain(X), copy_term(X, C, Gs)," +
             " Gs = [mylib_level(V, 3)], ( V == C -> R = ok ; R = wrong ).");

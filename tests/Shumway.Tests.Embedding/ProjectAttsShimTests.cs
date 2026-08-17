@@ -65,9 +65,10 @@ public class ProjectAttsShimTests
                 "attribute_goals(V) --> { get_atts(V, myfrz, held(G)) }, [myfrz:susp(V, G)].\n");
             var e = new PrologEngine();
             e.AddLibraryDirectory(dir);
-            e.ConsultString(
-                ":- use_module(library('$project_atts')).\n" +
-                ":- use_module(library(myfrz)).");
+            e.ConsultString("""
+                :- use_module(library('$project_atts')).
+                :- use_module(library(myfrz)).
+                """);
             var sol = e.Query(
                 "susp(X, wake), term_residual_goals(g(X), Gs), "
                 + "Gs = [myfrz:susp(Y, wake)], Y == X.");

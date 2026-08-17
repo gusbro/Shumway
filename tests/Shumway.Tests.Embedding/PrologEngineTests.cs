@@ -114,7 +114,11 @@ public class PrologEngineTests
     public void Query_MultiClausePredicate_BacktracksToMatch()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(a).\np(b).\np(c).\n");
+        engine.ConsultString("""
+            p(a).
+            p(b).
+            p(c).
+            """);
         var sol = engine.Query("p(b).");
 
         Assert.True(sol.Success);
@@ -126,7 +130,11 @@ public class PrologEngineTests
         // Query with a variable against a multi-clause predicate: the first
         // solution should bind X to the first clause's value.
         var engine = new PrologEngine();
-        engine.ConsultString("p(a).\np(b).\np(c).\n");
+        engine.ConsultString("""
+            p(a).
+            p(b).
+            p(c).
+            """);
         var sol = engine.Query("p(X).");
 
         Assert.True(sol.Success);
@@ -137,7 +145,10 @@ public class PrologEngineTests
     public void Query_NoMatchingClause_Fails()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(a).\np(b).\n");
+        engine.ConsultString("""
+            p(a).
+            p(b).
+            """);
         var sol = engine.Query("p(z).");
         Assert.False(sol.Success);
     }
@@ -148,10 +159,11 @@ public class PrologEngineTests
     public void Query_Rule_Succeeds()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "parent(tom, bob).\n" +
-            "parent(bob, alice).\n" +
-            "grandparent(X, Y) :- parent(X, Z), parent(Z, Y).\n");
+        engine.ConsultString("""
+            parent(tom, bob).
+            parent(bob, alice).
+            grandparent(X, Y) :- parent(X, Z), parent(Z, Y).
+            """);
         var sol = engine.Query("grandparent(tom, alice).");
         Assert.True(sol.Success);
     }
@@ -161,10 +173,11 @@ public class PrologEngineTests
     {
         // grandparent(tom, X)? — should bind X = alice.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "parent(tom, bob).\n" +
-            "parent(bob, alice).\n" +
-            "grandparent(X, Y) :- parent(X, Z), parent(Z, Y).\n");
+        engine.ConsultString("""
+            parent(tom, bob).
+            parent(bob, alice).
+            grandparent(X, Y) :- parent(X, Z), parent(Z, Y).
+            """);
         var sol = engine.Query("grandparent(tom, Y).");
 
         Assert.True(sol.Success);
@@ -179,10 +192,11 @@ public class PrologEngineTests
         // Without cut, the second clause would succeed via backtracking after
         // q(b) fails. With cut, the alternative is unreachable.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "p(a) :- !, q(b).\n" +
-            "p(a).\n" +
-            "q(a).\n");
+        engine.ConsultString("""
+            p(a) :- !, q(b).
+            p(a).
+            q(a).
+            """);
         var sol = engine.Query("p(a).");
 
         Assert.False(sol.Success);
@@ -193,10 +207,11 @@ public class PrologEngineTests
     {
         // Control test for the above: same shape minus the cut.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "p(a) :- q(b).\n" +
-            "p(a).\n" +
-            "q(a).\n");
+        engine.ConsultString("""
+            p(a) :- q(b).
+            p(a).
+            q(a).
+            """);
         var sol = engine.Query("p(a).");
 
         Assert.True(sol.Success);
@@ -208,7 +223,10 @@ public class PrologEngineTests
     public void Solution_ToString_HandlesTrueAndFalse()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p.\ncolour(red).\n");
+        engine.ConsultString("""
+            p.
+            colour(red).
+            """);
         Assert.Equal("true", engine.Query("p.").ToString());
         // colour(blue) is a defined predicate but no clause matches — succeeds
         // at link time, fails at runtime, prints as 'false'.
@@ -239,9 +257,10 @@ public class PrologEngineTests
     public void OpDirectiveInConsult_AffectsLaterQueries()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- op(700, xfx, ===>).\n" +
-            "a ===> b.\n");
+        engine.ConsultString("""
+            :- op(700, xfx, ===>).
+            a ===> b.
+            """);
         var sol = engine.Query("a ===> X.");
         Assert.True(sol.Success);
         Assert.Equal(Atom("b"), sol["X"]);

@@ -37,10 +37,11 @@ public class Adr037IndexedIlTests
     {
         var e = new PrologEngine { EnableInlineIte = true };
         e.IlPromotion.Threshold = 1;
-        e.ConsultString(
-            ":- public cls/2.\n" +
-            "cls(a, R) :- ( member(X, [1,2,3]) *-> R = t(X) ; R = none ).\n" +
-            "cls(b, R) :- R = bee.\n");
+        e.ConsultString("""
+            :- public cls/2.
+            cls(a, R) :- ( member(X, [1,2,3]) *-> R = t(X) ; R = none ).
+            cls(b, R) :- R = bee.
+            """);
         Assert.True(e.Query("cls(a, R), R == t(1).").Success);
         Assert.True(e.Query("cls(a, R), R == t(1).").Success);
         Assert.True(e.IlPromotion.IsPromoted(Fid("cls", 2)));
@@ -53,10 +54,11 @@ public class Adr037IndexedIlTests
     {
         var e = new PrologEngine { EnableInlineIte = true };
         e.IlPromotion.Threshold = 1;
-        e.ConsultString(
-            ":- public sign/2.\n" +
-            "sign(pos, R) :- ( 1 > 0 -> R = yes ; R = no ).\n" +
-            "sign(neg, R) :- R = other.\n");
+        e.ConsultString("""
+            :- public sign/2.
+            sign(pos, R) :- ( 1 > 0 -> R = yes ; R = no ).
+            sign(neg, R) :- R = other.
+            """);
         Assert.True(e.Query("sign(pos, R), R == yes.").Success);
         Assert.True(e.Query("sign(pos, R), R == yes.").Success);
         Assert.True(e.IlPromotion.IsPromoted(Fid("sign", 2)));
