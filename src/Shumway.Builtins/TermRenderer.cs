@@ -134,6 +134,17 @@ public static class TermRenderer
             }
         }
 
+        // Curly-brace notation: '{}'(Body) is {Body} — like list notation it
+        // survives ignore_ops(true) (ISO write_canonical keeps both), and the
+        // braces bracket the body, so it renders at full priority.
+        if (arity == 1 && name == "{}")
+        {
+            output.Write('{');
+            Render(engine, engine.GetHeap(functorIdx + 1), output, options, 1200);
+            output.Write('}');
+            return;
+        }
+
         // Operator-form rendering: consult the lookup table if enabled. The
         // priority bound is applied symmetrically — if the term's own
         // operator priority exceeds maxPriority we wrap in parens and
@@ -236,15 +247,17 @@ public static class TermRenderer
                     (name == "-"
                      && RendersLeadingDigit(engine, engine.GetHeap(functorIdx + 1), options))
                     || IsBareOperatorAtomCell(engine, engine.GetHeap(functorIdx + 1), options)
-                    // Neumerkel vn #43: a prefix operator applied to an operand
-                    // that is itself an operator of EQUAL priority is
+                    // Neumerkel vn #43: prefix `-` applied to an operand that
+                    // is a LEFT-CLOSED operator of EQUAL priority is
                     // parenthesised — `- X^2` → `- (X^2)` (`-` fy 200, `^` xfy
-                    // 200). Strict priority (fy allows equal) would omit these,
-                    // but the conformity Codex wants them; the >-priority case is
-                    // already parenthesised by argMax below, so this only adds the
-                    // equal-priority set.
-                    || OperandIsOperatorPriorityAtLeast(
-                           engine, engine.GetHeap(functorIdx + 1), prefixPrec, options);
+                    // 200). ONLY for `-`: Scryer's conformity prints
+                    // `+ (1*2)^3` bare (both re-read fine; SICStus-lineage
+                    // parenthesises the `-` family for the negative-literal
+                    // hazard's sake, and vn #43 pins that). The >-priority
+                    // case is already parenthesised by argMax below.
+                    || (name == "-"
+                        && OperandIsOperatorPriorityAtLeast(
+                               engine, engine.GetHeap(functorIdx + 1), prefixPrec, options));
                 if (needsParens) output.Write('(');
                 string prefixText = (!options.Quoted || NeedsNoQuoting(name))
                     ? name : QuotedAtomName(name);
@@ -377,7 +390,10 @@ public static class TermRenderer
             // Each element is an argument-priority (999) position: a ','/2
             // element must parenthesise (`[(a,b)]`, not `[a,b]` — which would
             // re-read as a two-element list), as must any operator ≥ 1000.
-            RenderOperand(engine, engine.GetHeap(headIdx), output, options, 999);
+            // Plain Render, NOT RenderOperand: an ATOM that is an operator is
+            // a legal argument bare (ISO §6.3.3 — `[:-,-]`, not `[(:-),(-)]`);
+            // the operand-position parens are only for operator operands.
+            Render(engine, engine.GetHeap(headIdx), output, options, 999);
             cursor = engine.GetHeap(headIdx + 1);
             first = false;
         }
@@ -390,7 +406,7 @@ public static class TermRenderer
         else
         {
             output.Write('|');   // ISO: compact improper-list tail
-            RenderOperand(engine, cursor, output, options, 999);   // arg-priority tail
+            Render(engine, cursor, output, options, 999);   // arg-priority tail
         }
         output.Write(']');
     }

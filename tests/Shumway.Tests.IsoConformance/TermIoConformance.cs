@@ -235,6 +235,46 @@ public class TermIoConformance : IDisposable
     }
 
     [Fact]
+    public void Writeq_OperatorAtomsAreLegalArgumentsBare()
+    {
+        // ISO §6.3.3: an atom that is an operator is a legal ARGUMENT as it
+        // stands — list elements and compound args print bare; only OPERAND
+        // positions of another operator parenthesise
+        // (Scryer conformity tests 28/29/185).
+        var e = new PrologEngine();
+        Assert.Equal("[:-,-]", Captured(e, "writeq([:-,-])"));
+        Assert.Equal("f(*)", Captured(e, "writeq(f(*))"));
+        Assert.Equal("-[-]", Captured(e, "writeq(-[-])"));
+    }
+
+    [Fact]
+    public void Writeq_CurlyNotation()
+    {
+        // '{}'(Body) is {Body}; like list notation it survives
+        // ignore_ops(true) — ISO write_canonical keeps both.
+        var e = new PrologEngine();
+        Assert.Equal("{a,b}", Captured(e, "writeq({a,b})"));
+        Assert.Equal("-{a}", Captured(e, "writeq(-{a})"));
+        Assert.Equal("{','(a,b)}", Captured(e, "write_canonical({a,b})"));
+        Assert.Equal("{}", Captured(e, "writeq({})"));
+    }
+
+    [Fact]
+    public void Writeq_EqualPriorityPrefixParens_OnlyForMinus()
+    {
+        // The equal-priority operand parens are the `-` family's (vn #43:
+        // `- (1^2)` — the negative-literal hazard's lineage); `+` prints
+        // bare, both re-read identically (Scryer conformity test 318).
+        var e = new PrologEngine();
+        Assert.Equal("+ (1*2)^3", Captured(e, "writeq(+((1*2)^3))"));
+        Assert.Equal("- ((1*2)^3)", Captured(e, "writeq(-((1*2)^3))"));
+        // Round-trip both.
+        Assert.True(e.Query(
+            "with_output_to(atom(A), writeq(+((1*2)^3))), "
+            + "read_term_from_atom(A, T, []), T == +((1*2)^3).").Success);
+    }
+
+    [Fact]
     public void Writeq_ParenthesisesAnOperatorAtomOperand()
     {
         // ISO §6.3.1.3: a bare operator-atom cannot be an operand, so writeq
