@@ -1669,6 +1669,7 @@ public sealed partial class PrologEngine
         var mutableSwitchTables = mergedSwitchTables;
         engine.SwitchTables = mutableSwitchTables;
         engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
+        engine.ResolveModuleLocalFallback = fid => ResolveDirectConsultLocal(engine, fid);
         // ADR-041 — first-arg clause selection for unindexed dynamic chains at
         // enter_dynamic (determinism must not depend on JIT hotness). Reads
         // _currentPredicatesByAddress at call time (set later in this setup).

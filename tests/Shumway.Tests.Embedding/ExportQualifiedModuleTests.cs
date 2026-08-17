@@ -301,9 +301,11 @@ public class ExportQualifiedModuleTests
             secret(x).
             """);
         Assert.True(Holds(e, "hello(world)"));
-        // Non-exported predicates stay module-local.
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
-            () => e.Query("secret(_)."));
+        // Non-exported predicates stay module-local — but the module was
+        // consulted DIRECTLY, so they too are callable bare, through the
+        // consult-direct fallback rather than the import table (see
+        // DirectConsultLocalTests for the use_module contrast).
+        Assert.True(Holds(e, "secret(x)"));
     }
 
     [Fact]

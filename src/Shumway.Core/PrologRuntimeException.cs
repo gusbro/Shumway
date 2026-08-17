@@ -95,4 +95,21 @@ public sealed class PrologRuntimeException : Exception
         return new PrologRuntimeException("existence_error",
             (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + arity);
     }
+
+    /// <summary>The consult-direct fallback's refusal to guess: a bare call
+    /// that two or more directly consulted modules define. Kind
+    /// <c>"ambiguous_module_local"</c>; Detail <c>"Name/Arity|m1,m2"</c> —
+    /// the translation splits it into
+    /// <c>error(existence_error(procedure, Name/Arity),
+    /// shumway(ambiguous_module_local, [m1, m2]))</c>, so an
+    /// existence-catcher still matches and the context says how to fix the
+    /// call (qualify it).</summary>
+    public static PrologRuntimeException AmbiguousModuleLocal(
+        int functorId, System.Collections.Generic.IReadOnlyList<string> modules)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        return new PrologRuntimeException("ambiguous_module_local",
+            (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + arity
+            + "|" + string.Join(",", modules));
+    }
 }

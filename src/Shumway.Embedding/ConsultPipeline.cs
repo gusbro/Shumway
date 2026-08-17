@@ -1677,6 +1677,12 @@ internal sealed class ConsultPipeline
             // so they are callable bare right after loading.
             if (isExportQualified && E._useModuleLoadDepth == 0)
                 E.ImportAllExportsIntoUser(moduleName);
+            // ...and its LOCALS become reachable through the consult-direct
+            // bare-call fallback (ResolveDirectConsultLocal): consulting a
+            // source means being able to call its predicates, module
+            // directive or not. A use_module dependency never joins.
+            if (moduleDirectiveSeen && E._useModuleLoadDepth == 0)
+                E._directlyConsultedModules.Add(moduleName);
         }
         else
         {

@@ -108,8 +108,10 @@ public class CompatLibrariesTests
         // ADR-038: `:- module(Name, [Exports])` is EXPORT-QUALIFIED — every
         // predicate is mangled Name$x (nothing bare-global). A DIRECTLY
         // consulted module auto-imports its exports into `user` (SWI
-        // behaviour), so the export resolves through the import table — but a
-        // private predicate stays invisible, proving nothing went bare-global.
+        // behaviour), so the export resolves through the import table; the
+        // private predicate resolves too, but through the consult-direct
+        // fallback — the mangling itself is pinned by the manifest flag and
+        // by DirectConsultLocalTests' ambiguity/use_module contrasts.
         var engine = new PrologEngine();
         engine.ConsultString("""
             :- module(mymod, [pub/1]).
@@ -119,7 +121,7 @@ public class CompatLibrariesTests
         Assert.True(engine.Modules.ContainsKey("mymod"));
         Assert.True(engine.Modules["mymod"].IsExportQualified);
         Assert.True(engine.Query("pub(hello).").Success);
-        Assert.False(engine.Query("catch(priv(secret), _, fail).").Success);
+        Assert.True(engine.Query("priv(secret).").Success);
     }
 
     [Fact]

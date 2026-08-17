@@ -110,6 +110,7 @@ public static partial class MetaBuiltins
             new CompoundTerm("type_error",
                 new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
         "existence_error" => WrapWithStampedContext(BuildExistenceError(re), re),
+        "ambiguous_module_local" => BuildAmbiguousModuleLocal(re),
         "domain_error" => WrapWithStampedContext(
             new CompoundTerm("domain_error",
                 new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
@@ -160,6 +161,35 @@ public static partial class MetaBuiltins
     /// <c>existence_error(procedure, Detail)</c> made
     /// <c>catch(open(...), error(existence_error(source_sink, _), _), _)</c>
     /// unreachable.</summary>
+    /// <summary>The consult-direct fallback's ambiguity ball:
+    /// <c>error(existence_error(procedure, N/A),
+    /// shumway(ambiguous_module_local, Modules))</c>. Still an
+    /// existence_error — a catcher for the undefined-procedure shape
+    /// matches — but the context lists the modules that each define the
+    /// name, so the message says how to disambiguate (qualify the call).
+    /// Detail is <c>"Name/Arity|m1,m2"</c> (see
+    /// <see cref="PrologRuntimeException.AmbiguousModuleLocal"/>).</summary>
+    private static Term BuildAmbiguousModuleLocal(PrologRuntimeException re)
+    {
+        int bar = re.Detail.LastIndexOf('|');
+        string pi = bar < 0 ? re.Detail : re.Detail[..bar];
+        Term modules = new AtomTerm("[]");
+        if (bar >= 0)
+        {
+            string[] names = re.Detail[(bar + 1)..].Split(',');
+            for (int i = names.Length - 1; i >= 0; i--)
+                modules = new CompoundTerm(".",
+                    new Term[] { new AtomTerm(names[i]), modules });
+        }
+        return new CompoundTerm("error", new Term[]
+        {
+            new CompoundTerm("existence_error",
+                new Term[] { new AtomTerm("procedure"), ProcedureIndicatorTerm(pi) }),
+            new CompoundTerm("shumway", new Term[]
+                { new AtomTerm("ambiguous_module_local"), modules }),
+        });
+    }
+
     private static Term BuildExistenceError(PrologRuntimeException re)
     {
         Term culprit = ProcedureIndicatorTerm(re.Detail);

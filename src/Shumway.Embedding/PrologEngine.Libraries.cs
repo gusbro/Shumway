@@ -1027,6 +1027,58 @@ public sealed partial class PrologEngine
         (object ClausesRef, int ClauseCount, int PublicCount, int ExportCount,
          HashSet<int> Mangled)> _moduleMangledCache = new();
 
+    /// <summary>Explicit (<c>:- module</c>) modules the user consulted
+    /// DIRECTLY — REPL command line, <c>consult/1</c>, the embedding's
+    /// ConsultFile/ConsultString — as opposed to arriving as a
+    /// <c>use_module</c> dependency. These are the modules whose locals the
+    /// consult-direct bare-call fallback may resolve
+    /// (<see cref="ResolveDirectConsultLocal"/>): consulting a source means
+    /// being able to call its predicates. A module that later gets consulted
+    /// directly joins the set from that moment on.</summary>
+    internal readonly HashSet<string> _directlyConsultedModules = new();
+
+    /// <summary>The consult-direct bare-call fallback (the agreed top-level
+    /// semantics, uniform across REPL / web / embedding). Runs only where a
+    /// bare goal is otherwise about to raise <c>existence_error</c>, so it
+    /// can never shadow a builtin, a bare-global public, a dynamic (an
+    /// <c>assertz</c>-created one included) or a <c>user</c> import.
+    /// Resolves to the ONE directly consulted explicit module that defines
+    /// the name as a mangled local; two candidates throw the ambiguity
+    /// existence_error naming both. Returns the code address, or -1.</summary>
+    internal int ResolveDirectConsultLocal(Activation engine, int fid)
+    {
+        if (_directlyConsultedModules.Count == 0) return -1;
+        if (_dynStore.IsDynamic(fid)) return -1;
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        // '$' anywhere: engine/transform internals and already-mangled
+        // spellings — neither participates in the convenience.
+        if (string.IsNullOrEmpty(name) || name.IndexOf('$') >= 0) return -1;
+        string? found = null;
+        List<string>? candidates = null;
+        foreach (string mod in _directlyConsultedModules)
+        {
+            if (!_modules.TryGetValue(mod, out ModuleManifest? m)) continue;
+            if (!GetModuleMangledSet(mod, m).Contains(fid)) continue;
+            found ??= mod;
+            (candidates ??= new List<string>()).Add(mod);
+        }
+        if (found is null) return -1;
+        if (candidates!.Count > 1)
+        {
+            candidates.Sort(StringComparer.Ordinal);
+            throw Shumway.Core.PrologRuntimeException.AmbiguousModuleLocal(fid, candidates);
+        }
+        int mangledFid = Shumway.Core.FunctorTable.Intern(
+            Shumway.Core.AtomTable.Intern(found + "$" + name, permanent: true).Id, arity);
+        if (engine.CurrentFunctorAddresses is { } map
+            && map.TryGetValue(mangledFid, out int addr)
+            && !Shumway.Core.CallTarget.IsUnresolved(addr)
+            && addr >= 0)
+            return addr;
+        return -1;
+    }
+
     /// <summary>True when every recorded static Module:Goal resolution of a
     /// cached transform still resolves the same today — the per-entry
     /// revalidation that lets an unrelated module load reuse the transform

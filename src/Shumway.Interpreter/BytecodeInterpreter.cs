@@ -516,6 +516,14 @@ public sealed partial class BytecodeInterpreter
                             _engine.SetPc(lateAddr);
                             continue;
                         }
+                        // The consult-direct fallback: a directly consulted
+                        // module's local.
+                        int fbAddr = _engine.ResolveModuleLocalFallback?.Invoke(functorId) ?? -1;
+                        if (fbAddr >= 0)
+                        {
+                            _engine.SetPc(fbAddr);
+                            continue;
+                        }
                         // honour the `unknown` flag (throws on error).
                         if (Shumway.Core.UnknownProcedure.Fails(_engine, functorId))
                         {

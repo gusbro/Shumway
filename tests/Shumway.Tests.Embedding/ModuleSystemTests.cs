@@ -53,18 +53,21 @@ public class ModuleSystemTests
     }
 
     [Fact]
-    public void ExplicitModule_LocalPredicateNotCallableFromUser()
+    public void ExplicitModule_LocalCallableAfterDirectConsult()
     {
-        // p/1 is local to 'parser', so a query in the user context can't
-        // reach it — calling the bare 'p/1' raises existence_error, just
-        // like any other undefined predicate.
+        // p/1 is local to 'parser', but the module was consulted DIRECTLY —
+        // consulting a source means being able to call its predicates, so the
+        // bare call resolves through the consult-direct fallback (see
+        // DirectConsultLocalTests; a use_module dependency's locals stay
+        // private).
         var engine = new PrologEngine();
         engine.ConsultString("""
             :- module(parser).
             p(a).
             """);
-        var ex = Assert.Throws<PrologRuntimeException>(() => engine.Query("p(X)."));
-        Assert.Equal("existence_error", ex.Kind);
+        var sol = engine.Query("p(X).");
+        Assert.True(sol.Success);
+        Assert.Equal("a", sol["X"]!.ToString());
     }
 
     [Fact]

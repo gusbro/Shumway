@@ -466,6 +466,17 @@ public sealed partial class Activation
     /// by the dispatchers right before raising existence_error.</summary>
     public Func<int, int>? ResolveLateHelper { get; set; }
 
+    /// <summary>The consult-direct bare-call fallback: a bare goal no other
+    /// route resolved is resolved to a DIRECTLY-consulted explicit module's
+    /// local when exactly ONE such module defines the name — consulting a
+    /// source means being able to call its predicates, module directive or
+    /// not. Two candidates throw the ambiguity existence_error (qualify to
+    /// choose); a module loaded only as a use_module dependency never
+    /// participates. Returns the address, or -1. Consulted by the
+    /// dispatchers after <see cref="ResolveLateHelper"/>, right before
+    /// <see cref="UnknownProcedure.Fails"/>.</summary>
+    public Func<int, int>? ResolveModuleLocalFallback { get; set; }
+
     /// <summary>Re-entrant semidet solve of a goal on THIS live activation, reusing
     /// the already-linked program (no fresh transient-region link, no new machine) —
     /// the cheap host→Prolog path for a foreign predicate that calls back into Prolog

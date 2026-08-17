@@ -416,6 +416,12 @@ public sealed partial class IlPredicateCompiler
                 int late = engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
                 if (late < 0)
                 {
+                    // The consult-direct fallback: a directly consulted
+                    // module's local. Returned UNCACHED — an assertz later in
+                    // the query may create the bare dynamic, which must win.
+                    int consultLocal =
+                        engine.ResolveModuleLocalFallback?.Invoke(functorId) ?? -1;
+                    if (consultLocal >= 0) return consultLocal;
                     // honour the `unknown` flag (throws on error).
                     if (UnknownProcedure.Fails(engine, functorId))
                         return SyncFail;
