@@ -1706,6 +1706,14 @@ public sealed partial class PrologEngine
         // never silently fall outside the late-materialization registry.
         int last = name.LastIndexOf('$');
         if (last < 0 || last + 2 >= name.Length) return false;
+        // The helper's own name STARTS with '$' — bare it is '$disj_12',
+        // module-mangled 'mod$$disj_12' (a DOUBLE dollar). A single-dollar
+        // name is a mangled USER local, and a user predicate named like
+        // 'mod$test_326' fits the letters_digits shape by accident: register
+        // it (under its bare name, first-compile-wins) and the module wall
+        // leaks — a bare test_326 resolved cross-module, preempting both the
+        // existence_error and the consult-direct fallback's ambiguity check.
+        if (last > 0 && name[last - 1] != '$') return false;
         // NEVER register the query-stub's own '$q…' helpers: their ids are
         // deliberately REUSED query-to-query (MetaTransform.HelperPrefix "$q"),
         // so a first-compile-wins registry would materialize a PREVIOUS query's
