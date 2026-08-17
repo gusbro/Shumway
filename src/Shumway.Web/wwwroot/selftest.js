@@ -344,6 +344,62 @@ export async function run(session, emit, out, editor, workspace) {
     await session.resetEngine();
   }
 
+  // --- debug view docks -----------------------------------------------------
+  // Pure page behaviour, no engine involved: the ⇄ button re-homes a view's
+  // BUTTON and PANEL into the other dock, an emptied dock collapses (.empty),
+  // and sending the view back restores the single-dock default.
+  {
+    const left = document.getElementById('debug-tabs-left');
+    const right = document.getElementById('debug-tabs');
+    check('left dock starts empty', left.classList.contains('empty'), true);
+    right.querySelector('[data-tab="tab-locals"]').click();       // make Locals current
+    right.querySelector('.tab-move').click();                     // send it left
+    check('locals moved to the left dock', !!left.querySelector('#tab-locals'), true);
+    check('left dock now shows', left.classList.contains('empty'), false);
+    check('locals panel is visible there',
+          left.querySelector('#tab-locals').hidden, false);
+    check('the stack stays on the right', !!right.querySelector('#tab-stack'), true);
+    left.querySelector('.tab-move').click();                      // send it back
+    check('left dock collapses again', left.classList.contains('empty'), true);
+    check('locals is home again', !!right.querySelector('#tab-locals'), true);
+  }
+
+  // --- resizable seams ------------------------------------------------------
+  // Synthetic pointer drags against the real handlers: the pane splitter and a
+  // dock handle resize by dragging, the shares persist (settings.layout), and
+  // a double-click gives the default back. Geometry under a REAL pointer is
+  // the visual harness's job; this checks the wiring.
+  {
+    const drag = (el, from, to) => {
+      const ev = (type, p) => new PointerEvent(type,
+        { bubbles: true, pointerId: 1, clientX: p.x, clientY: p.y });
+      el.dispatchEvent(ev('pointerdown', from));
+      el.dispatchEvent(ev('pointermove', to));
+      el.dispatchEvent(ev('pointerup', to));
+    };
+    const panes = document.querySelector('.panes');
+    const splitter = document.getElementById('split-panes');
+    const r = panes.getBoundingClientRect();
+    drag(splitter, { x: r.left + r.width * 0.5, y: r.top + 50 },
+                   { x: r.left + r.width * 0.65, y: r.top + 50 });
+    check('dragging the splitter sets the split',
+          panes.style.getPropertyValue('--split') !== '', true);
+    check('and the split persists', typeof settings.get().layout?.split, 'number');
+    splitter.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    check('double-click restores the default split',
+          panes.style.getPropertyValue('--split'), '');
+    check('and clears what was stored', settings.get().layout?.split ?? null, null);
+
+    const dock = document.getElementById('debug-tabs');
+    const handle = dock.querySelector('.dock-resize');
+    const d = dock.getBoundingClientRect();
+    drag(handle, { x: d.left + 40, y: d.top }, { x: d.left + 40, y: d.top - 80 });
+    check('dragging a dock handle sets its height', dock.style.flexBasis !== '', true);
+    check('and the height persists', typeof settings.get().layout?.rdock, 'number');
+    handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    check('double-click restores the dock default', dock.style.flexBasis, '');
+  }
+
   // Persistence is reported rather than assumed: a browser may refuse storage,
   // and the session must still work when it does.
   emit(`note: origin-private storage ${workspace.persistent() ? 'available' : 'UNAVAILABLE'}`

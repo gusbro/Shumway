@@ -102,7 +102,27 @@ par(b, c)."></div>
                 title="debug mode: breakpoints, stepping, call stack">Debug</button>
         <span class="hint">Ctrl-Enter consults · Ctrl-S saves · Tab completes</span>
       </div>
+
+      <!-- Debug mode's LEFT dock. Empty by default — every view starts on the
+           right — and collapsed while empty, so the editor keeps the space.
+           The ⇄ button on either dock sends that dock's current view across,
+           which is how two views (say Call stack + Locals) end up visible at
+           once, VS-style. -->
+      <div id="debug-tabs-left" class="debug-tabs empty">
+        <div class="dock-resize" role="separator" aria-orientation="horizontal"
+             title="drag to resize — double-click restores"></div>
+        <div class="tab-bar" role="tablist">
+          <span class="tab-strip"></span>
+          <button type="button" class="tab-move" data-dock="left"
+                  title="move this view to the other panel">⇄</button>
+        </div>
+      </div>
     </section>
+
+    <!-- The seam between the panes: drag to give one side more room. Hidden in
+         the narrow (stacked) layout, where there is no seam to drag. -->
+    <div id="split-panes" class="splitter-v" role="separator" aria-orientation="vertical"
+         title="drag to resize the panels — double-click restores"></div>
 
     <section class="pane">
       <h2>Answers
@@ -134,15 +154,22 @@ par(b, c)."></div>
       </form>
 
       <!-- Debug mode's bottom half of this pane: what the suspended query is
-           doing, one tab at a time — the stack (click a frame), its variables
-           (residual constraints included), the watches. Dimmed once the query
-           moves on: what it shows is a moment ago, not now. -->
+           doing — the stack (click a frame), its variables (residual
+           constraints included), the watches. Each dock shows one view; move
+           a view to the left dock (⇄) to see two at once. Dimmed once the
+           query moves on: what it shows is a moment ago, not now. -->
       <div id="debug-tabs" class="debug-tabs">
+        <div class="dock-resize" role="separator" aria-orientation="horizontal"
+             title="drag to resize — double-click restores"></div>
         <div class="tab-bar" role="tablist">
-          <button type="button" data-tab="tab-stack" class="active">Call stack</button>
-          <button type="button" data-tab="tab-locals">Locals</button>
-          <button type="button" data-tab="tab-watches">Watches</button>
-          <button type="button" data-tab="tab-immediate">Immediate</button>
+          <span class="tab-strip">
+            <button type="button" data-tab="tab-stack" class="active">Call stack</button>
+            <button type="button" data-tab="tab-locals">Locals</button>
+            <button type="button" data-tab="tab-watches">Watches</button>
+            <button type="button" data-tab="tab-immediate">Immediate</button>
+          </span>
+          <button type="button" class="tab-move" data-dock="right"
+                  title="move this view to the other panel">⇄</button>
         </div>
         <div id="tab-stack" class="tab-panel">
           <div id="debug-stack" class="debug-list"></div>
@@ -378,6 +405,13 @@ puzzle([S,E,N,D,M,O,R,Y]) :-
           <li><b>Watches</b> — goals you add, re-evaluated at every stop.</li>
           <li><b>Immediate</b> — see below.</li>
         </ul>
+        <p>The <b>⇄</b> button at the end of a tab bar sends its current view
+           to a second dock under the program panel, so two views — say the
+           call stack and the locals — stay visible at once. An emptied dock
+           gives its space back. Drag a dock's top edge to make it taller or
+           shorter — as the divider between the two panels resizes those — and
+           a double-click gives a seam its default back. All of it is
+           remembered.</p>
         <p>Step with the buttons above the answers, or the usual keys:</p>
         <ul class="keys">
           <li><kbd>F5</kbd> continue</li>

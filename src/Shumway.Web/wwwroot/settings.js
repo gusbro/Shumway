@@ -24,6 +24,9 @@ const DEFAULTS = {
   // log message, enabled), watch goals. Written by debug.js; a reload
   // reapplies the lot. Additive over v1 — the merge fills it in.
   debug: null,
+  // The dragged seams (layout.js): pane split and dock heights, as percentages.
+  // Only what differs from the defaults is stored; null = everything default.
+  layout: null,
 };
 
 /**

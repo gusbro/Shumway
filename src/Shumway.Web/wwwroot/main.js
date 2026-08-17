@@ -10,6 +10,7 @@ import * as workspace from './workspace.js';
 import * as libraries from './libraries.js';
 import * as settings from './settings.js';
 import * as theme from './theme.js';
+import * as layout from './layout.js';
 import { attach } from './editor.js';
 import * as debugUi from './debug.js';
 
@@ -1239,6 +1240,7 @@ document.getElementById('consult').addEventListener('click',
 const config = settings.load();
 theme.attach(document.getElementById('theme'), config.theme,
              (choice) => settings.update({ theme: choice }));
+layout.init();
 
 out.textContent = '';
 

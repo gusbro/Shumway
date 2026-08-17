@@ -56,9 +56,56 @@ h1 { font-size: 1.3rem; margin: 0; letter-spacing: -.01em; }
    equal height means the TRANSCRIPT takes up the slack, which is where extra
    room is worth having. */
 /* The source side is a little wider: it now carries a line-number gutter, and
-   code is the thing that suffers first from a narrow column. */
-.panes { display: grid; grid-template-columns: 1.15fr 1fr; gap: 1.25rem; align-items: stretch; }
-@media (max-width: 62rem) { .panes { grid-template-columns: 1fr; } }
+   code is the thing that suffers first from a narrow column. The middle column
+   is the draggable seam (layout.js): --split is the source side's share, and
+   its default keeps the old 1.15fr/1fr proportion. */
+.panes {
+  display: grid;
+  grid-template-columns: minmax(16rem, var(--split, 53.5%)) .9rem minmax(16rem, 1fr);
+  align-items: stretch;
+}
+@media (max-width: 62rem) {
+  .panes { grid-template-columns: 1fr; gap: 1.25rem; }
+  /* The stacked layout has no seams to drag: panes flow, docks size to content. */
+  .splitter-v, .dock-resize { display: none !important; }
+}
+
+/* --- the resizable seams (layout.js) ------------------------------------- */
+
+.splitter-v { cursor: col-resize; position: relative; touch-action: none; }
+.splitter-v::before {
+  content: '';
+  position: absolute;
+  left: 50%; top: 0; bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+.splitter-v:hover::before, .splitter-v:active::before {
+  width: 3px; margin-left: -1px;
+  background: var(--accent);
+}
+
+/* A dock's top edge. It IS the dock's separator line — the border the dock
+   used to draw — grown into a grab strip. */
+.dock-resize {
+  flex: none;
+  height: .55rem;
+  cursor: row-resize;
+  position: relative;
+  touch-action: none;
+  margin-bottom: .15rem;
+}
+.dock-resize::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  height: 1px;
+  background: var(--line);
+}
+.dock-resize:hover::before, .dock-resize:active::before {
+  height: 3px; margin-top: -1px;
+  background: var(--accent);
+}
 
 .pane {
   min-width: 0;
@@ -487,19 +534,23 @@ body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
 /* The bottom half of the answers pane while debugging: one tab at a time —
    the stack, the locals, the watches — so the page never needs to scroll to
    see them. */
-#debug-tabs { display: none; }
-.debug-mode #debug-tabs {
+.debug-tabs { display: none; }
+/* A dock with no views collapses even in debug mode: the editor (left) or
+   the transcript (right) takes the space back. */
+/* The 40% is only the DEFAULT share: dragging the .dock-resize strip sets an
+   inline flex-basis over it (layout.js), which is also what a reload restores. */
+.debug-mode .debug-tabs:not(.empty) {
   display: flex;
   flex-direction: column;
   flex: 0 0 40%;
   min-height: 8rem;
-  margin-top: .55rem;
-  border-top: 1px solid var(--line);
-  padding-top: .5rem;
+  margin-top: .3rem;
 }
-.tab-bar { display: flex; gap: .3rem; flex: none; margin-bottom: .4rem; }
+.tab-bar { display: flex; gap: .3rem; flex: none; margin-bottom: .4rem; align-items: center; }
+.tab-strip { display: flex; gap: .3rem; flex: 1 1 auto; min-width: 0; }
 .tab-bar button { font-size: .78rem; padding: .22rem .7rem; color: var(--muted); }
 .tab-bar button.active { color: var(--accent); border-color: var(--accent); }
+.tab-bar .tab-move { flex: none; padding: .22rem .45rem; }
 .tab-panel { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .tab-panel[hidden] { display: none; }
 
@@ -520,7 +571,7 @@ body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
 .debug-row.residual { color: var(--accent); }
 .debug-row.muted { color: var(--muted); }
 /* The query moved on: the last stop's stack stays readable but visibly past. */
-#debug-tabs.stale .debug-list { opacity: .55; }
+.debug-tabs.stale .debug-list { opacity: .55; }
 
 /* Breakpoint variants. A condition marks the dot with a hole ring tint; a
    logpoint is a different thing (it never stops) so it changes colour. */

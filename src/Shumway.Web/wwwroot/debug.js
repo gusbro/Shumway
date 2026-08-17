@@ -86,8 +86,11 @@ export function init(deps) {
   // The same line menu on the SOURCE itself — where the right hand already
   // is. Only in debug mode: normal mode keeps the browser's own menu.
   editorEl.addEventListener('contextmenu', onEditorMenu);
-  for (const b of document.querySelectorAll('#debug-tabs .tab-bar button'))
+  for (const b of document.querySelectorAll('.debug-tabs .tab-strip button'))
     b.addEventListener('click', () => selectTab(b.dataset.tab));
+  for (const b of document.querySelectorAll('.debug-tabs .tab-move'))
+    b.addEventListener('click', () => moveActiveTab(b.dataset.dock));
+  renderDocks();
   // The usual debugger keys, only while the mode is on — F5 must stay the
   // browser's refresh in normal mode. All of these are preventDefault-able
   // in current browsers (F11's fullscreen and F5's reload included).
@@ -132,7 +135,12 @@ function persist() {
     if (Object.keys(perFile).length) bps[ws] = perFile;
   }
   settings.update({
-    debug: { on: debugMode, bps, watches: watches.map((w) => w.goal) },
+    debug: {
+      on: debugMode, bps, watches: watches.map((w) => w.goal),
+      // The dock split: only the views sent LEFT are worth remembering —
+      // right is the default home.
+      dleft: TAB_IDS.filter((t) => dockOf[t] === 'left'),
+    },
   });
 }
 
@@ -159,6 +167,9 @@ export function restore() {
   for (const goal of d.watches || [])
     if (!watches.some((w) => w.goal === goal)) watches.push({ goal, result: '' });
   renderWatches();
+  for (const t of d.dleft || [])
+    if (t in dockOf) dockOf[t] = 'left';
+  renderDocks();
   return !!d.on;
 }
 
@@ -209,11 +220,51 @@ function onImmediateKey(e) {
   }
 }
 
+// --- the two view docks ----------------------------------------------------
+// Two dock zones, VS-style: the classic one under the transcript (right) and
+// a second one under the editor (left), so two views — say Call stack +
+// Locals — stay visible at once. dockOf is the single source of truth;
+// renderDocks() MOVES the button and panel elements between docks (their
+// listeners travel with the nodes), keeps one active view per dock, and
+// collapses a dock with nothing in it. Default: everything right.
+const TAB_IDS = ['tab-stack', 'tab-locals', 'tab-watches', 'tab-immediate'];
+const dockOf = Object.fromEntries(TAB_IDS.map((t) => [t, 'right']));
+const activeIn = { left: null, right: 'tab-stack' };
+const dockEl = (d) => $(d === 'left' ? 'debug-tabs-left' : 'debug-tabs');
+const tabButton = (t) => document.querySelector(`.debug-tabs [data-tab="${t}"]`);
+
+function renderDocks() {
+  for (const d of ['left', 'right']) {
+    const el = dockEl(d);
+    const strip = el.querySelector('.tab-strip');
+    const tabs = TAB_IDS.filter((t) => dockOf[t] === d);
+    if (!tabs.includes(activeIn[d])) activeIn[d] = tabs[0] ?? null;
+    for (const t of tabs) {         // canonical order, nodes re-homed as needed
+      strip.appendChild(tabButton(t));
+      el.appendChild($(t));
+    }
+    el.classList.toggle('empty', tabs.length === 0);
+    for (const t of tabs) {
+      tabButton(t).classList.toggle('active', t === activeIn[d]);
+      $(t).hidden = t !== activeIn[d];
+    }
+  }
+}
+
+/** Sends a dock's current view to the other dock (the ⇄ button). */
+function moveActiveTab(from) {
+  const id = activeIn[from];
+  if (!id) return;
+  const to = from === 'left' ? 'right' : 'left';
+  dockOf[id] = to;
+  activeIn[to] = id;
+  renderDocks();
+  persist();
+}
+
 function selectTab(id) {
-  for (const b of document.querySelectorAll('#debug-tabs .tab-bar button'))
-    b.classList.toggle('active', b.dataset.tab === id);
-  for (const p of document.querySelectorAll('#debug-tabs .tab-panel'))
-    p.hidden = p.id !== id;
+  activeIn[dockOf[id]] = id;
+  renderDocks();
 }
 
 function onDebugKey(e) {
@@ -429,7 +480,7 @@ export function onStop(stop) {
     frameFile = file;
     frameLine = sel.line;      // the hollow marker: where you are LOOKING
   }
-  $('debug-tabs').classList.remove('stale');
+  for (const el of document.querySelectorAll('.debug-tabs')) el.classList.remove('stale');
   renderStack();
   renderLocals();
   renderGutter();
@@ -471,7 +522,7 @@ function clearStoppedUi() {
   frameFile = '';
   setToolbar(false);
   restorePrompt();
-  $('debug-tabs').classList.add('stale');
+  for (const el of document.querySelectorAll('.debug-tabs')) el.classList.add('stale');
   renderGutter();
   if (statusEl.textContent.startsWith('stopped')) statusEl.textContent = '';
 }
