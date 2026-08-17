@@ -593,10 +593,9 @@ public sealed class Parser
                 // native goal: in a NON-DCG clause a body goal can be raw
                 // native code between braces (`p :- g, { C code; }, h.`).
                 // The brace content is not Prolog-lexable, so it is
-                // skipped RAW by the lexer (naive brace counting) and the
-                // goal `true` is substituted. TODO: the real
-                // implementation (compiling/binding the native code)
-                // comes later — for now the goal is a no-op.
+                // skipped RAW by the lexer (naive brace counting) and
+                // carried as '$native_goal'(RawText); the consult-time
+                // NativeTransform (ADR-022) compiles it for real.
                 //
                 // In a DCG rule (`head --> body`) braces keep their ISO
                 // {}/1 meaning — detection is the per-clause _sawDcgArrow
@@ -623,12 +622,12 @@ public sealed class Parser
                             "internal: token lookahead extends past a native '{' goal "
                             + "(arity_compat); raw skip would start at the wrong position.",
                             pos);
-                    // ADR-022 — capture the raw C statement
-                    // text and carry it in a `'$native_goal'(RawText)` term (the
-                    // raw text as a non-interned StringTerm). Until the native
-                    // codegen lands (step 4), '$native_goal'/1 is a no-op builtin
-                    // — same runtime behaviour as the previous `true`, but the
-                    // span is no longer lost.
+                    // ADR-022 — capture the raw C statement text in a
+                    // `'$native_goal'(RawText)` term (a non-interned
+                    // StringTerm). NativeTransform rewrites it to a compiled
+                    // '$native_run' at consult; one that survives to
+                    // execution raises loudly (see its registration in
+                    // StandardBuiltins) rather than silently succeeding.
                     string nativeText = _lexer.SkipNativeGoalBlock(pos);
                     return new CompoundTerm("$native_goal",
                         new Term[] { new StringTerm(nativeText) { Position = pos } })

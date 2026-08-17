@@ -520,11 +520,11 @@ public static class BundleWriter
             var pruned = new HashSet<int>();
             foreach (int f in fullReachable)
                 if (!regionReachable.Contains(f)) pruned.Add(f);
-            // (The constructed-constant meta-guard that used to rescue meta-call
-            // targets from the prune is GONE — superseded by the member-entry
-            // aliases: EVERY absorbed member is fid-resolvable into its region method via
-            // CurrentFunctorAddresses, so a meta-call / top-level / catch-recovery call to
-            // a pruned member dispatches correctly without a standalone form.)
+            // No meta-call rescue is needed here: EVERY absorbed member is
+            // fid-resolvable into its region method via CurrentFunctorAddresses
+            // (the member-entry aliases), so a meta-call / top-level /
+            // catch-recovery call to a pruned member dispatches correctly
+            // without a standalone form.
             prunableFids = pruned;
             DiagPrune(entry.ModuleName, predicates.Count, seedFids.Count,
                 forcedRoots.Count, regionReachable.Count, fullReachable.Count,

@@ -347,8 +347,8 @@ public static class TermRenderer
             // ISO §7.10.5 canonical form (write_canonical): a list is the
             // compound '.'(H, T) and ignore_ops means FUNCTIONAL notation —
             // `'.'(a,[])`, not `[a]` (Neumerkel #34). Iterative over the
-            // spine: a deep list must not recurse the C# stack (the
-            // chunk-111 lesson).
+            // spine — don't recurse per element: a deep list overflows the
+            // C# stack (same rule as the term materializers).
             int depth = 0;
             Cell cur = lisCell;
             while (true)

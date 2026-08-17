@@ -244,18 +244,6 @@ public static partial class MetaBuiltins
         }
     }
 
-    // (CallNCursor + AppendArgs removed — call/N is dispatched in the live
-    // engine by DispatchCall / IlMetaCallHelper; MetaBuiltins.CallN is now a
-    // dead-path guard that throws. See CallN.)
-
-    private static int ExtractAddrFromName(string name)
-    {
-        if (name.Length >= 3 && name[0] == '_' && name[1] == 'G'
-            && int.TryParse(name.AsSpan(2), out int addr))
-            return addr;
-        return -1;
-    }
-
     // ============================================================================
     // consult / reconsult
     // ============================================================================
@@ -574,8 +562,7 @@ public static partial class MetaBuiltins
         // take it from the return instead of re-extracting (a second
         // string intern per assert).
         int fid = prepend ? host.Asserta(clause) : host.Assertz(clause);
-        // ADR-015 chunk C step 4: incremental dispatch — the canonical
-        // path (the chunk-C redirect is gone).
+        // ADR-015 incremental dispatch — the canonical path:
         //   assertz → append a chunk and patch the tail's <next>.
         //   asserta → append a chunk, patch the trampoline's execute,
         //             and demote the old head's try_me_else in place to

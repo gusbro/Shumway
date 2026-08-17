@@ -299,8 +299,9 @@ public sealed partial class BytecodeInterpreter
     private bool DispatchCall(ProgramView code, int callArity, int barrier)
     {
         // Sizing diagnostic (profile builds only): how many goals are dispatched by
-        // runtime term inspection — the cost class the link-time meta-wrapper
-        // unfold (ADR-021 candidate #2) removes.
+        // runtime term inspection — the cost class the link-time
+        // MetaWrapperUnfold removes (ranked as a next-arc candidate in
+        // ADR-021's closing profile).
         Shumway.Core.Profiler.Note("meta_dispatch (DispatchCall)");
         int pc = _engine.P;
         Cell goal = DerefCell(_engine.GetRegister(0));

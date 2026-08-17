@@ -676,19 +676,6 @@ public sealed partial class PrologEngine
         return true;
     }
 
-    /// <summary>ADR-035 — the variables of one frame as TERMS, not renderings: what the
-    /// Immediate window substitutes into a goal. A variable whose slot has not been
-    /// written yet (or holds something that is not a term) is simply absent — the goal's
-    /// variable of that name stays free.</summary>
-    internal IReadOnlyList<(string Name, Term Value)> MaterializeFrameVariables(
-        Activation engine, int pc, int env)
-    {
-        var result = new List<(string, Term)>();
-        foreach (var (name, value, _, _) in MaterializeFrameVariablesWithAddresses(engine, pc, env))
-            result.Add((name, value));
-        return result;
-    }
-
     /// <summary>ADR-035 D5+ — the frame's variables as terms AND as heap ADDRESSES on the
     /// suspended activation, which is what the bind-into-frame commit needs: the address is
     /// the real cell a committed binding unifies against, where the term is only a copy.
