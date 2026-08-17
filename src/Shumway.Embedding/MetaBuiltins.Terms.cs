@@ -33,17 +33,13 @@ public static partial class MetaBuiltins
         var seen = new HashSet<string>();
         CollectNamedVarsFromTerm(parsed, names, seen);
 
-        Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
-        if (!engine.UnifyRegisterWithCell(1, parsedCell)) return false;
-
-        // The Materializer's internal varMap is private; re-walk the term to
-        // find each variable's heap address by re-materialising with a
-        // shared map ourselves. Simpler: read each var's binding back via
-        // re-parsing — but parsed already has the names. Re-materialise the
-        // bindings list using fresh vars that match by name into parsed.
-        // We do this by building '=(Name, Var)' terms whose Var slots
-        // share names with the parsed term — Materializer will then
-        // resolve them through its varMap and produce the same heap cells.
+        // Bindings vars must BE the term's vars (SWI contract — and what
+        // singleton computation and read_term_from_chars build on). Build
+        // '=(Name, Var)' pairs whose Var slots share names with the parsed
+        // term, then materialise term and pairs TOGETHER so the
+        // Materializer's varMap resolves each name to one shared heap cell.
+        // (Materialising the term separately first handed register 1 a copy
+        // DETACHED from the bindings — the trap this comment guards.)
         var pairs = new List<Term>(names.Count);
         foreach (string name in names)
         {
@@ -53,9 +49,6 @@ public static partial class MetaBuiltins
                 new VarTerm(name),
             }));
         }
-        // To force shared identity between vars in pairs and vars in parsed,
-        // construct a top-level wrapper term containing both, materialise
-        // together, then extract the bindings half.
         Term wrapper = new CompoundTerm("$pair", new Term[]
         {
             parsed,
@@ -64,8 +57,8 @@ public static partial class MetaBuiltins
         Cell wrapCell = Materializer.MaterializeAsCell(engine, wrapper);
         // wrapCell is Cell.Ref to STR for $pair/2. Args at strBase+2 and +3.
         int wrapBase = wrapCell.AsHeapIndex;
-        int bindingsAddr = wrapBase + 3;
-        return engine.UnifyRegisterWithHeapAt(2, bindingsAddr);
+        if (!engine.UnifyRegisterWithHeapAt(1, wrapBase + 2)) return false;
+        return engine.UnifyRegisterWithHeapAt(2, wrapBase + 3);
     }
 
     private static void CollectNamedVarsFromTerm(Term t, List<string> order, HashSet<string> seen)

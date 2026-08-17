@@ -145,5 +145,125 @@ internal static class ScryerShim
         '$scry_ctype'(whitespace, _, Code)   :- ( Code =:= 32 ; Code >= 9, Code =< 13 ).
         '$scry_ctype'(lower(Ls), C, _)       :- downcase_atom(C, D), D \== C, atom_chars(D, Ls).
         '$scry_ctype'(upper(Us), C, _)       :- upcase_atom(C, U), U \== C, atom_chars(U, Us).
+
+        % ----- charsio reader/writer natives -----
+        % charsio.pl's term I/O bottoms out in Rust-VM natives; these ride
+        % Shumway's own reader/writer instead. Known divergences: a syntax
+        % error carries OUR reader's message atom, not Scryer's error
+        % vocabulary (incomplete_reduction, …) — a syntax_error(_) catcher
+        % matches, a Scryer-specific code does not; the max_depth and
+        % double_quotes write options are accepted and ignored (their
+        % defaults); '$chars_base64' is not emulated.
+        :- public '$read_from_chars'/2.
+        '$read_from_chars'(Cs, T) :-
+            atom_chars(A, Cs),
+            read_term_from_atom(A, T).
+
+        :- public '$read_term_from_chars'/5.
+        '$read_term_from_chars'(Cs, T, Singletons, Vars, VNames) :-
+            atom_chars(A, Cs),
+            atom_to_term(A, T, VNames),
+            term_variables(T, Vars),
+            '$scry_singletons'(VNames, T, Singletons).
+
+        '$scry_singletons'([], _, []).
+        '$scry_singletons'([Name=V|Rest], T, S) :-
+            '$scry_count_var'(T, V, 0, N),
+            (   N =:= 1 -> S = [Name=V|S1] ; S = S1 ),
+            '$scry_singletons'(Rest, T, S1).
+
+        '$scry_count_var'(T, V, N0, N) :-
+            (   var(T) -> ( T == V -> N is N0 + 1 ; N = N0 )
+            ;   T =.. [_|Args],
+                '$scry_count_list'(Args, V, N0, N)
+            ).
+        '$scry_count_list'([], _, N, N).
+        '$scry_count_list'([A|As], V, N0, N) :-
+            '$scry_count_var'(A, V, N0, N1),
+            '$scry_count_list'(As, V, N1, N).
+
+        :- public '$write_term_to_chars'/8.
+        '$write_term_to_chars'(Chars, Term, IgnoreOps, NumberVars, Quoted, VNames,
+                               _MaxDepth, _DoubleQuotes) :-
+            with_output_to(atom(A),
+                write_term(Term, [ignore_ops(IgnoreOps), numbervars(NumberVars),
+                                  quoted(Quoted), variable_names(VNames)])),
+            atom_chars(A, Chars).
+
+        % builtins.pl's option parsers, called module-qualified from charsio
+        % (`builtins:parse_write_options(...)` — no builtins module exists, so
+        % the qualified call falls through to these bare globals). Value
+        % order matches Scryer's alphabetical default list.
+        :- public parse_write_options/3.
+        parse_write_options(Options, [DQ, IO, MD, NV, Q, VN], Stub) :-
+            '$scry_check_opts'(Options, '$scry_write_opt', write_option, Stub),
+            ( member(double_quotes(DQ0), Options)  -> DQ = DQ0 ; DQ = false ),
+            ( member(ignore_ops(IO0), Options)     -> IO = IO0 ; IO = false ),
+            ( member(max_depth(MD0), Options)      -> MD = MD0 ; MD = 0 ),
+            ( member(numbervars(NV0), Options)     -> NV = NV0 ; NV = false ),
+            ( member(quoted(Q0), Options)          -> Q = Q0   ; Q = false ),
+            ( member(variable_names(VN0), Options) -> VN = VN0 ; VN = [] ).
+
+        :- public parse_read_term_options/3.
+        parse_read_term_options(Options, [Singletons, VNames, Vars], Stub) :-
+            '$scry_check_opts'(Options, '$scry_read_opt', read_option, Stub),
+            ( member(singletons(Singletons), Options)  -> true ; true ),
+            ( member(variable_names(VNames), Options)  -> true ; true ),
+            ( member(variables(Vars), Options)         -> true ; true ).
+
+        '$scry_check_opts'(Os, _, _, Stub) :-
+            var(Os), !, throw(error(instantiation_error, Stub)).
+        '$scry_check_opts'([], _, _, _) :- !.
+        '$scry_check_opts'([O|Rest], Check, Domain, Stub) :- !,
+            (   var(O) -> throw(error(instantiation_error, Stub))
+            ;   call(Check, O) -> true
+            ;   throw(error(domain_error(Domain, O), Stub))
+            ),
+            '$scry_check_opts'(Rest, Check, Domain, Stub).
+        '$scry_check_opts'(Os, _, _, Stub) :-
+            throw(error(type_error(list, Os), Stub)).
+
+        '$scry_write_opt'(double_quotes(V))  :- '$scry_bool'(V).
+        '$scry_write_opt'(ignore_ops(V))     :- '$scry_bool'(V).
+        '$scry_write_opt'(max_depth(N))      :- integer(N).
+        '$scry_write_opt'(numbervars(V))     :- '$scry_bool'(V).
+        '$scry_write_opt'(quoted(V))         :- '$scry_bool'(V).
+        '$scry_write_opt'(variable_names(_)).
+        '$scry_read_opt'(singletons(_)).
+        '$scry_read_opt'(variable_names(_)).
+        '$scry_read_opt'(variables(_)).
+        '$scry_bool'(V) :-
+            (   var(V) -> throw(error(instantiation_error, _))
+            ;   V == true -> true
+            ;   V == false
+            ).
+
+        % charsio calls this bare (defined in Scryer's builtins.pl): extends
+        % the name list so every variable prints named. Pass-through — our
+        % writer names the rest _G-style, valid if not letter-pretty.
+        :- public extend_var_list/4.
+        extend_var_list(_, VNames, VNames, _).
+
+        :- public '$get_n_chars'/3.
+        '$get_n_chars'(_, 0, []) :- !.
+        '$get_n_chars'(S, N, Cs) :-
+            get_char(S, C),
+            (   C == end_of_file -> Cs = []
+            ;   Cs = [C|Rest],
+                N1 is N - 1,
+                '$get_n_chars'(S, N1, Rest)
+            ).
+
+        :- public '$get_single_char'/1.
+        '$get_single_char'(C) :- get_char(user_input, C).
+
+        % The first char whose code exceeds a byte, or fail — chars_base64's
+        % octet guard.
+        :- public '$first_non_octet'/2.
+        '$first_non_octet'([C|Cs], N) :-
+            char_code(C, Code),
+            (   Code > 255 -> N = C
+            ;   '$first_non_octet'(Cs, N)
+            ).
         """;
 }
