@@ -557,6 +557,7 @@ public static partial class MetaBuiltins
                 "assert: PrologEngine host required.");
 
         Term clauseTerm = MaterializeRegister(engine, 0);
+        clauseTerm = StripAssertQualifiers(clauseTerm);
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         // Asserta/Assertz extract the head functor id anyway —
         // take it from the return instead of re-extracting (a second
@@ -595,7 +596,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "'$retractall_modifiable'/1: PrologEngine host required.");
         int headHeap = engine.MaterializeRegisterForTrace(0);
-        int fid = ReadPatternHeadFunctorId(engine, headHeap);
+        int fid = ReadPatternHeadFunctorId(engine, ref headHeap);
         return host.IsRetractAllModifiable(fid);
     }
 
@@ -613,7 +614,7 @@ public static partial class MetaBuiltins
         // wasted: the heap representation already has the functor id
         // sitting one slot inside the STR.
         int patternHeap = engine.MaterializeRegisterForTrace(0);
-        int patternFid = ReadPatternHeadFunctorId(engine, patternHeap);
+        int patternFid = ReadPatternHeadFunctorId(engine, ref patternHeap);
 
         // ISO §7.12.2.h — retracting from a static
         // predicate is permission_error(modify, static_procedure, _),
@@ -655,28 +656,87 @@ public static partial class MetaBuiltins
     /// <see cref="ExtractHeadFunctorIdFromClause"/> but avoids the
     /// Term AST allocation — for retract's hot path the heap shape
     /// is sufficient.</summary>
-    private static int ReadPatternHeadFunctorId(Activation engine, int patternHeap)
+    /// <summary>Peels <c>Module:</c> qualifiers off an assert argument.
+    /// Dynamics are flat-global (invariant), so the qualifier validates and
+    /// drops — <c>assertz(m:f(1))</c>, <c>assertz(m:(H :- B))</c> and the
+    /// head-qualified <c>assertz((m:H :- B))</c> all assert the bare clause.
+    /// Nested qualifiers peel through (innermost wins, vacuously — they all
+    /// drop). A variable module is an instantiation_error, a non-atom a
+    /// type_error(atom) — checked before the drop.</summary>
+    private static Term StripAssertQualifiers(Term t)
+    {
+        t = StripColonChain(t);
+        if (t is CompoundTerm { Functor: ":-", Args.Length: 2 } rule
+            && rule.Args[0] is CompoundTerm { Functor: ":", Args.Length: 2 })
+        {
+            Term head = StripColonChain(rule.Args[0]);
+            t = new CompoundTerm(":-", new[] { head, rule.Args[1] })
+                { Position = rule.Position };
+        }
+        return t;
+    }
+
+    private static Term StripColonChain(Term t)
+    {
+        while (t is CompoundTerm { Functor: ":", Args.Length: 2 } q)
+        {
+            switch (q.Args[0])
+            {
+                case AtomTerm: break;
+                case VarTerm:
+                    throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+                default:
+                    throw new Shumway.Core.PrologRuntimeException("type_error", "atom");
+            }
+            t = q.Args[1];
+        }
+        return t;
+    }
+
+    private static readonly int _colonFunctorAtomId =
+        AtomTable.Intern(":", permanent: true).Id;
+
+    /// <summary>Reads the pattern's head functor id, peeling any top-level
+    /// <c>Module:</c> qualifier chain IN PLACE first: dynamics are
+    /// flat-global, so the qualifier validates and drops, and
+    /// <paramref name="patternHeap"/> moves to the inner subterm ITSELF —
+    /// the caller's variables keep their identity (a re-materialized copy
+    /// would silently stop binding them). Covers <c>retract(m:Head)</c> and
+    /// <c>retract(m:(H :- B))</c>; the head-qualified rule spelling stays on
+    /// the normal path (its ':'/2 head is not a dynamic predicate —
+    /// permission_error, as for any non-dynamic). The unqualified fast path
+    /// pays ONE extra int compare on the functor lookup it already did.</summary>
+    private static int ReadPatternHeadFunctorId(Activation engine, ref int patternHeap)
     {
         int idx = engine.Deref(patternHeap);
         Cell c = engine.GetHeap(idx);
-        // retract((Head :- Body)) — descend into the Head slot.
-        if (c.Tag == Tag.Str)
+        while (c.Tag == Tag.Str)
         {
             int sa = c.AsHeapIndex;
             Cell f = engine.GetHeap(sa);
-            if (f.Tag == Tag.Functor)
+            if (f.Tag != Tag.Functor) break;
+            int fid = f.AsFunctorId;
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            if (arity == 2 && atomId == _colonFunctorAtomId)
             {
-                int fid = f.AsFunctorId;
-                var (atomId, arity) = FunctorTable.Lookup(fid);
-                if (arity == 2 && atomId == _ruleFunctorAtomId)
-                {
-                    // Head is at sa + 1
-                    int headIdx = engine.Deref(sa + 1);
-                    Cell hc = engine.GetHeap(headIdx);
-                    return ReadFunctorIdFromCell(engine, hc);
-                }
-                return fid;
+                int mIdx = engine.Deref(sa + 1);
+                Cell mc = engine.GetHeap(mIdx);
+                if (mc.Tag == Tag.Ref || mc.Tag == Tag.AttVar)
+                    throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+                if (mc.Tag != Tag.Atom)
+                    throw new Shumway.Core.PrologRuntimeException("type_error", "atom");
+                patternHeap = idx = engine.Deref(sa + 2);
+                c = engine.GetHeap(idx);
+                continue;
             }
+            if (arity == 2 && atomId == _ruleFunctorAtomId)
+            {
+                // retract((Head :- Body)) — descend into the Head slot.
+                int headIdx = engine.Deref(sa + 1);
+                Cell hc = engine.GetHeap(headIdx);
+                return ReadFunctorIdFromCell(engine, hc);
+            }
+            return fid;
         }
         return ReadFunctorIdFromCell(engine, c);
     }

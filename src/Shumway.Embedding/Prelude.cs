@@ -1074,6 +1074,16 @@ internal static class Prelude
         % on a STATIC one it raises permission_error. '$retractall_modifiable'
         % succeeds only for a dynamic predicate, so the retract loop runs just
         % then; undefined makes it fail into the `true` arm.
+        % The qualified form peels first: dynamics are flat-global, so M: on
+        % a database operation validates the module slot and drops.
+        retractall(H0) :-
+            nonvar(H0), H0 = ':'(_, _), !,
+            '$strip_module'(H0, M, H),
+            (   var(M) -> throw(error(instantiation_error, _))
+            ;   \+ atom(M) -> throw(error(type_error(atom, M), _))
+            ;   true
+            ),
+            retractall(H).
         retractall(Head) :-
             ( '$retractall_modifiable'(Head)
             -> ( retract(Head), fail ; true ),

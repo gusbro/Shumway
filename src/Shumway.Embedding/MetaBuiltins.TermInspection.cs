@@ -1144,6 +1144,7 @@ public static partial class MetaBuiltins
                 "abolish/1 requires a PrologEngine host.");
 
         Term spec = MaterializeRegister(engine, 0);
+        spec = StripPiQualifiers(spec);
         if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2
             && c.Args[0] is AtomTerm name && c.Args[1] is IntTerm arity)
         {
@@ -1157,6 +1158,41 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(IsoError.InstantiationError());
         throw new ShumwayPrologException(
             IsoError.TypeError("predicate_indicator", spec));
+    }
+
+    /// <summary>Peels <c>Module:</c> qualifiers off a predicate-indicator
+    /// argument (abolish/1): both <c>m:(N/A)</c> — the whole — and
+    /// <c>(m:N)/A</c>, the operator parse of <c>m:N/A</c>. Dynamics are
+    /// flat-global, so the qualifier validates and drops.</summary>
+    private static Term StripPiQualifiers(Term spec)
+    {
+        spec = StripPiColonChain(spec);
+        if (spec is CompoundTerm { Functor: "/", Args.Length: 2 } slash
+            && slash.Args[0] is CompoundTerm { Functor: ":", Args.Length: 2 })
+        {
+            Term name = StripPiColonChain(slash.Args[0]);
+            spec = new CompoundTerm("/", new[] { name, slash.Args[1] })
+                { Position = slash.Position };
+        }
+        return spec;
+    }
+
+    private static Term StripPiColonChain(Term t)
+    {
+        while (t is CompoundTerm { Functor: ":", Args.Length: 2 } q)
+        {
+            switch (q.Args[0])
+            {
+                case AtomTerm: break;
+                case VarTerm:
+                    throw new ShumwayPrologException(IsoError.InstantiationError());
+                default:
+                    throw new ShumwayPrologException(
+                        IsoError.TypeError("atom", q.Args[0]));
+            }
+            t = q.Args[1];
+        }
+        return t;
     }
 
     /// <summary><c>garbage_collect_clauses/0</c>. Walks
