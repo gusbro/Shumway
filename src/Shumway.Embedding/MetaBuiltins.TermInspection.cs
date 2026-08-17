@@ -874,6 +874,40 @@ public static partial class MetaBuiltins
             (e, i) => e.UnifyRegisterWithCell(0, Materializer.MaterializeAsCell(e, indicators[i])));
     }
 
+    /// <summary><c>'$module_predicate_enum'(?Module, ?PI)</c> — the backing
+    /// for the qualified <c>current_predicate(M:PI)</c>. Enumerates
+    /// (module, Name/Arity) over what each explicit module DEFINES (see
+    /// <see cref="PrologEngine.DefinedModulePredicates"/>); a bound Module
+    /// filters to that module (an unknown one just fails), an unbound one
+    /// backtracks over the modules, SWI-style. Both positions unify per
+    /// step, so a bound PI acts as a membership test.</summary>
+    public static bool ModulePredicateEnum(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$module_predicate_enum'/2 requires a PrologEngine host.");
+        Term modTerm = MaterializeRegister(engine, 0);
+        string? onlyModule = modTerm is AtomTerm ma ? ma.Name : null;
+        var modules = new List<Term>();
+        var indicators = new List<Term>();
+        foreach (var (mod, fid) in host.DefinedModulePredicates(onlyModule))
+        {
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            modules.Add(new AtomTerm(mod));
+            indicators.Add(new CompoundTerm("/", new Term[]
+            {
+                new AtomTerm(AtomTable.GetById(atomId)?.Name ?? "?"),
+                new IntTerm(arity),
+            }));
+        }
+        int returnPc = engine.BuiltinReturnPc;
+        return Shumway.Core.IndexEnumCursor.Start(engine, indicators.Count, 2, returnPc,
+            (e, i) => e.UnifyRegisterWithCell(
+                          0, Materializer.MaterializeAsCell(e, modules[i]))
+                   && e.UnifyRegisterWithCell(
+                          1, Materializer.MaterializeAsCell(e, indicators[i])));
+    }
+
     /// <summary><c>'$listable_predicates'/1</c> — the user-defined
     /// predicates <c>listing/0,1</c> may print, each as a
     /// <c>pi(Name, Arity, Dynamic)</c> term where <c>Dynamic</c> is

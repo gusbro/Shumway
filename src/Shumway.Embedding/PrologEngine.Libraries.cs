@@ -1037,6 +1037,52 @@ public sealed partial class PrologEngine
     /// directly joins the set from that moment on.</summary>
     internal readonly HashSet<string> _directlyConsultedModules = new();
 
+    /// <summary>The (module, functor) pairs behind the qualified
+    /// <c>current_predicate(M:PI)</c>: what each module DEFINES — clause
+    /// heads, its <c>:- dynamic</c> declarations, a precompiled bundle's
+    /// recorded locals and publics. Imports and re-exports are not
+    /// definitions and are absent. Names are the user-facing bare spelling
+    /// (manifests hold pre-rewrite clauses); <c>$</c>-names never surface.
+    /// Modules sorted, fids first-seen order — a stable enumeration.</summary>
+    internal IEnumerable<(string Module, int Fid)> DefinedModulePredicates(string? onlyModule)
+    {
+        var names = new List<string>();
+        foreach (string mod in _modules.Keys)
+            if ((onlyModule is null || mod == onlyModule) && !mod.StartsWith('$'))
+                names.Add(mod);
+        names.Sort(StringComparer.Ordinal);
+        foreach (string mod in names)
+        {
+            ModuleManifest manifest = _modules[mod];
+            var seen = new HashSet<int>();
+            bool Fresh(int fid)
+            {
+                if (!seen.Add(fid)) return false;
+                var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
+                string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+                return !string.IsNullOrEmpty(name) && name.IndexOf('$') < 0;
+            }
+            foreach (var c in manifest.Clauses)
+            {
+                if (c.Kind == Shumway.Compiler.Ast.ClauseKind.Directive) continue;
+                int fid = ConsultPipeline.HeadFunctorIdOf(c);
+                if (Fresh(fid)) yield return (mod, fid);
+            }
+            foreach (int fid in manifest.DynamicFunctors)
+                if (Fresh(fid)) yield return (mod, fid);
+            // Consult-path dynamics: the store is flat-global, but the
+            // declaring module is on record (first declarer wins) — a
+            // `:- dynamic` in M's source counts as M defining it.
+            foreach (var (fid, declarer) in _dynamicDeclaringModule)
+                if (declarer == mod && Fresh(fid)) yield return (mod, fid);
+            foreach (int fid in manifest.PublicFunctors)
+                if (Fresh(fid)) yield return (mod, fid);
+            if (_precompiledModuleLocals.TryGetValue(mod, out var bundleLocals))
+                foreach (int fid in bundleLocals)
+                    if (Fresh(fid)) yield return (mod, fid);
+        }
+    }
+
     /// <summary>The consult-direct bare-call fallback (the agreed top-level
     /// semantics, uniform across REPL / web / embedding). Runs only where a
     /// bare goal is otherwise about to raise <c>existence_error</c>, so it

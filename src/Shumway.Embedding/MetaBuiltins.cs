@@ -242,6 +242,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$clause_enum",               2, ClauseEnum);
         BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
         BuiltinsRegistry.Register("$current_predicate_enum",    1, CurrentPredicateEnum);
+        BuiltinsRegistry.Register("$module_predicate_enum",     2, ModulePredicateEnum);
         BuiltinsRegistry.Register("$listable_predicates", 1, ListablePredicates);
         // listing path bypasses clause/2 + write/1 to
         // preserve the original VarTerm names parser captured. The

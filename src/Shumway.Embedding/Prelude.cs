@@ -274,18 +274,56 @@ internal static class Prelude
             nonvar(H),
             '$clause_enum'(H, H-B).
 
-        %! current_predicate(?PredicateIndicator) | Database | Enumerates the defined predicates as Name/Arity indicators.
+        %! current_predicate(?PredicateIndicator) | Database | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own.
         % '$current_predicate_enum' yields indicators lazily (a backtrackable
         % builtin), so the full O(n) indicator list is no longer built on the
-        % heap before member/2 walks it.
-        current_predicate(I) :-
-            '$check_predicate_indicator'(I),
-            '$current_predicate_enum'(I).
+        % heap before member/2 walks it. The qualified form M:PI answers for
+        % the predicates DEFINED in module M (imports are not definitions);
+        % an unbound M backtracks over the modules, SWI-style.
+        current_predicate(Spec) :-
+            (   nonvar(Spec), '$qualified_indicator'(Spec, M, I) ->
+                (   nonvar(M), \+ atom(M) ->
+                    throw(error(type_error(atom, M), _))
+                ;   true
+                ),
+                '$module_predicate_enum'(M, I)
+            ;   '$check_predicate_indicator'(Spec),
+                '$current_predicate_enum'(Spec)
+            ).
+
+        % The two spellings of a qualified indicator. The operator-natural
+        % M:F/A parses as (M:F)/A — ':' (200) binds tighter than '/' (400) —
+        % so the colon sits INSIDE the indicator; M:(F/A) is the explicit
+        % whole-indicator qualification. Fails for an unqualified spec.
+        '$qualified_indicator'(':'(Q0, R0), M, I) :- !,
+            '$strip_module'(':'(Q0, R0), M, I),
+            '$check_qualified_indicator'(I, ':'(Q0, R0)).
+        '$qualified_indicator'('/'(Q, A), M, '/'(N, A)) :-
+            nonvar(Q), Q = ':'(_, _),
+            '$strip_module'(Q, M, N),
+            (   atom(N) -> true
+            ;   var(N)  -> true
+            ;   throw(error(type_error(predicate_indicator, '/'(Q, A)), _))
+            ).
+
+        % Peels module qualifications to the INNERMOST pair: M1:M2:X is
+        % M2's X (the SWI reading). Shared by every M:X-aware builtin.
+        '$strip_module'(':'(M0, R), M, I) :-
+            (   nonvar(R), R = ':'(_, _) -> '$strip_module'(R, M, I)
+            ;   M = M0, I = R
+            ).
 
         '$check_predicate_indicator'(I) :- var(I), !.
         '$check_predicate_indicator'(_/_) :- !.
         '$check_predicate_indicator'(I) :-
             throw(error(type_error(predicate_indicator, I), _)).
+
+        % Inside a qualification the culprit of a malformed indicator is the
+        % WHOLE qualified term (SWI: type_error(predicate_indicator, m:bad)).
+        '$check_qualified_indicator'(I, _) :- var(I), !.
+        '$check_qualified_indicator'(_/_, _) :- !.
+        '$check_qualified_indicator'(_, Spec) :-
+            throw(error(type_error(predicate_indicator, Spec), _)).
 
         %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound.
         length(L, N) :-
