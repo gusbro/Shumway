@@ -7,7 +7,7 @@ Predicates available to programs embedding Shumway, grouped by area. The CLP(FD)
 
 Each template names its parameters and their mode: `+` bound at call, `-` an output, `?` either, `@` not modified, `:` a meta-called goal.
 
-Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [CLP(FD) — domains](#clpfd--domains) · [CLP(FD) — arithmetic constraints](#clpfd--arithmetic-constraints) · [CLP(FD) — global constraints](#clpfd--global-constraints) · [CLP(FD) — labeling](#clpfd--labeling) · [CLP(FD) — reification](#clpfd--reification) · [Atoms](#atoms) · [Coroutining](#coroutining) · [Global variables](#global-variables) · [Grammar](#grammar) · [Messages](#messages) · [Reflection](#reflection) · [Term comparison](#term-comparison) · [Threads](#threads) · [Time](#time)
+Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Threads](#threads) · [Time](#time) · [CLP(FD) — domains](#clpfd--domains) · [CLP(FD) — arithmetic constraints](#clpfd--arithmetic-constraints) · [CLP(FD) — global constraints](#clpfd--global-constraints) · [CLP(FD) — labeling](#clpfd--labeling) · [CLP(FD) — reification](#clpfd--reification)
 
 ## Unification & comparison
 
@@ -60,10 +60,12 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 
 | Predicate | Description |
 | --- | --- |
+| `=@=(@Term1, @Term2)` | Term1 and Term2 are variants (structurally equal up to variable renaming). |
 | `@<(@Term1, @Term2)` | Standard-order-of-terms less-than comparison. |
 | `@=<(@Term1, @Term2)` | Standard-order-of-terms less-than-or-equal comparison. |
 | `@>(@Term1, @Term2)` | Standard-order-of-terms greater-than comparison. |
 | `@>=(@Term1, @Term2)` | Standard-order-of-terms greater-than-or-equal comparison. |
+| `\=@=(@Term1, @Term2)` | Term1 and Term2 are NOT variants. |
 | `compare(?Order, @Term1, @Term2)` | Unifies Order with the relation (<, = or >) between the two terms. |
 
 ## Term inspection & construction
@@ -262,9 +264,12 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `char_code(?Char, ?Code)` | Relates a one-character atom to its character code. |
 | `char_type(+Char, ?Type)` | Tests or computes a character's type — alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on (ASCII range). |
 | `downcase_atom(+Atom, -Lower)` | Relates an atom to its lower-cased form. |
+| `gensym(+Base, -Unique)` | Generates a fresh atom Base1, Base2, … from a per-Base counter that survives backtracking. |
 | `number_chars(?Number, ?Chars)` | Converts between a number and its list of one-character atoms. |
 | `number_codes(?Number, ?Codes)` | Converts between a number and its list of character codes. |
 | `number_string(?Number, ?String)` | Converts between a number and its string representation; fails if the string is not numeric. |
+| `reset_gensym` | Resets every gensym/2 counter to 0. |
+| `reset_gensym(+Base)` | Resets the gensym/2 counter for Base to 0. |
 | `split_string(+String, +SepChars, +PadChars, -SubStrings)` | Splits a string on separator characters, trimming pad characters. |
 | `string_chars(?String, ?Chars)` | Converts between a string and its list of one-character atoms. |
 | `string_codes(?String, ?Codes)` | Converts between a string and its list of character codes. |
@@ -283,6 +288,15 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `del_attr(+Var, +Module)` | Removes a module's attribute from a variable. |
 | `get_attr(+Var, +Module, -Value)` | Reads a module's attribute from a variable. |
 | `put_attr(+Var, +Module, +Value)` | Attaches (or replaces) a module's attribute on a variable. |
+
+## Coroutining
+
+| Predicate | Description |
+| --- | --- |
+| `dif(?X, ?Y)` | Constrains X and Y to be different: fails when they become identical, succeeds once they cannot unify. |
+| `freeze(?Var, :Goal)` | Delays Goal until Var is bound; runs it at once when Var is already bound. |
+| `frozen(?Var, -Goal)` | Unifies Goal with the conjunction of goals delayed on Var (true when none). |
+| `when(+Condition, :Goal)` | Runs Goal as soon as Condition becomes true. Condition is nonvar(X), ground(X), ?=(X,Y), or a (,)/(;) of these. |
 
 ## Input / output
 
@@ -394,6 +408,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `char_conversion(+InChar, +OutChar)` | Registers a one-character-to-one-character mapping the lexer applies to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry. |
 | `current_char_conversion(?InChar, ?OutChar)` | Enumerates the active char-conversion table (ISO §8.14.10). |
+| `current_op(?Priority, ?Type, ?Name)` | Enumerates the operator table; backtracks over every operator (ISO §8.17.3). |
 | `current_prolog_flag(?Flag, ?Value)` | Reads the value of a Prolog flag. |
 | `is_stream(@Term)` | Succeeds if Term is a stream handle or a registered stream alias (SWI). |
 | `module_property(?Module, ?Property)` | Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound. |
@@ -402,6 +417,48 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
 | `statistics` | Writes a report of runtime, walltime and heap/trail/stack use to the current output. |
 | `statistics(?Key, ?Value)` | Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds. |
+
+## Grammar
+
+| Predicate | Description |
+| --- | --- |
+| `phrase(:Body, ?List)` | phrase(Body, List, []) — succeeds when the DCG Body derives List. |
+| `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime. |
+
+## Global variables
+
+| Predicate | Description |
+| --- | --- |
+| `b_getval(+Key, -Value)` | Reads a backtrackable global variable; existence_error if unset. |
+| `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. |
+| `flag(+Key, ?Old, +New)` | Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked. |
+| `get_flag(+Key, -Value)` | Reads a flag's value (0 if never set). |
+| `nb_current(?Key, ?Value)` | Enumerates global variables; fails for an unset Key (no throw). |
+| `nb_getval(+Key, -Value)` | Reads a non-backtrackable global variable; existence_error if unset. |
+| `nb_setval(+Key, +Value)` | Non-backtrackable global variable assignment. |
+| `set_flag(+Key, +Value)` | Sets a flag to Value (an arithmetic expression is evaluated), discarding the old value. |
+
+## Messages
+
+| Predicate | Description |
+| --- | --- |
+| `print_message(+Kind, +Message)` | Prints a message of the given kind (error/warning/informational/silent) to user_error. A best-effort renderer (no message//1 hooks). |
+
+## Threads
+
+| Predicate | Description |
+| --- | --- |
+| `message_queue_create(?Queue)` | Creates (or names) a FIFO message queue. Single-threaded buffer. |
+| `thread_get_message(+Queue, ?Message)` | Removes the oldest matching message; FAILS if none (single-threaded, no blocking). |
+| `thread_send_message(+Queue, +Message)` | Appends Message to the queue (FIFO). |
+| `with_mutex(+Mutex, :Goal)` | Runs Goal (once). Single-threaded: the mutex is a no-op. |
+
+## Time
+
+| Predicate | Description |
+| --- | --- |
+| `get_time(-Time)` | Current wall-clock time in seconds since the Unix epoch (a float). |
+| `stamp_date_time(+Stamp, -DateTime, +TimeZone)` | Converts a Unix-epoch stamp to a date(Y,M,D,H,Mi,S,Off,Tz,DST) term. |
 
 ## CLP(FD) — domains
 
@@ -448,75 +505,3 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `#==>(+Constraint1, +Constraint2)` | Constraint1 implies Constraint2. |
 | `#\(+Constraint)` | The constraint does not hold (negation). |
 | `#\/(+Constraint1, +Constraint2)` | At least one constraint holds (disjunction). |
-
-## Atoms
-
-| Predicate | Description |
-| --- | --- |
-| `gensym(+Base, -Unique)` | Generates a fresh atom Base1, Base2, … from a per-Base counter that survives backtracking. |
-| `reset_gensym` | Resets every gensym/2 counter to 0. |
-| `reset_gensym(+Base)` | Resets the gensym/2 counter for Base to 0. |
-
-## Coroutining
-
-| Predicate | Description |
-| --- | --- |
-| `dif(?X, ?Y)` | Constrains X and Y to be different: fails when they become identical, succeeds once they cannot unify. |
-| `freeze(?Var, :Goal)` | Delays Goal until Var is bound; runs it at once when Var is already bound. |
-| `frozen(?Var, -Goal)` | Unifies Goal with the conjunction of goals delayed on Var (true when none). |
-| `when(+Condition, :Goal)` | Runs Goal as soon as Condition becomes true. Condition is nonvar(X), ground(X), ?=(X,Y), or a (,)/(;) of these. |
-
-## Global variables
-
-| Predicate | Description |
-| --- | --- |
-| `b_getval(+Key, -Value)` | Reads a backtrackable global variable; existence_error if unset. |
-| `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. |
-| `flag(+Key, ?Old, +New)` | Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked. |
-| `get_flag(+Key, -Value)` | Reads a flag's value (0 if never set). |
-| `nb_current(?Key, ?Value)` | Enumerates global variables; fails for an unset Key (no throw). |
-| `nb_getval(+Key, -Value)` | Reads a non-backtrackable global variable; existence_error if unset. |
-| `nb_setval(+Key, +Value)` | Non-backtrackable global variable assignment. |
-| `set_flag(+Key, +Value)` | Sets a flag to Value (an arithmetic expression is evaluated), discarding the old value. |
-
-## Grammar
-
-| Predicate | Description |
-| --- | --- |
-| `phrase(:Body, ?List)` | phrase(Body, List, []) — succeeds when the DCG Body derives List. |
-| `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime. |
-
-## Messages
-
-| Predicate | Description |
-| --- | --- |
-| `print_message(+Kind, +Message)` | Prints a message of the given kind (error/warning/informational/silent) to user_error. A best-effort renderer (no message//1 hooks). |
-
-## Reflection
-
-| Predicate | Description |
-| --- | --- |
-| `current_op(?Priority, ?Type, ?Name)` | Enumerates the operator table; backtracks over every operator (ISO §8.17.3). |
-
-## Term comparison
-
-| Predicate | Description |
-| --- | --- |
-| `=@=(@Term1, @Term2)` | Term1 and Term2 are variants (structurally equal up to variable renaming). |
-| `\=@=(@Term1, @Term2)` | Term1 and Term2 are NOT variants. |
-
-## Threads
-
-| Predicate | Description |
-| --- | --- |
-| `message_queue_create(?Queue)` | Creates (or names) a FIFO message queue. Single-threaded buffer. |
-| `thread_get_message(+Queue, ?Message)` | Removes the oldest matching message; FAILS if none (single-threaded, no blocking). |
-| `thread_send_message(+Queue, +Message)` | Appends Message to the queue (FIFO). |
-| `with_mutex(+Mutex, :Goal)` | Runs Goal (once). Single-threaded: the mutex is a no-op. |
-
-## Time
-
-| Predicate | Description |
-| --- | --- |
-| `get_time(-Time)` | Current wall-clock time in seconds since the Unix epoch (a float). |
-| `stamp_date_time(+Stamp, -DateTime, +TimeZone)` | Converts a Unix-epoch stamp to a date(Y,M,D,H,Mi,S,Off,Tz,DST) term. |

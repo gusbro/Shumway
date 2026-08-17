@@ -362,7 +362,7 @@ public static partial class MetaBuiltins
             "Converts a Unix-epoch stamp to a date(Y,M,D,H,Mi,S,Off,Tz,DST) term.");
 
         BuiltinsRegistry.Register("current_op", 3, CurrentOp,
-            "Reflection", "current_op(?Priority, ?Type, ?Name)",
+            Reflect, "current_op(?Priority, ?Type, ?Name)",
             "Enumerates the operator table; backtracks over every operator (ISO §8.17.3).");
         BuiltinsRegistry.Register("char_conversion", 2, CharConversion,
             Reflect, "char_conversion(+InChar, +OutChar)",

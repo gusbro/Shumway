@@ -423,7 +423,7 @@ internal static class Prelude
         :- public call_cleanup/2.
         call_cleanup(Goal, Cleanup) :- setup_call_cleanup(true, Goal, Cleanup).
 
-        %! gensym(+Base, -Unique) | Atoms | Generates a fresh atom Base1, Base2, … from a per-Base counter that survives backtracking.
+        %! gensym(+Base, -Unique) | Atoms & strings | Generates a fresh atom Base1, Base2, … from a per-Base counter that survives backtracking.
         % Base + a monotonically increasing sequence number. The counter is a
         % flag/3 (not backtracked, so a failure-driven loop keeps advancing).
         % The number is converted to an atom BEFORE concatenation — atom_concat/3
@@ -439,11 +439,11 @@ internal static class Prelude
             atom_codes(Suffix, Codes),
             atom_concat(Base, Suffix, Unique).
 
-        %! reset_gensym | Atoms | Resets every gensym/2 counter to 0.
+        %! reset_gensym | Atoms & strings | Resets every gensym/2 counter to 0.
         :- public reset_gensym/0.
         reset_gensym :- forall('$gensym_base'(Base), set_flag('$gensym'(Base), 0)).
 
-        %! reset_gensym(+Base) | Atoms | Resets the gensym/2 counter for Base to 0.
+        %! reset_gensym(+Base) | Atoms & strings | Resets the gensym/2 counter for Base to 0.
         :- public reset_gensym/1.
         reset_gensym(Base) :- set_flag('$gensym'(Base), 0).
 
@@ -569,12 +569,12 @@ internal static class Prelude
         % are identical and used the same number of variables.
         :- public (=@=)/2.
         :- public (\=@=)/2.
-        %! =@=(@Term1, @Term2) | Term comparison | Term1 and Term2 are variants (structurally equal up to variable renaming).
+        %! =@=(@Term1, @Term2) | Term ordering | Term1 and Term2 are variants (structurally equal up to variable renaming).
         A =@= B :-
             copy_term(A, A1), numbervars(A1, 0, N),
             copy_term(B, B1), numbervars(B1, 0, M),
             N == M, A1 == B1.
-        %! \=@=(@Term1, @Term2) | Term comparison | Term1 and Term2 are NOT variants.
+        %! \=@=(@Term1, @Term2) | Term ordering | Term1 and Term2 are NOT variants.
         A \=@= B :- \+ (A =@= B).
 
         % ===== single-threaded mutex + message queues (SWI compat) =====

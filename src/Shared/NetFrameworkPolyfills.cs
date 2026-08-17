@@ -77,6 +77,8 @@ namespace System
             public static bool IsMacOS() => false;
 
             public static bool IsLinux() => false;
+
+            public static bool IsFreeBSD() => false;
         }
 
         extension(Text.Encoding)
@@ -188,6 +190,18 @@ namespace System
         {
             table.Remove(key);
             table.Add(key, value!);
+        }
+
+        /// <summary>Task.WaitAsync (.NET 6+), the timeout half: completes with
+        /// the task, or throws <see cref="TimeoutException"/>. The task itself
+        /// keeps running past the timeout — same as the real one.</summary>
+        public static async Threading.Tasks.Task WaitAsync(
+            this Threading.Tasks.Task task, TimeSpan timeout)
+        {
+            if (await Threading.Tasks.Task.WhenAny(
+                    task, Threading.Tasks.Task.Delay(timeout)) != task)
+                throw new TimeoutException();
+            await task;
         }
 
         extension(Convert)

@@ -82,6 +82,28 @@ public class Chunk94Tests
         Assert.DoesNotContain("`between/3`", doc);
     }
 
+    /// <summary>A category name that is not in the generator's declared order
+    /// renders after it, alphabetically — which is how near-duplicate sections
+    /// crept in ("Atoms" beside "Atoms &amp; strings", "Term comparison" beside
+    /// "Term ordering", "Reflection" beside "Flags, operators &amp;
+    /// reflection"). Every emitted category must have a deliberate place: fix
+    /// the metadata at the predicate, or add the new category to
+    /// <c>PredicateDoc.CategoryOrder</c>.</summary>
+    [Fact]
+    public void Generated_HasNoStrayCategorySections()
+    {
+        var declared = PredicateDoc.DeclaredCategoryOrder.ToHashSet();
+        foreach (var entry in PredicateDoc.Entries())
+            Assert.True(declared.Contains(entry.Category),
+                $"'{entry.Name}/{entry.Arity}' declares category '{entry.Category}', "
+                + "which has no place in PredicateDoc.CategoryOrder.");
+        // The three retired near-duplicates, by name.
+        string doc = PredicateDoc.Generate();
+        Assert.DoesNotContain("\n## Atoms\n", doc);
+        Assert.DoesNotContain("\n## Term comparison\n", doc);
+        Assert.DoesNotContain("\n## Reflection\n", doc);
+    }
+
     [Fact]
     public void Generated_OmitsInternalDollarHelpers()
     {

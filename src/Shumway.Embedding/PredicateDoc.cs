@@ -59,8 +59,13 @@ public static class PredicateDoc
         @"^\s*%!\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.+?)\s*$",
         RegexOptions.Compiled);
 
-    /// <summary>Preferred section order. Categories not listed here are
-    /// emitted after these, in alphabetical order.</summary>
+    /// <summary>The complete section order — every category a predicate
+    /// declares is expected to be listed here. One not listed still renders
+    /// (after these, alphabetically) so a host's custom category cannot break
+    /// doc generation, but for the shipped reference that fallback is drift: a
+    /// new name that near-duplicates an existing section ("Atoms" beside
+    /// "Atoms &amp; strings"). The doc tests check every emitted category
+    /// against this list, which is what catches a stray.</summary>
     private static readonly string[] CategoryOrder =
     {
         "Unification & comparison",
@@ -74,8 +79,14 @@ public static class PredicateDoc
         "Lists",
         "Atoms & strings",
         "Attributed variables",
+        "Coroutining",
         "Input / output",
         "Flags, operators & reflection",
+        "Grammar",
+        "Global variables",
+        "Messages",
+        "Threads",
+        "Time",
         "CLP(FD) — domains",
         "CLP(FD) — arithmetic constraints",
         "CLP(FD) — global constraints",
@@ -83,6 +94,10 @@ public static class PredicateDoc
         "CLP(FD) — reification",
         "CLP(R)",
     };
+
+    /// <summary>The declared section order, for the doc tests' stray-category
+    /// guard.</summary>
+    internal static IReadOnlyList<string> DeclaredCategoryOrder => CategoryOrder;
 
     /// <summary>Builds the predicate-reference markdown. Newlines are
     /// always <c>\n</c> so the result is comparable across platforms.</summary>
