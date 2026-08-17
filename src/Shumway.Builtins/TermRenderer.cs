@@ -134,10 +134,11 @@ public static class TermRenderer
             }
         }
 
-        // Curly-brace notation: '{}'(Body) is {Body} — like list notation it
-        // survives ignore_ops(true) (ISO write_canonical keeps both), and the
-        // braces bracket the body, so it renders at full priority.
-        if (arity == 1 && name == "{}")
+        // Curly-brace notation: '{}'(Body) is {Body}. UNLIKE list notation it
+        // does NOT survive ignore_ops(true) — write_canonical prints the
+        // functional {}(Body) (SWI and Scryer agree; Scryer conformity test
+        // 96). The braces bracket the body, so it renders at full priority.
+        if (arity == 1 && name == "{}" && !options.IgnoreOps)
         {
             output.Write('{');
             Render(engine, engine.GetHeap(functorIdx + 1), output, options, 1200);

@@ -7,3 +7,7 @@ conformity_gprolog.exe
 !artifacts/
 artifacts/*
 !artifacts/.gitignore
+
+# A Neumerkel suite data test opens a file literally named `f` in the
+# runner cwd — a run artifact, never source.
+f

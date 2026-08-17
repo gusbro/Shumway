@@ -140,12 +140,10 @@ public static class StreamBuiltins
         Cell modeCell = Resolve(engine, engine.GetRegister(1));
         if (pathCell.Tag == Tag.Ref || modeCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
-        if (pathCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
         if (modeCell.Tag != Tag.Atom)
             throw new PrologRuntimeException("type_error", "atom");
 
-        string path = AtomTable.GetById(pathCell.AsAtomId)?.Name ?? "";
+        string path = SourceSinkText(engine, pathCell);
         string mode = AtomTable.GetById(modeCell.AsAtomId)?.Name ?? "";
 
         StreamRegistry registry = engine.Streams
@@ -183,6 +181,42 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(2, MakeStreamTerm(engine, handle));
     }
 
+    /// <summary>The source-sink argument's text: an atom as always, or —
+    /// Scryer-compat, where text IS a chars list — a proper list of one-char
+    /// atoms (a PSTR included). Anything else keeps the ISO
+    /// type_error(atom).</summary>
+    internal static string SourceSinkText(Activation engine, Cell pathCell)
+    {
+        if (pathCell.Tag == Tag.Atom)
+            return AtomTable.GetById(pathCell.AsAtomId)?.Name ?? "";
+        if (pathCell.Tag == Tag.Pstr)
+        {
+            string s = engine.ReadPstrChain(pathCell, out Cell tail);
+            tail = Resolve(engine, tail);
+            if (tail.Tag == Tag.Atom && tail.AsAtomId == AtomTable.EmptyListId)
+                return s;
+        }
+        else if (pathCell.Tag == Tag.Lis)
+        {
+            var sb = new System.Text.StringBuilder();
+            Cell cur = pathCell;
+            int steps = 0, cap = engine.HeapTop + 1;
+            while (cur.Tag == Tag.Lis)
+            {
+                if (++steps > cap) break;   // cyclic — fall to the type error
+                Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
+                if (head.Tag != Tag.Atom) break;
+                string? c = AtomTable.GetById(head.AsAtomId)?.Name;
+                if (c is null || c.Length != 1) break;
+                sb.Append(c);
+                cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            }
+            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId)
+                return sb.ToString();
+        }
+        throw new PrologRuntimeException("type_error", "atom", engine, pathCell);
+    }
+
     /// <summary><c>open(+File, +Mode, -Stream, +Options)</c> — ISO §8.11.5.
     /// The four-argument form takes an options list, recognising
     /// <c>alias(Name)</c> (registers the stream under a user-chosen
@@ -201,12 +235,10 @@ public static class StreamBuiltins
         Cell optsCell = Resolve(engine, engine.GetRegister(3));
         if (pathCell.Tag == Tag.Ref || modeCell.Tag == Tag.Ref || optsCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
-        if (pathCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
         if (modeCell.Tag != Tag.Atom)
             throw new PrologRuntimeException("type_error", "atom");
 
-        string path = AtomTable.GetById(pathCell.AsAtomId)?.Name ?? "";
+        string path = SourceSinkText(engine, pathCell);
         string mode = AtomTable.GetById(modeCell.AsAtomId)?.Name ?? "";
 
         // Parse the options list. Each option is a 1-arg compound;

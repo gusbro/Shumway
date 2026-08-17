@@ -1643,6 +1643,13 @@ internal sealed class ConsultPipeline
             var manifest = new ModuleManifest(moduleName);
             committedManifest = manifest;
             consultBaseOffset = 0;
+            // ADR-040 — dialect library definitions REPLACED by the engine's
+            // own (Scryer's VM-native setup_call_cleanup family): dropped
+            // BEFORE the manifest commits, so locals never include them and
+            // every resolution — internal callers, importers — falls through
+            // to Shumway's builtin of the same ISO contract.
+            if (E.ActiveLibraryDialect == "scryer")
+                clauses.RemoveAll(c => IsReplacedDialectDefinition(moduleName, c));
             manifest.Clauses.AddRange(clauses);
             manifest.PublicFunctors.UnionWith(publics);
             // ADR-040 — stamp the dialect this module is being loaded under (a
@@ -2029,6 +2036,17 @@ internal sealed class ConsultPipeline
                 locals.Add(fid);
         }
         return locals;
+    }
+
+    /// <summary>Whether this clause defines a predicate the scryer dialect
+    /// load REPLACES with Shumway's own (see
+    /// <see cref="ScryerShim.ReplacedDefinitions"/>).</summary>
+    private static bool IsReplacedDialectDefinition(string moduleName, Clause clause)
+    {
+        if (clause.Kind == ClauseKind.Directive) return false;
+        var (atomId, arity) = FunctorTable.Lookup(HeadFunctorIdOf(clause));
+        string name = AtomTable.GetById(atomId)?.Name ?? "";
+        return ScryerShim.ReplacedDefinitions.Contains((moduleName, name, arity));
     }
 
     internal static int HeadFunctorIdOf(Clause clause)

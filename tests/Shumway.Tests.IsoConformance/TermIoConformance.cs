@@ -250,12 +250,14 @@ public class TermIoConformance : IDisposable
     [Fact]
     public void Writeq_CurlyNotation()
     {
-        // '{}'(Body) is {Body}; like list notation it survives
-        // ignore_ops(true) — ISO write_canonical keeps both.
+        // '{}'(Body) is {Body}. UNLIKE list notation it does NOT survive
+        // ignore_ops(true): write_canonical prints the functional {}(Body)
+        // (SWI and Scryer agree; Scryer conformity test 96).
         var e = new PrologEngine();
         Assert.Equal("{a,b}", Captured(e, "writeq({a,b})"));
         Assert.Equal("-{a}", Captured(e, "writeq(-{a})"));
-        Assert.Equal("{','(a,b)}", Captured(e, "write_canonical({a,b})"));
+        Assert.Equal("{}(','(a,b))", Captured(e, "write_canonical({a,b})"));
+        Assert.Equal("{}(1)", Captured(e, "write_canonical({1})"));
         Assert.Equal("{}", Captured(e, "writeq({})"));
     }
 

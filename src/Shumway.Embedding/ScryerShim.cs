@@ -11,6 +11,23 @@ namespace Shumway.Embedding;
 /// </summary>
 internal static class ScryerShim
 {
+    /// <summary>Library definitions REPLACED by Shumway's own when the
+    /// module loads under the scryer dialect. Scryer's setup_call_cleanup/3
+    /// bottoms out in its VM's choice-point natives ('$get_b_value', the scc
+    /// cleaner and ball stacks) that no emulation can honor; the CONTRACT is
+    /// ISO's, which Shumway's own prelude implements. The consult pipeline
+    /// drops these clauses BEFORE locals are computed, so every resolution
+    /// falls through to ours: the module's internal callers (call_nth/2)
+    /// compile bare, and an importer's ExportProvider finds no definition
+    /// and maps none. call_cleanup/2 goes with it — its one clause calls
+    /// setup_call_cleanup — and the prelude already provides it.</summary>
+    internal static readonly HashSet<(string Module, string Name, int Arity)>
+        ReplacedDefinitions = new()
+        {
+            ("iso_ext", "setup_call_cleanup", 3),
+            ("iso_ext", "call_cleanup", 2),
+        };
+
     public const string Source = """
         % ----- builtins.pl internals -----
         % Scryer's bootstrap module is implicitly visible in every module on

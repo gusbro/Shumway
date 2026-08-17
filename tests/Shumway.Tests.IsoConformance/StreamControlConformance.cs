@@ -123,6 +123,22 @@ public class StreamControlConformance : IDisposable
     }
 
     [Fact]
+    public void Open_AcceptsACharsListFileName()
+    {
+        // Scryer-compat: text is a chars list there, so open("f.txt", ...)
+        // arrives as a list of one-char atoms. An atom stays the ISO form;
+        // anything else keeps type_error(atom).
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"atom_chars('{path}', Cs), open(Cs, write, S), close(S).").Success);
+        Assert.True(e.Query(
+            $"atom_chars('{path}', Cs), open(Cs, read, S, []), close(S).").Success);
+        Assert.True(e.Query(
+            "catch(open(7, read, _), error(type_error(atom, 7), _), true).").Success);
+    }
+
+    [Fact]
     public void Open_ReadMode_ReadsBackWhatWasWritten()
     {
         File.WriteAllText(_tempPath, "hello");
