@@ -23,9 +23,10 @@ public class ImplicitDynamicFlagTests
         // No `:- dynamic pepe/0.` anywhere — would have raised
         // permission_error pre-Phase 19+ but the default
         // implicit_dynamic = true now auto-promotes.
-        engine.ConsultString(
-            ":- public test/0.\n"
-            + "test :- assertz(pepe), call(pepe).\n");
+        engine.ConsultString("""
+            :- public test/0.
+            test :- assertz(pepe), call(pepe).
+            """);
         Assert.True(engine.Query("test.").Success);
     }
 
@@ -33,9 +34,10 @@ public class ImplicitDynamicFlagTests
     public void Default_AssertaOnUndefined_AutoPromotes()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public test/0.\n"
-            + "test :- asserta(juan), call(juan).\n");
+        engine.ConsultString("""
+            :- public test/0.
+            test :- asserta(juan), call(juan).
+            """);
         Assert.True(engine.Query("test.").Success);
     }
 
@@ -43,9 +45,10 @@ public class ImplicitDynamicFlagTests
     public void DefaultFlag_ReportsTrue()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public probe/1.\n"
-            + "probe(V) :- current_prolog_flag(implicit_dynamic, V).\n");
+        engine.ConsultString("""
+            :- public probe/1.
+            probe(V) :- current_prolog_flag(implicit_dynamic, V).
+            """);
         var sol = engine.Query("probe(V).");
         Assert.True(sol.Success);
         Assert.Equal("true", sol.Bindings["V"].ToString());
@@ -55,10 +58,11 @@ public class ImplicitDynamicFlagTests
     public void FlagFalse_AssertzOnUndefined_RaisesPermissionError()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- set_prolog_flag(implicit_dynamic, false).\n"
-            + ":- public test/0.\n"
-            + "test :- assertz(pepe), call(pepe).\n");
+        engine.ConsultString("""
+            :- set_prolog_flag(implicit_dynamic, false).
+            :- public test/0.
+            test :- assertz(pepe), call(pepe).
+            """);
         var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(() => engine.Query("test."));
         Assert.Contains("permission_error", ex.Message);
     }
@@ -67,11 +71,12 @@ public class ImplicitDynamicFlagTests
     public void FlagFalse_DeclaredDynamic_StillAccepted()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- set_prolog_flag(implicit_dynamic, false).\n"
-            + ":- dynamic pepe/0.\n"
-            + ":- public test/0.\n"
-            + "test :- assertz(pepe), call(pepe).\n");
+        engine.ConsultString("""
+            :- set_prolog_flag(implicit_dynamic, false).
+            :- dynamic pepe/0.
+            :- public test/0.
+            test :- assertz(pepe), call(pepe).
+            """);
         Assert.True(engine.Query("test.").Success);
     }
 
@@ -83,10 +88,11 @@ public class ImplicitDynamicFlagTests
         // regardless of the flag's value — that's how SWI/SICStus/GNU
         // behave too.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public test/0.\n"
-            + "existing(static_clause).\n"
-            + "test :- assertz(existing(new_one)).\n");
+        engine.ConsultString("""
+            :- public test/0.
+            existing(static_clause).
+            test :- assertz(existing(new_one)).
+            """);
         var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(() => engine.Query("test."));
         Assert.Contains("permission_error", ex.Message);
     }
@@ -96,9 +102,10 @@ public class ImplicitDynamicFlagTests
     {
         // Builtins are always static.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public test/0.\n"
-            + "test :- assertz(true).\n");
+        engine.ConsultString("""
+            :- public test/0.
+            test :- assertz(true).
+            """);
         var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(() => engine.Query("test."));
         Assert.Contains("permission_error", ex.Message);
     }
@@ -107,11 +114,12 @@ public class ImplicitDynamicFlagTests
     public void AutoPromote_CompoundClauseHead_Works()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public test/0.\n"
-            + "test :- assertz(item(a, 1)), assertz(item(b, 2)),\n"
-            + "    item(a, X), X =:= 1,\n"
-            + "    item(b, Y), Y =:= 2.\n");
+        engine.ConsultString("""
+            :- public test/0.
+            test :- assertz(item(a, 1)), assertz(item(b, 2)),
+                item(a, X), X =:= 1,
+                item(b, Y), Y =:= 2.
+            """);
         Assert.True(engine.Query("test.").Success);
     }
 
@@ -119,11 +127,12 @@ public class ImplicitDynamicFlagTests
     public void AutoPromote_ThenRetract_Works()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public test/0.\n"
-            + "test :- assertz(thing(x)), retract(thing(x)),\n"
-            + "    ( thing(_) -> Out = leaked ; Out = ok ),\n"
-            + "    Out = ok.\n");
+        engine.ConsultString("""
+            :- public test/0.
+            test :- assertz(thing(x)), retract(thing(x)),
+                ( thing(_) -> Out = leaked ; Out = ok ),
+                Out = ok.
+            """);
         Assert.True(engine.Query("test.").Success);
     }
 
@@ -138,14 +147,15 @@ public class ImplicitDynamicFlagTests
         // dynamically. With the flag off, the runtime EnsureDynamic
         // path raises permission_error.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public test/0.\n"
-            + "test :- set_prolog_flag(implicit_dynamic, false),\n"
-            + "    NewHead = late_bound_pred,\n"
-            + "    catch(assertz(NewHead),\n"
-            + "        error(permission_error(_,_,_), _),\n"
-            + "        Caught = yes),\n"
-            + "    Caught == yes.\n");
+        engine.ConsultString("""
+            :- public test/0.
+            test :- set_prolog_flag(implicit_dynamic, false),
+                NewHead = late_bound_pred,
+                catch(assertz(NewHead),
+                    error(permission_error(_,_,_), _),
+                    Caught = yes),
+                Caught == yes.
+            """);
         Assert.True(engine.Query("test.").Success);
     }
 }

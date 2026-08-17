@@ -36,9 +36,10 @@ public class Chunk437Tests
         // Prolog source: codes([`a, `b, `\]).  — expect [97, 98, 92].
         // Chunk 439: the char after the backquote is taken literally
         // (Arity has no escape processing here), so `\ is 92 directly.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "codes([`a, `b, `\\]).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            codes([`a, `b, `\]).
+            """);
         Assert.True(e.Query("codes([97, 98, 92]).").Success);
     }
 
@@ -46,9 +47,10 @@ public class Chunk437Tests
     public void Backquote_MatchesZeroQuoteForm_FlagOn()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "pair(`x, 0'x).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            pair(`x, 0'x).
+            """);
         Assert.True(e.Query("pair(C, C).").Success);
     }
 
@@ -72,10 +74,11 @@ public class Chunk437Tests
         var e = new PrologEngine();
         // Prolog source: path('c:\tmp\new').  — under arity_compat every
         // backslash is literal: 10 characters, no tab/newline escapes.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "path('c:\\tmp\\new').\n" +
-            "bs('\\').\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            path('c:\tmp\new').
+            bs('\').
+            """);
         Assert.True(e.Query("path(X), atom_length(X, 10).").Success);
         Assert.True(e.Query("path(X), atom_codes(X, [0'c, 0':, 92, 0't, 0'm, 0'p, 92, 0'n, 0'e, 0'w]).").Success);
         // bs('\') — the one-character backslash atom.
@@ -86,9 +89,10 @@ public class Chunk437Tests
     public void QuotedAtom_DoubledQuoteStillEscapes_FlagOn()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "w('it''s').\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            w('it''s').
+            """);
         Assert.True(e.Query("w(X), atom_length(X, 4).").Success);
     }
 
@@ -98,7 +102,10 @@ public class Chunk437Tests
         var e = new PrologEngine();
         // Prolog source: a('\\'). b('\n').  — ISO escapes: single
         // backslash and a newline character respectively.
-        e.ConsultString("a('\\\\').\nb('\\n').\n");
+        e.ConsultString("""
+            a('\\').
+            b('\n').
+            """);
         Assert.True(e.Query("a(X), atom_codes(X, [92]).").Success);
         Assert.True(e.Query("b(X), atom_codes(X, [10]).").Success);
     }
@@ -109,9 +116,10 @@ public class Chunk437Tests
         var e = new PrologEngine();
         // The same '\n' source text that is ONE char (newline) without
         // the flag is TWO literal chars (backslash, n) with it.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "b('\\n').\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            b('\n').
+            """);
         Assert.True(e.Query("b(X), atom_codes(X, [92, 110]).").Success);
     }
 
@@ -123,7 +131,10 @@ public class Chunk437Tests
     public void Define_AtomToNumber()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- define(maxlen = 100).\nlimit(maxlen).\n");
+        e.ConsultString("""
+            :- define(maxlen = 100).
+            limit(maxlen).
+            """);
         Assert.True(e.Query("limit(100).").Success);
         Assert.False(e.Query("limit(maxlen).").Success);
     }
@@ -132,7 +143,10 @@ public class Chunk437Tests
     public void Define_AtomToAtom()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- define(red = rojo).\ncolor(red).\n");
+        e.ConsultString("""
+            :- define(red = rojo).
+            color(red).
+            """);
         Assert.True(e.Query("color(rojo).").Success);
         Assert.False(e.Query("color(red).").Success);
     }
@@ -141,10 +155,11 @@ public class Chunk437Tests
     public void Define_Cumulative_AllActiveInOneWalk()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- define(a = 1).\n" +
-            ":- define(b = 2).\n" +
-            "pair(a, b).\n");
+        e.ConsultString("""
+            :- define(a = 1).
+            :- define(b = 2).
+            pair(a, b).
+            """);
         Assert.True(e.Query("pair(1, 2).").Success);
     }
 
@@ -152,11 +167,12 @@ public class Chunk437Tests
     public void Define_SinglePass_NoReExpansion()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- define(a = b).\n" +
-            ":- define(b = c).\n" +
-            "v(a).\n" +
-            "w(b).\n");
+        e.ConsultString("""
+            :- define(a = b).
+            :- define(b = c).
+            v(a).
+            w(b).
+            """);
         // a -> b (NOT chained on to c); b -> c.
         Assert.True(e.Query("v(b).").Success);
         Assert.False(e.Query("v(c).").Success);
@@ -167,10 +183,11 @@ public class Chunk437Tests
     public void Define_OnlyAppliesFromDirectiveOnward()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            "before(k).\n" +
-            ":- define(k = 9).\n" +
-            "after(k).\n");
+        e.ConsultString("""
+            before(k).
+            :- define(k = 9).
+            after(k).
+            """);
         Assert.True(e.Query("before(k).").Success);
         Assert.True(e.Query("after(9).").Success);
     }
@@ -181,7 +198,10 @@ public class Chunk437Tests
         var e = new PrologEngine();
         // define(f = g) rewrites the ATOM f only — f(1) keeps its
         // functor; only the atom argument position changes.
-        e.ConsultString(":- define(f = g).\nq(f(1), f).\n");
+        e.ConsultString("""
+            :- define(f = g).
+            q(f(1), f).
+            """);
         Assert.True(e.Query("q(f(1), g).").Success);
     }
 
@@ -190,7 +210,10 @@ public class Chunk437Tests
     {
         var e = new PrologEngine();
         // Non-atom LHS exercises the linear (non-dictionary) store.
-        e.ConsultString(":- define(f(1) = one).\nr(f(1), f(2)).\n");
+        e.ConsultString("""
+            :- define(f(1) = one).
+            r(f(1), f(2)).
+            """);
         Assert.True(e.Query("r(one, f(2)).").Success);
     }
 
@@ -236,11 +259,12 @@ public class Chunk437Tests
     public void Define_RedefinitionOverwrites()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- define(n = 1).\n" +
-            "first(n).\n" +
-            ":- define(n = 2).\n" +
-            "second(n).\n");
+        e.ConsultString("""
+            :- define(n = 1).
+            first(n).
+            :- define(n = 2).
+            second(n).
+            """);
         Assert.True(e.Query("first(1).").Success);
         Assert.True(e.Query("second(2).").Success);
     }

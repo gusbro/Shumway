@@ -36,10 +36,11 @@ public class Chunk339Tests
         var engine = new PrologEngine();
         engine.UseClpfd();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public choose/2.\n"
-            + "choose(X, [V | _]) :- X = V, !.\n"
-            + "choose(X, [_ | T]) :- choose(X, T).\n");
+        engine.ConsultString("""
+            :- public choose/2.
+            choose(X, [V | _]) :- X = V, !.
+            choose(X, [_ | T]) :- choose(X, T).
+            """);
 
         for (int i = 0; i < 6; i++)
         {
@@ -62,10 +63,11 @@ public class Chunk339Tests
         var engine = new PrologEngine();
         engine.UseClpfd();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public m/2.\n"
-            + "m(9, a) :- !.\n"
-            + "m(_, b).\n");
+        engine.ConsultString("""
+            :- public m/2.
+            m(9, a) :- !.
+            m(_, b).
+            """);
 
         for (int i = 0; i < 6; i++)
         {

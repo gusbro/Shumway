@@ -83,10 +83,11 @@ public class Chunk58Tests
         // The directive must take effect during parse so subsequent
         // clauses in the same source see the new value.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- set_prolog_flag(double_quotes, codes).\n" +
-            ":- public greeting/1.\n" +
-            "greeting(\"hi\").\n");
+        engine.ConsultString("""
+            :- set_prolog_flag(double_quotes, codes).
+            :- public greeting/1.
+            greeting("hi").
+            """);
         // greeting(_) should have been compiled with "hi" parsed as
         // [104, 105] (= [`h`, `i`] codes).
         var sol = engine.Query("greeting([104, 105]).");
@@ -117,9 +118,10 @@ public class Chunk58Tests
     public void Dcg_Disjunction_ParsesEitherBranch()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public ab_or_xy/2.\n" +
-            "ab_or_xy --> ([a], [b]) ; ([x], [y]).\n");
+        engine.ConsultString("""
+            :- public ab_or_xy/2.
+            ab_or_xy --> ([a], [b]) ; ([x], [y]).
+            """);
         Assert.True(engine.Query("ab_or_xy([a, b], []).").Success);
         Assert.True(engine.Query("ab_or_xy([x, y], []).").Success);
         Assert.False(engine.Query("ab_or_xy([a, y], []).").Success);
@@ -129,9 +131,10 @@ public class Chunk58Tests
     public void Dcg_IfThenElse_PicksThenBranchOnSuccess()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public choose/2.\n" +
-            "choose --> ([a] -> [b] ; [c]).\n");
+        engine.ConsultString("""
+            :- public choose/2.
+            choose --> ([a] -> [b] ; [c]).
+            """);
         // Input [a, b]: cond [a] succeeds, then [b] required → success.
         Assert.True(engine.Query("choose([a, b], []).").Success);
         // Input [c]: cond [a] fails, falls to else [c] → success.

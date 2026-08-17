@@ -120,10 +120,11 @@ public class Phase33Wave1Tests
     public void E3_StringTerm_HonorsUserOperatorsOnParse()
     {
         var e = new Shumway.Embedding.PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- op(700, xfx, ===).\n" +
-            "p.\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- op(700, xfx, ===).
+            p.
+            """);
         // Parse direction: the custom operator must be readable.
         Assert.True(e.Query("string_term('a === b', T), T == ===(a, b).").Success);
         // Round-trip: term -> atom -> term is the identity under the live table.
@@ -137,7 +138,10 @@ public class Phase33Wave1Tests
     public void E8_StringTerm_MalformedText_IsCatchableSyntaxError()
     {
         var e = new Shumway.Embedding.PrologEngine();
-        e.ConsultString(":- set_prolog_flag(arity_compat, true).\np.\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            p.
+            """);
         Assert.True(e.Query(
             "catch(string_term('foo(', _), error(syntax_error(_), _), R = caught), R == caught.").Success);
     }
@@ -149,7 +153,10 @@ public class Phase33Wave1Tests
     public void E7_RecordedKey_InnerVariable_RaisesInstantiationError()
     {
         var e = new Shumway.Embedding.PrologEngine();
-        e.ConsultString(":- set_prolog_flag(arity_compat, true).\np.\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            p.
+            """);
         // foo(X) with X unbound: deep-ground check fires.
         Assert.True(e.Query(
             "catch(recorda(foo(_), v, _), error(instantiation_error, _), R = caught), R == caught.").Success);
@@ -210,7 +217,10 @@ public class Phase33Wave1Tests
     public void E11_StringSearch4_CaseFlag()
     {
         var e = new Shumway.Embedding.PrologEngine();
-        e.ConsultString(":- set_prolog_flag(arity_compat, true).\np.\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            p.
+            """);
         // Case-sensitive (0): 'AB' is not in 'xxabyy'.
         Assert.False(e.Query("string_search(0, 'AB', xxabyy, _).").Success);
         // Case-insensitive (1): found at offset 2 (0-based).
@@ -230,7 +240,7 @@ public class Phase33Wave1Tests
     public void E10_UntransformedNativeGoal_IsLoudError()
     {
         var e = new Shumway.Embedding.PrologEngine();
-        e.ConsultString("p.\n");
+        e.ConsultString("p.");
         // Old behavior: '$native_goal'(x) silently succeeded -> R stays unbound and
         // the == fails. New behavior: it throws, catch binds R = caught.
         Assert.True(e.Query(

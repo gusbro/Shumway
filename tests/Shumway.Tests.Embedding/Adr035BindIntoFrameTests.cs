@@ -208,8 +208,12 @@ public class Adr035BindIntoFrameTests
         //  3:     mk(X),
         //  4:     Out = X.
         //  5: mk(hecho).
-        var engine = DebugEngine(
-            "run2(Out) :-\n    mk(X),\n    Out = X.\nmk(hecho).\n");
+        var engine = DebugEngine("""
+            run2(Out) :-
+                mk(X),
+                Out = X.
+            mk(hecho).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 4) > 0);
 
         var (answers, sols) = RunAndEvalAtStop(engine, "run2(Out).", "X = otra_cosa");
@@ -235,9 +239,17 @@ public class Adr035BindIntoFrameTests
         //  8: choice(dos).
         //  9: mark(_, _).
         // 10: test(dos).
-        var engine = DebugEngine(
-            "run3(Out) :-\n    choice(X),\n    mark(X, W),\n    test(X),\n    Out = pair(X, W).\n" +
-            "choice(uno).\nchoice(dos).\nmark(_, _).\ntest(dos).\n");
+        var engine = DebugEngine("""
+            run3(Out) :-
+                choice(X),
+                mark(X, W),
+                test(X),
+                Out = pair(X, W).
+            choice(uno).
+            choice(dos).
+            mark(_, _).
+            test(dos).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 5) > 0);
 
         int stop = 0;

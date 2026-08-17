@@ -128,7 +128,10 @@ public class Phase33Wave5Tests
     public void T2_TinyBundle_StaysRaw()
     {
         // Below the 4 KB threshold: flag 0, body verbatim.
-        var obj = ShmoCompiler.CompileSource(":- public p/0.\np.\n");
+        var obj = ShmoCompiler.CompileSource("""
+            :- public p/0.
+            p.
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },
@@ -146,7 +149,7 @@ public class Phase33Wave5Tests
     {
         // save_state goes through BundleWriter.ToBytes — same framing.
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic fact/1.\n");
+        e.ConsultString(":- dynamic fact/1.");
         for (int i = 0; i < 300; i++)
             Assert.True(e.Query($"assertz(fact(v{i})).").Success);
         byte[] snap = e.SaveStateToBytes();

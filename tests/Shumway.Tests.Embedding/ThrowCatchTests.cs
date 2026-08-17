@@ -45,7 +45,10 @@ public class ThrowCatchTests
     public void Catch_GoalSucceeds_BindingsFlowBack()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("colour(red).\ncolour(green).\n");
+        engine.ConsultString("""
+            colour(red).
+            colour(green).
+            """);
         var sol = engine.Query("catch(colour(X), _, fail).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("red"), sol["X"]);
@@ -55,7 +58,7 @@ public class ThrowCatchTests
     public void Catch_GoalFails_CatchFails()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(1).\n");
+        engine.ConsultString("p(1).");
         Assert.False(engine.Query("catch(p(2), _, true).").Success);
     }
 
@@ -134,7 +137,7 @@ public class ThrowCatchTests
     public void Catch_ThrowFromUserPredicate_Catches()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("blowup :- throw(predicate_blew_up).\n");
+        engine.ConsultString("blowup :- throw(predicate_blew_up).");
         var sol = engine.Query("catch(blowup, E, X = E).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("predicate_blew_up"), sol["X"]);

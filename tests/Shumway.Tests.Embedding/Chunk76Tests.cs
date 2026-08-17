@@ -38,12 +38,13 @@ public class Chunk76Tests
         // where no instrumentation samples accumulate).
         engine.IlPromotion.BackgroundCompilation = false;
         engine.IlPromotion.PgoSampleThreshold = pgoThreshold;
-        engine.ConsultString(
-            ":- public color/1.\n" +
-            "color(red).\n" +
-            "color(green).\n" +
-            "color(blue).\n" +
-            "color(yellow).\n");
+        engine.ConsultString("""
+            :- public color/1.
+            color(red).
+            color(green).
+            color(blue).
+            color(yellow).
+            """);
         return engine;
     }
 
@@ -140,7 +141,10 @@ public class Chunk76Tests
         // promotes (chunk 25) but carries no PGO profile.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public greet/0.\ngreet.");
+        engine.ConsultString("""
+            :- public greet/0.
+            greet.
+            """);
         engine.Query("greet.");
         int fid = Fid("greet", 0);
         Assert.True(engine.IlPromotion.IsPromoted(fid));

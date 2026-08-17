@@ -113,12 +113,13 @@ public class Chunk28Tests
     public void DiscontiguousDirective_RecordedOnManifest()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(m).\n" +
-            ":- discontiguous foo/2.\n" +
-            "foo(a, 1).\n" +
-            "bar(x).\n" +
-            "foo(b, 2).\n");
+        engine.ConsultString("""
+            :- module(m).
+            :- discontiguous foo/2.
+            foo(a, 1).
+            bar(x).
+            foo(b, 2).
+            """);
         var manifest = engine.Modules["m"];
         // The functor id for foo/2 in this module's discontiguous set:
         int fid = Shumway.Core.FunctorTable.Intern(
@@ -130,10 +131,11 @@ public class Chunk28Tests
     public void MultifileDirective_AcceptedAndStored()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(shared).\n" +
-            ":- multifile fact/1.\n" +
-            "fact(a).\n");
+        engine.ConsultString("""
+            :- module(shared).
+            :- multifile fact/1.
+            fact(a).
+            """);
         var manifest = engine.Modules["shared"];
         int fid = Shumway.Core.FunctorTable.Intern(
             Shumway.Core.AtomTable.Intern("fact", permanent: true).Id, 1);
@@ -144,10 +146,11 @@ public class Chunk28Tests
     public void ModeDirective_StoresArgumentModes()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(typed).\n" +
-            ":- mode add(+, +, -).\n" +
-            "add(X, Y, Z) :- Z is X + Y.\n");
+        engine.ConsultString("""
+            :- module(typed).
+            :- mode add(+, +, -).
+            add(X, Y, Z) :- Z is X + Y.
+            """);
         var manifest = engine.Modules["typed"];
         int fid = Shumway.Core.FunctorTable.Intern(
             Shumway.Core.AtomTable.Intern("add", permanent: true).Id, 3);
@@ -171,12 +174,13 @@ public class Chunk28Tests
         // don't break compilation — the program below has all three and
         // still computes the right answer.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(arith).\n" +
-            ":- public sum/3.\n" +
-            ":- mode sum(+, +, -).\n" +
-            ":- discontiguous sum/3.\n" +
-            "sum(X, Y, Z) :- Z is X + Y.\n");
+        engine.ConsultString("""
+            :- module(arith).
+            :- public sum/3.
+            :- mode sum(+, +, -).
+            :- discontiguous sum/3.
+            sum(X, Y, Z) :- Z is X + Y.
+            """);
         Assert.Equal(Int(7), engine.Query("sum(3, 4, R).")["R"]);
     }
 
@@ -184,11 +188,12 @@ public class Chunk28Tests
     public void DiscontiguousListForm_Accepted()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(m2).\n" +
-            ":- discontiguous [foo/1, bar/2].\n" +
-            "foo(a).\n" +
-            "bar(x, 1).\n");
+        engine.ConsultString("""
+            :- module(m2).
+            :- discontiguous [foo/1, bar/2].
+            foo(a).
+            bar(x, 1).
+            """);
         var manifest = engine.Modules["m2"];
         Assert.Equal(2, manifest.DiscontiguousFunctors.Count);
     }

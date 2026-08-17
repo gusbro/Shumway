@@ -121,7 +121,12 @@ public class Chunk84Tests
     public void Bagof_OverAUserPredicate()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public color/1.\ncolor(red).\ncolor(green).\ncolor(blue).");
+        engine.ConsultString("""
+            :- public color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
         Assert.True(engine.Query(
             "bagof(C, color(C), L), L == [red, green, blue].").Success);
     }

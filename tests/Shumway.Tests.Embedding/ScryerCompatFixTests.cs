@@ -27,11 +27,12 @@ public sealed class ScryerCompatFixTests
         // nonterminal must be contiguous — they group under the real head, not
         // `,/4`. `peek(X), [X] --> [X]` is a lookahead: consume X, push it back.
         var e = new PrologEngine();
-        e.ConsultString(
-            "peek(X), [X] --> [X].\n"
-            + "peek_or_end(X) --> peek(X).\n"
-            + "peek_or_end(end) --> [].\n"
-            + "t(X, Rest) :- phrase(peek(X), [a, b, c], Rest).\n");
+        e.ConsultString("""
+            peek(X), [X] --> [X].
+            peek_or_end(X) --> peek(X).
+            peek_or_end(end) --> [].
+            t(X, Rest) :- phrase(peek(X), [a, b, c], Rest).
+            """);
         // Lookahead: X = a, and the input is UNCONSUMED (Rest still [a,b,c]).
         Assert.True(e.Query("t(a, [a, b, c]).").Success);
     }

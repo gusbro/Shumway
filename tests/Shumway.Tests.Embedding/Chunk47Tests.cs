@@ -31,11 +31,12 @@ public class Chunk47Tests
         // dispatch to q/1 must work. If this fails, the bug isn't in
         // IL — it's in the WAM compilation or Tier-0 dispatch.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public p/1.\n" +
-            ":- public q/1.\n" +
-            "q(red). q(green). q(blue).\n" +
-            "p(X) :- q(X).\n");
+        engine.ConsultString("""
+            :- public p/1.
+            :- public q/1.
+            q(red). q(green). q(blue).
+            p(X) :- q(X).
+            """);
         Assert.True(engine.Query("p(red).").Success);
         Assert.False(engine.Query("p(orange).").Success);
     }
@@ -49,11 +50,12 @@ public class Chunk47Tests
         // last goal). IL now promotes p/1 too.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public p/1.\n" +
-            ":- public q/1.\n" +
-            "q(red). q(green). q(blue).\n" +
-            "p(X) :- q(X).\n");
+        engine.ConsultString("""
+            :- public p/1.
+            :- public q/1.
+            q(red). q(green). q(blue).
+            p(X) :- q(X).
+            """);
         // First call warms p/1.
         Assert.True(engine.Query("p(red).").Success);
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("p", 1)));
@@ -70,11 +72,12 @@ public class Chunk47Tests
         // alternatives via the normal CP mechanism.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public p/1.\n" +
-            ":- public q/1.\n" +
-            "q(red). q(green). q(blue).\n" +
-            "p(X) :- q(X).\n");
+        engine.ConsultString("""
+            :- public p/1.
+            :- public q/1.
+            q(red). q(green). q(blue).
+            p(X) :- q(X).
+            """);
         engine.Query("p(red).");   // warm + promote
         var sols = engine.QueryAll("p(X).").Select(s => s["X"]).ToList();
         Assert.Equal(new[] { Atom("red"), Atom("green"), Atom("blue") }, sols);
@@ -88,11 +91,12 @@ public class Chunk47Tests
         // Both paths go through IL.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public p/1.\n" +
-            ":- public q/1.\n" +
-            "q(known). q(other).\n" +
-            "p(X) :- atom(X), q(X).\n");
+        engine.ConsultString("""
+            :- public p/1.
+            :- public q/1.
+            q(known). q(other).
+            p(X) :- atom(X), q(X).
+            """);
         Assert.True(engine.Query("p(known).").Success);
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("p", 1)));
         Assert.False(engine.Query("p(42).").Success);   // atom check fails
@@ -130,13 +134,14 @@ public class Chunk47Tests
         // so the cross-product enumeration works under Tier-1 IL.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public p/1.\n" +
-            ":- public q/1.\n" +
-            ":- public r/1.\n" +
-            "q(a). q(b).\n" +
-            "r(a). r(b).\n" +
-            "p(X) :- q(X), r(X).\n");
+        engine.ConsultString("""
+            :- public p/1.
+            :- public q/1.
+            :- public r/1.
+            q(a). q(b).
+            r(a). r(b).
+            p(X) :- q(X), r(X).
+            """);
         engine.Query("p(a).");
         Assert.False(engine.IlPromotion.IsUnpromotable(FunctorId("p", 1)));
         Assert.True(engine.Query("p(a).").Success);

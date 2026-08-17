@@ -28,9 +28,10 @@ public class Chunk73Tests
     public void Mode_ParsesBasicIndicators()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode classify(+, -, ?).\n" +
-            "classify(_, out, _).\n");
+        engine.ConsultString("""
+            :- mode classify(+, -, ?).
+            classify(_, out, _).
+            """);
         var decl = Assert.Single(engine.Modes.ModesFor(Fid("classify", 3)));
         Assert.Equal(
             new[] { ModeIndicator.Input, ModeIndicator.Output, ModeIndicator.Either },
@@ -44,9 +45,10 @@ public class Chunk73Tests
     public void Mode_ParsesDeterminismAnnotation()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode add(+, +, -) is det.\n" +
-            "add(X, Y, Z) :- Z is X + Y.\n");
+        engine.ConsultString("""
+            :- mode add(+, +, -) is det.
+            add(X, Y, Z) :- Z is X + Y.
+            """);
         var decl = Assert.Single(engine.Modes.ModesFor(Fid("add", 3)));
         Assert.Equal(Determinism.Det, decl.Determinism);
         Assert.True(decl.IsDeterministic);
@@ -74,12 +76,13 @@ public class Chunk73Tests
     {
         // ADR-012's append/3 example — three callable modes.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode append(+, +, -) is det.\n" +
-            ":- mode append(+, -, +) is semidet.\n" +
-            ":- mode append(-, -, +) is nondet.\n" +
-            "append([], L, L).\n" +
-            "append([H|T], L, [H|R]) :- append(T, L, R).\n");
+        engine.ConsultString("""
+            :- mode append(+, +, -) is det.
+            :- mode append(+, -, +) is semidet.
+            :- mode append(-, -, +) is nondet.
+            append([], L, L).
+            append([H|T], L, [H|R]) :- append(T, L, R).
+            """);
         var modes = engine.Modes.ModesFor(Fid("append", 3));
         Assert.Equal(3, modes.Count);
         Assert.Equal(Determinism.Det, modes[0].Determinism);
@@ -91,10 +94,11 @@ public class Chunk73Tests
     public void Mode_HasDeterministicMode()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode lookup(+, -) is semidet.\n" +
-            ":- mode lookup(-, -) is nondet.\n" +
-            "lookup(k, v).\n");
+        engine.ConsultString("""
+            :- mode lookup(+, -) is semidet.
+            :- mode lookup(-, -) is nondet.
+            lookup(k, v).
+            """);
         // One semidet mode → the predicate has a deterministic mode.
         Assert.True(engine.Modes.HasDeterministicMode(Fid("lookup", 2)));
     }
@@ -103,9 +107,11 @@ public class Chunk73Tests
     public void Mode_NoDeterministicMode_WhenAllNondet()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode gen(-) is multi.\n" +
-            "gen(a).\ngen(b).\n");
+        engine.ConsultString("""
+            :- mode gen(-) is multi.
+            gen(a).
+            gen(b).
+            """);
         Assert.False(engine.Modes.HasDeterministicMode(Fid("gen", 1)));
     }
 
@@ -114,7 +120,10 @@ public class Chunk73Tests
     {
         var engine = new PrologEngine();
         var ex = Assert.ThrowsAny<Exception>(() =>
-            engine.ConsultString(":- mode bad(*).\nbad(_).\n"));
+            engine.ConsultString("""
+                :- mode bad(*).
+                bad(_).
+                """));
         Assert.Contains("mode", ex.Message);
     }
 
@@ -123,7 +132,10 @@ public class Chunk73Tests
     {
         var engine = new PrologEngine();
         var ex = Assert.ThrowsAny<Exception>(() =>
-            engine.ConsultString(":- mode p(+) is fast.\np(_).\n"));
+            engine.ConsultString("""
+                :- mode p(+) is fast.
+                p(_).
+                """));
         Assert.Contains("determinism", ex.Message);
     }
 
@@ -132,10 +144,11 @@ public class Chunk73Tests
     {
         var engine = new PrologEngine();
         // ghost/2 has a mode declaration but no clauses.
-        engine.ConsultString(
-            ":- mode ghost(+, -) is det.\n" +
-            ":- mode real(+) is det.\n" +
-            "real(x).\n");
+        engine.ConsultString("""
+            :- mode ghost(+, -) is det.
+            :- mode real(+) is det.
+            real(x).
+            """);
         var issues = engine.Modes.Validate(engine.DefinedFunctors());
         var issue = Assert.Single(issues);
         Assert.Equal(Fid("ghost", 2), issue.FunctorId);
@@ -148,10 +161,11 @@ public class Chunk73Tests
     {
         var engine = new PrologEngine();
         // Same arg pattern (+, -), different determinism.
-        engine.ConsultString(
-            ":- mode q(+, -) is det.\n" +
-            ":- mode q(+, -) is semidet.\n" +
-            "q(a, b).\n");
+        engine.ConsultString("""
+            :- mode q(+, -) is det.
+            :- mode q(+, -) is semidet.
+            q(a, b).
+            """);
         var issues = engine.Modes.Validate(engine.DefinedFunctors());
         Assert.Contains(issues,
             i => i.Message.Contains("different determinism"));
@@ -161,9 +175,10 @@ public class Chunk73Tests
     public void Validate_CleanProgram_NoIssues()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode add(+, +, -) is det.\n" +
-            "add(X, Y, Z) :- Z is X + Y.\n");
+        engine.ConsultString("""
+            :- mode add(+, +, -) is det.
+            add(X, Y, Z) :- Z is X + Y.
+            """);
         var issues = engine.Modes.Validate(engine.DefinedFunctors());
         Assert.Empty(issues);
     }
@@ -172,7 +187,7 @@ public class Chunk73Tests
     public void Mode_NoDeclaration_EmptyModesFor()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("plain(x).\n");
+        engine.ConsultString("plain(x).");
         Assert.Empty(engine.Modes.ModesFor(Fid("plain", 1)));
         Assert.False(engine.Modes.HasModes(Fid("plain", 1)));
     }
@@ -183,9 +198,10 @@ public class Chunk73Tests
         // A :- dynamic predicate counts as "defined" for validation
         // even before anything is asserted.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- dynamic counter/1.\n" +
-            ":- mode counter(?) is nondet.\n");
+        engine.ConsultString("""
+            :- dynamic counter/1.
+            :- mode counter(?) is nondet.
+            """);
         var issues = engine.Modes.Validate(engine.DefinedFunctors());
         Assert.Empty(issues);
     }
@@ -196,9 +212,10 @@ public class Chunk73Tests
         // The chunk-28 guarantee holds: mode directives are metadata,
         // the program still computes.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode sum(+, +, -) is det.\n" +
-            "sum(X, Y, Z) :- Z is X + Y.\n");
+        engine.ConsultString("""
+            :- mode sum(+, +, -) is det.
+            sum(X, Y, Z) :- Z is X + Y.
+            """);
         Assert.Equal(
             new Shumway.Compiler.Ast.IntTerm(7),
             engine.Query("sum(3, 4, R).")["R"]);

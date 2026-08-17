@@ -124,9 +124,10 @@ public class PrologFlagsExpandedTests
         // pass it through a helper, branch on its first element.
         var e = new PrologEngine();
         e.Flags.Argv = new[] { "verbose", "input.txt" };
-        e.ConsultString(
-            ":- public got_first/1.\n"
-            + "got_first(F) :- current_prolog_flag(argv, [F|_]).\n");
+        e.ConsultString("""
+            :- public got_first/1.
+            got_first(F) :- current_prolog_flag(argv, [F|_]).
+            """);
         var sol = e.Query("got_first(X).");
         Assert.True(sol.Success);
         Assert.Equal(new AtomTerm("verbose"), sol["X"]);

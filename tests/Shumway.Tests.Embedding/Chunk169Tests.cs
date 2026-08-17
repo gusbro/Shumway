@@ -16,7 +16,10 @@ public class Chunk169Tests
     [Fact]
     public void DefaultMode_IsRelease()
     {
-        var obj = ShmoCompiler.CompileSource(":- module(m).\np(1).\n");
+        var obj = ShmoCompiler.CompileSource("""
+            :- module(m).
+            p(1).
+            """);
         Assert.Equal(ShmoBuildMode.Release, obj.BuildMode);
     }
 
@@ -33,9 +36,15 @@ public class Chunk169Tests
     [Fact]
     public void BuildMode_RoundTripsThroughShmoIo()
     {
-        var release = ShmoCompiler.CompileSource(":- module(m).\np(1).\n",
+        var release = ShmoCompiler.CompileSource("""
+            :- module(m).
+            p(1).
+            """,
             buildMode: ShmoBuildMode.Release);
-        var debug = ShmoCompiler.CompileSource(":- module(m).\np(1).\n",
+        var debug = ShmoCompiler.CompileSource("""
+            :- module(m).
+            p(1).
+            """,
             buildMode: ShmoBuildMode.Debug);
 
         var restoredRelease = ShmoReader.FromBytes(ShmoWriter.ToBytes(release));
@@ -61,7 +70,7 @@ public class Chunk169Tests
     {
         // Pre-release: no back-compat readers. Any version number other than
         // the frozen current one is rejected with a recompile hint.
-        var obj = ShmoCompiler.CompileSource("p.\n");
+        var obj = ShmoCompiler.CompileSource("p.");
         byte[] bytes = ShmoWriter.ToBytes(obj);
         bytes[4] = 1; bytes[5] = 0; bytes[6] = 0; bytes[7] = 0;   // version := 1
         var ex = Assert.Throws<InvalidDataException>(() => ShmoReader.FromBytes(bytes));
@@ -71,7 +80,7 @@ public class Chunk169Tests
     [Fact]
     public void UnsupportedFutureVersion_Throws()
     {
-        var obj = ShmoCompiler.CompileSource("p.\n");
+        var obj = ShmoCompiler.CompileSource("p.");
         byte[] bytes = ShmoWriter.ToBytes(obj);
         // Bump version to 999.
         bytes[4] = 0xE7;

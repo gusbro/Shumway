@@ -68,10 +68,11 @@ public class DcgTests
     public void Dcg_NonTerminalChain()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "noun --> [dog].\n" +
-            "verb --> [runs].\n" +
-            "sentence --> noun, verb.\n");
+        engine.ConsultString("""
+            noun --> [dog].
+            verb --> [runs].
+            sentence --> noun, verb.
+            """);
         Assert.True(engine.Query("sentence([dog, runs], []).").Success);
         Assert.False(engine.Query("sentence([dog, walks], []).").Success);
     }
@@ -80,9 +81,10 @@ public class DcgTests
     public void Dcg_MixedTerminalAndNonTerminal()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "verb --> [runs].\n" +
-            "phrase --> [the, dog], verb.\n");
+        engine.ConsultString("""
+            verb --> [runs].
+            phrase --> [the, dog], verb.
+            """);
         Assert.True(engine.Query("phrase([the, dog, runs], []).").Success);
     }
 
@@ -96,9 +98,10 @@ public class DcgTests
         // ?- num_list([1, 2, 3], []). → succeed
         // ?- num_list([1, two], []).  → fail
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "num_list --> [N], { integer(N) }.\n" +
-            "num_list --> [N], { integer(N) }, num_list.\n");
+        engine.ConsultString("""
+            num_list --> [N], { integer(N) }.
+            num_list --> [N], { integer(N) }, num_list.
+            """);
         Assert.True(engine.Query("num_list([1, 2, 3], []).").Success);
         Assert.False(engine.Query("num_list([1, two], []).").Success);
     }
@@ -108,8 +111,7 @@ public class DcgTests
     {
         // The "{ G }" escape lets DCG body call regular Prolog goals.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "positive --> [N], { integer(N), N > 0 }.\n");
+        engine.ConsultString("positive --> [N], { integer(N), N > 0 }.");
         Assert.True(engine.Query("positive([5], []).").Success);
         Assert.False(engine.Query("positive([-3], []).").Success);
         Assert.False(engine.Query("positive([foo], []).").Success);
@@ -141,10 +143,11 @@ public class DcgTests
         // colour --> [green].
         // colour --> [blue].
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "colour --> [red].\n" +
-            "colour --> [green].\n" +
-            "colour --> [blue].\n");
+        engine.ConsultString("""
+            colour --> [red].
+            colour --> [green].
+            colour --> [blue].
+            """);
 
         // Each clause produces a different consumed token.
         var solutions = engine.QueryAll("colour([X], []).")
@@ -163,10 +166,11 @@ public class DcgTests
         // digits --> digit.
         // digits --> digit, digits.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "digit --> [D], { integer(D), D >= 0, D =< 9 }.\n" +
-            "digits --> digit.\n" +
-            "digits --> digit, digits.\n");
+        engine.ConsultString("""
+            digit --> [D], { integer(D), D >= 0, D =< 9 }.
+            digits --> digit.
+            digits --> digit, digits.
+            """);
 
         Assert.True(engine.Query("digits([1, 2, 3], []).").Success);
         Assert.True(engine.Query("digits([5], []).").Success);
@@ -198,9 +202,10 @@ public class DcgTests
         // ?- first_match([a, b], []). → succeed
         // ?- first_match([a, c], []). → fail (cut prevented alternative)
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "first_match --> [a], !, [b].\n" +
-            "first_match --> [a], [c].\n");
+        engine.ConsultString("""
+            first_match --> [a], !, [b].
+            first_match --> [a], [c].
+            """);
         Assert.True(engine.Query("first_match([a, b], []).").Success);
         Assert.False(engine.Query("first_match([a, c], []).").Success);
     }

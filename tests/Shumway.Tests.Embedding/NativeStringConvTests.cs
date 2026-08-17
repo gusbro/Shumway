@@ -33,13 +33,16 @@ public sealed class NativeStringConvTests
         // i_start_rpt pattern: a char* global is a reusable holder. `H is buf` gives
         // the holder slot; make_c_string sets it, make_prolog_string reads it.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nchar* buf;\n:- prolog.\n" +
-            "p(In, Out) :-\n" +
-            "  { H: pchar; H is buf },\n" +
-            "  make_c_string(H, 100, In, _),\n" +
-            "  make_prolog_string(H, Out).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            char* buf;
+            :- prolog.
+            p(In, Out) :-
+              { H: pchar; H is buf },
+              make_c_string(H, 100, In, _),
+              make_prolog_string(H, Out).
+            """);
         Assert.True(e.Query("p(hello, Out), Out == hello.").Success);
     }
 
@@ -49,14 +52,17 @@ public sealed class NativeStringConvTests
         // The holder flow also compiles to IL (delegate / Tier-1 inline).
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 1;
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- public p/2.\n" +
-            ":- c.\nchar* buf;\n:- prolog.\n" +
-            "p(In, Out) :-\n" +
-            "  { H: pchar; H is buf },\n" +
-            "  make_c_string(H, 100, In, _),\n" +
-            "  make_prolog_string(H, Out).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- public p/2.
+            :- c.
+            char* buf;
+            :- prolog.
+            p(In, Out) :-
+              { H: pchar; H is buf },
+              make_c_string(H, 100, In, _),
+              make_prolog_string(H, Out).
+            """);
         for (int i = 0; i < 6; i++)
             Assert.True(e.Query("p(hello, Out), Out == hello.").Success);
     }
@@ -67,13 +73,16 @@ public sealed class NativeStringConvTests
         // The key reason for holders over identity: filling the same buffer twice
         // must NOT alias the two Prolog values.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            ":- c.\nchar* buf;\n:- prolog.\n" +
-            "q(A, B, OA, OB) :-\n" +
-            "  { H: pchar; H is buf },\n" +
-            "  make_c_string(H, 100, A, _), make_prolog_string(H, OA),\n" +
-            "  make_c_string(H, 100, B, _), make_prolog_string(H, OB).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            :- c.
+            char* buf;
+            :- prolog.
+            q(A, B, OA, OB) :-
+              { H: pchar; H is buf },
+              make_c_string(H, 100, A, _), make_prolog_string(H, OA),
+              make_c_string(H, 100, B, _), make_prolog_string(H, OB).
+            """);
         Assert.True(e.Query("q(x, y, OA, OB), OA == x, OB == y.").Success);
     }
 
@@ -84,9 +93,10 @@ public sealed class NativeStringConvTests
         // arity_compat keeps the builtin — the user clause is dropped (with a
         // warning), so the builtin's behaviour wins.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "atom_length(_, _) :- throw(user_clause_should_be_dropped).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            atom_length(_, _) :- throw(user_clause_should_be_dropped).
+            """);
         Assert.True(e.Query("atom_length(hello, 5).").Success);   // builtin ran, no throw
     }
 
@@ -97,7 +107,7 @@ public sealed class NativeStringConvTests
         // so a user clause for it still doesn't override (builtins win regardless);
         // this just confirms the drop path is the arity_compat-only part.
         var e = new PrologEngine();
-        e.ConsultString("p(N) :- atom_length(hello, N).\n");   // no redefinition
+        e.ConsultString("p(N) :- atom_length(hello, N).");   // no redefinition
         Assert.True(e.Query("p(5).").Success);
     }
 }

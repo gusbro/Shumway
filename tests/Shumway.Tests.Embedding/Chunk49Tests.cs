@@ -39,7 +39,10 @@ public class Chunk49Tests
         // dispatch read mode (since the caller supplies the list).
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public head_first/2.\nhead_first(X, [X|_]).");
+        engine.ConsultString("""
+            :- public head_first/2.
+            head_first(X, [X|_]).
+            """);
         var sol = engine.Query("head_first(H, [a, b, c]).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("a"), sol["H"]);
@@ -51,7 +54,10 @@ public class Chunk49Tests
         // Matching against an exact list literal.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public is_abc/1.\nis_abc([a, b, c]).");
+        engine.ConsultString("""
+            :- public is_abc/1.
+            is_abc([a, b, c]).
+            """);
         Assert.True(engine.Query("is_abc([a, b, c]).").Success);
         Assert.False(engine.Query("is_abc([a, b]).").Success);
         Assert.False(engine.Query("is_abc([x, y, z]).").Success);
@@ -65,7 +71,10 @@ public class Chunk49Tests
         // the list on the heap.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public primes/1.\nprimes([2, 3, 5, 7]).");
+        engine.ConsultString("""
+            :- public primes/1.
+            primes([2, 3, 5, 7]).
+            """);
         var sol = engine.Query("primes(P).");
         Assert.True(sol.Success);
         Assert.Equal(List(Int(2), Int(3), Int(5), Int(7)), sol["P"]);
@@ -77,7 +86,10 @@ public class Chunk49Tests
         // Head with a deeper nested list.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public pair_list/1.\npair_list([[a, b], [c, d]]).");
+        engine.ConsultString("""
+            :- public pair_list/1.
+            pair_list([[a, b], [c, d]]).
+            """);
         Assert.True(engine.Query("pair_list([[a, b], [c, d]]).").Success);
         Assert.False(engine.Query("pair_list([[a, b], [c, x]]).").Success);
     }
@@ -88,7 +100,10 @@ public class Chunk49Tests
         // first_rest(H, T, [H|T]) — both H and T bind to the caller's list.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public first_rest/3.\nfirst_rest(H, T, [H|T]).");
+        engine.ConsultString("""
+            :- public first_rest/3.
+            first_rest(H, T, [H|T]).
+            """);
         var sol = engine.Query("first_rest(H, T, [1, 2, 3]).");
         Assert.True(sol.Success);
         Assert.Equal(Int(1), sol["H"]);

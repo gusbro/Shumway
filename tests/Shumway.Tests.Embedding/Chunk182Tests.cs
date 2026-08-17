@@ -35,10 +35,10 @@ public class Chunk182Tests
         var engine = new PrologEngine();
         // Force every predicate to promote on first call.
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            "chain(0, Acc, Acc) :- !.\n"
-            + "chain(N, Acc, Out) :- N > 0, N1 is N - 1, "
-            + "  chain(N1, Acc, Mid), Out = Mid.\n");
+        engine.ConsultString("""
+            chain(0, Acc, Acc) :- !.
+            chain(N, Acc, Out) :- N > 0, N1 is N - 1,   chain(N1, Acc, Mid), Out = Mid.
+            """);
 
         // 5000 deep — pre-threading this overflowed at ~1500 nested
         // C# RunSubroutine frames.
@@ -54,10 +54,11 @@ public class Chunk182Tests
         // each visible to a non-tail Call'd from a Tier-1 caller.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            "color(red). color(green). color(blue).\n"
-            + "wrap(X, wrapped(X)).\n"
-            + "test(L) :- findall(W, (color(C), wrap(C, W)), L).\n");
+        engine.ConsultString("""
+            color(red). color(green). color(blue).
+            wrap(X, wrapped(X)).
+            test(L) :- findall(W, (color(C), wrap(C, W)), L).
+            """);
 
         var sol = engine.Query("test(L).");
         Assert.True(sol.Success);
@@ -76,13 +77,14 @@ public class Chunk182Tests
         // RunSubroutine floor pin.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 32;
-        engine.ConsultString(
-            "step(a, 1). step(b, 2). step(c, 3).\n"
-            + "look_up(K, V) :- step(K, V), !.\n"
-            + "loop(0, []).\n"
-            + "loop(N, [K-V|T]) :- N > 0, N1 is N - 1, \n"
-            + "  ( N mod 3 =:= 0 -> K = a ; N mod 3 =:= 1 -> K = b ; K = c ),\n"
-            + "  look_up(K, V), loop(N1, T).\n");
+        engine.ConsultString("""
+            step(a, 1). step(b, 2). step(c, 3).
+            look_up(K, V) :- step(K, V), !.
+            loop(0, []).
+            loop(N, [K-V|T]) :- N > 0, N1 is N - 1, 
+              ( N mod 3 =:= 0 -> K = a ; N mod 3 =:= 1 -> K = b ; K = c ),
+              look_up(K, V), loop(N1, T).
+            """);
 
         // Force loop to warm past the threshold.
         var sol = engine.Query("loop(100, L), length(L, N).");

@@ -122,10 +122,11 @@ go :- loop(20000).
         // consults it and WAITS at the prompt, you attach, and you set a breakpoint on a
         // predicate nothing has called yet. Not one goal has run in this engine's life.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- set_prolog_flag(compile_mode, debug).\n"
-            + "go :- step(1, A), step(A, B), B > 0.\n"
-            + "step(N, Out) :- Out is N * 2.\n");
+        engine.ConsultString("""
+            :- set_prolog_flag(compile_mode, debug).
+            go :- step(1, A), step(A, B), B > 0.
+            step(N, Out) :- Out is N * 2.
+            """);
 
         int bound = engine.AddBreakpoint("<string>", 3);   // the body of step/2
         Assert.True(bound > 0, "the breakpoint bound nothing at all");
@@ -153,10 +154,11 @@ go :- loop(20000).
         // in a query showed an EMPTY STACK. The debugger looked broken; it had simply been
         // told there was nothing there.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- set_prolog_flag(compile_mode, debug).\n"
-            + "loop(0) :- !.\n"
-            + "loop(N) :- N1 is N - 1, loop(N1).\n");
+        engine.ConsultString("""
+            :- set_prolog_flag(compile_mode, debug).
+            loop(0) :- !.
+            loop(N) :- N1 is N - 1, loop(N1).
+            """);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
 
         DebugSnapshot? seen = null;
@@ -199,7 +201,7 @@ go :- loop(20000).
         // thing only a debugger can answer; there is no way to assert that from a test
         // process that is not being debugged, and pretending otherwise would test the mock.)
         var engine = DebugEngine();
-        engine.ConsultString("guarded :- debugger_break, true.\n");
+        engine.ConsultString("guarded :- debugger_break, true.");
 
         int notifies = 0;
         using var session = new ChannelDebugSession(engine, notify: _ => notifies++);
@@ -262,10 +264,11 @@ go :- loop(20000).
         // foreign call, and says it is inside one.
         var engine = new PrologEngine();
         engine.RegisterPredicates(typeof(Scaling));
-        engine.ConsultString(
-            ":- set_prolog_flag(compile_mode, debug).\n"
-            + "run(In, Out) :- step(In, Out).\n"
-            + "step(In, Out) :- scale(In, Out).\n");
+        engine.ConsultString("""
+            :- set_prolog_flag(compile_mode, debug).
+            run(In, Out) :- step(In, Out).
+            step(In, Out) :- scale(In, Out).
+            """);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
 
         using var session = new ChannelDebugSession(engine, notify: _ => { });

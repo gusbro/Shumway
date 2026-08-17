@@ -23,16 +23,17 @@ public class Phase33I12DeepClauseTests
     private static PrologEngine NewEngine()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- dynamic store/1.\n" +
-            ":- dynamic ran/0.\n" +
-            "sink(_).\n" +
-            "mk(0, []) :- !.\n" +
-            "mk(N, [N|T]) :- N > 0, N1 is N-1, mk(N1, T).\n" +
-            ":- public assert_fact/1.\n" +
-            "assert_fact(N) :- mk(N, L), assertz(store(L)).\n" +
-            ":- public assert_rule/1.\n" +
-            "assert_rule(N) :- mk(N, L), assertz((ran :- sink(L))).\n");
+        e.ConsultString("""
+            :- dynamic store/1.
+            :- dynamic ran/0.
+            sink(_).
+            mk(0, []) :- !.
+            mk(N, [N|T]) :- N > 0, N1 is N-1, mk(N1, T).
+            :- public assert_fact/1.
+            assert_fact(N) :- mk(N, L), assertz(store(L)).
+            :- public assert_rule/1.
+            assert_rule(N) :- mk(N, L), assertz((ran :- sink(L))).
+            """);
         return e;
     }
 
@@ -59,7 +60,11 @@ public class Phase33I12DeepClauseTests
     {
         // A sanity check that ordinary (shallow) list clauses are unaffected.
         var e = new PrologEngine();
-        e.ConsultString("p([a, b, c, [1, 2, 3], d]).\n:- public q/0.\nq :- p([a, b, c, [1, 2, 3], d]).");
+        e.ConsultString("""
+            p([a, b, c, [1, 2, 3], d]).
+            :- public q/0.
+            q :- p([a, b, c, [1, 2, 3], d]).
+            """);
         Assert.True(e.Query("q.").Success);
     }
 }

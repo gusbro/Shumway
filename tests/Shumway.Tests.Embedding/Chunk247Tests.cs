@@ -30,9 +30,10 @@ public class Chunk247Tests
         // error. Use a name guaranteed not to be registered by any
         // other test's [PrologPredicate] (BuiltinsRegistry is
         // process-wide).
-        var shmo = ShmoCompiler.CompileSource(
-            ":- public main/0.\n"
-            + "main :- c247_phantom_no_dll(5, X), X = 10.\n");
+        var shmo = ShmoCompiler.CompileSource("""
+            :- public main/0.
+            main :- c247_phantom_no_dll(5, X), X = 10.
+            """);
 
         var config = new LinkConfig
         {
@@ -56,9 +57,10 @@ public class Chunk247Tests
         // it at link/load time.
         string testDll = typeof(C247Math).Assembly.Location;
 
-        var shmo = ShmoCompiler.CompileSource(
-            ":- public main/0.\n"
-            + "main :- c247_double(5, X), X = 10.\n");
+        var shmo = ShmoCompiler.CompileSource("""
+            :- public main/0.
+            main :- c247_double(5, X), X = 10.
+            """);
 
         var config = new LinkConfig
         {
@@ -90,9 +92,10 @@ public class Chunk247Tests
         string testDll = typeof(C247Math).Assembly.Location;
         string testDir = Path.GetDirectoryName(testDll)!;
 
-        var shmo = ShmoCompiler.CompileSource(
-            ":- public chunk247_check/0.\n"
-            + "chunk247_check :- c247_double(7, X), X =:= 14.\n");
+        var shmo = ShmoCompiler.CompileSource("""
+            :- public chunk247_check/0.
+            chunk247_check :- c247_double(7, X), X =:= 14.
+            """);
         var config = new LinkConfig
         {
             Objects = new[] { shmo },
@@ -139,9 +142,10 @@ public class Chunk247Tests
         // (5 vs 10 bytes).
         string testDll = typeof(C247Math).Assembly.Location;
         string testDir = Path.GetDirectoryName(testDll)!;
-        var shmo = ShmoCompiler.CompileSource(
-            ":- public chunk247_tail/2.\n"
-            + "chunk247_tail(N, R) :- c247_double(N, R).\n");
+        var shmo = ShmoCompiler.CompileSource("""
+            :- public chunk247_tail/2.
+            chunk247_tail(N, R) :- c247_double(N, R).
+            """);
 
         var config = new LinkConfig
         {
@@ -171,8 +175,10 @@ public class Chunk247Tests
         // A DLL with no [PrologPredicate] should still link, but the
         // linker warns and the bundle's ForeignAssemblies list
         // doesn't include it (no point auto-loading at runtime).
-        var shmo = ShmoCompiler.CompileSource(
-            ":- public bare/0.\nbare.\n");
+        var shmo = ShmoCompiler.CompileSource("""
+            :- public bare/0.
+            bare.
+            """);
         // Use Shumway.Core.dll — it doesn't carry [PrologPredicate].
         string emptyDll = typeof(Shumway.Core.Activation).Assembly.Location;
         var config = new LinkConfig

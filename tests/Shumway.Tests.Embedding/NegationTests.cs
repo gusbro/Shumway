@@ -73,7 +73,11 @@ public class NegationTests
     public void Neg_InsideConjunction_PropagatesCorrectly()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("colour(red).\ncolour(green).\ncolour(blue).\n");
+        engine.ConsultString("""
+            colour(red).
+            colour(green).
+            colour(blue).
+            """);
         // colour(X), \+ colour(other_X)? — pick a colour, succeed.
         // The negation is over a single colour atom that's not defined.
         var sol = engine.Query("colour(X), \\+ colour(orange).");
@@ -85,7 +89,11 @@ public class NegationTests
     public void Neg_FailureRejectsEntireBody()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(a).\np(b).\nq(b).\n");
+        engine.ConsultString("""
+            p(a).
+            p(b).
+            q(b).
+            """);
         // p(X), \+ q(X) — X must be in p but not in q.
         var solutions = engine.QueryAll("p(X), \\+ q(X).")
             .Select(s => s["X"]).ToList();
@@ -116,10 +124,11 @@ public class NegationTests
         // unique_member(X, L) :- member(X, L), \+ member(X, []).
         // (Just exercises \+ in a consulted clause; the inner condition is always false.)
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "member(X, [X|_]).\n" +
-            "member(X, [_|T]) :- member(X, T).\n" +
-            "non_empty_member(X, L) :- member(X, L), \\+ L = [].\n");
+        engine.ConsultString("""
+            member(X, [X|_]).
+            member(X, [_|T]) :- member(X, T).
+            non_empty_member(X, L) :- member(X, L), \+ L = [].
+            """);
         var sol = engine.Query("non_empty_member(X, [a, b]).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("a"), sol["X"]);
@@ -135,9 +144,11 @@ public class NegationTests
         // Hmm — \+ q(X) with unbound X tries q(X), which succeeds (binds X=a),
         // so \+ q(X) fails. So p(X) fails.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "q(a).\nr(b).\n" +
-            "p(X) :- \\+ q(X), \\+ r(X).\n");
+        engine.ConsultString("""
+            q(a).
+            r(b).
+            p(X) :- \+ q(X), \+ r(X).
+            """);
         Assert.False(engine.Query("p(X).").Success);
     }
 
@@ -146,7 +157,7 @@ public class NegationTests
     {
         // safe_div(X, Y, R) :- \+ Y = 0, R is X / Y.
         var engine = new PrologEngine();
-        engine.ConsultString("safe_div(X, Y, R) :- \\+ Y = 0, R is X / Y.\n");
+        engine.ConsultString("safe_div(X, Y, R) :- \\+ Y = 0, R is X / Y.");
         var sol = engine.Query("safe_div(10, 4, R).");
         Assert.True(sol.Success);
         // 10 / 4 = 2.5 (float).
@@ -157,7 +168,7 @@ public class NegationTests
     public void Neg_DivisionByZero_BlockedByNegation()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("safe_div(X, Y, R) :- \\+ Y = 0, R is X / Y.\n");
+        engine.ConsultString("safe_div(X, Y, R) :- \\+ Y = 0, R is X / Y.");
         Assert.False(engine.Query("safe_div(10, 0, R).").Success);
     }
 }

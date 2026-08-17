@@ -73,7 +73,7 @@ public class UndefinedPredicateTests
     public void UndefinedInClauseBody_RaisesWhenClauseRuns()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("run :- helper(1).\n");
+        engine.ConsultString("run :- helper(1).");
         var ex = Assert.Throws<PrologRuntimeException>(() => engine.Query("run."));
         Assert.Equal("existence_error", ex.Kind);
         Assert.EndsWith("helper/1", ex.Detail);
@@ -86,7 +86,10 @@ public class UndefinedPredicateTests
         // well-formed 'ok' must still succeed — an undefined predicate no
         // longer fails the whole program's link.
         var engine = new PrologEngine();
-        engine.ConsultString("broken :- gone(1).\nok.\n");
+        engine.ConsultString("""
+            broken :- gone(1).
+            ok.
+            """);
         Assert.True(engine.Query("ok.").Success);
     }
 
@@ -107,7 +110,7 @@ public class UndefinedPredicateTests
         // has no clauses — so a call to it fails rather than raising
         // existence_error.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic maybe/1.\n");
+        engine.ConsultString(":- dynamic maybe/1.");
         Assert.False(engine.Query("maybe(x).").Success);
     }
 }

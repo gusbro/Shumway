@@ -50,11 +50,12 @@ public class CompatLibrariesTests
         var engine = new PrologEngine();
         // lists / charsio are prelude-covered — importing them is a no-op that
         // succeeds and leaves the prelude predicates working.
-        engine.ConsultString(
-            ":- use_module(library(lists)).\n" +
-            ":- use_module(library(charsio)).\n" +
-            ":- public ok/0.\n" +
-            "ok.\n");
+        engine.ConsultString("""
+            :- use_module(library(lists)).
+            :- use_module(library(charsio)).
+            :- public ok/0.
+            ok.
+            """);
         Assert.True(engine.Query("ok.").Success);
         Assert.True(engine.Query("member(2, [1, 2, 3]).").Success);
     }
@@ -65,10 +66,11 @@ public class CompatLibrariesTests
         // The import directive must run during consult so a clause defined
         // AFTER it can call the imported predicate.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- use_module(library(dcgs)).\n" +
-            ":- public two/2.\n" +
-            "two --> seq(_), seq(_).\n");
+        engine.ConsultString("""
+            :- use_module(library(dcgs)).
+            :- public two/2.
+            two --> seq(_), seq(_).
+            """);
         Assert.True(engine.Query("two([a, b], []).").Success);
     }
 
@@ -78,9 +80,10 @@ public class CompatLibrariesTests
         var engine = new PrologEngine();
         // Importing the same library twice must not re-consult (which would
         // trip the public-predicate uniqueness check).
-        engine.ConsultString(
-            ":- use_module(library(dcgs)).\n" +
-            ":- use_module(library(dcgs)).\n");
+        engine.ConsultString("""
+            :- use_module(library(dcgs)).
+            :- use_module(library(dcgs)).
+            """);
         Assert.True(engine.Query("phrase(seq([a]), [a]).").Success);
     }
 
@@ -89,10 +92,11 @@ public class CompatLibrariesTests
     {
         var engine = new PrologEngine();
         // As a directive, an unknown library must not abort the consult.
-        engine.ConsultString(
-            ":- use_module(library(no_such_library_xyz)).\n" +
-            ":- public ok/0.\n" +
-            "ok.\n");
+        engine.ConsultString("""
+            :- use_module(library(no_such_library_xyz)).
+            :- public ok/0.
+            ok.
+            """);
         Assert.True(engine.Query("ok.").Success);
     }
 
@@ -107,10 +111,11 @@ public class CompatLibrariesTests
         // behaviour), so the export resolves through the import table — but a
         // private predicate stays invisible, proving nothing went bare-global.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(mymod, [pub/1]).\n" +
-            "pub(hello).\n" +
-            "priv(secret).\n");
+        engine.ConsultString("""
+            :- module(mymod, [pub/1]).
+            pub(hello).
+            priv(secret).
+            """);
         Assert.True(engine.Modules.ContainsKey("mymod"));
         Assert.True(engine.Modules["mymod"].IsExportQualified);
         Assert.True(engine.Query("pub(hello).").Success);
@@ -124,9 +129,10 @@ public class CompatLibrariesTests
         // consult succeeds and the export-qualified module is registered
         // (g/1 lives as m3$g, reachable via import — see ExportQualifiedModuleTests).
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(m3, [g/1, op(700, xfx, ===)]).\n" +
-            "g(ok).\n");
+        engine.ConsultString("""
+            :- module(m3, [g/1, op(700, xfx, ===)]).
+            g(ok).
+            """);
         Assert.True(engine.Modules.ContainsKey("m3"));
         Assert.True(engine.Modules["m3"].IsExportQualified);
     }

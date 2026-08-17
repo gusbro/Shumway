@@ -38,11 +38,12 @@ public class LogicalUpdateViewTests
         // ( p(X), retract(p(X)), fail ; true ) must enumerate all three:
         // p(X) captured the 3-clause view when it started.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- dynamic p/1.\n"
-            + "p(1). p(2). p(3).\n"
-            + ":- public collect/1.\n"
-            + "collect(L) :- findall(X, (p(X), retract(p(X))), L).\n");
+        engine.ConsultString("""
+            :- dynamic p/1.
+            p(1). p(2). p(3).
+            :- public collect/1.
+            collect(L) :- findall(X, (p(X), retract(p(X))), L).
+            """);
         var sol = engine.Query("collect(L).");
         Assert.True(sol.Success);
         Assert.Equal("1,2,3", ListString(sol["L"]!));
@@ -57,11 +58,12 @@ public class LogicalUpdateViewTests
         // q(1) — the q(X) enumeration ignores clauses asserted after it
         // started (otherwise it would loop / see 2).
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- dynamic q/1.\n"
-            + "q(1).\n"
-            + ":- public collect/1.\n"
-            + "collect(L) :- findall(X, (q(X), assertz(q(2))), L).\n");
+        engine.ConsultString("""
+            :- dynamic q/1.
+            q(1).
+            :- public collect/1.
+            collect(L) :- findall(X, (q(X), assertz(q(2))), L).
+            """);
         var sol = engine.Query("collect(L).");
         Assert.True(sol.Success);
         Assert.Equal("1", ListString(sol["L"]!));
@@ -78,13 +80,14 @@ public class LogicalUpdateViewTests
         // enumeration is in progress), but the observable result must be
         // unchanged.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- dynamic cur/1.\n"
-            + ":- public run/2.\n"
-            + "run(N, Last) :- assertz(cur(0)), step(N), cur(Last).\n"
-            + "step(0) :- !.\n"
-            + "step(N) :- N > 0, cur(C), C1 is C + 1,\n"
-            + "    retract(cur(_)), assertz(cur(C1)), N1 is N - 1, step(N1).\n");
+        engine.ConsultString("""
+            :- dynamic cur/1.
+            :- public run/2.
+            run(N, Last) :- assertz(cur(0)), step(N), cur(Last).
+            step(0) :- !.
+            step(N) :- N > 0, cur(C), C1 is C + 1,
+                retract(cur(_)), assertz(cur(C1)), N1 is N - 1, step(N1).
+            """);
         var sol = engine.Query("run(5000, Last).");
         Assert.True(sol.Success);
         Assert.Equal("5000", sol.Bindings["Last"].ToString());

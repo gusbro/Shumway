@@ -30,11 +30,12 @@ public class Chunk74Tests
         // det declaration is a contract: the trailing cut commits to
         // the first.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode pick(+, -) is det.\n" +
-            "pick(a, 1).\n" +
-            "pick(a, 2).\n" +
-            "pick(b, 3).\n");
+        engine.ConsultString("""
+            :- mode pick(+, -) is det.
+            pick(a, 1).
+            pick(a, 2).
+            pick(b, 3).
+            """);
         var sols = engine.QueryAll("pick(a, X).").Select(s => s["X"]).ToList();
         Assert.Single(sols);
         Assert.Equal(new IntTerm(1), sols[0]);
@@ -44,10 +45,11 @@ public class Chunk74Tests
     public void SemidetPredicate_YieldsFirstSolutionOnly()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode opt(+, -) is semidet.\n" +
-            "opt(x, first).\n" +
-            "opt(x, second).\n");
+        engine.ConsultString("""
+            :- mode opt(+, -) is semidet.
+            opt(x, first).
+            opt(x, second).
+            """);
         Assert.Single(engine.QueryAll("opt(x, R)."));
     }
 
@@ -56,11 +58,12 @@ public class Chunk74Tests
     {
         // Declared nondet → no specialization → full backtracking.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode gen(+, -) is nondet.\n" +
-            "gen(a, 1).\n" +
-            "gen(a, 2).\n" +
-            "gen(a, 3).\n");
+        engine.ConsultString("""
+            :- mode gen(+, -) is nondet.
+            gen(a, 1).
+            gen(a, 2).
+            gen(a, 3).
+            """);
         Assert.Equal(3, engine.QueryAll("gen(a, X).").Count());
     }
 
@@ -68,10 +71,11 @@ public class Chunk74Tests
     public void MultiPredicate_KeepsAllSolutions()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode many(+, -) is multi.\n" +
-            "many(k, 1).\n" +
-            "many(k, 2).\n");
+        engine.ConsultString("""
+            :- mode many(+, -) is multi.
+            many(k, 1).
+            many(k, 2).
+            """);
         Assert.Equal(2, engine.QueryAll("many(k, X).").Count());
     }
 
@@ -80,10 +84,11 @@ public class Chunk74Tests
     {
         // No :- mode directive at all → no specialization.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "plain(a, 1).\n" +
-            "plain(a, 2).\n" +
-            "plain(a, 3).\n");
+        engine.ConsultString("""
+            plain(a, 1).
+            plain(a, 2).
+            plain(a, 3).
+            """);
         Assert.Equal(3, engine.QueryAll("plain(a, X).").Count());
     }
 
@@ -94,11 +99,12 @@ public class Chunk74Tests
         // one declared mode is nondet, the cut-append is unsafe and
         // the predicate keeps full backtracking.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode route(+, -) is det.\n" +
-            ":- mode route(-, +) is nondet.\n" +
-            "route(a, 1).\n" +
-            "route(a, 2).\n");
+        engine.ConsultString("""
+            :- mode route(+, -) is det.
+            :- mode route(-, +) is nondet.
+            route(a, 1).
+            route(a, 2).
+            """);
         // Not specialized → both solutions survive.
         Assert.Equal(2, engine.QueryAll("route(a, X).").Count());
     }
@@ -110,11 +116,12 @@ public class Chunk74Tests
         // predicate is genuinely deterministic. The cut-append must
         // not change any answer.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode classify(+, -) is det.\n" +
-            "classify(X, negative) :- X < 0.\n" +
-            "classify(0, zero).\n" +
-            "classify(X, positive) :- X > 0.\n");
+        engine.ConsultString("""
+            :- mode classify(+, -) is det.
+            classify(X, negative) :- X < 0.
+            classify(0, zero).
+            classify(X, positive) :- X > 0.
+            """);
         Assert.Equal(new AtomTerm("negative"), engine.Query("classify(-5, C).")["C"]);
         Assert.Equal(new AtomTerm("zero"), engine.Query("classify(0, C).")["C"]);
         Assert.Equal(new AtomTerm("positive"), engine.Query("classify(7, C).")["C"]);
@@ -126,13 +133,14 @@ public class Chunk74Tests
         // The cut is trailing: it fires only after a clause's body
         // succeeds. If clause 1's body fails, clause 2 is still tried.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode lookup(+, -) is semidet.\n" +
-            "lookup(K, V) :- table(K, V), V > 10.\n" +
-            "lookup(K, V) :- table(K, V).\n" +
-            ":- public table/2.\n" +
-            "table(a, 5).\n" +
-            "table(a, 50).\n");
+        engine.ConsultString("""
+            :- mode lookup(+, -) is semidet.
+            lookup(K, V) :- table(K, V), V > 10.
+            lookup(K, V) :- table(K, V).
+            :- public table/2.
+            table(a, 5).
+            table(a, 50).
+            """);
         // Clause 1: table(a,5) → 5>10 fails; table(a,50) → 50>10 ok → V=50.
         var sol = engine.Query("lookup(a, V).");
         Assert.True(sol.Success);
@@ -148,11 +156,12 @@ public class Chunk74Tests
         // Fact-form clauses (no body) of a det predicate also get the
         // implicit cut: H. → H :- !.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode color(-) is det.\n" +
-            "color(red).\n" +
-            "color(green).\n" +
-            "color(blue).\n");
+        engine.ConsultString("""
+            :- mode color(-) is det.
+            color(red).
+            color(green).
+            color(blue).
+            """);
         Assert.Single(engine.QueryAll("color(X)."));
     }
 
@@ -161,9 +170,10 @@ public class Chunk74Tests
     {
         // Sanity: specialization doesn't break the basic success path.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode double(+, -) is det.\n" +
-            "double(X, Y) :- Y is X * 2.\n");
+        engine.ConsultString("""
+            :- mode double(+, -) is det.
+            double(X, Y) :- Y is X * 2.
+            """);
         Assert.Equal(new IntTerm(14), engine.Query("double(7, R).")["R"]);
     }
 
@@ -172,9 +182,10 @@ public class Chunk74Tests
     {
         // A det predicate that doesn't match still fails cleanly.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode only(+) is semidet.\n" +
-            "only(yes).\n");
+        engine.ConsultString("""
+            :- mode only(+) is semidet.
+            only(yes).
+            """);
         Assert.True(engine.Query("only(yes).").Success);
         Assert.False(engine.Query("only(no).").Success);
     }
@@ -185,7 +196,10 @@ public class Chunk74Tests
         // A dynamic predicate declared det also gets the cut-append;
         // the chunk-68 cache caches the specialized compiled form.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic d/2.\n:- mode d(+, -) is det.\n");
+        engine.ConsultString("""
+            :- dynamic d/2.
+            :- mode d(+, -) is det.
+            """);
         engine.Query("assertz(d(k, 1)).");
         engine.Query("assertz(d(k, 2)).");
         Assert.Single(engine.QueryAll("d(k, X)."));
@@ -197,14 +211,17 @@ public class Chunk74Tests
         // The implicit cut is clause-local: it commits within the det
         // predicate but must not prune the caller's choice points.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- mode classify1(+, -) is det.\n" +
-            "classify1(X, small) :- X < 10.\n" +
-            "classify1(X, big) :- X >= 10.\n" +
-            ":- public num/1.\n" +
-            "num(3).\nnum(20).\nnum(7).\n" +
-            ":- public describe/2.\n" +
-            "describe(N, C) :- num(N), classify1(N, C).\n");
+        engine.ConsultString("""
+            :- mode classify1(+, -) is det.
+            classify1(X, small) :- X < 10.
+            classify1(X, big) :- X >= 10.
+            :- public num/1.
+            num(3).
+            num(20).
+            num(7).
+            :- public describe/2.
+            describe(N, C) :- num(N), classify1(N, C).
+            """);
         // num/1 backtracks (3 solutions); classify1 is det per call but
         // its cut must not kill num/1's choice points.
         var sols = engine.QueryAll("describe(N, C).").ToList();

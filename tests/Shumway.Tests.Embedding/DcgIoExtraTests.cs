@@ -30,7 +30,7 @@ public class DcgIoExtraTests
     {
         // colour --> [red] ; [green] ; [blue].
         var engine = new PrologEngine();
-        engine.ConsultString("colour --> [red] ; [green] ; [blue].\n");
+        engine.ConsultString("colour --> [red] ; [green] ; [blue].");
 
         Assert.True(engine.Query("colour([red], []).").Success);
         Assert.True(engine.Query("colour([green], []).").Success);
@@ -46,8 +46,7 @@ public class DcgIoExtraTests
         // the negative-literal parsing question (-3 parses as -(3), not the
         // integer cell the integer/1 test would need).
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "sign(P) --> [N], ( { N > 0 } -> { P = positive } ; { P = zero_or_neg } ).\n");
+        engine.ConsultString("sign(P) --> [N], ( { N > 0 } -> { P = positive } ; { P = zero_or_neg } ).");
 
         Assert.Equal(Atom("positive"), engine.Query("sign(P, [5], []).")["P"]);
         Assert.Equal(Atom("zero_or_neg"), engine.Query("sign(P, [0], []).")["P"]);
@@ -58,7 +57,7 @@ public class DcgIoExtraTests
     {
         // greeting --> ([hello] ; [hi]), [world].
         var engine = new PrologEngine();
-        engine.ConsultString("greeting --> ([hello] ; [hi]), [world].\n");
+        engine.ConsultString("greeting --> ([hello] ; [hi]), [world].");
 
         Assert.True(engine.Query("greeting([hello, world], []).").Success);
         Assert.True(engine.Query("greeting([hi, world], []).").Success);

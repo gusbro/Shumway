@@ -25,14 +25,14 @@ public class Adr037NonEligibleTests
     {
         // The ! in Then commits the HOST: it prunes member's remaining choice
         // points, so only the first solution survives.
-        var e = Load("p(R) :- ( member(X, [1,2,3]) *-> R = X, ! ; R = none ).\n");
+        var e = Load("p(R) :- ( member(X, [1,2,3]) *-> R = X, ! ; R = none ).");
         Assert.True(e.Query("findall(R, p(R), L), L == [1].").Success);
     }
 
     [Fact]
     public void NestedControlInThen_Works()
     {
-        var e = Load("q(R) :- ( true *-> ( R = a ; R = b ) ; R = none ).\n");
+        var e = Load("q(R) :- ( true *-> ( R = a ; R = b ) ; R = none ).");
         Assert.True(e.Query("findall(R, q(R), L), L == [a,b].").Success);
     }
 
@@ -40,7 +40,7 @@ public class Adr037NonEligibleTests
     public void NonEligible_PreservesCondNondeterminism_ElsePruned()
     {
         // member (non-det) *-> a nested disjunction: every combination, no `none`.
-        var e = Load("p(R) :- ( member(X, [1,2,3]) *-> ( R = X ; R = neg(X) ) ; R = none ).\n");
+        var e = Load("p(R) :- ( member(X, [1,2,3]) *-> ( R = X ; R = neg(X) ) ; R = none ).");
         Assert.True(e.Query(
             "findall(R, p(R), L), L == [1, neg(1), 2, neg(2), 3, neg(3)].").Success);
     }
@@ -48,20 +48,21 @@ public class Adr037NonEligibleTests
     [Fact]
     public void NonEligible_CondFails_RunsElse()
     {
-        var e = Load("s(R) :- ( member(_, []) *-> ( R = a ; R = b ) ; R = els ).\n");
+        var e = Load("s(R) :- ( member(_, []) *-> ( R = a ; R = b ) ; R = els ).");
         Assert.True(e.Query("findall(R, s(R), L), L == [els].").Success);
     }
 
     [Fact]
     public void Standalone_SoftCut_NoElse()
     {
-        var e = Load(
-            "r(R) :- ( 1 =< 1 *-> R = yes ).\n" +
-            "f(R) :- ( fail *-> R = yes ).\n");
+        var e = Load("""
+            r(R) :- ( 1 =< 1 *-> R = yes ).
+            f(R) :- ( fail *-> R = yes ).
+            """);
         Assert.True(e.Query("r(R), R == yes.").Success);
         Assert.False(e.Query("f(_).").Success);   // no else, cond fails → fail
         // Non-deterministic standalone condition still enumerates.
-        var e2 = Load("g(X) :- ( member(X, [1,2,3]) *-> true ).\n");
+        var e2 = Load("g(X) :- ( member(X, [1,2,3]) *-> true ).");
         Assert.True(e2.Query("findall(X, g(X), L), L == [1,2,3].").Success);
     }
 

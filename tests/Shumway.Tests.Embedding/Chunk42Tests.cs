@@ -21,8 +21,12 @@ public class Chunk42Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public color/1.\ncolor(red).\ncolor(green).\ncolor(blue).");
+        engine.ConsultString("""
+            :- public color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
 
         // First query: ground arg, hits the IL atom-id dispatch.
         Assert.True(engine.Query("color(red).").Success);
@@ -36,8 +40,12 @@ public class Chunk42Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public color/1.\ncolor(red).\ncolor(green).\ncolor(blue).");
+        engine.ConsultString("""
+            :- public color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
 
         // Warm the predicate so it gets IL-promoted.
         engine.Query("color(red).");
@@ -57,8 +65,12 @@ public class Chunk42Tests
         // path. The collected list must match what Tier 0 would produce.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public color/1.\ncolor(red).\ncolor(green).\ncolor(blue).");
+        engine.ConsultString("""
+            :- public color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
         engine.Query("color(red).");
 
         var sol = engine.Query("findall(X, color(X), L).");
@@ -82,7 +94,11 @@ public class Chunk42Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public truth/1.\ntruth(yes).\ntruth(no).");
+        engine.ConsultString("""
+            :- public truth/1.
+            truth(yes).
+            truth(no).
+            """);
         engine.Query("truth(yes).");
         var sols = engine.QueryAll("truth(X).").ToList();
         Assert.Equal(2, sols.Count);
@@ -93,7 +109,12 @@ public class Chunk42Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public p/1.\np(a).\np(b).\np(c).");
+        engine.ConsultString("""
+            :- public p/1.
+            p(a).
+            p(b).
+            p(c).
+            """);
         engine.Query("p(a).");   // warm + promote
         Assert.False(engine.Query("p(z).").Success);
     }
@@ -104,12 +125,22 @@ public class Chunk42Tests
         // Same query against a fresh PrologEngine (Tier 0 only) and a
         // promoted engine — every solution and its order must match.
         var tier0 = new PrologEngine();
-        tier0.ConsultString(":- public q/1.\nq(one).\nq(two).\nq(three).");
+        tier0.ConsultString("""
+            :- public q/1.
+            q(one).
+            q(two).
+            q(three).
+            """);
         var tier0Sols = tier0.QueryAll("q(X).").Select(s => s["X"]).ToList();
 
         var tier1 = new PrologEngine();
         tier1.IlPromotion.Threshold = 1;
-        tier1.ConsultString(":- public q/1.\nq(one).\nq(two).\nq(three).");
+        tier1.ConsultString("""
+            :- public q/1.
+            q(one).
+            q(two).
+            q(three).
+            """);
         tier1.Query("q(one).");   // warm + promote
         var tier1Sols = tier1.QueryAll("q(X).").Select(s => s["X"]).ToList();
 

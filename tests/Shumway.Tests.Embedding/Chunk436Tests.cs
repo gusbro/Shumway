@@ -210,13 +210,14 @@ public class Chunk436Tests
     public void CSection_WorksThroughEngineConsult()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "a(1).\n" +
-            ":- c.\n" +
-            "unsigned long strlen(const char* s);\n" +
-            ":- prolog.\n" +
-            "b(2).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            a(1).
+            :- c.
+            unsigned long strlen(const char* s);
+            :- prolog.
+            b(2).
+            """);
         Assert.True(e.Query("a(1), b(2).").Success);
     }
 

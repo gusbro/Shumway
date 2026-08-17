@@ -34,11 +34,12 @@ public class Chunk69Tests
         // body inlines q's empty head match + proceed.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public foo/0.\n" +
-            ":- public q/0.\n" +
-            "q.\n" +
-            "foo :- q.\n");
+        engine.ConsultString("""
+            :- public foo/0.
+            :- public q/0.
+            q.
+            foo :- q.
+            """);
         Assert.True(engine.Query("foo.").Success);
         Assert.True(engine.IlPromotion.IsPromoted(Fid("foo", 0)));
     }
@@ -50,12 +51,13 @@ public class Chunk69Tests
         // get inlined (q via Call, r via Execute).
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public foo/0.\n" +
-            ":- public q/0.\n" +
-            ":- public r/0.\n" +
-            "q. r.\n" +
-            "foo :- q, r.\n");
+        engine.ConsultString("""
+            :- public foo/0.
+            :- public q/0.
+            :- public r/0.
+            q. r.
+            foo :- q, r.
+            """);
         Assert.True(engine.Query("foo.").Success);
         Assert.True(engine.IlPromotion.IsPromoted(Fid("foo", 0)));
     }
@@ -68,11 +70,12 @@ public class Chunk69Tests
         // caller's X[0].
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public foo/1.\n" +
-            ":- public check/1.\n" +
-            "check(ok).\n" +
-            "foo(X) :- check(X).\n");
+        engine.ConsultString("""
+            :- public foo/1.
+            :- public check/1.
+            check(ok).
+            foo(X) :- check(X).
+            """);
         Assert.True(engine.Query("foo(ok).").Success);
         Assert.False(engine.Query("foo(nope).").Success);
         Assert.True(engine.IlPromotion.IsPromoted(Fid("foo", 1)));
@@ -86,12 +89,13 @@ public class Chunk69Tests
         // and foo returns false.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public foo/1.\n" +
-            ":- public check/1.\n" +
-            ":- public r/0.\n" +
-            "check(ok). r.\n" +
-            "foo(X) :- check(X), r.\n");
+        engine.ConsultString("""
+            :- public foo/1.
+            :- public check/1.
+            :- public r/0.
+            check(ok). r.
+            foo(X) :- check(X), r.
+            """);
         Assert.True(engine.Query("foo(ok).").Success);
         Assert.False(engine.Query("foo(not_ok).").Success);
     }
@@ -129,14 +133,15 @@ public class Chunk69Tests
         // and continuation get the standard sub-call treatment.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public foo/0.\n" +
-            ":- public m/0.\n" +
-            ":- public a/0.\n" +
-            ":- public b/0.\n" +
-            "a. b.\n" +
-            "m :- a, b.\n" +
-            "foo :- m.\n");
+        engine.ConsultString("""
+            :- public foo/0.
+            :- public m/0.
+            :- public a/0.
+            :- public b/0.
+            a. b.
+            m :- a, b.
+            foo :- m.
+            """);
         Assert.True(engine.Query("foo.").Success);
     }
 
@@ -148,11 +153,12 @@ public class Chunk69Tests
         // meta-CP machinery handles the backtracking instead.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public foo/1.\n" +
-            ":- public color/1.\n" +
-            "color(red). color(green). color(blue).\n" +
-            "foo(X) :- color(X).\n");
+        engine.ConsultString("""
+            :- public foo/1.
+            :- public color/1.
+            color(red). color(green). color(blue).
+            foo(X) :- color(X).
+            """);
         var sols = engine.QueryAll("foo(X).").Select(s => s["X"]).ToList();
         Assert.Equal(new Term[] { new AtomTerm("red"), new AtomTerm("green"), new AtomTerm("blue") }, sols);
     }
@@ -165,11 +171,12 @@ public class Chunk69Tests
         // opcodes against the caller's X[0].
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public wrap/1.\n" +
-            ":- public check/1.\n" +
-            "check([7]).\n" +
-            "wrap(X) :- check(X).\n");
+        engine.ConsultString("""
+            :- public wrap/1.
+            :- public check/1.
+            check([7]).
+            wrap(X) :- check(X).
+            """);
         Assert.True(engine.Query("wrap([7]).").Success);
         Assert.False(engine.Query("wrap([8]).").Success);
         Assert.False(engine.Query("wrap(7).").Success);
@@ -183,13 +190,14 @@ public class Chunk69Tests
         // all three get inlined.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public chain/0.\n" +
-            ":- public a/0.\n" +
-            ":- public b/0.\n" +
-            ":- public c/0.\n" +
-            "a. b. c.\n" +
-            "chain :- a, b, c.\n");
+        engine.ConsultString("""
+            :- public chain/0.
+            :- public a/0.
+            :- public b/0.
+            :- public c/0.
+            a. b. c.
+            chain :- a, b, c.
+            """);
         Assert.True(engine.Query("chain.").Success);
         Assert.True(engine.IlPromotion.IsPromoted(Fid("chain", 0)));
     }
@@ -203,11 +211,12 @@ public class Chunk69Tests
         // bound to whatever the caller passes in.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public outer/1.\n" +
-            ":- public inner/1.\n" +
-            "inner(found).\n" +
-            "outer(X) :- inner(X).\n");
+        engine.ConsultString("""
+            :- public outer/1.
+            :- public inner/1.
+            inner(found).
+            outer(X) :- inner(X).
+            """);
         var sol = engine.Query("outer(Y).");
         Assert.True(sol.Success);
         Assert.Equal(new AtomTerm("found"), sol["Y"]);

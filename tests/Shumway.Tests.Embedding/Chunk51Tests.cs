@@ -36,9 +36,10 @@ public class Chunk51Tests
         // The runtime error fires inside a user-defined predicate
         // (compute/1) — division by zero raises evaluation_error.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public compute/1.\n" +
-            "compute(X) :- _ is X / 0.\n");
+        engine.ConsultString("""
+            :- public compute/1.
+            compute(X) :- _ is X / 0.
+            """);
         Assert.Throws<PrologRuntimeException>(
             () => engine.Query("compute(5)."));
         var trace = engine.LastErrorStackTrace;
@@ -49,8 +50,10 @@ public class Chunk51Tests
     public void StackTrace_DoesNotLeakSyntheticQueryPredicate()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public boom/0.\nboom :- throw(error).\n");
+        engine.ConsultString("""
+            :- public boom/0.
+            boom :- throw(error).
+            """);
         try { engine.Query("boom."); } catch (ShumwayPrologException) { }
         var trace = engine.LastErrorStackTrace;
         foreach (var (name, _) in trace)
@@ -64,11 +67,12 @@ public class Chunk51Tests
         // should reach down through the caller chain when the error
         // isn't caught.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public bomb/0.\n" +
-            ":- public outer/0.\n" +
-            "bomb :- throw(boom).\n" +
-            "outer :- bomb.\n");
+        engine.ConsultString("""
+            :- public bomb/0.
+            :- public outer/0.
+            bomb :- throw(boom).
+            outer :- bomb.
+            """);
         var ex = Assert.Throws<ShumwayPrologException>(
             () => engine.Query("outer."));
         Assert.IsType<AtomTerm>(ex.Term);
@@ -80,8 +84,10 @@ public class Chunk51Tests
     public void StackTrace_StickyBetweenSuccessfulQueries()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public crashy/0.\ncrashy :- throw(oops).\n");
+        engine.ConsultString("""
+            :- public crashy/0.
+            crashy :- throw(oops).
+            """);
         // First query fails with an error.
         try { engine.Query("crashy."); } catch (ShumwayPrologException) { }
         Assert.NotEmpty(engine.LastErrorStackTrace);

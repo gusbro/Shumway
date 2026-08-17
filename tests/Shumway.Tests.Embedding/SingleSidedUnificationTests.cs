@@ -13,10 +13,11 @@ public sealed class SingleSidedUnificationTests
     {
         var e = new PrologEngine();
         // Clause 3 would match anything, but clause 1 commits for 0.
-        e.ConsultString(
-            "sign(0, R) => R = zero.\n"
-            + "sign(N, R), N > 0 => R = pos.\n"
-            + "sign(_, R) => R = neg.\n");
+        e.ConsultString("""
+            sign(0, R) => R = zero.
+            sign(N, R), N > 0 => R = pos.
+            sign(_, R) => R = neg.
+            """);
         Assert.True(e.Query("sign(0, zero).").Success);
         Assert.True(e.Query("sign(5, pos).").Success);
         Assert.True(e.Query("sign(-3, neg).").Success);
@@ -26,10 +27,11 @@ public sealed class SingleSidedUnificationTests
     public void GuardFailure_FallsThroughToNextClause()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            "grade(S, a), S >= 90 => true.\n"
-            + "grade(S, b), S >= 80 => true.\n"
-            + "grade(_, f) => true.\n");
+        e.ConsultString("""
+            grade(S, a), S >= 90 => true.
+            grade(S, b), S >= 80 => true.
+            grade(_, f) => true.
+            """);
         Assert.True(e.Query("grade(95, a).").Success);
         Assert.True(e.Query("grade(85, b).").Success);   // 85>=90 fails, 85>=80 holds
         Assert.True(e.Query("grade(50, f).").Success);   // both guards fail
@@ -43,9 +45,10 @@ public sealed class SingleSidedUnificationTests
         var e = new PrologEngine();
         // Two clauses whose heads both unify with p(1, X); the committed choice
         // means p(1, X) yields exactly ONE solution (the first).
-        e.ConsultString(
-            "p(1, R) => R = first.\n"
-            + "p(_, R) => R = second.\n");
+        e.ConsultString("""
+            p(1, R) => R = first.
+            p(_, R) => R = second.
+            """);
         Assert.Single(e.QueryAll("p(1, X)."));
         Assert.True(e.Query("p(1, first).").Success);
         Assert.False(e.Query("p(1, second).").Success);   // committed away
@@ -57,11 +60,12 @@ public sealed class SingleSidedUnificationTests
         var e = new PrologEngine();
         // The library shape SSU is written for: structural head patterns, one
         // clause per constructor, deterministic.
-        e.ConsultString(
-            "depth(leaf, 0) => true.\n"
-            + "depth(node(L, R), D) => depth(L, DL), depth(R, DR), max(DL, DR, M), D is M + 1.\n"
-            + "max(A, B, A), A >= B => true.\n"
-            + "max(_, B, B) => true.\n");
+        e.ConsultString("""
+            depth(leaf, 0) => true.
+            depth(node(L, R), D) => depth(L, DL), depth(R, DR), max(DL, DR, M), D is M + 1.
+            max(A, B, A), A >= B => true.
+            max(_, B, B) => true.
+            """);
         Assert.True(e.Query("depth(leaf, 0).").Success);
         Assert.True(e.Query("depth(node(leaf, node(leaf, leaf)), 2).").Success);
     }

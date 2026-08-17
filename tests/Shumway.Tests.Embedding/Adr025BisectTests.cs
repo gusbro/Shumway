@@ -67,9 +67,10 @@ public class HelperNameCollisionRegressionTests
     [Fact]
     public void NegationAndCatchHelpers_NoCollision()
     {
-        var e = E(
-            "safe(X) :- \\+ bad(X).\n" +
-            "bad(0).\n");
+        var e = E("""
+            safe(X) :- \+ bad(X).
+            bad(0).
+            """);
         Assert.True(e.Query("\\+ bad(1), safe(1).").Success);
         Assert.True(e.Query("findall(X, (member(X, [0, 1, 2]), safe(X)), L), L == [1, 2].").Success);
         Assert.True(e.Query("catch(safe(1), _, fail).").Success);
@@ -78,17 +79,17 @@ public class HelperNameCollisionRegressionTests
     // ---- ADR-025 inline-lowering arith shapes (bisected during bring-up) ----
 
     [Fact] public void Inline_ArithInThen()
-        => Assert.True(E("t(X,R) :- (X > 0 -> Y is X * 2, R = Y ; R = neg).\n", inline: true)
+        => Assert.True(E("t(X,R) :- (X > 0 -> Y is X * 2, R = Y ; R = neg).", inline: true)
             .Query("t(3, R), R == 6.").Success);
 
     [Fact] public void Inline_ArithInElse()
-        => Assert.True(E("t(X,R) :- (X > 100 -> R = big ; Y is X + 1, R = Y).\n", inline: true)
+        => Assert.True(E("t(X,R) :- (X > 100 -> R = big ; Y is X + 1, R = Y).", inline: true)
             .Query("t(3, R), R == 4.").Success);
 
     [Fact] public void Inline_SameVarBoundInBothBranches()
         // Regression for the emitter's Y-initialization tracking across branches:
         // A is first-bound in BOTH branches; the else path must not read it as
         // "already initialized" just because the then path was emitted first.
-        => Assert.True(E("t(X,G) :- (X > 0 -> A = high ; A = low), G = g(A).\n", inline: true)
+        => Assert.True(E("t(X,G) :- (X > 0 -> A = high ; A = low), G = g(A).", inline: true)
             .Query("t(-2, G), G == g(low).").Success);
 }

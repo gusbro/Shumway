@@ -37,9 +37,10 @@ public class Chunk439Tests
     {
         var e = new PrologEngine();
         // The arity.pl / arv2.pl corpus shape: concat(['!', Token], N).
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "l(['!', x]).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            l(['!', x]).
+            """);
         var s = e.Query("l([A, B]).");
         Assert.True(s.Success);
         Assert.True(e.Query("l(['!', x]).").Success);
@@ -51,9 +52,10 @@ public class Chunk439Tests
     public void QuotedBang_UsedInAtomConcatShape_FlagOn()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "bang(N, T) :- atomic_list_concat(['!', T], N).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            bang(N, T) :- atomic_list_concat(['!', T], N).
+            """);
         var s = e.Query("bang(N, foo).");
         Assert.True(s.Success);
         Assert.Equal("!foo", s["N"]!.ToString());
@@ -65,9 +67,10 @@ public class Chunk439Tests
         var e = new PrologEngine();
         // Snip semantics unchanged: internal backtracking allowed, choice
         // points pruned on exit — so findall sees exactly one solution.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "s(X) :- [! member(X, [1, 2, 3]), X > 1 !].\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            s(X) :- [! member(X, [1, 2, 3]), X > 1 !].
+            """);
         Assert.True(e.Query("s(2).").Success);
         Assert.True(e.Query("findall(X, s(X), [2]).").Success);
     }
@@ -79,7 +82,7 @@ public class Chunk439Tests
         // Not arity-gated: a quoted '!' after '[' is a list element in
         // every mode (the snip parse itself is what chunk 263 added
         // unconditionally; the WasQuoted guard applies equally).
-        e.ConsultString("l(['!', y]).\n");
+        e.ConsultString("l(['!', y]).");
         Assert.True(e.Query("l(['!', y]).").Success);
     }
 
@@ -93,9 +96,10 @@ public class Chunk439Tests
         var e = new PrologEngine();
         // Source: c1(`\).  — the char after ` is taken literally, so the
         // backslash IS the literal (no escape sequence starts).
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "c1(`\\).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            c1(`\).
+            """);
         Assert.True(e.Query("c1(92).").Success);
     }
 
@@ -105,9 +109,10 @@ public class Chunk439Tests
         var e = new PrologEngine();
         // Source: c2(`)).  — the first `)` is the literal (41), the
         // second closes the argument list.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "c2(`)).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            c2(`)).
+            """);
         Assert.True(e.Query("c2(41).").Success);
     }
 
@@ -116,9 +121,10 @@ public class Chunk439Tests
     {
         var e = new PrologEngine();
         // Source: c3(` ).  — backquote followed by a space is code 32.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "c3(` ).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            c3(` ).
+            """);
         Assert.True(e.Query("c3(32).").Success);
     }
 
@@ -128,9 +134,10 @@ public class Chunk439Tests
         var e = new PrologEngine();
         // The prospec3.pl shape: edit_format1(..., `", ...) — a
         // backquoted double-quote character, code 34.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "c4(`\").\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            c4(`").
+            """);
         Assert.True(e.Query("c4(34).").Success);
     }
 
@@ -167,8 +174,7 @@ public class Chunk439Tests
         // The subviews.pl construct (line 2069): the third argument of
         // ifthenelse/3 is followed by a comma, a % comment, and then the
         // closing paren on the next line.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
+        e.ConsultString(":- set_prolog_flag(arity_compat, true).\n" +
             "ifthenelse(C, T, _) :- C, !, T.\n" +
             "ifthenelse(_, _, E) :- E.\n" +
             "save_old_mod.\n" +
@@ -186,9 +192,10 @@ public class Chunk439Tests
     public void TrailingCommaBeforeRParen_SimpleFact_FlagOn()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "f(a, b, ).\n");
+        e.ConsultString("""
+            :- set_prolog_flag(arity_compat, true).
+            f(a, b, ).
+            """);
         // The dangling comma is dropped: f/2, not f/3.
         Assert.True(e.Query("f(a, b).").Success);
         Assert.False(e.Query("current_predicate(f/3).").Success);
@@ -225,9 +232,10 @@ public class Chunk439Tests
     public void DcgStringTerminal_CodesMode()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(double_quotes, codes).\n" +
-            "ab --> \"ab\".\n");
+        e.ConsultString("""
+            :- set_prolog_flag(double_quotes, codes).
+            ab --> "ab".
+            """);
         Assert.True(e.Query("phrase(ab, [97, 98]).").Success);
         Assert.False(e.Query("phrase(ab, [97]).").Success);
     }
@@ -236,9 +244,10 @@ public class Chunk439Tests
     public void DcgStringTerminal_CharsMode()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(double_quotes, chars).\n" +
-            "ab --> \"ab\".\n");
+        e.ConsultString("""
+            :- set_prolog_flag(double_quotes, chars).
+            ab --> "ab".
+            """);
         Assert.True(e.Query("phrase(ab, [a, b]).").Success);
         Assert.False(e.Query("phrase(ab, [a, c]).").Success);
     }
@@ -251,7 +260,7 @@ public class Chunk439Tests
         // in DcgTransform to its character codes (PSTR's representation).
         // Pre-chunk-439 this threw "DcgTransform: cannot add diff-list
         // args to StringTerm".
-        e.ConsultString("ab --> \"ab\".\n");
+        e.ConsultString("ab --> \"ab\".");
         Assert.True(e.Query("phrase(ab, [97, 98]).").Success);
         Assert.False(e.Query("phrase(ab, [98, 97]).").Success);
     }
@@ -261,9 +270,10 @@ public class Chunk439Tests
     {
         var e = new PrologEngine();
         // "" is the empty terminal: S0 = S. Default (string) mode.
-        e.ConsultString(
-            "e --> \"\".\n" +
-            "wrap --> e, \"x\", e.\n");
+        e.ConsultString("""
+            e --> "".
+            wrap --> e, "x", e.
+            """);
         Assert.True(e.Query("phrase(e, []).").Success);
         Assert.True(e.Query("phrase(e, [a], [a]).").Success);
         Assert.True(e.Query("phrase(wrap, [120]).").Success);
@@ -274,9 +284,10 @@ public class Chunk439Tests
     {
         var e = new PrologEngine();
         // The prospec3.pl shape: a string terminal followed by more body.
-        e.ConsultString(
-            ":- set_prolog_flag(double_quotes, codes).\n" +
-            "pct(P) --> \"%\", [P].\n");
+        e.ConsultString("""
+            :- set_prolog_flag(double_quotes, codes).
+            pct(P) --> "%", [P].
+            """);
         var s = e.Query("phrase(pct(P), [37, 100]).");
         Assert.True(s.Success);
         Assert.Equal("100", s["P"]!.ToString());

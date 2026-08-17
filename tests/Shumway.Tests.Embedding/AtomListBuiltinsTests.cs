@@ -307,9 +307,10 @@ public class AtomListBuiltinsTests
         // reverse([], []).
         // reverse([H|T], R) :- reverse(T, RT), append(RT, [H], R).
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "reverse([], []).\n" +
-            "reverse([H|T], R) :- reverse(T, RT), append(RT, [H], R).\n");
+        engine.ConsultString("""
+            reverse([], []).
+            reverse([H|T], R) :- reverse(T, RT), append(RT, [H], R).
+            """);
         var sol = engine.Query("reverse([a, b, c], R).");
         Assert.True(sol.Success);
         Assert.Equal(List(Atom("c"), Atom("b"), Atom("a")), sol["R"]);

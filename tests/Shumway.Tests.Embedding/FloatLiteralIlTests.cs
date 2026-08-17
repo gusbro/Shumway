@@ -33,7 +33,12 @@ public class FloatLiteralIlTests
     {
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 1;   // promote on first call
-        e.ConsultString(":- public temp/2.\ntemp(mon, 1.5).\ntemp(tue, 2.5).\ntemp(wed, 3.5).\n");
+        e.ConsultString("""
+            :- public temp/2.
+            temp(mon, 1.5).
+            temp(tue, 2.5).
+            temp(wed, 3.5).
+            """);
         int fid = Fid("temp", 2);
         for (int i = 0; i < 3; i++) Assert.True(e.Query("temp(tue, 2.5).").Success);
         Assert.True(e.IlPromotion.IsPromoted(fid));                 // floats no longer block IL
@@ -48,7 +53,10 @@ public class FloatLiteralIlTests
         // make/1 builds a compound carrying a float literal (put_float in the body).
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 1;
-        e.ConsultString(":- public make/1.\nmake(p(1.25)).\n");
+        e.ConsultString("""
+            :- public make/1.
+            make(p(1.25)).
+            """);
         for (int i = 0; i < 3; i++) Assert.True(e.Query("make(_).").Success);
         Assert.True(e.IlPromotion.IsPromoted(Fid("make", 1)));
         Assert.True(e.Query("make(p(X)), X =:= 1.25.").Success);

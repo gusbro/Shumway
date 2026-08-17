@@ -68,9 +68,10 @@ public class Chunk55Tests
         // (the chain machinery isn't engaged) and the frame falls back
         // to the predicate's first-clause source position.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public single/1.\n" +
-            "single(X) :- _ is X / 0.\n");      // line 2
+        engine.ConsultString("""
+            :- public single/1.
+            single(X) :- _ is X / 0.
+            """);      // line 2
         Assert.Throws<PrologRuntimeException>(
             () => engine.Query("single(7)."));
         var frames = engine.LastErrorStackTraceWithPositions;

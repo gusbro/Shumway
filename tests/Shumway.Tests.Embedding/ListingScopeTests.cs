@@ -27,7 +27,10 @@ public sealed class ListingScopeTests
     public void ListsTheUsersPredicatesOnly()
     {
         var e = new PrologEngine();
-        e.ConsultString("mine(1).\nmine(2).\n");
+        e.ConsultString("""
+            mine(1).
+            mine(2).
+            """);
         string text = Listing(e);
 
         Assert.Contains("mine(1)", text);
@@ -40,7 +43,7 @@ public sealed class ListingScopeTests
     {
         var e = new PrologEngine();
         e.UseClpfd();
-        e.ConsultString("mine(1).\n");
+        e.ConsultString("mine(1).");
         string text = Listing(e);
 
         Assert.Contains("mine(1)", text);

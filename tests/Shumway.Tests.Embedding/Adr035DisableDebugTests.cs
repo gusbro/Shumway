@@ -75,7 +75,11 @@ public class Adr035DisableDebugTests
         //   2: visible_a(1).
         //   3: :- disable_debug.
         //   4: hidden_b(2).
-        var engine = DebugEngine("visible_a(1).\n:- disable_debug.\nhidden_b(2).\n");
+        var engine = DebugEngine("""
+            visible_a(1).
+            :- disable_debug.
+            hidden_b(2).
+            """);
 
         Assert.True(engine.AddBreakpoint("<string>", 2) > 0);   // debuggable
         Assert.Equal(0, engine.AddBreakpoint("<string>", 4));   // opaque — cannot bind
@@ -88,8 +92,12 @@ public class Adr035DisableDebugTests
         //   3: hidden(1).
         //   4: :- enable_debug.
         //   5: visible(2).
-        var engine = DebugEngine(
-            ":- disable_debug.\nhidden(1).\n:- enable_debug.\nvisible(2).\n");
+        var engine = DebugEngine("""
+            :- disable_debug.
+            hidden(1).
+            :- enable_debug.
+            visible(2).
+            """);
 
         Assert.Equal(0, engine.AddBreakpoint("<string>", 3));
         Assert.True(engine.AddBreakpoint("<string>", 5) > 0);
@@ -109,9 +117,15 @@ public class Adr035DisableDebugTests
         //   6: c(3).                <- debuggable
         //   7: :- disable_debug.
         //   8: d(4).                <- not
-        var engine = DebugEngine(
-            "a(1).\n:- disable_debug.\nb(2).\n:- enable_debug.\nc(3).\n"
-            + ":- disable_debug.\nd(4).\n");
+        var engine = DebugEngine("""
+            a(1).
+            :- disable_debug.
+            b(2).
+            :- enable_debug.
+            c(3).
+            :- disable_debug.
+            d(4).
+            """);
 
         Assert.True(engine.AddBreakpoint("<string>", 2) > 0);
         Assert.Equal(0, engine.AddBreakpoint("<string>", 4));
@@ -135,9 +149,13 @@ public class Adr035DisableDebugTests
         //   4: :- enable_debug.
         //   5: deep(X) :- leaf(X).
         //   6: leaf(42).
-        var engine = DebugEngine(
-            ":- disable_debug.\nopaque(X) :- deep(X).\n:- enable_debug.\n"
-            + "deep(X) :- leaf(X).\nleaf(42).\n");
+        var engine = DebugEngine("""
+            :- disable_debug.
+            opaque(X) :- deep(X).
+            :- enable_debug.
+            deep(X) :- leaf(X).
+            leaf(42).
+            """);
 
         Assert.Equal(0, engine.AddBreakpoint("<string>", 3));   // inside the black box
         Assert.True(engine.AddBreakpoint("<string>", 6) > 0);   // beyond it
@@ -154,9 +172,11 @@ public class Adr035DisableDebugTests
         // No debug_lastcall is emitted for them, so debug_lco is inert there: a deep
         // tail recursion in an opaque predicate keeps running in constant stack even
         // with LCO switched "off".
-        var engine = DebugEngine(
-            ":- disable_debug.\n"
-            + "loop(0, 0).\nloop(N, R) :- N > 0, M is N - 1, loop(M, R).\n");
+        var engine = DebugEngine("""
+            :- disable_debug.
+            loop(0, 0).
+            loop(N, R) :- N > 0, M is N - 1, loop(M, R).
+            """);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
 
         Assert.Equal(0, engine.QueryFirst<int>("loop(50000, R).", "R"));
@@ -166,8 +186,13 @@ public class Adr035DisableDebugTests
     public void TheDirectivesAreInertWithoutDebugCompilation()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "a(1).\n:- disable_debug.\nb(2).\n:- enable_debug.\nc(3).\n");
+        engine.ConsultString("""
+            a(1).
+            :- disable_debug.
+            b(2).
+            :- enable_debug.
+            c(3).
+            """);
 
         Assert.Equal(1, engine.QueryFirst<int>("a(X).", "X"));
         Assert.Equal(2, engine.QueryFirst<int>("b(X).", "X"));
@@ -177,10 +202,13 @@ public class Adr035DisableDebugTests
     [Fact]
     public void ProgramMeaningIsUnchanged_WhicheverRegionsAreDisabled()
     {
-        var engine = DebugEngine(
-            "rev([], []).\nrev([H|T], R) :- rev(T, RT), app(RT, [H], R).\n"
-            + ":- disable_debug.\n"
-            + "app([], L, L).\napp([H|T], L, [H|R]) :- app(T, L, R).\n");
+        var engine = DebugEngine("""
+            rev([], []).
+            rev([H|T], R) :- rev(T, RT), app(RT, [H], R).
+            :- disable_debug.
+            app([], L, L).
+            app([H|T], L, [H|R]) :- app(T, L, R).
+            """);
 
         Assert.Equal(new[] { 3, 2, 1 }, engine.QueryFirst<List<int>>("rev([1,2,3], R).", "R"));
     }

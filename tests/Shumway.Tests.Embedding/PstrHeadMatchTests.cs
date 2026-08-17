@@ -32,10 +32,11 @@ public class PstrHeadMatchTests
     public void DcgOverDoubleQuotedString_Matches()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            "digits([D|T]) --> digit(D), digits(T).\n" +
-            "digits([D]) --> digit(D).\n" +
-            "digit(D) --> [D], { D >= 0'0, D =< 0'9 }.\n");
+        e.ConsultString("""
+            digits([D|T]) --> digit(D), digits(T).
+            digits([D]) --> digit(D).
+            digit(D) --> [D], { D >= 0'0, D =< 0'9 }.
+            """);
         var s = e.Query("phrase(digits(L), \"123\", R), R == [].");
         Assert.True(s.Success);
         Assert.Equal(".(49, .(50, .(51, [])))", s["L"]!.ToString());
@@ -56,12 +57,12 @@ public class PstrHeadMatchTests
         // phrase(M:NT, L, R) → M:NT'(…, L, R) — appending to ':' itself
         // raised existence_error(':'/4).
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- module(gm, []).\n" +
-            "letters([C|T]) --> [C], letters(T).\n" +
-            "letters([]) --> [].\n");
-        e.ConsultString(
-            "use_it(L, R) :- phrase(gm:letters(L), [a, b], R).");
+        e.ConsultString("""
+            :- module(gm, []).
+            letters([C|T]) --> [C], letters(T).
+            letters([]) --> [].
+            """);
+        e.ConsultString("use_it(L, R) :- phrase(gm:letters(L), [a, b], R).");
         var s = e.Query("use_it(L, []).");
         Assert.True(s.Success);
         Assert.Equal(".(a, .(b, []))", s["L"]!.ToString());

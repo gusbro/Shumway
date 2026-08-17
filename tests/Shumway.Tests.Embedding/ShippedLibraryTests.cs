@@ -31,15 +31,16 @@ public class ShippedLibraryTests
     {
         var e = new PrologEngine();
         e.AddLibraryDirectory(RepoLibDir());
-        e.ConsultString(
-            ":- use_module(library(lists_ext)).\n" +
-            "t_take(L)      :- take(2, [a,b,c,d], L).\n" +
-            "t_drop(L)      :- drop(2, [a,b,c,d], L).\n" +
-            "t_split(P, S)  :- split_at(2, [a,b,c,d], P, S).\n" +
-            "t_zip(Ps)      :- zip([1,2,3], [a,b,c], Ps).\n" +
-            "t_unzip(As,Bs) :- unzip([1-a,2-b], As, Bs).\n" +
-            "t_inter(L)     :- intersperse(x, [a,b,c], L).\n" +
-            "t_flatten(L)   :- flatten([1,[2,[3,4],5]], L).");
+        e.ConsultString("""
+            :- use_module(library(lists_ext)).
+            t_take(L)      :- take(2, [a,b,c,d], L).
+            t_drop(L)      :- drop(2, [a,b,c,d], L).
+            t_split(P, S)  :- split_at(2, [a,b,c,d], P, S).
+            t_zip(Ps)      :- zip([1,2,3], [a,b,c], Ps).
+            t_unzip(As,Bs) :- unzip([1-a,2-b], As, Bs).
+            t_inter(L)     :- intersperse(x, [a,b,c], L).
+            t_flatten(L)   :- flatten([1,[2,[3,4],5]], L).
+            """);
         return e;
     }
 

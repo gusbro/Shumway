@@ -76,7 +76,10 @@ public class Chunk239Tests
     public void Query_ResultList_DecodesViaTypedAccessor()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public xs/1.\nxs([a, b, c]).\n");
+        engine.ConsultString("""
+            :- public xs/1.
+            xs([a, b, c]).
+            """);
         var sol = engine.Query("xs(L).");
         var list = sol.Get<List<string>>("L");
         Assert.Equal(new[] { "a", "b", "c" }, list);

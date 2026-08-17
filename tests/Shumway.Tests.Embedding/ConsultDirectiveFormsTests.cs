@@ -27,7 +27,7 @@ public class ConsultDirectiveFormsTests
     public void Dynamic_CommaSeparatedForm_Accepted()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic a/0, b/1, c/2.\n");
+        e.ConsultString(":- dynamic a/0, b/1, c/2.");
         // a/0 and b/1 and c/2 are now valid call targets that
         // assertz can populate at runtime.
         Assert.True(e.Query("assertz(a).").Success);
@@ -42,10 +42,11 @@ public class ConsultDirectiveFormsTests
     public void Public_CommaSeparatedForm_Accepted()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- module(m).\n"
-            + ":- public foo/0, bar/1.\n"
-            + "foo. bar(_).\n");
+        e.ConsultString("""
+            :- module(m).
+            :- public foo/0, bar/1.
+            foo. bar(_).
+            """);
         Assert.True(e.Query("foo.").Success);
         Assert.True(e.Query("bar(_).").Success);
     }
@@ -56,9 +57,13 @@ public class ConsultDirectiveFormsTests
         var e = new PrologEngine();
         // Without :- discontiguous the engine would throw on the
         // re-interleaved p/q clauses. The comma form must work.
-        e.ConsultString(
-            ":- discontiguous p/1, q/1.\n"
-            + "p(1).\nq(1).\np(2).\nq(2).\n");
+        e.ConsultString("""
+            :- discontiguous p/1, q/1.
+            p(1).
+            q(1).
+            p(2).
+            q(2).
+            """);
         Assert.True(e.Query("p(1).").Success);
         Assert.True(e.Query("q(2).").Success);
     }
@@ -72,12 +77,13 @@ public class ConsultDirectiveFormsTests
         // not contiguous" because every DcgRule's head term was
         // the `-->`/2 compound.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- module(g).\n"
-            + ":- public sentence/2.\n"
-            + "sentence --> noun, verb.\n"
-            + "noun --> [the], [dog].\n"
-            + "verb --> [runs].\n");
+        e.ConsultString("""
+            :- module(g).
+            :- public sentence/2.
+            sentence --> noun, verb.
+            noun --> [the], [dog].
+            verb --> [runs].
+            """);
         Assert.True(e.Query("sentence([the, dog, runs], []).").Success);
     }
 
@@ -88,21 +94,23 @@ public class ConsultDirectiveFormsTests
         // the same expanded name/arity should be flagged just like
         // regular Rule clauses are.
         var e = new PrologEngine();
-        Assert.ThrowsAny<Exception>(() => e.ConsultString(
-            "a --> [x].\n"
-            + "b --> [y].\n"
-            + "a --> [z].\n"));   // a/2 split by b/2 — must throw.
+        Assert.ThrowsAny<Exception>(() => e.ConsultString("""
+            a --> [x].
+            b --> [y].
+            a --> [z].
+            """));   // a/2 split by b/2 — must throw.
     }
 
     [Fact]
     public void DcgRules_InterleavedWithDiscontiguousDeclared_Allowed()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- discontiguous a/2.\n"
-            + "a --> [x].\n"
-            + "b --> [y].\n"
-            + "a --> [z].\n");
+        e.ConsultString("""
+            :- discontiguous a/2.
+            a --> [x].
+            b --> [y].
+            a --> [z].
+            """);
         // Just a smoke check — if consult didn't throw, the
         // discontiguous declaration with the expanded arity was
         // honoured.

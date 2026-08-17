@@ -95,8 +95,13 @@ public class Adr035WatchEditTests
         //  4:     mid(X, Y),
         //  5:     Out = pair(X, Y).
         //  6: mid(f(Z), Z).
-        var engine = DebugEngine(
-            "run(Out) :-\n    X = 1,\n    mid(X, Y),\n    Out = pair(X, Y).\nmid(f(Z), Z).\n");
+        var engine = DebugEngine("""
+            run(Out) :-
+                X = 1,
+                mid(X, Y),
+                Out = pair(X, Y).
+            mid(f(Z), Z).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 4) > 0);
 
         var (results, sols) = RunEditing(engine, "run(Out).", "X", "f(Y)");
@@ -127,10 +132,16 @@ public class Adr035WatchEditTests
         //  7: pick(1).
         //  8: pick(2).
         //  9: note(T) :- assertz(log(T)).
-        var engine = DebugEngine(
-            ":- dynamic(log/1).\n" +
-            "run(Out) :-\n    pick(X),\n    note(X),\n    Out = X.\npick(1).\npick(2).\n" +
-            "note(T) :- assertz(log(T)).\n");
+        var engine = DebugEngine("""
+            :- dynamic(log/1).
+            run(Out) :-
+                pick(X),
+                note(X),
+                Out = X.
+            pick(1).
+            pick(2).
+            note(T) :- assertz(log(T)).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 5) > 0);
 
         var (results, sols) = RunEditing(engine, "run(Out).", "X", "9");
@@ -154,9 +165,13 @@ public class Adr035WatchEditTests
         //  4:     check(X),
         //  5:     Out = X.
         //  6: check(hola(A)) :- atom(A).
-        var engine = DebugEngine(
-            "run(Out) :-\n    X = hola('1234'),\n    check(X),\n    Out = X.\n" +
-            "check(hola(A)) :- atom(A).\n");
+        var engine = DebugEngine("""
+            run(Out) :-
+                X = hola('1234'),
+                check(X),
+                Out = X.
+            check(hola(A)) :- atom(A).
+            """);
         Assert.True(engine.AddBreakpoint("<string>", 4) > 0);
 
         string? shown = null;

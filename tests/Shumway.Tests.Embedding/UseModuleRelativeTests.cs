@@ -64,7 +64,10 @@ public sealed class LoadWarningTests
     {
         var warnings = new StringWriter();
         var e = new PrologEngine { Out = new StringWriter(), Warnings = warnings };
-        e.ConsultString(":- use_module('no_such_file_xyz.pl').\np(1).\n");
+        e.ConsultString("""
+            :- use_module('no_such_file_xyz.pl').
+            p(1).
+            """);
 
         Assert.Contains("no_such_file_xyz.pl", warnings.ToString());
         // The rest of the file still loaded — a missing import is a warning.
@@ -76,7 +79,7 @@ public sealed class LoadWarningTests
     {
         var warnings = new StringWriter();
         var e = new PrologEngine { Out = new StringWriter(), Warnings = warnings };
-        e.ConsultString(":- fail.\n");
+        e.ConsultString(":- fail.");
         Assert.Contains("directive failed", warnings.ToString());
     }
 
@@ -85,7 +88,7 @@ public sealed class LoadWarningTests
     {
         var warnings = new StringWriter();
         var e = new PrologEngine { Out = new StringWriter(), Warnings = warnings };
-        e.ConsultString(":- use_module(library(no_such_library_xyz)).\n");
+        e.ConsultString(":- use_module(library(no_such_library_xyz)).");
         Assert.Contains("no_such_library_xyz", warnings.ToString());
     }
 }

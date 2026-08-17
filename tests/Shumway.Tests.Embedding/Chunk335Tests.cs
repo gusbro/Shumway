@@ -87,8 +87,7 @@ public class Chunk335Tests
     public void NeckCut_OverConstraintInClause_RetriesCaller()
     {
         var engine = Fd();
-        engine.ConsultString(
-            "pick(X) :- member(V, [7, 3]), X #= V, !.");
+        engine.ConsultString("pick(X) :- member(V, [7, 3]), X #= V, !.");
         var sol = engine.Query("X in 1..5, pick(X).");
         Assert.True(sol.Success);
         Assert.Equal(Int(3), sol["X"]);

@@ -23,7 +23,12 @@ public class SuspendedActivationAssertTests
     public void SuspendedEnumeration_AssertsInterleavedWithNestedQuery_NoCorruption()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic k/1.\nseed(1).\nseed(2).\nseed(3).\n");
+        e.ConsultString("""
+            :- dynamic k/1.
+            seed(1).
+            seed(2).
+            seed(3).
+            """);
         // A1 asserts one k/1 fact per solution and suspends between them.
         using var it = e.QueryAll("seed(X), assertz(k(X)).").GetEnumerator();
         Assert.True(it.MoveNext());              // A1: assertz(k(1)), suspended
@@ -48,7 +53,12 @@ public class SuspendedActivationAssertTests
         // under deliberate interleaving, driven well past the JIT-indexing
         // threshold so the extensible-indexed layout is exercised too.
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic d/1.\nuses(X) :- d(X).\nseed(1).\nseed(2).\n");
+        e.ConsultString("""
+            :- dynamic d/1.
+            uses(X) :- d(X).
+            seed(1).
+            seed(2).
+            """);
         for (int i = 1; i <= 15; i++)
         {
             using var it = e.QueryAll("seed(S), assertz(d(S)).").GetEnumerator();

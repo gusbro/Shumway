@@ -28,13 +28,14 @@ public class DcgIlProbeTests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public sentence/2.\n"
-            + "sentence --> noun_phrase, verb_phrase.\n"
-            + "noun_phrase --> [the], [dog].\n"
-            + "noun_phrase --> [a], [cat].\n"
-            + "verb_phrase --> [barks].\n"
-            + "verb_phrase --> [meows].\n");
+        engine.ConsultString("""
+            :- public sentence/2.
+            sentence --> noun_phrase, verb_phrase.
+            noun_phrase --> [the], [dog].
+            noun_phrase --> [a], [cat].
+            verb_phrase --> [barks].
+            verb_phrase --> [meows].
+            """);
 
         // sentence(Input, []) — full parse, no leftover.
         var sol = engine.Query("sentence([the, dog, barks], []).");
@@ -46,11 +47,12 @@ public class DcgIlProbeTests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public greeting/2.\n"
-            + "greeting --> [hello].\n"
-            + "greeting --> [hi].\n"
-            + "greeting --> [hey].\n");
+        engine.ConsultString("""
+            :- public greeting/2.
+            greeting --> [hello].
+            greeting --> [hi].
+            greeting --> [hey].
+            """);
 
         var sols = engine.QueryAll("greeting(L, []).")
             .Select(s => s.Bindings["L"].ToString())
@@ -66,9 +68,10 @@ public class DcgIlProbeTests
         // to G with no diff-list args.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public digit/2.\n"
-            + "digit(D) --> [D], { D >= 0'0, D =< 0'9 }.\n");
+        engine.ConsultString("""
+            :- public digit/2.
+            digit(D) --> [D], { D >= 0'0, D =< 0'9 }.
+            """);
 
         var sol = engine.Query("digit(0'5, [0'5], []).");
         Assert.True(sol.Success);

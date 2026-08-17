@@ -63,7 +63,11 @@ public class Adr035VariablesTests
         //   2: p(X, Y) :-
         //   3:     q(X, Y).
         //   4: q(_, _).
-        var engine = DebugEngine("p(X, Y) :-\n    q(X, Y).\nq(_, _).\n");
+        var engine = DebugEngine("""
+            p(X, Y) :-
+                q(X, Y).
+            q(_, _).
+            """);
         engine.AddBreakpoint("<string>", 2);
 
         var stop = Walk(engine, "p(hello, 42).")[0];
@@ -81,7 +85,12 @@ public class Adr035VariablesTests
         //   3:     mk(Mid),
         //   4:     Out = got(Mid).
         //   5: mk(seven).
-        var engine = DebugEngine("p(Out) :-\n    mk(Mid),\n    Out = got(Mid).\nmk(seven).\n");
+        var engine = DebugEngine("""
+            p(Out) :-
+                mk(Mid),
+                Out = got(Mid).
+            mk(seven).
+            """);
         engine.AddBreakpoint("<string>", 3);   // before mk(Mid) runs
         engine.AddBreakpoint("<string>", 4);   // after it
 
@@ -104,9 +113,14 @@ public class Adr035VariablesTests
         //   5:     done(First, Second).
         //   6: use(x).
         //   7: done(_, _).
-        var engine = DebugEngine(
-            "p :-\n    use(First),\n    use(Second),\n    done(First, Second).\n"
-            + "use(x).\ndone(_, _).\n");
+        var engine = DebugEngine("""
+            p :-
+                use(First),
+                use(Second),
+                done(First, Second).
+            use(x).
+            done(_, _).
+            """);
         engine.AddBreakpoint("<string>", 5);
 
         var stop = Walk(engine, "p.")[0];
@@ -125,9 +139,15 @@ public class Adr035VariablesTests
         //   6:     leaf(In, Out).
         //   7: leaf(I, out(I)).
         //   8: use(_).
-        var engine = DebugEngine(
-            "top(A) :-\n    mid(A, B),\n    use(B).\n"
-            + "mid(In, Out) :-\n    leaf(In, Out).\nleaf(I, out(I)).\nuse(_).\n");
+        var engine = DebugEngine("""
+            top(A) :-
+                mid(A, B),
+                use(B).
+            mid(In, Out) :-
+                leaf(In, Out).
+            leaf(I, out(I)).
+            use(_).
+            """);
         engine.AddBreakpoint("<string>", 7);   // inside leaf/2
 
         var frames = Walk(engine, "top(one).")[0].Frames;
@@ -152,7 +172,11 @@ public class Adr035VariablesTests
         //   2: p(T) :-
         //   3:     q(T).
         //   4: q(_).
-        var engine = DebugEngine("p(T) :-\n    q(T).\nq(_).\n");
+        var engine = DebugEngine("""
+            p(T) :-
+                q(T).
+            q(_).
+            """);
         engine.AddBreakpoint("<string>", 2);
 
         Assert.Equal("[1, 2, 3]", Value(Walk(engine, "p([1,2,3]).")[0], "T"));
@@ -169,7 +193,11 @@ public class Adr035VariablesTests
         //   2: p(Keep, _Drop, _) :-
         //   3:     q(Keep).
         //   4: q(_).
-        var engine = DebugEngine("p(Keep, _Drop, _) :-\n    q(Keep).\nq(_).\n");
+        var engine = DebugEngine("""
+            p(Keep, _Drop, _) :-
+                q(Keep).
+            q(_).
+            """);
         engine.AddBreakpoint("<string>", 2);
 
         var stop = Walk(engine, "p(a, b, c).")[0];
@@ -185,7 +213,13 @@ public class Adr035VariablesTests
         //   4: t :-
         //   5:     p(X),
         //   6:     X > 1.
-        var engine = DebugEngine("p(1).\np(2).\nt :-\n    p(X),\n    X > 1.\n");
+        var engine = DebugEngine("""
+            p(1).
+            p(2).
+            t :-
+                p(X),
+                X > 1.
+            """);
         engine.AddBreakpoint("<string>", 6);   // the guard, after p(X) has bound X
 
         var stops = Walk(engine, "t.");
@@ -202,7 +236,11 @@ public class Adr035VariablesTests
         // The same program without compile_mode=debug. Nothing is instrumented, so
         // nothing binds — and the frames that a stop would have shown do not exist.
         var engine = new PrologEngine();
-        engine.ConsultString("p(X) :-\n    q(X).\nq(_).\n");
+        engine.ConsultString("""
+            p(X) :-
+                q(X).
+            q(_).
+            """);
 
         Assert.Equal(0, engine.AddBreakpoint("<string>", 2));
         Assert.Empty(engine.Breakpoints);

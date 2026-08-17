@@ -28,9 +28,10 @@ public class IfThenAndNotDispatchTests
     public void StandaloneIfThen_InClauseBody_Succeeds()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- public test/0.\n"
-            + "test :- true -> true.\n");
+        e.ConsultString("""
+            :- public test/0.
+            test :- true -> true.
+            """);
         Assert.True(e.Query("test.").Success);
     }
 
@@ -41,9 +42,10 @@ public class IfThenAndNotDispatchTests
         // the whole thing fails (does NOT fall through to a sibling
         // conjunct).
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- public test/0.\n"
-            + "test :- (fail -> true).\n");
+        e.ConsultString("""
+            :- public test/0.
+            test :- (fail -> true).
+            """);
         Assert.False(e.Query("test.").Success);
     }
 
@@ -52,10 +54,11 @@ public class IfThenAndNotDispatchTests
     {
         // The Blint.pl shape: ifthen(X, Y) :- X -> !, Y.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- public ifthen/2.\n"
-            + "ifthen(X, Y) :- X -> !, Y.\n"
-            + "ifthen(_, _) :- !.\n");
+        e.ConsultString("""
+            :- public ifthen/2.
+            ifthen(X, Y) :- X -> !, Y.
+            ifthen(_, _) :- !.
+            """);
         var sol = e.Query("ifthen(true, X = ok).");
         Assert.True(sol.Success);
     }
@@ -66,9 +69,10 @@ public class IfThenAndNotDispatchTests
         // The (A -> B ; C) form must still work the same way — the
         // new standalone rewrite must not destabilise it.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- public p/1.\n"
-            + "p(X) :- (X = ok -> Y = yes ; Y = no), write(Y).\n");
+        e.ConsultString("""
+            :- public p/1.
+            p(X) :- (X = ok -> Y = yes ; Y = no), write(Y).
+            """);
         Assert.True(e.Query("p(ok).").Success);
     }
 
@@ -93,11 +97,12 @@ public class IfThenAndNotDispatchTests
         // Approximates Blint.pl's ifthen(not(show_in_console), ...).
         // The variable carries `not(G)` to call/1 inside a body.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- public test/0.\n"
-            + "guarded(X, Y) :- X -> Y.\n"
-            + "show_in_console :- fail.\n"
-            + "test :- guarded(not(show_in_console), true).\n");
+        e.ConsultString("""
+            :- public test/0.
+            guarded(X, Y) :- X -> Y.
+            show_in_console :- fail.
+            test :- guarded(not(show_in_console), true).
+            """);
         Assert.True(e.Query("test.").Success);
     }
 

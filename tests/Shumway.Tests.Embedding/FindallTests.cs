@@ -41,7 +41,11 @@ public class FindallTests
     public void Findall_MultipleSolutions_YieldsAllInOrder()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(a).\np(b).\np(c).\n");
+        engine.ConsultString("""
+            p(a).
+            p(b).
+            p(c).
+            """);
         var sol = engine.Query("findall(X, p(X), L).");
         Assert.True(sol.Success);
         Assert.Equal(List(Atom("a"), Atom("b"), Atom("c")), sol["L"]);
@@ -53,7 +57,10 @@ public class FindallTests
         // findall(point(X, Y), pos(X, Y), L) — captures the whole compound at
         // each solution, not just one of its vars.
         var engine = new PrologEngine();
-        engine.ConsultString("pos(1, 2).\npos(3, 4).\n");
+        engine.ConsultString("""
+            pos(1, 2).
+            pos(3, 4).
+            """);
         var sol = engine.Query("findall(point(X, Y), pos(X, Y), L).");
         Assert.True(sol.Success);
         Assert.Equal(
@@ -67,7 +74,11 @@ public class FindallTests
     public void Findall_IntegerTemplate_CollectsIntegers()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("v(1).\nv(2).\nv(3).\n");
+        engine.ConsultString("""
+            v(1).
+            v(2).
+            v(3).
+            """);
         var sol = engine.Query("findall(N, v(N), L).");
         Assert.True(sol.Success);
         Assert.Equal(List(Int(1), Int(2), Int(3)), sol["L"]);
@@ -79,7 +90,10 @@ public class FindallTests
         // After findall returns, X must remain unbound in the calling engine —
         // the sub-engine's bindings shouldn't leak back.
         var engine = new PrologEngine();
-        engine.ConsultString("p(a).\np(b).\n");
+        engine.ConsultString("""
+            p(a).
+            p(b).
+            """);
         var sol = engine.Query("findall(Y, p(Y), L), X = X.");
         Assert.True(sol.Success);
         // X remains unbound — represented as a synthetic _G* var.
@@ -93,7 +107,11 @@ public class FindallTests
         // findall(unit, p(_), L) — template is the atom 'unit', so L's length
         // reflects how many times Goal succeeded.
         var engine = new PrologEngine();
-        engine.ConsultString("q(_).\nq(_).\nq(_).\n");
+        engine.ConsultString("""
+            q(_).
+            q(_).
+            q(_).
+            """);
         var sol = engine.Query("findall(unit, q(_), L).");
         Assert.True(sol.Success);
         Assert.Equal(
@@ -107,12 +125,13 @@ public class FindallTests
         // Outer findall enumerates X; inner findall, for each X, collects
         // every Y such that p(X, Y).
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "p(a, 1).\n" +
-            "p(a, 2).\n" +
-            "p(b, 3).\n" +
-            "v(a).\n" +
-            "v(b).\n");
+        engine.ConsultString("""
+            p(a, 1).
+            p(a, 2).
+            p(b, 3).
+            v(a).
+            v(b).
+            """);
         var sol = engine.Query(
             "findall(group(X, Ys), (v(X), findall(Y, p(X, Y), Ys)), L).");
         Assert.True(sol.Success);

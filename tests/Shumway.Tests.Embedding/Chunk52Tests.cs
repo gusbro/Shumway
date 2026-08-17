@@ -28,9 +28,10 @@ public class Chunk52Tests
         // sniff --> peek(a), [a].   First peeks 'a' (no consumption),
         // then actually consumes 'a'. Residue is whatever's left.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public sniff/2.\n" +
-            "sniff --> peek(a), [a].\n");
+        engine.ConsultString("""
+            :- public sniff/2.
+            sniff --> peek(a), [a].
+            """);
         // Input [a, b, c] → peek(a) verifies head=a (no consume), then
         // [a] consumes 'a'. Residue is [b, c].
         var sol = engine.Query("sniff([a, b, c], R).");
@@ -45,9 +46,10 @@ public class Chunk52Tests
     public void Dcg_Peek_FailsOnWrongHead()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public must_start_a/2.\n" +
-            "must_start_a --> peek(a).\n");
+        engine.ConsultString("""
+            :- public must_start_a/2.
+            must_start_a --> peek(a).
+            """);
         Assert.True(engine.Query("must_start_a([a, b], R), R == [a, b].").Success);
         Assert.False(engine.Query("must_start_a([b, c], _).").Success);
     }
@@ -63,9 +65,10 @@ public class Chunk52Tests
         // pushes [close] back onto the output state. For input
         // [open, x], the residue after wrap is [close, x].
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public wrap/2.\n" +
-            "wrap --> [open], pushback([close]).\n");
+        engine.ConsultString("""
+            :- public wrap/2.
+            wrap --> [open], pushback([close]).
+            """);
         var sol = engine.Query("wrap([open, x], R).");
         Assert.True(sol.Success);
         Assert.Equal(
@@ -79,9 +82,10 @@ public class Chunk52Tests
     {
         // pushback([]) doesn't change the diff-list state.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public bypass/2.\n" +
-            "bypass --> [t], pushback([]).\n");
+        engine.ConsultString("""
+            :- public bypass/2.
+            bypass --> [t], pushback([]).
+            """);
         Assert.True(engine.Query("bypass([t, u], R), R == [u].").Success);
     }
 
@@ -97,7 +101,12 @@ public class Chunk52Tests
         // means three "succeed" alternatives.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public ok/0.\nok.\nok.\nok.\n");
+        engine.ConsultString("""
+            :- public ok/0.
+            ok.
+            ok.
+            ok.
+            """);
         // First query warms.
         Assert.True(engine.Query("ok.").Success);
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("ok", 0)));
@@ -114,10 +123,11 @@ public class Chunk52Tests
         // single builtin call. The try_me_else chain wraps two clauses.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public p/1.\n" +
-            "p(X) :- atom(X).\n" +
-            "p(X) :- integer(X).\n");
+        engine.ConsultString("""
+            :- public p/1.
+            p(X) :- atom(X).
+            p(X) :- integer(X).
+            """);
         Assert.True(engine.Query("p(foo).").Success);
         Assert.True(engine.Query("p(42).").Success);
         Assert.False(engine.Query("p(3.14).").Success);
@@ -131,11 +141,12 @@ public class Chunk52Tests
         // visits each in source order via the IL choice-point machinery.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public any/1.\n" +
-            "any(_).\n" +
-            "any(_).\n" +
-            "any(_).\n");
+        engine.ConsultString("""
+            :- public any/1.
+            any(_).
+            any(_).
+            any(_).
+            """);
         engine.Query("any(x).");   // warm
         Assert.Equal(3, engine.QueryAll("any(y).").Count());
     }

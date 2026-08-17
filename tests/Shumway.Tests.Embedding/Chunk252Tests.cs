@@ -34,9 +34,10 @@ public class Chunk252Tests
     public void LongList_Breaks()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public make/1.\n"
-            + "make([alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota, kappa]).\n");
+        engine.ConsultString("""
+            :- public make/1.
+            make([alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota, kappa]).
+            """);
         var sol = engine.Query("make(L).");
         // Tight width forces multi-line.
         string s = sol.ToString(40);
@@ -53,9 +54,10 @@ public class Chunk252Tests
     public void LongCompound_Breaks()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public make/1.\n"
-            + "make(record(field_one_with_a_long_name, field_two_also_quite_long, field_three_also_long)).\n");
+        engine.ConsultString("""
+            :- public make/1.
+            make(record(field_one_with_a_long_name, field_two_also_quite_long, field_three_also_long)).
+            """);
         var sol = engine.Query("make(R).");
         string s = sol.ToString(40);
         Assert.Contains("record(\n", s);
@@ -67,9 +69,10 @@ public class Chunk252Tests
     public void NestedLong_BreaksRecursively()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public outer/1.\n"
-            + "outer(pair(inner(a, b, c, d, e, f, g), [one, two, three, four, five, six, seven])).\n");
+        engine.ConsultString("""
+            :- public outer/1.
+            outer(pair(inner(a, b, c, d, e, f, g), [one, two, three, four, five, six, seven])).
+            """);
         var sol = engine.Query("outer(T).");
         string s = sol.ToString(30);
         // Parent compound broke.
@@ -85,9 +88,10 @@ public class Chunk252Tests
         // of how long the binding is — embedding-API consumers that
         // log to a file want predictable single-line output.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public make/1.\n"
-            + "make([a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q]).\n");
+        engine.ConsultString("""
+            :- public make/1.
+            make([a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q]).
+            """);
         var sol = engine.Query("make(L).");
         string compact = sol.ToString();
         Assert.DoesNotContain("\n", compact);

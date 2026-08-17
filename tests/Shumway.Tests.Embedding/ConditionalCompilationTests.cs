@@ -27,12 +27,13 @@ public sealed class ConditionalCompilationTests
     public void IfFalse_SkipsBranch_ElseIncluded()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- if(current_predicate(no_such_predicate_xyz/9)).\n"
-            + "q(taken).\n"
-            + ":- else.\n"
-            + "q(else).\n"
-            + ":- endif.\n");
+        e.ConsultString("""
+            :- if(current_predicate(no_such_predicate_xyz/9)).
+            q(taken).
+            :- else.
+            q(else).
+            :- endif.
+            """);
         Assert.False(e.Query("q(taken).").Success);
         Assert.True(e.Query("q(else).").Success);
     }
@@ -63,15 +64,16 @@ public sealed class ConditionalCompilationTests
         var e = new PrologEngine();
         // Outer is false → the whole block (including the inner if's TRUE branch)
         // is skipped.
-        e.ConsultString(
-            ":- if(fail).\n"
-            + ":- if(true).\n"
-            + "s(inner).\n"
-            + ":- endif.\n"
-            + "s(outer).\n"
-            + ":- else.\n"
-            + "s(elsebranch).\n"
-            + ":- endif.\n");
+        e.ConsultString("""
+            :- if(fail).
+            :- if(true).
+            s(inner).
+            :- endif.
+            s(outer).
+            :- else.
+            s(elsebranch).
+            :- endif.
+            """);
         Assert.False(e.Query("s(inner).").Success);
         Assert.False(e.Query("s(outer).").Success);
         Assert.True(e.Query("s(elsebranch).").Success);
@@ -81,10 +83,11 @@ public sealed class ConditionalCompilationTests
     public void ConditionBooleanCombinators()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- if((current_predicate(atom_length/2), \\+ current_predicate(nope_zzz/1))).\n"
-            + "t(yes).\n"
-            + ":- endif.\n");
+        e.ConsultString("""
+            :- if((current_predicate(atom_length/2), \+ current_predicate(nope_zzz/1))).
+            t(yes).
+            :- endif.
+            """);
         Assert.True(e.Query("t(yes).").Success);
     }
 }

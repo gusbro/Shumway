@@ -37,7 +37,7 @@ public class Chunk425Tests
     {
         var e = new PrologEngine();
         Assert.ThrowsAny<System.Exception>(() =>
-            e.ConsultString("p($oops$).\n"));
+            e.ConsultString("p($oops$)."));
     }
 
     [Fact]
@@ -99,7 +99,7 @@ public class Chunk425Tests
         Assert.Equal("false", s["V"]!.ToString());
         Assert.True(e.Query("set_prolog_flag(arity_compat, true).").Success);
         // Applies to a SUBSEQUENT consult.
-        e.ConsultString("t($dollar atom$).\n");
+        e.ConsultString("t($dollar atom$).");
         Assert.True(e.Query("t(X), X == 'dollar atom'.").Success);
     }
 

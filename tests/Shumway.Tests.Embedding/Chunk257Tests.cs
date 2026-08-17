@@ -101,7 +101,7 @@ public class Chunk257Tests
         // stored in _dynamicClauses has synthetic _Gn names. The
         // chunk-257 path renames them to A, B, C.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic(my_pred/2).\n");
+        engine.ConsultString(":- dynamic(my_pred/2).");
         engine.Query("assertz((my_pred(X, Y) :- Y is X + 1)).");
         var sw = new StringWriter();
         engine.Out = sw;

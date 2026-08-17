@@ -56,7 +56,7 @@ public class SolutionDeterminismTests
     public void SingleClausePredicate_IsLast()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("only_fact(yes).\n");
+        engine.ConsultString("only_fact(yes).");
         var sols = engine.QueryAll("only_fact(X).").ToList();
         Assert.Single(sols);
         Assert.True(sols[0].IsLast);

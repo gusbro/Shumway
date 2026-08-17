@@ -29,10 +29,11 @@ public class Phase26PermanentEscapeTests
         // X is permanent (spans the gen/1 call and the Out = box(X) goal). The
         // structure box(X) is bound to the head argument Out and so OUTLIVES
         // escaper's environment. Binding it afterwards must reach X's heap cell.
-        var engine = Load(
-            "escaper(Out) :- gen(X), Out = box(X), keep.\n" +
-            "gen(_).\n" +
-            "keep.\n");
+        var engine = Load("""
+            escaper(Out) :- gen(X), Out = box(X), keep.
+            gen(_).
+            keep.
+            """);
         var sol = engine.Query("escaper(O), O = box(V), V = filled.");
         Assert.True(sol.Success);
         Assert.Equal("box(filled)", sol["O"]!.ToString());
@@ -43,10 +44,11 @@ public class Phase26PermanentEscapeTests
     {
         // Mirrors Blint's `concat(['x', Name], _)` shape: a permanent (Name)
         // built into a heap list that escapes via the head argument.
-        var engine = Load(
-            "wrap(Name, List) :- pre(Name), List = [a, Name, c], post.\n" +
-            "pre(_).\n" +
-            "post.\n");
+        var engine = Load("""
+            wrap(Name, List) :- pre(Name), List = [a, Name, c], post.
+            pre(_).
+            post.
+            """);
         var sol = engine.Query("wrap(N, L), N = b, L = [a, b, c].");
         Assert.True(sol.Success);
     }

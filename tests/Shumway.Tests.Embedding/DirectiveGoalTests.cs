@@ -27,7 +27,10 @@ public sealed class DirectiveGoalTests
     public void GeneralGoalDirective_Runs_WithSideEffectVisible()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic flag/1.\n:- assertz(flag(set)).\n");
+        e.ConsultString("""
+            :- dynamic flag/1.
+            :- assertz(flag(set)).
+            """);
         Assert.True(e.Query("flag(set).").Success);
     }
 
@@ -38,7 +41,10 @@ public sealed class DirectiveGoalTests
         string err = CaptureStderr(() =>
             // The `use_module` typo the fix targets: a warning, not silence,
             // and p/1 still loads.
-            e.ConsultString(":- use(library(coroutining)).\np(ok).\n"));
+            e.ConsultString("""
+                :- use(library(coroutining)).
+                p(ok).
+                """));
 
         Assert.Contains("use/1", err);
         Assert.True(e.Query("p(X).")["X"]!.ToString() == "ok");
@@ -49,7 +55,10 @@ public sealed class DirectiveGoalTests
     {
         var e = new PrologEngine();
         string err = CaptureStderr(() =>
-            e.ConsultString(":- fail.\nq(ok).\n"));
+            e.ConsultString("""
+                :- fail.
+                q(ok).
+                """));
 
         Assert.Contains("directive failed", err);
         Assert.True(e.Query("q(ok).").Success);
@@ -61,10 +70,11 @@ public sealed class DirectiveGoalTests
         // A `:- main.`-style directive at EOF calls a predicate defined in the
         // same file. It runs post-commit, so the predicate is visible.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- dynamic done/0.\n" +
-            "setup :- assertz(done).\n" +
-            ":- setup.\n");
+        e.ConsultString("""
+            :- dynamic done/0.
+            setup :- assertz(done).
+            :- setup.
+            """);
         Assert.True(e.Query("done.").Success);
     }
 
@@ -73,10 +83,11 @@ public sealed class DirectiveGoalTests
     {
         // ISO: general directives run during load; initialization/1 after it.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- dynamic ev/1.\n" +
-            ":- assertz(ev(directive)).\n" +
-            ":- initialization(assertz(ev(init))).\n");
+        e.ConsultString("""
+            :- dynamic ev/1.
+            :- assertz(ev(directive)).
+            :- initialization(assertz(ev(init))).
+            """);
         var order = e.QueryAll("ev(X).").Select(s => s["X"]!.ToString()).ToList();
         Assert.Equal(new[] { "directive", "init" }, order);
     }
@@ -88,7 +99,10 @@ public sealed class DirectiveGoalTests
         // must not warn or re-run it as a failing goal.
         var e = new PrologEngine();
         string err = CaptureStderr(() =>
-            e.ConsultString(":- op(700, xfx, ===).\nr(ok).\n"));
+            e.ConsultString("""
+                :- op(700, xfx, ===).
+                r(ok).
+                """));
         Assert.DoesNotContain("directive", err);
         Assert.True(e.Query("r(ok).").Success);
     }
@@ -97,10 +111,11 @@ public sealed class DirectiveGoalTests
     public void MultipleGoalDirectives_RunInSourceOrder()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- dynamic log/1.\n" +
-            ":- assertz(log(a)).\n" +
-            ":- assertz(log(b)).\n");
+        e.ConsultString("""
+            :- dynamic log/1.
+            :- assertz(log(a)).
+            :- assertz(log(b)).
+            """);
         var order = e.QueryAll("log(X).").Select(s => s["X"]!.ToString()).ToList();
         Assert.Equal(new[] { "a", "b" }, order);
     }

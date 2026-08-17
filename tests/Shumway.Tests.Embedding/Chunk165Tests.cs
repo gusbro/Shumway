@@ -16,8 +16,12 @@ public class Chunk165Tests
     [Fact]
     public async Task LinkAsync_ReturnsSameResultAsSync()
     {
-        var obj = ShmoCompiler.CompileSource(
-            ":- module(m).\n:- public f/1.\nf(X) :- g(X).\ng(_).\n");
+        var obj = ShmoCompiler.CompileSource("""
+            :- module(m).
+            :- public f/1.
+            f(X) :- g(X).
+            g(_).
+            """);
         var config = new LinkConfig
         {
             Objects = new[] { obj },
@@ -48,10 +52,16 @@ public class Chunk165Tests
         Directory.CreateDirectory(dir);
         try
         {
-            var libObj = ShmoCompiler.CompileSource(
-                ":- module(lib).\n:- public lib_main/1.\nlib_main(X) :- X = ok.\n");
-            var appObj = ShmoCompiler.CompileSource(
-                ":- module(app).\n:- public main/1.\nmain(X) :- lib_main(X).\n");
+            var libObj = ShmoCompiler.CompileSource("""
+                :- module(lib).
+                :- public lib_main/1.
+                lib_main(X) :- X = ok.
+                """);
+            var appObj = ShmoCompiler.CompileSource("""
+                :- module(app).
+                :- public main/1.
+                main(X) :- lib_main(X).
+                """);
             string libPath = Path.Combine(dir, "lib.shmo");
             string appPath = Path.Combine(dir, "app.shmo");
             ShmoWriter.WriteToFile(libObj, libPath);

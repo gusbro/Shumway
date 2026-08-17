@@ -32,10 +32,11 @@ public sealed class Adr035EntryBreakTests
     [Fact]
     public void ArmEntryBreak_FiresOnceAtTheFirstGoalOfTheFirstQuery()
     {
-        var engine = DebugEngine(
-            "go :- first(X), second(X).\n" +
-            "first(1).\n" +
-            "second(_).\n");
+        var engine = DebugEngine("""
+            go :- first(X), second(X).
+            first(1).
+            second(_).
+            """);
 
         var service = new DebugService(engine, (_, _) => { });
         int fired = 0;
@@ -108,7 +109,10 @@ public sealed class Adr035EntryBreakTests
     {
         // Plain --debug (no wait), or a --debug-wait whose timeout elapsed with nobody there:
         // the program must run normally, with no stop at the entry.
-        var engine = DebugEngine("go :- first(_).\nfirst(_).\n");
+        var engine = DebugEngine("""
+            go :- first(_).
+            first(_).
+            """);
 
         var service = new DebugService(engine, (_, _) => { });
         int fired = 0;
@@ -128,7 +132,10 @@ public sealed class Adr035EntryBreakTests
         // armed-but-then-detached session from breaking to nobody. With no debugger in this
         // test process the arm reaches the first goal and the guard swallows it: the program
         // runs to its answer, no hang, no crash.
-        var engine = DebugEngine("go :- step(_).\nstep(_).\n");
+        var engine = DebugEngine("""
+            go :- step(_).
+            step(_).
+            """);
         using var session = new ChannelDebugSession(engine, notify: _ => { });
 
         session.ArmEntryBreak();

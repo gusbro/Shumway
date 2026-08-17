@@ -18,8 +18,12 @@ public class Chunk163Tests
     [Fact]
     public void Link_SingleModule_EntryReachable()
     {
-        var obj = Compile(
-            ":- module(m1).\n:- public start/0.\nstart :- helper.\nhelper.\n");
+        var obj = Compile("""
+            :- module(m1).
+            :- public start/0.
+            start :- helper.
+            helper.
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },
@@ -36,8 +40,11 @@ public class Chunk163Tests
     [Fact]
     public void Link_MissingPredicate_Errors()
     {
-        var obj = Compile(
-            ":- module(m1).\n:- public start/0.\nstart :- nonexistent.\n");
+        var obj = Compile("""
+            :- module(m1).
+            :- public start/0.
+            start :- nonexistent.
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },
@@ -52,8 +59,11 @@ public class Chunk163Tests
     [Fact]
     public void Link_MissingPredicate_AllowUndefined_DowngradesToWarning()
     {
-        var obj = Compile(
-            ":- module(m1).\n:- public start/0.\nstart :- nonexistent.\n");
+        var obj = Compile("""
+            :- module(m1).
+            :- public start/0.
+            start :- nonexistent.
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },
@@ -69,10 +79,16 @@ public class Chunk163Tests
     [Fact]
     public void Link_CrossModule_PublicResolves()
     {
-        var libObj = Compile(
-            ":- module(lib).\n:- public lib_helper/1.\nlib_helper(X) :- X = ok.\n");
-        var appObj = Compile(
-            ":- module(app).\n:- public main/1.\nmain(X) :- lib_helper(X).\n");
+        var libObj = Compile("""
+            :- module(lib).
+            :- public lib_helper/1.
+            lib_helper(X) :- X = ok.
+            """);
+        var appObj = Compile("""
+            :- module(app).
+            :- public main/1.
+            main(X) :- lib_helper(X).
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { libObj, appObj },
@@ -87,10 +103,17 @@ public class Chunk163Tests
     public void Link_CrossModule_LocalNotVisible_Missing()
     {
         // lib defines helper/1 as LOCAL, app tries to call it.
-        var libObj = Compile(
-            ":- module(lib).\n:- public lib_main/0.\nlib_main :- helper(1).\nhelper(_).\n");
-        var appObj = Compile(
-            ":- module(app).\n:- public main/0.\nmain :- helper(2).\n");
+        var libObj = Compile("""
+            :- module(lib).
+            :- public lib_main/0.
+            lib_main :- helper(1).
+            helper(_).
+            """);
+        var appObj = Compile("""
+            :- module(app).
+            :- public main/0.
+            main :- helper(2).
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { libObj, appObj },
@@ -103,8 +126,16 @@ public class Chunk163Tests
     [Fact]
     public void Link_DuplicatePublic_AcrossModules_Errors()
     {
-        var a = Compile(":- module(a).\n:- public foo/1.\nfoo(1).\n");
-        var b = Compile(":- module(b).\n:- public foo/1.\nfoo(2).\n");
+        var a = Compile("""
+            :- module(a).
+            :- public foo/1.
+            foo(1).
+            """);
+        var b = Compile("""
+            :- module(b).
+            :- public foo/1.
+            foo(2).
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { a, b },
@@ -118,8 +149,18 @@ public class Chunk163Tests
     [Fact]
     public void Link_DynamicAcrossModules_NotACollision()
     {
-        var a = Compile(":- module(a).\n:- public init_a/0.\n:- dynamic shared/1.\ninit_a :- assertz(shared(1)).\n");
-        var b = Compile(":- module(b).\n:- public init_b/0.\n:- dynamic shared/1.\ninit_b :- assertz(shared(2)).\n");
+        var a = Compile("""
+            :- module(a).
+            :- public init_a/0.
+            :- dynamic shared/1.
+            init_a :- assertz(shared(1)).
+            """);
+        var b = Compile("""
+            :- module(b).
+            :- public init_b/0.
+            :- dynamic shared/1.
+            init_b :- assertz(shared(2)).
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { a, b },
@@ -135,11 +176,17 @@ public class Chunk163Tests
         // dispatcher uses call/1 with a runtime-constructed goal —
         // the static call graph won't show the dispatch to handler/1
         // unless handler is marked ensure_linked.
-        var dispatcher = Compile(
-            ":- module(disp).\n:- public dispatch/1.\n:- ensure_linked handler/1.\n"
-            + "dispatch(X) :- G =.. [handler, X], call(G).\n");
-        var handler = Compile(
-            ":- module(h).\n:- public handler/1.\nhandler(_).\n");
+        var dispatcher = Compile("""
+            :- module(disp).
+            :- public dispatch/1.
+            :- ensure_linked handler/1.
+            dispatch(X) :- G =.. [handler, X], call(G).
+            """);
+        var handler = Compile("""
+            :- module(h).
+            :- public handler/1.
+            handler(_).
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { dispatcher, handler },
@@ -152,8 +199,16 @@ public class Chunk163Tests
     [Fact]
     public void Link_UnreachableModule_DroppedWithWarning()
     {
-        var used = Compile(":- module(used).\n:- public foo/0.\nfoo.\n");
-        var dead = Compile(":- module(dead).\n:- public bar/0.\nbar.\n");
+        var used = Compile("""
+            :- module(used).
+            :- public foo/0.
+            foo.
+            """);
+        var dead = Compile("""
+            :- module(dead).
+            :- public bar/0.
+            bar.
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { used, dead },
@@ -170,9 +225,11 @@ public class Chunk163Tests
     [Fact]
     public void Link_BuiltinCalls_DoNotShowAsMissing()
     {
-        var obj = Compile(
-            ":- module(m).\n:- public f/1.\n"
-            + "f(X) :- Y is X + 1, write(Y), nl.\n");
+        var obj = Compile("""
+            :- module(m).
+            :- public f/1.
+            f(X) :- Y is X + 1, write(Y), nl.
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },
@@ -186,8 +243,11 @@ public class Chunk163Tests
     public void Link_PreludeCalls_DoNotShowAsMissing()
     {
         // member/2 is in the prelude — should resolve.
-        var obj = Compile(
-            ":- module(m).\n:- public has_x/1.\nhas_x(L) :- member(x, L).\n");
+        var obj = Compile("""
+            :- module(m).
+            :- public has_x/1.
+            has_x(L) :- member(x, L).
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },
@@ -199,7 +259,11 @@ public class Chunk163Tests
     [Fact]
     public void Link_EntryNotFound_Errors()
     {
-        var obj = Compile(":- module(m).\n:- public foo/0.\nfoo.\n");
+        var obj = Compile("""
+            :- module(m).
+            :- public foo/0.
+            foo.
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },
@@ -213,8 +277,16 @@ public class Chunk163Tests
     [Fact]
     public void Link_QualifiedRef_ResolvesAgainstNamedModule()
     {
-        var lib = Compile(":- module(lib).\n:- public ext/1.\next(ok).\n");
-        var app = Compile(":- module(app).\n:- public main/0.\nmain :- lib:ext(_).\n");
+        var lib = Compile("""
+            :- module(lib).
+            :- public ext/1.
+            ext(ok).
+            """);
+        var app = Compile("""
+            :- module(app).
+            :- public main/0.
+            main :- lib:ext(_).
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { lib, app },
@@ -228,8 +300,15 @@ public class Chunk163Tests
     public void Link_QualifiedRef_TargetNotPublic_Missing()
     {
         // lib defines secret/0 as LOCAL; app tries qualified call.
-        var lib = Compile(":- module(lib).\nsecret.\n");
-        var app = Compile(":- module(app).\n:- public main/0.\nmain :- lib:secret.\n");
+        var lib = Compile("""
+            :- module(lib).
+            secret.
+            """);
+        var app = Compile("""
+            :- module(app).
+            :- public main/0.
+            main :- lib:secret.
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { lib, app },
@@ -242,8 +321,11 @@ public class Chunk163Tests
     [Fact]
     public void Link_BundleBytes_LoadsAndExecutes()
     {
-        var obj = Compile(
-            ":- module(m).\n:- public answer/1.\nanswer(42).\n");
+        var obj = Compile("""
+            :- module(m).
+            :- public answer/1.
+            answer(42).
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },
@@ -265,10 +347,17 @@ public class Chunk163Tests
     {
         // 'app' never directly references 'plugin' via call graph;
         // only ensure_linked saves it from dead-code elimination.
-        var app = Compile(
-            ":- module(app).\n:- public main/0.\n:- ensure_linked plugin_run/0.\nmain.\n");
-        var plugin = Compile(
-            ":- module(plugin).\n:- public plugin_run/0.\nplugin_run.\n");
+        var app = Compile("""
+            :- module(app).
+            :- public main/0.
+            :- ensure_linked plugin_run/0.
+            main.
+            """);
+        var plugin = Compile("""
+            :- module(plugin).
+            :- public plugin_run/0.
+            plugin_run.
+            """);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { app, plugin },

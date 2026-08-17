@@ -48,8 +48,10 @@ public class Adr035LastCallTests
     {
         // The default is LCO on: debug-compiled code must behave exactly like
         // release code until someone asks for the full stack.
-        var engine = DebugEngine(
-            "app([], L, L).\napp([H|T], L, [H|R]) :- app(T, L, R).\n");
+        var engine = DebugEngine("""
+            app([], L, L).
+            app([H|T], L, [H|R]) :- app(T, L, R).
+            """);
 
         var sols = engine.Query<List<int>>("app([1,2,3], [4,5], X).", "X").ToList();
 
@@ -64,7 +66,11 @@ public class Adr035LastCallTests
         // With LCO on, top/1's only body goal is a tail call, so top's frame is
         // gone before mid/1 runs and top never reports an exit. Turning LCO off
         // is precisely what puts that exit port back.
-        var engine = DebugEngine("top(X) :- mid(X).\nmid(X) :- leaf(X).\nleaf(7).\n");
+        var engine = DebugEngine("""
+            top(X) :- mid(X).
+            mid(X) :- leaf(X).
+            leaf(7).
+            """);
 
         var withLco = Trace(engine, "top(A).", out _);
         Assert.DoesNotContain(withLco, l => l.StartsWith("   Exit: ") && l.Contains(" top("));
@@ -81,7 +87,11 @@ public class Adr035LastCallTests
     [Fact]
     public void LcoOff_NestsTheCallStack_InsteadOfFlatteningIt()
     {
-        var engine = DebugEngine("top(X) :- mid(X).\nmid(X) :- leaf(X).\nleaf(7).\n");
+        var engine = DebugEngine("""
+            top(X) :- mid(X).
+            mid(X) :- leaf(X).
+            leaf(7).
+            """);
 
         var withLco = Trace(engine, "top(A).", out _);
         // Flat: each tail call takes its caller's place.
@@ -99,10 +109,13 @@ public class Adr035LastCallTests
     [Fact]
     public void LcoOff_PreservesSemantics_IncludingBacktrackingAndCut()
     {
-        var engine = DebugEngine(
-            "p(1).\np(2).\np(3).\n"
-            + "q(X) :- p(X), X > 1, !.\n"
-            + "r(L) :- findall(X, p(X), L).\n");
+        var engine = DebugEngine("""
+            p(1).
+            p(2).
+            p(3).
+            q(X) :- p(X), X > 1, !.
+            r(L) :- findall(X, p(X), L).
+            """);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
 
         Assert.Equal(2, engine.QueryFirst<int>("q(X).", "X"));
@@ -117,7 +130,10 @@ public class Adr035LastCallTests
         // frame per iteration. Small depths must still be correct; that a deep
         // one now costs stack is the price of a full call stack, and exactly
         // why LCO is a switch rather than "always off under debug".
-        var engine = DebugEngine("count(0, 0).\ncount(N, M) :- N > 0, P is N - 1, count(P, M).\n");
+        var engine = DebugEngine("""
+            count(0, 0).
+            count(N, M) :- N > 0, P is N - 1, count(P, M).
+            """);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
 
         Assert.Equal(0, engine.QueryFirst<int>("count(200, M).", "M"));
@@ -132,7 +148,11 @@ public class Adr035LastCallTests
     {
         // A debugger flips this from the Immediate window mid-session, so the
         // flip has to reach the activation that is already running.
-        var engine = DebugEngine("top(X) :- mid(X).\nmid(X) :- leaf(X).\nleaf(7).\n");
+        var engine = DebugEngine("""
+            top(X) :- mid(X).
+            mid(X) :- leaf(X).
+            leaf(7).
+            """);
         var sink = new StringWriter();
         engine.SetTracing(true, sink);
 
@@ -151,7 +171,11 @@ public class Adr035LastCallTests
         // inert for it — turning LCO off must not resurrect frames that were
         // never emitted.
         var engine = new PrologEngine();
-        engine.ConsultString("top(X) :- mid(X).\nmid(X) :- leaf(X).\nleaf(7).\n");
+        engine.ConsultString("""
+            top(X) :- mid(X).
+            mid(X) :- leaf(X).
+            leaf(7).
+            """);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
 
         var lines = Trace(engine, "top(A).", out int solutions);
@@ -167,7 +191,7 @@ public class Adr035LastCallTests
         // debug_lastcall site (same 9-byte width) when the linker discovers it,
         // and as a compile-time CallBuiltin otherwise. Either way the return
         // stub behind it is the right epilogue.
-        var engine = DebugEngine("len(L, N) :- length(L, N).\n");
+        var engine = DebugEngine("len(L, N) :- length(L, N).");
 
         Assert.Equal(3, engine.QueryFirst<int>("len([a,b,c], N).", "N"));
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();

@@ -143,10 +143,11 @@ public class Chunk70Tests
         // step flattens the prior chain into a new buffer; the final
         // result must still equal the eagerly-joined string.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public build/2.\n" +
-            "build([], \"\").\n" +
-            "build([H|T], R) :- build(T, RT), string_concat(H, RT, R).\n");
+        engine.ConsultString("""
+            :- public build/2.
+            build([], "").
+            build([H|T], R) :- build(T, RT), string_concat(H, RT, R).
+            """);
         var sol = engine.Query(
             "build([\"alpha\", \"beta\", \"gamma\", \"delta\", \"epsilon\"], R).");
         Assert.True(sol.Success);

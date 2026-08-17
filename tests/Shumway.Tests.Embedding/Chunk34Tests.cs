@@ -127,7 +127,7 @@ public class Chunk34Tests
     public void Halt_InsideQueryAll_StopsIterationGracefully()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic v/1.\n");
+        engine.ConsultString(":- dynamic v/1.");
         engine.Query("assertz(v(1)).");
         engine.Query("assertz(v(2)).");
 

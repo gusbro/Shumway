@@ -210,9 +210,11 @@ public class BuiltinsTests
         // p(a). p(b).  pick(X) :- p(X), X == b.   ?- pick(R).
         // Clause 1 of p binds X to a; the == fails; backtrack picks b.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "p(a).\np(b).\n" +
-            "pick(X) :- p(X), X == b.\n");
+        engine.ConsultString("""
+            p(a).
+            p(b).
+            pick(X) :- p(X), X == b.
+            """);
         var sol = engine.Query("pick(R).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("b"), sol["R"]);

@@ -34,13 +34,14 @@ public class Chunk66Tests
     public void Tier0_NonLeafCrossProduct_FullCorrect()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public pair/2.\n" +
-            ":- public left/1.\n" +
-            ":- public right/1.\n" +
-            "left(a). left(b). left(c).\n" +
-            "right(1). right(2).\n" +
-            "pair(X, Y) :- left(X), right(Y).\n");
+        engine.ConsultString("""
+            :- public pair/2.
+            :- public left/1.
+            :- public right/1.
+            left(a). left(b). left(c).
+            right(1). right(2).
+            pair(X, Y) :- left(X), right(Y).
+            """);
         Assert.Equal(6, engine.QueryAll("pair(_, _).").Count());
     }
 
@@ -48,15 +49,16 @@ public class Chunk66Tests
     public void Tier0_NonLeafTripleProduct_FullCorrect()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public triple/3.\n" +
-            ":- public dim_a/1.\n" +
-            ":- public dim_b/1.\n" +
-            ":- public dim_c/1.\n" +
-            "dim_a(x). dim_a(y).\n" +
-            "dim_b(p). dim_b(q). dim_b(r).\n" +
-            "dim_c(7).\n" +
-            "triple(A, B, C) :- dim_a(A), dim_b(B), dim_c(C).\n");
+        engine.ConsultString("""
+            :- public triple/3.
+            :- public dim_a/1.
+            :- public dim_b/1.
+            :- public dim_c/1.
+            dim_a(x). dim_a(y).
+            dim_b(p). dim_b(q). dim_b(r).
+            dim_c(7).
+            triple(A, B, C) :- dim_a(A), dim_b(B), dim_c(C).
+            """);
         Assert.Equal(6, engine.QueryAll("triple(_, _, _).").Count());
     }
 
@@ -69,13 +71,14 @@ public class Chunk66Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public pair/2.\n" +
-            ":- public left/1.\n" +
-            ":- public right/1.\n" +
-            "left(a). left(b). left(c).\n" +
-            "right(1). right(2).\n" +
-            "pair(X, Y) :- left(X), right(Y).\n");
+        engine.ConsultString("""
+            :- public pair/2.
+            :- public left/1.
+            :- public right/1.
+            left(a). left(b). left(c).
+            right(1). right(2).
+            pair(X, Y) :- left(X), right(Y).
+            """);
         engine.Query("pair(a, 1).");
         Assert.True(engine.IlPromotion.IsPromoted(Fid("pair", 2)));
     }
@@ -85,13 +88,14 @@ public class Chunk66Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public pair/2.\n" +
-            ":- public left/1.\n" +
-            ":- public right/1.\n" +
-            "left(a). left(b). left(c).\n" +
-            "right(1). right(2).\n" +
-            "pair(X, Y) :- left(X), right(Y).\n");
+        engine.ConsultString("""
+            :- public pair/2.
+            :- public left/1.
+            :- public right/1.
+            left(a). left(b). left(c).
+            right(1). right(2).
+            pair(X, Y) :- left(X), right(Y).
+            """);
         engine.Query("pair(a, 1).");   // warm
         Assert.Equal(6, engine.QueryAll("pair(_, _).").Count());
     }
@@ -131,11 +135,12 @@ public class Chunk66Tests
         // points.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public wrapped/1.\n" +
-            ":- public inner/1.\n" +
-            "inner(X) :- atom(X).\n" +
-            "wrapped(X) :- inner(X), atom(X).\n");
+        engine.ConsultString("""
+            :- public wrapped/1.
+            :- public inner/1.
+            inner(X) :- atom(X).
+            wrapped(X) :- inner(X), atom(X).
+            """);
         engine.Query("wrapped(foo).");
         Assert.True(engine.Query("wrapped(bar).").Success);
         Assert.False(engine.Query("wrapped(7).").Success);
@@ -149,15 +154,16 @@ public class Chunk66Tests
         // their resume paths chain together via the post-call cursors.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public triple/3.\n" +
-            ":- public a/1.\n" +
-            ":- public b/1.\n" +
-            ":- public c/1.\n" +
-            "a(1). a(2).\n" +
-            "b(p). b(q).\n" +
-            "c(x). c(y).\n" +
-            "triple(A, B, C) :- a(A), b(B), c(C).\n");
+        engine.ConsultString("""
+            :- public triple/3.
+            :- public a/1.
+            :- public b/1.
+            :- public c/1.
+            a(1). a(2).
+            b(p). b(q).
+            c(x). c(y).
+            triple(A, B, C) :- a(A), b(B), c(C).
+            """);
         engine.Query("triple(1, p, x).");   // warm
         // 2 * 2 * 2 = 8 cross-product solutions.
         Assert.Equal(8, engine.QueryAll("triple(_, _, _).").Count());

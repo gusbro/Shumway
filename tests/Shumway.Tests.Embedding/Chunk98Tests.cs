@@ -86,7 +86,12 @@ public class Chunk98Tests
     public void Retractall_RemovesEveryMatchingClause()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic foo/1.\nfoo(1).\nfoo(2).\nfoo(3).");
+        engine.ConsultString("""
+            :- dynamic foo/1.
+            foo(1).
+            foo(2).
+            foo(3).
+            """);
         Assert.True(engine.Query("retractall(foo(_)).").Success);
         Assert.False(engine.Query("foo(_).").Success);
     }
@@ -95,7 +100,12 @@ public class Chunk98Tests
     public void Retractall_RemovesOnlyTheUnifyingClauses()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic foo/1.\nfoo(1).\nfoo(2).\nfoo(3).");
+        engine.ConsultString("""
+            :- dynamic foo/1.
+            foo(1).
+            foo(2).
+            foo(3).
+            """);
         Assert.True(engine.Query("retractall(foo(2)).").Success);
         Assert.True(engine.Query("foo(1).").Success);
         Assert.False(engine.Query("foo(2).").Success);
@@ -116,7 +126,11 @@ public class Chunk98Tests
     public void Listing1_ListsAPredicatesFacts()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic item/1.\nitem(apple).\nitem(pear).");
+        engine.ConsultString("""
+            :- dynamic item/1.
+            item(apple).
+            item(pear).
+            """);
         Assert.True(engine.Query(
             "with_output_to(atom(A), listing(item/1)), " +
             "sub_atom(A, _, _, _, 'item(apple).'), " +
@@ -127,7 +141,10 @@ public class Chunk98Tests
     public void Listing1_ListsARuleWithItsBody()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic positive/1.\npositive(X) :- X > 0.");
+        engine.ConsultString("""
+            :- dynamic positive/1.
+            positive(X) :- X > 0.
+            """);
         Assert.True(engine.Query(
             "with_output_to(atom(A), listing(positive/1)), " +
             "sub_atom(A, _, _, _, ':-').").Success);
@@ -137,7 +154,10 @@ public class Chunk98Tests
     public void Listing1_AcceptsABarePredicateName()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic item/1.\nitem(apple).");
+        engine.ConsultString("""
+            :- dynamic item/1.
+            item(apple).
+            """);
         Assert.True(engine.Query(
             "with_output_to(atom(A), listing(item)), " +
             "sub_atom(A, _, _, _, 'item(apple).').").Success);
@@ -147,7 +167,10 @@ public class Chunk98Tests
     public void Listing0_ListsTheDynamicPredicates()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic mark/1.\nmark(here).");
+        engine.ConsultString("""
+            :- dynamic mark/1.
+            mark(here).
+            """);
         Assert.True(engine.Query(
             "with_output_to(atom(A), listing), " +
             "sub_atom(A, _, _, _, 'mark(here).').").Success);
@@ -159,7 +182,10 @@ public class Chunk98Tests
         // A consulted program — predicates that are NOT :- dynamic — must
         // still be listable; no `:- dynamic` header is printed for them.
         var engine = new PrologEngine();
-        engine.ConsultString("color(red).\ncolor(blue).");
+        engine.ConsultString("""
+            color(red).
+            color(blue).
+            """);
         Assert.True(engine.Query(
             "with_output_to(atom(A), listing(color/1)), " +
             "sub_atom(A, _, _, _, 'color(red).'), " +
@@ -173,7 +199,11 @@ public class Chunk98Tests
     public void Listing0_ListsBothStaticAndDynamicUserPredicates()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("shape(square).\n:- dynamic count/1.\ncount(3).");
+        engine.ConsultString("""
+            shape(square).
+            :- dynamic count/1.
+            count(3).
+            """);
         Assert.True(engine.Query(
             "with_output_to(atom(A), listing), " +
             "sub_atom(A, _, _, _, 'shape(square).'), " +
@@ -186,7 +216,10 @@ public class Chunk98Tests
         // User predicates are listed — never builtins (append/3) or the
         // library predicates of the prelude (member/2).
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic item/1.\nitem(apple).");
+        engine.ConsultString("""
+            :- dynamic item/1.
+            item(apple).
+            """);
         var sol = engine.Query(
             "with_output_to(atom(A), listing), " +
             "sub_atom(A, _, _, _, 'item(apple).').");
@@ -203,8 +236,10 @@ public class Chunk98Tests
     public void Listing_PrintsADynamicHeaderAndIndentsRuleBodies()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- dynamic step/2.\nstep(X, Y) :- X > 0, Y is X - 1.");
+        engine.ConsultString("""
+            :- dynamic step/2.
+            step(X, Y) :- X > 0, Y is X - 1.
+            """);
         Assert.True(engine.Query(
             "with_output_to(atom(A), listing(step/2)), " +
             "sub_atom(A, _, _, _, ':- dynamic step/2.'), " +

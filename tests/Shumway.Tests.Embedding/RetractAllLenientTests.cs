@@ -24,7 +24,10 @@ public sealed class RetractAllLenientTests
     public void RetractAll_OnStatic_RaisesPermissionError()
     {
         var e = new PrologEngine();
-        e.ConsultString("p(1).\np(2).\n");   // static
+        e.ConsultString("""
+            p(1).
+            p(2).
+            """);   // static
         var sol = e.Query("catch(retractall(p(_)), error(E, _), true), E = permission_error(modify, static_procedure, _).");
         Assert.True(sol.Success);
     }
@@ -33,7 +36,12 @@ public sealed class RetractAllLenientTests
     public void RetractAll_OnDynamic_RemovesMatching()
     {
         var e = new PrologEngine();
-        e.ConsultString(":- dynamic d/1.\nd(1).\nd(2).\nd(3).\n");
+        e.ConsultString("""
+            :- dynamic d/1.
+            d(1).
+            d(2).
+            d(3).
+            """);
         Assert.True(e.Query("retractall(d(2)).").Success);
         Assert.Equal(new[] { "1", "3" },
             e.QueryAll("d(X).").Select(s => s.Bindings["X"].ToString()).ToArray());

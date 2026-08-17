@@ -139,13 +139,14 @@ public class SaveRestoreTests
         // snapshot must restore into the SAME slot, reachable through the
         // module's public accessor.
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- module(m).\n"
-            + ":- public padd/1, pget/1.\n"
-            + ":- dynamic p/1.\n"
-            + "p(0).\n"
-            + "padd(X) :- assertz(p(X)).\n"
-            + "pget(X) :- p(X).\n");
+        e.ConsultString("""
+            :- module(m).
+            :- public padd/1, pget/1.
+            :- dynamic p/1.
+            p(0).
+            padd(X) :- assertz(p(X)).
+            pget(X) :- p(X).
+            """);
         Assert.True(e.Query("save.").Success);
         Assert.True(e.Query("padd(5), pget(5).").Success);
         Assert.True(e.Query("restore.").Success);

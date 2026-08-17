@@ -146,9 +146,10 @@ big(80).
         e.IlPromotion.Threshold = 1;
         // Default threshold (2048 bytes) — small predicate easily
         // fits under it.
-        e.ConsultString(
-            ":- public greet/1.\n"
-            + "greet(hello).\n");
+        e.ConsultString("""
+            :- public greet/1.
+            greet(hello).
+            """);
         Assert.True(e.Query("greet(X).").Success);
         Assert.True(e.Query("greet(X).").Success);
         // Hard to assert IsPromoted=true reliably (depends on the

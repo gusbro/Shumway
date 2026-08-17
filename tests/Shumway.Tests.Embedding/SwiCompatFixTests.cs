@@ -39,13 +39,14 @@ public sealed class SwiCompatFixTests
         var e = new PrologEngine();
         // A module declaring SWI-specific directives that Shumway no-ops still
         // loads and its predicate works.
-        e.ConsultString(
-            ":- module(m, [p/1]).\n"
-            + ":- module_transparent p/1.\n"
-            + ":- volatile p/1.\n"
-            + ":- predicate_options(p/1, 1, [verbose(boolean)]).\n"
-            + ":- redefine_system_predicate(p/1).\n"
-            + "p(ok).\n");
+        e.ConsultString("""
+            :- module(m, [p/1]).
+            :- module_transparent p/1.
+            :- volatile p/1.
+            :- predicate_options(p/1, 1, [verbose(boolean)]).
+            :- redefine_system_predicate(p/1).
+            p(ok).
+            """);
         Assert.True(e.Query("m:p(ok).").Success);
     }
 }

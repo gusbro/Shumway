@@ -177,12 +177,20 @@ public class Adr035ModuleResolveTests
         // NOT be pinned. `show_usage` is defined in exactly ONE module, so it still resolves; a
         // name defined in neither stays undefined.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- set_prolog_flag(compile_mode, debug).\n:- module(other).\n:- public(o/0).\n"
-            + "o :- true.\nsecondary :- true.\n");
-        engine.ConsultString(
-            ":- module(blint).\n:- public(main/0).\nmain :- helper.\n"
-            + "helper :- true.\nshow_usage :- true.\n");
+        engine.ConsultString("""
+            :- set_prolog_flag(compile_mode, debug).
+            :- module(other).
+            :- public(o/0).
+            o :- true.
+            secondary :- true.
+            """);
+        engine.ConsultString("""
+            :- module(blint).
+            :- public(main/0).
+            main :- helper.
+            helper :- true.
+            show_usage :- true.
+            """);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
 
         string usage = "", missing = "";

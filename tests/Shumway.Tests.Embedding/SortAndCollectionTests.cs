@@ -120,7 +120,11 @@ public class SortAndCollectionTests
     public void Bagof_MultipleSolutions_PreservesOrder()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("p(a).\np(b).\np(c).\n");
+        engine.ConsultString("""
+            p(a).
+            p(b).
+            p(c).
+            """);
         var sol = engine.Query("bagof(X, p(X), L).");
         Assert.True(sol.Success);
         Assert.Equal(List(Atom("a"), Atom("b"), Atom("c")), sol["L"]);
@@ -133,7 +137,11 @@ public class SortAndCollectionTests
         // support our bagof treats every var as implicitly existential, so
         // this should just collect every X for which there's some Y.
         var engine = new PrologEngine();
-        engine.ConsultString("p(a, 1).\np(b, 2).\np(c, 3).\n");
+        engine.ConsultString("""
+            p(a, 1).
+            p(b, 2).
+            p(c, 3).
+            """);
         var sol = engine.Query("bagof(X, Y^p(X, Y), L).");
         Assert.True(sol.Success);
         Assert.Equal(List(Atom("a"), Atom("b"), Atom("c")), sol["L"]);
@@ -143,7 +151,12 @@ public class SortAndCollectionTests
     public void Bagof_KeepsDuplicates()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("v(1).\nv(2).\nv(1).\nv(3).\n");
+        engine.ConsultString("""
+            v(1).
+            v(2).
+            v(1).
+            v(3).
+            """);
         var sol = engine.Query("bagof(X, v(X), L).");
         Assert.True(sol.Success);
         Assert.Equal(List(Int(1), Int(2), Int(1), Int(3)), sol["L"]);
@@ -164,7 +177,13 @@ public class SortAndCollectionTests
     public void Setof_SortsAndDedups()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("v(c).\nv(a).\nv(b).\nv(a).\nv(c).\n");
+        engine.ConsultString("""
+            v(c).
+            v(a).
+            v(b).
+            v(a).
+            v(c).
+            """);
         var sol = engine.Query("setof(X, v(X), L).");
         Assert.True(sol.Success);
         Assert.Equal(List(Atom("a"), Atom("b"), Atom("c")), sol["L"]);
@@ -175,7 +194,12 @@ public class SortAndCollectionTests
     {
         // Numbers sort before atoms in standard order.
         var engine = new PrologEngine();
-        engine.ConsultString("item(banana).\nitem(2).\nitem(apple).\nitem(1).\n");
+        engine.ConsultString("""
+            item(banana).
+            item(2).
+            item(apple).
+            item(1).
+            """);
         var sol = engine.Query("setof(X, item(X), L).");
         Assert.True(sol.Success);
         Assert.Equal(List(Int(1), Int(2), Atom("apple"), Atom("banana")), sol["L"]);
@@ -185,11 +209,12 @@ public class SortAndCollectionTests
     public void Setof_CompoundTemplate_DedupsByStructure()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "edge(a, b).\n" +
-            "edge(c, d).\n" +
-            "edge(a, b).\n" +
-            "edge(b, c).\n");
+        engine.ConsultString("""
+            edge(a, b).
+            edge(c, d).
+            edge(a, b).
+            edge(b, c).
+            """);
         var sol = engine.Query("setof(edge(X, Y), edge(X, Y), L).");
         Assert.True(sol.Success);
         Assert.Equal(
@@ -204,11 +229,12 @@ public class SortAndCollectionTests
     public void Setof_WithExistential_StripsQuantifier()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            "p(b, 1).\n" +
-            "p(a, 2).\n" +
-            "p(c, 3).\n" +
-            "p(a, 4).\n");
+        engine.ConsultString("""
+            p(b, 1).
+            p(a, 2).
+            p(c, 3).
+            p(a, 4).
+            """);
         var sol = engine.Query("setof(X, Y^p(X, Y), L).");
         Assert.True(sol.Success);
         Assert.Equal(List(Atom("a"), Atom("b"), Atom("c")), sol["L"]);

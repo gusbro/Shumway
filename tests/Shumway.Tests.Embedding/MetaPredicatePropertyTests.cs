@@ -41,9 +41,10 @@ public sealed class MetaPredicatePropertyTests
     public void UserDeclaredTemplate_IsReported()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- meta_predicate(my_call(0, *)).\n"
-            + "my_call(G, _) :- call(G).\n");
+        e.ConsultString("""
+            :- meta_predicate(my_call(0, *)).
+            my_call(G, _) :- call(G).
+            """);
         Assert.Equal("my_call(0, *)", TemplateOf(e, "my_call(_, _)"));
     }
 
@@ -51,10 +52,11 @@ public sealed class MetaPredicatePropertyTests
     public void CommaConjunctionOfTemplates_RecordsEach()
     {
         var e = new PrologEngine();
-        e.ConsultString(
-            ":- meta_predicate((mc_a(0), mc_b(*, 0))).\n"
-            + "mc_a(G) :- call(G).\n"
-            + "mc_b(_, G) :- call(G).\n");
+        e.ConsultString("""
+            :- meta_predicate((mc_a(0), mc_b(*, 0))).
+            mc_a(G) :- call(G).
+            mc_b(_, G) :- call(G).
+            """);
         Assert.Equal("mc_a(0)", TemplateOf(e, "mc_a(_)"));
         Assert.Equal("mc_b(*, 0)", TemplateOf(e, "mc_b(_, _)"));
     }
@@ -63,7 +65,7 @@ public sealed class MetaPredicatePropertyTests
     public void APredicateWithoutATemplate_HasNoSuchProperty()
     {
         var e = new PrologEngine();
-        e.ConsultString("plain_p(1).\n");
+        e.ConsultString("plain_p(1).");
         Assert.False(
             e.Query("predicate_property(plain_p(_), meta_predicate(_)).").Success);
         // The atom properties still answer.

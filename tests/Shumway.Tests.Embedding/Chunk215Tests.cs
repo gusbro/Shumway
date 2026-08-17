@@ -30,11 +30,12 @@ public class Chunk215Tests
         // TryMeElseChain (no first/second-arg indexing), so the only
         // not-previously-supported opcodes are get_level/cut — isolating
         // the deep-cut feature under test.
-        engine.ConsultString(
-            ":- public classify/2.\n"
-            + "classify(X, R) :- X < 0, !, R = neg.\n"
-            + "classify(X, R) :- X =:= 0, !, R = zero.\n"
-            + "classify(_, R) :- R = pos.\n");
+        engine.ConsultString("""
+            :- public classify/2.
+            classify(X, R) :- X < 0, !, R = neg.
+            classify(X, R) :- X =:= 0, !, R = zero.
+            classify(_, R) :- R = pos.
+            """);
 
         // Each input yields exactly one solution — the cut commits.
         Assert.Equal(new[] { "neg" }, Results(engine, "classify(-5, R).", "R"));
@@ -55,11 +56,14 @@ public class Chunk215Tests
         // either under- or over-cut.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            "helper(1).\nhelper(2).\nhelper(3).\n"
-            + ":- public g/1.\n"
-            + "g(X) :- helper(X), X > 0, !.\n"
-            + "g(99).\n");
+        engine.ConsultString("""
+            helper(1).
+            helper(2).
+            helper(3).
+            :- public g/1.
+            g(X) :- helper(X), X > 0, !.
+            g(99).
+            """);
 
         Assert.Equal(new[] { "1" }, Results(engine, "g(X).", "X"));
         Assert.True(engine.IlPromotion.IsPromoted(Fid("g", 1)));
@@ -73,11 +77,12 @@ public class Chunk215Tests
         // entry barrier restored from the choice point's saved _b0.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public f/2.\n"
-            + "f(X, R) :- member(X, [1,2,3]), X > 5, R = a.\n"
-            + "f(X, R) :- member(X, [1,2,3]), X >= 2, !, R = b.\n"
-            + "f(_, R) :- R = c.\n");
+        engine.ConsultString("""
+            :- public f/2.
+            f(X, R) :- member(X, [1,2,3]), X > 5, R = a.
+            f(X, R) :- member(X, [1,2,3]), X >= 2, !, R = b.
+            f(_, R) :- R = c.
+            """);
 
         // Clause 1: no solution. Clause 2: X=1 (X>=2 fails), X=2 (cut) ->
         // (X=2, b). The cut discards member's CP and clause 3.

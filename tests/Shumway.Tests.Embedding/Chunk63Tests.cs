@@ -41,13 +41,14 @@ public class Chunk63Tests
         // single-clause IL bodies.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public outer/0.\n" +
-            ":- public inner/0.\n" +
-            ":- public a/0.\n" +
-            "a.\n" +
-            "inner :- a, a.\n" +
-            "outer :- inner, a.\n");
+        engine.ConsultString("""
+            :- public outer/0.
+            :- public inner/0.
+            :- public a/0.
+            a.
+            inner :- a, a.
+            outer :- inner, a.
+            """);
         engine.Query("outer.");
         int fid = Shumway.Core.FunctorTable.Intern(
             Shumway.Core.AtomTable.Intern("outer", permanent: true).Id, 0);
@@ -61,13 +62,14 @@ public class Chunk63Tests
         // though Tier-1 doesn't handle this shape yet. Documents the
         // target behaviour for the Phase-2 IL lift.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public choose/1.\n" +
-            ":- public color/1.\n" +
-            ":- public size/1.\n" +
-            "color(red). color(green). color(blue).\n" +
-            "size(small). size(large).\n" +
-            "choose(X) :- color(X), size(_).\n");
+        engine.ConsultString("""
+            :- public choose/1.
+            :- public color/1.
+            :- public size/1.
+            color(red). color(green). color(blue).
+            size(small). size(large).
+            choose(X) :- color(X), size(_).
+            """);
         Assert.Equal(6, engine.QueryAll("choose(_).").Count());
     }
 }

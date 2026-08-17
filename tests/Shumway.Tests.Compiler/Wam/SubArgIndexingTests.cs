@@ -63,7 +63,12 @@ public class SubArgIndexingTests
     {
         // tok([a|T],T) ... [d|T]: arg0 is a list in every clause, heads a/b/c/d
         // distinct atoms -> car indexing on the head (sub0 = 0, sub1 = -1).
-        var cp = Compile("tok([a|T],T).\ntok([b|T],T).\ntok([c|T],T).\ntok([d|T],T).");
+        var cp = Compile("""
+            tok([a|T],T).
+            tok([b|T],T).
+            tok([c|T],T).
+            tok([d|T],T).
+            """);
         int[]? ops = OperandsOf(cp.Bytecode, Opcode.SwitchOnAtomSub);
         Assert.NotNull(ops);
         Assert.Equal(new[] { 0, 0, -1 }, new[] { ops![0], ops[1], ops[2] });   // argIdx, sub0, sub1
@@ -75,7 +80,11 @@ public class SubArgIndexingTests
     [Fact]
     public void ListHeadIntegers_EmitIntegerSub_DepthOne()
     {
-        var cp = Compile("k([1|T],T).\nk([2|T],T).\nk([3|T],T).");
+        var cp = Compile("""
+            k([1|T],T).
+            k([2|T],T).
+            k([3|T],T).
+            """);
         int[]? ops = OperandsOf(cp.Bytecode, Opcode.SwitchOnIntegerSub);
         Assert.NotNull(ops);
         Assert.Equal(new[] { 0, 0, -1 }, new[] { ops![0], ops[1], ops[2] });
@@ -86,8 +95,11 @@ public class SubArgIndexingTests
     {
         // The Arity print_cmd idiom: list head is a t/4 compound, the discriminating
         // integer code lives at the token's 2nd sub-arg -> path (sub0=0, sub1=1).
-        var cp = Compile(
-            "pc([t(_,104,_,_)|R],R).\npc([t(_,105,_,_)|R],R).\npc([t(_,106,_,_)|R],R).");
+        var cp = Compile("""
+            pc([t(_,104,_,_)|R],R).
+            pc([t(_,105,_,_)|R],R).
+            pc([t(_,106,_,_)|R],R).
+            """);
         int[]? ops = OperandsOf(cp.Bytecode, Opcode.SwitchOnIntegerSub);
         Assert.NotNull(ops);
         Assert.Equal(new[] { 0, 0, 1 }, new[] { ops![0], ops[1], ops[2] });   // argIdx, sub0=head, sub1=t.arg1
@@ -99,7 +111,12 @@ public class SubArgIndexingTests
         // The evalsql expression_operand idiom: arg0 is a struct e/2, the OpCode
         // integer is e's first sub-arg -> switch_on_structure picks e/2, then
         // switch_on_integer_sub keys on sub0 = 0 (sub1 = -1).
-        var cp = Compile("eo(e(1,_)).\neo(e(29,_)).\neo(e(31,_)).\neo(e(49,_)).");
+        var cp = Compile("""
+            eo(e(1,_)).
+            eo(e(29,_)).
+            eo(e(31,_)).
+            eo(e(49,_)).
+            """);
         Assert.True(Count(cp.Bytecode, Opcode.SwitchOnStructure) >= 1);
         int[]? ops = OperandsOf(cp.Bytecode, Opcode.SwitchOnIntegerSub);
         Assert.NotNull(ops);
@@ -111,7 +128,11 @@ public class SubArgIndexingTests
     {
         // heading_line-style: every clause's list head shares the SAME leading
         // atom, so one level of sub indexing can't partition -> no sub-switch.
-        var cp = Compile("h([x,a|T],T).\nh([x,b|T],T).\nh([x,c|T],T).");
+        var cp = Compile("""
+            h([x,a|T],T).
+            h([x,b|T],T).
+            h([x,c|T],T).
+            """);
         // No atom_sub at depth-1 on the head (all 'x'); depth-2 into the head
         // atom can't be followed either, so nothing is emitted.
         Assert.Equal(0, Count(cp.Bytecode, Opcode.SwitchOnAtomSub));
@@ -122,7 +143,10 @@ public class SubArgIndexingTests
     {
         // A list bucket with both an atom head and an integer head is not a
         // single homogeneous key kind -> v1 keeps the plain chain.
-        var cp = Compile("m([a|T],T).\nm([1|T],T).");
+        var cp = Compile("""
+            m([a|T],T).
+            m([1|T],T).
+            """);
         Assert.Equal(0, Count(cp.Bytecode, Opcode.SwitchOnAtomSub));
         Assert.Equal(0, Count(cp.Bytecode, Opcode.SwitchOnIntegerSub));
     }

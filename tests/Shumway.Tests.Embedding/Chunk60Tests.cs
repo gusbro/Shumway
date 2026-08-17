@@ -19,11 +19,12 @@ public class Chunk60Tests
     public void Consult_ContiguousClauses_NoError()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public color/1.\n" +
-            "color(red).\n" +
-            "color(green).\n" +
-            "color(blue).\n");
+        engine.ConsultString("""
+            :- public color/1.
+            color(red).
+            color(green).
+            color(blue).
+            """);
         Assert.Equal(3, engine.QueryAll("color(_).").Count());
     }
 
@@ -32,12 +33,13 @@ public class Chunk60Tests
     {
         var engine = new PrologEngine();
         var ex = Assert.Throws<System.InvalidOperationException>(() =>
-            engine.ConsultString(
-                ":- public color/1.\n" +
-                ":- public size/1.\n" +
-                "color(red).\n" +
-                "size(small).\n" +
-                "color(green).\n"));
+            engine.ConsultString("""
+                :- public color/1.
+                :- public size/1.
+                color(red).
+                size(small).
+                color(green).
+                """));
         Assert.Contains("color/1", ex.Message);
         Assert.Contains("contiguous", ex.Message);
     }
@@ -46,13 +48,14 @@ public class Chunk60Tests
     public void Consult_DiscontiguousWithDeclaration_OK()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public color/1.\n" +
-            ":- public size/1.\n" +
-            ":- discontiguous color/1.\n" +
-            "color(red).\n" +
-            "size(small).\n" +
-            "color(green).\n");
+        engine.ConsultString("""
+            :- public color/1.
+            :- public size/1.
+            :- discontiguous color/1.
+            color(red).
+            size(small).
+            color(green).
+            """);
         Assert.Equal(2, engine.QueryAll("color(_).").Count());
     }
 
@@ -68,8 +71,16 @@ public class Chunk60Tests
         // rejects the second module at query time (when the public
         // namespace is validated).
         var engine = new PrologEngine();
-        engine.ConsultString(":- module(m1).\n:- public greet/1.\ngreet(hello).\n");
-        engine.ConsultString(":- module(m2).\n:- public greet/1.\ngreet(world).\n");
+        engine.ConsultString("""
+            :- module(m1).
+            :- public greet/1.
+            greet(hello).
+            """);
+        engine.ConsultString("""
+            :- module(m2).
+            :- public greet/1.
+            greet(world).
+            """);
         var ex = Assert.Throws<System.InvalidOperationException>(
             () => engine.Query("greet(_)."));
         Assert.Contains("public", ex.Message);
@@ -80,16 +91,18 @@ public class Chunk60Tests
     public void Consult_SamePublicAcrossModules_WithMultifile_BothAccepted()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(colors_a).\n" +
-            ":- public color/1.\n" +
-            ":- multifile color/1.\n" +
-            "color(red).\n");
-        engine.ConsultString(
-            ":- module(colors_b).\n" +
-            ":- public color/1.\n" +
-            ":- multifile color/1.\n" +
-            "color(blue).\n");
+        engine.ConsultString("""
+            :- module(colors_a).
+            :- public color/1.
+            :- multifile color/1.
+            color(red).
+            """);
+        engine.ConsultString("""
+            :- module(colors_b).
+            :- public color/1.
+            :- multifile color/1.
+            color(blue).
+            """);
         // Both modules' clauses are visible to query time.
         Assert.Equal(2, engine.QueryAll("color(_).").Count());
     }
@@ -101,15 +114,17 @@ public class Chunk60Tests
         // wins as the canonical owner, so the second module's public
         // clash still raises.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- module(m1).\n" +
-            ":- public greet/1.\n" +
-            ":- multifile greet/1.\n" +
-            "greet(hi).\n");
-        engine.ConsultString(
-            ":- module(m2).\n" +
-            ":- public greet/1.\n" +
-            "greet(yo).\n");
+        engine.ConsultString("""
+            :- module(m1).
+            :- public greet/1.
+            :- multifile greet/1.
+            greet(hi).
+            """);
+        engine.ConsultString("""
+            :- module(m2).
+            :- public greet/1.
+            greet(yo).
+            """);
         Assert.Throws<System.InvalidOperationException>(
             () => engine.Query("greet(_)."));
     }

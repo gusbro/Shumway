@@ -20,9 +20,10 @@ public class Chunk46Tests
         // `not_x --> \+ [x].` succeeds when the next char isn't 'x',
         // consuming nothing.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public not_x/2.\n" +
-            "not_x --> \\+ [x].");
+        engine.ConsultString("""
+            :- public not_x/2.
+            not_x --> \+ [x].
+            """);
         // Input doesn't start with x → succeeds, no input consumed.
         Assert.True(engine.Query("not_x([a, b], R), R == [a, b].").Success);
         // Input starts with x → fails.
@@ -35,9 +36,10 @@ public class Chunk46Tests
         // After `\+ NT`, the diff-list state is unchanged regardless of
         // what NT would have done.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public after_neg/2.\n" +
-            "after_neg --> \\+ [no], [yes].");
+        engine.ConsultString("""
+            :- public after_neg/2.
+            after_neg --> \+ [no], [yes].
+            """);
         Assert.True(engine.Query("after_neg([yes], []).").Success);
         Assert.False(engine.Query("after_neg([no, yes], _).").Success);
     }
@@ -47,9 +49,10 @@ public class Chunk46Tests
     {
         // The existing branches still pass through unchanged.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public ab/2.\n" +
-            "ab --> [a] ; [b].");
+        engine.ConsultString("""
+            :- public ab/2.
+            ab --> [a] ; [b].
+            """);
         Assert.True(engine.Query("ab([a], []).").Success);
         Assert.True(engine.Query("ab([b], []).").Success);
         Assert.False(engine.Query("ab([c], _).").Success);
@@ -61,9 +64,10 @@ public class Chunk46Tests
         // `{ G }` runs G as a plain Prolog goal without touching the
         // diff-list state. Combine with a terminal to check both halves.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public any_atom/3.\n" +
-            "any_atom(X) --> [X], { atom(X) }.");
+        engine.ConsultString("""
+            :- public any_atom/3.
+            any_atom(X) --> [X], { atom(X) }.
+            """);
         Assert.True(engine.Query("any_atom(foo, [foo], []).").Success);
         Assert.False(engine.Query("any_atom(42, [42], _).").Success);
     }
@@ -74,10 +78,11 @@ public class Chunk46Tests
         // Sanity check that recursive DCG productions remain intact
         // after the chunk-46 transform changes.
         var engine = new PrologEngine();
-        engine.ConsultString(
-            ":- public as/2.\n" +
-            "as --> [].\n" +
-            "as --> [a], as.");
+        engine.ConsultString("""
+            :- public as/2.
+            as --> [].
+            as --> [a], as.
+            """);
         Assert.True(engine.Query("as([a, a, a], []).").Success);
         // [a, b] can't be fully parsed because b stops the as recursion;
         // the residual list must contain b.

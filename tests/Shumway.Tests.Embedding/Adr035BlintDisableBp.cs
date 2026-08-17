@@ -33,7 +33,7 @@ public class Adr035BlintDisableBp
         // (Arity $...$ strings, backslash not an escape), which this file
         // never consulted under.
         engine.Flags.LenientBareOperatorOperands = true;
-        engine.ConsultString(":- set_prolog_flag(compile_mode, debug).\n");
+        engine.ConsultString(":- set_prolog_flag(compile_mode, debug).");
         engine.ConsultFile(BlintPath);
         engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
         // Lint Blint.pl itself, the way the launcher does (dummy prog name + -console + file;

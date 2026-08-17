@@ -176,7 +176,11 @@ public class Adr035SteppingTests
         //   2: p(a).
         //   3: p(b).
         //   4: p(c).
-        var engine = DebugEngine("p(a).\np(b).\np(c).\n");
+        var engine = DebugEngine("""
+            p(a).
+            p(b).
+            p(c).
+            """);
         engine.AddBreakpoint("<string>", 3);
 
         var stops = Walk(engine, "p(X).");   // no steps: every stop resumes with Continue
@@ -196,7 +200,13 @@ public class Adr035SteppingTests
         //   4: t :-
         //   5:     p(X),
         //   6:     X > 1.
-        var engine = DebugEngine("p(1).\np(2).\nt :-\n    p(X),\n    X > 1.\n");
+        var engine = DebugEngine("""
+            p(1).
+            p(2).
+            t :-
+                p(X),
+                X > 1.
+            """);
         engine.AddBreakpoint("<string>", 5);   // the goal p(X)
 
         var stops = Walk(engine, "t.",
@@ -226,7 +236,11 @@ public class Adr035SteppingTests
         //   2: p(1).
         //   3: t :-
         //   4:     p(9).
-        var engine = DebugEngine("p(1).\nt :-\n    p(9).\n");
+        var engine = DebugEngine("""
+            p(1).
+            t :-
+                p(9).
+            """);
         engine.AddBreakpoint("<string>", 4);   // the goal p(9)
 
         var stops = Walk(engine, "t.", StepMode.Into, StepMode.Into);
@@ -316,10 +330,11 @@ public class Adr035SteppingTests
         // as a loop counter, confidently. The duplicate is only ever the FIRST frame (the
         // running clause saved the current cp into its own environment at `allocate`), and
         // that is the only one to skip.
-        var engine = DebugEngine(
-            "down(0) :- mark(bottom).\n"
-            + "down(N) :- N > 0, M is N - 1, down(M).\n"
-            + "mark(_).\n", lco: false);
+        var engine = DebugEngine("""
+            down(0) :- mark(bottom).
+            down(N) :- N > 0, M is N - 1, down(M).
+            mark(_).
+            """, lco: false);
         engine.AddBreakpoint("<string>", 2);   // the bottom of the recursion, twelve levels down
 
         var frames = Walk(engine, "down(12).")[0].Frames;
@@ -351,9 +366,10 @@ public class Adr035SteppingTests
         // engine now says the step is over, and the debugger cancels it. There is no honest
         // alternative -- stopping the user in the host's C# would be showing them a place
         // they did not ask to see, and where their program is not.
-        var engine = DebugEngine(
-            "pick(X) :- member(X, [a,b,c]).\n"
-            + "shout(X) :- writeln(X).\n", lco: false);
+        var engine = DebugEngine("""
+            pick(X) :- member(X, [a,b,c]).
+            shout(X) :- writeln(X).
+            """, lco: false);
         engine.AddBreakpoint("<string>", 3);   // shout/1's body
 
         var stops = Walk(engine, "pick(X), shout(X).", StepMode.Over);
@@ -406,10 +422,15 @@ public class Adr035SteppingTests
         //   6: go(X) :-
         //   7:     pick(X),
         //   8:     shout(X).
-        var engine = DebugEngine(
-            "pick(X) :-\n    member(X, [a,b,c]).\n"
-            + "shout(X) :-\n    writeln(X).\n"
-            + "go(X) :-\n    pick(X),\n    shout(X).\n", lco: false);
+        var engine = DebugEngine("""
+            pick(X) :-
+                member(X, [a,b,c]).
+            shout(X) :-
+                writeln(X).
+            go(X) :-
+                pick(X),
+                shout(X).
+            """, lco: false);
         engine.AddBreakpoint("<string>", 3);   // pick/1's body: the call to member/2
 
         var stops = Walk(engine, "go(A).",
@@ -451,8 +472,15 @@ public class Adr035SteppingTests
         //   2: p(X) :-
         //   3:     q(X),          <- stopped here; r/1's argument has not been built
         //   4:     r(_Later).
-        var engine = DebugEngine(
-            "p(X) :-\n    q(X),\n    r(_Later).\nq(_).\nr(_).\ngo :-\n    p(1).\n",
+        var engine = DebugEngine("""
+            p(X) :-
+                q(X),
+                r(_Later).
+            q(_).
+            r(_).
+            go :-
+                p(1).
+            """,
             lco: false);
         engine.AddBreakpoint("<string>", 3);
 
@@ -488,8 +516,14 @@ public class Adr035SteppingTests
         //   5: choose(1).
         //   6: choose(2).
         //   7: check(2).
-        var engine = DebugEngine(
-            "pick(X) :-\n    choose(X),\n    check(X).\nchoose(1).\nchoose(2).\ncheck(2).\n",
+        var engine = DebugEngine("""
+            pick(X) :-
+                choose(X),
+                check(X).
+            choose(1).
+            choose(2).
+            check(2).
+            """,
             lco: false);
         engine.AddBreakpoint("<string>", 3);
 
@@ -525,9 +559,20 @@ public class Adr035SteppingTests
         //  11: t(_).
         //  12: q(5).
         //  13: r(_).
-        var engine = DebugEngine(
-            "p(X) :-\n    q(X),\n    X > 1,\n    Y is X * 2,\n    !,\n    r(Y).\n"
-            + "t(X) :-\n    p(X),\n    fail.\nt(_).\nq(5).\nr(_).\n", lco: false);
+        var engine = DebugEngine("""
+            p(X) :-
+                q(X),
+                X > 1,
+                Y is X * 2,
+                !,
+                r(Y).
+            t(X) :-
+                p(X),
+                fail.
+            t(_).
+            q(5).
+            r(_).
+            """, lco: false);
         engine.AddBreakpoint("<string>", 3);
 
         var stops = Walk(engine, "t(A).",
@@ -563,13 +608,14 @@ public class Adr035SteppingTests
         //   5:     total(T, Acc1, Total).
         //   6: main(Total) :-
         //   7:     total([item(pen,10), item(book,25)], 0, Total).
-        var engine = DebugEngine(
-            "total([], Acc, Acc).\n"
-            + "total([item(_, Price)|T], Acc, Total) :-\n"
-            + "    Acc1 is Acc + Price,\n"
-            + "    total(T, Acc1, Total).\n"
-            + "main(Total) :-\n"
-            + "    total([item(pen,10), item(book,25)], 0, Total).\n", lco: false);
+        var engine = DebugEngine("""
+            total([], Acc, Acc).
+            total([item(_, Price)|T], Acc, Total) :-
+                Acc1 is Acc + Price,
+                total(T, Acc1, Total).
+            main(Total) :-
+                total([item(pen,10), item(book,25)], 0, Total).
+            """, lco: false);
         engine.AddBreakpoint("<string>", 5);   // the recursive call
 
         var stops = Walk(engine, "main(T).", StepMode.Continue);
@@ -611,8 +657,13 @@ public class Adr035SteppingTests
         //   4:     use(Y).
         //   5: make(X, out(X)).
         //   6: use(_).
-        var engine = DebugEngine(
-            "mid(X, Y) :-\n    make(X, Y),\n    use(Y).\nmake(X, out(X)).\nuse(_).\n",
+        var engine = DebugEngine("""
+            mid(X, Y) :-
+                make(X, Y),
+                use(Y).
+            make(X, out(X)).
+            use(_).
+            """,
             lco: false);
         engine.AddBreakpoint("<string>", 3);
 
@@ -642,9 +693,13 @@ public class Adr035SteppingTests
         //   4: walk([_|T], Data) :-
         //   5:     walk(T, Data).
         //   6: stop_here.
-        var engine = DebugEngine(
-            "walk([], _) :-\n    stop_here.\nwalk([_|T], Data) :-\n    walk(T, Data).\n"
-            + "stop_here.\n", lco: false);
+        var engine = DebugEngine("""
+            walk([], _) :-
+                stop_here.
+            walk([_|T], Data) :-
+                walk(T, Data).
+            stop_here.
+            """, lco: false);
         engine.AddBreakpoint("<string>", 3);
 
         var frames = Walk(engine, "walk([a,b,c,d], payload(1,2,3)).")[0].Frames;
@@ -671,8 +726,15 @@ public class Adr035SteppingTests
         // recursion, which they can see is a recursion from the two frames of it either side.
         // So the stack shows both ends and SAYS how many frames it left out, rather than
         // running to a length no window can show and no buffer can carry.
-        var engine = DebugEngine(
-            "down(0) :-\n    !,\n    bottom.\ndown(N) :-\n    N1 is N - 1,\n    down(N1).\nbottom.\n",
+        var engine = DebugEngine("""
+            down(0) :-
+                !,
+                bottom.
+            down(N) :-
+                N1 is N - 1,
+                down(N1).
+            bottom.
+            """,
             lco: false);
         engine.AddBreakpoint("<string>", 4);   // bottom/0, 300 frames down
 
@@ -727,8 +789,13 @@ public class Adr035SteppingTests
         //   4:     % nothing here either
         //   5:     mid(X).
         //   6: mid(7).
-        var engine = DebugEngine(
-            "top(X) :-\n\n    % nothing here either\n    mid(X).\nmid(7).\n");
+        var engine = DebugEngine("""
+            top(X) :-
+
+                % nothing here either
+                mid(X).
+            mid(7).
+            """);
 
         // None of lines 2, 3, 4 is a place the machine can stop: 3 and 4 have no code,
         // and 2 is a head, whose entry point IS the first goal's. All three snap to 5.
@@ -747,7 +814,11 @@ public class Adr035SteppingTests
     {
         // A hollow breakpoint: there is nothing at or after this line to stop in, and
         // saying so is better than pretending it took.
-        var engine = DebugEngine("top(X) :-\n    mid(X).\nmid(7).\n");
+        var engine = DebugEngine("""
+            top(X) :-
+                mid(X).
+            mid(7).
+            """);
 
         Assert.Equal(-1, engine.BoundLine("<string>", 99));
         Assert.Equal(0, engine.AddBreakpoint("<string>", 99));
@@ -763,8 +834,20 @@ public class Adr035SteppingTests
         // collision: without the debug metadata in that key, the second engine gets the
         // first one's link, and reports its neighbour's source positions. A debugger
         // showing the wrong lines, with no error anywhere.
-        var first = DebugEngine("q(X) :-\n    r(X).\nr(1).\n");                     // goal on 3
-        var second = DebugEngine("\n\n\n\nq(X) :-\n    r(X).\nr(1).\n");            // goal on 7
+        var first = DebugEngine("""
+            q(X) :-
+                r(X).
+            r(1).
+            """);                     // goal on 3
+        var second = DebugEngine("""
+
+
+
+
+            q(X) :-
+                r(X).
+            r(1).
+            """);            // goal on 7
 
         Assert.Equal(3, first.BoundLine("<string>", 3));
         Assert.Equal(7, second.BoundLine("<string>", 7));
@@ -779,7 +862,11 @@ public class Adr035SteppingTests
     [Fact]
     public void SteppingDoesNotChangeWhatTheProgramComputes()
     {
-        var engine = DebugEngine("app([], L, L).\napp([H|T], L, [H|R]) :-\n    app(T, L, R).\n");
+        var engine = DebugEngine("""
+            app([], L, L).
+            app([H|T], L, [H|R]) :-
+                app(T, L, R).
+            """);
         engine.AddBreakpoint("<string>", 4);
 
         var svc = new DebugService(engine, (s, e) => s.Resume(StepMode.Into));

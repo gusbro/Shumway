@@ -70,9 +70,10 @@ public class Adr030RedundantCutTests
         // redundant (single applicable recursive clause reached deterministically
         // by first-arg on a bound list), prefix is det → elided → clean tail
         // shape. Result must be unchanged.
-        var e = Consult(
-            "len([],0).\n" +
-            "len([_|T],N):-len(T,M),N is M+1,!.\n");
+        var e = Consult("""
+            len([],0).
+            len([_|T],N):-len(T,M),N is M+1,!.
+            """);
         Assert.True(e.Query("len([a,b,c,d], N), N == 4.").Success);
         Assert.Single(e.QueryAll("len([a,b,c], N)."));
     }

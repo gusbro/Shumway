@@ -35,7 +35,11 @@ public class PstrEqualityTests
     public void StringFromDynamicFact_EqualsLiteral()
     {
         var e = StringEngine();
-        e.ConsultString(":- dynamic s/1.\ns(\"foo\").\ns(\"bar\").\n");
+        e.ConsultString("""
+            :- dynamic s/1.
+            s("foo").
+            s("bar").
+            """);
         Assert.True(e.Query("s(X), X == \"bar\".").Success);
     }
 

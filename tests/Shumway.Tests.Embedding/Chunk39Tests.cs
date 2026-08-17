@@ -127,7 +127,10 @@ public class Chunk39Tests
     public void Engine_PromotionDisabled_NeverCallsIl()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- public greet/1.\ngreet(world).\n");
+        engine.ConsultString("""
+            :- public greet/1.
+            greet(world).
+            """);
         // Threshold = 0 (default).
         for (int i = 0; i < 10; i++) Assert.True(engine.Query("greet(world).").Success);
         int fid = FunctorId("greet", 1);
@@ -139,7 +142,10 @@ public class Chunk39Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 3;
-        engine.ConsultString(":- public greet/1.\ngreet(world).\n");
+        engine.ConsultString("""
+            :- public greet/1.
+            greet(world).
+            """);
         int fid = FunctorId("greet", 1);
 
         // First two calls bump the counter; third call triggers compilation
@@ -159,12 +165,18 @@ public class Chunk39Tests
         // The truth value and the binding should be identical — IL emission
         // must preserve unification semantics.
         var engineA = new PrologEngine();
-        engineA.ConsultString(":- public answer/1.\nanswer(42).\n");
+        engineA.ConsultString("""
+            :- public answer/1.
+            answer(42).
+            """);
         var solA = engineA.Query("answer(X).");
 
         var engineB = new PrologEngine();
         engineB.IlPromotion.Threshold = 1;
-        engineB.ConsultString(":- public answer/1.\nanswer(42).\n");
+        engineB.ConsultString("""
+            :- public answer/1.
+            answer(42).
+            """);
         var solB = engineB.Query("answer(X).");
 
         Assert.True(solA.Success);
@@ -180,7 +192,10 @@ public class Chunk39Tests
         // (the IL has the same head-match-or-fail shape as the bytecode).
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public colour/1.\ncolour(red).\n");
+        engine.ConsultString("""
+            :- public colour/1.
+            colour(red).
+            """);
 
         Assert.True(engine.Query("colour(red).").Success);
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("colour", 1)));
@@ -202,7 +217,10 @@ public class Chunk39Tests
         // mutation phase continues the predicate stays on Tier 0.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- dynamic foo/1.\nfoo(a).\n");
+        engine.ConsultString("""
+            :- dynamic foo/1.
+            foo(a).
+            """);
         int fid = FunctorId("foo", 1);
         for (int round = 0; round < 6; round++)
         {

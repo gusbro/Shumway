@@ -51,11 +51,12 @@ public class Chunk190Tests
     {
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public lookup/2.\n"
-            + "lookup(red, X) :- X = hot.\n"
-            + "lookup(green, X) :- X = cool.\n"
-            + "lookup(blue, X) :- X = cold.\n");
+        engine.ConsultString("""
+            :- public lookup/2.
+            lookup(red, X) :- X = hot.
+            lookup(green, X) :- X = cool.
+            lookup(blue, X) :- X = cold.
+            """);
 
         Assert.Equal("hot",
             engine.Query("lookup(red, X).").Bindings["X"].ToString());
@@ -71,11 +72,12 @@ public class Chunk190Tests
         // X unbound → var dispatch should walk every clause via CPs.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public step/2.\n"
-            + "step(a, 1).\n"
-            + "step(b, 2).\n"
-            + "step(c, 3).\n");
+        engine.ConsultString("""
+            :- public step/2.
+            step(a, 1).
+            step(b, 2).
+            step(c, 3).
+            """);
 
         var sols = engine.QueryAll("step(K, V).")
             .Select(s => (K: s.Bindings["K"].ToString(),
@@ -95,12 +97,13 @@ public class Chunk190Tests
         // chunk-190 emit.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            "helper(1, one).\n"
-            + "helper(2, two).\n"
-            + ":- public translate/2.\n"
-            + "translate(en, V) :- helper(1, V).\n"
-            + "translate(es, V) :- helper(2, V).\n");
+        engine.ConsultString("""
+            helper(1, one).
+            helper(2, two).
+            :- public translate/2.
+            translate(en, V) :- helper(1, V).
+            translate(es, V) :- helper(2, V).
+            """);
 
         Assert.Equal("one",
             engine.Query("translate(en, X).").Bindings["X"].ToString());
@@ -116,9 +119,10 @@ public class Chunk190Tests
         // through the rewritten emit.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- public color/1.\n"
-            + "color(red). color(green). color(blue).\n");
+        engine.ConsultString("""
+            :- public color/1.
+            color(red). color(green). color(blue).
+            """);
 
         Assert.True(engine.Query("color(red).").Success);
         Assert.True(engine.Query("color(green).").Success);
