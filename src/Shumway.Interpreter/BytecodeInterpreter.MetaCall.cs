@@ -602,12 +602,20 @@ public sealed partial class BytecodeInterpreter
             int fidx = goal.AsHeapIndex;
             int fid = _engine.GetHeap(fidx).AsFunctorId;
             // Both the engine's $mqual(Module, Goal) tag and the ISO Module:Goal
-            // qualifier share the same (Module, Goal) layout. A user-written
-            // `M:G` with a non-atom module is not a valid qualification — leave it
-            // for the callable/type checks below rather than unwrapping it.
+            // qualifier share the same (Module, Goal) layout. A `M:G` with a
+            // bad module slot is the ISO error HERE — falling through used to
+            // dispatch ':'/2 as a predicate, whose prelude clause is
+            // call(M:G): an infinite loop, not an error.
             if (fid == MqualFunctorId) { }
-            else if (fid == ColonFunctorId
-                     && DerefCell(_engine.GetHeap(fidx + 1)).Tag == Tag.Atom) { }
+            else if (fid == ColonFunctorId)
+            {
+                Cell qc = DerefCell(_engine.GetHeap(fidx + 1));
+                if (qc.Tag == Tag.Ref || qc.Tag == Tag.AttVar)
+                    throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+                if (qc.Tag != Tag.Atom)
+                    throw new Shumway.Core.PrologRuntimeException(
+                        "type_error", "atom", _engine, qc);
+            }
             else break;
             Cell mCell = DerefCell(_engine.GetHeap(fidx + 1));
             if (mCell.Tag == Tag.Atom) module = mCell.AsAtomId;

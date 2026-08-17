@@ -464,11 +464,19 @@ public sealed partial class IlPredicateCompiler
                 int fidx = goal.AsHeapIndex;
                 int fid = engine.GetHeap(fidx).AsFunctorId;
                 // Both $mqual(Module, Goal) and the ISO Module:Goal qualifier share
-                // the (Module, Goal) layout. `M:G` with a non-atom module is not a
-                // valid qualification — leave it for the checks below.
+                // the (Module, Goal) layout. A `M:G` with a bad module slot is
+                // the ISO error HERE — falling through used to dispatch ':'/2 as
+                // a predicate, whose prelude clause is call(M:G): an infinite
+                // loop, not an error.
                 if (fid == MqualFid) { }
-                else if (fid == ColonFid
-                         && DerefCell(engine, engine.GetHeap(fidx + 1)).Tag == Tag.Atom) { }
+                else if (fid == ColonFid)
+                {
+                    Cell qc = DerefCell(engine, engine.GetHeap(fidx + 1));
+                    if (qc.Tag == Tag.Ref || qc.Tag == Tag.AttVar)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (qc.Tag != Tag.Atom)
+                        throw new PrologRuntimeException("type_error", "atom", engine, qc);
+                }
                 else break;
                 Cell mCell = DerefCell(engine, engine.GetHeap(fidx + 1));
                 if (mCell.Tag == Tag.Atom) module = mCell.AsAtomId;
