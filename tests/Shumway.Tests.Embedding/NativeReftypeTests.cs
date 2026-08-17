@@ -310,15 +310,203 @@ public sealed class NativeReftypeTests
         Assert.True(e.Query("swap(pair(1, 2), Q), Q == pair(2, 1).").Success);
     }
 
+    // ------------------------------------------------------------------
+    // Preprocessed-source smoke: Arity-era native sources are C compiler
+    // output INTERLEAVED with Prolog — #line markers with mixed separator
+    // styles, `:- c.` … `:- prolog.` blocks carrying typedefs / unions /
+    // pragmas / prototypes / __stdcall callback typedefs, extern reftype
+    // globals, and clauses whose bodies mix `{...}` native blocks with
+    // fill_par/reftype_term round-trips. The three sources below are
+    // SYNTHETIC (an invented depot-inventory library) but preserve that
+    // shape one construct at a time, so the whole pipeline is exercised
+    // self-contained.
+    // ------------------------------------------------------------------
+
+    /// <summary>The interface definition: the t_reftype layout (the ADR-024
+    /// contract), scalar typedefs, reftype globals, prototypes and callback
+    /// typedefs, plus plain Arity-style string helpers (public/visible
+    /// pairs, a quoted operator atom as an operand).</summary>
+    private const string DepotIface = """
+        #line 1 "B:\\gen\\int\\depot_ifce.c"
+        % depot_ifce - string helpers for the depot native library.
+
+        #line 1 "B:/gen/../inc\\machdep.h"
+
+        :-c.
+        #line 4 "B:/gen/../inc\\machdep.h"
+        typedef char *pchar;
+        typedef pchar *ppchar;
+        typedef int *pint;
+        typedef short *pshort;
+        // machine-dependent scalar aliases
+        /* packed: the layout is the interop contract */
+        #pragma pack(8)
+        union  u_crep{
+        		char*   cstr;
+        		int     cint;
+        		double  cflt;
+        };
+
+        typedef struct t_reftype
+        {
+        	int64_t ntype;
+        	int64_t nelem;
+        	struct t_reftype** pars;
+        	union u_crep crep;
+        } * reftype, t_reftype;
+
+        typedef reftype* preftype;
+
+        #pragma pack()
+        #line 143 "B:/gen/../inc\\machdep.h"
+
+        extern reftype slot1ref;
+        extern reftype slot2ref;
+        extern reftype slot3ref;
+
+        int getint_c(reftype, int*);
+        int putint_c(int, reftype);
+
+        typedef int(__stdcall* depot_scanCallback)(int bay_id, int slot_num, short* ptype, t_reftype* p_slots);
+        typedef int(__stdcall* depot_sealCallback)(t_reftype* p_text, t_reftype* p_key, t_reftype* p_sealed);
+        :-prolog.
+
+        #line 12 "B:\\gen\\int\\depot_ifce.c"
+        :-public bin_tag/2.
+        :-visible bin_tag/2.
+        bin_tag(Char, tagged):-
+        	Char = '/',
+        	!.
+        bin_tag(_, plain).
+
+        :-public and_all/1.
+        :-visible and_all/1.
+        and_all([]).
+        and_all([G|Gs]):-
+        	call(G),
+        	and_all(Gs).
+        """;
+
+    /// <summary>A user of the interface: fill_par → call the C function by
+    /// its quoted name → reftype_term, with two `{...}` native blocks (typed
+    /// locals, address-of a reftype global, an out-parameter through a
+    /// pshort) — the i_form_e shape.</summary>
+    private const string DepotScan = """
+        #line 1 "B:\\gen\\int\\depot_scan.c"
+
+        :-c.
+        #line 4 "B:/gen/../inc\\machdep.h"
+        typedef short *pshort;
+        typedef struct t_reftype
+        {
+        	int64_t ntype;
+        	int64_t nelem;
+        	struct t_reftype** pars;
+        	union { char* cstr; int cint; double cflt; } crep;
+        } * reftype, t_reftype;
+        typedef reftype* preftype;
+        extern reftype slot1ref;
+
+        int depot_scan(int bay_id, int slot_num, short* ptype, reftype p_slots)
+        {
+        	*ptype = (short)(bay_id + slot_num);
+        	return 1;
+        }
+        :-prolog.
+
+        #line 41 "B:\\gen\\int\\depot_scan.c"
+
+        :-public depot_scan/4.
+        :-visible depot_scan/4.
+        :-mode depot_scan(+,+,?,?):det.
+        depot_scan(Bay, Slot, Type, Exp):-
+        	integer(Bay),
+        	integer(Slot),
+        	{
+        		PtrExp: preftype;
+        		PtrExp is &slot1ref
+        	},
+        	fill_par(Exp, PtrExp),
+        	{
+        		ret:int;
+        		type:short;
+        		ptype:pshort;
+        		ptype = &type;
+        		ret = 'depot_scan'(Bay, Slot, ptype, slot1ref);
+        		Type  is type;
+        		Ret is ret
+        	},
+        	reftype_term(Exp, PtrExp),
+        	!,
+        	Ret \= 0,
+        	!.
+        #line 69 "B:\\gen\\int\\depot_scan.c"
+        """;
+
+    /// <summary>A user with MULTIPLE reftype globals in play across one
+    /// clause — the i_SupTyp shape.</summary>
+    private const string DepotMove = """
+        #line 1 "B:\\gen\\int\\depot_move.c"
+
+        :-c.
+        typedef struct t_reftype
+        {
+        	int64_t ntype;
+        	int64_t nelem;
+        	struct t_reftype** pars;
+        	union { char* cstr; int cint; double cflt; } crep;
+        } * reftype, t_reftype;
+        typedef reftype* preftype;
+
+        extern reftype slot1ref;
+        extern reftype slot2ref;
+        extern reftype slot3ref;
+
+        int depot_move(reftype p_from, reftype p_to, reftype p_log)
+        {
+        	(void)p_from; (void)p_to; (void)p_log;
+        	return 1;
+        }
+        :-prolog.
+
+        :-public depot_move/3.
+        :-visible depot_move/3.
+        depot_move(From, To, Log):-
+        	{
+        		PFrom: preftype;
+        		PTo: preftype;
+        		PLog: preftype;
+        		PFrom is &slot1ref;
+        		PTo is &slot2ref;
+        		PLog is &slot3ref
+        	},
+        	fill_par(From, PFrom),
+        	fill_par(To, PTo),
+        	fill_par(Log, PLog),
+        	{
+        		ret:int;
+        		ret = 'depot_move'(slot1ref, slot2ref, slot3ref);
+        		Ret is ret
+        	},
+        	reftype_term(From, PFrom),
+        	reftype_term(To, PTo),
+        	reftype_term(Log, PLog),
+        	Ret \= 0,
+        	!.
+        """;
+
     [Theory]
-    [InlineData("prlg_ifce.pl")]   // the interface definition
-    [InlineData("i_form_e.pl")]    // a user (fill_par → call C → reftype_term)
-    [InlineData("i_SupTyp.pl")]    // a user (multiple reftype globals)
-    public void RealAritySource_CompilesCleanly(string file)
+    [InlineData("iface")]    // the interface definition
+    [InlineData("scan")]     // a user (fill_par → call C → reftype_term)
+    [InlineData("move")]     // a user (multiple reftype globals)
+    public void PreprocessedNativeSource_CompilesCleanly(string which)
     {
-        string path = System.IO.Path.Combine(@"C:\temp\test", file);
-        if (!System.IO.File.Exists(path)) return;   // corpus not present — skip
-        string src = System.IO.File.ReadAllText(path);
+        string src = which switch
+        {
+            "iface" => DepotIface,
+            "scan" => DepotScan,
+            _ => DepotMove,
+        };
         var result = ShmoCompiler.TryCompileSource(src, "m", ShmoBuildMode.Release,
             arityCompat: true);
         Assert.True(result.Success,

@@ -48,9 +48,18 @@ VanRoyMultiEngine.Run(args);
 
 public static class VanRoyMultiEngine
 {
-    private const string GprologPath  = @"C:\GProlog\bin\gprolog.exe";
-    private const string GplcPath     = @"C:\GProlog\bin\gplc.exe";
-    private const string SwiplPath    = @"C:\Program Files (x86)\swipl\bin\swipl.exe";
+    // Cross-engine paths: overridable per machine (the harness needs local
+    // installs by nature); the defaults are the conventional install spots.
+    // An engine that is absent is skipped, not an error.
+    private static readonly string GprologPath =
+        Environment.GetEnvironmentVariable("SHUMWAY_GPROLOG")
+        ?? @"C:\GProlog\bin\gprolog.exe";
+    private static readonly string GplcPath =
+        Environment.GetEnvironmentVariable("SHUMWAY_GPLC")
+        ?? @"C:\GProlog\bin\gplc.exe";
+    private static readonly string SwiplPath =
+        Environment.GetEnvironmentVariable("SHUMWAY_SWIPL")
+        ?? @"C:\Program Files (x86)\swipl\bin\swipl.exe";
 
     // hyperfine (MIT/Apache-2.0) drives the cross-engine wall-clock timing:
     // warmup runs + statistical outlier detection + median/stddev, far more
@@ -540,7 +549,8 @@ public static class VanRoyMultiEngine
     private static string? FindVcvars64()
     {
         if (_vcvarsCache is not null) return _vcvarsCache.Length == 0 ? null : _vcvarsCache;
-        string vsWhere = @"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe";
+        string vsWhere = Environment.GetEnvironmentVariable("SHUMWAY_VSWHERE")
+            ?? @"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe";
         if (!File.Exists(vsWhere)) { _vcvarsCache = ""; return null; }
         var psi = new ProcessStartInfo
         {
