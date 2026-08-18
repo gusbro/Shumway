@@ -251,15 +251,19 @@ internal sealed class BundleLoader
         }
         foreach (var entry in effectiveEntries)
         {
-            // replay the entry's `:- op/3` definitions
-            // into the runtime operator table BEFORE loading it. A
-            // source-stripped entry otherwise loses its ops entirely (the
-            // debug path re-executes them via ConsultString, for which this
-            // replay is an idempotent no-op) — and any runtime read/1 /
-            // string_term/2 of text using them would mis-parse.
+            // replay the entry's `:- op/3` definitions BEFORE loading it.
+            // ADR-046 — into the MODULE'S OWN LAYER, not the global table
+            // (a bundle module's private syntax must not change how later
+            // user text parses). A '*'-suffixed type marks an EXPORTED op:
+            // it is also re-advertised so a post-load use_module of this
+            // module installs it in the importer, and — bare-global modules
+            // aside — a directly-usable module's exports reach user via the
+            // same ImportAllExportsIntoUser path as a live consult.
             foreach (var od in entry.Operators)
             {
-                var opType = od.Type switch
+                bool exported = od.Type.EndsWith('*');
+                string typeName = exported ? od.Type[..^1] : od.Type;
+                var opType = typeName switch
                 {
                     "fx" => Shumway.Compiler.Parsing.OperatorType.Fx,
                     "fy" => Shumway.Compiler.Parsing.OperatorType.Fy,
@@ -270,7 +274,21 @@ internal sealed class BundleLoader
                     "yfx" => Shumway.Compiler.Parsing.OperatorType.Yfx,
                     _ => (Shumway.Compiler.Parsing.OperatorType?)null,
                 } ;
-                if (opType is { } t) E.DefineOperator(od.Name, od.Priority, t);
+                if (opType is not { } t) continue;
+                // Bare-global text (no :- module/2) defined its ops in USER
+                // at consult time — replay matches; only an export-qualified
+                // module's ops are scoped to its layer.
+                var opTarget = entry.IsExportQualified
+                    ? E.ModuleOperatorLayer(entry.ModuleName)
+                    : E.Operators;
+                opTarget.Define(od.Name, od.Priority, t);
+                if (exported)
+                {
+                    if (!E._moduleExportedOps.TryGetValue(entry.ModuleName, out var xl))
+                        E._moduleExportedOps[entry.ModuleName] = xl = new();
+                    if (!xl.Contains((od.Priority, t, od.Name)))
+                        xl.Add((od.Priority, t, od.Name));
+                }
             }
             // source-less load. When the bundle was built
             // with --strip (or compiled in Release with

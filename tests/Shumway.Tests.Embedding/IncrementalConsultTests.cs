@@ -151,9 +151,11 @@ public class IncrementalConsultTests
         System.IO.Directory.CreateDirectory(dir);
         try
         {
+            // ADR-046 — module operators are scoped; a library meant to
+            // hand its syntax to importers EXPORTS the op (how real
+            // SWI/Scryer libraries are written).
             System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "declmac.pl"),
-                ":- module(declmac, []).\n" +
-                ":- op(1150, fx, decl).\n" +
+                ":- module(declmac, [op(1150, fx, decl)]).\n" +
                 "user:term_expansion((:- decl X), marked(X)).");
             var e = new PrologEngine();
             e.AddLibraryDirectory(dir);
@@ -181,9 +183,8 @@ public class IncrementalConsultTests
             System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "helperlib.pl"),
                 ":- module(helperlib, [help/1]).\nhelp(ok).");
             System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "declib.pl"),
-                ":- module(declib, []).\n" +
+                ":- module(declib, [op(1150, fx, decl)]).\n" +   // ADR-046: exported
                 ":- use_module(library(helperlib)).\n" +
-                ":- op(1150, fx, decl).\n" +
                 "user:term_expansion((:- decl X), Clauses) :- help(_), phrase(gen(X), Clauses).\n" +
                 "gen(X) --> [marked(X)].");
             var e = new PrologEngine();

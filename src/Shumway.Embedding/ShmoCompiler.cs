@@ -310,6 +310,29 @@ public static class ShmoCompiler
                     isExportQualified = true;
                     foreach (var spec in ReadPiListLenient(modDir.Args[1]))
                         exportSet.Add(spec);
+                    // ADR-046 — op(P,T,N) entries of the export list persist
+                    // with a '*' suffix on the type: EXPORTED (installed into
+                    // an importer's layer / advertised at LoadBundle), vs the
+                    // module's private ops from bare `:- op` directives.
+                    Term exCursor = modDir.Args[1];
+                    while (exCursor is CompoundTerm { Functor: ".", Args: [var exEl, var exRest] })
+                    {
+                        if (exEl is CompoundTerm { Functor: "op",
+                                Args: [IntTerm xp, AtomTerm xt, var xn] })
+                        {
+                            if (xn is AtomTerm xa)
+                                operatorDefs.Add(new ShmoOperatorDef(
+                                    (int)xp.Value, xt.Name + "*", xa.Name));
+                            else
+                                while (xn is CompoundTerm { Functor: ".", Args: [AtomTerm xe, var xr] })
+                                {
+                                    operatorDefs.Add(new ShmoOperatorDef(
+                                        (int)xp.Value, xt.Name + "*", xe.Name));
+                                    xn = xr;
+                                }
+                        }
+                        exCursor = exRest;
+                    }
                     continue;
                 }
                 // ADR-038 — `:- use_module(library(X))` / `…, [Filter]`. Record the

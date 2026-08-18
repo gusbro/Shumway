@@ -825,8 +825,31 @@ link-time meaning:
 | `:- ensure_linked Name/N.` | Tells the linker to treat this predicate as a **reachability root**. Use it when the predicate is called only via runtime meta-call (`call/1` with a constructed goal) — the static call graph won't see the edge, and without this hint the linker would drop the predicate as unreachable. |
 | `:- ensure_linked [a/1, b/2].` | List form of the above. |
 
-Other directives (`op/3`, `set_prolog_flag/2`, etc.) are honoured at
-consult time but do not affect link-time decisions.
+Other directives (`set_prolog_flag/2`, etc.) are honoured at consult time
+but do not affect link-time decisions.
+
+### Operator scope (ADR-046)
+
+Operator tables are **module-scoped**, following SWI/YAP/Ciao/Scryer:
+
+- `:- op(P, T, Name)` in a module's text defines the operator for that
+  module's own source only; in module-less text it is global (`user`
+  table), exactly the ISO behaviour.
+- `:- op(P, T, user:Name)` — from anywhere — defines in the global
+  (`user`) table (SWI's escape).
+- A module's export list may carry `op(P, T, Name)` terms: importing the
+  module (`use_module`, either form) activates those operators for the
+  importer — in the importing module's table, or in `user` when the
+  import happens at the top level (goal-form `use_module/1`, or directly
+  consulting the module file).
+- `op(0, T, Name)` inside a module hides an inherited global operator for
+  that module only.
+- Runtime `op/3` and `current_op/3` inside module code use the module's
+  table; at the top level they use the global one.
+- Separate compilation preserves all of this: a `.shmo`/`.shum` carries
+  each module's own and exported operators, and `LoadBundle` restores the
+  same scoping (a bundle module's private syntax never leaks into your
+  code; its exported operators arrive when you `use_module` it).
 
 ### How a goal resolves (the name-lookup algorithm)
 

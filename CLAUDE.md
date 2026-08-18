@@ -316,6 +316,7 @@ When proposing changes:
 | .NET Framework 4.8 target (opt-in) | ADR-043 |
 | Canonical `/` path separator | ADR-044 |
 | Text-mode CR-LF → `\n` translation | ADR-045 |
+| Module-scoped operator tables | ADR-046 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

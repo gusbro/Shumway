@@ -589,7 +589,8 @@ internal sealed class ConsultPipeline
     {
         var rawClauses = new ClauseReader(
             new Lexer(source, E._flags.CharConversionEnabled ? E._flags.CharConversion : null),
-            E._operators, E._flags).ReadAll().ToList();
+            E._operators, E._flags)
+        { ModuleLayerProvider = E.ModuleOperatorLayer }.ReadAll().ToList();
         string moduleName = PrologEngine.DefaultModuleName;
         var heads = new HashSet<int>();
         foreach (var clause in rawClauses)
@@ -735,6 +736,7 @@ internal sealed class ConsultPipeline
         // from; the FileId travels with the position because compilation happens
         // at query setup, long after this read.
         bool preludeSource = ReferenceEquals(source, Prelude.Source);
+        ClauseReader? liveReader = null;
         IEnumerable<Clause> rawClauses;
         if (preludeSource && s_preludeClauses is { } cached)
         {
@@ -745,7 +747,8 @@ internal sealed class ConsultPipeline
             var list = new ClauseReader(
                 new Lexer(source, E._flags.CharConversionEnabled ? E._flags.CharConversion : null)
                 { FileId = E._debugFileId },
-                E._operators, E._flags).ReadAll().ToList();
+                E._operators, E._flags)
+            { ModuleLayerProvider = E.ModuleOperatorLayer }.ReadAll().ToList();
             if (preludeSource)
                 System.Threading.Volatile.Write(ref s_preludeClauses, list);
             // ISO 7.4.2.7 `:- include(File)` — textual inclusion.
@@ -756,10 +759,13 @@ internal sealed class ConsultPipeline
         {
             // Lazy: each clause is parsed on demand as the loop pulls it, so a
             // directive executed mid-loop affects the parse of the clauses after it.
-            rawClauses = new ClauseReader(
+            var lazyReader = new ClauseReader(
                 new Lexer(source, E._flags.CharConversionEnabled ? E._flags.CharConversion : null)
                 { FileId = E._debugFileId },
-                E._operators, E._flags).ReadAll();
+                E._operators, E._flags)
+            { ModuleLayerProvider = E.ModuleOperatorLayer };
+            liveReader = lazyReader;
+            rawClauses = lazyReader.ReadAll();
         }
 
         // Record the prelude's predicates so predicate_property/2 reports them as
@@ -1080,6 +1086,15 @@ internal sealed class ConsultPipeline
                     foreach (var (n, a) in moduleExports)
                         exports.Add(FunctorTable.Intern(
                             AtomTable.Intern(n, permanent: true).Id, a));
+                }
+                // ADR-046 — record the op(P,T,N) entries of the export list
+                // so a later use_module of this module can install them in
+                // the importer's operator layer. (Parse-side activation for
+                // THIS file already happened in the ClauseReader.)
+                if (body is CompoundTerm { Args: [_, var exportListTerm] })
+                {
+                    var expOps = CollectExportedOps(exportListTerm);
+                    if (expOps.Count > 0) E._moduleExportedOps[name] = expOps;
                 }
             }
             else if (TryReadPublicDirective(body, out var publicSpecs))
@@ -1548,6 +1563,12 @@ internal sealed class ConsultPipeline
         void RecordImports(string? src, List<(string Name, int Arity)>? filter)
         {
             if (src is null) return;
+            // ADR-046 — importing a module activates its exported operators
+            // for the REST of this file (both use_module forms: the syntax
+            // is a practical precondition for reading the importer at all,
+            // so the filtered form does not filter ops — Scryer agrees).
+            E.ApplyExportedOperators(src,
+                liveReader?.CurrentOperators ?? E._operators);
             ModuleManifest srcManifest = E._modules[src];
             // First import of a name wins: a later use_module of a DIFFERENT module
             // exporting the same name does not silently steal it (C-linker / SWI
@@ -2416,6 +2437,51 @@ internal sealed class ConsultPipeline
 
     private static bool TryReadModuleDirective(Term body, out string name) =>
         TryReadModuleDirective(body, out name, out _);
+
+    /// <summary>ADR-046 — the <c>op(P, T, Name)</c> entries of a module's
+    /// export list (each Name may be an atom or a list of atoms).</summary>
+    private static List<(int Precedence, OperatorType Type, string Name)>
+        CollectExportedOps(Term exportList)
+    {
+        var ops = new List<(int, OperatorType, string)>();
+        Term cursor = exportList;
+        while (cursor is CompoundTerm { Functor: ".", Args: [var element, var rest] })
+        {
+            if (element is CompoundTerm { Functor: "op",
+                    Args: [IntTerm prec, AtomTerm type, var names] }
+                && TryParseOperatorType(type.Name, out OperatorType t))
+            {
+                if (names is AtomTerm one)
+                    ops.Add(((int)prec.Value, t, one.Name));
+                else
+                {
+                    Term nc = names;
+                    while (nc is CompoundTerm { Functor: ".", Args: [AtomTerm n, var nrest] })
+                    {
+                        ops.Add(((int)prec.Value, t, n.Name));
+                        nc = nrest;
+                    }
+                }
+            }
+            cursor = rest;
+        }
+        return ops;
+    }
+
+    private static bool TryParseOperatorType(string s, out OperatorType t)
+    {
+        switch (s)
+        {
+            case "fx": t = OperatorType.Fx; return true;
+            case "fy": t = OperatorType.Fy; return true;
+            case "xfx": t = OperatorType.Xfx; return true;
+            case "xfy": t = OperatorType.Xfy; return true;
+            case "yfx": t = OperatorType.Yfx; return true;
+            case "xf": t = OperatorType.Xf; return true;
+            case "yf": t = OperatorType.Yf; return true;
+            default: t = default; return false;
+        }
+    }
 
     /// <summary>Recognises <c>:- module(Name)</c> (Shumway's one-arg form) and
     /// the standard ISO/SWI/Scryer two-arg <c>:- module(Name, ExportList)</c>.

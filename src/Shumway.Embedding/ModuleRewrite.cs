@@ -278,6 +278,19 @@ public static class ModuleRewrite
                         return new CompoundTerm("$cp_ctx", new[]
                             { (Term)new AtomTerm(ctx.ModuleName), c.Args[0] })
                             { Position = c.Position };
+                    // ADR-046 — op/3 and current_op/3 are module-sensitive:
+                    // a runtime op inside module code targets the module's
+                    // layer; current_op sees the module's effective view.
+                    case ("op", 3):
+                        return new CompoundTerm("$op_ctx", new[]
+                            { (Term)new AtomTerm(ctx.ModuleName),
+                              c.Args[0], c.Args[1], c.Args[2] })
+                            { Position = c.Position };
+                    case ("current_op", 3):
+                        return new CompoundTerm("$current_op_ctx", new[]
+                            { (Term)new AtomTerm(ctx.ModuleName),
+                              c.Args[0], c.Args[1], c.Args[2] })
+                            { Position = c.Position };
                     case ("clause", 2):
                     case ("predicate_property", 2):
                         return new CompoundTerm(c.Functor, new[]

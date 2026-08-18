@@ -147,4 +147,19 @@ public class SnipParserTests
     {
         Assert.Throws<ParseException>(() => Parse("[! a, b ]"));
     }
+
+    [Fact]
+    public void CutAsOperandOfInfix_IsAList()
+    {
+        // [!-1, !-2] — the token after the '!' is an infix operator (or a
+        // sign-folded number), so the '!' is the LEFT OPERAND of a list
+        // element, not a snip opener (ISO pairs with a cut key are legal;
+        // the Logtalk conformity suite writes them).
+        var t = Parse("[!-1, !-2]");
+        var cons = Assert.IsType<CompoundTerm>(t);
+        var first = Assert.IsType<CompoundTerm>(cons.Args[0]);
+        Assert.Equal("-", first.Functor);
+        Assert.Equal(new AtomTerm("!"), first.Args[0]);
+        Assert.Equal(new IntTerm(1), first.Args[1]);
+    }
 }

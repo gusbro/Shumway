@@ -374,6 +374,8 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("current_char_conversion", 2, CurrentCharConversion,
             Reflect, "current_char_conversion(?InChar, ?OutChar)",
             "Enumerates the active char-conversion table (ISO §8.14.10).");
+        BuiltinsRegistry.Register("$op_ctx", 4, OpCtx);
+        BuiltinsRegistry.Register("$current_op_ctx", 4, CurrentOpCtx);
         BuiltinsRegistry.Register("op", 3, Op,
             Reflect, "op(+Priority, +Type, +Name)", "Declares an operator of the given priority and type.");
         BuiltinsRegistry.Register("set_prolog_flag",     2, SetPrologFlag,

@@ -605,6 +605,14 @@ public sealed partial class PrologEngine
                 case "clpr":  UseClpr();  return null;
                 case "coroutining": UseCoroutining(); return null;
                 default:
+                    // (1.5) the module is ALREADY LOADED (typically from a
+                    // bundle whose manifests LoadBundle reconstructed):
+                    // import straight from the live manifest — predicates
+                    // AND exported operators — with no file involved.
+                    // SWI semantics: use_module of a loaded module imports.
+                    if (_modules.TryGetValue(libName, out var loadedManifest)
+                        && loadedManifest.IsExportQualified)
+                        return libName;
                     // (2) ADR-038 — a .pl/.shum on the library search path.
                     if (TryResolveLibrary(libName, out string libPath))
                     {
@@ -899,6 +907,10 @@ public sealed partial class PrologEngine
     /// Invalidates the rewrite caches when it adds anything.</summary>
     internal void ImportAllExportsIntoUser(string sourceModule)
     {
+        // ADR-046 — the module's exported operators become part of the
+        // top-level syntax too (a directly-consulted module or a goal-form
+        // use_module is a user-level import).
+        ApplyExportedOperators(sourceModule, _operators);
         if (!_modules.TryGetValue(sourceModule, out ModuleManifest? srcManifest)) return;
         if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest)) return;
         bool changed = false;

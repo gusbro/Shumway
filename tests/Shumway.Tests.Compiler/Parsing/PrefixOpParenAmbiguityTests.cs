@@ -54,8 +54,13 @@ public class PrefixOpParenAmbiguityTests
     [Fact]
     public void NotSpaceParen_IsUnaryAppliedToConjunction()
     {
-        // 'not (a, b)' — same disambiguation for the 'not' synonym.
-        var t = Parse("not (a, b).");
+        // 'not (a, b)' — same disambiguation once `not` is declared an
+        // operator (it is NOT one in the default table: ISO/GNU/SWI keep
+        // it a plain atom; Arity sources get it via arity_compat).
+        var ops = OperatorTable.Default();
+        ops.Define("not", 900, OperatorType.Fy);
+        var parser = new Parser(new SourceLexer("not (a, b)."), ops);
+        var t = parser.ReadClauseTerm();
         var c = Assert.IsType<CompoundTerm>(t);
         Assert.Equal("not", c.Functor);
         Assert.Single(c.Args);

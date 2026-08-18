@@ -128,6 +128,48 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     internal Activation? _liveConsultEngine;
     internal readonly OperatorTable _operators = OperatorTable.Default();
 
+    /// <summary>ADR-046 — per-module operator layers, each parented by
+    /// <see cref="_operators"/> (the <c>user</c> table). Created on demand;
+    /// a module that never declares an operator has no entry and reads
+    /// straight from the user table (zero-cost common case). Distinct from
+    /// <c>_moduleOperators</c> (the flat attribution list separate
+    /// compilation persists).</summary>
+    internal readonly Dictionary<string, OperatorTable> _moduleOpLayers = new();
+
+    /// <summary>ADR-046 — the operators each module EXPORTS (the
+    /// <c>op(P,T,N)</c> terms of its export list). Applied to the
+    /// importer's layer by <c>use_module</c>.</summary>
+    internal readonly Dictionary<string,
+        List<(int Precedence, OperatorType Type, string Name)>> _moduleExportedOps = new();
+
+    /// <summary>The operator layer used to READ module
+    /// <paramref name="module"/>'s text: its own layer over the user
+    /// table, or the user table itself for bare/user text.</summary>
+    internal OperatorTable ModuleOperatorLayer(string module)
+    {
+        if (module == DefaultModuleName) return _operators;
+        if (!_moduleOpLayers.TryGetValue(module, out var t))
+        {
+            _moduleOpLayers[module] = t = new OperatorTable(_operators);
+            // The separate-compilation attribution (module -> its op defs,
+            // persisted into the .shmo) listens on the user table; a layer
+            // define must feed the same collector. Read through at fire
+            // time — the collector delegate is (re)wired per consult.
+            t.OnDefine = (n, prec, ty) => _operators.OnDefine?.Invoke(n, prec, ty);
+        }
+        return t;
+    }
+
+    /// <summary>ADR-046 — applies the operators exported by
+    /// <paramref name="sourceModule"/> to <paramref name="target"/> (the
+    /// importer's layer, or the user table for a top-level import).</summary>
+    internal void ApplyExportedOperators(string sourceModule, OperatorTable target)
+    {
+        if (!_moduleExportedOps.TryGetValue(sourceModule, out var ops)) return;
+        foreach (var (prec, type, opName) in ops)
+            target.Define(opName, prec, type);
+    }
+
     /// <summary>Save-state chronological log of every source
     /// string passed to <see cref="ConsultString"/>, excluding the
     /// auto-loaded prelude (which the ctor always loads first).

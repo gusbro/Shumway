@@ -142,9 +142,18 @@ public static class ShmoViaConsult
                 }
 
             // This module's OWN operators (a `:- op` under its consult).
+            // ADR-046 — the ones in its export list persist with a '*'
+            // type suffix so a load re-advertises them to importers.
             var ops = new List<ShmoOperatorDef>();
+            e._moduleExportedOps.TryGetValue(name, out var exportedOps);
             foreach (var (opName, prec, type) in e.ModuleOperators(name))
-                ops.Add(new ShmoOperatorDef(prec, OpTypeName(type), opName));
+            {
+                string tn = OpTypeName(type);
+                bool exported = exportedOps is not null
+                    && exportedOps.Any(x => x.Name == opName
+                        && x.Precedence == prec);
+                ops.Add(new ShmoOperatorDef(prec, exported ? tn + "*" : tn, opName));
+            }
 
             var localErrors = new List<ShmoCompileError>();
             var res = ShmoCompiler.CompileFromParts(

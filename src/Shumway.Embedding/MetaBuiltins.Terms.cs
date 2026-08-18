@@ -785,10 +785,72 @@ public static partial class MetaBuiltins
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "op/3 requires the engine to be hosted by a PrologEngine.");
+        return OpCore(engine, host, regBase: 0, host.Operators);
+    }
 
-        Cell precCell = ResolveLocal(engine, engine.GetRegister(0));
-        Cell typeCell = ResolveLocal(engine, engine.GetRegister(1));
-        Cell nameCell = ResolveLocal(engine, engine.GetRegister(2));
+    /// <summary>ADR-046 — <c>'$op_ctx'(Module, P, T, N)</c>: the compile-time
+    /// rewrite of an <c>op/3</c> goal inside module code. Defines in the
+    /// module's operator layer (a qualified name still redirects).</summary>
+    public static bool OpCtx(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$op_ctx'/4 requires the engine to be hosted by a PrologEngine.");
+        Cell modCell = ResolveLocal(engine, engine.GetRegister(0));
+        string mod = modCell.Tag == Tag.Atom
+            ? AtomTable.GetById(modCell.AsAtomId)?.Name ?? PrologEngine.DefaultModuleName
+            : PrologEngine.DefaultModuleName;
+        return OpCore(engine, host, regBase: 1, host.ModuleOperatorLayer(mod));
+    }
+
+    /// <summary>ADR-046 — <c>'$current_op_ctx'(Module, P, T, N)</c>: the
+    /// compile-time rewrite of <c>current_op/3</c> inside module code —
+    /// enumerates the module's EFFECTIVE view (its layer over user).</summary>
+    public static bool CurrentOpCtx(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$current_op_ctx'/4 requires the engine to be hosted by a PrologEngine.");
+        Cell modCell = ResolveLocal(engine, engine.GetRegister(0));
+        string mod = modCell.Tag == Tag.Atom
+            ? AtomTable.GetById(modCell.AsAtomId)?.Name ?? PrologEngine.DefaultModuleName
+            : PrologEngine.DefaultModuleName;
+        var ops = host.ModuleOperatorLayer(mod).Enumerate().ToArray();
+        int rp = engine.BuiltinReturnPc;
+        return IndexEnumCursor.Start(engine, ops.Length, 4, rp,
+            (e, i) => CurrentOpUnify(e, ops, i, regBase: 1));
+    }
+
+    private static bool OpCore(
+        Activation engine, PrologEngine host, int regBase,
+        Shumway.Compiler.Parsing.OperatorTable target)
+    {
+        Cell precCell = ResolveLocal(engine, engine.GetRegister(regBase));
+        Cell typeCell = ResolveLocal(engine, engine.GetRegister(regBase + 1));
+        Cell nameCell = ResolveLocal(engine, engine.GetRegister(regBase + 2));
+
+        // ADR-046 — `op(P, T, user:N)` targets the user (global) table from
+        // anywhere; `op(P, T, m:N)` targets module m's layer.
+        if (nameCell.Tag == Tag.Str)
+        {
+            Cell f = engine.GetHeap(nameCell.AsHeapIndex);
+            if (f.Tag == Tag.Functor)
+            {
+                var (qAtomId, qAr) = FunctorTable.Lookup(f.AsFunctorId);
+                if (qAr == 2 && AtomTable.GetById(qAtomId)?.Name == ":")
+                {
+                    Cell qual = ResolveLocal(engine,
+                        engine.GetHeap(nameCell.AsHeapIndex + 1));
+                    if (qual.Tag == Tag.Atom)
+                    {
+                        string qname = AtomTable.GetById(qual.AsAtomId)?.Name ?? "";
+                        target = host.ModuleOperatorLayer(qname);
+                        nameCell = ResolveLocal(engine,
+                            engine.GetHeap(nameCell.AsHeapIndex + 2));
+                    }
+                }
+            }
+        }
 
         if (precCell.Tag != Tag.Int)
             throw new ShumwayPrologException(IsoError.TypeError("integer", new VarTerm("_")));
@@ -818,8 +880,8 @@ public static partial class MetaBuiltins
         if (nameCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "";
-            ValidateOpDefine(host, name, precedence, opType);
-            host.DefineOperator(name, precedence, opType);
+            ValidateOpDefine(target, name, precedence, opType);
+            target.Define(name, precedence, opType);
             return true;
         }
         if (nameCell.Tag == Tag.Lis)
@@ -831,8 +893,8 @@ public static partial class MetaBuiltins
                 if (head.Tag != Tag.Atom)
                     throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
                 string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
-                ValidateOpDefine(host, name, precedence, opType);
-                host.DefineOperator(name, precedence, opType);
+                ValidateOpDefine(target, name, precedence, opType);
+                target.Define(name, precedence, opType);
                 cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
             }
             return true;
@@ -845,7 +907,7 @@ public static partial class MetaBuiltins
     /// removed); <c>'[]'</c>/<c>'{}'</c> can never be operators; and no atom
     /// may be both an infix and a postfix operator.</summary>
     private static void ValidateOpDefine(
-        PrologEngine host, string name, int precedence,
+        Shumway.Compiler.Parsing.OperatorTable table, string name, int precedence,
         Shumway.Compiler.Parsing.OperatorType opType)
     {
         bool isInfix = opType is Shumway.Compiler.Parsing.OperatorType.Xfx
@@ -863,11 +925,11 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(
                 IsoError.PermissionError("create", "operator", new AtomTerm(name)));
         if (precedence != 0 && isInfix
-            && host.Operators.TryGetPostfix(name, out _, out _))
+            && table.TryGetPostfix(name, out _, out _))
             throw new ShumwayPrologException(
                 IsoError.PermissionError("create", "operator", new AtomTerm(name)));
         if (precedence != 0 && isPostfix
-            && host.Operators.TryGetInfix(name, out _, out _))
+            && table.TryGetInfix(name, out _, out _))
             throw new ShumwayPrologException(
                 IsoError.PermissionError("create", "operator", new AtomTerm(name)));
     }
@@ -894,7 +956,7 @@ public static partial class MetaBuiltins
     private static bool CurrentOpUnify(
         Activation engine,
         (int Precedence, Shumway.Compiler.Parsing.OperatorType Type, string Name)[] ops,
-        int idx)
+        int idx, int regBase = 0)
     {
         var (prec, type, name) = ops[idx];
         string typeName = type switch
@@ -909,10 +971,10 @@ public static partial class MetaBuiltins
             _ => "?",
         };
 
-        if (!engine.UnifyRegisterWithCell(0, Cell.Int(prec))) return false;
-        if (!engine.UnifyRegisterWithCell(1,
+        if (!engine.UnifyRegisterWithCell(regBase, Cell.Int(prec))) return false;
+        if (!engine.UnifyRegisterWithCell(regBase + 1,
                 Cell.Atom(AtomTable.Intern(typeName, permanent: true).Id))) return false;
-        if (!engine.UnifyRegisterWithCell(2,
+        if (!engine.UnifyRegisterWithCell(regBase + 2,
                 Cell.Atom(AtomTable.Intern(name, permanent: true).Id))) return false;
         return true;
     }

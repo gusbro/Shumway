@@ -27,7 +27,13 @@ namespace Shumway.Compiler.Parsing;
 public sealed class Parser
 {
     private readonly Lexer.Lexer _lexer;
-    private readonly OperatorTable _operators;
+    private OperatorTable _operators;
+
+    /// <summary>ADR-046 — retargets the parser at another operator layer
+    /// mid-stream. Called by the ClauseReader when a <c>:- module/2</c>
+    /// directive switches the rest of the file to the module's table.</summary>
+    internal void SwitchOperators(OperatorTable operators)
+        => _operators = operators;
     private readonly PrologFlags _flags;
     private readonly List<Token> _lookahead = new();
 
