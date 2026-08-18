@@ -176,6 +176,13 @@ public static partial class MetaBuiltins
                 throw new ShumwayPrologException(
                     IsoError.DomainError("flag_value", new AtomTerm(valueName)));
             host.Flags.ArityCompat = valueName == "true";
+            if (valueName == "true")
+            {
+                // Arity call semantics: undefined predicates FAIL. An
+                // explicit set_prolog_flag(unknown, _) afterwards overrides.
+                host.Flags.Unknown = "fail";
+                engine.OnUnknown = Shumway.Core.UnknownAction.Fail;
+            }
             return true;
         }
         if (flagName == "occurs_check")

@@ -67,7 +67,8 @@ public sealed class Bundle
         BundleSnapshot? snapshot,
         IReadOnlyList<BundleArchiveMember>? archiveMembers = null,
         IReadOnlyList<string>? nativeLibraries = null,
-        ShumwayVersion? generatorVersion = null)
+        ShumwayVersion? generatorVersion = null,
+        bool arityCompat = false)
     {
         Entries = entries;
         ForeignAssemblies = foreignAssemblies ?? Array.Empty<string>();
@@ -75,7 +76,15 @@ public sealed class Bundle
         ArchiveMembers = archiveMembers ?? Array.Empty<BundleArchiveMember>();
         NativeLibraries = nativeLibraries ?? Array.Empty<string>();
         GeneratorVersion = generatorVersion ?? ShumwayVersion.Current;
+        ArityCompat = arityCompat;
     }
+
+    /// <summary><c>true</c> when any linked module was compiled in Arity
+    /// compatibility mode. <see cref="PrologEngine.LoadBundle(Bundle)"/>
+    /// then sets <c>arity_compat</c> and <c>unknown=fail</c> — an Arity
+    /// program expects a call to an undefined (or abolished) predicate to
+    /// FAIL, and separate compilation must not lose that.</summary>
+    public bool ArityCompat { get; }
 
     /// <summary>The Shumway version that wrote this bundle. Every writer
     /// stamps it, so a <c>.shum</c> can always say which build produced it —

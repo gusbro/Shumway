@@ -170,6 +170,7 @@ public static class BundleWriter
         // ShmoLinker.SerialiseBundle — the .shum has two writers and they are
         // required to emit the same layout.
         BundleFormat.WriteGeneratorVersion(bw);
+        bw.Write(bundle.ArityCompat);
         bw.Write((uint)effective.Length);
         foreach (var entry in effective)
         {
