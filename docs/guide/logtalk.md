@@ -87,8 +87,10 @@ Shumway; only that one selector borrows SWI's name.
   compiler needs — is native.
 
 - **The `tests/prolog` ISO conformity battery** (192 testers, ~3,400
-  counted tests): 2,570 passed / 674 failed after the 2026-08 campaign
-  (baseline before it: 2,096 / 933). One divergence is deliberate and
+  counted tests): 2,796 passed / 499 failed after the 2026-08 campaign
+  (baseline before it: 2,096 / 933). Every tester now reports a summary
+  except the five `unicode/` ones, which gate on the `encoding/1`
+  directive Shumway does not implement. One divergence is deliberate and
   closed: the battery's `lgt_*` tests expect the strict-ISO reading of the
   float-conversion functions — `ceiling(9)`, `floor(9)`, `round(9)`,
   `truncate(9)`, `float_integer_part(9)`, `float_fractional_part(9)` →
