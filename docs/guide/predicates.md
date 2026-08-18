@@ -52,6 +52,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `>(+Expr1, +Expr2)` | Arithmetic greater-than comparison. |
 | `>=(+Expr1, +Expr2)` | Arithmetic greater-than-or-equal comparison. |
 | `between(+Low, +High, ?X)` | Succeeds when X is in the inclusive integer range; enumerates it when unbound. |
+| `evaluable_property(+Callable, ?Property)` | Properties of an arithmetic function: built_in, static, template(Callable, ReturnType). |
 | `is(?Result, +Expr)` | Evaluates the arithmetic expression on the right and unifies it with the left. |
 | `plus(?Int1, ?Int2, ?Sum)` | Relates Int1 + Int2 = Sum, solving for whichever single argument is unbound. |
 | `succ(?Int1, ?Int2)` | Relates a non-negative integer to its successor, in either direction. |
@@ -131,6 +132,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `get_cpu_time(-Time)` | Binds Time to a high-resolution monotonic process timer, in milliseconds (float; GNU-Prolog timing primitive). |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
+| `if(:Condition, :Then, :Else)` | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
 | `notrace` | Turns the four-port tracer off. |
 | `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |

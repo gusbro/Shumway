@@ -53,6 +53,18 @@ public sealed class StreamHandle
     /// alias atom anywhere a stream is required.</summary>
     public string? Alias { get; internal set; }
 
+    /// <summary>The <c>eof_action</c> stream option: <c>eof_code</c>
+    /// (default — reads at/past eof keep yielding <c>end_of_file</c>),
+    /// <c>error</c> (a read PAST eof raises
+    /// <c>permission_error(input, past_end_of_stream, S)</c>), or
+    /// <c>reset</c>.</summary>
+    public string EofAction { get; set; } = "eof_code";
+
+    /// <summary>True once a read consumed the end of the stream — the
+    /// position is past-end-of-stream (<c>end_of_stream(past)</c>).
+    /// Peeks never set this.</summary>
+    public bool PastEof { get; set; }
+
     /// <summary>True once <c>close/1</c> has run; the handle stays
     /// in the registry briefly so an inadvertent second-close can
     /// report <c>existence_error</c> rather than crashing.</summary>

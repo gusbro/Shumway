@@ -354,6 +354,7 @@ public sealed partial class PrologEngine
     {
         _dynStore.RemoveSlot(functorId);
         _dynStore.UnmarkDynamic(functorId);
+        _dynStore.Abolished.Add(functorId);
         InvalidateDynamicCache(functorId);
         // dropping a dynamic functor changes the
         // dynamic-region layout — the next query has to rebuild
@@ -890,6 +891,22 @@ public sealed partial class PrologEngine
         return StaticHeadFunctors().Contains(functorId);
     }
 
+    /// <summary>The §7.8 control constructs are callable (call/1 accepts
+    /// them) but live in no registry — current_predicate excludes them,
+    /// while predicate_property reports them built_in (SWI/SICStus
+    /// agree; the Logtalk conformity testers gate on it).</summary>
+    private static bool IsControlConstructFid(int functorId)
+    {
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
+        string? n = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        return (arity, n) switch
+        {
+            (2, "," or ";" or "->" or "*->") => true,
+            (0, "!") => true,
+            _ => false,
+        };
+    }
+
     /// <summary>The property atom ids for <paramref name="functorId"/>, as
     /// enumerated by <c>predicate_property/2</c>. An undefined predicate yields
     /// the empty list (so <c>predicate_property/2</c> fails for it). A defined
@@ -900,9 +917,11 @@ public sealed partial class PrologEngine
     internal List<int> PredicatePropertyAtomIds(int functorId)
     {
         var props = new List<int>();
-        if (!HasPredicate(functorId)) return props;
+        if (!HasPredicate(functorId) && !IsControlConstructFid(functorId))
+            return props;
         int kind;
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _)
+            || IsControlConstructFid(functorId)
             || _preludeFunctors.Contains(functorId))
             kind = AtomTable.Intern("built_in", permanent: true).Id;
         else if (_dynStore.IsDynamic(functorId))
@@ -922,13 +941,47 @@ public sealed partial class PrologEngine
     /// silent no-op — the predicate is left undefined, no dispatch trampoline is
     /// fabricated), and throws <c>permission_error(modify, static_procedure)</c>
     /// for a static procedure or a builtin (you can't retractall those).</summary>
+    /// <summary>The §7.12.2.h ball for modifying a static procedure or
+    /// builtin, with the Name/Arity indicator riding in the Value slot so
+    /// the translated permission_error carries the culprit.</summary>
+    internal static Shumway.Core.PrologRuntimeException StaticProcedureError(int fid)
+    {
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+        return new Shumway.Core.PrologRuntimeException(
+            "permission_error", "modify,static_procedure",
+            (object)new CompoundTerm("/", new Term[]
+            {
+                new AtomTerm(Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "?"),
+                new IntTerm(arity),
+            }));
+    }
+
     internal bool IsRetractAllModifiable(int fid)
     {
         if (_dynStore.IsDynamic(fid)) return true;
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _) || HasStaticClauses(fid))
-            throw new Shumway.Core.PrologRuntimeException(
-                "permission_error", "modify,static_procedure");
+            throw StaticProcedureError(fid);
         return false;   // undefined → retractall is a no-op
+    }
+
+    /// <summary>abolish/1 modifiability: dynamic → true; builtin or static →
+    /// <c>permission_error(modify, static_procedure, Name/Arity)</c> with the
+    /// indicator as culprit; undefined → false (abolish is a silent no-op).</summary>
+    internal bool IsAbolishModifiable(int fid)
+    {
+        if (_dynStore.IsDynamic(fid)) return true;
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _) || HasStaticClauses(fid))
+        {
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+            throw new ShumwayPrologException(IsoError.PermissionError(
+                "modify", "static_procedure",
+                new CompoundTerm("/", new Term[]
+                {
+                    new AtomTerm(Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "?"),
+                    new IntTerm(arity),
+                })));
+        }
+        return false;
     }
 
     internal void EnsureDynamic(int fid)
@@ -979,8 +1032,7 @@ public sealed partial class PrologEngine
         // splits and builds the three-arg permission_error compound
         // (the third Obj slot stays as an anonymous variable, since
         // PrologRuntimeException can't carry a Term yet).
-        throw new Shumway.Core.PrologRuntimeException(
-            "permission_error", "modify,static_procedure");
+        throw StaticProcedureError(fid);
     }
 
     /// <summary>emits a fresh empty-dynamic trampoline for
@@ -1390,8 +1442,10 @@ public sealed partial class PrologEngine
             case "arity_compat":
                 // consult-time directive form. The ClauseReader's
                 // pre-pass already flipped the live lexer for THIS file; this
-                // records it for subsequent consults.
-                if (valueName == "true") _flags.ArityCompat = true;
+                // records it for subsequent consults. Arity call semantics
+                // ride along: undefined predicates FAIL (a later explicit
+                // set_prolog_flag(unknown, _) overrides).
+                if (valueName == "true") { _flags.ArityCompat = true; _flags.Unknown = "fail"; }
                 else if (valueName == "false") _flags.ArityCompat = false;
                 break;
             case "unknown":

@@ -1298,14 +1298,29 @@ internal sealed class DynamicCodePatcher
             fid = pred.FunctorId;
         else if (!table.TrampolineFids.TryGetValue(trampolinePc, out fid))
             return SelDiag(0, -2, $"unknown-trampoline@{trampolinePc}");
-        if (!table.Chains.TryGetValue(fid, out var state)) return SelDiag(fid, -2, "no-chain");
+        if (!table.Chains.TryGetValue(fid, out var state) || state.Entries.Count == 0)
+        {
+            // ISO abolish/1: once abolished the predicate is UNDEFINED — a
+            // NEW call (this dispatch) is an undefined-procedure call, so
+            // it goes through the `unknown` flag exactly like any other
+            // (error → existence_error; fail → plain failure, the
+            // DEC-10/Arity behaviour abolish-then-call sources rely on).
+            // Only tombstoned fids divert — declared-but-empty dynamics
+            // and late helpers keep failing. Tombstone probe only on this
+            // cold empty path, never on the per-call fast path. LUV holds:
+            // older calls' live choice points re-check born/died against
+            // their own view generation, not this entry point.
+            if (E._dynStore.Abolished.Contains(fid)
+                && Shumway.Core.UnknownProcedure.Fails(engine, fid))
+                return SelDiag(fid, -1, "abolished");
+            return SelDiag(fid, -2, state is null ? "no-chain" : "empty-chain");
+        }
         var entries = state.Entries;
         // NOTE: a 1-entry chain is NOT det by itself — its try_me_else points
         // at the fail-stub and that choice point survives a successful call
         // (Logtalk's freshly-asserted send-cache entries made every SECOND
         // send report non-deterministic). A single entry is selected CP-free
         // below regardless of the first argument.
-        if (entries.Count == 0) return SelDiag(fid, -2, "empty-chain");
         var prog = engine.CurrentProgram;
         if (prog is null) return -2;
 

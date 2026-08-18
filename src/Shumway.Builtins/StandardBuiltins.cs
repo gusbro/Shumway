@@ -265,6 +265,8 @@ public static class StandardBuiltins
         // Multi-solution helpers called from the prelude.
         BuiltinsRegistry.Register("$list_length",              2, MultiSolutionHelpers.ListLength);
         BuiltinsRegistry.Register("$make_var_list",            2, MultiSolutionHelpers.MakeVarList);
+        BuiltinsRegistry.Register("$type_error_callable",      1, ControlBuiltins.TypeErrorCallable);
+        BuiltinsRegistry.Register("$is_evaluable",             2, ControlBuiltins.IsEvaluable);
         BuiltinsRegistry.Register("$sub_atom_decompositions",  2, MultiSolutionHelpers.SubAtomDecompositions);
         BuiltinsRegistry.Register("$sub_atom_enum",            5, MultiSolutionHelpers.SubAtomEnum);
         // Branch-cut barrier capture (MetaTransform cut transparency).

@@ -25,14 +25,13 @@ public class Chunk144Tests
     [Fact]
     public void TypeError_Evaluable_BindsValueSlot()
     {
-        // `X is foo` — foo is the offending non-evaluable atom.
-        // ArithmeticEvaluator.EvaluateAtomConstant now passes the cell
-        // through the value-carrying ctor; the catcher binds V to it.
+        // `X is foo` — an unknown evaluable reports the procedure
+        // INDICATOR foo/0 in the value slot (ISO §9), not the bare atom;
+        // the catcher binds V to the `/`-compound.
         var e = new PrologEngine();
         var sol = e.Query(
-            "catch(_X is foo, error(type_error(evaluable, V), _), true).");
+            "catch(_X is foo, error(type_error(evaluable, V), _), true), V == foo/0.");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("foo"), sol["V"]);
     }
 
     [Fact]

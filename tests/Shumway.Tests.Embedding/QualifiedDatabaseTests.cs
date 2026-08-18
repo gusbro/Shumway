@@ -69,8 +69,14 @@ public sealed class QualifiedDatabaseTests
     public void QualifiedAbolish_BothIndicatorSpellings()
     {
         var e = new PrologEngine();
-        Assert.True(e.Query("assertz(qd_k(1)), abolish(m:qd_k/1), \\+ qd_k(_).").Success);
-        Assert.True(e.Query("assertz(qd_j(1)), abolish(m:(qd_j/1)), \\+ qd_j(_).").Success);
+        // After abolish the predicate is UNDEFINED — a new call raises
+        // existence_error (§8.9.4), it does not quietly fail.
+        Assert.True(e.Query(
+            "assertz(qd_k(1)), abolish(m:qd_k/1), "
+            + "catch(qd_k(_), error(existence_error(procedure, qd_k/1), _), true).").Success);
+        Assert.True(e.Query(
+            "assertz(qd_j(1)), abolish(m:(qd_j/1)), "
+            + "catch(qd_j(_), error(existence_error(procedure, qd_j/1), _), true).").Success);
     }
 
     [Fact]

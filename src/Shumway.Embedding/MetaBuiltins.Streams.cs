@@ -68,9 +68,14 @@ public static partial class MetaBuiltins
             pairs.Add((h, h.IsReader ? (Term)new AtomTerm("input") : new AtomTerm("output")));
             if (h.IsReader)
             {
-                string state = (ReferenceEquals(h, registry.UserInput)
-                                || h.Reader!.Peek() >= 0)
-                    ? "not" : "at";
+                // §8.11.8: not / at / past. A binary reader has no
+                // TextReader — probe the seekable stream instead.
+                string state = h.PastEof ? "past"
+                    : ReferenceEquals(h, registry.UserInput) ? "not"
+                    : h.Reader is not null ? (h.Reader.Peek() >= 0 ? "not" : "at")
+                    : h.BinaryStream is { CanSeek: true } bs
+                        ? (bs.Position < bs.Length ? "not" : "at")
+                        : "not";
                 pairs.Add((h, new CompoundTerm("end_of_stream",
                     new Term[] { new AtomTerm(state) })));
             }

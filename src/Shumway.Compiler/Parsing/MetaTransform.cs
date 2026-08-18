@@ -242,12 +242,15 @@ public static class MetaTransform
             && fa.Args.Length == 3
             && InlinableGoal(fa.Args[1]))
         {
+            Term spliced = GoalHasLocalCut(fa.Args[1])
+                ? new CompoundTerm("call", new[] { fa.Args[1] })
+                : fa.Args[1];
             Term collectLoop = new CompoundTerm(",", new[]
             {
                 (Term)new AtomTerm("$findall_push"),
                 new CompoundTerm(",", new[]
                 {
-                    fa.Args[1],
+                    spliced,
                     new CompoundTerm(",", new[]
                     {
                         (Term)new CompoundTerm("$findall_record_s", new[] { fa.Args[0] }),
@@ -599,6 +602,21 @@ public static class MetaTransform
 
     /// <summary>A goal this transform may inline: syntactically callable AND not
     /// the opaque <c>$mqual</c> marker.</summary>
+    /// <summary>A <c>!</c> anywhere cut-transparent in a findall/bagof
+    /// GOAL argument (top level, <c>,</c>-chain, <c>;</c> arms, <c>-&gt;</c>
+    /// thens). Splicing such a goal into the collect loop would let the cut
+    /// reach the DRIVER's disjunction and kill the collect alternative —
+    /// wrap it in call/1 instead so the cut stays local (§7.8.3).</summary>
+    private static bool GoalHasLocalCut(Term t) => t switch
+    {
+        AtomTerm { Name: "!" } => true,
+        CompoundTerm { Functor: "," or ";", Args.Length: 2 } c
+            => GoalHasLocalCut(c.Args[0]) || GoalHasLocalCut(c.Args[1]),
+        CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } c
+            => GoalHasLocalCut(c.Args[1]),
+        _ => false,
+    };
+
     private static bool InlinableGoal(Term t) =>
         (t is AtomTerm || t is CompoundTerm) && !IsMqualGoal(t);
 
@@ -895,12 +913,15 @@ public static class MetaTransform
         string collector = functor == "setof" ? "$setof_collect" : "$bagof_collect";
 
         // '$findall_push', Goal', '$findall_record'(Wt-T), fail
+        Term splicedGoal = GoalHasLocalCut(goal)
+            ? new CompoundTerm("call", new[] { goal })
+            : goal;
         Term collectLoop = new CompoundTerm(",", new[]
         {
             (Term)new AtomTerm("$findall_push"),
             new CompoundTerm(",", new[]
             {
-                goal,
+                splicedGoal,
                 new CompoundTerm(",", new[]
                 {
                     (Term)new CompoundTerm("$findall_record", new[]

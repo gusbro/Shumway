@@ -63,6 +63,9 @@ public sealed class ClauseReader
     private static void DefineArityCompatOperators(OperatorTable operators)
     {
         operators.Define("extrn", 1150, OperatorType.Fx);
+        // Arity spells negation `not Goal`; the standard tables keep `not`
+        // a plain atom (ISO/GNU/SWI — `X == not` must parse).
+        operators.Define("not", 900, OperatorType.Fy);
     }
 
     private readonly global::Shumway.Compiler.Lexer.Lexer _lexer;

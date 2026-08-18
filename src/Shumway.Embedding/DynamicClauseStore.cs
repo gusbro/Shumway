@@ -31,9 +31,16 @@ internal sealed class DynamicClauseStore
     public ISet<int> Functors => _functors;
 
     public bool IsDynamic(int fid) => _functors.Contains(fid);
-    public bool MarkDynamic(int fid) => _functors.Add(fid);
+    public bool MarkDynamic(int fid) { Abolished.Remove(fid); return _functors.Add(fid); }
     public bool UnmarkDynamic(int fid) => _functors.Remove(fid);
-    public void MarkDynamicAll(IEnumerable<int> fids) => _functors.UnionWith(fids);
+    public void MarkDynamicAll(IEnumerable<int> fids)
+    { Abolished.ExceptWith(fids); _functors.UnionWith(fids); }
+
+    /// <summary>Tombstones left by abolish/1: dispatching one of these
+    /// raises existence_error (the predicate is UNDEFINED) instead of
+    /// failing over its dead chain. Re-marking dynamic clears the
+    /// tombstone.</summary>
+    public readonly HashSet<int> Abolished = new();
     public int FunctorCount => _functors.Count;
 
     // ----- clause slots -----

@@ -66,10 +66,9 @@ public static class ArithmeticEvaluator
                 return new Number(rh.Random.NextDouble());
         }
         // ISO §7.1.2 / §7.8.7: any other atom in arithmetic position raises
-        // type_error(evaluable, Name/0). The offending atom cell travels as
-        // the exception's Value, so a catcher matching
-        // `error(type_error(evaluable, V), _)` binds V to the atom.
-        throw new PrologRuntimeException("type_error", "evaluable", engine, atomCell);
+        // type_error(evaluable, Name/0) — the culprit is the INDICATOR
+        // compound, not the bare atom (a catcher for foo/0 must unify).
+        throw EvaluableTypeError(engine, name ?? "?", 0);
     }
 
     private static Number EvaluateCompound(Activation engine, Cell strCell)
@@ -91,8 +90,24 @@ public static class ArithmeticEvaluator
                                 engine.GetHeap(functorIdx + 2)),
             // Any other arity in arithmetic position is a non-evaluable
             // compound: ISO type_error(evaluable, Name/Arity).
-            _ => throw new PrologRuntimeException("type_error", "evaluable"),
+            _ => throw EvaluableTypeError(engine, name, arity),
         };
+    }
+
+    /// <summary>The ISO ball for an unknown evaluable: the culprit is the
+    /// procedure-INDICATOR <c>Name/Arity</c> (§9.x general error cases),
+    /// built on the heap so the catcher's second slot binds the compound —
+    /// not a bare atom, not a fresh variable.</summary>
+    private static PrologRuntimeException EvaluableTypeError(
+        Activation engine, string name, int arity)
+    {
+        int slashFid = FunctorTable.Intern(
+            AtomTable.Intern("/", permanent: true).Id, 2);
+        int b = engine.AllocateHeap(3);
+        engine.SetHeap(b, Cell.Functor(slashFid));
+        engine.SetHeap(b + 1, Cell.Atom(AtomTable.Intern(name, permanent: true).Id));
+        engine.SetHeap(b + 2, Cell.Int(arity));
+        return new PrologRuntimeException("type_error", "evaluable", engine, Cell.Str(b));
     }
 
     /// <summary>Evaluates <c>name(arg)</c> for a unary arithmetic function.
@@ -113,16 +128,32 @@ public static class ArithmeticEvaluator
         }
         // SWI msb/lsb: index of the most/least significant set bit of a
         // positive integer (varnumbers' power-of-two rounding uses msb).
-        if ((name == "msb" || name == "lsb") && a.IsInt)
+        if ((name == "msb" || name == "lsb") && !a.IsRat)
         {
+            if (a.IsFloat) throw IntTypeError(a);
+            if (a.IsBig)
+            {
+                System.Numerics.BigInteger bv = a.BigValue;
+                if (bv.Sign <= 0) throw EvalError("undefined");
+                if (name == "msb") return new Number(bv.GetBitLength() - 1);
+                // lsb: first non-zero byte of the little-endian magnitude.
+                byte[] bytes = bv.ToByteArray();
+                for (int i = 0; i < bytes.Length; i++)
+                    if (bytes[i] != 0)
+                        return new Number(i * 8L
+                            + System.Numerics.BitOperations.TrailingZeroCount((uint)bytes[i]));
+                throw EvalError("undefined");
+            }
             long v = a.IntValue;
-            if (v <= 0) throw new PrologRuntimeException("evaluation_error", "undefined");
+            if (v <= 0) throw EvalError("undefined");
             return new Number(name == "msb"
                 ? 63 - System.Numerics.BitOperations.LeadingZeroCount((ulong)v)
                 : System.Numerics.BitOperations.TrailingZeroCount((ulong)v));
         }
+        // SWI/ECLiPSe popcount(Int): set-bit count of a non-negative integer.
+        if (name == "popcount") return Popcount(a);
         // Unknown unary arithmetic function — ISO type_error(evaluable, Name/1).
-        throw new PrologRuntimeException("type_error", "evaluable");
+        throw EvaluableTypeError(engine, name, 1);
     }
 
     /// <summary>Evaluates <c>name(a, b)</c> for a binary arithmetic function.
@@ -135,7 +166,7 @@ public static class ArithmeticEvaluator
         Number b = Evaluate(engine, bCell);
         if (TryBinOp(name, out BinOp op)) return ApplyBin(op, a, b, engine.PreferRationals);
         // Unknown binary arithmetic function — ISO type_error(evaluable, Name/2).
-        throw new PrologRuntimeException("type_error", "evaluable");
+        throw EvaluableTypeError(engine, name, 2);
     }
 
     // ---------- ADR-018: arithmetic instruction set op codes ----------
@@ -154,6 +185,7 @@ public static class ArithmeticEvaluator
         IntDivFloor,   // (div)/2 — integer division rounding toward -inf
         PowFloat,      // (**)/2 — ISO: result is ALWAYS a float (^ keeps IF)
         Rdiv,          // (rdiv)/2 — exact rational division (ADR-039)
+        LogBase,       // log(Base, X) — Cor.2 two-argument logarithm
     }
 
     public enum UnOp : byte
@@ -163,6 +195,7 @@ public static class ArithmeticEvaluator
         FloatFracPart, Integer,
         // Append only.
         Numerator, Denominator, Rationalize,
+        Sinh, Cosh, Tanh, Asinh, Acosh, Atanh, Log10,
     }
 
     public enum RelOp : byte { Eq, Neq, Lt, Gt, Le, Ge }
@@ -194,6 +227,7 @@ public static class ArithmeticEvaluator
             case "gcd": op = BinOp.Gcd; return true;
             case "atan2": op = BinOp.Atan2; return true;
             case "rdiv": op = BinOp.Rdiv; return true;
+            case "log": op = BinOp.LogBase; return true;
             default: op = default; return false;
         }
     }
@@ -228,6 +262,14 @@ public static class ArithmeticEvaluator
             case "numerator": op = UnOp.Numerator; return true;
             case "denominator": op = UnOp.Denominator; return true;
             case "rationalize": op = UnOp.Rationalize; return true;
+            // ISO Cor.2 hyperbolic family.
+            case "sinh": op = UnOp.Sinh; return true;
+            case "cosh": op = UnOp.Cosh; return true;
+            case "tanh": op = UnOp.Tanh; return true;
+            case "asinh": op = UnOp.Asinh; return true;
+            case "acosh": op = UnOp.Acosh; return true;
+            case "atanh": op = UnOp.Atanh; return true;
+            case "log10": op = UnOp.Log10; return true;
             default: op = default; return false;
         }
     }
@@ -262,27 +304,72 @@ public static class ArithmeticEvaluator
         BinOp.Rem => Remainder(a, b),
         BinOp.Min => Compare(a, b) <= 0 ? a : b,
         BinOp.Max => Compare(a, b) >= 0 ? a : b,
-        BinOp.Pow => Power(a, b),
+        BinOp.Pow => Power(a, b, preferRationals),
         BinOp.BitAnd => BitwiseAnd(a, b),
         BinOp.BitOr => BitwiseOr(a, b),
         BinOp.Xor => BitwiseXor(a, b),
         BinOp.Shl => ShiftLeft(a, b),
         BinOp.Shr => ShiftRight(a, b),
         BinOp.Gcd => Gcd(a, b),
-        BinOp.Atan2 => new Number(Math.Atan2(a.AsDouble(), b.AsDouble())),
+        BinOp.Atan2 => a.AsDouble() == 0 && b.AsDouble() == 0
+            ? throw EvalError("undefined")
+            : new Number(Math.Atan2(a.AsDouble(), b.AsDouble())),
         BinOp.IntDivFloor => FloorDivide(a, b),
-        BinOp.PowFloat => new Number(Math.Pow(a.AsDouble(), b.AsDouble())),
+        BinOp.PowFloat => PowFloatChecked(a, b),
         BinOp.Rdiv => RationalDivide(a, b),
+        BinOp.LogBase => LogBase(a, b),
         _ => throw new PrologRuntimeException("type_error", "evaluable"),
     };
+
+    private static PrologRuntimeException EvalError(string what)
+        => new("evaluation_error", what);
+
+    /// <summary>A float result computed from FINITE inputs: infinity means
+    /// the exact value fell outside the float range —
+    /// <c>evaluation_error(float_overflow)</c> (§9.1.4.1); NaN means the
+    /// function was applied outside its domain.</summary>
+    private static Number FiniteOrOverflow(double r)
+    {
+        if (double.IsInfinity(r)) throw EvalError("float_overflow");
+        if (double.IsNaN(r)) throw EvalError("undefined");
+        return new Number(r);
+    }
+
+    /// <summary>Float→integer conversion (truncate / round / floor /
+    /// ceiling / integer): a non-finite argument is undefined, and a value
+    /// beyond the long range converts EXACTLY through BigInteger — the
+    /// bare (long) cast silently produced long.MinValue garbage for
+    /// <c>truncate(1.0e30)</c>.</summary>
+    private static Number FloatToInteger(double d)
+    {
+        if (double.IsNaN(d) || double.IsInfinity(d)) throw EvalError("undefined");
+        if (d >= -9.2233720368547758e18 && d <= 9.2233720368547758e18)
+        {
+            long l = (long)d;
+            // The boundary itself is inexact in double; re-check round-trip.
+            if ((double)l == d || Math.Abs(d) < 9.2e18) return new Number(l);
+        }
+        return new Number(new BigInteger(d));
+    }
+
+    /// <summary>ISO <c>(**)/2</c> float power, §9.3.1.3: a zero base with a
+    /// negative exponent divides by zero; a negative base demands an
+    /// integral exponent (a fractional one is complex — undefined); a
+    /// finite-input infinity is float_overflow.</summary>
+    private static Number PowFloatChecked(Number a, Number b)
+    {
+        double x = a.AsDouble(), y = b.AsDouble();
+        if (x == 0 && y < 0) throw EvalError("zero_divisor");
+        if (x < 0 && y != Math.Floor(y)) throw EvalError("undefined");
+        return FiniteOrOverflow(Math.Pow(x, y));
+    }
 
     /// <summary>ISO <c>(div)/2</c> — integer division rounding toward
     /// negative infinity (pairs with <c>mod</c> the way <c>//</c> pairs
     /// with <c>rem</c>).</summary>
     private static Number FloorDivide(Number a, Number b)
     {
-        if (a.IsFloat || b.IsFloat)
-            throw new PrologRuntimeException("type_error", "integer");
+        EnsureBothInt(a, b);
         if (a.IsBig || b.IsBig)
         {
             BigInteger bigA = a.AsBigInteger();
@@ -307,26 +394,56 @@ public static class ArithmeticEvaluator
         UnOp.Abs => Abs(a),
         UnOp.Sign => Sign(a),
         UnOp.BitNot => BitwiseNot(a),
-        UnOp.Sqrt => new Number(Math.Sqrt(a.AsDouble())),
+        // ISO §9.3 domain conditions: outside a function's mathematical
+        // domain is evaluation_error(undefined), never the IEEE inf/nan the
+        // hardware would hand back (log(0), sqrt(-1), asin(2), …).
+        UnOp.Sqrt => a.AsDouble() < 0
+            ? throw EvalError("undefined")
+            : new Number(Math.Sqrt(a.AsDouble())),
         UnOp.Sin => new Number(Math.Sin(a.AsDouble())),
         UnOp.Cos => new Number(Math.Cos(a.AsDouble())),
         UnOp.Tan => new Number(Math.Tan(a.AsDouble())),
-        UnOp.Asin => new Number(Math.Asin(a.AsDouble())),
-        UnOp.Acos => new Number(Math.Acos(a.AsDouble())),
+        UnOp.Asin => Math.Abs(a.AsDouble()) > 1
+            ? throw EvalError("undefined")
+            : new Number(Math.Asin(a.AsDouble())),
+        UnOp.Acos => Math.Abs(a.AsDouble()) > 1
+            ? throw EvalError("undefined")
+            : new Number(Math.Acos(a.AsDouble())),
         UnOp.Atan => new Number(Math.Atan(a.AsDouble())),
-        UnOp.Exp => new Number(Math.Exp(a.AsDouble())),
-        UnOp.Log => new Number(Math.Log(a.AsDouble())),
-        UnOp.Ceiling => new Number((long)Math.Ceiling(a.AsDouble())),
-        UnOp.Floor => new Number((long)Math.Floor(a.AsDouble())),
-        UnOp.Round => new Number((long)Math.Round(a.AsDouble(), MidpointRounding.AwayFromZero)),
-        UnOp.Truncate => new Number((long)Math.Truncate(a.AsDouble())),
+        // A finite argument whose exact result exceeds the float range is
+        // evaluation_error(float_overflow) (§9.1.4.1), not silent infinity.
+        UnOp.Exp => FiniteOrOverflow(Math.Exp(a.AsDouble())),
+        UnOp.Log => a.AsDouble() <= 0
+            ? throw EvalError("undefined")
+            : new Number(Math.Log(a.AsDouble())),
+        UnOp.Log10 => a.AsDouble() <= 0
+            ? throw EvalError("undefined")
+            : new Number(Math.Log10(a.AsDouble())),
+        UnOp.Ceiling => FloatToInteger(Math.Ceiling(a.AsDouble())),
+        UnOp.Floor => FloatToInteger(Math.Floor(a.AsDouble())),
+        // ISO 9.1.6.1 defines round(x) as floor(x + 1/2) — halves go toward
+        // +inf (round(-3.5) is -3), NOT away from zero.
+        UnOp.Round => FloatToInteger(Math.Floor(a.AsDouble() + 0.5)),
+        UnOp.Truncate => FloatToInteger(Math.Truncate(a.AsDouble())),
         UnOp.Float => new Number(a.AsDouble()),
         UnOp.FloatIntPart => new Number(Math.Truncate(a.AsDouble())),
         UnOp.FloatFracPart => new Number(a.AsDouble() - Math.Truncate(a.AsDouble())),
-        UnOp.Integer => a.IsFloat ? new Number((long)Math.Truncate(a.AsDouble())) : a,
+        UnOp.Integer => a.IsFloat ? FloatToInteger(Math.Truncate(a.AsDouble())) : a,
         UnOp.Numerator => Numerator(a),
         UnOp.Denominator => Denominator(a),
         UnOp.Rationalize => Rationalize(a),
+        // ISO Cor.2 hyperbolics, same domain discipline: acosh below 1 and
+        // atanh at or beyond ±1 are undefined; sinh/cosh overflow.
+        UnOp.Sinh => FiniteOrOverflow(Math.Sinh(a.AsDouble())),
+        UnOp.Cosh => FiniteOrOverflow(Math.Cosh(a.AsDouble())),
+        UnOp.Tanh => new Number(Math.Tanh(a.AsDouble())),
+        UnOp.Asinh => new Number(Math.Asinh(a.AsDouble())),
+        UnOp.Acosh => a.AsDouble() < 1
+            ? throw EvalError("undefined")
+            : new Number(Math.Acosh(a.AsDouble())),
+        UnOp.Atanh => Math.Abs(a.AsDouble()) >= 1
+            ? throw EvalError("undefined")
+            : new Number(Math.Atanh(a.AsDouble())),
         _ => throw new PrologRuntimeException("type_error", "evaluable"),
     };
 
@@ -336,8 +453,7 @@ public static class ArithmeticEvaluator
     /// exact.</summary>
     private static Number RationalDivide(Number a, Number b)
     {
-        if (a.IsFloat || b.IsFloat)
-            throw new PrologRuntimeException("type_error", "integer");
+        EnsureBothInt(a, b);
         var (an, ad) = a.AsRationalParts();
         var (bn, bd) = b.AsRationalParts();
         // (an/ad) / (bn/bd) = (an*bd) / (ad*bn)
@@ -412,38 +528,70 @@ public static class ArithmeticEvaluator
         return new Number((long)Math.Sign(a.IntValue));
     }
 
+    /// <summary>log(Base, X): Cor.2 two-argument logarithm, always a float.
+    /// Non-positive operand → undefined; base 1 → zero_divisor (the
+    /// denominator ln(Base) vanishes).</summary>
+    private static Number LogBase(Number a, Number b)
+    {
+        double bas = a.AsDouble(), x = b.AsDouble();
+        if (bas <= 0 || x <= 0) throw EvalError("undefined");
+        double den = Math.Log(bas);
+        if (den == 0) throw EvalError("zero_divisor");
+        return FiniteOrOverflow(Math.Log(x) / den);
+    }
+
+    private static Number Popcount(Number a)
+    {
+        if (a.IsFloat) throw IntTypeError(a);
+        if (a.IsBig)
+        {
+            if (a.BigValue.Sign < 0)
+                throw new PrologRuntimeException(
+                    "domain_error", "not_less_than_zero", (object)a.BigValue);
+            // Byte-wise count: BigInteger.PopCount needs .NET 7, and the value
+            // is non-negative so the two's-complement bytes are the magnitude.
+            long bits = 0;
+            foreach (byte by in a.BigValue.ToByteArray())
+                bits += System.Numerics.BitOperations.PopCount(by);
+            return new Number(bits);
+        }
+        if (a.IntValue < 0)
+            throw new PrologRuntimeException(
+                "domain_error", "not_less_than_zero", (object)a.IntValue);
+        return new Number((long)System.Numerics.BitOperations.PopCount((ulong)a.IntValue));
+    }
+
     private static Number BitwiseNot(Number a)
     {
-        if (a.IsFloat)
-            throw new PrologRuntimeException("type_error", "integer");
+        if (a.IsFloat) throw IntTypeError(a);
         if (a.IsBig) return new Number(~a.BigValue);
         return new Number(~a.IntValue);
     }
 
     private static Number BitwiseAnd(Number a, Number b)
     {
-        EnsureBothInt(a, b, "/\\");
+        EnsureBothInt(a, b);
         if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() & b.AsBigInteger());
         return new Number(a.IntValue & b.IntValue);
     }
 
     private static Number BitwiseOr(Number a, Number b)
     {
-        EnsureBothInt(a, b, "\\/");
+        EnsureBothInt(a, b);
         if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() | b.AsBigInteger());
         return new Number(a.IntValue | b.IntValue);
     }
 
     private static Number BitwiseXor(Number a, Number b)
     {
-        EnsureBothInt(a, b, "xor");
+        EnsureBothInt(a, b);
         if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() ^ b.AsBigInteger());
         return new Number(a.IntValue ^ b.IntValue);
     }
 
     private static Number ShiftLeft(Number a, Number b)
     {
-        EnsureBothInt(a, b, "<<");
+        EnsureBothInt(a, b);
         int shift = (int)b.IntValue;
         if (a.IsBig) return new Number(a.BigValue << shift);
         // `checked` does NOT cover shifts in C# (they wrap silently, and the
@@ -461,7 +609,7 @@ public static class ArithmeticEvaluator
 
     private static Number ShiftRight(Number a, Number b)
     {
-        EnsureBothInt(a, b, ">>");
+        EnsureBothInt(a, b);
         int shift = (int)b.IntValue;
         if (a.IsBig) return new Number(a.BigValue >> shift);
         return new Number(a.IntValue >> shift);
@@ -469,12 +617,12 @@ public static class ArithmeticEvaluator
 
     private static Number Gcd(Number a, Number b)
     {
-        EnsureBothInt(a, b, "gcd");
+        EnsureBothInt(a, b);
         return new Number(System.Numerics.BigInteger.GreatestCommonDivisor(
             a.AsBigInteger(), b.AsBigInteger()));
     }
 
-    private static Number Power(Number a, Number b)
+    private static Number Power(Number a, Number b, bool preferRationals = false)
     {
         // ISO: if both operands are integers and exponent >= 0, the result is
         // integer; otherwise it's a float.
@@ -484,14 +632,39 @@ public static class ArithmeticEvaluator
                 throw new PrologRuntimeException("evaluation_error", "exponent_too_large");
             return new Number(System.Numerics.BigInteger.Pow(a.AsBigInteger(), (int)b.IntValue));
         }
-        return new Number(Math.Pow(a.AsDouble(), b.AsDouble()));
+        // ISO 9.3.10 (Cor.2): integer base, NEGATIVE integer exponent —
+        // 0 has no inverse (undefined), ±1 stay integer, and anything else
+        // has no integer value: type_error(float, Base). Under
+        // prefer_rationals (ADR-039) the exact rational 1/Base^|N| exists.
+        if (!a.IsFloat && !b.IsFloat && !a.IsRat && b.IsInt && b.IntValue < 0)
+        {
+            BigInteger baseInt = a.AsBigInteger();
+            if (baseInt.IsZero) throw EvalError("undefined");
+            if (baseInt.IsOne) return new Number(1L);
+            if ((-baseInt).IsOne)
+                return new Number((b.IntValue & 1) == 0 ? 1L : -1L);
+            if (b.IntValue < -int.MaxValue)
+                throw new PrologRuntimeException("evaluation_error", "exponent_too_large");
+            if (preferRationals)
+                return new Number(Rational.Create(
+                    BigInteger.One, BigInteger.Pow(baseInt, (int)(-b.IntValue))));
+            throw new PrologRuntimeException("type_error", "float",
+                a.IsBig ? (object)a.BigValue : (object)a.IntValue);
+        }
+        return PowFloatChecked(a, b);
     }
 
-    private static void EnsureBothInt(Number a, Number b, string op)
+    /// <summary>ISO <c>type_error(integer, Culprit)</c> for an integer-only
+    /// function fed a float — the culprit is the offending VALUE, boxed
+    /// (these helpers run without an Activation, shared with the compiled
+    /// tier).</summary>
+    private static PrologRuntimeException IntTypeError(Number offender)
+        => new("type_error", "integer", (object)offender.FloatValue);
+
+    private static void EnsureBothInt(Number a, Number b)
     {
-        if (a.IsFloat || b.IsFloat)
-            throw new PrologRuntimeException("type_error",
-                $"integer (left of {op})");
+        if (a.IsFloat) throw IntTypeError(a);
+        if (b.IsFloat) throw IntTypeError(b);
     }
 
     // ---------- Operations ----------
@@ -516,9 +689,18 @@ public static class ArithmeticEvaluator
         catch (OverflowException) { return new Number(-(BigInteger)a.IntValue); }
     }
 
+    /// <summary>Float result of a binary op: infinity or NaN produced from
+    /// FINITE operands is float_overflow / undefined (§9.1.4.1); an
+    /// already-infinite operand propagates untouched.</summary>
+    private static Number FloatChecked(double x, double y, double r)
+        => double.IsFinite(r) || !double.IsFinite(x) || !double.IsFinite(y)
+            ? new Number(r)
+            : FiniteOrOverflow(r);
+
     private static Number Add(Number a, Number b)
     {
-        if (a.IsFloat || b.IsFloat) return new Number(a.AsDouble() + b.AsDouble());
+        if (a.IsFloat || b.IsFloat)
+            return FloatChecked(a.AsDouble(), b.AsDouble(), a.AsDouble() + b.AsDouble());
         if (a.IsRat || b.IsRat)
         {
             var (an, ad) = a.AsRationalParts();
@@ -535,7 +717,8 @@ public static class ArithmeticEvaluator
 
     private static Number Subtract(Number a, Number b)
     {
-        if (a.IsFloat || b.IsFloat) return new Number(a.AsDouble() - b.AsDouble());
+        if (a.IsFloat || b.IsFloat)
+            return FloatChecked(a.AsDouble(), b.AsDouble(), a.AsDouble() - b.AsDouble());
         if (a.IsRat || b.IsRat)
         {
             var (an, ad) = a.AsRationalParts();
@@ -552,7 +735,8 @@ public static class ArithmeticEvaluator
 
     private static Number Multiply(Number a, Number b)
     {
-        if (a.IsFloat || b.IsFloat) return new Number(a.AsDouble() * b.AsDouble());
+        if (a.IsFloat || b.IsFloat)
+            return FloatChecked(a.AsDouble(), b.AsDouble(), a.AsDouble() * b.AsDouble());
         if (a.IsRat || b.IsRat)
         {
             var (an, ad) = a.AsRationalParts();
@@ -583,13 +767,12 @@ public static class ArithmeticEvaluator
         }
         double bv = b.AsDouble();
         if (bv == 0.0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
-        return new Number(a.AsDouble() / bv);
+        return FloatChecked(a.AsDouble(), bv, a.AsDouble() / bv);
     }
 
     private static Number IntegerDivide(Number a, Number b)
     {
-        if (a.IsFloat || b.IsFloat)
-            throw new PrologRuntimeException("type_error", "integer");
+        EnsureBothInt(a, b);
         if (a.IsBig || b.IsBig)
         {
             BigInteger bb = b.AsBigInteger();
@@ -603,8 +786,7 @@ public static class ArithmeticEvaluator
 
     private static Number Modulo(Number a, Number b)
     {
-        if (a.IsFloat || b.IsFloat)
-            throw new PrologRuntimeException("type_error", "integer");
+        EnsureBothInt(a, b);
         if (a.IsBig || b.IsBig)
         {
             BigInteger bigA = a.AsBigInteger();
@@ -623,8 +805,7 @@ public static class ArithmeticEvaluator
 
     private static Number Remainder(Number a, Number b)
     {
-        if (a.IsFloat || b.IsFloat)
-            throw new PrologRuntimeException("type_error", "integer");
+        EnsureBothInt(a, b);
         if (a.IsBig || b.IsBig)
         {
             BigInteger bigB = b.AsBigInteger();

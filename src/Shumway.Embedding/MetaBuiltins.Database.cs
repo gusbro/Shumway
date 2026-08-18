@@ -186,8 +186,14 @@ public static partial class MetaBuiltins
     /// <see cref="PrologRuntimeException.Value"/>) when the throw site
     /// snapshotted one, or a fresh anonymous var otherwise.
     /// </summary>
-    private static Term ValueTermOrVar(PrologRuntimeException re) =>
-        re.Value as Term ?? new VarTerm("_");
+    private static Term ValueTermOrVar(PrologRuntimeException re) => re.Value switch
+    {
+        Term t => t,
+        long l => new IntTerm(l),
+        double d => new FloatTerm(d),
+        System.Numerics.BigInteger bi => new BigIntTerm(bi),
+        _ => new VarTerm("_"),
+    };
 
     /// <summary>Builds the procedure-indicator term for an
     /// <c>existence_error(procedure, Name/Arity)</c> from the

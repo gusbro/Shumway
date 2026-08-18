@@ -68,6 +68,14 @@ public sealed class PrologRuntimeException : Exception
             Value = materialize(cell);
     }
 
+    /// <summary>Culprit the throw site holds as a raw number (boxed
+    /// <c>long</c> / <c>double</c> / <c>BigInteger</c>) rather than a heap
+    /// cell — for sites with no Activation at hand (the arithmetic
+    /// Apply* helpers, shared with the compiled tier). The embedding
+    /// translation turns it into the matching number term.</summary>
+    public PrologRuntimeException(string kind, string detail, object boxedCulprit)
+        : this(kind, detail) => Value = boxedCulprit;
+
     /// <summary>Stamps the offending builtin's <c>Name/Arity</c> onto the
     /// exception, if not already set. Called by the interpreter dispatch
     /// as the exception unwinds out of a builtin Impl so the ISO error

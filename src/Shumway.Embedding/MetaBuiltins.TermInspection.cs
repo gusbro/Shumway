@@ -1145,17 +1145,41 @@ public static partial class MetaBuiltins
 
         Term spec = MaterializeRegister(engine, 0);
         spec = StripPiQualifiers(spec);
-        if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2
-            && c.Args[0] is AtomTerm name && c.Args[1] is IntTerm arity)
+        if (spec is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2)
         {
+            // ISO §8.9.4.3 checks each slot before the indicator shape:
+            // vars → instantiation; non-integer arity → type_error(integer);
+            // non-atom name → type_error(atom); then the numeric range.
+            if (c.Args[0] is VarTerm || c.Args[1] is VarTerm)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
+            if (c.Args[1] is not IntTerm and not BigIntTerm)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("integer", c.Args[1]));
+            if (c.Args[0] is not AtomTerm name)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("atom", c.Args[0]));
+            if (c.Args[1] is BigIntTerm big)
+                throw new ShumwayPrologException(big.Value.Sign < 0
+                    ? IsoError.DomainError("not_less_than_zero", big)
+                    : IsoError.RepresentationError("max_arity"));
+            var arity = (IntTerm)c.Args[1];
+            if (arity.Value < 0)
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("not_less_than_zero", arity));
+            if (arity.Value > 255)   // current_prolog_flag(max_arity, 255)
+                throw new ShumwayPrologException(
+                    IsoError.RepresentationError("max_arity"));
             int fid = FunctorTable.Intern(
                 AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
-            host.AbolishDynamic(engine, fid);
+            // Dynamic → abolish; builtin/static → permission_error (thrown
+            // by the check); undefined → succeed silently (§8.9.4.1).
+            if (host.IsAbolishModifiable(fid))
+                host.AbolishDynamic(engine, fid);
             return true;
         }
 
-        if (spec is VarTerm)
-            throw new ShumwayPrologException(IsoError.InstantiationError());
         throw new ShumwayPrologException(
             IsoError.TypeError("predicate_indicator", spec));
     }

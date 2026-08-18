@@ -572,8 +572,13 @@ public sealed partial class ClauseCompiler
                 gArgs = new Term[] { v };
                 break;
             default:
-                throw new NotSupportedException(
-                    $"Goal type {goal.GetType().Name} is not yet supported in clause bodies.");
+                // A non-callable in goal position (a number, a string)
+                // compiles to a runtime type_error(callable, Culprit) —
+                // a compile-time crash would be uncatchable
+                // (catch({1^true}, _, fail) must fail, not kill the load).
+                fName = "$type_error_callable";
+                gArgs = new Term[] { goal };
+                break;
         }
 
         // ADR-018 — arithmetic instruction set. `X is Expr` and the six

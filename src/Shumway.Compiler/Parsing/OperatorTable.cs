@@ -178,9 +178,10 @@ public sealed class OperatorTable
         t.Define("*->", 1050, OperatorType.Xfy);
         t.Define(",", 1000, OperatorType.Xfy);
 
-        // Negation
+        // Negation. `not` is deliberately NOT an operator here — ISO, GNU
+        // and SWI all leave it a plain atom (`X == not` must parse); the
+        // arity_compat scope defines it (Arity writes `not Goal`).
         t.Define("\\+", 900, OperatorType.Fy);
-        t.Define("not", 900, OperatorType.Fy);
 
         // Comparison and unification
         t.Define("=", 700, OperatorType.Xfx);

@@ -550,6 +550,59 @@ public static partial class MetaBuiltins
     public static bool Assertz(Activation engine) => AssertImpl(engine, prepend: false);
     public static bool Asserta(Activation engine) => AssertImpl(engine, prepend: true);
 
+    /// <summary>ISO §8.9.1.3 assert-time validation: the head must be an
+    /// atom or compound; the body must convert to a goal — a number (or
+    /// other non-callable) anywhere in the <c>,</c>/<c>;</c>/<c>-&gt;</c>
+    /// control skeleton raises <c>type_error(callable, Culprit)</c>. A var
+    /// in goal position is fine (it meta-calls). Without this the bad body
+    /// surfaces later as an uncatchable compiler exception at dispatch.</summary>
+    private static void ValidateAssertClause(Term clauseTerm)
+    {
+        if (clauseTerm is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        Term head = clauseTerm;
+        Term? body = null;
+        if (clauseTerm is CompoundTerm { Functor: ":-", Args.Length: 2 } rule)
+        {
+            head = rule.Args[0];
+            body = rule.Args[1];
+        }
+        if (head is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (head is not AtomTerm and not CompoundTerm)
+            throw new ShumwayPrologException(IsoError.TypeError("callable", head));
+        // Control constructs are not procedures — asserting a clause for
+        // `!`, `,`/2, `;`/2, `->`/2 or `*->`/2 is modifying a static
+        // procedure (WG17 reading; SWI and GNU agree).
+        string hn = head is AtomTerm ha ? ha.Name : ((CompoundTerm)head).Functor;
+        int harity = head is CompoundTerm hc ? hc.Args.Length : 0;
+        if ((harity == 0 && hn == "!")
+            || (harity == 1 && hn == ":-")
+            || (harity == 2 && hn is "," or ";" or "->" or "*->" or ":-"))
+            throw new ShumwayPrologException(IsoError.PermissionError(
+                "modify", "static_procedure",
+                new CompoundTerm("/", new Term[] { new AtomTerm(hn), new IntTerm(harity) })));
+        if (body is not null) ValidateGoalTerm(body);
+    }
+
+    private static void ValidateGoalTerm(Term goal)
+    {
+        switch (goal)
+        {
+            case VarTerm:
+                return;
+            case CompoundTerm { Args.Length: 2 } c
+                when c.Functor is "," or ";" or "->" or "*->":
+                ValidateGoalTerm(c.Args[0]);
+                ValidateGoalTerm(c.Args[1]);
+                return;
+            case AtomTerm or CompoundTerm:
+                return;
+            default:
+                throw new ShumwayPrologException(IsoError.TypeError("callable", goal));
+        }
+    }
+
     private static bool AssertImpl(Activation engine, bool prepend)
     {
         if (engine.Host is not PrologEngine host)
@@ -558,6 +611,7 @@ public static partial class MetaBuiltins
 
         Term clauseTerm = MaterializeRegister(engine, 0);
         clauseTerm = StripAssertQualifiers(clauseTerm);
+        ValidateAssertClause(clauseTerm);
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         // Asserta/Assertz extract the head functor id anyway —
         // take it from the return instead of re-extracting (a second
@@ -620,9 +674,10 @@ public static partial class MetaBuiltins
         // predicate is permission_error(modify, static_procedure, _),
         // not a silent failure. The check fires after the head's type
         // check (above) so type errors win precedence.
-        if (!host.IsDynamic(patternFid))
-            throw new Shumway.Core.PrologRuntimeException(
-                "permission_error", "modify,static_procedure");
+        // Same triage as retractall: dynamic → run the retract loop;
+        // static/builtin → permission_error (thrown by the check);
+        // UNDEFINED → plain failure, not an error.
+        if (!host.IsRetractAllModifiable(patternFid)) return false;
 
         // scan the LIVE clause list directly — no snapshot copy.
         // This is sound for the first step: the scan runs to completion
@@ -753,7 +808,9 @@ public static partial class MetaBuiltins
         }
         if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        throw new Shumway.Core.PrologRuntimeException("type_error", "callable");
+        // Non-callable pattern (a number, a string): the cell rides along so
+        // the translated type_error(callable, Culprit) carries the value.
+        throw new Shumway.Core.PrologRuntimeException("type_error", "callable", engine, c);
     }
 
     private static readonly int _ruleFunctorAtomId =
@@ -818,7 +875,8 @@ public static partial class MetaBuiltins
         Clause candidate = candidates[matchIndex];
         int savedHb = engine.Hb;
         engine.SetHb(engine.HeapTop);
-        Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
+        Cell candidateCell = Materializer.MaterializeAsCell(engine,
+            RuleFormCandidate(candidate.Term, IsRuleFormPattern(engine, patternHeap)));
         int candSlot = engine.AllocateHeap(1);
         engine.SetHeap(candSlot, candidateCell);
 
@@ -906,7 +964,8 @@ public static partial class MetaBuiltins
 
             int savedHb = engine.Hb;
             engine.SetHb(engine.HeapTop);
-            Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
+            Cell candidateCell = Materializer.MaterializeAsCell(engine,
+                RuleFormCandidate(candidate.Term, IsRuleFormPattern(engine, patternHeap)));
             int candSlot = engine.AllocateHeap(1);
             engine.SetHeap(candSlot, candidateCell);
 
@@ -945,6 +1004,27 @@ public static partial class MetaBuiltins
     /// candidate on a PROVEN structural mismatch (distinct atoms / ints /
     /// functors at the same position) with zero allocation; only candidates
     /// it cannot refute pay the materialise-and-unify trial.</para></summary>
+    /// <summary>True when the retract pattern on the heap is the rule form
+    /// <c>(Head :- Body)</c>. A rule-form pattern must also match stored
+    /// FACTS — ISO treats a fact as <c>(Head :- true)</c> — so candidates
+    /// are normalized with <see cref="RuleFormCandidate"/> before the trial
+    /// unification.</summary>
+    private static bool IsRuleFormPattern(Activation engine, int patternHeap)
+    {
+        int idx = engine.Deref(patternHeap);
+        Cell c = engine.GetHeap(idx);
+        if (c.Tag != Tag.Str) return false;
+        Cell f = engine.GetHeap(c.AsHeapIndex);
+        if (f.Tag != Tag.Functor) return false;
+        var (aid, ar) = FunctorTable.Lookup(f.AsFunctorId);
+        return ar == 2 && aid == _ruleFunctorAtomId;
+    }
+
+    private static Term RuleFormCandidate(Term t, bool ruleForm)
+        => ruleForm && t is not CompoundTerm { Functor: ":-", Args.Length: 2 }
+            ? new CompoundTerm(":-", new[] { t, new AtomTerm("true") })
+            : t;
+
     private static int FindRetractMatch(
         Activation engine, IReadOnlyList<Clause> candidates, int startIndex,
         int endExclusive, int patternHeap)
@@ -952,9 +1032,11 @@ public static partial class MetaBuiltins
         // endExclusive bounds the scan explicitly — a resume's
         // candidates live in a pooled buffer that may be longer than the
         // snapshot it holds, so candidates.Count is not the right bound.
+        bool ruleForm = IsRuleFormPattern(engine, patternHeap);
         for (int i = startIndex; i < endExclusive; i++)
         {
-            if (DefiniteMismatch(engine, patternHeap, candidates[i].Term, depth: 4))
+            Term candTerm = RuleFormCandidate(candidates[i].Term, ruleForm);
+            if (DefiniteMismatch(engine, patternHeap, candTerm, depth: 4))
                 continue;
             int savedHeapTop = engine.HeapTop;
             int savedBindingTrail = engine.BindingTrailTop;
@@ -963,7 +1045,7 @@ public static partial class MetaBuiltins
             engine.SetHb(engine.HeapTop);
 
             Cell candidateCell =
-                Materializer.MaterializeAsCell(engine, candidates[i].Term);
+                Materializer.MaterializeAsCell(engine, candTerm);
             int candSlot = engine.AllocateHeap(1);
             engine.SetHeap(candSlot, candidateCell);
             bool matches = engine.Unify(patternHeap, candSlot);

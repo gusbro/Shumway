@@ -555,11 +555,19 @@ public sealed class Parser
                 // `[!, X]`, `[! | T]` are ordinary lists with the cut atom as
                 // an element (ISO-valid, and used by real libraries such as
                 // Scryer's clpz). A real snip `[! Goal !]` always has a goal
-                // after the opening '!'.
+                // after the opening '!' — so an INFIX operator right after the
+                // '!' also means list, with '!' as its left operand
+                // (`[!-1, !-2]`); goals never start with an infix-only token.
                 if (PeekToken().Kind == TokenKind.Atom && PeekToken().Text == "!"
                     && !PeekToken().WasQuoted
                     && PeekTokenAt(1).Kind is not (TokenKind.RBracket
-                        or TokenKind.Comma or TokenKind.Bar))
+                        or TokenKind.Comma or TokenKind.Bar
+                        // A goal can start with neither a number ([!-1, …]:
+                        // the lexer folds the sign in) …
+                        or TokenKind.Integer or TokenKind.Float)
+                    // … nor an infix operator taking the '!' as left operand.
+                    && !(PeekTokenAt(1).Kind == TokenKind.Atom
+                        && _operators.TryGetInfix(PeekTokenAt(1).Text, out _, out _)))
                 {
                     NextToken();   // consume the opening '!'
                     Term snipBody = ReadTermInternal(1200, out _);

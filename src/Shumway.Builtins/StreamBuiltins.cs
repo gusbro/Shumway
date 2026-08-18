@@ -120,7 +120,10 @@ public static class StreamBuiltins
     {
         var h = ResolveStream(engine, cell);
         if (!h.IsReader)
-            throw new PrologRuntimeException("permission_error", "input,stream");
+            // The culprit is the stream-or-alias ARGUMENT as written
+            // (§8.12.1.3.d wants e.g. user_output, not a fresh var).
+            throw new PrologRuntimeException("permission_error", "input,stream",
+                engine, Resolve(engine, cell));
         return h;
     }
 
@@ -128,7 +131,8 @@ public static class StreamBuiltins
     {
         var h = ResolveStream(engine, cell);
         if (!h.IsWriter)
-            throw new PrologRuntimeException("permission_error", "output,stream");
+            throw new PrologRuntimeException("permission_error", "output,stream",
+                engine, Resolve(engine, cell));
         return h;
     }
 
@@ -244,6 +248,7 @@ public static class StreamBuiltins
         // Parse the options list. Each option is a 1-arg compound;
         // anything else is a stream_option domain error.
         string? alias = null;
+        string eofAction = "eof_code";
         bool binary = false;
         System.Text.Encoding? encoding = null;
         Cell cur = optsCell;
@@ -308,9 +313,13 @@ public static class StreamBuiltins
                     };
                     break;
                 case "eof_action":
-                    // Recognised but not yet plumbed through the read
-                    // side; reading at EOF always returns the
-                    // end_of_file atom (matching eof_code).
+                    if (argCell.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (argCell.Tag != Tag.Atom)
+                        throw new PrologRuntimeException("domain_error", "stream_option");
+                    eofAction = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
+                    if (eofAction is not ("error" or "eof_code" or "reset"))
+                        throw new PrologRuntimeException("domain_error", "stream_option");
                     break;
                 case "reposition":
                     // Recognised; SeekablePosition is implicit on
@@ -399,6 +408,7 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("system_error", ex.Message);
         }
 
+        handle.EofAction = eofAction;
         registry.Add(handle);
         return engine.UnifyRegisterWithCell(2, MakeStreamTerm(engine, handle));
     }
@@ -423,6 +433,12 @@ public static class StreamBuiltins
     public static bool Close(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
+        // ISO §8.11.6: closing a standard stream has no effect — the
+        // user streams outlive every close and stay registered.
+        var st = engine.Streams!;
+        if (ReferenceEquals(h, st.UserInput) || ReferenceEquals(h, st.UserOutput)
+            || ReferenceEquals(h, st.UserError))
+            return true;
         if (h.Reader is not null) h.Reader.Dispose();
         if (h.Writer is not null) { h.Writer.Flush(); h.Writer.Dispose(); }
         if (h.BinaryStream is not null)
@@ -442,7 +458,13 @@ public static class StreamBuiltins
     public static bool Close2(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
-        bool force = ContainsForceTrue(engine, engine.GetRegister(1));
+        bool force = ParseCloseOptions(engine, engine.GetRegister(1));
+        // ISO §8.11.6: closing a standard stream has no effect — the
+        // user streams outlive every close and stay registered.
+        var st = engine.Streams!;
+        if (ReferenceEquals(h, st.UserInput) || ReferenceEquals(h, st.UserOutput)
+            || ReferenceEquals(h, st.UserError))
+            return true;
         try
         {
             if (h.Reader is not null) h.Reader.Dispose();
@@ -635,7 +657,7 @@ public static class StreamBuiltins
     /// <summary><c>get_byte(+Stream, -Byte)</c> — ISO §8.13.1.</summary>
     public static bool GetByte2(Activation engine)
     {
-        var h = ResolveStream(engine, engine.GetRegister(0));
+        var h = ResolveReader(engine, engine.GetRegister(0));
         return ReadByteInto(engine, h, regOut: 1);
     }
 
@@ -650,7 +672,7 @@ public static class StreamBuiltins
     /// <summary><c>peek_byte(+Stream, -Byte)</c> — ISO §8.13.2.</summary>
     public static bool PeekByte2(Activation engine)
     {
-        var h = ResolveStream(engine, engine.GetRegister(0));
+        var h = ResolveReader(engine, engine.GetRegister(0));
         return PeekByteInto(engine, h, regOut: 1);
     }
 
@@ -682,7 +704,10 @@ public static class StreamBuiltins
             // ISO §8.13.1.3.g: byte I/O on a text stream is
             // permission_error(input, text_stream, _).
             throw new PrologRuntimeException("permission_error", "input,text_stream");
+        CheckOutArgIsInByte(engine, regOut);
+        CheckPastEof(engine, h);
         int b = h.BinaryStream!.ReadByte();
+        if (b < 0) h.PastEof = true;
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(b));
     }
 
@@ -695,6 +720,8 @@ public static class StreamBuiltins
         var bs = h.BinaryStream!;
         if (!bs.CanSeek)
             throw new PrologRuntimeException("permission_error", "reposition,stream");
+        CheckOutArgIsInByte(engine, regOut);
+        CheckPastEof(engine, h);
         long pos = bs.Position;
         int b = bs.ReadByte();
         bs.Position = pos;
@@ -722,6 +749,101 @@ public static class StreamBuiltins
 
     // ---------- character / code helpers ----------
 
+    /// <summary>The §8.12 pre-read gate: touching a stream whose position
+    /// is already past-end-of-stream under <c>eof_action(error)</c> raises
+    /// <c>permission_error(input, past_end_of_stream, S)</c>. All other
+    /// combinations read normally (eof keeps yielding <c>end_of_file</c> —
+    /// GNU's default behaviour).</summary>
+    /// <summary>§8.12.1.3.c: a BOUND output argument that could never be a
+    /// read result is a type error up front — get_char(S, 1) raises
+    /// type_error(in_character, 1), it does not just fail. in_character =
+    /// one-char atom or end_of_file.</summary>
+    private static void CheckOutArgIsInCharacter(Activation engine, int regOut)
+    {
+        Cell c = Resolve(engine, engine.GetRegister(regOut));
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar) return;
+        if (c.Tag == Tag.Atom)
+        {
+            string? n = AtomTable.GetById(c.AsAtomId)?.Name;
+            if (n is not null && (n.Length == 1 || n == "end_of_file"
+                || (n.Length == 2 && char.IsSurrogatePair(n[0], n[1]))))
+                return;
+        }
+        throw new PrologRuntimeException("type_error", "in_character", engine, c);
+    }
+
+    /// <summary>§8.12.4.3.c: in_character_code = a char code or -1.</summary>
+    private static void CheckOutArgIsInCharacterCode(Activation engine, int regOut)
+    {
+        Cell c = Resolve(engine, engine.GetRegister(regOut));
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar) return;
+        if (c.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer", engine, c);
+        long v = c.AsInt;
+        if (v == -1 || (v >= 0 && v <= 0x10FFFF)) return;
+        throw new PrologRuntimeException("representation_error", "in_character_code");
+    }
+
+    /// <summary>§8.13.1.3.c: in_byte = 0..255 or -1.</summary>
+    private static void CheckOutArgIsInByte(Activation engine, int regOut)
+    {
+        Cell c = Resolve(engine, engine.GetRegister(regOut));
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar) return;
+        if (c.Tag == Tag.Int && (c.AsInt == -1 || (c.AsInt >= 0 && c.AsInt <= 255)))
+            return;
+        throw new PrologRuntimeException("type_error", "in_byte", engine, c);
+    }
+
+    /// <summary>§8.11.6 close-option list validation: the list and every
+    /// option must be instantiated; the only recognised option is
+    /// <c>force(true|false)</c> — anything else is
+    /// <c>domain_error(close_option, Culprit)</c>.</summary>
+    private static bool ParseCloseOptions(Activation engine, Cell optsCell)
+    {
+        bool force = false;
+        Cell cur = Resolve(engine, optsCell);
+        while (true)
+        {
+            if (cur.Tag is Tag.Ref or Tag.AttVar)
+                throw new PrologRuntimeException("instantiation_error");
+            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId)
+                return force;
+            if (cur.Tag != Tag.Lis)
+                throw new PrologRuntimeException("type_error", "list", engine, cur);
+            Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
+            if (head.Tag is Tag.Ref or Tag.AttVar)
+                throw new PrologRuntimeException("instantiation_error");
+            bool ok = false;
+            if (head.Tag == Tag.Str)
+            {
+                Cell f = engine.GetHeap(head.AsHeapIndex);
+                var (aid, ar) = FunctorTable.Lookup(f.AsFunctorId);
+                if (ar == 1 && AtomTable.GetById(aid)?.Name == "force")
+                {
+                    Cell arg = Resolve(engine, engine.GetHeap(head.AsHeapIndex + 1));
+                    if (arg.Tag == Tag.Atom)
+                    {
+                        string? an = AtomTable.GetById(arg.AsAtomId)?.Name;
+                        if (an == "true") { force = true; ok = true; }
+                        else if (an == "false") ok = true;
+                    }
+                }
+            }
+            if (!ok)
+                throw new PrologRuntimeException(
+                    "domain_error", "close_option", engine, head);
+            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        }
+    }
+
+    private static void CheckPastEof(Activation engine, StreamHandle h)
+    {
+        if (h.PastEof && h.EofAction == "error")
+            throw new PrologRuntimeException("permission_error",
+                "input,past_end_of_stream", engine, MakeStreamTerm(engine, h));
+        if (h.PastEof && h.EofAction == "reset") h.PastEof = false;
+    }
+
     private static bool ReadCharInto(Activation engine, StreamHandle h, int regOut)
     {
         if (!h.IsReader)
@@ -730,7 +852,10 @@ public static class StreamBuiltins
             // ISO §8.12.1.3.g: char I/O on a binary stream is
             // permission_error(input, binary_stream, _).
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
+        CheckOutArgIsInCharacter(engine, regOut);
+        CheckPastEof(engine, h);
         int c = h.Reader!.Read();
+        if (c < 0) h.PastEof = true;
         // Same single-char-atom cache as PeekCharInto.
         int atomId = c < 0
             ? _eofAtomId
@@ -746,6 +871,8 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,stream");
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
+        CheckOutArgIsInCharacter(engine, regOut);
+        CheckPastEof(engine, h);
         int c = h.Reader!.Peek();
         // Hot path: the cached single-char atom id is a pure array
         // index — saves the lock + dictionary probe + 1-char string
@@ -769,7 +896,10 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,stream");
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
+        CheckOutArgIsInCharacterCode(engine, regOut);
+        CheckPastEof(engine, h);
         int c = h.Reader!.Read();
+        if (c < 0) h.PastEof = true;
         // ISO §8.12.4: EOF is the integer -1.
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
     }
@@ -780,6 +910,8 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,stream");
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
+        CheckOutArgIsInCharacterCode(engine, regOut);
+        CheckPastEof(engine, h);
         int c = h.Reader!.Peek();
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
     }
@@ -879,21 +1011,32 @@ public static class StreamBuiltins
     /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.9.</summary>
     public static bool AtEndOfStream1(Activation engine)
     {
-        var h = ResolveStream(engine, engine.GetRegister(0));
-        if (h.Reader is null) return false;       // a writer is never "at end"
-        // user_input's underlying console reader doesn't support
-        // non-blocking Peek — report "not at end" conservatively.
-        if (ReferenceEquals(h, engine.Streams!.UserInput)) return false;
-        return h.Reader.Peek() < 0;
+        Cell arg = engine.GetRegister(0);
+        var h = ResolveStream(engine, arg);
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream",
+                engine, Resolve(engine, arg));
+        return AtEnd(engine, h);
     }
 
     /// <summary><c>at_end_of_stream/0</c> — checks current_input.</summary>
     public static bool AtEndOfStream0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput;
-        if (h?.Reader is null) return false;
+        return h is not null && AtEnd(engine, h);
+    }
+
+    /// <summary>True when the position is at OR past end (§8.11.9). A
+    /// binary reader has no TextReader — probe the seekable stream.</summary>
+    private static bool AtEnd(Activation engine, StreamHandle h)
+    {
+        if (!h.IsReader) return false;            // a writer is never "at end"
+        if (h.PastEof) return true;
+        // user_input's underlying console reader doesn't support
+        // non-blocking Peek — report "not at end" conservatively.
         if (ReferenceEquals(h, engine.Streams!.UserInput)) return false;
-        return h.Reader.Peek() < 0;
+        if (h.Reader is not null) return h.Reader.Peek() < 0;
+        return h.BinaryStream is { CanSeek: true } bs && bs.Position >= bs.Length;
     }
 
     // ---------- Helpers ----------

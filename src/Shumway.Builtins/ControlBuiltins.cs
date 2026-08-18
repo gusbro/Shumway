@@ -20,6 +20,36 @@ public static class ControlBuiltins
     public static bool Fail(Activation engine) => false;
     public static bool True(Activation engine) => true;
 
+    /// <summary><c>'$type_error_callable'(Culprit)</c> — the runtime
+    /// thrower the clause compiler emits for a NON-CALLABLE in goal
+    /// position (<c>foo :- 4</c>, <c>{1^true}</c>): the error must be a
+    /// catchable type_error(callable, Culprit) raised when the goal RUNS,
+    /// never a compile-time crash.</summary>
+    public static bool TypeErrorCallable(Activation engine)
+        => throw new PrologRuntimeException("type_error", "callable",
+            engine, engine.GetRegister(0));
+
+    /// <summary><c>'$is_evaluable'(+Name, +Arity)</c> — membership test
+    /// against the arithmetic function tables, backing the prelude's
+    /// <c>evaluable_property/2</c>.</summary>
+    public static bool IsEvaluable(Activation engine)
+    {
+        Cell n = engine.GetRegister(0);
+        if (n.Tag == Tag.Ref) n = engine.GetHeap(engine.Deref(n.AsHeapIndex));
+        Cell a = engine.GetRegister(1);
+        if (a.Tag == Tag.Ref) a = engine.GetHeap(engine.Deref(a.AsHeapIndex));
+        if (n.Tag != Tag.Atom || a.Tag != Tag.Int) return false;
+        string name = AtomTable.GetById(n.AsAtomId)?.Name ?? "";
+        return a.AsInt switch
+        {
+            0 => name is "pi" or "e" or "epsilon" or "random_float",
+            1 => ArithmeticEvaluator.TryUnOp(name, out _)
+                 || name is "msb" or "lsb" or "popcount" or "random",
+            2 => ArithmeticEvaluator.TryBinOp(name, out _),
+            _ => false,
+        };
+    }
+
     /// <summary><c>get_cpu_time(-Time)</c> — GNU-Prolog timing primitive:
     /// binds <c>Time</c> to a high-resolution monotonic process timer, in
     /// milliseconds (a float, so sub-millisecond deltas survive). Used by the

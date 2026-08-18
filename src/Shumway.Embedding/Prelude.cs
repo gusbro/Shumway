@@ -39,6 +39,8 @@ internal static class Prelude
         :- public foldl/5.
         :- public aggregate_all/3.
         :- public forall/2.
+        :- public if/3.
+        :- public evaluable_property/2.
         :- public catch/3.
         :- public '$catch_run'/1.
         :- public copy_term/3.
@@ -184,6 +186,36 @@ internal static class Prelude
         % variable Condition/Action (it must NOT use an isolated sub-engine —
         % that would hide the called goals' assert/retract).
         forall(Cond, Action) :- \+ ( call(Cond), \+ call(Action) ).
+
+        %! if(:Condition, :Then, :Else) | Control | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
+        if(C, T, E) :- ( C *-> T ; E ).
+
+        %! evaluable_property(+Callable, ?Property) | Arithmetic | Properties of an arithmetic function: built_in, static, template(Callable, ReturnType).
+        evaluable_property(E, P) :-
+            (   var(E) -> throw(error(instantiation_error, evaluable_property/2))
+            ;   \+ callable(E) ->
+                throw(error(type_error(callable, E), evaluable_property/2))
+            ;   true
+            ),
+            (   var(P) -> true
+            ;   P = template(_, _) -> true
+            ;   ( P == built_in ; P == static ; P == (dynamic) ; P == foreign ) -> true
+            ;   throw(error(domain_error(evaluable_property, P), evaluable_property/2))
+            ),
+            functor(E, N, A),
+            '$is_evaluable'(N, A),
+            '$evaluable_property1'(N, A, P).
+
+        '$evaluable_property1'(_, _, built_in).
+        '$evaluable_property1'(_, _, static).
+        '$evaluable_property1'(N, A, template(T, R)) :-
+            (   A =:= 0 -> T = N, ( N == pi -> R = float ; N == e -> R = float ; R = number )
+            ;   functor(T, N, A), '$fill_number_args'(A, T), R = number
+            ).
+
+        '$fill_number_args'(0, _) :- !.
+        '$fill_number_args'(I, T) :-
+            arg(I, T, number), I1 is I - 1, '$fill_number_args'(I1, T).
 
         %! findall(?Template, :Goal, -List) | Findall & aggregation | Collects an instance of Template for every solution of Goal into a list.
         % Runs Goal in the LIVE engine via call/1 and the in-engine collect
@@ -350,11 +382,26 @@ internal static class Prelude
             throw(error(type_error(predicate_indicator, Spec), _)).
 
         %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound.
+        % Proper lists take the native '$list_length' fast path; everything
+        % else (partial list, improper term, bad Length) walks with the
+        % original term kept for the type_error(list, Culprit).
         length(L, N) :-
-            nonvar(L), !, '$list_length'(L, N).
-        length(L, N) :-
-            integer(N), !, '$make_var_list'(N, L).
-        length(L, N) :- '$length_enum'(L, N, 0).
+            nonvar(L), '$list_length'(L, M), !,
+            (   integer(N) -> N = M
+            ;   var(N) -> N = M
+            ;   throw(error(type_error(integer, N), length/2))
+            ).
+        length(L, N) :- '$length_walk'(L, L, N, 0).
+
+        '$length_walk'(L, Orig, N, Acc) :-
+            (   var(L) ->
+                (   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
+                ;   var(N) -> '$length_enum'(L, N, Acc)
+                ;   throw(error(type_error(integer, N), length/2))
+                )
+            ;   L = [_|T] -> Acc1 is Acc + 1, '$length_walk'(T, Orig, N, Acc1)
+            ;   throw(error(type_error(list, Orig), length/2))
+            ).
 
         '$length_enum'([], N, N).
         '$length_enum'([_|T], N, Acc) :-
