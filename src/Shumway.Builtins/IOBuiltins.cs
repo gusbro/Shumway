@@ -121,12 +121,34 @@ public static class IOBuiltins
         return true;
     }
 
+    /// <summary>Options write_term recognises but does not act on (SWI
+    /// extras real code passes) — accepted so a domain_error only fires on
+    /// genuinely unknown names.</summary>
+    private static readonly System.Collections.Generic.HashSet<string> IgnoredWriteOptions = new()
+    {
+        "portray", "fullstop", "nl", "dotlists", "brace_terms",
+        "attributes", "blobs", "character_escapes", "cycles", "partial",
+        "portray_goal", "spacing", "no_lists", "priority",
+    };
+
     private static TermRenderOptions ReadWriteTermOptions(Activation engine, int optsReg)
     {
         var options = new TermRenderOptions { Operators = engine.Operators };
-        Cell optsCell = Resolve(engine, engine.GetRegister(optsReg));
-        while (optsCell.Tag == Tag.Lis)
+        Cell listStart = Resolve(engine, engine.GetRegister(optsReg));
+        Cell optsCell = listStart;
+        // ISO §8.14.2.3: the list and every element must be instantiated;
+        // an improper tail is type_error(list, WholeList); an element that
+        // is not a recognised Name(Arg) option is domain_error(write_option,
+        // Element); a bool option with a non-true/false argument reports the
+        // WHOLE option as the culprit.
+        while (true)
         {
+            if (optsCell.Tag is Tag.Ref or Tag.AttVar)
+                throw new PrologRuntimeException("instantiation_error");
+            if (optsCell.Tag == Tag.Atom && optsCell.AsAtomId == AtomTable.EmptyListId)
+                break;
+            if (optsCell.Tag != Tag.Lis)
+                throw new PrologRuntimeException("type_error", "list", engine, listStart);
             int headIdx = optsCell.AsHeapIndex;
             Cell head = Resolve(engine, engine.GetHeap(headIdx));
             ApplyOption(engine, head, options);
@@ -137,26 +159,67 @@ public static class IOBuiltins
 
     private static void ApplyOption(Activation engine, Cell optCell, TermRenderOptions options)
     {
-        if (optCell.Tag != Tag.Str) return;
+        if (optCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (optCell.Tag != Tag.Str)
+            throw new PrologRuntimeException("domain_error", "write_option", engine, optCell);
         int functorIdx = optCell.AsHeapIndex;
         var (atomId, arity) = FunctorTable.Lookup(
             engine.GetHeap(functorIdx).AsFunctorId);
-        if (arity != 1) return;
+        if (arity != 1)
+            throw new PrologRuntimeException("domain_error", "write_option", engine, optCell);
         string name = AtomTable.GetById(atomId)?.Name ?? "";
         Cell valCell = Resolve(engine, engine.GetHeap(functorIdx + 1));
         if (name == "variable_names")
         {
-            ApplyVariableNames(engine, valCell, options);
+            ApplyVariableNames(engine, valCell, options, optCell);
             return;
         }
-        bool value = IsTrueAtom(valCell);
         switch (name)
         {
-            case "quoted": options.Quoted = value; break;
-            case "ignore_ops": options.IgnoreOps = value; break;
-            case "numbervars": options.Numbervars = value; break;
-            // Unknown options ignored silently.
+            case "quoted": options.Quoted = RequireBool(engine, valCell, optCell); break;
+            case "ignore_ops": options.IgnoreOps = RequireBool(engine, valCell, optCell); break;
+            case "numbervars": options.Numbervars = RequireBool(engine, valCell, optCell); break;
+            case "max_depth":
+                if (valCell.Tag is Tag.Ref or Tag.AttVar)
+                    throw new PrologRuntimeException("instantiation_error");
+                if (valCell.Tag != Tag.Int || valCell.AsInt < 0)
+                    throw new PrologRuntimeException(
+                        "domain_error", "write_option", engine, optCell);
+                options.MaxDepth = (int)valCell.AsInt;
+                break;
+            case "portrayed":
+                // Accepted and VALIDATED, but not acted on: the hook needs a
+                // re-entrant portray/1 call from inside this builtin, and
+                // SolveOnce is not sound from a builtin running under a
+                // nested sub-query (the Logtalk test harness's shape) — the
+                // caller's continuation fails after the nested solve
+                // returns. Tracked separately; the option stays a no-op
+                // rather than silently corrupting a live query.
+                RequireBool(engine, valCell, optCell);
+                break;
+            default:
+                if (!IgnoredWriteOptions.Contains(name))
+                    throw new PrologRuntimeException(
+                        "domain_error", "write_option", engine, optCell);
+                break;
         }
+    }
+
+    /// <summary>A bool write-option argument: unbound → instantiation_error;
+    /// anything but true/false → domain_error with the WHOLE option
+    /// (<c>quoted(fail)</c>) as culprit.</summary>
+    private static bool RequireBool(Activation engine, Cell valCell, Cell optCell)
+    {
+        if (valCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (valCell.Tag == Tag.Atom)
+        {
+            string? v = AtomTable.GetById(valCell.AsAtomId)?.Name;
+            if (v == "true") return true;
+            if (v == "false") return false;
+        }
+        throw new PrologRuntimeException("domain_error", "write_option", engine, optCell);
     }
 
     /// <summary>Parses the <c>variable_names([Name=Var, ...])</c> option
@@ -166,11 +229,15 @@ public static class IOBuiltins
     /// bound-but-malformed list, a non-<c>=</c>/2 element, or a non-atom Name
     /// raises <c>domain_error(write_option, …)</c>. A bound Var is accepted and
     /// simply carries no name.</summary>
-    private static void ApplyVariableNames(Activation engine, Cell listCell, TermRenderOptions options)
+    private static void ApplyVariableNames(
+        Activation engine, Cell listCell, TermRenderOptions options, Cell optCell)
     {
         Cell cur = Resolve(engine, listCell);
         if (cur.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
+        if (cur.Tag != Tag.Lis
+            && !(cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId))
+            throw new PrologRuntimeException("domain_error", "write_option", engine, optCell);
         // A bound-but-malformed element (or improper tail, or non-atom name)
         // is a domain_error even past an earlier unbound element/name — the
         // instantiation_error is deferred (sawUnbound) and only raised if the
@@ -189,15 +256,15 @@ public static class IOBuiltins
             else
             {
                 if (pair.Tag != Tag.Str)
-                    throw new PrologRuntimeException("domain_error", "write_option");
+                    throw new PrologRuntimeException("domain_error", "write_option", engine, optCell);
                 int pairIdx = pair.AsHeapIndex;
                 var (pAtom, pArity) = FunctorTable.Lookup(engine.GetHeap(pairIdx).AsFunctorId);
                 if (pArity != 2 || (AtomTable.GetById(pAtom)?.Name ?? "") != "=")
-                    throw new PrologRuntimeException("domain_error", "write_option");
+                    throw new PrologRuntimeException("domain_error", "write_option", engine, optCell);
                 Cell nameCell = Resolve(engine, engine.GetHeap(pairIdx + 1));
                 if (nameCell.Tag is Tag.Ref or Tag.AttVar) { sawUnbound = true; }
                 else if (nameCell.Tag != Tag.Atom)
-                    throw new PrologRuntimeException("domain_error", "write_option");
+                    throw new PrologRuntimeException("domain_error", "write_option", engine, optCell);
                 else
                 {
                     int varAddr = ResolveVarAddr(engine, engine.GetHeap(pairIdx + 2));
@@ -213,7 +280,7 @@ public static class IOBuiltins
         }
         if (cur.Tag is Tag.Ref or Tag.AttVar) sawUnbound = true;
         else if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-            throw new PrologRuntimeException("domain_error", "write_option");
+            throw new PrologRuntimeException("domain_error", "write_option", engine, optCell);
         if (sawUnbound)
             throw new PrologRuntimeException("instantiation_error");
         // Merge into the shared option map with OVERWRITE, so a later

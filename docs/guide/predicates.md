@@ -121,6 +121,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `call(:Goal, +Extra1, ..., +Extra7)` | Calls a goal extended with seven extra arguments (ISO requires call/2..8). |
 | `call_cleanup(:Goal, :Cleanup)` | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes. |
 | `call_det(:Goal, -Deterministic)` | Calls Goal once and unifies Deterministic with true if Goal succeeded without leaving a choice point, false otherwise. |
+| `call_nth(:Goal, ?N)` | True when Goal has an Nth solution: with N bound, commits to that solution; with N unbound, enumerates solutions numbering each. |
 | `catch(:Goal, ?Catcher, :Recovery)` | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
 | `compile_all` | Eagerly compiles every compilable static predicate to Tier-1 IL now, instead of waiting for each to promote lazily on use. For a program that will do enough queries to want the whole set hot up front (a server warming up). No-op when Tier-1 is disabled or under Native AOT. Always succeeds. |
 | `compile_all(-Count)` | As compile_all/0, unifying Count with the number of predicates newly compiled to Tier-1 IL by this call. |
@@ -163,8 +164,11 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `abolish_table(+PredicateIndicator)` | Discards the tabled answers of one predicate, given as Name/Arity. |
 | `assert(+Clause)` | Synonym for assertz/1 (historical SWI/GProlog name). |
 | `asserta(+Clause)` | Adds a clause to the front of its dynamic predicate. |
+| `asserta(+Clause, -Ref)` | Adds Clause at the front of its predicate and unifies Ref with its clause reference. |
 | `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
+| `assertz(+Clause, -Ref)` | Adds Clause at the end of its predicate and unifies Ref with its clause reference. |
 | `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate; Module:Head reads from that module's viewpoint. |
+| `clause(?Head, ?Body, ?Ref)` | clause/2 with a clause reference: fetches by Ref when bound, else enumerates Head's clauses binding Ref (de facto standard). |
 | `compact_dynamic_buffer` | Invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
 | `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Validates Name/Arity names a dynamic predicate, then triggers the same full rebuild as the 0-arg form. The single buffer holds every dynamic predicate's bytecode interleaved, so independent per-predicate reclamation isn't currently feasible without partial-relink support — the API surface is per-predicate for forward compatibility. |
 | `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl (SWI-style). |

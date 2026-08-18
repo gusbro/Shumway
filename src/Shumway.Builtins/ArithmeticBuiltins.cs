@@ -241,26 +241,33 @@ public static class ArithmeticBuiltins
         Cell xc = Resolve(engine, engine.GetRegister(0));
         Cell yc = Resolve(engine, engine.GetRegister(1));
 
-        if (xc.Tag == Tag.Int)
+        // Type/domain checks run on EVERY bound argument before either
+        // direction is attempted, and carry the offending value.
+        if (xc.Tag is not (Tag.Ref or Tag.AttVar))
         {
-            long xv = xc.AsInt;
-            if (xv < 0)
-                throw new PrologRuntimeException("domain_error", "not_less_than_zero");
-            return engine.UnifyRegisterWithCell(1, Cell.Int(xv + 1));
+            if (xc.Tag != Tag.Int)
+                throw new PrologRuntimeException("type_error", "integer", engine, xc);
+            if (xc.AsInt < 0)
+                throw new PrologRuntimeException(
+                    "domain_error", "not_less_than_zero", engine, xc);
         }
+        if (yc.Tag is not (Tag.Ref or Tag.AttVar))
+        {
+            if (yc.Tag != Tag.Int)
+                throw new PrologRuntimeException("type_error", "integer", engine, yc);
+            if (yc.AsInt < 0)
+                throw new PrologRuntimeException(
+                    "domain_error", "not_less_than_zero", engine, yc);
+        }
+        if (xc.Tag == Tag.Int)
+            return engine.UnifyRegisterWithCell(1, Cell.Int(xc.AsInt + 1));
         if (yc.Tag == Tag.Int)
         {
             long yv = yc.AsInt;
-            if (yv < 0)
-                throw new PrologRuntimeException("domain_error", "not_less_than_zero");
             if (yv == 0) return false;   // succ(_, 0) has no solution
             return engine.UnifyRegisterWithCell(0, Cell.Int(yv - 1));
         }
-        // Neither is an integer — instantiation_error if both var,
-        // type_error(integer) when at least one is bound to a non-int.
-        if (xc.Tag == Tag.Ref && yc.Tag == Tag.Ref)
-            throw new PrologRuntimeException("instantiation_error");
-        throw new PrologRuntimeException("type_error", "integer");
+        throw new PrologRuntimeException("instantiation_error");
     }
 
     /// <summary><c>plus(X, Y, Z)</c> — integer addition relation with
@@ -272,6 +279,12 @@ public static class ArithmeticBuiltins
         Cell xc = Resolve(engine, engine.GetRegister(0));
         Cell yc = Resolve(engine, engine.GetRegister(1));
         Cell zc = Resolve(engine, engine.GetRegister(2));
+
+        // A BOUND non-integer is a type error regardless of how many
+        // arguments are known — the type check precedes the mode check.
+        foreach (Cell c in stackalloc Cell[] { xc, yc, zc })
+            if (c.Tag is not (Tag.Ref or Tag.AttVar) && c.Tag != Tag.Int)
+                throw new PrologRuntimeException("type_error", "integer", engine, c);
 
         bool xBound = xc.Tag == Tag.Int;
         bool yBound = yc.Tag == Tag.Int;

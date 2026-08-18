@@ -259,6 +259,15 @@ public sealed partial class Activation
     /// <summary>Number of catch frames on the stack (active or not).</summary>
     public int CatchFrameCount => _catchFrames.Count;
 
+    /// <summary>Drops catch frames above <paramref name="count"/>. A nested
+    /// in-engine goal that FAILS never reaches its '$catch_end', so any
+    /// frame it opened would outlive it and mis-route a later ball; the
+    /// nested driver truncates on the failure path.</summary>
+    public void TruncateCatchFrames(int count)
+    {
+        while (_catchFrames.Count > count) _catchFrames.RemoveAt(_catchFrames.Count - 1);
+    }
+
     /// <summary>Reads the catch frame at <paramref name="index"/>.</summary>
     public CatchFrame GetCatchFrame(int index) => _catchFrames[index];
 
@@ -367,7 +376,7 @@ public sealed partial class Activation
         // every choice-point scope above it — fire the cleanup of any registered
         // scope that is being abandoned (its Goal's CPs sit above the frame's
         // snapshot level). The drain runs at the recovery goal's first safe point.
-        if (HasCleanupHandlers) FireCleanupsAbove(f.SnapB);
+        if (HasCleanupHandlers) FireCleanupsAbove(f.SnapB, heapIntact: false);
         if (AttrSweepEnabled)
         {
             int attrEntries = 0, oldHomeEntries = 0;

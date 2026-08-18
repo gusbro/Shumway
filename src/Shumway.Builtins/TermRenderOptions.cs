@@ -26,6 +26,21 @@ public sealed class TermRenderOptions
     public bool IgnoreOps { get; set; } = false;
     public bool Numbervars { get; set; } = false;
 
+    /// <summary><c>max_depth(N)</c>: compounds/list tails nested deeper
+    /// than N render as <c>...</c> / <c>|...</c>. 0 = unlimited.</summary>
+    public int MaxDepth { get; set; }
+
+    /// <summary>Mutable render-time nesting counter for
+    /// <see cref="MaxDepth"/>. Only touched when MaxDepth &gt; 0, so the
+    /// shared Default instance stays immutable in practice.</summary>
+    public int CurrentDepth { get; set; }
+
+    /// <summary><c>portrayed(true)</c>: called for every subterm before
+    /// default rendering; returning true means the hook produced the
+    /// output (SICStus portray/1 protocol — the embedding wires it to a
+    /// re-entrant call of the user's portray/1).</summary>
+    public Func<Activation, Cell, System.IO.TextWriter, bool>? Portray { get; set; }
+
     /// <summary>The <c>variable_names(Bindings)</c> write_term option
     /// (SWI / SICStus): a map from a variable's dereferenced heap index to
     /// the source name it should print as, instead of the default

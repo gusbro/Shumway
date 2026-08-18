@@ -181,6 +181,40 @@ public sealed partial class PrologEngine
     /// clause's <c>died</c> slot in the running program's bytecode so an
     /// already-compiled dispatch's <c>check_visible</c> filters it out
     /// from now on.</summary>
+    // ---- clause references (asserta/2, clause/3, erase/1) ----
+    // Opaque ids handed out lazily per Clause OBJECT (the dynamic store
+    // keeps the identical instance from assert to retract, so identity is
+    // the stable key; clause_3_02 requires the same clause to yield the
+    // same reference on every lookup). Stale entries after erase/abolish
+    // are harmless: every fetch re-verifies liveness against the store.
+    private long _nextClauseRefId = 1;
+    private readonly Dictionary<long, (int Fid, Clause Clause)> _clauseRefsById = new();
+    private readonly Dictionary<Clause, long> _clauseRefIds = new(ReferenceEqualityComparer.Instance);
+
+    internal long ClauseRefFor(int fid, Clause clause)
+    {
+        if (_clauseRefIds.TryGetValue(clause, out long id)) return id;
+        id = _nextClauseRefId++;
+        _clauseRefIds[clause] = id;
+        _clauseRefsById[id] = (fid, clause);
+        return id;
+    }
+
+    internal bool TryGetClauseByRef(long id, out int fid, out Clause clause)
+    {
+        if (_clauseRefsById.TryGetValue(id, out var e))
+        {
+            (fid, clause) = e;
+            // liveness: the clause must still sit in its predicate's list.
+            if (_dynStore.TryGetClauses(fid, out var list))
+                for (int i = 0; i < list.Count; i++)
+                    if (ReferenceEquals(list[i], clause)) return true;
+        }
+        fid = 0;
+        clause = null!;
+        return false;
+    }
+
     internal bool RemoveDynamicByReference(
         Activation engine, int functorId, Clause clause, int knownIndex = -1)
     {

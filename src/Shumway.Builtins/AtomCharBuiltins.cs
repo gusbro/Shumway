@@ -197,7 +197,7 @@ public static class AtomCharBuiltins
             throw new PrologRuntimeException("instantiation_error");
         //  (b) Number bound to a non-number → type_error(number, _).
         if (numCell.Tag != Tag.Ref && !numIsNumber)
-            throw new PrologRuntimeException("type_error", "number");
+            throw new PrologRuntimeException("type_error", "number", engine, numCell);
 
         //  (c) The list argument, when instantiated, is type-checked and — if
         //      fully bound — parsed as a number and unified with Number (the
@@ -814,7 +814,8 @@ public static class AtomCharBuiltins
             else if (asCodes)
             {
                 if (head.Tag != Tag.Int)
-                    throw new PrologRuntimeException("type_error", "character_code");
+                    throw new PrologRuntimeException(
+                        "type_error", "integer", engine, head);
                 // BMP-only, same contract as char_code/2: silently casting
                 // would BUILD A DIFFERENT CHARACTER (0x10400 → 0x400).
                 if (head.AsInt < 0 || head.AsInt > char.MaxValue)
@@ -836,7 +837,9 @@ public static class AtomCharBuiltins
         if (cursor.Tag == Tag.Ref)
             hasUnbound = true;
         else if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            throw new PrologRuntimeException("type_error", "list");
+            // Culprit is the WHOLE list argument (§8.16.7.3), not the
+            // improper tail alone.
+            throw new PrologRuntimeException("type_error", "list", engine, listCell);
         return sb.ToString();
     }
 

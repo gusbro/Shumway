@@ -99,18 +99,39 @@ public static partial class MetaBuiltins
         Cell valueCell = ResolveLocal(engine, engine.GetRegister(1));
         if (flagCell.Tag == Tag.Ref || valueCell.Tag == Tag.Ref)
             throw new ShumwayPrologException(IsoError.InstantiationError());
+        Term flagTerm = MaterializeRegister(engine, 0);
+        Term valueTerm = MaterializeRegister(engine, 1);
+        // §8.17.1.3: the flag-value domain error's culprit is the PAIR
+        // Flag+Value, not the value alone.
+        Term FlagValuePair() =>
+            new CompoundTerm("+", new[] { flagTerm, valueTerm });
         if (flagCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(
-                IsoError.TypeError("atom", new VarTerm("_")));
+            throw new ShumwayPrologException(IsoError.TypeError("atom", flagTerm));
 
         string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
+
+        // A flag that exists but is not user-settable raises
+        // permission_error(modify, flag, F) (§8.17.1.3 c) — checked
+        // BEFORE the value's type, since the flag itself is the fault.
+        switch (flagName)
+        {
+            case "bounded":
+            case "max_integer":
+            case "min_integer":
+            case "integer_rounding_function":
+            case "max_arity":
+            case "dialect":
+            case "argv":
+                throw new ShumwayPrologException(IsoError.PermissionError(
+                    "modify", "flag", new AtomTerm(flagName)));
+        }
 
         // Checked before the atom rule below, which every other flag follows.
         if (flagName == "answer_max_depth")
         {
             if (valueCell.Tag != Tag.Int)
                 throw new ShumwayPrologException(
-                    IsoError.TypeError("integer", new VarTerm("_")));
+                    IsoError.TypeError("integer", valueTerm));
             if (valueCell.AsInt < 0)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("not_less_than_zero", new IntTerm(valueCell.AsInt)));
@@ -120,7 +141,7 @@ public static partial class MetaBuiltins
 
         if (valueCell.Tag != Tag.Atom)
             throw new ShumwayPrologException(
-                IsoError.TypeError("atom", new VarTerm("_")));
+                IsoError.TypeError("atom", valueTerm));
 
         string valueName = AtomTable.GetById(valueCell.AsAtomId)?.Name ?? "";
 
@@ -133,7 +154,7 @@ public static partial class MetaBuiltins
                 "atom"   => Shumway.Compiler.Parsing.DoubleQuotesMode.Atom,
                 "string" => Shumway.Compiler.Parsing.DoubleQuotesMode.String,
                 _ => throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName))),
+                    IsoError.DomainError("flag_value", FlagValuePair())),
             };
             return true;
         }
@@ -146,7 +167,7 @@ public static partial class MetaBuiltins
             catch (System.ArgumentException)
             {
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             }
             return true;
         }
@@ -154,7 +175,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "error" && valueName != "fail" && valueName != "warning")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.Unknown = valueName;
             // take effect mid-query: dispatch reads the
             // live engine's OnUnknown, not the host flags.
@@ -174,7 +195,7 @@ public static partial class MetaBuiltins
             // handles a mid-file flip.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.ArityCompat = valueName == "true";
             if (valueName == "true")
             {
@@ -189,7 +210,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "false" && valueName != "true" && valueName != "error")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.OccursCheck = valueName;
             return true;
         }
@@ -197,7 +218,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.ImplicitDynamic = valueName == "true";
             return true;
         }
@@ -208,7 +229,7 @@ public static partial class MetaBuiltins
             // within one query.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.PreferRationals = engine.PreferRationals = valueName == "true";
             return true;
         }
@@ -216,7 +237,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "debug" && valueName != "release")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.EmitDebugInfo = host.Flags.DebugCodegen = valueName == "debug";
             return true;
         }
@@ -228,7 +249,7 @@ public static partial class MetaBuiltins
             // the Immediate window mid-session).
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.DebugLco = valueName == "on";
             engine.LastCallOptimisation = host.Flags.DebugLco;
             return true;
@@ -239,7 +260,7 @@ public static partial class MetaBuiltins
             // (the table) is applied.
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.CharConversionEnabled = valueName == "on";
             return true;
         }
@@ -249,26 +270,9 @@ public static partial class MetaBuiltins
             // the flag itself is required; accepted and stored.
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.Debug = valueName == "on";
             return true;
-        }
-
-        // a flag that exists but is not user-
-        // settable raises permission_error(modify, flag, F) (ISO
-        // §8.17.1.3 c); only a flag that does not exist at all raises
-        // domain_error(prolog_flag, F).
-        switch (flagName)
-        {
-            case "bounded":
-            case "max_integer":
-            case "min_integer":
-            case "integer_rounding_function":
-            case "max_arity":
-            case "dialect":
-            case "argv":
-                throw new ShumwayPrologException(IsoError.PermissionError(
-                    "modify", "flag", new AtomTerm(flagName)));
         }
 
         throw new ShumwayPrologException(

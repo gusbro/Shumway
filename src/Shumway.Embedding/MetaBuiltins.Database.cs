@@ -156,6 +156,9 @@ public static partial class MetaBuiltins
         "type_error" => WrapWithStampedContext(
             new CompoundTerm("type_error",
                 new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
+        "uninstantiation_error" => WrapWithStampedContext(
+            new CompoundTerm("uninstantiation_error",
+                new Term[] { ValueTermOrVar(re) }), re),
         "existence_error" => WrapWithStampedContext(BuildExistenceError(re), re),
         "ambiguous_module_local" => BuildAmbiguousModuleLocal(re),
         "domain_error" => WrapWithStampedContext(
@@ -406,8 +409,22 @@ public static partial class MetaBuiltins
     /// <summary><c>'$scc_register'(-Ref)</c> — registers a setup_call_cleanup
     /// cleanup handler at the current choice-point level; Ref keys the stored
     /// Cleanup goal.</summary>
-    public static bool SccRegister(Activation engine) =>
-        engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(engine.RegisterCleanupHandler()));
+    public static bool SccRegister(Activation engine)
+    {
+        // arg 1 is the LIVE Cleanup term — capture its dereffed cell so an
+        // async fire (cut / unwind / teardown) runs it with bindings intact.
+        Cell live = engine.GetRegister(1);
+        if (live.Tag == Tag.Ref)
+        {
+            int idx = engine.Deref(live.AsHeapIndex);
+            Cell at = engine.GetHeap(idx);
+            // Bound: keep the VALUE cell; unbound: keep a REF to its home
+            // (bindings made later flow through when the async fire runs).
+            live = at.Tag == Tag.Ref ? Cell.Ref(idx) : at;
+        }
+        return engine.UnifyRegisterWithCell(0,
+            Shumway.Core.Cell.Int(engine.RegisterCleanupHandler(live)));
+    }
 
     /// <summary><c>'$scc_forget'(+Ref)</c> — drops a handler the prelude fired
     /// synchronously so it can never fire again asynchronously.</summary>
@@ -422,8 +439,11 @@ public static partial class MetaBuiltins
     /// engine teardown path (cut / exception unwind / query end); fails when the
     /// queue is empty. The prelude's '$drain_cleanups'/0 loops on it.</summary>
     public static bool PopPendingCleanup(Activation engine) =>
-        engine.TryPopPendingCleanup(out int refId)
-        && engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(refId));
+        engine.TryPopPendingCleanup(out int refId, out Cell liveCleanup, out bool useLive)
+        && engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(refId))
+        && engine.UnifyRegisterWithCell(1,
+            useLive ? liveCleanup
+                    : Cell.Atom(AtomTable.Intern("$scc_use_copy", permanent: true).Id));
 
     /// <summary><c>module_property(?Module, ?Property)</c> — introspects a loaded
     /// module. Supports <c>exports(List)</c> (the <c>Name/Arity</c> indicators the

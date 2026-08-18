@@ -244,10 +244,12 @@ public class StreamControlConformance : IDisposable
     public void CurrentStream_FindsUserOutput()
     {
         // user_output is always registered; current_stream/3 should
-        // surface it. Bind Mode = write to filter to just writers
-        // and check there's at least one with that mode.
+        // surface it. ISO §7.10.2.4 gives the standard output stream mode
+        // APPEND (not write), so filter on that.
         var e = new PrologEngine();
-        Assert.True(e.Query("current_stream(_, write, _).").Success);
+        Assert.True(e.Query("current_stream(_, append, _).").Success);
+        Assert.True(e.Query(
+            "stream_property(S, alias(user_output)), stream_property(S, mode(append)).").Success);
     }
 
     [Fact]

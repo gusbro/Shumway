@@ -34,6 +34,13 @@ public static class TermRenderer
     {
         int derefAddr = Resolve(engine, ref cell);
 
+        // portrayed(true): the user's portray/1 gets first shot at every
+        // subterm; on success its output IS the rendering.
+        if (options.Portray is { } portray
+            && cell.Tag is not (Tag.Ref or Tag.AttVar)
+            && portray(engine, cell, output))
+            return;
+
         switch (cell.Tag)
         {
             case Tag.Ref:
@@ -81,9 +88,33 @@ public static class TermRenderer
                 break;
             }
             case Tag.Str:
+                if (options.MaxDepth > 0)
+                {
+                    if (options.CurrentDepth >= options.MaxDepth)
+                    {
+                        output.Write("...");
+                        break;
+                    }
+                    options.CurrentDepth++;
+                    try { RenderCompound(engine, cell, output, options, maxPriority); }
+                    finally { options.CurrentDepth--; }
+                    break;
+                }
                 RenderCompound(engine, cell, output, options, maxPriority);
                 break;
             case Tag.Lis:
+                if (options.MaxDepth > 0)
+                {
+                    if (options.CurrentDepth >= options.MaxDepth)
+                    {
+                        output.Write("...");
+                        break;
+                    }
+                    options.CurrentDepth++;
+                    try { RenderList(engine, cell, output, options); }
+                    finally { options.CurrentDepth--; }
+                    break;
+                }
                 RenderList(engine, cell, output, options);
                 break;
             case Tag.Pstr:
@@ -382,11 +413,24 @@ public static class TermRenderer
         output.Write('[');
         bool first = true;
         Cell cursor = lisCell;
+        // max_depth: the ENTRY cons already consumed one level (the Render
+        // gate incremented); every further cons consumes another. When the
+        // budget runs out the tail elides to `|...`.
+        int consDepth = options.CurrentDepth;
         while (true)
         {
             Resolve(engine, ref cursor);
             if (cursor.Tag != Tag.Lis) break;
-            if (!first) output.Write(',');   // ISO: no layout between elements
+            if (!first)
+            {
+                consDepth++;
+                if (options.MaxDepth > 0 && consDepth > options.MaxDepth)
+                {
+                    output.Write("|...]");
+                    return;
+                }
+                output.Write(',');   // ISO: no layout between elements
+            }
             int headIdx = cursor.AsHeapIndex;
             // Each element is an argument-priority (999) position: a ','/2
             // element must parenthesise (`[(a,b)]`, not `[a,b]` — which would

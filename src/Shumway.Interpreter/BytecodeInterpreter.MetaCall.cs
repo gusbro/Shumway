@@ -236,7 +236,9 @@ public sealed partial class BytecodeInterpreter
             case Tag.AttVar:
                 throw new PrologRuntimeException("instantiation_error");
             default:
-                throw new PrologRuntimeException("type_error", "callable");
+                // The culprit rides along so the ISO ball reads
+                // type_error(callable, 1), not an anonymous slot.
+                throw new PrologRuntimeException("type_error", "callable", _engine, goal);
         }
 
         if (functorId == ConjFunctorId)
@@ -352,7 +354,7 @@ public sealed partial class BytecodeInterpreter
             case Tag.AttVar:
                 throw new PrologRuntimeException("instantiation_error");
             default:
-                throw new PrologRuntimeException("type_error", "callable");
+                throw new PrologRuntimeException("type_error", "callable", _engine, goal);
         }
 
         int totalArity = goalArity + extraCount;
@@ -383,6 +385,7 @@ public sealed partial class BytecodeInterpreter
             {
                 case Shumway.Core.MetaRouteKind.Cut:
                     _engine.Cut(barrier);
+                    FlushPendingCleanups(code);   // setup_call_cleanup on meta-cut
                     _engine.AdvancePc(9);
                     return true;
                 case Shumway.Core.MetaRouteKind.True:
@@ -457,6 +460,7 @@ public sealed partial class BytecodeInterpreter
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.Cut, 0);
             _engine.Cut(barrier);
+            FlushPendingCleanups(code);   // setup_call_cleanup on meta-cut
             _engine.AdvancePc(9);
             return true;
         }
@@ -843,6 +847,9 @@ public sealed partial class BytecodeInterpreter
             if (_engine.B > savedB) _engine.Cut(savedB);
             return true;
         }
+        // Failure: a catch/3 the goal opened never ran its '$catch_end'
+        // (that only fires on success), so drop the frames it left.
+        _engine.TruncateCatchFrames(entryCatchFrames);
         return false;
     }
 

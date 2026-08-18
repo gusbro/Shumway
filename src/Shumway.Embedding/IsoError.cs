@@ -29,6 +29,12 @@ public static class IsoError
             engine);
 
     /// <summary><c>error(instantiation_error, Context)</c></summary>
+    /// <summary><c>error(uninstantiation_error(Culprit), Ctx)</c> — an
+    /// argument that must be UNBOUND was bound (ISO Cor.2; asserta/2's
+    /// reference output is the canonical case).</summary>
+    public static Term UninstantiationError(Term culprit, Activation? engine = null) =>
+        Wrap(new CompoundTerm("uninstantiation_error", new[] { culprit }), engine);
+
     public static Term InstantiationError(Activation? engine = null) =>
         Wrap(new AtomTerm("instantiation_error"), engine);
 

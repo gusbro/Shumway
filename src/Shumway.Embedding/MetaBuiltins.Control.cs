@@ -603,12 +603,113 @@ public static partial class MetaBuiltins
         }
     }
 
+    /// <summary><c>asserta(Clause, -Ref)</c> / <c>assertz(Clause, -Ref)</c> —
+    /// the de-facto clause-reference forms. Ref must be UNBOUND
+    /// (uninstantiation_error otherwise) and binds to the opaque
+    /// <c>'$clause_ref'(Id)</c> for the freshly asserted clause.</summary>
+    public static bool AssertaRef(Activation engine) => AssertRefImpl(engine, prepend: true);
+    public static bool AssertzRef(Activation engine) => AssertRefImpl(engine, prepend: false);
+
+    private static bool AssertRefImpl(Activation engine, bool prepend)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("assert/2: PrologEngine host required.");
+        Term refArg = MaterializeRegister(engine, 1);
+        if (refArg is not VarTerm)
+            throw new ShumwayPrologException(IsoError.UninstantiationError(refArg));
+        var (fid, clause) = AssertCore(engine, host, prepend);
+        long id = host.ClauseRefFor(fid, clause);
+        Cell refCell = Materializer.MaterializeAsCell(engine,
+            new CompoundTerm("$clause_ref", new Term[] { new IntTerm(id) }));
+        return engine.UnifyRegisterWithCell(1, refCell);
+    }
+
+
+    /// <summary><c>'$clause_refs_of'(+Head, -Refs)</c> — the list of
+    /// <c>'$clause_ref'(Id)</c> terms for Head's predicate's CURRENT
+    /// clauses (call-time snapshot; clause/3's enumeration walks it).</summary>
+    public static bool ClauseRefsOf(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("clause/3: PrologEngine host required.");
+        int headHeap = engine.MaterializeRegisterForTrace(0);
+        int fid = ReadPatternHeadFunctorId(engine, ref headHeap);
+        IReadOnlyList<Clause> clauses = host.DynamicClausesFor(fid);
+        Term list = new AtomTerm("[]");
+        for (int i = clauses.Count - 1; i >= 0; i--)
+        {
+            long id = host.ClauseRefFor(fid, clauses[i]);
+            list = new CompoundTerm(".", new[]
+            {
+                (Term)new CompoundTerm("$clause_ref", new Term[] { new IntTerm(id) }),
+                list,
+            });
+        }
+        Cell c = Materializer.MaterializeAsCell(engine, list);
+        return engine.UnifyRegisterWithCell(1, c);
+    }
+
+    /// <summary><c>'$clause_ref_fetch'(+Ref, ?Head, ?Body)</c> — unifies
+    /// Head/Body with the clause the reference designates; fails when the
+    /// clause was erased/retracted. A bound non-reference is
+    /// <c>type_error(db_reference, Culprit)</c>.</summary>
+    public static bool ClauseRefFetch(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("clause/3: PrologEngine host required.");
+        Term r = MaterializeRegister(engine, 0);
+        if (r is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (r is not CompoundTerm { Functor: "$clause_ref", Args: [IntTerm idT] })
+            throw new ShumwayPrologException(IsoError.TypeError("db_reference", r));
+        if (!host.TryGetClauseByRef(idT.Value, out _, out Clause clause)) return false;
+        Term head = clause.Term is CompoundTerm { Functor: ":-", Args.Length: 2 } rule
+            ? rule.Args[0] : clause.Term;
+        Term body = clause.Term is CompoundTerm { Functor: ":-", Args.Length: 2 } rule2
+            ? rule2.Args[1] : new AtomTerm("true");
+        // ONE materialization of the whole (Head :- Body) pair so the
+        // clause's variables stay shared between the two unifications.
+        Cell pair = Materializer.MaterializeAsCell(engine,
+            new CompoundTerm(":-", new[] { head, body }));
+        int pairIdx = engine.AllocateHeap(1);
+        engine.SetHeap(pairIdx, pair);
+        int baseIdx = engine.Deref(pairIdx);
+        Cell str = engine.GetHeap(baseIdx);
+        if (str.Tag != Tag.Str) return false;
+        int args = str.AsHeapIndex + 1;
+        int hSlot = engine.AllocateHeap(2);
+        engine.SetHeap(hSlot, engine.GetHeap(args));
+        engine.SetHeap(hSlot + 1, engine.GetHeap(args + 1));
+        return engine.UnifyRegisterWithHeapAt(1, hSlot)
+            && engine.UnifyRegisterWithHeapAt(2, hSlot + 1);
+    }
+
+    /// <summary><c>'$clause_ref_erase'(+Ref)</c> — removes the referenced
+    /// clause (idempotent on a stale reference).</summary>
+    public static bool ClauseRefErase(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("erase/1: PrologEngine host required.");
+        Term r = MaterializeRegister(engine, 0);
+        if (r is not CompoundTerm { Functor: "$clause_ref", Args: [IntTerm idT] })
+            return false;
+        if (host.TryGetClauseByRef(idT.Value, out int fid, out Clause clause))
+            host.RemoveDynamicByReference(engine, fid, clause);
+        return true;
+    }
+
     private static bool AssertImpl(Activation engine, bool prepend)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "assert: PrologEngine host required.");
+        AssertCore(engine, host, prepend);
+        return true;
+    }
 
+    private static (int Fid, Clause Clause) AssertCore(
+        Activation engine, PrologEngine host, bool prepend)
+    {
         Term clauseTerm = MaterializeRegister(engine, 0);
         clauseTerm = StripAssertQualifiers(clauseTerm);
         ValidateAssertClause(clauseTerm);
@@ -626,7 +727,7 @@ public static partial class MetaBuiltins
             host.PrependDynamicClauseIncremental(engine, fid, clause);
         else
             host.AppendDynamicClauseIncremental(engine, fid, clause);
-        return true;
+        return (fid, clause);
     }
 
     /// <summary><c>retract(Clause)</c> — finds the first asserted clause

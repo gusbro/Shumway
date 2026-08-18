@@ -116,6 +116,26 @@ public static class StreamBuiltins
         return false;
     }
 
+    /// <summary>§8.11.5.3.e/f: the source/sink must be an ATOM (or the
+    /// chars-list / PSTR spellings SourceSinkText accepts). A compound is
+    /// domain_error(source_sink, S); a number is type_error(atom, S).</summary>
+    private static void ValidateSourceSink(Activation engine, Cell pathCell)
+    {
+        switch (pathCell.Tag)
+        {
+            case Tag.Atom:
+            case Tag.Lis:
+            case Tag.Pstr:
+            case Tag.String:
+                return;
+            case Tag.Str:
+                throw new PrologRuntimeException(
+                    "domain_error", "source_sink", engine, pathCell);
+            default:
+                throw new PrologRuntimeException("type_error", "atom", engine, pathCell);
+        }
+    }
+
     private static StreamHandle ResolveReader(Activation engine, Cell cell)
     {
         var h = ResolveStream(engine, cell);
@@ -144,11 +164,19 @@ public static class StreamBuiltins
         Cell modeCell = Resolve(engine, engine.GetRegister(1));
         if (pathCell.Tag == Tag.Ref || modeCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
+        ValidateSourceSink(engine, pathCell);
         if (modeCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
+            throw new PrologRuntimeException("type_error", "atom", engine, modeCell);
+        // §8.11.5.3: the Stream argument must be UNBOUND.
+        Cell streamOut = Resolve(engine, engine.GetRegister(2));
+        if (streamOut.Tag is not (Tag.Ref or Tag.AttVar))
+            throw new PrologRuntimeException(
+                "uninstantiation_error", "", engine, streamOut);
 
         string path = SourceSinkText(engine, pathCell);
         string mode = AtomTable.GetById(modeCell.AsAtomId)?.Name ?? "";
+        if (mode is not ("read" or "write" or "append"))
+            throw new PrologRuntimeException("domain_error", "io_mode", engine, modeCell);
 
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
@@ -239,11 +267,19 @@ public static class StreamBuiltins
         Cell optsCell = Resolve(engine, engine.GetRegister(3));
         if (pathCell.Tag == Tag.Ref || modeCell.Tag == Tag.Ref || optsCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
+        ValidateSourceSink(engine, pathCell);
         if (modeCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
+            throw new PrologRuntimeException("type_error", "atom", engine, modeCell);
+        // §8.11.5.3: the Stream argument must be UNBOUND.
+        Cell streamOut = Resolve(engine, engine.GetRegister(2));
+        if (streamOut.Tag is not (Tag.Ref or Tag.AttVar))
+            throw new PrologRuntimeException(
+                "uninstantiation_error", "", engine, streamOut);
 
         string path = SourceSinkText(engine, pathCell);
         string mode = AtomTable.GetById(modeCell.AsAtomId)?.Name ?? "";
+        if (mode is not ("read" or "write" or "append"))
+            throw new PrologRuntimeException("domain_error", "io_mode", engine, modeCell);
 
         // Parse the options list. Each option is a 1-arg compound;
         // anything else is a stream_option domain error.
@@ -258,7 +294,8 @@ public static class StreamBuiltins
             if (head.Tag == Tag.Ref)
                 throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Str)
-                throw new PrologRuntimeException("domain_error", "stream_option");
+                throw new PrologRuntimeException(
+                    "domain_error", "stream_option", engine, head);
 
             int functorIdx = head.AsHeapIndex;
             int functorId = engine.GetHeap(functorIdx).AsFunctorId;
@@ -326,14 +363,16 @@ public static class StreamBuiltins
                     // file streams — no plumbing needed yet.
                     break;
                 default:
-                    throw new PrologRuntimeException("domain_error", "stream_option");
+                    throw new PrologRuntimeException(
+                        "domain_error", "stream_option", engine, head);
             }
             cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
         }
         if (cur.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-            throw new PrologRuntimeException("type_error", "list");
+            throw new PrologRuntimeException("type_error", "list",
+                engine, Resolve(engine, engine.GetRegister(3)));
 
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
@@ -341,7 +380,16 @@ public static class StreamBuiltins
         // ISO permission_error(open, source_sink, alias(_)) when the
         // requested alias is already taken.
         if (alias is not null && registry.IsAliasTaken(alias))
-            throw new PrologRuntimeException("permission_error", "open,source_sink");
+        {
+            // Culprit is the OPTION term alias(A) (§8.11.5.3.j).
+            int aliasFid = FunctorTable.Intern(
+                AtomTable.Intern("alias", permanent: true).Id, 1);
+            int ab = engine.AllocateHeap(2);
+            engine.SetHeap(ab, Cell.Functor(aliasFid));
+            engine.SetHeap(ab + 1, Cell.Atom(AtomTable.Intern(alias, permanent: true).Id));
+            throw new PrologRuntimeException("permission_error", "open,source_sink",
+                engine, Cell.Str(ab));
+        }
 
         int id = registry.NextId();
         StreamHandle handle;
@@ -363,7 +411,8 @@ public static class StreamBuiltins
                     "write"  => FileMode.Create,
                     "append" => FileMode.Append,
                     "read"   => FileMode.Open,
-                    _ => throw new PrologRuntimeException("domain_error", "stream_mode"),
+                    _ => throw new PrologRuntimeException(
+                        "domain_error", "io_mode", engine, modeCell),
                 };
                 FileAccess fa = mode == "read" ? FileAccess.Read : FileAccess.Write;
                 handle = new StreamHandle(id, new FileStream(path, fm, fa),
@@ -390,8 +439,8 @@ public static class StreamBuiltins
                             ? new StreamReader(path)
                             : new StreamReader(path, encoding),
                         "read", path, alias),
-                    _ => throw new PrologRuntimeException("domain_error",
-                        "stream_mode (Phase 1 supports write / append / read)"),
+                    _ => throw new PrologRuntimeException(
+                        "domain_error", "io_mode", engine, modeCell),
                 };
             }
         }

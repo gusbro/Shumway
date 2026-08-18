@@ -14,6 +14,11 @@ public sealed partial class Activation
     // for one query's linked layout).
     public IReadOnlyDictionary<int, int>? CurrentFunctorAddresses { get; set; }
 
+    /// <summary>write_term's <c>portrayed(true)</c> hook: runs the user's
+    /// portray/1 re-entrantly for a subterm, returning true when it
+    /// produced the output. Wired by the embedding at query setup.</summary>
+    public Func<Activation, Cell, System.IO.TextWriter, bool>? PortrayHook { get; set; }
+
     // ADR-038 — the per-query module import map for runtime variable meta-calls.
     // Keyed by a packed (moduleAtomId, bareFunctorId) → the mangled Source$name
     // functor id the importing module bound that name to. A '$mqual'-tagged goal

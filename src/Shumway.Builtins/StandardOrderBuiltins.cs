@@ -16,6 +16,18 @@ public static class StandardOrderBuiltins
     /// order of <c>X</c> and <c>Y</c>.</summary>
     public static bool Compare3(Activation engine)
     {
+        // §8.4.2.3: a bound Order must be one of the three order atoms —
+        // anything else is type_error(atom, O) / domain_error(order, O).
+        Cell ord = engine.GetRegister(0);
+        if (ord.Tag == Tag.Ref) ord = engine.GetHeap(engine.Deref(ord.AsHeapIndex));
+        if (ord.Tag is not (Tag.Ref or Tag.AttVar))
+        {
+            if (ord.Tag != Tag.Atom)
+                throw new PrologRuntimeException("type_error", "atom", engine, ord);
+            string on = AtomTable.GetById(ord.AsAtomId)?.Name ?? "";
+            if (on is not ("<" or "=" or ">"))
+                throw new PrologRuntimeException("domain_error", "order", engine, ord);
+        }
         int cmp = StandardOrderComparator.Compare(
             engine, engine.GetRegister(1), engine.GetRegister(2));
         string name = cmp < 0 ? "<" : cmp > 0 ? ">" : "=";

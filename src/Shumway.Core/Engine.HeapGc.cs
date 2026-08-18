@@ -312,6 +312,9 @@ public sealed partial class Activation
         // also carry heap indices. Relocating all of that correctly is
         // future work; until then a no-op is the safe choice.
         if (_attrTable.Count > 0 || _pendingWakeups.Count > 0) return 0;
+        // setup_call_cleanup handlers hold the LIVE Cleanup cell outside the
+        // heap-root set (Activation.Cleanup) — same treatment as attvars.
+        if (HasCleanupHandlers || HasPendingCleanups) return 0;
 
         int oldTop = _heapTop;
         if (oldTop == 0) return 0;

@@ -41,6 +41,8 @@ internal static class Prelude
         :- public forall/2.
         :- public if/3.
         :- public evaluable_property/2.
+        :- public clause/3.
+        :- public call_nth/2.
         :- public catch/3.
         :- public '$catch_run'/1.
         :- public copy_term/3.
@@ -189,6 +191,41 @@ internal static class Prelude
 
         %! if(:Condition, :Then, :Else) | Control | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
         if(C, T, E) :- ( C *-> T ; E ).
+
+        %! call_nth(:Goal, ?N) | Control | True when Goal has an Nth solution: with N bound, commits to that solution; with N unbound, enumerates solutions numbering each.
+        call_nth(Goal, N) :-
+            (   var(Goal) -> throw(error(instantiation_error, call_nth/2))
+            ;   \+ callable(Goal) ->
+                throw(error(type_error(callable, Goal), call_nth/2))
+            ;   var(N) -> true
+            ;   integer(N) ->
+                (   N < 0 ->
+                    throw(error(domain_error(not_less_than_zero, N), call_nth/2))
+                ;   true
+                )
+            ;   throw(error(type_error(integer, N), call_nth/2))
+            ),
+            (   integer(N), N =:= 0 -> fail
+            ;   gensym('$call_nth', Key),
+                set_flag(Key, 0),
+                call(Goal),
+                get_flag(Key, C0),
+                C1 is C0 + 1,
+                set_flag(Key, C1),
+                % The counter is a FLAG (not trailed), so it keeps counting
+                % across Goal's backtracking — that is the whole point.
+                (   integer(N) -> ( C1 =:= N -> ! ; fail )
+                ;   N = C1
+                )
+            ).
+
+        %! clause(?Head, ?Body, ?Ref) | Database | clause/2 with a clause reference: fetches by Ref when bound, else enumerates Head's clauses binding Ref (de facto standard).
+        clause(Head, Body, Ref) :-
+            (   nonvar(Ref) -> '$clause_ref_fetch'(Ref, Head, Body)
+            ;   '$clause_refs_of'(Head, Refs),
+                member(Ref, Refs),
+                '$clause_ref_fetch'(Ref, Head, Body)
+            ).
 
         %! evaluable_property(+Callable, ?Property) | Arithmetic | Properties of an arithmetic function: built_in, static, template(Callable, ReturnType).
         evaluable_property(E, P) :-
@@ -479,7 +516,15 @@ internal static class Prelude
         :- public setup_call_cleanup/3.
         setup_call_cleanup(Setup, Goal, Cleanup) :-
             once(Setup),
-            '$scc_register'(Ref),
+            % Cleanup must be callable NOW (WG17): an unbound Cleanup is an
+            % instantiation_error even if Goal would bind it later; the check
+            % runs after Setup so setup_call_cleanup(X=true, true, X) is fine.
+            (   var(Cleanup) ->
+                throw(error(instantiation_error, setup_call_cleanup/3))
+            ;   callable(Cleanup) -> true
+            ;   throw(error(type_error(callable, Cleanup), setup_call_cleanup/3))
+            ),
+            '$scc_register'(Ref, Cleanup),
             assertz('$cleanup_pending'(Ref, Cleanup)),
             '$catch_begin'(Error, '$scc_recover'(Ref, Error)),
             '$scc'(Goal, Ref, Cleanup),
@@ -525,8 +570,33 @@ internal static class Prelude
         % from a teardown path. A Cleanup exception propagates out of the drain as
         % a normal exception.
         :- public '$drain_cleanups'/0.
+        % A drained handler fired ASYNCHRONOUSLY (exception unwind, external
+        % cut, teardown). An exception the Cleanup itself throws here is
+        % DROPPED: when the trigger was an error unwind the original ball
+        % has already won (SWI/WG17 first-exception-wins — a late throw
+        % would surface as a phantom second error after the catch ran).
+        % Async fire runs the LIVE Cleanup term (handler slot) — its
+        % bindings reach the caller (scc(true, scc(...), Y=3), ! leaves
+        % Y=3). The retract stays the exactly-once guard. The catch goal is
+        % built at runtime so MetaTransform takes the runtime catch/3
+        % clause (see '$module_attr_goals' — an inlined static catch has no
+        % baked '$catchrec' address and silently fails); its ball is
+        % DROPPED: on an error unwind the original ball already won
+        % (first-exception-wins), a late throw would surface as a phantom
+        % second error after the catch ran.
+        % Live is the handler's live cell for a CUT fire (heap intact,
+        % bindings reach the caller) or the '$scc_use_copy' sentinel for an
+        % EXCEPTION/teardown fire (heap truncated below the catcher — the
+        % live cell may point at reclaimed memory; run the stable copy).
         '$drain_cleanups' :-
-            ( '$pop_pending_cleanup'(Ref) -> '$scc_fire'(Ref), '$drain_cleanups' ; true ).
+            ( '$pop_pending_cleanup'(Ref, Live)
+            -> '$scc_forget'(Ref),
+               ( retract('$cleanup_pending'(Ref, Copy))
+               -> ( Live == '$scc_use_copy' -> F = ignore(Copy) ; F = ignore(Live) ),
+                  catch(F, _, true)
+               ; true ),
+               '$drain_cleanups'
+            ; true ).
 
         %! call_cleanup(:Goal, :Cleanup) | Control | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes.
         :- public call_cleanup/2.

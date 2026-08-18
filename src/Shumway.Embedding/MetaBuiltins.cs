@@ -229,10 +229,10 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$catch_begin", 2, CatchBegin);
         BuiltinsRegistry.Register("$catch_end",   0, CatchEnd);
         // setup_call_cleanup/3 cleanup-handler primitives.
-        BuiltinsRegistry.Register("$scc_register", 1, SccRegister);
+        BuiltinsRegistry.Register("$scc_register", 2, SccRegister);
         BuiltinsRegistry.Register("$cp_owners", 0, CpOwners);
         BuiltinsRegistry.Register("$scc_forget", 1, SccForget);
-        BuiltinsRegistry.Register("$pop_pending_cleanup", 1, PopPendingCleanup);
+        BuiltinsRegistry.Register("$pop_pending_cleanup", 2, PopPendingCleanup);
 
         // clause/2 and current_predicate/1 are now Prolog-level predicates
         // defined in the prelude. They call these helpers to
@@ -374,6 +374,14 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("current_char_conversion", 2, CurrentCharConversion,
             Reflect, "current_char_conversion(?InChar, ?OutChar)",
             "Enumerates the active char-conversion table (ISO §8.14.10).");
+        BuiltinsRegistry.Register("asserta", 2, AssertaRef,
+            "Database", "asserta(+Clause, -Ref)",
+            "Adds Clause at the front of its predicate and unifies Ref with its clause reference.");
+        BuiltinsRegistry.Register("assertz", 2, AssertzRef,
+            "Database", "assertz(+Clause, -Ref)",
+            "Adds Clause at the end of its predicate and unifies Ref with its clause reference.");
+        BuiltinsRegistry.Register("$clause_refs_of", 2, ClauseRefsOf);
+        BuiltinsRegistry.Register("$clause_ref_fetch", 3, ClauseRefFetch);
         BuiltinsRegistry.Register("$op_ctx", 4, OpCtx);
         BuiltinsRegistry.Register("$current_op_ctx", 4, CurrentOpCtx);
         BuiltinsRegistry.Register("op", 3, Op,

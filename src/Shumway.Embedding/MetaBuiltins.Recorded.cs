@@ -189,8 +189,16 @@ public static partial class MetaBuiltins
     public static bool Erase1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "erase/1");
-        long @ref = RequireIntRef(engine, register: 0, builtin: "erase/1");
-        return host.Records.Erase(@ref);
+        // A '$clause_ref'(Id) erases the referenced CLAUSE (asserta/2
+        // family); an integer erases a recorded-database entry (Arity).
+        Term t = MaterializeRegister(engine, 0);
+        if (t is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (t is CompoundTerm { Functor: "$clause_ref" })
+            return MetaBuiltins.ClauseRefErase(engine);
+        if (t is not IntTerm it)
+            throw new ShumwayPrologException(IsoError.TypeError("db_reference", t));
+        return host.Records.Erase(it.Value);
     }
 
     public static bool EraseAll1(Activation engine)
