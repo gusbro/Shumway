@@ -86,6 +86,19 @@ Shumway; only that one selector borrows SWI's name.
   `format/2,3`, `predicate_property/2` and the full ISO surface Logtalk's
   compiler needs — is native.
 
+- **The `tests/prolog` ISO conformity battery** (192 testers, ~3,400
+  counted tests): 2,570 passed / 674 failed after the 2026-08 campaign
+  (baseline before it: 2,096 / 933). One divergence is deliberate and
+  closed: the battery's `lgt_*` tests expect the strict-ISO reading of the
+  float-conversion functions — `ceiling(9)`, `floor(9)`, `round(9)`,
+  `truncate(9)`, `float_integer_part(9)`, `float_fractional_part(9)` →
+  `type_error(float, 9)`, which is what GNU Prolog does. Shumway stays in
+  the **lenient camp with SWI and Scryer** (integers accepted, identity
+  for the rounding functions): the SWI/Scryer library ecosystems this
+  engine certifies against rely on it, and Scryer — the strictest of the
+  modern systems — accepts it too. These six single-test failures in
+  `functions/` are accepted, not pending.
+
 ## Notes
 
 - The adapter is Shumway's own code (MIT, like the rest of the repository),
