@@ -27,7 +27,7 @@ public sealed class ListingControlLayoutTests
             findall(X, member(X, L), Xs),
             (   Xs == [] ->
                 write('none here')
-            ;   format(there, Xs),
+            ;   format("~w", [Xs]),
                 nl
             ),
             write(done).

@@ -82,6 +82,14 @@ public static class ArithmeticEvaluator
                       ?? throw new InvalidOperationException(
                              $"Functor {functorId} has no name.");
 
+        // The FUNCTOR is checked before the arguments are evaluated:
+        // `foo(bar)` is type_error(evaluable, foo/1), not bar/0 (§7.1.2 —
+        // the outermost non-evaluable is the culprit; GNU and SWI agree).
+        if ((arity == 1 && !TryUnOp(name, out _)
+                && name is not ("msb" or "lsb" or "popcount" or "random"))
+            || (arity == 2 && !TryBinOp(name, out _)))
+            throw EvaluableTypeError(engine, name, arity);
+
         return arity switch
         {
             1 => EvaluateUnary(engine, name, engine.GetHeap(functorIdx + 1)),

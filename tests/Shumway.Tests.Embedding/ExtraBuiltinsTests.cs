@@ -61,7 +61,9 @@ public class ExtraBuiltinsTests
     {
         var engine = WithCaptureOut(out var sw);
         engine.Query("format('a~nb', []).");
-        Assert.Equal("a" + System.Environment.NewLine + "b", sw.ToString());
+        // ~n writes a single LF, like nl/1 — never the host's CRLF
+        // (ADR-045: Prolog text is LF-terminated on every platform).
+        Assert.Equal("a\nb", sw.ToString());
     }
 
     [Fact]

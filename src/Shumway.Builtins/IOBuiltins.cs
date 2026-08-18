@@ -46,7 +46,9 @@ public static class IOBuiltins
     public static bool Nl(Activation engine)
     {
         var w = engine.Streams?.CurrentOutput.Writer ?? engine.Out;
-        w.WriteLine();
+        // A Prolog newline is LF on every platform (ADR-045); TextWriter's
+        // WriteLine would emit the host's CRLF into an in-memory sink.
+        w.Write('\n');
         return true;
     }
 
@@ -55,7 +57,7 @@ public static class IOBuiltins
     {
         var w = CurrentWriter(engine);
         TermRenderer.Render(engine, engine.GetRegister(0), w, DefaultOptions(engine));
-        w.WriteLine();
+        w.Write('\n');
         return true;
     }
 
@@ -376,11 +378,18 @@ public static class IOBuiltins
         return FormatImpl(engine, h.Writer!, fmtReg: 1, argsReg: 2, "format/3");
     }
 
-    private static bool FormatImpl(Activation engine, System.IO.TextWriter output, int fmtReg, int argsReg, string name)
+    private static bool FormatImpl(Activation engine, System.IO.TextWriter realOutput, int fmtReg, int argsReg, string name)
     {
         string fmt = ReadStringArg(engine, engine.GetRegister(fmtReg), name);
         var args = ReadProperListAsCells(engine, engine.GetRegister(argsReg), name);
         int argIdx = 0;
+
+        // Column alignment (~t / ~| / ~+) needs the text SINCE the last
+        // column stop in hand to distribute padding, so everything is
+        // written into a pending buffer and flushed at each stop, each
+        // newline, and at the end.
+        var column = new ColumnWriter(realOutput);
+        System.IO.TextWriter output = column;
 
         for (int i = 0; i < fmt.Length; i++)
         {
@@ -403,9 +412,7 @@ public static class IOBuiltins
             if (fmt[i] == '*')
             {
                 i++;
-                Cell c = Resolve(engine, ConsumeArg(args, ref argIdx, name));
-                if (c.Tag != Tag.Int) throw new PrologRuntimeException("type_error", "integer");
-                num = (int)c.AsInt;
+                num = (int)FormatIntegerArg(engine, ConsumeArg(args, ref argIdx, name));
             }
             else if (fmt[i] == '`' && i + 1 < fmt.Length)
             {
@@ -428,13 +435,18 @@ public static class IOBuiltins
                     output.Write('~');
                     break;
                 case 'n':
-                    output.WriteLine();
+                    // ~Nn writes N newlines (the count already went through
+                    // the arithmetic path when it came from ~*n).
+                    for (int r = 0; r < (num ?? 1); r++) output.Write('\n');
                     break;
                 case 'w':
                 {
+                    // ~w is write/1, which honours numbervars: a term run
+                    // through numbervars/3 prints A, B, … not '$VAR'(0).
                     Cell arg = ConsumeArg(args, ref argIdx, name);
                     TermRenderer.Render(engine, arg, output,
-                        new TermRenderOptions { Operators = engine.Operators });
+                        new TermRenderOptions
+                        { Operators = engine.Operators, Numbervars = true });
                     break;
                 }
                 case 'a':
@@ -443,10 +455,11 @@ public static class IOBuiltins
                     Cell deref = Resolve(engine, arg);
                     // ~a wants an atom — instantiation_error for an
                     // unbound arg, type_error(atom) otherwise.
-                    if (deref.Tag == Tag.Ref)
+                    if (deref.Tag is Tag.Ref or Tag.AttVar)
                         throw new PrologRuntimeException("instantiation_error");
                     if (deref.Tag != Tag.Atom)
-                        throw new PrologRuntimeException("type_error", "atom");
+                        throw new PrologRuntimeException(
+                            "type_error", "atom", engine, deref);
                     output.Write(AtomTable.GetById(deref.AsAtomId)?.Name ?? "");
                     break;
                 }
@@ -457,7 +470,11 @@ public static class IOBuiltins
                     Cell arg = ConsumeArg(args, ref argIdx, name);
                     TermRenderer.Render(engine, arg, output,
                         new TermRenderOptions
-                        { Operators = engine.Operators, Quoted = true });
+                        {
+                            Operators = engine.Operators,
+                            Quoted = true,
+                            Numbervars = true,
+                        });
                     break;
                 }
                 case 'p':
@@ -476,12 +493,18 @@ public static class IOBuiltins
                 case 'd':
                 {
                     Cell arg = ConsumeArg(args, ref argIdx, name);
-                    Cell deref = Resolve(engine, arg);
-                    if (deref.Tag == Tag.Ref)
-                        throw new PrologRuntimeException("instantiation_error");
-                    if (deref.Tag != Tag.Int)
-                        throw new PrologRuntimeException("type_error", "integer");
-                    output.Write(deref.AsInt.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    System.Numerics.BigInteger dv = FormatIntegerArg(engine, arg);
+                    string ds = dv.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    // ~Nd inserts a decimal point N digits from the right.
+                    if (num is int dd && dd > 0)
+                    {
+                        bool neg = ds.StartsWith('-');
+                        if (neg) ds = ds[1..];
+                        if (ds.Length <= dd) ds = ds.PadLeft(dd + 1, '0');
+                        ds = ds[..^dd] + "." + ds[^dd..];
+                        if (neg) ds = "-" + ds;
+                    }
+                    output.Write(ds);
                     break;
                 }
                 case 's':
@@ -489,13 +512,19 @@ public static class IOBuiltins
                     Cell arg = ConsumeArg(args, ref argIdx, name);
                     var sb = new System.Text.StringBuilder();
                     Cell cur = Resolve(engine, arg);
+                    if (cur.Tag is Tag.Ref or Tag.AttVar)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (cur.Tag is not (Tag.Lis or Tag.Pstr)
+                        && !(cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId))
+                        throw new PrologRuntimeException("type_error", "list", engine, cur);
                     while (cur.Tag == Tag.Lis)
                     {
                         Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
-                        if (head.Tag == Tag.Ref)
+                        if (head.Tag is Tag.Ref or Tag.AttVar)
                             throw new PrologRuntimeException("instantiation_error");
                         if (head.Tag != Tag.Int)
-                            throw new PrologRuntimeException("type_error", "character_code");
+                            throw new PrologRuntimeException(
+                                "type_error", "integer", engine, head);
                         // BMP-only, as char_code/2 (truncating builds another char).
                         if (head.AsInt < 0 || head.AsInt > char.MaxValue)
                             throw new PrologRuntimeException(
@@ -503,39 +532,36 @@ public static class IOBuiltins
                         sb.Append((char)head.AsInt);
                         cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
                     }
-                    output.Write(sb.ToString());
+                    if (cur.Tag is Tag.Ref or Tag.AttVar)
+                        throw new PrologRuntimeException("instantiation_error");
+                    // ~Ns emits at most N characters (~0s emits none).
+                    string sv = sb.ToString();
+                    if (num is int scut && scut < sv.Length) sv = sv[..scut];
+                    output.Write(sv);
                     break;
                 }
                 case 'e':
+                case 'E':
                 case 'f':
                 case 'g':
+                case 'G':
                 {
                     // ~Ne / ~Nf / ~Ng — the numeric argument as a float with
                     // N fractional digits (default 6), C-printf style. An
                     // integer argument is accepted and widened.
-                    Cell deref = Resolve(engine, ConsumeArg(args, ref argIdx, name));
-                    double d;
-                    if (deref.Tag == Tag.Float)
-                        d = Cell.DecodeFloat(deref, engine.GetHeap(deref.FloatPairedIndex));
-                    else if (deref.Tag == Tag.Int)
-                        d = deref.AsInt;
-                    else if (deref.Tag == Tag.BigInt)
-                        d = (double)engine.AsBigInt(deref);
-                    else if (deref.Tag == Tag.Rational)
-                        d = engine.AsRational(deref).ToDouble();
-                    else if (deref.Tag == Tag.Ref)
-                        throw new PrologRuntimeException("instantiation_error");
-                    else
-                        throw new PrologRuntimeException("type_error", "number");
+                    double d = FormatFloatArg(engine, ConsumeArg(args, ref argIdx, name));
                     int prec = num ?? 6;
-                    string netFmt = spec switch
+                    // ~E / ~G are ~e / ~g with an upper-case exponent marker.
+                    char lower = char.ToLowerInvariant(spec);
+                    string netFmt = lower switch
                     {
                         'e' => "0." + new string('0', prec) + "e+00",
                         'f' => "F" + prec,
                         _   => "G" + (prec <= 0 ? 6 : prec),
                     };
-                    output.Write(d.ToString(
-                        netFmt, System.Globalization.CultureInfo.InvariantCulture));
+                    string fs = d.ToString(
+                        netFmt, System.Globalization.CultureInfo.InvariantCulture);
+                    output.Write(spec is 'E' or 'G' ? fs.ToUpperInvariant() : fs);
                     break;
                 }
                 case 'r':
@@ -543,16 +569,11 @@ public static class IOBuiltins
                 {
                     // ~Nr / ~NR — the integer argument in radix N (2..36),
                     // digits a-z (~r) or A-Z (~R).
-                    Cell deref = Resolve(engine, ConsumeArg(args, ref argIdx, name));
-                    if (deref.Tag == Tag.Ref)
-                        throw new PrologRuntimeException("instantiation_error");
-                    System.Numerics.BigInteger iv;
-                    if (deref.Tag == Tag.Int) iv = deref.AsInt;
-                    else if (deref.Tag == Tag.BigInt) iv = engine.AsBigInt(deref);
-                    else throw new PrologRuntimeException("type_error", "integer");
                     int radix = num ?? 8;
                     if (radix < 2 || radix > 36)
                         throw new PrologRuntimeException("domain_error", "radix");
+                    System.Numerics.BigInteger iv =
+                        FormatIntegerArg(engine, ConsumeArg(args, ref argIdx, name));
                     string r = ToRadix(iv, radix);
                     output.Write(spec == 'R' ? r.ToUpperInvariant() : r);
                     break;
@@ -560,9 +581,7 @@ public static class IOBuiltins
                 case 'D':
                 {
                     // ~D — the integer argument with thousands separators.
-                    Cell deref = Resolve(engine, ConsumeArg(args, ref argIdx, name));
-                    if (deref.Tag == Tag.Ref)
-                        throw new PrologRuntimeException("instantiation_error");
+                    Cell deref = FormatIntegerCell(engine, ConsumeArg(args, ref argIdx, name));
                     if (deref.Tag == Tag.Int)
                         output.Write(deref.AsInt.ToString(
                             "N0", System.Globalization.CultureInfo.InvariantCulture));
@@ -577,25 +596,28 @@ public static class IOBuiltins
                 {
                     // ~Nc — emit the argument's character code N times (N = 1).
                     Cell deref = Resolve(engine, ConsumeArg(args, ref argIdx, name));
-                    if (deref.Tag == Tag.Ref)
+                    if (deref.Tag is Tag.Ref or Tag.AttVar)
                         throw new PrologRuntimeException("instantiation_error");
                     if (deref.Tag != Tag.Int)
-                        throw new PrologRuntimeException("type_error", "character_code");
+                        throw new PrologRuntimeException(
+                            "type_error", "integer", engine, deref);
                     int reps = num ?? 1;
                     for (int r = 0; r < reps; r++) output.Write((char)deref.AsInt);
                     break;
                 }
                 case 't':
-                    // Column fill point. Full column alignment (distributing
-                    // fill between ~t marks up to a ~| / ~+ stop) is not yet
-                    // implemented; without a stop ~t is a no-op anyway, which
-                    // covers the common `format('~tword~n')` shape.
+                    // Fill point: ~t pads with spaces, ~`ct (or ~Nt) with
+                    // the given character, when a later stop needs padding.
+                    column.AddFillPoint(num.HasValue ? (char)num.Value : ' ');
                     break;
                 case '|':
+                    // Absolute column stop; bare ~| means "here".
+                    column.ColumnStop(num ?? column.CurrentColumn);
+                    break;
                 case '+':
-                    // Column stop — accepted (no padding emitted yet) so a
-                    // format string that aligns columns runs rather than
-                    // raising a domain_error. Output is unaligned, not wrong.
+                    // Relative stop: N columns past where this segment began
+                    // (default 8) — the standard table-column idiom.
+                    column.ColumnStop(column.SegmentStartColumn + (num ?? 8));
                     break;
                 default:
                     // An unknown ~X spec is an ISO domain_error on the
@@ -603,10 +625,137 @@ public static class IOBuiltins
                     throw new PrologRuntimeException("domain_error", "format_spec");
             }
         }
+        column.Flush();
+        // §format: every argument must be consumed — a leftover is a
+        // format_arguments domain error (SWI raises, SICStus too).
+        if (argIdx < args.Count)
+            throw new PrologRuntimeException("domain_error", "format_arguments");
         return true;
     }
 
+    /// <summary>format/2's column engine. Text accumulates in a pending
+    /// segment; <c>~t</c> records a fill point (with its fill character)
+    /// inside that segment; <c>~N|</c> / <c>~N+</c> close the segment,
+    /// padding it out to the requested column by distributing the shortfall
+    /// over the fill points — all of it at the end when there are none (so
+    /// the text is left-aligned), at the front for a leading <c>~t</c>
+    /// (right-aligned), split for <c>~t</c> on both sides (centred).</summary>
+    private sealed class ColumnWriter : System.IO.TextWriter
+    {
+        private readonly System.IO.TextWriter _out;
+        private readonly System.Text.StringBuilder _seg = new();
+        private readonly List<(int Pos, char Fill)> _fills = new();
+        private int _lineColumn;      // column where the pending segment starts
+
+        public ColumnWriter(System.IO.TextWriter output) => _out = output;
+
+        public override System.Text.Encoding Encoding => _out.Encoding;
+
+        public override void Write(char value)
+        {
+            if (value == '\n')
+            {
+                // A newline ends the segment as-is (no padding) and resets
+                // the column origin.
+                FlushSegment();
+                _out.Write('\n');
+                _lineColumn = 0;
+                return;
+            }
+            _seg.Append(value);
+        }
+
+        /// <summary>Records a <c>~t</c> fill point at the current position.</summary>
+        public void AddFillPoint(char fill) => _fills.Add((_seg.Length, fill));
+
+        /// <summary>Closes the segment at column <paramref name="target"/>
+        /// (absolute for <c>~|</c>; the caller resolves <c>~+</c> to one).</summary>
+        public void ColumnStop(int target)
+        {
+            int pad = target - (_lineColumn + _seg.Length);
+            if (pad > 0)
+            {
+                if (_fills.Count == 0)
+                {
+                    _seg.Append(' ', pad);       // no ~t: pad on the right
+                }
+                else
+                {
+                    // Distribute evenly; the remainder goes to the LAST
+                    // fill point (SWI's behaviour for `~t~t~30|`).
+                    int each = pad / _fills.Count, extra = pad % _fills.Count;
+                    for (int k = _fills.Count - 1; k >= 0; k--)
+                    {
+                        int n = each + (k == _fills.Count - 1 ? extra : 0);
+                        if (n > 0) _seg.Insert(_fills[k].Pos, new string(_fills[k].Fill, n));
+                    }
+                }
+            }
+            FlushSegment();
+            // A stop always leaves the cursor at least at the target column.
+            _lineColumn = System.Math.Max(_lineColumn, target);
+        }
+
+        /// <summary>The column the next character would land in.</summary>
+        public int CurrentColumn => _lineColumn + _seg.Length;
+
+        /// <summary>The column this pending segment started at — the origin
+        /// a relative <c>~N+</c> stop measures from.</summary>
+        public int SegmentStartColumn => _lineColumn;
+
+        private void FlushSegment()
+        {
+            if (_seg.Length > 0)
+            {
+                _lineColumn += _seg.Length;
+                _out.Write(_seg.ToString());
+                _seg.Clear();
+            }
+            _fills.Clear();
+        }
+
+        public override void Flush()
+        {
+            FlushSegment();
+            _out.Flush();
+        }
+    }
+
     // ---------- Helpers ----------
+
+    /// <summary>A numeric format argument (<c>~d</c>, <c>~D</c>, <c>~r</c>,
+    /// <c>~e/f/g</c>, and the <c>~*n</c> count) is an arithmetic
+    /// EXPRESSION, as in SWI and SICStus — so a non-evaluable argument
+    /// raises type_error(evaluable, Name/Arity) rather than a bare type
+    /// error, and <c>format("~d", [1+1])</c> prints 2.</summary>
+    private static Cell FormatIntegerCell(Activation engine, Cell arg)
+    {
+        Cell deref = Resolve(engine, arg);
+        if (deref.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (deref.Tag is Tag.Int or Tag.BigInt) return deref;
+        // A float is a type error even though it evaluates.
+        if (deref.Tag is Tag.Float or Tag.Rational)
+            throw new PrologRuntimeException("type_error", "integer", engine, deref);
+        Number n = ArithmeticEvaluator.Evaluate(engine, deref);
+        if (n.IsFloat)
+            throw new PrologRuntimeException("type_error", "integer", engine, deref);
+        return n.ToCell(engine);
+    }
+
+    private static System.Numerics.BigInteger FormatIntegerArg(Activation engine, Cell arg)
+    {
+        Cell c = FormatIntegerCell(engine, arg);
+        return c.Tag == Tag.BigInt ? engine.AsBigInt(c) : c.AsInt;
+    }
+
+    private static double FormatFloatArg(Activation engine, Cell arg)
+    {
+        Cell deref = Resolve(engine, arg);
+        if (deref.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        return ArithmeticEvaluator.Evaluate(engine, deref).AsDouble();
+    }
 
     /// <summary>Renders a (possibly big) integer in the given radix
     /// (2..36) with lowercase digits, matching SWI/SICStus <c>~r</c>.</summary>

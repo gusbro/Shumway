@@ -583,7 +583,7 @@ public static class StreamBuiltins
         var h = ResolveWriter(engine, engine.GetRegister(0));
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "output,binary_stream");
-        h.Writer!.WriteLine();
+        h.Writer!.Write('\n');   // LF on every platform (ADR-045)
         return true;
     }
 

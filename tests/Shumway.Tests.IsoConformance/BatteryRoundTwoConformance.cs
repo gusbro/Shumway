@@ -182,6 +182,56 @@ public class BatteryRoundTwoConformance
         Succeeds("compare(<, 1, 2).");
     }
 
+    // ---------- format/2,3 ----------
+
+    [Fact]
+    public void Format_ColumnAlignment()
+    {
+        // ~t marks fill points, ~N| an absolute column stop, ~N+ a stop N
+        // columns past where the segment began. No fill point means the
+        // padding goes on the right (left-aligned).
+        Succeeds("with_output_to(atom(A), format('~w~t~20|~w', [left, right])), "
+            + "A == 'left                right'.");
+        Succeeds("with_output_to(atom(A), format('~t~w~20|', [right_aligned])), "
+            + "A == '       right_aligned'.");
+        Succeeds("with_output_to(atom(A), format('~w~t~10+~w', [col1, col2])), "
+            + "A == 'col1      col2'.");
+        Succeeds("with_output_to(atom(A), format('~`-t~10|', [])), A == '----------'.");
+    }
+
+    [Fact]
+    public void Format_NumericDirectivesTakeExpressions()
+    {
+        // ~d / ~D / ~r / ~e evaluate their argument (GNU, SWI, SICStus).
+        Succeeds("with_output_to(atom(A), format('~d', [1+1])), A == '2'.");
+        Succeeds("catch(format('~d', [foo(bar)]), "
+            + "error(type_error(evaluable, foo/1), _), true).");
+        Succeeds("catch(format('~d', [1.5]), error(type_error(integer, 1.5), _), true).");
+        Succeeds("catch(format('~d', [_]), error(instantiation_error, _), true).");
+        Succeeds("with_output_to(atom(A), format('~2d', [1234])), A == '12.34'.");
+        Succeeds("with_output_to(atom(A), format('~8r', [64])), A == '100'.");
+        Succeeds("catch(format('~0r', [16]), error(domain_error(radix, _), _), true).");
+    }
+
+    [Fact]
+    public void Format_ArgumentChecksAndNewlines()
+    {
+        Succeeds("catch(format('~a', [42]), error(type_error(atom, 42), _), true).");
+        Succeeds("catch(format('~s', [42]), error(type_error(_, 42), _), true).");
+        Succeeds("catch(format('~s', [[65,66|_]]), error(instantiation_error, _), true).");
+        // Every argument must be consumed.
+        Succeeds("catch(format('abc', [def]), error(domain_error(_, _), _), true).");
+        // ~n writes LF, and ~Nn writes N of them.
+        Succeeds("with_output_to(atom(A), format('a~nb', [])), atom_length(A, 3).");
+        Succeeds("with_output_to(atom(A), format('~2n', [])), atom_length(A, 2).");
+        // ~w honours numbervars, like write/1.
+        Succeeds("T = a(_), numbervars(T, 0, _), "
+            + "with_output_to(atom(A), format('~w', [T])), A == 'a(A)'.");
+        // ~Ns truncates the code list.
+        Succeeds("with_output_to(atom(A), format('~0s', [[65,66,67]])), A == ''.");
+        Succeeds("with_output_to(atom(A), format('~2s', [[65,66,67]])), A == 'AB'.");
+    }
+
     // ---------- call_nth/2 ----------
 
     [Fact]
