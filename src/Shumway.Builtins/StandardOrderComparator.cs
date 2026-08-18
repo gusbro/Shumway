@@ -8,7 +8,8 @@ namespace Shumway.Builtins;
 ///
 /// <list type="number">
 /// <item>Variables (compared by heap address — older / lower comes first)</item>
-/// <item>Numbers (numeric, with float &lt; integer on tie)</item>
+/// <item>Numbers (ISO §7.2.1: ALL floats before all integers;
+/// by value within a type)</item>
 /// <item>Atoms (alphabetical by name)</item>
 /// <item>Strings (alphabetical, treated as opaque)</item>
 /// <item>Compound terms (by arity, then functor name, then args left-to-right)</item>
@@ -155,12 +156,13 @@ public static class StandardOrderComparator
     {
         Number na = ToNumber(engine, a);
         Number nb = ToNumber(engine, b);
-        int cmp = Number.Compare(na, nb);
-        if (cmp != 0) return cmp;
-        // Tie-break by type: float < integer in ISO standard order.
-        if (na.IsFloat && !nb.IsFloat) return -1;
-        if (!na.IsFloat && nb.IsFloat) return 1;
-        return 0;
+        // ISO §7.2.1: a Float ALWAYS precedes an Integer, whatever the
+        // values — msort([3, 1.5, 2, 0.5, 1]) is [0.5, 1.5, 1, 2, 3], not
+        // numeric order (verified against GNU; SICStus and Scryer agree).
+        // Only within one type does the value decide. Rationals are exact,
+        // so they sort with the integers.
+        if (na.IsFloat != nb.IsFloat) return na.IsFloat ? -1 : 1;
+        return Number.Compare(na, nb);
     }
 
     private static Number ToNumber(Activation engine, Cell c) => c.Tag switch

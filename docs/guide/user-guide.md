@@ -828,6 +828,23 @@ link-time meaning:
 Other directives (`set_prolog_flag/2`, etc.) are honoured at consult time
 but do not affect link-time decisions.
 
+### Standard order of terms
+
+Shumway follows ISO 13211-1 §7.2.1 exactly, which differs from SWI on one
+point worth knowing: between a **float and an integer the TYPE decides,
+never the value** — every float sorts before every integer. The value only
+breaks ties within one type.
+
+```prolog
+?- compare(Order, 1.1, 1).      % Order = (<)   — float first, though 1.1 > 1
+?- msort([3, 1.5, 2, 0.5, 1], L).
+L = [0.5, 1.5, 1, 2, 3].
+```
+
+This matches GNU Prolog, SICStus and Scryer (SWI orders numbers by value).
+It affects everything built on the standard order: `sort/2`, `msort/2`,
+`setof/3`, `keysort/2`, `@</2` and friends.
+
 ### Operator scope (ADR-046)
 
 Operator tables are **module-scoped**, following SWI/YAP/Ciao/Scryer:

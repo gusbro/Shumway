@@ -164,6 +164,24 @@ public class BatteryRoundTwoConformance
             + "error(permission_error(modify, flag, max_arity), _), true).");
     }
 
+    // ---------- standard order of terms ----------
+
+    [Fact]
+    public void StandardOrder_AllFloatsPrecedeAllIntegers()
+    {
+        // ISO §7.2.1: the TYPE decides between a float and an integer,
+        // never the value — verified identical to GNU Prolog.
+        Succeeds("compare(<, 1.1, 1).");
+        Succeeds("compare(>, 1, 1.1).");
+        Succeeds("compare(<, 1.0, 1).");
+        Succeeds("1.0 @< 1.");
+        Succeeds("msort([3, 1.5, 2, 0.5, 1], L), L == [0.5, 1.5, 1, 2, 3].");
+        Succeeds("sort([b, 2, 1.0, a, 1], S), S == [1.0, 1, 2, a, b].");
+        // Within one type the value still decides.
+        Succeeds("compare(<, 1.5, 2.5).");
+        Succeeds("compare(<, 1, 2).");
+    }
+
     // ---------- call_nth/2 ----------
 
     [Fact]
