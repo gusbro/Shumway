@@ -715,6 +715,49 @@ public static partial class MetaBuiltins
     internal static void WireNumberFromChars(Activation engine)
         => engine.NumberFromChars = s => NumberFromCharsHook(engine, s);
 
+    /// <summary>Installs the <c>portray/1</c> hook write_term's
+    /// <c>portrayed(true)</c> and print/1,2 call for every subterm. The user's
+    /// portray/1 runs RE-ENTRANTLY on the live activation with current output
+    /// redirected at <paramref name="engine"/>'s writer, so whatever it writes
+    /// lands where the term would have. Succeeding means "I produced the
+    /// output"; failing means "render it normally".</summary>
+    internal static void WirePortrayHook(Activation engine, PrologEngine host)
+        => engine.PortrayHook = (e, cell, output) => PortraySubterm(e, host, cell, output);
+
+    private static readonly int _portrayFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("portray", permanent: true).Id, 1);
+
+    private static bool PortraySubterm(
+        Activation engine, PrologEngine host, Cell cell, System.IO.TextWriter output)
+    {
+        // No user portray/1 at all: the common case, and it must cost nothing.
+        if (!host.HasPredicate(_portrayFunctorId)) return false;
+        if (engine.ReentrantSolve is not { } solve) return false;
+
+        // portray/1's argument is the subterm ITSELF — no copy: the hook is
+        // allowed to inspect bindings, and copying would hide them.
+        int goalBase = engine.AllocateHeap(2);
+        engine.SetHeap(goalBase, Cell.Functor(_portrayFunctorId));
+        engine.SetHeap(goalBase + 1, cell);
+        Cell goal = Cell.Str(goalBase);
+
+        // Whatever portray/1 writes has to land in THIS renderer's sink, which
+        // is not necessarily current output (format_to_atom, with_output_to,
+        // write_term to a stream).
+        var registry = engine.Streams;
+        StreamHandle? savedOut = registry?.CurrentOutput;
+        var sink = new StreamHandle(-1, output, "write", null);
+        try
+        {
+            registry?.SetCurrentOutput(sink);
+            return solve(goal);
+        }
+        finally
+        {
+            if (savedOut is not null) registry?.SetCurrentOutput(savedOut);
+        }
+    }
+
     /// <summary><c>'$wot_begin'(Sink)</c> — the primitive under the prelude's
     /// <c>with_output_to/2</c>: validates the sink (<c>atom(_)</c> /
     /// <c>string(_)</c>) and redirects CURRENT OUTPUT — the stream registry's,

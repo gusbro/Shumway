@@ -893,6 +893,7 @@ public sealed partial class BytecodeInterpreter
         int savedCp    = _engine.Cp;
         int savedB0    = _engine.B0;
         int savedB     = _engine.B;
+        int savedE     = _engine.E;
         int savedFloor = _backtrackFloor;
         int entryCatchFrames = _engine.CatchFrameCount;
 
@@ -936,8 +937,13 @@ public sealed partial class BytecodeInterpreter
             if (_engine.B > savedB) _engine.Cut(savedB);
             return true;
         }
-        // Failure: a catch/3 the goal opened never ran its '$catch_end'
-        // (that only fires on success), so drop the frames it left.
+        // Failure: the last clause tried left ITS environment current — the
+        // final backtrack found no choice point to restore E from — so the
+        // caller would resume against a foreign frame. Nothing above savedE is
+        // live any more; put the caller's environment back.
+        _engine.SetE(savedE);
+        // A catch/3 the goal opened never ran its '$catch_end' (that only
+        // fires on success), so drop the frames it left.
         _engine.TruncateCatchFrames(entryCatchFrames);
         return false;
     }

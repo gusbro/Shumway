@@ -1678,6 +1678,7 @@ public sealed partial class PrologEngine
         // ISO number_chars/number_codes fall back to the full term reader for the
         // operator/quoting cases the token parser can't cover (`'-'1` → -1).
         MetaBuiltins.WireNumberFromChars(engine);
+        MetaBuiltins.WirePortrayHook(engine, this);
         engine.DeclaredEmptyFids = DeclaredEmptyFunctors();
 
         var interp = new BytecodeInterpreter(

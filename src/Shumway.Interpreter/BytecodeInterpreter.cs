@@ -275,6 +275,14 @@ public sealed partial class BytecodeInterpreter
         // Expose the re-entrant semidet solve to foreign code running under this
         // activation (see Activation.ReentrantSolve). The closure reads _reentrantCode
         // so it is allocated once; each Run refreshes the program view it targets.
+        //
+        // SAVED AND RESTORED, because Run NESTS: a sub-query driven from inside a
+        // live query (Logtalk consulting its compiled objects, a debugger
+        // evaluation) re-enters here with its own view, and on return the outer
+        // query's re-entrant solve has to target the outer program again. Leaving
+        // the inner view behind ran later re-entrant goals against the wrong
+        // program and broke the caller's continuation.
+        ProgramView savedReentrantCode = _reentrantCode;
         _reentrantCode = code;
         _engine.ReentrantSolve = _reentrantSolve ??= ReentrantSolveTransparent;
         try { return Dispatch(code); }
@@ -288,6 +296,7 @@ public sealed partial class BytecodeInterpreter
             DumpPcRing(code, _engine.P, ex.GetType().Name);
             throw;
         }
+        finally { _reentrantCode = savedReentrantCode; }
     }
 
     /// <summary>Backs <see cref="Activation.ReentrantSolve"/> (the host→Prolog

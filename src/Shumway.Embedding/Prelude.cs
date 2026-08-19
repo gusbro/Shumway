@@ -138,6 +138,10 @@ internal static class Prelude
         :- public '$call_arrow'/3.
         :- public '$call_softarrow'/3.
         :- public '$call_neg'/1.
+        % The portray/1 hook: user code adds clauses to it from anywhere, so
+        % it is multifile and dynamic before anyone declares it (SWI, SICStus).
+        :- multifile portray/1.
+        :- dynamic portray/1.
         :- dynamic attribute_goals/4.
         :- dynamic file_search_path/2.
         :- dynamic library_directory/1.

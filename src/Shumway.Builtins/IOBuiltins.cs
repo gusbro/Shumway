@@ -132,7 +132,7 @@ public static class IOBuiltins
     /// genuinely unknown names.</summary>
     private static readonly System.Collections.Generic.HashSet<string> IgnoredWriteOptions = new()
     {
-        "portray", "fullstop", "nl", "dotlists", "brace_terms",
+        "fullstop", "nl", "dotlists", "brace_terms",
         "attributes", "blobs", "character_escapes", "cycles", "partial",
         "portray_goal", "spacing", "no_lists", "priority",
     };
@@ -241,14 +241,12 @@ public static class IOBuiltins
                 options.MaxDepth = (int)valCell.AsInt;
                 break;
             case "portrayed":
-                // Accepted and VALIDATED, but not acted on: the hook needs a
-                // re-entrant portray/1 call from inside this builtin, and
-                // SolveOnce is not sound from a builtin running under a
-                // nested sub-query (the Logtalk test harness's shape) — the
-                // caller's continuation fails after the nested solve
-                // returns. Tracked separately; the option stays a no-op
-                // rather than silently corrupting a live query.
-                RequireBool(engine, valCell, optCell);
+            case "portray":
+                // SICStus spells it portrayed/1, SWI portray/1 — same hook.
+                if (RequireBool(engine, valCell, optCell))
+                    options.Portray = engine.PortrayHook;
+                else
+                    options.Portray = null;
                 break;
             default:
                 if (!IgnoredWriteOptions.Contains(name))
@@ -391,12 +389,13 @@ public static class IOBuiltins
             IgnoreOps = true,
         };
 
-    /// <summary><c>print(X)</c> — a portray/1 hook with a <c>write/1</c>
-    /// fallback. The hook is not wired yet, so this is the write path.</summary>
+    /// <summary><c>print(X)</c> — write/1 with the <c>portray/1</c> hook
+    /// consulted for every subterm first (the de-facto standard).</summary>
     public static bool Print(Activation engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine),
-            DefaultOptions(engine));
+        var opts = DefaultOptions(engine);
+        opts.Portray = engine.PortrayHook;
+        TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine), opts);
         return true;
     }
 
@@ -405,11 +404,14 @@ public static class IOBuiltins
     {
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
         if (h.IsBinary)
-            throw new PrologRuntimeException("permission_error", "output,binary_stream");
+            throw new PrologRuntimeException("permission_error", "output,binary_stream",
+                engine, engine.GetRegister(0));
         if (h.Writer is null)
-            throw new PrologRuntimeException("permission_error", "output,stream");
-        TermRenderer.Render(engine, engine.GetRegister(1), h.Writer,
-            DefaultOptions(engine));
+            throw new PrologRuntimeException("permission_error", "output,stream",
+                engine, engine.GetRegister(0));
+        var opts = DefaultOptions(engine);
+        opts.Portray = engine.PortrayHook;
+        TermRenderer.Render(engine, engine.GetRegister(1), h.Writer, opts);
         return true;
     }
 
@@ -541,11 +543,15 @@ public static class IOBuiltins
                 }
                 case 'p':
                 {
-                    // ~p — print/1. Shumway has no portray hook, so this is
-                    // ~w (unquoted, operator-form rendering).
+                    // ~p — print/1: ~w with the portray/1 hook consulted first.
                     Cell arg = ConsumeArg(args, ref argIdx, name);
                     TermRenderer.Render(engine, arg, output,
-                        new TermRenderOptions { Operators = engine.Operators });
+                        new TermRenderOptions
+                        {
+                            Operators = engine.Operators,
+                            Numbervars = true,
+                            Portray = engine.PortrayHook,
+                        });
                     break;
                 }
                 case 'i':
