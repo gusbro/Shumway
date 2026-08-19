@@ -995,6 +995,16 @@ public sealed class Lexer
                 int e = ReadEscapeSequence(pos);
                 if (e != EscapeContinuation) sb.Append((char)e);
             }
+            else if ((c < ' ' || c == '\x7f') && !ArityCompat)
+            {
+                // §6.4.2.1: same rule as a quoted ATOM — a raw control
+                // character is not a valid double-quoted-token char; it has to
+                // be an escape (\\t, \\n, …) or, for a newline, the
+                // \\<newline> continuation. Arity-era sources are exempt.
+                throw new LexerException(
+                    $"Raw control character (0x{(int)c:x2}) in string "
+                    + $"at {pos} — use an escape sequence.", pos);
+            }
             else
             {
                 sb.Append(c);

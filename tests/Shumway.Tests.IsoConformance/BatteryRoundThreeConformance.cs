@@ -395,6 +395,51 @@ public class BatteryRoundThreeConformance
         Succeeds("assertz((z4 :- true)), retract((z4 :- B)), B == true.");
     }
 
+    // ---------- reading: a quoted token holds no raw layout ----------
+
+    [Fact]
+    public void RawControlCharactersAreRejectedInEveryQuotedToken()
+    {
+        // §6.4.2.1 — a raw tab or newline has to be written as an escape.
+        // Quoted ATOMS and back-quoted tokens already refused them; strings
+        // are the same token class and now agree.
+        // 34 is `"`, 9 is tab, 10 is newline — spelled as codes so the C#
+        // and Prolog escaping stay out of each other's way.
+        Succeeds("atom_codes(S, [34, 0'a, 9, 0'b, 34]), "
+            + "catch(atom_to_term(S, _, _), error(syntax_error(_), _), true).");
+        Succeeds("atom_codes(S, [34, 0'a, 10, 0'b, 34]), "
+            + "catch(atom_to_term(S, _, _), error(syntax_error(_), _), true).");
+        // A quoted ATOM and a back-quoted token follow the same rule.
+        Succeeds("atom_codes(S, [39, 0'a, 9, 0'b, 39]), "
+            + "catch(atom_to_term(S, _, _), error(syntax_error(_), _), true).");
+        // The escaped spellings still read.
+        Succeeds("atom_codes(S, [34, 0'a, 92, 0't, 0'b, 34]), "
+            + "atom_to_term(S, _, _).");
+    }
+
+    // ---------- a metacalled variable gets its own cut barrier ----------
+
+    [Fact]
+    public void CutReachedThroughAVariableIsLocalToItsOwnCall()
+    {
+        // §7.6.2: a variable in goal position converts to call(V), so the `!`
+        // it is bound to commits only within that metacall — a(X)'s choice
+        // point survives.
+        var engine = new PrologEngine();
+        engine.ConsultString("cb(1).\ncb(2).\n");
+        Assert.True(engine.Query(
+            "findall(Z-X, call((Z = (!), cb(X), Z)), L), L == [(!)-1, (!)-2].").Success);
+        Assert.True(engine.Query(
+            "findall(X, call((C = (!), (X = 1, C ; X = 2))), L), L == [1, 2].").Success);
+        // A cut written LITERALLY inside the called term still commits to it.
+        Assert.True(engine.Query(
+            "findall(X, call((cb(X), !)), L), L == [1].").Success);
+        Assert.False(engine.Query("call((cb(_), !, fail)).").Success);
+        // …and a whole-goal variable commits within its own call, no further.
+        Assert.True(engine.Query(
+            "G = (cb(X), !), findall(X, call(G), L), L == [1].").Success);
+    }
+
     [Fact]
     public void PrintOnAStreamExists()
     {

@@ -395,7 +395,16 @@ public sealed partial class BytecodeInterpreter
         // ADR-021's closing profile).
         Shumway.Core.Profiler.Note("meta_dispatch (DispatchCall)");
         int pc = _engine.P;
-        Cell goal = DerefCell(_engine.GetRegister(0));
+        Cell rawGoal = _engine.GetRegister(0);
+        Cell goal = DerefCell(rawGoal);
+
+        // §7.6.2 — a VARIABLE in goal position converts to `call(V)`, which
+        // gives it its own cut barrier. The argument slot still holds the REF
+        // even after the variable was bound, so a goal reached through one is
+        // recognisable here: `call((Z = (!), a(X), Z))` must keep a(X)'s
+        // choice point, because the `!` Z was bound to cuts only within its
+        // own metacall. A goal written literally keeps the inherited barrier.
+        if (rawGoal.Tag is Tag.Ref or Tag.AttVar) barrier = _engine.B;
 
         // '$mqual'(Module, Goal): a runtime-variable meta-goal tagged with the
         // module of the clause that meta-called it. Unwrap it, updating X0 to the
