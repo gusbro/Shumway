@@ -440,6 +440,55 @@ public class BatteryRoundThreeConformance
             "G = (cb(X), !), findall(X, call(G), L), L == [1].").Success);
     }
 
+    // ---------- implicit_dynamic prepares dispatch, it does not define ----------
+
+    [Fact]
+    public void ScannedAssertTargetIsNotInTheDatabaseYet()
+    {
+        // The implicit_dynamic pre-scan marks a literal assertz/1 target
+        // dynamic at CONSULT time so the linker emits a real trampoline for
+        // calls to it. That is a codegen preparation, not a definition:
+        // §8.8.2.1 enumerates the procedures IN THE DATABASE, and GNU, SWI
+        // and Scryer all agree the predicate is not one of them yet.
+        var engine = new PrologEngine();
+        engine.ConsultString("scan_p :- assertz(scan_foo(bar)).\n");
+        Assert.False(engine.Query("current_predicate(scan_foo/_).").Success);
+        // Calling it goes through the `unknown` flag like any undefined
+        // procedure — error by default…
+        Assert.True(engine.Query(
+            "catch(scan_foo(_), error(existence_error(procedure, _), _), true).").Success);
+        // …and the first assert makes it real: enumerable, and its clauses
+        // are there.
+        Assert.True(engine.Query("scan_p, current_predicate(scan_foo/1).").Success);
+        Assert.True(engine.Query("scan_foo(bar).").Success);
+    }
+
+    [Fact]
+    public void DeclaredDynamicIsInTheDatabaseEvenWithNoClauses()
+    {
+        // The counterpart, and the reason the two marks have to be told
+        // apart: a DECLARED dynamic is defined — it enumerates, and calling
+        // it FAILS rather than raising, whatever the `unknown` flag says.
+        var engine = new PrologEngine();
+        engine.ConsultString(":- dynamic(decl_empty/1).\n");
+        Assert.True(engine.Query("current_predicate(decl_empty/1).").Success);
+        Assert.False(engine.Query("decl_empty(_).").Success);
+    }
+
+    [Fact]
+    public void UnknownFailMakesEveryUndefinedCallFail()
+    {
+        // What the Arity scenario actually rests on — N modules linked at the
+        // end, so a call to something no one has defined yet must not raise.
+        // It comes from `unknown = fail`, not from the pre-scan, and it covers
+        // predicates the scan never saw.
+        var engine = new PrologEngine();
+        engine.ConsultString(":- set_prolog_flag(unknown, fail).\n"
+            + "scan_q :- assertz(scan_bar(1)).\n");
+        Assert.False(engine.Query("scan_bar(_).").Success);
+        Assert.False(engine.Query("never_mentioned_at_all(_, _).").Success);
+    }
+
     [Fact]
     public void PrintOnAStreamExists()
     {

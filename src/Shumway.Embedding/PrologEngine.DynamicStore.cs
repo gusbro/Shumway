@@ -897,7 +897,7 @@ public sealed partial class PrologEngine
     {
         var seen = new HashSet<int>();
         foreach (int fid in _dynStore.Functors)
-            if (seen.Add(fid)) yield return fid;
+            if (!_dynStore.IsImplicitOnly(fid) && seen.Add(fid)) yield return fid;
         foreach (int fid in StaticHeadFunctors())
             if (seen.Add(fid)) yield return fid;
     }
@@ -1049,7 +1049,15 @@ public sealed partial class PrologEngine
 
     internal void EnsureDynamic(int fid)
     {
-        if (_dynStore.IsDynamic(fid)) return;
+        if (_dynStore.IsDynamic(fid))
+        {
+            // An asserted clause makes it a REAL dynamic: the implicit_dynamic
+            // scan's provisional mark (linker-only) is now backed by the
+            // database, so it enumerates and its empty chain fails like any
+            // declared dynamic.
+            _dynStore.ClearImplicitOnly(fid);
+            return;
+        }
 
         // implicit_dynamic flag (default true) auto-
         // promotes an undefined predicate on its first assertz/asserta.
@@ -1562,6 +1570,11 @@ public sealed partial class PrologEngine
             if (publicsInSameConsult.Contains(fid)) continue;
             if (ClausesDefineFunctor(clauses, fid)) continue;
             _dynStore.MarkDynamic(fid);
+            // …but only the LINKER needs to know yet. The predicate is not in
+            // the database until something declares or asserts it, so it stays
+            // out of current_predicate/1 and calling it goes through the
+            // `unknown` flag (§8.8.2.1; GNU, SWI and Scryer all agree).
+            _dynStore.ImplicitOnly.Add(fid);
             if (!_dynStore.HasClauses(fid))
                 _dynStore[fid] = new List<Clause>();
         }

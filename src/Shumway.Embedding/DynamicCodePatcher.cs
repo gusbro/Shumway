@@ -1313,6 +1313,14 @@ internal sealed class DynamicCodePatcher
             if (E._dynStore.Abolished.Contains(fid)
                 && Shumway.Core.UnknownProcedure.Fails(engine, fid))
                 return SelDiag(fid, -1, "abolished");
+            // Marked dynamic ONLY by the implicit_dynamic scan: the linker
+            // needed a trampoline, but nothing has declared or asserted this
+            // predicate, so it is still UNDEFINED — the `unknown` flag decides
+            // (error by default, fail under arity_compat). A really-declared
+            // dynamic with an empty chain keeps failing, per ISO.
+            if (E._dynStore.IsImplicitOnly(fid)
+                && Shumway.Core.UnknownProcedure.Fails(engine, fid))
+                return SelDiag(fid, -1, "implicit-only");
             return SelDiag(fid, -2, state is null ? "no-chain" : "empty-chain");
         }
         var entries = state.Entries;
