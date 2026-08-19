@@ -216,11 +216,6 @@ public sealed class OperatorTable
         // the engine, like DCG `-->`. The operator lets it parse; SsuTransform
         // rewrites the clause.
         t.Define("=>", 1200, OperatorType.Xfx);
-        // Scryer directive — marks a predicate as not counting toward inference
-        // limits. Shumway has no inference-limit machinery, so it is a pure no-op;
-        // the operator exists only so `:- non_counted_backtracking foo/N.` parses
-        // (e.g. loading Scryer's library(iso_ext)).
-        t.Define("non_counted_backtracking", 1150, OperatorType.Fx);
         t.Define("table", 1150, OperatorType.Fx);
         t.Define("mode", 1150, OperatorType.Fx);
         t.Define("ensure_linked", 1150, OperatorType.Fx);
@@ -273,7 +268,9 @@ public sealed class OperatorTable
         t.Define("-", 500, OperatorType.Yfx);
         t.Define("/\\", 500, OperatorType.Yfx);
         t.Define("\\/", 500, OperatorType.Yfx);
-        t.Define("xor", 500, OperatorType.Yfx);
+        // Not an ISO operator (GNU and Scryer do not declare it); SWI is the
+        // only system that does, at 400 yfx.
+        t.Define("xor", 400, OperatorType.Yfx);
 
         t.Define("*", 400, OperatorType.Yfx);
         t.Define("/", 400, OperatorType.Yfx);
@@ -293,8 +290,12 @@ public sealed class OperatorTable
         t.Define("+", 200, OperatorType.Fy);
         t.Define("\\", 200, OperatorType.Fy);
 
-        // Tag / qualifier — usually module qualification
-        t.Define(":", 200, OperatorType.Xfy);
+        // Module qualification. 600 xfy is what GNU, SWI and Scryer all use
+        // (measured, not assumed) — ISO 13211-1 does not define `:` at all, so
+        // the de-facto table is the whole authority. It puts `:` LOOSER than
+        // `/`, so `m:f/0` reads as `m:(f/0)`: the qualifier is outside the
+        // predicate indicator, as in every one of those systems.
+        t.Define(":", 600, OperatorType.Xfy);
 
         return t;
     }

@@ -2593,12 +2593,23 @@ internal sealed class ConsultPipeline
         // property after `as` has no Shumway meaning; read the indicator.
         while (term is CompoundTerm { Functor: "as", Args: [var decorated, _] })
             term = decorated;
+        // A module-qualified indicator `Module:Name/Arity`
+        // (`:- multifile user:term_expansion/6.`). With `:` LOOSER than `/`
+        // — 600 vs 400, as in GNU/SWI/Scryer — it parses as
+        // :(Module, /(Name, Arity)); strip the module, since
+        // discontiguous/multifile group by the bare predicate. The Arity
+        // annotation form `PI:Ann` has the SAME shape, so tell them apart by
+        // what the right side looks like: an indicator means a qualifier.
+        if (term is CompoundTerm { Functor: ":", Args: [_, var qualified] }
+            && qualified is CompoundTerm { Functor: "/", Args.Length: 2 })
+            term = qualified;
+        else if (term is CompoundTerm { Functor: ":", Args: [var annotated, _] }
+            && annotated is CompoundTerm { Functor: "/", Args.Length: 2 })
+            term = annotated;
         if (term is CompoundTerm slash && slash.Functor == "/" && slash.Args.Length == 2)
         {
-            // A module-qualified indicator `Module:Name/Arity` (Scryer/SICStus,
-            // e.g. `:- discontiguous clpz:goal_expansion/5.`) parses as
-            // /(:(Module, Name), Arity) since `:` binds tighter than `/`. Strip
-            // the module — discontiguous/multifile group by the bare predicate.
+            // The tighter grouping is accepted too — a source read under a
+            // table that puts `:` below `/` yields /(:(Module, Name), Arity).
             Term nameSlot = slash.Args[0];
             if (nameSlot is CompoundTerm { Functor: ":", Args: [_, var inner] })
                 nameSlot = inner;

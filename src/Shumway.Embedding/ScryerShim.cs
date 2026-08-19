@@ -29,6 +29,18 @@ internal static class ScryerShim
         };
 
     public const string Source = """
+        % ----- operators the Scryer library set assumes -----
+        % `:- non_counted_backtracking foo/N.` marks a predicate as not
+        % counting toward call_with_inference_limit/3. Shumway has no
+        % inference-limit machinery, so the directive is a recognised no-op —
+        % but the sources have to PARSE, and Scryer itself declares the
+        % operator in lib/ops_and_meta_predicates.pl rather than building it
+        % in. Declaring it GLOBALLY here (ADR-046's `user:` escape) keeps it
+        % out of Shumway's own default table, where a non-ISO operator would
+        % change how a strictly conforming program reads, while making the
+        % load order of Scryer's files irrelevant.
+        :- op(700, fx, user:non_counted_backtracking).
+
         % ----- builtins.pl internals -----
         % Scryer's bootstrap module is implicitly visible in every module on
         % their VM; libraries call its helpers bare (arithmetic.pl).
