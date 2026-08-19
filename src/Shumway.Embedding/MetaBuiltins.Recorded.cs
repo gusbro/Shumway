@@ -137,7 +137,16 @@ public static partial class MetaBuiltins
                     var cand = n.Value;
                     if (!patIsVar && !TrialUnifies(engine, patSlot, cand.Term)) continue;
                     _lastYieldedRef = cand.Ref;
-                    return YieldCandidate(engine, (cand.Ref, cand.Term), isResume);
+                    // Look ahead with the same rolled-back trial: a choice
+                    // point is only worth pushing when a LATER candidate can
+                    // match too. Otherwise the last solution reports
+                    // nondeterministic and every caller that never cuts drags
+                    // a dead CP around.
+                    bool more = false;
+                    for (var m = n.Next; m is not null; m = m.Next)
+                        if (patIsVar || TrialUnifies(engine, patSlot, m.Value.Term))
+                        { more = true; break; }
+                    return YieldCandidate(engine, (cand.Ref, cand.Term), isResume, more);
                 }
                 return false;
             }
@@ -146,7 +155,11 @@ public static partial class MetaBuiltins
             {
                 var cand = _snapshot[_snapIdx++];
                 if (!patIsVar && !TrialUnifies(engine, patSlot, cand.Term)) continue;
-                return YieldCandidate(engine, cand, isResume);
+                bool more = false;
+                for (int j = _snapIdx; j < _snapshot.Count; j++)
+                    if (patIsVar || TrialUnifies(engine, patSlot, _snapshot[j].Term))
+                    { more = true; break; }
+                return YieldCandidate(engine, cand, isResume, more);
             }
             return false;
         }
@@ -172,12 +185,13 @@ public static partial class MetaBuiltins
         }
 
         private bool YieldCandidate(
-            Activation engine, (long Ref, Term Term) cand, bool isResume)
+            Activation engine, (long Ref, Term Term) cand, bool isResume, bool more)
         {
             // Push the re-satisfaction CP FIRST so the real bindings roll
             // back cleanly on backtrack (arity 3 — the registers must be
-            // restored for the next attempt's pattern; the CP-arity lesson).
-            engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            // restored for the next attempt's pattern; the CP-arity lesson),
+            // and only when the lookahead found a further match.
+            if (more) engine.PushBuiltinChoicePoint(Resume, arity: 3);
             Cell termCell = Materializer.MaterializeAsCell(engine, cand.Term);
             if (!engine.UnifyRegisterWithCell(1, termCell)) return false;
             if (!engine.UnifyRegisterWithCell(2, Cell.Int(cand.Ref))) return false;

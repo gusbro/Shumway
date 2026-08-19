@@ -143,10 +143,39 @@ public static partial class MetaBuiltins
                 pairs.Add((h, new CompoundTerm("eof_action",
                     new Term[] { new AtomTerm(h.EofAction) })));
         }
+        // The name filter above still leaves one candidate per stream for a
+        // property like `alias(user_output)`. Compare the GROUND arguments too,
+        // so the cursor enumerates SOLUTIONS and a fully-specified query is
+        // deterministic.
+        if (pArg is CompoundTerm pWanted)
+            pairs.RemoveAll(pr => !PropertyArgsCanMatch(pr.Property, pWanted));
+
         int returnPc = engine.BuiltinReturnPc;
         var pairArr = pairs.ToArray();
         return IndexEnumCursor.Start(engine, pairArr.Length, 2, returnPc,  // arity 2 (stream_property/2)
             (e, i) => StreamPropertyUnify(e, pairArr, i));
+    }
+
+    /// <summary>Cheap pre-unification filter: could this candidate property
+    /// unify with the bound one? Only GROUND atom / integer arguments are
+    /// compared — anything else is left for the real unification.</summary>
+    private static bool PropertyArgsCanMatch(Term candidate, CompoundTerm wanted)
+    {
+        if (candidate is not CompoundTerm c
+            || c.Functor != wanted.Functor
+            || c.Args.Length != wanted.Args.Length)
+            return false;
+        for (int i = 0; i < c.Args.Length; i++)
+        {
+            switch (c.Args[i], wanted.Args[i])
+            {
+                case (AtomTerm a, AtomTerm b) when a.Name != b.Name: return false;
+                case (IntTerm a, IntTerm b) when a.Value != b.Value: return false;
+                case (AtomTerm, IntTerm):
+                case (IntTerm, AtomTerm): return false;
+            }
+        }
+        return true;
     }
 
     private static bool StreamPropertyUnify(

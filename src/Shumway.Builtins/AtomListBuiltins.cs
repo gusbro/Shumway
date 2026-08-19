@@ -518,6 +518,21 @@ public static class AtomListBuiltins
             return engine.UnifyRegisterWithCell(0, Cell.Atom(aId));
         }
 
+        // Same mode analysis one step further: A and B ALIASED (the same
+        // unbound variable, `atom_concat(X, X, aaaa)`) pins the split just as
+        // firmly as a bound argument does — only the even split can match, and
+        // only when the two halves are equal. One candidate, checked directly,
+        // no choice point.
+        if (aCell.Tag == Tag.Ref && bCell.Tag == Tag.Ref
+            && aCell.AsHeapIndex == bCell.AsHeapIndex)
+        {
+            if ((cName.Length & 1) != 0) return false;
+            int half = cName.Length / 2;
+            if (string.CompareOrdinal(cName, 0, cName, half, half) != 0) return false;
+            int halfId = AtomTable.Intern(cName[..half], permanent: false).Id;
+            return engine.UnifyRegisterWithCell(0, Cell.Atom(halfId));
+        }
+
         int returnPc = engine.BuiltinReturnPc;
         return new AtomConcatSplitCursor(cName, returnPc).Start(engine);
     }

@@ -1,3 +1,4 @@
+using System.Linq;
 using Shumway.Builtins;
 using Shumway.Compiler.Ast;
 using Shumway.Core;
@@ -14,6 +15,18 @@ public static partial class MetaBuiltins
     /// each property in turn, so a bound <c>Property</c> acts as a filter. Head
     /// must be instantiated (ISO instantiation_error / type_error(callable)).
     /// Enough for the SWI/GNU-style introspection Logtalk's compiler relies on.</summary>
+    /// <summary>Cheap pre-unification filter: can this property term possibly
+    /// unify with the bound argument? Name and arity only — the cursor still
+    /// does the real unification.</summary>
+    private static bool PropertyCanMatch(Term prop, Term wanted) => (prop, wanted) switch
+    {
+        (_, VarTerm) => true,
+        (AtomTerm a, AtomTerm b) => a.Name == b.Name,
+        (CompoundTerm c, CompoundTerm d) =>
+            c.Functor == d.Functor && c.Args.Length == d.Args.Length,
+        _ => false,
+    };
+
     /// <summary>The property names predicate_property/2 can answer. A bound
     /// argument outside this set is domain_error(predicate_property, P).</summary>
     private static bool IsKnownPredicateProperty(Term t) => t switch
@@ -120,6 +133,13 @@ public static partial class MetaBuiltins
         // The declared meta-template, when one was recorded (`:- meta_predicate`).
         if (host._metaPredicateTemplates.TryGetValue(fid, out Term? template))
             props.Add(new CompoundTerm("meta_predicate", new[] { template }));
+        // A BOUND Property narrows the list, so the cursor enumerates
+        // SOLUTIONS rather than every property this predicate has —
+        // `predicate_property(p(_), dynamic)` is then deterministic.
+        Term wanted = MaterializeRegister(engine, 1);
+        if (wanted is not VarTerm)
+            props = props.Where(pr => PropertyCanMatch(pr, wanted)).ToList();
+
         int returnPc = engine.BuiltinReturnPc;
         return Shumway.Core.IndexEnumCursor.Start(engine, props.Count, 2, returnPc,
             (e, i) => e.UnifyRegisterWithCell(

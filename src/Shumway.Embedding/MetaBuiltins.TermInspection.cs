@@ -872,12 +872,55 @@ public static partial class MetaBuiltins
         var candidates = new List<Clause>();
         candidates.AddRange(host.DynamicClausesFor(fid));
         candidates.AddRange(host.StaticClausesFor(fid));
+        // Drop the clauses whose head DEFINITELY cannot match the pattern, so
+        // the cursor enumerates SOLUTIONS rather than the whole predicate —
+        // first-argument indexing's answer to the same question, at the AST
+        // level. `clause(p(1), B)` over `p(1). p(2).` is then deterministic.
+        candidates.RemoveAll(c => !HeadCanMatch(headPattern, ClauseHead(c)));
 
         int returnPc = engine.BuiltinReturnPc;
         // arity 2 (clause/2): save the arg registers across backtracks.
         return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 2, returnPc,
             (e, i) => ClauseEnumUnify(e, candidates[i]));
     }
+
+    private static Term ClauseHead(Clause c) => c.Kind == ClauseKind.Rule
+        ? ((CompoundTerm)c.Term).Args[0]
+        : c.Term;
+
+    /// <summary>Conservative head prefilter: false only on a DEFINITE
+    /// mismatch (both sides non-variable with different shapes). Anything it
+    /// cannot rule out stays a candidate for the real unification.</summary>
+    private static bool HeadCanMatch(Term pattern, Term head)
+    {
+        if (pattern is VarTerm || head is VarTerm) return true;
+        if (pattern is CompoundTerm pc)
+        {
+            if (head is not CompoundTerm hc
+                || pc.Functor != hc.Functor
+                || pc.Args.Length != hc.Args.Length)
+                return false;
+            for (int i = 0; i < pc.Args.Length; i++)
+                if (!ArgCanMatch(pc.Args[i], hc.Args[i])) return false;
+            return true;
+        }
+        return ArgCanMatch(pattern, head);
+    }
+
+    private static bool ArgCanMatch(Term a, Term b) => (a, b) switch
+    {
+        (VarTerm, _) or (_, VarTerm) => true,
+        (AtomTerm x, AtomTerm y) => x.Name == y.Name,
+        (IntTerm x, IntTerm y) => x.Value == y.Value,
+        (FloatTerm x, FloatTerm y) => x.Value.Equals(y.Value),
+        (CompoundTerm x, CompoundTerm y) =>
+            x.Functor == y.Functor && x.Args.Length == y.Args.Length,
+        // Different leaf KINDS never unify; anything else stays a candidate.
+        (AtomTerm, IntTerm) or (IntTerm, AtomTerm) => false,
+        (AtomTerm or IntTerm or FloatTerm, CompoundTerm) => false,
+        (CompoundTerm, AtomTerm or IntTerm or FloatTerm) => false,
+        _ => true,
+    };
 
     private static bool ClauseEnumUnify(Activation engine, Clause candidate)
         => ClauseEnumUnify(engine, candidate, pairRegister: 1);
@@ -952,13 +995,43 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "'$current_predicate_enum'/1 requires a PrologEngine host.");
 
+        // A BOUND Name or Arity in the PI narrows the candidate set here, so
+        // the cursor enumerates SOLUTIONS rather than every user predicate:
+        // `current_predicate(foo/1)` is then deterministic instead of leaving
+        // a choice point over the rest of the database.
+        string? wantName = null;
+        long? wantArity = null;
+        {
+            Cell pi = ResolveLocal(engine, engine.GetRegister(0));
+            if (pi.Tag == Tag.Str)
+            {
+                int sa = pi.AsHeapIndex;
+                Cell f = engine.GetHeap(sa);
+                if (f.Tag == Tag.Functor)
+                {
+                    var (fAtom, fArity) = FunctorTable.Lookup(f.AsFunctorId);
+                    if (fArity == 2 && AtomTable.GetById(fAtom)?.Name == "/")
+                    {
+                        Cell nCell = ResolveLocal(engine, engine.GetHeap(sa + 1));
+                        Cell aCell = ResolveLocal(engine, engine.GetHeap(sa + 2));
+                        if (nCell.Tag == Tag.Atom)
+                            wantName = AtomTable.GetById(nCell.AsAtomId)?.Name;
+                        if (aCell.Tag == Tag.Int) wantArity = aCell.AsInt;
+                    }
+                }
+            }
+        }
+
         var seen = new HashSet<int>();
         var indicators = new List<Term>();
         void AddIndicator(int functorId)
         {
             if (!seen.Add(functorId)) return;
             var (atomId, arity) = FunctorTable.Lookup(functorId);
+            if (wantArity is { } wa && arity != wa) return;
             string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            if (wantName is { } wn && !string.Equals(name, wn, StringComparison.Ordinal))
+                return;
             indicators.Add(new CompoundTerm("/",
                 new Term[] { new AtomTerm(name), new IntTerm(arity) }));
         }

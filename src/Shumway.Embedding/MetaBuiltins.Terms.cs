@@ -836,7 +836,8 @@ public static partial class MetaBuiltins
             ? AtomTable.GetById(modCell.AsAtomId)?.Name ?? PrologEngine.DefaultModuleName
             : PrologEngine.DefaultModuleName;
         ValidateCurrentOpArgs(engine, regBase: 1);
-        var ops = host.ModuleOperatorLayer(mod).Enumerate().ToArray();
+        var ops = FilterOpsByBoundArgs(
+            engine, host.ModuleOperatorLayer(mod).Enumerate().ToArray(), regBase: 1);
         int rp = engine.BuiltinReturnPc;
         return IndexEnumCursor.Start(engine, ops.Length, 4, rp,
             (e, i) => CurrentOpUnify(e, ops, i, regBase: 1));
@@ -992,7 +993,7 @@ public static partial class MetaBuiltins
         ValidateCurrentOpArgs(engine, regBase: 0);
         // Snapshot the current operator set so backtracking iteration
         // sees a stable view even if op/3 mutates the table mid-enum.
-        var ops = host.EnumerateOperators().ToArray();
+        var ops = FilterOpsByBoundArgs(engine, host.EnumerateOperators().ToArray(), regBase: 0);
         int returnPc = engine.BuiltinReturnPc;
         return IndexEnumCursor.Start(engine, ops.Length, 3, returnPc,  // arity 3 (current_op/3)
             (e, i) => CurrentOpUnify(e, ops, i));
@@ -1029,6 +1030,50 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(
                 IsoError.TypeError("atom", MaterializeRegister(engine, regBase + 2)));
     }
+
+    /// <summary>Narrows the operator snapshot to the entries a BOUND argument
+    /// can still match, so the cursor enumerates SOLUTIONS rather than table
+    /// positions — `current_op(P, T, xor)` is then deterministic instead of
+    /// leaving a choice point over the rest of the table. Same principle
+    /// stream_property/2 and atom_concat/3's mode analysis already follow.
+    /// </summary>
+    private static (int Precedence, Shumway.Compiler.Parsing.OperatorType Type, string Name)[]
+        FilterOpsByBoundArgs(
+            Activation engine,
+            (int Precedence, Shumway.Compiler.Parsing.OperatorType Type, string Name)[] ops,
+            int regBase)
+    {
+        Cell p = ResolveLocal(engine, engine.GetRegister(regBase));
+        Cell t = ResolveLocal(engine, engine.GetRegister(regBase + 1));
+        Cell n = ResolveLocal(engine, engine.GetRegister(regBase + 2));
+        long? wantPrec = p.Tag == Tag.Int ? p.AsInt : null;
+        string? wantType = t.Tag == Tag.Atom ? AtomTable.GetById(t.AsAtomId)?.Name : null;
+        string? wantName = n.Tag == Tag.Atom ? AtomTable.GetById(n.AsAtomId)?.Name : null;
+        if (wantPrec is null && wantType is null && wantName is null) return ops;
+
+        var kept = new List<(int, Shumway.Compiler.Parsing.OperatorType, string)>(ops.Length);
+        foreach (var op in ops)
+        {
+            if (wantPrec is { } wp && op.Precedence != wp) continue;
+            if (wantName is { } wn && !string.Equals(op.Name, wn, StringComparison.Ordinal))
+                continue;
+            if (wantType is { } wt && OperatorTypeName(op.Type) != wt) continue;
+            kept.Add(op);
+        }
+        return kept.ToArray();
+    }
+
+    private static string OperatorTypeName(Shumway.Compiler.Parsing.OperatorType type) => type switch
+    {
+        Shumway.Compiler.Parsing.OperatorType.Fx => "fx",
+        Shumway.Compiler.Parsing.OperatorType.Fy => "fy",
+        Shumway.Compiler.Parsing.OperatorType.Xf => "xf",
+        Shumway.Compiler.Parsing.OperatorType.Yf => "yf",
+        Shumway.Compiler.Parsing.OperatorType.Xfx => "xfx",
+        Shumway.Compiler.Parsing.OperatorType.Xfy => "xfy",
+        Shumway.Compiler.Parsing.OperatorType.Yfx => "yfx",
+        _ => "?",
+    };
 
     private static bool CurrentOpUnify(
         Activation engine,
