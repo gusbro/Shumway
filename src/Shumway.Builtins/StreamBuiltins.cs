@@ -739,7 +739,7 @@ public static class StreamBuiltins
     public static bool PutByte2(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
-        WriteOneByte(engine, h, regByte: 1);
+        WriteOneByte(engine, h, regByte: 1, streamReg: 0);
         return true;
     }
 
@@ -777,10 +777,14 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(b));
     }
 
-    private static void WriteOneByte(Activation engine, StreamHandle h, int regByte)
+    private static void WriteOneByte(
+        Activation engine, StreamHandle h, int regByte, int streamReg = -1)
     {
         if (!h.IsWriter)
-            throw new PrologRuntimeException("permission_error", "output,stream");
+            throw new PrologRuntimeException("permission_error", "output,stream",
+                engine, streamReg >= 0
+                    ? Resolve(engine, engine.GetRegister(streamReg))
+                    : MakeStreamTerm(engine, h));
         if (!h.IsBinary)
             // ISO §8.13.3.3.g: byte I/O on a text stream is
             // permission_error(output, text_stream, _).
@@ -789,10 +793,10 @@ public static class StreamBuiltins
         if (c.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (c.Tag != Tag.Int)
-            throw new PrologRuntimeException("type_error", "byte");
+            throw new PrologRuntimeException("type_error", "byte", engine, c);
         long v = c.AsInt;
         if (v < 0 || v > 255)
-            throw new PrologRuntimeException("type_error", "byte");
+            throw new PrologRuntimeException("type_error", "byte", engine, c);
         h.BinaryStream!.WriteByte((byte)v);
     }
 

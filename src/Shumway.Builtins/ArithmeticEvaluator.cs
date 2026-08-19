@@ -319,9 +319,9 @@ public static class ArithmeticEvaluator
         BinOp.Shl => ShiftLeft(a, b),
         BinOp.Shr => ShiftRight(a, b),
         BinOp.Gcd => Gcd(a, b),
-        BinOp.Atan2 => a.AsDouble() == 0 && b.AsDouble() == 0
+        BinOp.Atan2 => FloatOperand(a) == 0 && b.AsDouble() == 0
             ? throw EvalError("undefined")
-            : new Number(Math.Atan2(a.AsDouble(), b.AsDouble())),
+            : new Number(Math.Atan2(FloatOperand(a), b.AsDouble())),
         BinOp.IntDivFloor => FloorDivide(a, b),
         BinOp.PowFloat => PowFloatChecked(a, b),
         BinOp.Rdiv => RationalDivide(a, b),
@@ -331,6 +331,17 @@ public static class ArithmeticEvaluator
 
     private static PrologRuntimeException EvalError(string what)
         => new("evaluation_error", what);
+
+    /// <summary>The operand of a float-domain function as a double: an
+    /// unbounded integer whose magnitude exceeds the float range cannot be
+    /// represented, so `sqrt(7^7^7)` is evaluation_error(float_overflow)
+    /// (§9.1.4.1) rather than a silent infinity.</summary>
+    private static double FloatOperand(Number a)
+    {
+        double d = a.AsDouble();
+        if (!a.IsFloat && double.IsInfinity(d)) throw EvalError("float_overflow");
+        return d;
+    }
 
     /// <summary>A float result computed from FINITE inputs: infinity means
     /// the exact value fell outside the float range —
@@ -366,7 +377,7 @@ public static class ArithmeticEvaluator
     /// finite-input infinity is float_overflow.</summary>
     private static Number PowFloatChecked(Number a, Number b)
     {
-        double x = a.AsDouble(), y = b.AsDouble();
+        double x = FloatOperand(a), y = b.AsDouble();
         if (x == 0 && y < 0) throw EvalError("zero_divisor");
         if (x < 0 && y != Math.Floor(y)) throw EvalError("undefined");
         return FiniteOrOverflow(Math.Pow(x, y));
@@ -405,53 +416,53 @@ public static class ArithmeticEvaluator
         // ISO §9.3 domain conditions: outside a function's mathematical
         // domain is evaluation_error(undefined), never the IEEE inf/nan the
         // hardware would hand back (log(0), sqrt(-1), asin(2), …).
-        UnOp.Sqrt => a.AsDouble() < 0
+        UnOp.Sqrt => FloatOperand(a) < 0
             ? throw EvalError("undefined")
-            : new Number(Math.Sqrt(a.AsDouble())),
-        UnOp.Sin => new Number(Math.Sin(a.AsDouble())),
-        UnOp.Cos => new Number(Math.Cos(a.AsDouble())),
-        UnOp.Tan => new Number(Math.Tan(a.AsDouble())),
-        UnOp.Asin => Math.Abs(a.AsDouble()) > 1
+            : new Number(Math.Sqrt(FloatOperand(a))),
+        UnOp.Sin => new Number(Math.Sin(FloatOperand(a))),
+        UnOp.Cos => new Number(Math.Cos(FloatOperand(a))),
+        UnOp.Tan => new Number(Math.Tan(FloatOperand(a))),
+        UnOp.Asin => Math.Abs(FloatOperand(a)) > 1
             ? throw EvalError("undefined")
-            : new Number(Math.Asin(a.AsDouble())),
-        UnOp.Acos => Math.Abs(a.AsDouble()) > 1
+            : new Number(Math.Asin(FloatOperand(a))),
+        UnOp.Acos => Math.Abs(FloatOperand(a)) > 1
             ? throw EvalError("undefined")
-            : new Number(Math.Acos(a.AsDouble())),
-        UnOp.Atan => new Number(Math.Atan(a.AsDouble())),
+            : new Number(Math.Acos(FloatOperand(a))),
+        UnOp.Atan => new Number(Math.Atan(FloatOperand(a))),
         // A finite argument whose exact result exceeds the float range is
         // evaluation_error(float_overflow) (§9.1.4.1), not silent infinity.
-        UnOp.Exp => FiniteOrOverflow(Math.Exp(a.AsDouble())),
-        UnOp.Log => a.AsDouble() <= 0
+        UnOp.Exp => FiniteOrOverflow(Math.Exp(FloatOperand(a))),
+        UnOp.Log => FloatOperand(a) <= 0
             ? throw EvalError("undefined")
-            : new Number(Math.Log(a.AsDouble())),
-        UnOp.Log10 => a.AsDouble() <= 0
+            : new Number(Math.Log(FloatOperand(a))),
+        UnOp.Log10 => FloatOperand(a) <= 0
             ? throw EvalError("undefined")
-            : new Number(Math.Log10(a.AsDouble())),
-        UnOp.Ceiling => FloatToInteger(Math.Ceiling(a.AsDouble())),
-        UnOp.Floor => FloatToInteger(Math.Floor(a.AsDouble())),
+            : new Number(Math.Log10(FloatOperand(a))),
+        UnOp.Ceiling => FloatToInteger(Math.Ceiling(FloatOperand(a))),
+        UnOp.Floor => FloatToInteger(Math.Floor(FloatOperand(a))),
         // ISO 9.1.6.1 defines round(x) as floor(x + 1/2) — halves go toward
         // +inf (round(-3.5) is -3), NOT away from zero.
-        UnOp.Round => FloatToInteger(Math.Floor(a.AsDouble() + 0.5)),
-        UnOp.Truncate => FloatToInteger(Math.Truncate(a.AsDouble())),
-        UnOp.Float => new Number(a.AsDouble()),
-        UnOp.FloatIntPart => new Number(Math.Truncate(a.AsDouble())),
-        UnOp.FloatFracPart => new Number(a.AsDouble() - Math.Truncate(a.AsDouble())),
-        UnOp.Integer => a.IsFloat ? FloatToInteger(Math.Truncate(a.AsDouble())) : a,
+        UnOp.Round => FloatToInteger(Math.Floor(FloatOperand(a) + 0.5)),
+        UnOp.Truncate => FloatToInteger(Math.Truncate(FloatOperand(a))),
+        UnOp.Float => new Number(FloatOperand(a)),
+        UnOp.FloatIntPart => new Number(Math.Truncate(FloatOperand(a))),
+        UnOp.FloatFracPart => new Number(FloatOperand(a) - Math.Truncate(FloatOperand(a))),
+        UnOp.Integer => a.IsFloat ? FloatToInteger(Math.Truncate(FloatOperand(a))) : a,
         UnOp.Numerator => Numerator(a),
         UnOp.Denominator => Denominator(a),
         UnOp.Rationalize => Rationalize(a),
         // ISO Cor.2 hyperbolics, same domain discipline: acosh below 1 and
         // atanh at or beyond ±1 are undefined; sinh/cosh overflow.
-        UnOp.Sinh => FiniteOrOverflow(Math.Sinh(a.AsDouble())),
-        UnOp.Cosh => FiniteOrOverflow(Math.Cosh(a.AsDouble())),
-        UnOp.Tanh => new Number(Math.Tanh(a.AsDouble())),
-        UnOp.Asinh => new Number(Math.Asinh(a.AsDouble())),
-        UnOp.Acosh => a.AsDouble() < 1
+        UnOp.Sinh => FiniteOrOverflow(Math.Sinh(FloatOperand(a))),
+        UnOp.Cosh => FiniteOrOverflow(Math.Cosh(FloatOperand(a))),
+        UnOp.Tanh => new Number(Math.Tanh(FloatOperand(a))),
+        UnOp.Asinh => new Number(Math.Asinh(FloatOperand(a))),
+        UnOp.Acosh => FloatOperand(a) < 1
             ? throw EvalError("undefined")
-            : new Number(Math.Acosh(a.AsDouble())),
-        UnOp.Atanh => Math.Abs(a.AsDouble()) >= 1
+            : new Number(Math.Acosh(FloatOperand(a))),
+        UnOp.Atanh => Math.Abs(FloatOperand(a)) >= 1
             ? throw EvalError("undefined")
-            : new Number(Math.Atanh(a.AsDouble())),
+            : new Number(Math.Atanh(FloatOperand(a))),
         _ => throw new PrologRuntimeException("type_error", "evaluable"),
     };
 
@@ -541,7 +552,7 @@ public static class ArithmeticEvaluator
     /// denominator ln(Base) vanishes).</summary>
     private static Number LogBase(Number a, Number b)
     {
-        double bas = a.AsDouble(), x = b.AsDouble();
+        double bas = FloatOperand(a), x = b.AsDouble();
         if (bas <= 0 || x <= 0) throw EvalError("undefined");
         double den = Math.Log(bas);
         if (den == 0) throw EvalError("zero_divisor");
@@ -708,7 +719,7 @@ public static class ArithmeticEvaluator
     private static Number Add(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat)
-            return FloatChecked(a.AsDouble(), b.AsDouble(), a.AsDouble() + b.AsDouble());
+            return FloatChecked(FloatOperand(a), b.AsDouble(), FloatOperand(a) + b.AsDouble());
         if (a.IsRat || b.IsRat)
         {
             var (an, ad) = a.AsRationalParts();
@@ -726,7 +737,7 @@ public static class ArithmeticEvaluator
     private static Number Subtract(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat)
-            return FloatChecked(a.AsDouble(), b.AsDouble(), a.AsDouble() - b.AsDouble());
+            return FloatChecked(FloatOperand(a), b.AsDouble(), FloatOperand(a) - b.AsDouble());
         if (a.IsRat || b.IsRat)
         {
             var (an, ad) = a.AsRationalParts();
@@ -744,7 +755,7 @@ public static class ArithmeticEvaluator
     private static Number Multiply(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat)
-            return FloatChecked(a.AsDouble(), b.AsDouble(), a.AsDouble() * b.AsDouble());
+            return FloatChecked(FloatOperand(a), b.AsDouble(), FloatOperand(a) * b.AsDouble());
         if (a.IsRat || b.IsRat)
         {
             var (an, ad) = a.AsRationalParts();
@@ -775,7 +786,7 @@ public static class ArithmeticEvaluator
         }
         double bv = b.AsDouble();
         if (bv == 0.0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
-        return FloatChecked(a.AsDouble(), bv, a.AsDouble() / bv);
+        return FloatChecked(FloatOperand(a), bv, FloatOperand(a) / bv);
     }
 
     private static Number IntegerDivide(Number a, Number b)

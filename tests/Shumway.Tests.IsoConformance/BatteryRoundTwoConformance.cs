@@ -278,6 +278,43 @@ public class BatteryRoundTwoConformance
         Succeeds("atom_chars(abc, L), L == [a,b,c].");
     }
 
+    [Fact]
+    public void UnboundedIntegers_ReachSuccPlusAndFloatDomains()
+    {
+        // succ/2 and plus/3 relate BIGNUMS, not just machine integers.
+        Succeeds("succ(123456789012345678901234567890, N), "
+            + "N =:= 123456789012345678901234567891.");
+        Succeeds("succ(N, 123456789012345678901234567891), "
+            + "N =:= 123456789012345678901234567890.");
+        Succeeds("plus(123456789012345678901234567890, "
+            + "987654321098765432109876543210, S), "
+            + "S =:= 1111111110111111111011111111100.");
+        // A float-domain function whose integer argument exceeds the float
+        // range is evaluation_error(float_overflow), not silent infinity.
+        Succeeds("catch(_ is sqrt(7^7^7), "
+            + "error(evaluation_error(float_overflow), _), true).");
+        Succeeds("catch(_ is log(7^7^7), "
+            + "error(evaluation_error(float_overflow), _), true).");
+        Succeeds("X is sqrt(16), X =:= 4.0.");
+    }
+
+    [Fact]
+    public void AtomicListConcat_ChecksItsArguments()
+    {
+        // (put_byte's byte culprits need a binary stream and live in the
+        // battery's own put_byte_2 tester, now 21/21.)
+        Succeeds("atomic_list_concat([a, 42, c], '_', A), A == 'a_42_c'.");
+        Succeeds("atomic_list_concat(L, '_', 'a_b_c'), L == [a, b, c].");
+        Succeeds("catch(atomic_list_concat([_, bar], '_', _), "
+            + "error(instantiation_error, _), true).");
+        Succeeds("catch(atomic_list_concat([foo, bar|_], '_', _), "
+            + "error(instantiation_error, _), true).");
+        Succeeds("catch(atomic_list_concat([a(1)], '_', _), "
+            + "error(type_error(atomic, a(1)), _), true).");
+        Succeeds("catch(atomic_list_concat([foo, bar], _, _), "
+            + "error(instantiation_error, _), true).");
+    }
+
     // ---------- standard order of terms ----------
 
     [Fact]

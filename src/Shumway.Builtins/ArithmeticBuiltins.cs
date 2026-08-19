@@ -243,29 +243,27 @@ public static class ArithmeticBuiltins
 
         // Type/domain checks run on EVERY bound argument before either
         // direction is attempted, and carry the offending value.
-        if (xc.Tag is not (Tag.Ref or Tag.AttVar))
+        // Unbounded integers count: succ/2 relates bignums too.
+        static System.Numerics.BigInteger? CheckArg(Activation e, Cell c)
         {
-            if (xc.Tag != Tag.Int)
-                throw new PrologRuntimeException("type_error", "integer", engine, xc);
-            if (xc.AsInt < 0)
+            if (c.Tag is Tag.Ref or Tag.AttVar) return null;
+            System.Numerics.BigInteger v;
+            if (c.Tag == Tag.Int) v = c.AsInt;
+            else if (c.Tag == Tag.BigInt) v = e.AsBigInt(c);
+            else throw new PrologRuntimeException("type_error", "integer", e, c);
+            if (v.Sign < 0)
                 throw new PrologRuntimeException(
-                    "domain_error", "not_less_than_zero", engine, xc);
+                    "domain_error", "not_less_than_zero", e, c);
+            return v;
         }
-        if (yc.Tag is not (Tag.Ref or Tag.AttVar))
+        System.Numerics.BigInteger? x = CheckArg(engine, xc);
+        System.Numerics.BigInteger? y = CheckArg(engine, yc);
+        if (x is { } xv)
+            return engine.UnifyRegisterWithCell(1, new Number(xv + 1).ToCell(engine));
+        if (y is { } yv)
         {
-            if (yc.Tag != Tag.Int)
-                throw new PrologRuntimeException("type_error", "integer", engine, yc);
-            if (yc.AsInt < 0)
-                throw new PrologRuntimeException(
-                    "domain_error", "not_less_than_zero", engine, yc);
-        }
-        if (xc.Tag == Tag.Int)
-            return engine.UnifyRegisterWithCell(1, Cell.Int(xc.AsInt + 1));
-        if (yc.Tag == Tag.Int)
-        {
-            long yv = yc.AsInt;
-            if (yv == 0) return false;   // succ(_, 0) has no solution
-            return engine.UnifyRegisterWithCell(0, Cell.Int(yv - 1));
+            if (yv.IsZero) return false;   // succ(_, 0) has no solution
+            return engine.UnifyRegisterWithCell(0, new Number(yv - 1).ToCell(engine));
         }
         throw new PrologRuntimeException("instantiation_error");
     }
@@ -282,32 +280,27 @@ public static class ArithmeticBuiltins
 
         // A BOUND non-integer is a type error regardless of how many
         // arguments are known — the type check precedes the mode check.
-        foreach (Cell c in stackalloc Cell[] { xc, yc, zc })
-            if (c.Tag is not (Tag.Ref or Tag.AttVar) && c.Tag != Tag.Int)
-                throw new PrologRuntimeException("type_error", "integer", engine, c);
-
-        bool xBound = xc.Tag == Tag.Int;
-        bool yBound = yc.Tag == Tag.Int;
-        bool zBound = zc.Tag == Tag.Int;
-        int boundCount = (xBound ? 1 : 0) + (yBound ? 1 : 0) + (zBound ? 1 : 0);
+        // Bignums are integers here: plus/3 relates unbounded values.
+        static System.Numerics.BigInteger? Read(Activation e, Cell c)
+        {
+            if (c.Tag is Tag.Ref or Tag.AttVar) return null;
+            if (c.Tag == Tag.Int) return c.AsInt;
+            if (c.Tag == Tag.BigInt) return e.AsBigInt(c);
+            throw new PrologRuntimeException("type_error", "integer", e, c);
+        }
+        System.Numerics.BigInteger? x = Read(engine, xc);
+        System.Numerics.BigInteger? y = Read(engine, yc);
+        System.Numerics.BigInteger? z = Read(engine, zc);
+        int boundCount = (x is null ? 0 : 1) + (y is null ? 0 : 1) + (z is null ? 0 : 1);
         if (boundCount < 2)
             throw new PrologRuntimeException("instantiation_error");
 
-        if (xBound && yBound)
-        {
-            long sum = checked(xc.AsInt + yc.AsInt);
-            return engine.UnifyRegisterWithCell(2, Cell.Int(sum));
-        }
-        if (xBound && zBound)
-        {
-            long y = checked(zc.AsInt - xc.AsInt);
-            return engine.UnifyRegisterWithCell(1, Cell.Int(y));
-        }
-        // yBound && zBound
-        {
-            long x = checked(zc.AsInt - yc.AsInt);
-            return engine.UnifyRegisterWithCell(0, Cell.Int(x));
-        }
+        if (x is { } xv && y is { } yv)
+            return engine.UnifyRegisterWithCell(2, new Number(xv + yv).ToCell(engine));
+        if (x is { } xv2 && z is { } zv2)
+            return engine.UnifyRegisterWithCell(1, new Number(zv2 - xv2).ToCell(engine));
+        return engine.UnifyRegisterWithCell(
+            0, new Number(z!.Value - y!.Value).ToCell(engine));
     }
 
     private static Number EvaluateA(Activation engine) =>

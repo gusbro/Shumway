@@ -1038,13 +1038,40 @@ internal static class Prelude
 
         %! atomic_list_concat(?List, +Separator, ?Atom) | Atoms & strings | Joins a list of atomics with a separator, or splits an atom on the separator.
         atomic_list_concat(List, Sep, Atom) :-
-            var(List), nonvar(Atom), Sep \== '', !,
+            var(List), nonvar(Atom), nonvar(Sep), Sep \== '', !,
             '$alc_split'(Atom, Sep, List).
-        atomic_list_concat([], _, '').
-        atomic_list_concat([X], _, Atom) :- !, '$atomic_to_atom'(X, Atom).
-        atomic_list_concat([X, Y|Xs], Sep, Atom) :-
+        atomic_list_concat(List, Sep, Atom) :-
+            % Join direction: the list must be proper with atomic elements
+            % and the separator an atom — all checked before concatenating,
+            % so a bad argument errors rather than half-building an atom.
+            '$alc_check_list'(List),
+            (   var(Sep) -> throw(error(instantiation_error, atomic_list_concat/3))
+            ;   atom(Sep) -> true
+            ;   throw(error(type_error(atom, Sep), atomic_list_concat/3))
+            ),
+            (   var(Atom) -> true
+            ;   atom(Atom) -> true
+            ;   throw(error(type_error(atom, Atom), atomic_list_concat/3))
+            ),
+            '$alc_join'(List, Sep, Atom).
+
+        '$alc_check_list'(L) :-
+            (   var(L) -> throw(error(instantiation_error, atomic_list_concat/3))
+            ;   L == [] -> true
+            ;   L = [X|Xs] ->
+                (   var(X) -> throw(error(instantiation_error, atomic_list_concat/3))
+                ;   atomic(X) -> true
+                ;   throw(error(type_error(atomic, X), atomic_list_concat/3))
+                ),
+                '$alc_check_list'(Xs)
+            ;   throw(error(type_error(list, L), atomic_list_concat/3))
+            ).
+
+        '$alc_join'([], _, '').
+        '$alc_join'([X], _, Atom) :- !, '$atomic_to_atom'(X, Atom).
+        '$alc_join'([X, Y|Xs], Sep, Atom) :-
             '$atomic_to_atom'(X, AX),
-            atomic_list_concat([Y|Xs], Sep, Rest),
+            '$alc_join'([Y|Xs], Sep, Rest),
             atom_concat(AX, Sep, P),
             atom_concat(P, Rest, Atom).
 
