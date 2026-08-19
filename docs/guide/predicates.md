@@ -265,6 +265,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `atom_length(+Atom, ?Length)` | Relates an atom to its length in characters. |
 | `atom_number(?Atom, ?Number)` | Converts between an atom and the number it denotes; fails if the atom is not numeric. |
 | `atom_string(?Atom, ?String)` | Converts between an atom and a string. |
+| `atomic_concat(+Atomic1, +Atomic2, -Atom)` | Concatenates two atomic terms into a single atom. |
 | `atomic_list_concat(+List, -Atom)` | Concatenates a list of atomic terms into a single atom. |
 | `atomic_list_concat(?List, +Separator, ?Atom)` | Joins a list of atomics with a separator, or splits an atom on the separator. |
 | `char_code(?Char, ?Code)` | Relates a one-character atom to its character code. |

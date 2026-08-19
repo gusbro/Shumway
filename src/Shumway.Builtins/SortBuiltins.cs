@@ -38,7 +38,16 @@ public static class SortBuiltins
         // improper tail) is type_error(list, L) with the WHOLE argument
         // as culprit — before any element's pair shape is looked at.
         CheckSortListArgument(engine, listStart);
-        CheckPartialListArgument(engine, Resolve(engine, engine.GetRegister(1)));
+        Cell sortedArg = Resolve(engine, engine.GetRegister(1));
+        CheckPartialListArgument(engine, sortedArg);
+        // §8.4.4.3: the SORTED argument's bound elements have to be pairs too.
+        for (Cell sc = sortedArg; sc.Tag == Tag.Lis;
+             sc = Resolve(engine, engine.GetHeap(sc.AsHeapIndex + 1)))
+        {
+            Cell el = Resolve(engine, engine.GetHeap(sc.AsHeapIndex));
+            if (el.Tag is Tag.Ref or Tag.AttVar) continue;
+            ExtractPairKey(engine, el);
+        }
         while (cursor.Tag == Tag.Lis)
         {
             int headIdx = cursor.AsHeapIndex;

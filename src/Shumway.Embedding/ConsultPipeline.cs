@@ -1686,6 +1686,7 @@ internal sealed class ConsultPipeline
                 foreach (var (fid, src) in pendingImports) manifest.Imports[fid] = src;
             if (pendingDiscontiguous is not null) manifest.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
             if (pendingMultifile is not null) manifest.MultifileFunctors.UnionWith(pendingMultifile);
+            E.RecordDeclaredEmpty(pendingDiscontiguous, pendingMultifile);
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
             E._modules[moduleName] = manifest;
@@ -1730,6 +1731,7 @@ internal sealed class ConsultPipeline
                 E.RecordUserImports(existing, pendingImports);
             if (pendingDiscontiguous is not null) existing.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
             if (pendingMultifile is not null) existing.MultifileFunctors.UnionWith(pendingMultifile);
+            E.RecordDeclaredEmpty(pendingDiscontiguous, pendingMultifile);
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes)
                 {

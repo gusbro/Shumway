@@ -918,9 +918,27 @@ public sealed partial class PrologEngine
                     set.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
             }
+            // A `:- discontiguous` / `:- multifile` declaration makes the
+            // predicate exist even with no clauses of its own.
+            set.UnionWith(manifest.DiscontiguousFunctors);
+            set.UnionWith(manifest.MultifileFunctors);
         }
         _staticHeadFunctorsCache = set;
         return set;
+    }
+
+    /// <summary>Functors a `:- discontiguous` / `:- multifile` directive
+    /// declared, host-lifetime. The activation holds this INSTANCE, not a
+    /// copy: Logtalk consults its compiled objects from inside a live query,
+    /// so a declaration seen mid-query has to take effect immediately.</summary>
+    private readonly HashSet<int> _declaredEmptyFids = new();
+
+    internal HashSet<int> DeclaredEmptyFunctors() => _declaredEmptyFids;
+
+    internal void RecordDeclaredEmpty(HashSet<int>? discontiguous, HashSet<int>? multifile)
+    {
+        if (discontiguous is not null) _declaredEmptyFids.UnionWith(discontiguous);
+        if (multifile is not null) _declaredEmptyFids.UnionWith(multifile);
     }
 
     /// <summary>True iff <paramref name="functorId"/> is the functor of any

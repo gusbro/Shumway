@@ -43,6 +43,11 @@ public static class SentenceScanner
             int ci = reader.Read();
             if (ci < 0)
             {
+                // §6.4.1: an UNTERMINATED block comment is a syntax error, so
+                // hand the text to the parser (which reports it) rather than
+                // treating it as layout.
+                if (blockComment)
+                    return sb.ToString();
                 // end_of_file when nothing but layout/comments accumulated —
                 // a trailing-whitespace file must yield end_of_file, not a
                 // syntax error.

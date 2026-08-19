@@ -908,6 +908,14 @@ public static class MetaTransform
         var seen = new HashSet<string>();
         CollectNamedVars(innerGoal, freeVars, seen);
 
+        // §7.8.9: `\+ G` is `(call(G) -> fail ; true)`, so a cut inside G is
+        // LOCAL to it. Spliced bare into the helper's first clause it would
+        // cut the helper itself and take the second clause — the one that
+        // makes the negation succeed — with it, so `\+ ((!, fail))` failed.
+        if (GoalHasLocalCut(innerGoal))
+            innerGoal = new CompoundTerm("call", new[] { innerGoal })
+                { Position = innerGoal.Position };
+
         // Recurse into innerGoal too — a nested \+ inside the negated goal
         // should be transformed before being used as the helper's body.
         innerGoal = TransformGoal(innerGoal, ref counter, helpers);
@@ -969,6 +977,13 @@ public static class MetaTransform
             CollectNamedVars(caret.Args[0], new List<string>(), existential);
             goal = caret.Args[1];
         }
+
+        // §7.6.2 on the goal the ^ wrappers were hiding: `setof(X, X^(true;4), L)`
+        // must raise type_error(callable, (true;4)) before anything runs.
+        if (IsControlConstruct(goal) && HasNumberInGoalPosition(goal))
+            goal = BodyConversionThrow(goal);
+        else if (goal is IntTerm or FloatTerm or BigIntTerm or RationalTerm)
+            goal = BodyConversionThrow(goal);
 
         // Name anonymous variables so they can be collected as witnesses.
         goal = NameAnonymousVars(goal, ref counter);

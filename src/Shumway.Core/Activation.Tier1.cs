@@ -38,6 +38,13 @@ public sealed partial class Activation
     /// live-consult query.</summary>
     public System.Collections.Generic.HashSet<int>? LiveConsultVisibleFids { get; set; }
 
+    /// <summary>functor ids DECLARED by a `:- discontiguous` or
+    /// `:- multifile` directive. Such a predicate is known even with no
+    /// clauses: calling it FAILS rather than raising existence_error,
+    /// whatever the <c>unknown</c> flag says. Installed at query setup;
+    /// null when nothing declared one.</summary>
+    public System.Collections.Generic.HashSet<int>? DeclaredEmptyFids { get; set; }
+
     /// <summary>runtime action for a call to an undefined
     /// procedure (the ISO <c>unknown</c> prolog flag, wired through
     /// dispatch via <see cref="UnknownProcedure.Fails"/>). Set by the

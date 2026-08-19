@@ -65,6 +65,11 @@ public sealed class StreamHandle
     /// Peeks never set this.</summary>
     public bool PastEof { get; set; }
 
+    /// <summary><c>reposition(false)</c> was passed to open/4: the stream
+    /// refuses set_stream_position/2 even when the underlying stream could
+    /// seek. Defaults to true — a seekable file is repositionable.</summary>
+    public bool Repositionable { get; set; } = true;
+
     /// <summary>True once <c>close/1</c> has run; the handle stays
     /// in the registry briefly so an inadvertent second-close can
     /// report <c>existence_error</c> rather than crashing.</summary>

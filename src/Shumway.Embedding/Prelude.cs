@@ -69,6 +69,7 @@ internal static class Prelude
         :- public pairs_keys_values/3.
         :- public predsort/3.
         :- public sort/4.
+        :- public atomic_concat/3.
         :- public atomic_list_concat/2.
         :- public atomic_list_concat/3.
         :- public char_type/2.
@@ -1059,6 +1060,9 @@ internal static class Prelude
             '$alc_concat'(Xs, Rest),
             atom_concat(AX, Rest, Atom).
 
+        %! atomic_concat(+Atomic1, +Atomic2, -Atom) | Atoms & strings | Concatenates two atomic terms into a single atom.
+        atomic_concat(A, B, C) :- atomic_list_concat([A, B], C).
+
         %! atomic_list_concat(?List, +Separator, ?Atom) | Atoms & strings | Joins a list of atomics with a separator, or splits an atom on the separator.
         atomic_list_concat(List, Sep, Atom) :-
             var(List), nonvar(Atom), nonvar(Sep), Sep \== '', !,
@@ -1076,7 +1080,8 @@ internal static class Prelude
             ;   atom(Atom) -> true
             ;   throw(error(type_error(atom, Atom), atomic_list_concat/3))
             ),
-            '$alc_join'(List, Sep, Atom).
+            '$atomic_to_atom'(Sep, SepAtom),
+            '$alc_join'(List, SepAtom, Atom).
 
         '$alc_check_list'(L) :-
             (   var(L) -> throw(error(instantiation_error, atomic_list_concat/3))

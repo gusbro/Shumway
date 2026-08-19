@@ -327,7 +327,19 @@ public static partial class MetaBuiltins
                 "type_error(atom, _)");
 
         string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
-        path = ConsultPipeline.ResolveSourcePath(path);
+        // A relative name resolves against the directory of the file being
+        // loaded, as `:- include/1` does — `:- ensure_loaded(file_1)` inside
+        // dir/main.pl means dir/file_1.pl, not one relative to the CWD.
+        string resolved = ConsultPipeline.ResolveSourcePath(path);
+        if (!System.IO.File.Exists(resolved)
+            && host._consultBaseDir is { } baseDir
+            && !System.IO.Path.IsPathRooted(path))
+        {
+            string rebased = ConsultPipeline.ResolveSourcePath(
+                System.IO.Path.Combine(baseDir, path));
+            if (System.IO.File.Exists(rebased)) resolved = rebased;
+        }
+        path = resolved;
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
                 $"existence_error(source_sink, '{path}')");

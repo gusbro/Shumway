@@ -14,6 +14,19 @@ public static partial class MetaBuiltins
     /// each property in turn, so a bound <c>Property</c> acts as a filter. Head
     /// must be instantiated (ISO instantiation_error / type_error(callable)).
     /// Enough for the SWI/GNU-style introspection Logtalk's compiler relies on.</summary>
+    /// <summary>The property names predicate_property/2 can answer. A bound
+    /// argument outside this set is domain_error(predicate_property, P).</summary>
+    private static bool IsKnownPredicateProperty(Term t) => t switch
+    {
+        AtomTerm a => a.Name is "built_in" or "dynamic" or "static" or "defined"
+            or "multifile" or "discontiguous" or "control_construct"
+            or "logtalk" or "foreign" or "iso" or "deterministic",
+        CompoundTerm { Functor: "imported_from", Args.Length: 1 } => true,
+        CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } => true,
+        CompoundTerm { Functor: "number_of_clauses", Args.Length: 1 } => true,
+        _ => false,
+    };
+
     public static bool PredicateProperty(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -55,6 +68,13 @@ public static partial class MetaBuiltins
             default:
                 throw new ShumwayPrologException(IsoError.TypeError("callable", head));
         }
+        // A bound Property that names no property at all is a domain error
+        // (§predicate_property), not a quiet failure.
+        Term propTerm = MaterializeRegister(engine, 1);
+        if (propTerm is not VarTerm && !IsKnownPredicateProperty(propTerm))
+            throw new ShumwayPrologException(
+                IsoError.DomainError("predicate_property", propTerm));
+
         // M's viewpoint: its own definition; else the import's SOURCE
         // predicate plus imported_from(Source); else the bare-global /
         // builtin the module sees like everyone else.

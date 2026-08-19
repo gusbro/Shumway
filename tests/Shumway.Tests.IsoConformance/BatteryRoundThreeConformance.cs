@@ -241,6 +241,111 @@ public class BatteryRoundThreeConformance
             + "error(permission_error(access, private_procedure, atom/1), _), true).");
     }
 
+    // ---------- round four: the loose ends ----------
+
+    [Fact]
+    public void NegationKeepsItsGoalsCutLocal()
+    {
+        // §7.8.9: `\+ G` is `(call(G) -> fail ; true)`, so the cut inside G
+        // commits within G only — spliced bare into the helper it used to cut
+        // away the very clause that makes the negation succeed.
+        Succeeds("\\+ ((!, fail)).");
+        Succeeds("findall(X, ((X = 1 ; X = 2), \\+ ((!, fail))), L), L == [1, 2].");
+    }
+
+    [Fact]
+    public void DeclaredButUndefinedPredicateIsKnown()
+    {
+        // A `:- discontiguous` / `:- multifile` declaration DEFINES the
+        // predicate as far as current_predicate/1 is concerned, and calling it
+        // fails instead of raising existence_error.
+        var engine = new PrologEngine();
+        engine.ConsultString(":- discontiguous(scat/2). :- multifile(mfe/1).");
+        Assert.False(engine.Query("scat(_, _).").Success);
+        Assert.True(engine.Query("current_predicate(scat/2).").Success);
+        Assert.True(engine.Query("current_predicate(mfe/1).").Success);
+        // An undeclared, undefined predicate still raises.
+        Assert.True(engine.Query(
+            "catch(nosuchpred(_), error(existence_error(procedure, _), _), true).").Success);
+    }
+
+    [Fact]
+    public void ExistentialGoalIsBodyConvertedToo()
+    {
+        // The ^ wrappers hide the goal from the ordinary §7.6.2 check.
+        Succeeds("catch(setof(_X, _A^_A^1, _L), "
+            + "error(type_error(callable, 1), _), true).");
+    }
+
+    [Fact]
+    public void FilesOpenWithoutLockingOtherHandlesOut()
+    {
+        // No other Prolog locks the files it opens, and programs that reopen a
+        // file they already hold open are ordinary.
+        Succeeds("atom_concat('shumway_share_', 'test.tmp', F), "
+            + "open(F, write, S1), write(S1, a), flush_output(S1), "
+            + "open(F, write, S2), write(S2, b), close(S2), close(S1).");
+    }
+
+    [Fact]
+    public void EnsureLoadedResolvesRelativeToTheLoadingFile()
+    {
+        // `:- ensure_loaded(dep)` inside dir/main.pl means dir/dep.pl, the
+        // same rule `:- include/1` follows.
+        string dir = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "shumway_el_" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "dep.pl"), "el_a(1).\n");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "main.pl"),
+                ":- ensure_loaded(dep).\nel_c(3).\n:- ensure_loaded(dep).\n");
+            var engine = new PrologEngine();
+            engine.ConsultFile(System.IO.Path.Combine(dir, "main.pl"));
+            Assert.True(engine.Query("findall(X, el_a(X), L), L == [1].").Success);
+            Assert.True(engine.Query("el_c(3).").Success);
+        }
+        finally { System.IO.Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void StreamOptionsRepeatedAndRepositionFalse()
+    {
+        // A repeated option: the LAST one wins.
+        Succeeds("atom_concat('shumway_opt_', 'test.tmp', F), "
+            + "open(F, write, S, [type(binary), type(text)]), "
+            + "stream_property(S, type(text)), close(S).");
+        // reposition(false) refuses the seek and reports itself.
+        Succeeds("atom_concat('shumway_rep_', 'test.tmp', F), "
+            + "open(F, write, S0, []), close(S0), "
+            + "open(F, read, S, [reposition(false)]), "
+            + "stream_property(S, reposition(false)), "
+            + "catch(set_stream_position(S, 0), "
+            + "  error(permission_error(reposition, stream, _), _), true), close(S).");
+    }
+
+    [Fact]
+    public void MoreArgumentChecks()
+    {
+        Succeeds("catch(keysort([], [1/a]), error(type_error(pair, 1/a), _), true).");
+        Succeeds("catch(predicate_property(atom_chars(_, _), foobar), "
+            + "error(domain_error(predicate_property, foobar), _), true).");
+        Succeeds("catch(op(100, xfx, [a|_]), error(instantiation_error, _), true).");
+        Succeeds("catch(functor(_, t, 18446744073709097979076548489551455463), "
+            + "error(representation_error(max_arity), _), true).");
+        Succeeds("atomic_concat(foo, 42, A), A == foo42.");
+        Succeeds("atomic_list_concat([a, b], 42, X), X == a42b.");
+        Succeeds("current_prolog_flag(min_integer, Lo), Lo < 0, "
+            + "current_prolog_flag(max_integer, Hi), Hi > 0.");
+    }
+
+    [Fact]
+    public void UnterminatedBlockCommentIsASyntaxError()
+    {
+        Succeeds("catch(atom_to_term('/* unterminated', _, _), "
+            + "error(syntax_error(_), _), true).");
+    }
+
     [Fact]
     public void PrintOnAStreamExists()
     {

@@ -147,6 +147,29 @@ public static class StreamBuiltins
         return h;
     }
 
+    /// <summary>Opens a file for text I/O with <c>FileShare.ReadWrite</c>. No
+    /// other Prolog locks the files it opens, and programs that reopen a file
+    /// they already hold open are ordinary — the .NET convenience
+    /// constructors would fail them with a sharing violation.</summary>
+    private static FileStream SharedFileStream(string path, FileMode fm, FileAccess fa)
+        => new(path, fm, fa, FileShare.ReadWrite);
+
+    private static StreamWriter SharedWriter(
+        string path, bool append, System.Text.Encoding? encoding)
+    {
+        var fs = SharedFileStream(
+            path, append ? FileMode.Append : FileMode.Create, FileAccess.Write);
+        return encoding is null
+            ? new StreamWriter(fs) { NewLine = "\n" }
+            : new StreamWriter(fs, encoding) { NewLine = "\n" };
+    }
+
+    private static StreamReader SharedReader(string path, System.Text.Encoding? encoding)
+    {
+        var fs = SharedFileStream(path, FileMode.Open, FileAccess.Read);
+        return encoding is null ? new StreamReader(fs) : new StreamReader(fs, encoding);
+    }
+
     private static StreamHandle ResolveWriter(Activation engine, Cell cell)
     {
         var h = ResolveStream(engine, cell);
@@ -189,9 +212,9 @@ public static class StreamBuiltins
                 ? NullDeviceHandle(id, mode, path, alias: null)
                 : mode switch
             {
-                "write"  => new StreamHandle(id, new StreamWriter(path, append: false) { NewLine = "\n" }, "write", path),
-                "append" => new StreamHandle(id, new StreamWriter(path, append: true) { NewLine = "\n" }, "append", path),
-                "read"   => new StreamHandle(id, new StreamReader(path), "read", path),
+                "write"  => new StreamHandle(id, SharedWriter(path, false, null), "write", path),
+                "append" => new StreamHandle(id, SharedWriter(path, true, null), "append", path),
+                "read"   => new StreamHandle(id, SharedReader(path, null), "read", path),
                 _ => throw new PrologRuntimeException("domain_error",
                     "stream_mode (Phase 1 supports write / append / read)"),
             };
@@ -285,6 +308,7 @@ public static class StreamBuiltins
         // anything else is a stream_option domain error.
         string? alias = null;
         string eofAction = "eof_code";
+        bool repositionable = true;
         bool binary = false;
         System.Text.Encoding? encoding = null;
         Cell cur = optsCell;
@@ -327,8 +351,9 @@ public static class StreamBuiltins
                         throw new PrologRuntimeException(
                             "domain_error", "stream_option", engine, head);
                     string typeName = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
-                    if (typeName == "binary") binary = true;
-                    else if (typeName != "text")
+                    // A repeated option: the LAST one wins.
+                    if (typeName is "binary" or "text") binary = typeName == "binary";
+                    else
                         throw new PrologRuntimeException(
                             "domain_error", "stream_option", engine, head);
                     break;
@@ -376,6 +401,8 @@ public static class StreamBuiltins
                             is not ("true" or "false"))
                         throw new PrologRuntimeException(
                             "domain_error", "stream_option", engine, head);
+                    repositionable =
+                        AtomTable.GetById(argCell.AsAtomId)?.Name == "true";
                     break;
                 default:
                     throw new PrologRuntimeException(
@@ -430,7 +457,7 @@ public static class StreamBuiltins
                         "domain_error", "io_mode", engine, modeCell),
                 };
                 FileAccess fa = mode == "read" ? FileAccess.Read : FileAccess.Write;
-                handle = new StreamHandle(id, new FileStream(path, fm, fa),
+                handle = new StreamHandle(id, SharedFileStream(path, fm, fa),
                     mode, path, alias);
             }
             else
@@ -440,20 +467,11 @@ public static class StreamBuiltins
                 handle = mode switch
                 {
                     "write"  => new StreamHandle(id,
-                        encoding is null
-                            ? new StreamWriter(path, append: false) { NewLine = "\n" }
-                            : new StreamWriter(path, false, encoding) { NewLine = "\n" },
-                        "write", path, alias),
+                        SharedWriter(path, false, encoding), "write", path, alias),
                     "append" => new StreamHandle(id,
-                        encoding is null
-                            ? new StreamWriter(path, append: true) { NewLine = "\n" }
-                            : new StreamWriter(path, true, encoding) { NewLine = "\n" },
-                        "append", path, alias),
+                        SharedWriter(path, true, encoding), "append", path, alias),
                     "read"   => new StreamHandle(id,
-                        encoding is null
-                            ? new StreamReader(path)
-                            : new StreamReader(path, encoding),
-                        "read", path, alias),
+                        SharedReader(path, encoding), "read", path, alias),
                     _ => throw new PrologRuntimeException(
                         "domain_error", "io_mode", engine, modeCell),
                 };
@@ -473,6 +491,7 @@ public static class StreamBuiltins
         }
 
         handle.EofAction = eofAction;
+        handle.Repositionable = repositionable;
         registry.Add(handle);
         return engine.UnifyRegisterWithCell(2, MakeStreamTerm(engine, handle));
     }

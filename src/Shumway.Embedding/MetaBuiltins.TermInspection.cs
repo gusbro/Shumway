@@ -98,6 +98,15 @@ public static partial class MetaBuiltins
                 throw new ShumwayPrologException(IsoError.InstantiationError());
             Term nameTerm = MaterializeRegister(engine, 1);
             Term arityTerm = MaterializeRegister(engine, 2);
+            if (a.Tag == Tag.BigInt)
+            {
+                // A bignum IS an integer: negative is a domain error, positive
+                // is simply past max_arity.
+                throw new ShumwayPrologException(
+                    engine.AsBigInt(a).Sign < 0
+                        ? IsoError.DomainError("not_less_than_zero", arityTerm)
+                        : IsoError.RepresentationError("max_arity"));
+            }
             if (a.Tag != Tag.Int)
                 throw new ShumwayPrologException(
                     IsoError.TypeError("integer", arityTerm));

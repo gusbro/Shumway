@@ -29,6 +29,10 @@ public static class UnknownProcedure
     /// <c>existence_error</c> when the flag is <c>error</c>.</summary>
     public static bool Fails(Activation engine, int functorId)
     {
+        // A `:- discontiguous` / `:- multifile` declaration makes the
+        // predicate KNOWN even before any clause exists, so the call fails
+        // instead of raising — independently of the `unknown` flag.
+        if (engine.DeclaredEmptyFids?.Contains(functorId) == true) return true;
         switch (engine.OnUnknown)
         {
             case UnknownAction.Fail:

@@ -137,7 +137,8 @@ public static partial class MetaBuiltins
                     new Term[] { new AtomTerm(h.IsBinary ? "binary" : "text") })));
             if (Want("reposition"))
                 pairs.Add((h, new CompoundTerm("reposition",
-                    new Term[] { new AtomTerm(pos.HasValue ? "true" : "false") })));
+                    new Term[] { new AtomTerm(
+                        pos.HasValue && h.Repositionable ? "true" : "false") })));
             if (h.IsReader && Want("eof_action"))
                 pairs.Add((h, new CompoundTerm("eof_action",
                     new Term[] { new AtomTerm(h.EofAction) })));
@@ -212,8 +213,16 @@ public static partial class MetaBuiltins
         if (posCell.Tag == Tag.Ref)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (posCell.Tag != Tag.Int)
-            throw new Shumway.Core.PrologRuntimeException("domain_error", "stream_position");
+            throw new Shumway.Core.PrologRuntimeException(
+                "domain_error", "stream_position", engine, posCell);
         long target = posCell.AsInt;
+
+        // §8.11.7.3: `open(…, [reposition(false)])` refuses the seek even when
+        // the underlying stream could do it.
+        if (!h.Repositionable)
+            throw new Shumway.Core.PrologRuntimeException(
+                "permission_error", "reposition,stream", engine,
+                Shumway.Builtins.StreamBuiltins.MakeStreamTerm(engine, h));
 
         // Text read stream — reposition through the char-count tracker.
         if (h.Reader is Shumway.Core.PositionTrackingReader ptr
@@ -510,7 +519,10 @@ public static partial class MetaBuiltins
             Term pair = new CompoundTerm("=",
                 new Term[] { new AtomTerm(nm), new VarTerm(nm) });
             vnList = new CompoundTerm(".", new Term[] { pair, vnList });
-            if (counts[nm] == 1 && !nm.StartsWith("_"))
+            // `_X` IS a singleton for read_term/2,3: only `_` itself is
+            // anonymous. (The compiler's singleton WARNING is the place where
+            // a leading underscore means "deliberately unused" — not here.)
+            if (counts[nm] == 1)
                 singList = new CompoundTerm(".", new Term[] { pair, singList });
         }
 

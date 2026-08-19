@@ -410,6 +410,18 @@ public static partial class MetaBuiltins
             case "debug":
                 return UnifyAtom(engine, 1, host.Flags.Debug ? "on" : "off");
 
+            case "min_integer":
+                // ISO only requires these when `bounded` is true, and Shumway
+                // is unbounded — but SWI reports them anyway and portable code
+                // probes them (lgtunit's quick-check generator does). The
+                // answer is the INLINE fixnum range (ADR-002's 60-bit
+                // payload) — anything past it is a BigInt, which is exactly
+                // what "unbounded" means here.
+                return engine.UnifyRegisterWithCell(1, Cell.Int(Cell.MinInt60));
+
+            case "max_integer":
+                return engine.UnifyRegisterWithCell(1, Cell.Int(Cell.MaxInt60));
+
             case "max_arity":
                 // ISO requires this be either an integer or
                 // unbounded. Shumway's WAM register layout limits
@@ -430,7 +442,8 @@ public static partial class MetaBuiltins
     /// the value is produced by the same bound-name switch.</summary>
     private static readonly string[] EnumerableFlags =
     {
-        "bounded", "max_arity", "integer_rounding_function",
+        "bounded", "max_arity", "min_integer", "max_integer",
+        "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
         "debug", "dialect", "library_dialect", "version_data", "argv", "pid",
         "implicit_dynamic", "arity_compat",
