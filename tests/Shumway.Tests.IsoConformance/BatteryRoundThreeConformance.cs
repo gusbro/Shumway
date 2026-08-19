@@ -346,6 +346,55 @@ public class BatteryRoundThreeConformance
             + "error(syntax_error(_), _), true).");
     }
 
+    // ---------- §7.6.2 clause conversion at store time ----------
+
+    [Fact]
+    public void StoredClauseBodyIsTheConvertedOne()
+    {
+        // A clause enters the database converted, so a variable in goal
+        // position comes back out of clause/2 as call(V). Both the asserted
+        // and the source-declared route (GNU and SWI agree exactly).
+        var engine = new PrologEngine();
+        engine.ConsultString(":- dynamic(legs/2).\nlegs(A, 7) :- A, call(A).\n");
+        Assert.True(engine.Query(
+            "clause(legs(_, 7), B), B = ','(call(X), call(X)).").Success);
+        Assert.True(engine.Query(
+            "assertz((q(X) :- X, call(X))), clause(q(_), B), "
+            + "B = ','(call(Y), call(Y)).").Success);
+    }
+
+    [Fact]
+    public void ConversionDescendsTheControlSkeletonOnly()
+    {
+        // §7.6.2 covers ','/2, ';'/2 and '->'/2. `\+` is NOT converted —
+        // GNU Prolog, the reference here, leaves it alone (SWI does convert
+        // it, and *-> too).
+        Succeeds("assertz((r1(X) :- (X ; true))), clause(r1(_), B), "
+            + "B = ';'(call(_), true).");
+        Succeeds("assertz((r2(X,Y,Z) :- (X -> Y ; Z))), clause(r2(_,_,_), B), "
+            + "B = ';'('->'(call(_), call(_)), call(_)).");
+        Succeeds("assertz((r3(X) :- \\+ X)), clause(r3(_), B), "
+            + "B = \\+(V), var(V).");
+        // A non-callable body is still rejected outright.
+        Succeeds("catch(assertz((r4 :- 3)), error(type_error(callable, 3), _), true).");
+    }
+
+    [Fact]
+    public void RetractMatchesTheConvertedFormAndTheWrittenOne()
+    {
+        // The pattern goes through the same conversion, so the text that
+        // assertz stored is the text retract takes back…
+        Succeeds("assertz((z1(X) :- X, call(X))), retract((z1(Y) :- Y, call(Y))).");
+        // …the converted form matches too (the clause/2 round trip)…
+        Succeeds("assertz((z2(X) :- X, call(X))), clause(z2(W), B), "
+            + "retract((z2(W) :- B)).");
+        // …and a body that is a bare VARIABLE stays the pattern's wildcard,
+        // not a goal to convert: it must still match anything.
+        Succeeds("assertz((z3(X) :- X, call(X))), retract((z3(_) :- Body)), "
+            + "Body = ','(call(_), call(_)).");
+        Succeeds("assertz((z4 :- true)), retract((z4 :- B)), B == true.");
+    }
+
     [Fact]
     public void PrintOnAStreamExists()
     {

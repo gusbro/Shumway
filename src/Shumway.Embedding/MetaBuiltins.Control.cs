@@ -815,9 +815,81 @@ public static partial class MetaBuiltins
         // heap address that's BELOW the CP's saved heap top — so
         // it survives the backtrack truncation. Capturing it once
         // here side-steps the register-clobber.
+        // §7.6.2 — the stored clause is the CONVERTED one, so the pattern has
+        // to be converted the same way or `retract((p(X) :- X, call(X)))` would
+        // stop matching what `assertz` of the same text just stored. A body
+        // that is a bare VARIABLE stays as it is: it is the pattern's wildcard
+        // (`retract((p(_) :- Body))`), not a goal to convert. GNU and SWI both
+        // behave exactly this way.
+        patternHeap = ConvertRetractPattern(engine, patternHeap);
+
         return RetractStep(engine, host, patternFid, candidates, returnPc,
             patternHeap);
     }
+
+    /// <summary>Rebuilds the retract pattern with §7.6.2 applied to its body,
+    /// sharing every leaf with the original so bindings still reach the
+    /// caller. Returns <paramref name="patternHeap"/> unchanged when the body
+    /// needs no conversion, which is the overwhelmingly common case.</summary>
+    private static int ConvertRetractPattern(Activation engine, int patternHeap)
+    {
+        Cell pat = engine.GetHeap(engine.Deref(patternHeap));
+        if (pat.Tag != Tag.Str) return patternHeap;
+        int sa = pat.AsHeapIndex;
+        Cell f = engine.GetHeap(sa);
+        if (f.Tag != Tag.Functor) return patternHeap;
+        var (atomId, arity) = FunctorTable.Lookup(f.AsFunctorId);
+        if (arity != 2 || AtomTable.GetById(atomId)?.Name != ":-") return patternHeap;
+
+        Cell body = ResolveLocal(engine, engine.GetHeap(sa + 1));
+        Cell converted = ConvertBodyCell(engine, body, topLevel: true);
+        if (converted.Equals(body)) return patternHeap;
+
+        int rebuilt = engine.AllocateHeap(3);
+        engine.SetHeap(rebuilt, f);
+        engine.SetHeap(rebuilt + 1, engine.GetHeap(sa + 1));
+        engine.SetHeap(rebuilt + 2, converted);
+        int home = engine.AllocateHeap(1);
+        engine.SetHeap(home, Cell.Str(rebuilt));
+        return home;
+    }
+
+    /// <summary>§7.6.2 on a body already on the heap: a variable goal becomes
+    /// <c>call(V)</c> (sharing V), and the control skeleton `,` / `;` / `-&gt;`
+    /// is descended. Everything else — and a top-level variable when
+    /// <paramref name="topLevel"/> — is returned as is.</summary>
+    private static Cell ConvertBodyCell(Activation engine, Cell body, bool topLevel)
+    {
+        if (body.Tag is Tag.Ref or Tag.AttVar)
+        {
+            if (topLevel) return body;
+            int callBase = engine.AllocateHeap(2);
+            engine.SetHeap(callBase, Cell.Functor(CallOneFunctorId));
+            engine.SetHeap(callBase + 1, body);
+            return Cell.Str(callBase);
+        }
+        if (body.Tag != Tag.Str) return body;
+        int sa = body.AsHeapIndex;
+        Cell f = engine.GetHeap(sa);
+        if (f.Tag != Tag.Functor) return body;
+        var (atomId, arity) = FunctorTable.Lookup(f.AsFunctorId);
+        if (arity != 2) return body;
+        if (AtomTable.GetById(atomId)?.Name is not ("," or ";" or "->")) return body;
+
+        Cell l = ResolveLocal(engine, engine.GetHeap(sa + 1));
+        Cell r = ResolveLocal(engine, engine.GetHeap(sa + 2));
+        Cell nl = ConvertBodyCell(engine, l, topLevel: false);
+        Cell nr = ConvertBodyCell(engine, r, topLevel: false);
+        if (nl.Equals(l) && nr.Equals(r)) return body;
+        int b = engine.AllocateHeap(3);
+        engine.SetHeap(b, f);
+        engine.SetHeap(b + 1, nl);
+        engine.SetHeap(b + 2, nr);
+        return Cell.Str(b);
+    }
+
+    private static readonly int CallOneFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("call", permanent: true).Id, 1);
 
     /// <summary>Reads the pattern's head functor id straight from the
     /// heap. Mirrors the ISO callability check in

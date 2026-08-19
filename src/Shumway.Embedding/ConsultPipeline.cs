@@ -1477,6 +1477,10 @@ internal sealed class ConsultPipeline
                         bool isMultifile = pendingMultifile?.Contains(fid) == true;
                         if (isMultifile && moduleName != PrologEngine.DefaultModuleName)
                             c = ModuleRewrite.Rewrite(c, MultifileCtx());
+                        // §7.6.2 — a source-declared clause for a dynamic
+                        // predicate enters the database in its CONVERTED form,
+                        // exactly as an assertz'd one does.
+                        c = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(c);
                         E._dynStore.Slot(fid).Add(c);
                         // ADR-023 — a CONSULT-borne clause is a mutation of the
                         // dynamic predicate exactly like a runtime assertz, and

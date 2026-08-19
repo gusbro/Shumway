@@ -22,6 +22,7 @@ public sealed partial class PrologEngine
     /// extraction's string intern).</summary>
     internal int Assertz(Clause clause)
     {
+        clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
         GetOrCreateDynamicSlot(fid).Add(clause);
@@ -33,6 +34,7 @@ public sealed partial class PrologEngine
     /// dynamic clause list. Returns the head's functor id.</summary>
     internal int Asserta(Clause clause)
     {
+        clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
         GetOrCreateDynamicSlot(fid).Insert(0, clause);
