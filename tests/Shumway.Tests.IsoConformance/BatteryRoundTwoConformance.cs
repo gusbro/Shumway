@@ -315,6 +315,34 @@ public class BatteryRoundTwoConformance
             + "error(instantiation_error, _), true).");
     }
 
+    [Fact]
+    public void AtomBuiltins_CheckEveryBoundArgument()
+    {
+        Succeeds("catch(atom_length(1.23, _), error(type_error(atom, 1.23), _), true).");
+        Succeeds("catch(atom_length(abc, '4'), error(type_error(integer, '4'), _), true).");
+        Succeeds("catch(atom_length(abc, -4), "
+            + "error(domain_error(not_less_than_zero, -4), _), true).");
+        Succeeds("catch(atom_concat(a, f(a), _), error(type_error(atom, f(a)), _), true).");
+        Succeeds("catch(atom_concat(foo, 42, _), error(type_error(atom, 42), _), true).");
+        Succeeds("catch(char_code(a, x), error(type_error(integer, x), _), true).");
+        Succeeds("catch(between(a, 2, _), error(type_error(integer, a), _), true).");
+        Succeeds("atom_length(hello, 5), atom_concat(he, llo, hello), between(1, 3, 2).");
+    }
+
+    [Fact]
+    public void CurrentOp_ValidatesItsArguments()
+    {
+        // §8.14.4.3 — a bound argument is checked before the enumeration.
+        Succeeds("catch(current_op(1201, xfx, _), "
+            + "error(domain_error(operator_priority, 1201), _), true).");
+        Succeeds("catch(current_op(_, yfy, _), "
+            + "error(domain_error(operator_specifier, yfy), _), true).");
+        Succeeds("catch(current_op(_, 0, _), error(type_error(atom, 0), _), true).");
+        Succeeds("catch(current_op(_, _, 5), error(type_error(atom, 5), _), true).");
+        Succeeds("catch(current_op(a, _, _), error(type_error(integer, a), _), true).");
+        Succeeds("current_op(P, xfx, =), P == 700.");
+    }
+
     // ---------- standard order of terms ----------
 
     [Fact]

@@ -163,6 +163,13 @@ public static class ArithmeticBuiltins
         Cell lo = Resolve(engine, engine.GetRegister(0));
         Cell hi = Resolve(engine, engine.GetRegister(1));
         Cell x = Resolve(engine, engine.GetRegister(2));
+        // Bound-but-wrong beats unbound: between(a, 2, _) is
+        // type_error(integer, a), not an instantiation_error.
+        foreach (Cell c in stackalloc Cell[] { lo, hi })
+            if (c.Tag is not (Tag.Ref or Tag.AttVar) && c.Tag is not (Tag.Int or Tag.BigInt))
+                throw new PrologRuntimeException("type_error", "integer", engine, c);
+        if (x.Tag is not (Tag.Ref or Tag.AttVar) && x.Tag is not (Tag.Int or Tag.BigInt))
+            throw new PrologRuntimeException("type_error", "integer", engine, x);
         if (lo.Tag != Tag.Int || hi.Tag != Tag.Int)
             throw new PrologRuntimeException(
                 "instantiation_error",

@@ -819,6 +819,7 @@ public static partial class MetaBuiltins
         string mod = modCell.Tag == Tag.Atom
             ? AtomTable.GetById(modCell.AsAtomId)?.Name ?? PrologEngine.DefaultModuleName
             : PrologEngine.DefaultModuleName;
+        ValidateCurrentOpArgs(engine, regBase: 1);
         var ops = host.ModuleOperatorLayer(mod).Enumerate().ToArray();
         int rp = engine.BuiltinReturnPc;
         return IndexEnumCursor.Start(engine, ops.Length, 4, rp,
@@ -963,12 +964,45 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "current_op/3 requires the engine to be hosted by a PrologEngine.");
 
+        ValidateCurrentOpArgs(engine, regBase: 0);
         // Snapshot the current operator set so backtracking iteration
         // sees a stable view even if op/3 mutates the table mid-enum.
         var ops = host.EnumerateOperators().ToArray();
         int returnPc = engine.BuiltinReturnPc;
         return IndexEnumCursor.Start(engine, ops.Length, 3, returnPc,  // arity 3 (current_op/3)
             (e, i) => CurrentOpUnify(e, ops, i));
+    }
+
+    /// <summary>§8.14.4.3: a BOUND argument of current_op/3 is checked —
+    /// the priority must be an integer in 0..1200, the specifier one of
+    /// the seven operator types, and the name an atom.</summary>
+    private static void ValidateCurrentOpArgs(Activation engine, int regBase)
+    {
+        Cell p = ResolveLocal(engine, engine.GetRegister(regBase));
+        if (p.Tag is not (Tag.Ref or Tag.AttVar))
+        {
+            if (p.Tag != Tag.Int)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("integer", MaterializeRegister(engine, regBase)));
+            if (p.AsInt < 0 || p.AsInt > 1200)
+                throw new ShumwayPrologException(IsoError.DomainError(
+                    "operator_priority", MaterializeRegister(engine, regBase)));
+        }
+        Cell t = ResolveLocal(engine, engine.GetRegister(regBase + 1));
+        if (t.Tag is not (Tag.Ref or Tag.AttVar))
+        {
+            if (t.Tag != Tag.Atom)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("atom", MaterializeRegister(engine, regBase + 1)));
+            string tn = AtomTable.GetById(t.AsAtomId)?.Name ?? "";
+            if (tn is not ("fx" or "fy" or "xf" or "yf" or "xfx" or "xfy" or "yfx"))
+                throw new ShumwayPrologException(IsoError.DomainError(
+                    "operator_specifier", MaterializeRegister(engine, regBase + 1)));
+        }
+        Cell n = ResolveLocal(engine, engine.GetRegister(regBase + 2));
+        if (n.Tag is not (Tag.Ref or Tag.AttVar) && n.Tag != Tag.Atom)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("atom", MaterializeRegister(engine, regBase + 2)));
     }
 
     private static bool CurrentOpUnify(

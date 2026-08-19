@@ -463,6 +463,12 @@ public static class AtomListBuiltins
         }
 
         Cell cCell = Resolve(engine, engine.GetRegister(2));
+        // §8.16.2.3: a BOUND non-atom in A or B is type_error(atom, X)
+        // with that argument as culprit, before the C-driven split.
+        foreach (Cell abc in stackalloc Cell[] { aCell, bCell })
+            if (abc.Tag is not (Tag.Ref or Tag.AttVar) && abc.Tag != Tag.Atom
+                && !SwiLenient.IsBoundAtomic(abc))
+                throw new PrologRuntimeException("type_error", "atom", engine, abc);
         if (cCell.Tag != Tag.Atom)
         {
             // ISO §8.16.2: if C is var, neither direction can drive
@@ -478,7 +484,13 @@ public static class AtomListBuiltins
             }
             Shumway.Core.Diagnostics.ChoicePointTrace.DumpAtSite(
                 engine, "atom_concat/3 type_error(atom)");
-            throw new PrologRuntimeException("type_error", "atom");
+            // The culprit is the first argument that is bound but not an
+            // atom — A, then B, then C.
+            Cell culprit =
+                aCell.Tag is not (Tag.Ref or Tag.AttVar) && aCell.Tag != Tag.Atom ? aCell
+                : bCell.Tag is not (Tag.Ref or Tag.AttVar) && bCell.Tag != Tag.Atom ? bCell
+                : cCell;
+            throw new PrologRuntimeException("type_error", "atom", engine, culprit);
         }
 
         string cName = AtomTable.GetById(cCell.AsAtomId)?.Name ?? "";

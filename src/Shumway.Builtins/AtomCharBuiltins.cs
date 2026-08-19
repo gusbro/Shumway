@@ -28,16 +28,28 @@ public static class AtomCharBuiltins
     public static bool AtomLength(Activation engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
-        // ISO §8.16.1.3: Atom var → instantiation_error; not atom → type_error(atom, Atom).
-        if (atomCell.Tag == Tag.Ref)
+        // ISO §8.16.1.3: Atom var → instantiation_error; not atom →
+        // type_error(atom, Atom); a bound Length must be a non-negative
+        // integer (checked whatever the atom looks like).
+        if (atomCell.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
+        Cell lenCell = Resolve(engine, engine.GetRegister(1));
+        if (lenCell.Tag is not (Tag.Ref or Tag.AttVar))
+        {
+            if (lenCell.Tag != Tag.Int)
+                throw new PrologRuntimeException(
+                    "type_error", "integer", engine, lenCell);
+            if (lenCell.AsInt < 0)
+                throw new PrologRuntimeException(
+                    "domain_error", "not_less_than_zero", engine, lenCell);
+        }
         if (atomCell.Tag != Tag.Atom)
         {
             // SWI accepts any atomic (a number/string) and returns the length of
             // its text; ISO raises type_error(atom). Only for an SWI caller.
             if (SwiLenient.TryCoerce(engine, atomCell, out string coerced))
                 return engine.UnifyRegisterWithCell(1, Cell.Int(coerced.Length));
-            throw new PrologRuntimeException("type_error", "atom");
+            throw new PrologRuntimeException("type_error", "atom", engine, atomCell);
         }
         string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         return engine.UnifyRegisterWithCell(1, Cell.Int(name.Length));
@@ -139,6 +151,10 @@ public static class AtomCharBuiltins
     {
         Cell charCell = Resolve(engine, engine.GetRegister(0));
         Cell codeCell = Resolve(engine, engine.GetRegister(1));
+        // §8.16.5.3.c: a BOUND non-integer Code is type_error(integer, C),
+        // checked even when Char is a usable character.
+        if (codeCell.Tag is not (Tag.Ref or Tag.AttVar) && codeCell.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer", engine, codeCell);
 
         if (charCell.Tag == Tag.Atom)
         {
@@ -831,10 +847,12 @@ public static class AtomCharBuiltins
             else
             {
                 if (head.Tag != Tag.Atom)
-                    throw new PrologRuntimeException("type_error", "character");
+                    throw new PrologRuntimeException(
+                        "type_error", "character", engine, head);
                 string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
                 if (name.Length != 1)
-                    throw new PrologRuntimeException("type_error", "character");
+                    throw new PrologRuntimeException(
+                        "type_error", "character", engine, head);
                 if (!hasUnbound) sb.Append(name[0]);
             }
             cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
