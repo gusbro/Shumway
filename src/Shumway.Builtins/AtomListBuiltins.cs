@@ -337,6 +337,13 @@ public static class AtomListBuiltins
         if (atomCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+            // With BOTH arguments bound the list is still type-checked
+            // (§8.16.5.3): atom_codes(abc, [a,b,c]) is
+            // type_error(integer, a), not a silent failure.
+            // Only a PROPER list is validated-and-compared: a partial
+            // one (atom_codes(abc, [0'a|T])) must still unify.
+            if (IsProperListCell(engine, codesCell))
+                return ReadCodesString(engine, codesCell) == name;
             int listIdx = BuildIntCodesList(engine, name);
             return engine.UnifyRegisterWithHeapAt(1, listIdx);
         }
@@ -352,7 +359,7 @@ public static class AtomListBuiltins
         // number/string to its text and yields its codes.
         if (SwiLenient.TryCoerce(engine, atomCell, out string coerced))
             return engine.UnifyRegisterWithHeapAt(1, BuildIntCodesList(engine, coerced));
-        throw new PrologRuntimeException("type_error", "atom");
+        throw new PrologRuntimeException("type_error", "atom", engine, atomCell);
     }
 
     private static int BuildIntCodesList(Activation engine, string s)
@@ -379,9 +386,14 @@ public static class AtomListBuiltins
     private static string ReadCodesString(Activation engine, Cell codesCell)
     {
         var sb = new StringBuilder();
-        Cell cursor = Resolve(engine, codesCell);
-        if (cursor.Tag == Tag.Ref)
+        Cell listStart = Resolve(engine, codesCell);
+        Cell cursor = listStart;
+        if (cursor.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
+        // A bound non-list is type_error(list, L) before any element.
+        if (cursor.Tag is not (Tag.Lis or Tag.Pstr)
+            && !(cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId))
+            throw new PrologRuntimeException("type_error", "list", engine, listStart);
         while (true)
         {
             // A PSTR is a code list; consume its text and continue at its
@@ -396,7 +408,8 @@ public static class AtomListBuiltins
             if (head.Tag == Tag.Ref)
                 throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Int)
-                throw new PrologRuntimeException("type_error", "character_code");
+                throw new PrologRuntimeException(
+                    "type_error", "integer", engine, head);
             // BMP-only, same contract as char_code/2: silently casting would
             // BUILD A DIFFERENT CHARACTER (0x10400 → 0x400).
             if (head.AsInt < 0 || head.AsInt > char.MaxValue)
@@ -408,7 +421,7 @@ public static class AtomListBuiltins
         if (cursor.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            throw new PrologRuntimeException("type_error", "list");
+            throw new PrologRuntimeException("type_error", "list", engine, listStart);
         return sb.ToString();
     }
 
@@ -548,4 +561,23 @@ public static class AtomListBuiltins
         int addr = engine.Deref(c.AsHeapIndex);
         return engine.GetHeap(addr);
     }
+    /// <summary>True when a bound second argument is fully GROUND as a
+    /// list — every element bound and the tail nil (or improper). Only
+    /// then is it type-checked and compared against the atom's text; a
+    /// partial list, or one holding unbound elements, is the generate
+    /// direction and must unify instead (atom_codes(A, [X]) after
+    /// atom_codes(A, [0'x]) binds X).</summary>
+    private static bool IsProperListCell(Activation engine, Cell c)
+    {
+        Cell cur = Resolve(engine, c);
+        int guard = engine.HeapTop + 2;
+        while (cur.Tag == Tag.Lis && guard-- > 0)
+        {
+            Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
+            if (head.Tag is Tag.Ref or Tag.AttVar) return false;
+            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        }
+        return cur.Tag is not (Tag.Ref or Tag.AttVar);
+    }
+
 }

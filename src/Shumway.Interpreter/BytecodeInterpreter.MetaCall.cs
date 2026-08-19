@@ -213,6 +213,80 @@ public sealed partial class BytecodeInterpreter
     /// builtin runs directly, a user/prelude predicate runs via
     /// <see cref="RunGoalInEngine"/>. An undefined predicate raises an
     /// existence error.</summary>
+    /// <summary>§7.8.3 body conversion for a control construct whose two
+    /// arguments sit in X0/X1 (the shape DispatchCall has built by the
+    /// time it routes). A non-callable in either branch makes the WHOLE
+    /// reconstructed goal the type_error culprit.</summary>
+    private void CheckControlGoalFromRegisters(int atomId)
+    {
+        Cell a = DerefCell(_engine.GetRegister(0));
+        Cell b = DerefCell(_engine.GetRegister(1));
+        if (IsBodyConvertible(a) && IsBodyConvertible(b)) return;
+        // Rebuild ','(A, B) so the ball names the goal the caller wrote.
+        int fid = Shumway.Core.FunctorTable.Intern(atomId, 2);
+        int strBase = _engine.AllocateHeap(3);
+        _engine.SetHeap(strBase, Cell.Functor(fid));
+        _engine.SetHeap(strBase + 1, a);
+        _engine.SetHeap(strBase + 2, b);
+        throw new PrologRuntimeException(
+            "type_error", "callable", _engine, Cell.Str(strBase));
+    }
+
+    private bool IsBodyConvertible(Cell c)
+    {
+        c = DerefCell(c);
+        switch (c.Tag)
+        {
+            case Tag.Ref:
+            case Tag.AttVar:
+            case Tag.Atom:
+                return true;
+            case Tag.Str:
+            {
+                int fIdx = c.AsHeapIndex;
+                var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
+                    _engine.GetHeap(fIdx).AsFunctorId);
+                if (ar == 2 && Shumway.Core.AtomTable.GetById(aid)?.Name
+                        is "," or ";" or "->" or "*->")
+                    return IsBodyConvertible(_engine.GetHeap(fIdx + 1))
+                        && IsBodyConvertible(_engine.GetHeap(fIdx + 2));
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>The same §7.8.3 check for a goal still in TERM form (the
+    /// in-engine meta-call path).</summary>
+    private void CheckBodyConvertible(Cell part, Cell whole)
+    {
+        Cell c = DerefCell(part);
+        switch (c.Tag)
+        {
+            case Tag.Ref:
+            case Tag.AttVar:
+            case Tag.Atom:
+                return;
+            case Tag.Str:
+            {
+                int fIdx = c.AsHeapIndex;
+                var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
+                    _engine.GetHeap(fIdx).AsFunctorId);
+                if (ar == 2 && Shumway.Core.AtomTable.GetById(aid)?.Name
+                        is "," or ";" or "->" or "*->")
+                {
+                    CheckBodyConvertible(_engine.GetHeap(fIdx + 1), whole);
+                    CheckBodyConvertible(_engine.GetHeap(fIdx + 2), whole);
+                }
+                return;
+            }
+            default:
+                throw new PrologRuntimeException(
+                    "type_error", "callable", _engine, whole);
+        }
+    }
+
     private bool MetaCallInEngine(ProgramView code, Cell goal)
     {
         goal = DerefCell(goal);
@@ -242,8 +316,15 @@ public sealed partial class BytecodeInterpreter
         }
 
         if (functorId == ConjFunctorId)
+        {
+            // §7.8.3: converting the goal to a body must succeed BEFORE
+            // any of it runs — call((fail, 3)) is
+            // type_error(callable, (fail,3)), with the WHOLE goal as the
+            // culprit, and `fail` never executes.
+            CheckBodyConvertible(goal, goal);
             return MetaCallInEngine(code, _engine.GetHeap(argBase))
                 && MetaCallInEngine(code, _engine.GetHeap(argBase + 1));
+        }
         if (functorId == TrueFunctorId) return true;
         if (functorId == FailFunctorId) return false;
 
@@ -377,6 +458,14 @@ public sealed partial class BytecodeInterpreter
         // A module-tagged goal bypasses the route cache: its resolution depends
         // on the module too, and the tagged path is the (uncommon) variable
         // meta-call, not the hot direct-call path.
+        // §7.8.3: a control construct's arguments must convert to a body
+        // BEFORE any of it runs — call((fail, 3)) and call(',', fail, 3)
+        // are both type_error(callable, (fail,3)), and `fail` must not
+        // execute first. Checked here (not after the route cache) so the
+        // cached path is covered too.
+        if (totalArity == 2 && Shumway.Core.AtomTable.GetById(atomId)?.Name
+                is "," or ";" or "->" or "*->")
+            CheckControlGoalFromRegisters(atomId);
         bool routeCacheable = resolutionModule < 0 && (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits
         long routeKey = ((long)atomId << 16) | (uint)totalArity;
         if (routeCacheable && cache.TryGetValue(routeKey, out var route))

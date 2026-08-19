@@ -258,6 +258,26 @@ public class BatteryRoundTwoConformance
             + "with_output_to(atom(A), write(L)), atom_length(A, _).");
     }
 
+    [Fact]
+    public void AtomTextConversions_CheckBoundListsBothWays()
+    {
+        // With BOTH arguments bound the list is still type-checked
+        // (§8.16.4/8.16.5) — but only when it is fully ground: a partial
+        // list, or one holding unbound elements, is the generate
+        // direction and must unify.
+        Succeeds("catch(atom_codes(abc, [a,b,c]), "
+            + "error(type_error(integer, a), _), true).");
+        Succeeds("catch(atom_codes('ABC', [66|67]), "
+            + "error(type_error(list, [66|67]), _), true).");
+        Succeeds("catch(atom_chars(abc, ['A'|'B']), "
+            + "error(type_error(list, ['A'|'B']), _), true).");
+        Succeeds("catch(atom_codes(f(a), _), error(type_error(atom, f(a)), _), true).");
+        // Generate directions still work.
+        Succeeds("atom_codes(abc, [0'a|T]), T == [0'b, 0'c].");
+        Succeeds("atom_codes(A, [0'a]), atom_codes(A, [Y]), Y == 0'a.");
+        Succeeds("atom_chars(abc, L), L == [a,b,c].");
+    }
+
     // ---------- standard order of terms ----------
 
     [Fact]
