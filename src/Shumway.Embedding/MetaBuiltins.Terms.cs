@@ -832,6 +832,15 @@ public static partial class MetaBuiltins
         Cell precCell = ResolveLocal(engine, engine.GetRegister(regBase));
         Cell typeCell = ResolveLocal(engine, engine.GetRegister(regBase + 1));
         Cell nameCell = ResolveLocal(engine, engine.GetRegister(regBase + 2));
+        // §8.14.3.3: every argument must be instantiated, checked before
+        // any type rule; each type error carries the offending value.
+        if (precCell.Tag is Tag.Ref or Tag.AttVar
+            || typeCell.Tag is Tag.Ref or Tag.AttVar
+            || nameCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        Term precTerm = MaterializeRegister(engine, regBase);
+        Term typeTerm = MaterializeRegister(engine, regBase + 1);
+        Term nameTerm = MaterializeRegister(engine, regBase + 2);
 
         // ADR-046 — `op(P, T, user:N)` targets the user (global) table from
         // anywhere; `op(P, T, m:N)` targets module m's layer.
@@ -857,14 +866,14 @@ public static partial class MetaBuiltins
         }
 
         if (precCell.Tag != Tag.Int)
-            throw new ShumwayPrologException(IsoError.TypeError("integer", new VarTerm("_")));
+            throw new ShumwayPrologException(IsoError.TypeError("integer", precTerm));
         int precedence = (int)precCell.AsInt;
         if (precedence < 0 || precedence > 1200)
             throw new ShumwayPrologException(
                 IsoError.DomainError("operator_priority", new IntTerm(precedence)));
 
         if (typeCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
+            throw new ShumwayPrologException(IsoError.TypeError("atom", typeTerm));
         string typeName = AtomTable.GetById(typeCell.AsAtomId)?.Name ?? "";
         Shumway.Compiler.Parsing.OperatorType opType = typeName switch
         {
@@ -894,8 +903,12 @@ public static partial class MetaBuiltins
             while (cur.Tag == Tag.Lis)
             {
                 Cell head = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex));
+                if (head.Tag is Tag.Ref or Tag.AttVar)
+                    throw new ShumwayPrologException(IsoError.InstantiationError());
                 if (head.Tag != Tag.Atom)
-                    throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
+                    throw new ShumwayPrologException(IsoError.TypeError("atom",
+                        engine.MaterializeCellToTerm is { } hm && hm(head) is Term ht
+                            ? ht : new VarTerm("_")));
                 string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
                 ValidateOpDefine(target, name, precedence, opType);
                 target.Define(name, precedence, opType);
@@ -903,7 +916,8 @@ public static partial class MetaBuiltins
             }
             return true;
         }
-        throw new ShumwayPrologException(IsoError.TypeError("atom_or_list", new VarTerm("_")));
+        // A non-atom, non-list third argument: ISO calls it type_error(list, N).
+        throw new ShumwayPrologException(IsoError.TypeError("list", nameTerm));
     }
 
     /// <summary>ISO §8.14.3.3 (+ Cor.2) op/3 permission rules: <c>','</c> is

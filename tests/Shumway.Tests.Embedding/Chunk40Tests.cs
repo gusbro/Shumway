@@ -145,21 +145,29 @@ public class Chunk40Tests
             foo(a).
             """);
         Assert.True(engine.Query("current_predicate(foo/1).").Success);
-        Assert.True(engine.Query("current_predicate(is/2).").Success);   // builtin
+        // A builtin is NOT a current_predicate (§8.8.2, GNU-verified);
+        // predicate_property/2 is the way to ask about one.
+        Assert.True(engine.Query("\\+ current_predicate(is/2).").Success);
+        Assert.True(engine.Query("predicate_property(is(_, _), built_in).").Success);
     }
 
     [Fact]
-    public void CurrentPredicate_VariableIndicator_EnumeratesAtLeastSomeBuiltins()
+    public void CurrentPredicate_EnumeratesUserPredicatesOnly()
     {
+        // §8.8.2 (GNU-verified): current_predicate/1 enumerates
+        // USER-DEFINED procedures. Builtins and prelude library
+        // predicates are excluded — predicate_property/2 answers for
+        // those.
         var engine = new PrologEngine();
-        // Don't enumerate the full list (too brittle); just check that the
-        // enumeration is non-empty and includes a couple of well-known
-        // indicators.
-        var sols = engine.QueryAll("current_predicate(X).").ToList();
-        Assert.True(sols.Count > 50, $"expected lots of known predicates, got {sols.Count}");
-        var names = sols.Select(s => s["X"]).ToHashSet();
-        Assert.Contains(new CompoundTerm("/", new Term[] { Atom("is"), Int(2) }), names);
-        Assert.Contains(new CompoundTerm("/", new Term[] { Atom("member"), Int(2) }), names);
+        engine.ConsultString("c40_user(1). c40_other(a, b).");
+        var names = engine.QueryAll("current_predicate(X).")
+            .Select(s => s["X"]).ToHashSet();
+        Assert.Contains(new CompoundTerm("/", new Term[] { Atom("c40_user"), Int(1) }), names);
+        Assert.Contains(new CompoundTerm("/", new Term[] { Atom("c40_other"), Int(2) }), names);
+        Assert.DoesNotContain(new CompoundTerm("/", new Term[] { Atom("is"), Int(2) }), names);
+        Assert.DoesNotContain(new CompoundTerm("/", new Term[] { Atom("member"), Int(2) }), names);
+        Assert.True(engine.Query("\\+ current_predicate(atom/1).").Success);
+        Assert.True(engine.Query("predicate_property(atom(_), built_in).").Success);
     }
 
     [Fact]

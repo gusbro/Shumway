@@ -117,18 +117,19 @@ public class ImplementationHooksConformance
     }
 
     [Fact]
-    public void Op_VarPriority_RaisesTypeError()
+    public void Op_ArgumentErrors_AreIso()
     {
-        // Phase-9 chunk 131e gave op/3 the type check; ISO calls for
-        // instantiation_error when var, type_error(integer, _)
-        // otherwise. Shumway's current impl reports type_error in
-        // both cases (Detail "integer"), which is suboptimal but
-        // matches existing SWI behaviour for some malformed args.
+        // §8.14.3.3, verified against GNU: an unbound argument is an
+        // instantiation_error; a bad priority is type_error(integer, P);
+        // a third argument that is neither atom nor list is
+        // type_error(list, N).
         var e = new PrologEngine();
-        var sol = e.Query(
-            "catch(op(_P, xfx, foo), error(type_error(T, _), _), true).");
-        Assert.True(sol.Success);
-        Assert.Equal(Atom("integer"), sol["T"]);
+        Assert.True(e.Query(
+            "catch(op(_P, xfx, foo), error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query(
+            "catch(op(max, xfx, foo), error(type_error(integer, max), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(op(200, xfx, 0), error(type_error(list, 0), _), true).").Success);
     }
 
     [Fact]

@@ -106,7 +106,7 @@ public static class AtomCharBuiltins
         // SWI coerces a number/string to its text and yields its chars.
         if (SwiLenient.TryCoerce(engine, atomCell, out string coercedChars))
             return engine.UnifyRegisterWithHeapAt(1, BuildCharAtomList(engine, coercedChars));
-        throw new PrologRuntimeException("type_error", "atom");
+        throw new PrologRuntimeException("type_error", "atom", engine, atomCell);
     }
 
     /// <summary><c>'$sub_atom_icasechk'(+Haystack, ?Before, +Needle)</c> — the C#
@@ -884,7 +884,14 @@ public static class AtomCharBuiltins
     private static string ReadCharAtomsToString(Activation engine, Cell charsCell)
     {
         var sb = new StringBuilder();
-        Cell cursor = Resolve(engine, charsCell);
+        Cell listStart = Resolve(engine, charsCell);
+        Cell cursor = listStart;
+        // A bound non-list is type_error(list, L) before any element is
+        // looked at (§8.16.4.3).
+        if (cursor.Tag is not (Tag.Lis or Tag.Pstr)
+            && !(cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId)
+            && cursor.Tag is not (Tag.Ref or Tag.AttVar))
+            throw new PrologRuntimeException("type_error", "list", engine, cursor);
         // A PSTR is a CODE list, not a char list; its elements are
         // integers, so the ISO element-type error applies
         // (type_error(character)), not type_error(list).
@@ -896,10 +903,10 @@ public static class AtomCharBuiltins
             if (head.Tag == Tag.Ref)
                 throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Atom)
-                throw new PrologRuntimeException("type_error", "character");
+                throw new PrologRuntimeException("type_error", "character", engine, head);
             string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
             if (name.Length != 1)
-                throw new PrologRuntimeException("type_error", "character");
+                throw new PrologRuntimeException("type_error", "character", engine, head);
             sb.Append(name[0]);
             cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
         }
@@ -913,7 +920,7 @@ public static class AtomCharBuiltins
         {
             Shumway.Core.Diagnostics.ChoicePointTrace.DumpAtSite(
                 engine, "ReadCharAtomsToString type_error(list)");
-            throw new PrologRuntimeException("type_error", "list");
+            throw new PrologRuntimeException("type_error", "list", engine, listStart);
         }
         return sb.ToString();
     }

@@ -119,7 +119,11 @@ public static class TermRenderer
                 break;
             case Tag.Pstr:
                 output.Write('"');
-                output.Write(engine.AsPstrString(derefAddr));
+                // Read the chain from the CELL, not from a heap index: an
+                // element taken straight out of a list arrives already
+                // dereferenced (derefAddr == -1), and AsPstrString's
+                // index-based entry point cannot be used then.
+                output.Write(engine.ReadPstrChain(cell, out _));
                 output.Write('"');
                 break;
             default:

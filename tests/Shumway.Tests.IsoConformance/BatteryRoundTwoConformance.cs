@@ -164,6 +164,100 @@ public class BatteryRoundTwoConformance
             + "error(permission_error(modify, flag, max_arity), _), true).");
     }
 
+    // ---------- term inspection ----------
+
+    [Fact]
+    public void Arg_ChecksTheTermFirst()
+    {
+        // §8.5.2.3, verified against GNU: the TERM decides first — a
+        // non-compound is type_error(compound, T) whatever N is — then N's
+        // type, then its sign.
+        Succeeds("catch(arg(0, atom, _), error(type_error(compound, atom), _), true).");
+        Succeeds("catch(arg(1, 3, _), error(type_error(compound, 3), _), true).");
+        Succeeds("catch(arg(-3, foo(a), _), "
+            + "error(domain_error(not_less_than_zero, -3), _), true).");
+        Succeeds("catch(arg(a, foo(a), _), error(type_error(integer, a), _), true).");
+        Succeeds("catch(arg(_, _, _), error(instantiation_error, _), true).");
+        Succeeds("arg(2, foo(a, b), b).");
+    }
+
+    [Fact]
+    public void Univ_ChecksInstantiationBeforeShape()
+    {
+        Succeeds("catch(_ =.. _, error(instantiation_error, _), true).");
+        Succeeds("catch(_ =.. [foo, a|_], error(instantiation_error, _), true).");
+        Succeeds("catch(_ =.. [foo|bar], error(type_error(list, [foo|bar]), _), true).");
+        Succeeds("catch(_ =.. [_, bar], error(instantiation_error, _), true).");
+        Succeeds("catch(_ =.. [3, bar], error(type_error(atom, 3), _), true).");
+    }
+
+    [Fact]
+    public void CurrentPredicate_IsUserPredicatesOnly()
+    {
+        // §8.8.2: builtins and library predicates are NOT current
+        // predicates (GNU agrees); predicate_property/2 answers for them.
+        Succeeds("\\+ current_predicate(current_predicate/1).");
+        Succeeds("\\+ current_predicate(atom/1).");
+        Succeeds("predicate_property(atom(_), built_in).");
+        // Indicator shape is validated.
+        Succeeds("catch(current_predicate(0/dog), "
+            + "error(type_error(predicate_indicator, 0/dog), _), true).");
+        Succeeds("catch(current_predicate(f/f), "
+            + "error(type_error(predicate_indicator, f/f), _), true).");
+    }
+
+    [Fact]
+    public void PredicateProperty_ReportsMetaTemplates()
+    {
+        // The meta-templates a portable program (and Logtalk's compiler)
+        // reads to decide which arguments are goals.
+        Succeeds("predicate_property(findall(_,_,_), meta_predicate(findall(*, 0, *))).");
+        Succeeds("predicate_property(call(_,_,_), meta_predicate(call(2, *, *))).");
+        Succeeds("predicate_property((_,_), meta_predicate(T)), T == (0,0).");
+        Succeeds("predicate_property((_;_), meta_predicate(T)), T == (0;0).");
+        Succeeds("predicate_property(catch(_,_,_), meta_predicate(catch(0, *, 0))).");
+    }
+
+    [Fact]
+    public void Functor_ConstructModeChecks()
+    {
+        Succeeds("catch(functor(_, foo, _), error(instantiation_error, _), true).");
+        Succeeds("catch(functor(_, foo, a), error(type_error(integer, a), _), true).");
+        Succeeds("catch(functor(_, 1.5, 1), error(type_error(atom, 1.5), _), true).");
+        Succeeds("catch(functor(_, foo(a), 1), error(type_error(atomic, foo(a)), _), true).");
+        Succeeds("catch(functor(_, foo, -1), "
+            + "error(domain_error(not_less_than_zero, -1), _), true).");
+        Succeeds("catch(functor(_, foo, 300), "
+            + "error(representation_error(max_arity), _), true).");
+        Succeeds("functor(T, foo, 2), T = foo(_, _).");
+    }
+
+    [Fact]
+    public void SortFamily_ValidatesTheListArgument()
+    {
+        // §8.4.3.3: the list argument is checked as a whole, with the
+        // WHOLE argument as the culprit, before any element is inspected.
+        Succeeds("catch(sort(3, _), error(type_error(list, 3), _), true).");
+        Succeeds("catch(sort([a|b], _), error(type_error(list, [a|b]), _), true).");
+        Succeeds("catch(msort([a,b|c], _), error(type_error(list, [a,b|c]), _), true).");
+        Succeeds("catch(keysort([1-a|b], _), error(type_error(list, [1-a|b]), _), true).");
+        Succeeds("catch(keysort([_|_], _), error(instantiation_error, _), true).");
+        Succeeds("catch(keysort([a], _), error(type_error(pair, a), _), true).");
+        Succeeds("sort([b,a,c], L), L == [a,b,c].");
+        Succeeds("keysort([b-1, a-2], L), L == [a-2, b-1].");
+    }
+
+    [Fact]
+    public void PartialStringsRenderInsideLists()
+    {
+        // Regression: a PSTR element read straight out of a list arrives
+        // already dereferenced, and the renderer's index-based entry point
+        // crashed on it (an out-of-bounds heap index) — msort/2 over a list
+        // holding a string was enough to hit it.
+        Succeeds("msort([f(x), a, 1, \"s\"], L), "
+            + "with_output_to(atom(A), write(L)), atom_length(A, _).");
+    }
+
     // ---------- standard order of terms ----------
 
     [Fact]

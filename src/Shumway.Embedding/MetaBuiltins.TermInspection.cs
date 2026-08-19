@@ -89,27 +89,37 @@ public static partial class MetaBuiltins
         }
         if (t.Tag == Tag.Ref)
         {
-            // Construct mode: Name and Arity must be ground.
+            // Construct mode (§8.5.1.3): Name and Arity must be ground,
+            // Arity a non-negative integer within max_arity, and Name an
+            // atom unless Arity is 0. Every error carries its culprit.
             Cell n = ResolveLocal(engine, engine.GetRegister(1));
             Cell a = ResolveLocal(engine, engine.GetRegister(2));
+            if (n.Tag is Tag.Ref or Tag.AttVar || a.Tag is Tag.Ref or Tag.AttVar)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
+            Term nameTerm = MaterializeRegister(engine, 1);
+            Term arityTerm = MaterializeRegister(engine, 2);
             if (a.Tag != Tag.Int)
                 throw new ShumwayPrologException(
-                    IsoError.TypeError("integer", new VarTerm("_")));
+                    IsoError.TypeError("integer", arityTerm));
             long arity = a.AsInt;
             if (arity < 0)
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("not_less_than_zero", new VarTerm("_")));
+                    IsoError.DomainError("not_less_than_zero", arityTerm));
+            if (arity > 255)   // current_prolog_flag(max_arity, 255)
+                throw new ShumwayPrologException(
+                    IsoError.RepresentationError("max_arity"));
             if (arity == 0)
             {
                 // T becomes Name itself (atomic).
                 if (n.Tag is not (Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float))
                     throw new ShumwayPrologException(
-                        IsoError.TypeError("atomic", new VarTerm("_")));
+                        IsoError.TypeError("atomic", nameTerm));
                 return engine.UnifyRegisterWithCell(0, n);
             }
+            if (n.Tag is Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float)
+                throw new ShumwayPrologException(IsoError.TypeError("atom", nameTerm));
             if (n.Tag != Tag.Atom)
-                throw new ShumwayPrologException(
-                    IsoError.TypeError("atom", new VarTerm("_")));
+                throw new ShumwayPrologException(IsoError.TypeError("atomic", nameTerm));
             int functorId = FunctorTable.Intern(n.AsAtomId, (int)arity);
             int strBase = engine.AllocateHeap(2 + (int)arity);
             engine.SetHeap(strBase, Cell.Str(strBase + 1));
@@ -182,19 +192,36 @@ public static partial class MetaBuiltins
     {
         Cell nCell = ResolveLocal(engine, engine.GetRegister(0));
         Cell tCell = ResolveLocal(engine, engine.GetRegister(1));
+        // §8.5.2.3 order: the TERM is checked first — an unbound term is
+        // an instantiation_error and a non-compound is
+        // type_error(compound, T), whatever N looks like.
+        if (tCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (tCell.Tag is not (Tag.Str or Tag.Lis))
+            throw new ShumwayPrologException(
+                IsoError.TypeError("compound", MaterializeRegister(engine, 1)));
+        if (nCell.Tag is Tag.Ref or Tag.AttVar)
+        {
+            // SWI's arg/3 ENUMERATES the arguments when N is unbound
+            // (occurs.pl's contains_term walks subterms with arg(_, T, A));
+            // ISO wants an instantiation_error there. Gated on the caller
+            // living in an SWI-dialect module.
+            if (engine.Host is Shumway.Builtins.IDialectAwareHost dh0
+                && dh0.CallerModuleHasDialect(engine, "swi"))
+                return ArgEnumerate(engine, tCell);
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        }
+        if (nCell.Tag == Tag.Int && nCell.AsInt < 0)
+            throw new ShumwayPrologException(IsoError.DomainError(
+                "not_less_than_zero", MaterializeRegister(engine, 0)));
         if (nCell.Tag != Tag.Int)
         {
             // SWI's arg/3 ENUMERATES the arguments when N is unbound
             // (occurs.pl's contains_term walks subterms with arg(_, T, A));
             // ISO wants an error there. Gated on the caller living in an
             // SWI-dialect module, so strict programs keep ISO behaviour.
-            if (nCell.Tag == Tag.Ref
-                && (tCell.Tag == Tag.Str || tCell.Tag == Tag.Lis)
-                && engine.Host is Shumway.Builtins.IDialectAwareHost dh
-                && dh.CallerModuleHasDialect(engine, "swi"))
-                return ArgEnumerate(engine, tCell);
             throw new ShumwayPrologException(
-                IsoError.TypeError("integer", new VarTerm("_")));
+                IsoError.TypeError("integer", MaterializeRegister(engine, 0)));
         }
         long n = nCell.AsInt;
 
@@ -357,6 +384,12 @@ public static partial class MetaBuiltins
             // build the STR. The list is on the heap so the walk is a
             // pointer chase, no allocation.
             Cell listC = ResolveLocal(engine, engine.GetRegister(1));
+            Term listTerm = MaterializeRegister(engine, 1);
+            // §8.5.3.3 order: an UNBOUND list (or tail) is an
+            // instantiation_error; an improper one is type_error(list, L)
+            // with the whole list as culprit.
+            if (listC.Tag is Tag.Ref or Tag.AttVar)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
             int count = 0;
             Cell cur = listC;
             while (cur.Tag == Tag.Lis)
@@ -364,26 +397,30 @@ public static partial class MetaBuiltins
                 count++;
                 cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
             }
+            if (cur.Tag is Tag.Ref or Tag.AttVar)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
             if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-                throw new ShumwayPrologException(
-                    IsoError.TypeError("list", new VarTerm("_")));
+                throw new ShumwayPrologException(IsoError.TypeError("list", listTerm));
             if (count == 0)
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("non_empty_list", new VarTerm("_")));
+                    IsoError.DomainError("non_empty_list", listTerm));
 
             // Fetch the functor cell (the first element).
             int headIdx = listC.AsHeapIndex;
             Cell first = ResolveLocal(engine, engine.GetHeap(headIdx));
+            Term firstTerm = engine.MaterializeCellToTerm is { } fmat
+                && fmat(first) is Term ft ? ft : new VarTerm("_");
+            if (first.Tag is Tag.Ref or Tag.AttVar)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
             if (count == 1)
             {
                 if (first.Tag is not (Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float))
                     throw new ShumwayPrologException(
-                        IsoError.TypeError("atomic", new VarTerm("_")));
+                        IsoError.TypeError("atomic", firstTerm));
                 return engine.UnifyRegisterWithCell(0, first);
             }
             if (first.Tag != Tag.Atom)
-                throw new ShumwayPrologException(
-                    IsoError.TypeError("atom", new VarTerm("_")));
+                throw new ShumwayPrologException(IsoError.TypeError("atom", firstTerm));
             int arity = count - 1;
             int functorId = FunctorTable.Intern(first.AsAtomId, arity);
             // Walk the list a second time to copy args into the STR.
@@ -834,10 +871,17 @@ public static partial class MetaBuiltins
                 new Term[] { new AtomTerm(name), new IntTerm(arity) }));
         }
 
-        foreach (int fid in BuiltinsRegistry.AllRegisteredFunctorIds())
-            AddIndicator(fid);
+        // §8.8.2: current_predicate/1 enumerates USER-DEFINED procedures.
+        // Builtins (and the prelude's library predicates, which are
+        // built_in to a program) are excluded — GNU-verified:
+        // current_predicate(atom/1) fails there too. predicate_property/2
+        // is the way to ask about a builtin.
         foreach (int fid in host.AllStaticAndDynamicFunctors())
+        {
+            if (BuiltinsRegistry.TryGetByFunctor(fid, out _)) continue;
+            if (host.IsPreludeFunctor(fid)) continue;
             AddIndicator(fid);
+        }
 
         Term listTerm = new AtomTerm("[]");
         for (int i = indicators.Count - 1; i >= 0; i--)
@@ -868,10 +912,17 @@ public static partial class MetaBuiltins
             indicators.Add(new CompoundTerm("/",
                 new Term[] { new AtomTerm(name), new IntTerm(arity) }));
         }
-        foreach (int fid in BuiltinsRegistry.AllRegisteredFunctorIds())
-            AddIndicator(fid);
+        // §8.8.2: current_predicate/1 enumerates USER-DEFINED procedures.
+        // Builtins (and the prelude's library predicates, which are
+        // built_in to a program) are excluded — GNU-verified:
+        // current_predicate(atom/1) fails there too. predicate_property/2
+        // is the way to ask about a builtin.
         foreach (int fid in host.AllStaticAndDynamicFunctors())
+        {
+            if (BuiltinsRegistry.TryGetByFunctor(fid, out _)) continue;
+            if (host.IsPreludeFunctor(fid)) continue;
             AddIndicator(fid);
+        }
 
         int returnPc = engine.BuiltinReturnPc;
         return Shumway.Core.IndexEnumCursor.Start(engine, indicators.Count, 1, returnPc,

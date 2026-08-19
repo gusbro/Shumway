@@ -77,6 +77,36 @@ internal static class Prelude
         :- public ignore/1.
         :- public time_out/3.
         :- meta_predicate(time_out(0, *, *)).
+        % The ISO/de-facto meta-predicates and control constructs, so
+        % predicate_property(G, meta_predicate(T)) reports the argument
+        % modes a portable program (and Logtalk's compiler) reads.
+        :- meta_predicate(findall(*, 0, *)).
+        :- meta_predicate(findall(*, 0, *, *)).
+        :- meta_predicate(bagof(*, ^, *)).
+        :- meta_predicate(setof(*, ^, *)).
+        :- meta_predicate(forall(0, 0)).
+        :- meta_predicate(aggregate_all(*, 0, *)).
+        :- meta_predicate(catch(0, *, 0)).
+        :- meta_predicate(\+(0)).
+        :- meta_predicate(once(0)).
+        :- meta_predicate(ignore(0)).
+        :- meta_predicate(call(0)).
+        :- meta_predicate(call(1, *)).
+        :- meta_predicate(call(2, *, *)).
+        :- meta_predicate(call(3, *, *, *)).
+        :- meta_predicate(call(4, *, *, *, *)).
+        :- meta_predicate(call(5, *, *, *, *, *)).
+        :- meta_predicate(call(6, *, *, *, *, *, *)).
+        :- meta_predicate(call(7, *, *, *, *, *, *, *)).
+        :- meta_predicate(call_nth(0, *)).
+        :- meta_predicate(setup_call_cleanup(0, 0, 0)).
+        :- meta_predicate(call_cleanup(0, 0)).
+        :- meta_predicate(if(0, 0, 0)).
+        :- meta_predicate(apply(1, *)).
+        % Control constructs: callable, and their arguments are goals.
+        % (','/2 and friends are seeded in C# — PrologEngine's
+        % SeedControlMetaTemplates — since a ','-term in the directive is
+        % the conjunction-of-specs form and cannot name ','/2 itself.)
         :- public call_residue_vars/2.
         :- public time/1.
         :- public chdir/1.
@@ -407,7 +437,20 @@ internal static class Prelude
             ).
 
         '$check_predicate_indicator'(I) :- var(I), !.
-        '$check_predicate_indicator'(_/_) :- !.
+        % §8.8.2.3: inside Name/Arity, a BOUND Name must be an atom and a
+        % BOUND Arity a non-negative integer — 0/dog, 3/3, f/f and f/(-1)
+        % are all type_error(predicate_indicator, Culprit), with the whole
+        % indicator as the culprit (GNU and SWI agree).
+        '$check_predicate_indicator'(I) :-
+            I = (N/A), !,
+            (   nonvar(N), \+ atom(N) ->
+                throw(error(type_error(predicate_indicator, I), _))
+            ;   nonvar(A), \+ integer(A) ->
+                throw(error(type_error(predicate_indicator, I), _))
+            ;   integer(A), A < 0 ->
+                throw(error(domain_error(not_less_than_zero, A), _))
+            ;   true
+            ).
         '$check_predicate_indicator'(I) :-
             throw(error(type_error(predicate_indicator, I), _)).
 

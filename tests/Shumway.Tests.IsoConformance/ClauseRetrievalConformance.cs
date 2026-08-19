@@ -94,11 +94,12 @@ public class ClauseRetrievalConformance
     }
 
     [Fact]
-    public void CurrentPredicate_VarIndicator_EnumeratesUserAndBuiltins()
+    public void CurrentPredicate_VarIndicator_EnumeratesUserPredicates()
     {
-        // ISO: with a var indicator, the call enumerates every
-        // defined predicate as a Name/Arity term. Pin the test
-        // structurally so a renderer change doesn't break it.
+        // §8.8.2: with a var indicator the call enumerates the
+        // USER-DEFINED predicates as Name/Arity terms (builtins are not
+        // among them — GNU agrees). Pinned structurally so a renderer
+        // change doesn't break it.
         var e = new PrologEngine();
         e.ConsultString("foo(1).");
         var indicators = e.QueryAll("current_predicate(I).")
@@ -109,9 +110,9 @@ public class ClauseRetrievalConformance
                           Arity: (c.Args[1] as IntTerm)?.Value))
             .ToList();
 
-        // Built-ins should be enumerated.
-        Assert.Contains(indicators, p => p.Name == "is" && p.Arity == 2);
-        // User-defined predicates should be enumerated too.
+        // Built-ins are NOT enumerated…
+        Assert.DoesNotContain(indicators, p => p.Name == "is" && p.Arity == 2);
+        // …user-defined predicates are.
         Assert.Contains(indicators, p => p.Name == "foo" && p.Arity == 1);
     }
 
@@ -131,12 +132,15 @@ public class ClauseRetrievalConformance
     }
 
     [Fact]
-    public void CurrentPredicate_BuiltinsAreVisible()
+    public void CurrentPredicate_ExcludesBuiltins()
     {
-        // Shumway exposes builtins through current_predicate too —
-        // chunk 47's '$all_predicate_indicators' merges them in.
+        // §8.8.2: current_predicate/1 ranges over USER-DEFINED procedures
+        // only — GNU-verified (current_predicate(atom/1) fails there).
+        // predicate_property/2 is how a program asks about a builtin.
         var e = new PrologEngine();
-        // 'is' is a core arithmetic builtin.
-        Assert.True(e.Query("current_predicate(is/2).").Success);
+        Assert.False(e.Query("current_predicate(is/2).").Success);
+        Assert.True(e.Query("predicate_property(is(_, _), built_in).").Success);
+        e.ConsultString("cr_user(1).");
+        Assert.True(e.Query("current_predicate(cr_user/1).").Success);
     }
 }

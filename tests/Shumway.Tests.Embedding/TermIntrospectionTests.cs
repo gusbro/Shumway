@@ -104,7 +104,10 @@ public class TermIntrospectionTests
     public void Arg_OnAtom_Fails()
     {
         var engine = new PrologEngine();
-        Assert.False(engine.Query("arg(1, hello, _).").Success);
+        // arg/3 on a non-compound is type_error(compound, T) — GNU and
+        // the ISO battery agree; it does not just fail.
+        Assert.True(engine.Query(
+            "catch(arg(1, hello, _), error(type_error(compound, hello), _), true).").Success);
     }
 
     // ---------- =../2 (univ) ----------

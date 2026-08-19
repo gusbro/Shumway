@@ -297,6 +297,21 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// wrapped for the calling context.</summary>
     internal readonly Dictionary<int, Term> _metaPredicateTemplates = new();
 
+    /// <summary>The control constructs' meta-templates. They are not
+    /// predicates, so no <c>:- meta_predicate</c> directive can name them
+    /// (`','(0,0)` in a directive reads as the conjunction-of-specs form),
+    /// but predicate_property/2 must still report their goal arguments —
+    /// Logtalk's compiler reads exactly this to decide what to wrap.</summary>
+    private void SeedControlMetaTemplates()
+    {
+        foreach (string ctl in new[] { ",", ";", "->", "*->" })
+        {
+            int fid = FunctorTable.Intern(AtomTable.Intern(ctl, permanent: true).Id, 2);
+            _metaPredicateTemplates[fid] = new CompoundTerm(ctl,
+                new Term[] { new IntTerm(0), new IntTerm(0) });
+        }
+    }
+
     /// <summary>The module that declared a dynamic functor <c>:- dynamic</c>,
     /// or <c>null</c> if it was auto-promoted (implicit_dynamic) with no
     /// declaration.</summary>
@@ -414,6 +429,10 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// which is what a client like Logtalk's linter checks to decide a call is
     /// to a known system predicate rather than an undefined one.</summary>
     internal readonly HashSet<int> _preludeFunctors = new();
+
+    /// <summary>True for a predicate the PRELUDE defines — library code a
+    /// program sees as built_in, so current_predicate/1 skips it.</summary>
+    internal bool IsPreludeFunctor(int functorId) => _preludeFunctors.Contains(functorId);
 
     /// <summary>The sink that I/O builtins (<c>write/1</c>, <c>nl/0</c>,
     /// <c>writeln/1</c>) write into. Defaults to <see cref="System.Console.Out"/>;
@@ -699,6 +718,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // Meta-builtins (findall/3 etc.) live in the Embedding layer because
         // they spawn sub-PrologEngines — Builtins can't reference Embedding.
         MetaBuiltins.EnsureRegistered();
+        SeedControlMetaTemplates();
 
         // Every operator defined (a `:- op` applies here at parse time) is
         // routed to the active consult's collection frame, so the

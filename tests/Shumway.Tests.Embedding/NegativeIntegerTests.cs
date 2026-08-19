@@ -79,7 +79,11 @@ public class NegativeIntegerTests
         // (was a compound before), so the failure mode is "out of range",
         // not type_error.
         var engine = new PrologEngine();
-        Assert.False(engine.Query("arg(-1, foo(a, b), _).").Success);
+        // §8.5.2.3 (GNU-verified): a negative index is a domain error,
+        // not a silent failure.
+        Assert.True(engine.Query(
+            "catch(arg(-1, foo(a, b), _), "
+            + "error(domain_error(not_less_than_zero, -1), _), true).").Success);
     }
 
     // ---------- Float ----------

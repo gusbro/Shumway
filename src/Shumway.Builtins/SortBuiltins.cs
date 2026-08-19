@@ -30,20 +30,24 @@ public static class SortBuiltins
     public static bool Keysort(Activation engine)
     {
         var pairs = new List<(Cell Pair, Cell Key, int Index)>();
-        Cell cursor = Resolve(engine, engine.GetRegister(0));
+        Cell listStart = Resolve(engine, engine.GetRegister(0));
+        Cell cursor = listStart;
         int index = 0;
+        // §8.4.3/8.4.4: the list argument is checked as a whole first —
+        // an unbound one is an instantiation_error, a bound non-list (or
+        // improper tail) is type_error(list, L) with the WHOLE argument
+        // as culprit — before any element's pair shape is looked at.
+        CheckSortListArgument(engine, listStart);
         while (cursor.Tag == Tag.Lis)
         {
             int headIdx = cursor.AsHeapIndex;
             Cell pair = Resolve(engine, engine.GetHeap(headIdx));
+            if (pair.Tag is Tag.Ref or Tag.AttVar)
+                throw new PrologRuntimeException("instantiation_error");
             Cell key = ExtractPairKey(engine, pair);
             pairs.Add((pair, key, index++));
             cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
-        if (cursor.Tag == Tag.Ref)
-            throw new PrologRuntimeException("instantiation_error");
-        if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            return false;
 
         // Sort by key, breaking ties by original index → stable.
         pairs.Sort((a, b) =>
@@ -58,21 +62,40 @@ public static class SortBuiltins
         return engine.UnifyRegisterWithHeapAt(1, listIdx);
     }
 
+    /// <summary>The sort family's list argument (§8.4.3.3): unbound (or
+    /// with an unbound tail) is an instantiation_error; a bound
+    /// non-list — including an improper tail — is type_error(list, L),
+    /// the WHOLE argument being the culprit.</summary>
+    private static void CheckSortListArgument(Activation engine, Cell listStart)
+    {
+        Cell cur = listStart;
+        while (true)
+        {
+            if (cur.Tag is Tag.Ref or Tag.AttVar)
+                throw new PrologRuntimeException("instantiation_error");
+            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) return;
+            if (cur.Tag != Tag.Lis)
+                throw new PrologRuntimeException(
+                    "type_error", "list", engine, listStart);
+            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        }
+    }
+
     /// <summary>Extracts the <c>K</c> from a <c>K-V</c> pair cell.
     /// A non-pair raises <c>type_error(pair, Element)</c> per ISO
     /// §8.4.4.</summary>
     private static Cell ExtractPairKey(Activation engine, Cell pair)
     {
         if (pair.Tag != Tag.Str)
-            throw new PrologRuntimeException("type_error", "pair");
+            throw new PrologRuntimeException("type_error", "pair", engine, pair);
         int functorIdx = pair.AsHeapIndex;
         Cell functorCell = engine.GetHeap(functorIdx);
         if (functorCell.Tag != Tag.Functor)
-            throw new PrologRuntimeException("type_error", "pair");
+            throw new PrologRuntimeException("type_error", "pair", engine, pair);
         var (atomId, arity) = FunctorTable.Lookup(functorCell.AsFunctorId);
         string name = AtomTable.GetById(atomId)?.Name ?? "";
         if (name != "-" || arity != 2)
-            throw new PrologRuntimeException("type_error", "pair");
+            throw new PrologRuntimeException("type_error", "pair", engine, pair);
         return Resolve(engine, engine.GetHeap(functorIdx + 1));
     }
 
@@ -84,18 +107,15 @@ public static class SortBuiltins
         // plain value cell — both work as elements of the result list and
         // both are compared correctly by StandardOrderComparator.
         var elements = new List<Cell>();
-        Cell cursor = Resolve(engine, engine.GetRegister(0));
+        Cell listStart = Resolve(engine, engine.GetRegister(0));
+        Cell cursor = listStart;
+        CheckSortListArgument(engine, listStart);
         while (cursor.Tag == Tag.Lis)
         {
             int headIdx = cursor.AsHeapIndex;
             elements.Add(Resolve(engine, engine.GetHeap(headIdx)));
             cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
-        if (cursor.Tag == Tag.Ref)
-            // A partial list — ISO instantiation_error.
-            throw new PrologRuntimeException("instantiation_error");
-        if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            return false;   // improper / non-list — fail rather than throw
 
         elements.Sort((a, b) => StandardOrderComparator.Compare(engine, a, b));
 

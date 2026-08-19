@@ -89,8 +89,12 @@ public class IntrospectionTests
         // Builtins are visible to current_predicate too (they live in the
         // "system" pseudo-module per ADR-008).
         var engine = new PrologEngine();
-        Assert.True(engine.Query("current_predicate(append/3).").Success);
-        Assert.True(engine.Query("current_predicate(is/2).").Success);
+        // Library (prelude) and builtin predicates are not enumerated by
+        // current_predicate/1 — §8.8.2 restricts it to user-defined
+        // procedures, as GNU does. They ARE predicate_property built_in.
+        Assert.True(engine.Query("\\+ current_predicate(append/3).").Success);
+        Assert.True(engine.Query("\\+ current_predicate(is/2).").Success);
+        Assert.True(engine.Query("predicate_property(append(_,_,_), built_in).").Success);
     }
 
     [Fact]
