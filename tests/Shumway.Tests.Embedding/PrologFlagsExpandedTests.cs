@@ -111,10 +111,13 @@ public class PrologFlagsExpandedTests
     }
 
     [Fact]
-    public void UnknownFlag_Fails()
+    public void UnknownFlag_RaisesDomainError()
     {
+        // §8.17.2.3: an atom naming no flag is domain_error(prolog_flag, F).
         var e = new PrologEngine();
-        Assert.False(e.Query("current_prolog_flag(no_such_flag, _).").Success);
+        Assert.True(e.Query(
+            "catch(current_prolog_flag(no_such_flag, _), "
+            + "error(domain_error(prolog_flag, no_such_flag), _), true).").Success);
     }
 
     [Fact]

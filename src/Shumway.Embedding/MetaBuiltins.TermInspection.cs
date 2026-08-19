@@ -214,6 +214,15 @@ public static partial class MetaBuiltins
         if (nCell.Tag == Tag.Int && nCell.AsInt < 0)
             throw new ShumwayPrologException(IsoError.DomainError(
                 "not_less_than_zero", MaterializeRegister(engine, 0)));
+        if (nCell.Tag == Tag.BigInt)
+        {
+            // A bignum index IS an integer: negative is still a domain
+            // error, positive is simply past every argument.
+            if (engine.AsBigInt(nCell).Sign < 0)
+                throw new ShumwayPrologException(IsoError.DomainError(
+                    "not_less_than_zero", MaterializeRegister(engine, 0)));
+            return false;
+        }
         if (nCell.Tag != Tag.Int)
         {
             // SWI's arg/3 ENUMERATES the arguments when N is unbound
@@ -321,6 +330,11 @@ public static partial class MetaBuiltins
         }
     }
 
+    /// <summary>The <c>max_arity</c> flag's value — the WAM register layout
+    /// caps an argument list at what fits a uint16 index, and
+    /// current_prolog_flag/2 reports the same number.</summary>
+    private const int MaxArity = 255;
+
     public static bool Univ(Activation engine)
     {
         Cell t = ResolveLocal(engine, engine.GetRegister(0));
@@ -422,6 +436,10 @@ public static partial class MetaBuiltins
             if (first.Tag != Tag.Atom)
                 throw new ShumwayPrologException(IsoError.TypeError("atom", firstTerm));
             int arity = count - 1;
+            // §8.5.3.3: past the max_arity flag the term cannot be built.
+            if (arity > MaxArity)
+                throw new ShumwayPrologException(
+                    IsoError.RepresentationError("max_arity"));
             int functorId = FunctorTable.Intern(first.AsAtomId, arity);
             // Walk the list a second time to copy args into the STR.
             int strBase = engine.AllocateHeap(2 + arity);
@@ -628,8 +646,16 @@ public static partial class MetaBuiltins
         if (startDeref.Tag == Tag.Ref)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (startDeref.Tag != Tag.Int)
-            throw new Shumway.Core.PrologRuntimeException("type_error", "integer");
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error", "integer", engine, startDeref);
         long start = startDeref.AsInt;
+
+        // The End argument is an output, but a BOUND non-integer is still
+        // type_error(integer, End) — it can never be the next free number.
+        Cell endC = ResolveLocal(engine, engine.GetRegister(2));
+        if (endC.Tag is not (Tag.Ref or Tag.AttVar or Tag.Int or Tag.BigInt))
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error", "integer", engine, endC);
 
         // Copy the input register to a heap slot so we have a stable address
         // to walk from. The walk visits each cell, derefs, and on the first
@@ -650,6 +676,21 @@ public static partial class MetaBuiltins
     /// subterms are visited once (a <c>visited</c> address set).</summary>
     public static bool TermVariables(Activation engine)
     {
+        // §8.5.5: the Vars argument must be a partial list —
+        // `term_variables(foo, 3)` is type_error(list, 3), not a failure.
+        {
+            Cell cur = ResolveLocal(engine, engine.GetRegister(1));
+            Cell given = cur;
+            while (true)
+            {
+                if (cur.Tag is Tag.Ref or Tag.AttVar or Tag.Pstr) break;
+                if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) break;
+                if (cur.Tag != Tag.Lis)
+                    throw new Shumway.Core.PrologRuntimeException(
+                        "type_error", "list", engine, given);
+                cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            }
+        }
         int rootSlot = engine.AllocateHeap(1);
         engine.SetHeap(rootSlot, engine.GetRegister(0));
         var visited = new HashSet<int>();

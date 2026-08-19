@@ -666,6 +666,16 @@ public static partial class MetaBuiltins
         // (ReadTerm) then require true EOF — a trailing `.` leaves a Dot token, so
         // IsAtEnd is false and `"3."` is rejected. (Leading layout is fine.)
         if (chars.Length != chars.TrimEnd().Length) return null;
+        // A trailing COMMENT is junk too — `"3%"` and `"3/* */"` are syntax
+        // errors even though the lexer skips both. `0'%` is the one place a
+        // '%' belongs to the number itself, and the token parser has already
+        // handled that shape before this fallback runs.
+        if (!chars.Contains("0'", StringComparison.Ordinal))
+        {
+            int pct = chars.IndexOf('%');
+            if (pct >= 0 && chars.IndexOf('\n', pct) < 0) return null;
+            if (chars.EndsWith("*/", StringComparison.Ordinal)) return null;
+        }
         Term parsed;
         try
         {

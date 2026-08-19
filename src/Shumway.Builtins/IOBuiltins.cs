@@ -45,7 +45,11 @@ public static class IOBuiltins
     /// falls back to <see cref="Activation.Out"/>.</summary>
     public static bool Nl(Activation engine)
     {
-        var w = engine.Streams?.CurrentOutput.Writer ?? engine.Out;
+        var cur = engine.Streams?.CurrentOutput;
+        if (cur is { IsBinary: true })
+            throw new PrologRuntimeException("permission_error", "output,binary_stream",
+                engine, StreamBuiltins.MakeStreamTerm(engine, cur));
+        var w = cur?.Writer ?? engine.Out;
         // A Prolog newline is LF on every platform (ADR-045); TextWriter's
         // WriteLine would emit the host's CRLF into an in-memory sink.
         w.Write('\n');
@@ -133,10 +137,57 @@ public static class IOBuiltins
         "portray_goal", "spacing", "no_lists", "priority",
     };
 
+    /// <summary>format's <c>~ND</c>: the last <paramref name="frac"/> digits
+    /// go after a decimal point and only the part to its left is grouped in
+    /// threes.</summary>
+    private static string GroupedDecimal(System.Numerics.BigInteger v, int frac)
+    {
+        bool neg = v.Sign < 0;
+        string digits = System.Numerics.BigInteger.Abs(v).ToString(
+            System.Globalization.CultureInfo.InvariantCulture);
+        string tail = "";
+        if (frac > 0)
+        {
+            if (digits.Length <= frac) digits = digits.PadLeft(frac + 1, '0');
+            tail = "." + digits[^frac..];
+            digits = digits[..^frac];
+        }
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < digits.Length; i++)
+        {
+            if (i > 0 && (digits.Length - i) % 3 == 0) sb.Append(',');
+            sb.Append(digits[i]);
+        }
+        return (neg ? "-" : "") + sb + tail;
+    }
+
+    /// <summary>C's printf writes a two-digit exponent (<c>1.23e-06</c>);
+    /// .NET's "G" writes <c>E-06</c> and sometimes three digits.</summary>
+    private static string NormaliseExponent(string s)
+    {
+        int e = s.IndexOfAny(new[] { 'E', 'e' });
+        if (e < 0) return s;
+        string mant = s[..e];
+        char sign = s[e + 1] is '+' or '-' ? s[e + 1] : '+';
+        string exp = (s[e + 1] is '+' or '-' ? s[(e + 2)..] : s[(e + 1)..]).TrimStart('0');
+        if (exp.Length == 0) exp = "0";
+        if (exp.Length < 2) exp = exp.PadLeft(2, '0');
+        return mant + "e" + sign + exp;
+    }
+
     private static TermRenderOptions ReadWriteTermOptions(Activation engine, int optsReg)
     {
         var options = new TermRenderOptions { Operators = engine.Operators };
-        Cell listStart = Resolve(engine, engine.GetRegister(optsReg));
+        ApplyWriteOptions(engine, Resolve(engine, engine.GetRegister(optsReg)), options);
+        return options;
+    }
+
+    /// <summary>Applies a write-option LIST (already dereferenced) onto
+    /// <paramref name="options"/>. Shared by write_term/2,3 and format's
+    /// <c>~W</c>.</summary>
+    private static void ApplyWriteOptions(
+        Activation engine, Cell listStart, TermRenderOptions options)
+    {
         Cell optsCell = listStart;
         // ISO §8.14.2.3: the list and every element must be instantiated;
         // an improper tail is type_error(list, WholeList); an element that
@@ -156,7 +207,6 @@ public static class IOBuiltins
             ApplyOption(engine, head, options);
             optsCell = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
-        return options;
     }
 
     private static void ApplyOption(Activation engine, Cell optCell, TermRenderOptions options)
@@ -341,12 +391,24 @@ public static class IOBuiltins
             IgnoreOps = true,
         };
 
-    /// <summary><c>print(X)</c> — ISO defines this as a portray/1 hook
-    /// fallback to <c>write/1</c>. Shumway has no portray hook, so this
-    /// is the <c>write/1</c> path.</summary>
+    /// <summary><c>print(X)</c> — a portray/1 hook with a <c>write/1</c>
+    /// fallback. The hook is not wired yet, so this is the write path.</summary>
     public static bool Print(Activation engine)
     {
         TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine),
+            DefaultOptions(engine));
+        return true;
+    }
+
+    /// <summary><c>print(+Stream, +Term)</c>.</summary>
+    public static bool Print2(Activation engine)
+    {
+        var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "output,binary_stream");
+        if (h.Writer is null)
+            throw new PrologRuntimeException("permission_error", "output,stream");
+        TermRenderer.Render(engine, engine.GetRegister(1), h.Writer,
             DefaultOptions(engine));
         return true;
     }
@@ -493,6 +555,8 @@ public static class IOBuiltins
                 case 'd':
                 {
                     Cell arg = ConsumeArg(args, ref argIdx, name);
+                    if (num is int dneg && dneg < 0)
+                        throw new PrologRuntimeException("domain_error", "format_spec");
                     System.Numerics.BigInteger dv = FormatIntegerArg(engine, arg);
                     string ds = dv.ToString(System.Globalization.CultureInfo.InvariantCulture);
                     // ~Nd inserts a decimal point N digits from the right.
@@ -514,7 +578,11 @@ public static class IOBuiltins
                     Cell cur = Resolve(engine, arg);
                     if (cur.Tag is Tag.Ref or Tag.AttVar)
                         throw new PrologRuntimeException("instantiation_error");
-                    if (cur.Tag is not (Tag.Lis or Tag.Pstr)
+                    // A plain atom is accepted as text (SWI/SICStus), as is a
+                    // list of one-char atoms — `~s` is not code-lists-only.
+                    if (cur.Tag == Tag.Atom && cur.AsAtomId != AtomTable.EmptyListId)
+                        sb.Append(AtomTable.GetById(cur.AsAtomId)?.Name ?? "");
+                    else if (cur.Tag is not (Tag.Lis or Tag.Pstr)
                         && !(cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId))
                         throw new PrologRuntimeException("type_error", "list", engine, cur);
                     while (cur.Tag == Tag.Lis)
@@ -522,21 +590,36 @@ public static class IOBuiltins
                         Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
                         if (head.Tag is Tag.Ref or Tag.AttVar)
                             throw new PrologRuntimeException("instantiation_error");
-                        if (head.Tag != Tag.Int)
+                        if (head.Tag == Tag.Atom)
+                        {
+                            string cn = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
+                            if (cn.Length != 1)
+                                throw new PrologRuntimeException(
+                                    "type_error", "character", engine, head);
+                            sb.Append(cn);
+                        }
+                        else if (head.Tag == Tag.Int)
+                        {
+                            // BMP-only, as char_code/2 (truncating builds another char).
+                            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+                                throw new PrologRuntimeException(
+                                    "representation_error", "character_code");
+                            sb.Append((char)head.AsInt);
+                        }
+                        else
+                        {
                             throw new PrologRuntimeException(
                                 "type_error", "integer", engine, head);
-                        // BMP-only, as char_code/2 (truncating builds another char).
-                        if (head.AsInt < 0 || head.AsInt > char.MaxValue)
-                            throw new PrologRuntimeException(
-                                "representation_error", "character_code");
-                        sb.Append((char)head.AsInt);
+                        }
                         cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
                     }
                     if (cur.Tag is Tag.Ref or Tag.AttVar)
                         throw new PrologRuntimeException("instantiation_error");
-                    // ~Ns emits at most N characters (~0s emits none).
+                    // ~Ns is a field WIDTH: longer text is cut to N, shorter
+                    // text is padded out to N with spaces.
                     string sv = sb.ToString();
-                    if (num is int scut && scut < sv.Length) sv = sv[..scut];
+                    if (num is int swidth)
+                        sv = swidth < sv.Length ? sv[..swidth] : sv.PadRight(swidth);
                     output.Write(sv);
                     break;
                 }
@@ -553,17 +636,51 @@ public static class IOBuiltins
                     int prec = num ?? 6;
                     // ~E / ~G are ~e / ~g with an upper-case exponent marker.
                     char lower = char.ToLowerInvariant(spec);
-                    string netFmt = lower switch
+                    string fs;
+                    if (lower == 'g')
                     {
-                        'e' => "0." + new string('0', prec) + "e+00",
-                        'f' => "F" + prec,
-                        _   => "G" + (prec <= 0 ? 6 : prec),
-                    };
-                    string fs = d.ToString(
-                        netFmt, System.Globalization.CultureInfo.InvariantCulture);
-                    output.Write(spec is 'E' or 'G' ? fs.ToUpperInvariant() : fs);
+                        // C's %g: significant digits, shortest of %e/%f, and a
+                        // two-digit exponent — .NET's "G" gives "E-06" and a
+                        // three-digit exponent on some inputs.
+                        fs = d.ToString(
+                            "G" + (prec <= 0 ? 6 : prec),
+                            System.Globalization.CultureInfo.InvariantCulture);
+                        fs = NormaliseExponent(fs);
+                    }
+                    else
+                    {
+                        string netFmt = lower == 'e'
+                            ? "0." + new string('0', prec) + "e+00"
+                            : "F" + prec;
+                        fs = d.ToString(
+                            netFmt, System.Globalization.CultureInfo.InvariantCulture);
+                    }
+                    output.Write(spec is 'E' or 'G' ? fs.ToUpperInvariant() : fs.ToLowerInvariant());
                     break;
                 }
+                case 'k':
+                {
+                    // ~k — write_canonical/1 of the argument.
+                    TermRenderer.Render(engine, ConsumeArg(args, ref argIdx, name),
+                        output, CanonicalOptions(engine));
+                    break;
+                }
+                case 'W':
+                {
+                    // ~W — write_term/2: TWO arguments, the term and its
+                    // option list.
+                    Cell wterm = ConsumeArg(args, ref argIdx, name);
+                    Cell wopts = ConsumeArg(args, ref argIdx, name);
+                    var wo = DefaultOptions(engine);
+                    ApplyWriteOptions(engine, wopts, wo);
+                    TermRenderer.Render(engine, wterm, output, wo);
+                    break;
+                }
+                case 'N':
+                    // ~N — a newline only when not already at column 0
+                    // (a leading count is accepted and ignored).
+                    if (column.CurrentColumn != 0) output.Write('\n');
+                    break;
                 case 'r':
                 case 'R':
                 {
@@ -580,29 +697,34 @@ public static class IOBuiltins
                 }
                 case 'D':
                 {
-                    // ~D — the integer argument with thousands separators.
+                    // ~D — thousands separators. ~ND additionally puts the
+                    // last N digits after a decimal point, and only the part
+                    // to its LEFT is grouped (`~2D` of 123456789 is
+                    // 1,234,567.89).
+                    if (num is int Dneg && Dneg < 0)
+                        throw new PrologRuntimeException("domain_error", "format_spec");
                     Cell deref = FormatIntegerCell(engine, ConsumeArg(args, ref argIdx, name));
-                    if (deref.Tag == Tag.Int)
-                        output.Write(deref.AsInt.ToString(
-                            "N0", System.Globalization.CultureInfo.InvariantCulture));
-                    else if (deref.Tag == Tag.BigInt)
-                        output.Write(engine.AsBigInt(deref).ToString(
-                            "N0", System.Globalization.CultureInfo.InvariantCulture));
-                    else
-                        throw new PrologRuntimeException("type_error", "integer");
+                    System.Numerics.BigInteger Dv = deref.Tag switch
+                    {
+                        Tag.Int => deref.AsInt,
+                        Tag.BigInt => engine.AsBigInt(deref),
+                        _ => throw new PrologRuntimeException("type_error", "integer"),
+                    };
+                    output.Write(GroupedDecimal(Dv, num ?? 0));
                     break;
                 }
                 case 'c':
                 {
                     // ~Nc — emit the argument's character code N times (N = 1).
-                    Cell deref = Resolve(engine, ConsumeArg(args, ref argIdx, name));
-                    if (deref.Tag is Tag.Ref or Tag.AttVar)
-                        throw new PrologRuntimeException("instantiation_error");
-                    if (deref.Tag != Tag.Int)
+                    // The code goes through the arithmetic path like ~d, so
+                    // `~c` of the atom `a` is type_error(evaluable, a/0).
+                    System.Numerics.BigInteger cv =
+                        FormatIntegerArg(engine, ConsumeArg(args, ref argIdx, name));
+                    if (cv < 0 || cv > char.MaxValue)
                         throw new PrologRuntimeException(
-                            "type_error", "integer", engine, deref);
+                            "representation_error", "character_code");
                     int reps = num ?? 1;
-                    for (int r = 0; r < reps; r++) output.Write((char)deref.AsInt);
+                    for (int r = 0; r < reps; r++) output.Write((char)cv);
                     break;
                 }
                 case 't':
@@ -681,12 +803,13 @@ public static class IOBuiltins
                 }
                 else
                 {
-                    // Distribute evenly; the remainder goes to the LAST
-                    // fill point (SWI's behaviour for `~t~t~30|`).
+                    // Distribute evenly; the remainder goes ONE EACH to the
+                    // last fill points, so `~|~t~t~tabc~t~10+` pads 1+2+2+2,
+                    // not 1+1+1+4.
                     int each = pad / _fills.Count, extra = pad % _fills.Count;
                     for (int k = _fills.Count - 1; k >= 0; k--)
                     {
-                        int n = each + (k == _fills.Count - 1 ? extra : 0);
+                        int n = each + (k >= _fills.Count - extra ? 1 : 0);
                         if (n > 0) _seg.Insert(_fills[k].Pos, new string(_fills[k].Fill, n));
                     }
                 }
@@ -788,7 +911,11 @@ public static class IOBuiltins
     {
         Cell d = Resolve(engine, c);
         if (d.Tag == Tag.Atom)
-            return AtomTable.GetById(d.AsAtomId)?.Name ?? "";
+            // `format("", [])` reaches here as the empty LIST under
+            // double_quotes=codes — empty text, not the name "[]".
+            return d.AsAtomId == AtomTable.EmptyListId
+                ? ""
+                : AtomTable.GetById(d.AsAtomId)?.Name ?? "";
         if (d.Tag == Tag.Pstr)
             return engine.AsPstrString(engine.Deref(c.AsHeapIndex));
         // A format string may equally be a list of character CODES or of
@@ -800,7 +927,7 @@ public static class IOBuiltins
         // one is type_error(atom).
         if (d.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
-        throw new PrologRuntimeException("type_error", "atom");
+        throw new PrologRuntimeException("type_error", "atom", engine, d);
     }
 
     /// <summary>Reads a code list or char list into text. The two are not
@@ -861,8 +988,10 @@ public static class IOBuiltins
         if (cur.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-            // Argument list isn't a proper list — ISO type_error(list, _).
-            throw new PrologRuntimeException("type_error", "list");
+            // Argument list isn't a proper list — the culprit is the list as
+            // GIVEN, not the offending tail.
+            throw new PrologRuntimeException(
+                "type_error", "list", engine, Resolve(engine, c));
         return result;
     }
 

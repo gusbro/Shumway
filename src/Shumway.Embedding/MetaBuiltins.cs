@@ -41,6 +41,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$te_after",        1, TeAfter);
         BuiltinsRegistry.Register("$findall_record_s", 1, FindallRecordSnapshot);
         BuiltinsRegistry.Register("$findall_collect", 1, FindallCollect);
+        BuiltinsRegistry.Register("$check_partial_list", 1, CheckPartialList);
         // In-engine bagof/setof plumbing — reuse the findall
         // frame stack ('$findall_push' / '$findall_record'); only the
         // collect step differs (it groups the solutions by witness).

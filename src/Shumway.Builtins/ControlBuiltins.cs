@@ -145,8 +145,10 @@ public static class ControlBuiltins
             int addr = engine.Deref(c.AsHeapIndex);
             c = engine.GetHeap(addr);
         }
+        if (c.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
         if (c.Tag != Tag.Int)
-            throw new PrologRuntimeException("type_error", "integer");
+            throw new PrologRuntimeException("type_error", "integer", engine, c);
         long code = c.AsInt;
         if (code < int.MinValue || code > int.MaxValue)
             throw new PrologRuntimeException("domain_error", "int32");

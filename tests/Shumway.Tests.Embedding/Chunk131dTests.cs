@@ -85,10 +85,12 @@ public class Chunk131dTests
     public void Format_TildeS_NonIntListElement_RaisesTypeError()
     {
         var e = new PrologEngine();
+        // ~s takes a code list OR a char list, so a list of atoms is read as
+        // characters and a multi-char atom in it is type_error(character, _).
         var sol = e.Query(
             "catch(format('~s', [[foo, bar]]), error(type_error(T, _), _), true).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("integer"), sol["T"]);
+        Assert.Equal(Atom("character"), sol["T"]);
     }
 
     // ---------- format-arg list shape ----------

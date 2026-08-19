@@ -90,6 +90,10 @@ public static partial class MetaBuiltins
                     props.Add(new AtomTerm(AtomTable.GetById(atomId)?.Name ?? "?"));
             }
         }
+        // `:- multifile PI` is a property of the predicate, whichever module
+        // declared it — the clauses accumulate across files.
+        if (props.Count > 0 && host.IsMultifileFunctor(fid))
+            props.Add(new AtomTerm("multifile"));
         if (importedFrom is not null)
             props.Add(new CompoundTerm("imported_from",
                 new Term[] { new AtomTerm(importedFrom) }));

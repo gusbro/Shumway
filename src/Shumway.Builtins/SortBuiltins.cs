@@ -38,6 +38,7 @@ public static class SortBuiltins
         // improper tail) is type_error(list, L) with the WHOLE argument
         // as culprit — before any element's pair shape is looked at.
         CheckSortListArgument(engine, listStart);
+        CheckPartialListArgument(engine, Resolve(engine, engine.GetRegister(1)));
         while (cursor.Tag == Tag.Lis)
         {
             int headIdx = cursor.AsHeapIndex;
@@ -66,6 +67,24 @@ public static class SortBuiltins
     /// with an unbound tail) is an instantiation_error; a bound
     /// non-list — including an improper tail — is type_error(list, L),
     /// the WHOLE argument being the culprit.</summary>
+    /// <summary>§8.4: the SORTED argument is checked too — it has to be a
+    /// partial list (a variable, or a list ending in [] or a variable).
+    /// <c>sort([], 3)</c> is type_error(list, 3), not a quiet failure.</summary>
+    private static void CheckPartialListArgument(Activation engine, Cell listStart)
+    {
+        Cell cur = listStart;
+        while (true)
+        {
+            if (cur.Tag is Tag.Ref or Tag.AttVar) return;
+            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) return;
+            if (cur.Tag == Tag.Pstr) return;
+            if (cur.Tag != Tag.Lis)
+                throw new PrologRuntimeException(
+                    "type_error", "list", engine, listStart);
+            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        }
+    }
+
     private static void CheckSortListArgument(Activation engine, Cell listStart)
     {
         Cell cur = listStart;
@@ -110,6 +129,7 @@ public static class SortBuiltins
         Cell listStart = Resolve(engine, engine.GetRegister(0));
         Cell cursor = listStart;
         CheckSortListArgument(engine, listStart);
+        CheckPartialListArgument(engine, Resolve(engine, engine.GetRegister(1)));
         while (cursor.Tag == Tag.Lis)
         {
             int headIdx = cursor.AsHeapIndex;

@@ -302,7 +302,8 @@ public static class StreamBuiltins
             var (optAtomId, optArity) = FunctorTable.Lookup(functorId);
             string optName = AtomTable.GetById(optAtomId)?.Name ?? "";
             if (optArity != 1)
-                throw new PrologRuntimeException("domain_error", "stream_option");
+                throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
 
             Cell argCell = Resolve(engine, engine.GetHeap(functorIdx + 1));
             switch (optName)
@@ -315,18 +316,21 @@ public static class StreamBuiltins
                     // (GNU + Neumerkel agree), NOT type_error(atom) — consistent
                     // with the type(...) case below.
                     if (argCell.Tag != Tag.Atom)
-                        throw new PrologRuntimeException("domain_error", "stream_option");
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     alias = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
                     break;
                 case "type":
                     if (argCell.Tag == Tag.Ref)
                         throw new PrologRuntimeException("instantiation_error");
                     if (argCell.Tag != Tag.Atom)
-                        throw new PrologRuntimeException("domain_error", "stream_option");
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     string typeName = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
                     if (typeName == "binary") binary = true;
                     else if (typeName != "text")
-                        throw new PrologRuntimeException("domain_error", "stream_option");
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     break;
                 case "encoding":
                     // SWI-style: encoding(utf8 | iso_latin_1 | ascii). The
@@ -338,7 +342,8 @@ public static class StreamBuiltins
                     if (argCell.Tag == Tag.Ref)
                         throw new PrologRuntimeException("instantiation_error");
                     if (argCell.Tag != Tag.Atom)
-                        throw new PrologRuntimeException("domain_error", "stream_option");
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     string encName = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
                     encoding = encName switch
                     {
@@ -346,21 +351,31 @@ public static class StreamBuiltins
                         "iso_latin_1" => System.Text.Encoding.Latin1,
                         "ascii" => System.Text.Encoding.ASCII,
                         _ => throw new PrologRuntimeException(
-                            "domain_error", "stream_option"),
+                            "domain_error", "stream_option", engine, head),
                     };
                     break;
                 case "eof_action":
                     if (argCell.Tag == Tag.Ref)
                         throw new PrologRuntimeException("instantiation_error");
                     if (argCell.Tag != Tag.Atom)
-                        throw new PrologRuntimeException("domain_error", "stream_option");
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     eofAction = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
                     if (eofAction is not ("error" or "eof_code" or "reset"))
-                        throw new PrologRuntimeException("domain_error", "stream_option");
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     break;
                 case "reposition":
                     // Recognised; SeekablePosition is implicit on
-                    // file streams — no plumbing needed yet.
+                    // file streams — no plumbing needed yet, but the
+                    // value is still validated (§8.11.5.4).
+                    if (argCell.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (argCell.Tag != Tag.Atom
+                        || AtomTable.GetById(argCell.AsAtomId)?.Name
+                            is not ("true" or "false"))
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     break;
                 default:
                     throw new PrologRuntimeException(
@@ -977,10 +992,10 @@ public static class StreamBuiltins
         if (c.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (c.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "character");
+            throw new PrologRuntimeException("type_error", "character", engine, c);
         string name = AtomTable.GetById(c.AsAtomId)?.Name ?? "";
         if (name.Length != 1)
-            throw new PrologRuntimeException("type_error", "character");
+            throw new PrologRuntimeException("type_error", "character", engine, c);
         h.Writer!.Write(name[0]);
     }
 
@@ -992,7 +1007,7 @@ public static class StreamBuiltins
         if (c.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (c.Tag != Tag.Int)
-            throw new PrologRuntimeException("type_error", "integer");
+            throw new PrologRuntimeException("type_error", "integer", engine, c);
         long code = c.AsInt;
         if (code < 0 || code > char.MaxValue)
             throw new PrologRuntimeException("representation_error", "character_code");
@@ -1008,8 +1023,27 @@ public static class StreamBuiltins
     {
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
+        RequireStreamOrVar(engine, engine.GetRegister(0));
         return engine.UnifyRegisterWithCell(
             0, MakeStreamTerm(engine, registry.CurrentInput));
+    }
+
+    /// <summary>current_input/1 and current_output/1 take a variable or a
+    /// term naming an OPEN stream; anything else (an unrelated atom, a
+    /// closed stream) is domain_error(stream, X) rather than a quiet
+    /// failure.</summary>
+    private static void RequireStreamOrVar(Activation engine, Cell cell)
+    {
+        Cell d = Resolve(engine, cell);
+        if (d.Tag is Tag.Ref or Tag.AttVar) return;
+        try
+        {
+            ResolveStream(engine, d);
+        }
+        catch (PrologRuntimeException)
+        {
+            throw new PrologRuntimeException("domain_error", "stream", engine, d);
+        }
     }
 
     /// <summary><c>current_output(Stream)</c> — ISO §8.11.2.</summary>
@@ -1017,6 +1051,7 @@ public static class StreamBuiltins
     {
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
+        RequireStreamOrVar(engine, engine.GetRegister(0));
         return engine.UnifyRegisterWithCell(
             0, MakeStreamTerm(engine, registry.CurrentOutput));
     }

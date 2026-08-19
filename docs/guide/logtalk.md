@@ -87,11 +87,16 @@ Shumway; only that one selector borrows SWI's name.
   compiler needs — is native.
 
 - **The `tests/prolog` ISO conformity battery** (192 testers, ~3,400
-  counted tests): 2,796 passed / 499 failed after the 2026-08 campaign
-  (baseline before it: 2,096 / 933). Every tester now reports a summary
-  except the five `unicode/` ones, which gate on the `encoding/1`
-  directive Shumway does not implement. One divergence is deliberate and
-  closed: the battery's `lgt_*` tests expect the strict-ISO reading of the
+  counted tests): **3,219 passed / 70 failed** after the 2026-08 campaign
+  (baseline before it: 2,096 / 933; 2,796 / 499 at the end of round two).
+  Every tester now reports a summary except the five `unicode/` ones,
+  which gate on the `encoding/1` directive Shumway does not implement.
+  Of what remains, 25 failures are the `portray/1` hook (see the engine
+  note below), 6 are the accepted float-conversion divergence, and the
+  rest are single-tester items tracked in the repository history.
+
+  Two divergences are deliberate and closed. The first: the battery's
+  `lgt_*` tests expect the strict-ISO reading of the
   float-conversion functions — `ceiling(9)`, `floor(9)`, `round(9)`,
   `truncate(9)`, `float_integer_part(9)`, `float_fractional_part(9)` →
   `type_error(float, 9)`, which is what GNU Prolog does. Shumway stays in
@@ -100,6 +105,20 @@ Shumway; only that one selector borrows SWI's name.
   engine certifies against rely on it, and Scryer — the strictest of the
   modern systems — accepts it too. These six single-test failures in
   `functions/` are accepted, not pending.
+
+  The second: `\e`, `\s`, `\d` in quoted tokens and a lone `0''` are SWI
+  extensions, not ISO — GNU Prolog rejects them too, and Shumway's reader
+  accepts them only inside the swi dialect load scope, because the strict
+  reading is what the Neumerkel conformance suite pins. Four
+  `syntax/numbers` failures come from that and are accepted.
+
+  Still open on the engine side: `write_term/2,3`'s `portrayed(true)` and
+  `print/1,2`'s `portray/1` hook are validated but do not call the hook. It
+  needs a re-entrant solve from inside a writer builtin, and that is unsound
+  today when the builtin runs under a nested sub-query — the caller's
+  continuation fails after the nested solve returns even when the hook
+  succeeded. It accounts for the `print_1`, `print_2`, `portray_1` and the
+  portray part of the `write_term_3` / `format_2` / `format_3` failures.
 
 ## Notes
 

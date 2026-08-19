@@ -315,8 +315,8 @@ public static partial class MetaBuiltins
                 (e, i) => PrologFlagUnify(e, host, i));
         }
         if (flagCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(
-                IsoError.TypeError("atom", new VarTerm("_")));
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error", "atom", engine, flagCell);
         string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
 
         switch (flagName)
@@ -418,7 +418,10 @@ public static partial class MetaBuiltins
                 return engine.UnifyRegisterWithCell(1, Cell.Int(255));
 
             default:
-                return false;
+                // §8.17.2.3: an atom that names no flag is a domain error,
+                // not a quiet failure.
+                throw new Shumway.Core.PrologRuntimeException(
+                    "domain_error", "prolog_flag", engine, flagCell);
         }
     }
 
@@ -900,6 +903,9 @@ public static partial class MetaBuiltins
         }
         if (nameCell.Tag == Tag.Lis)
         {
+            // Validate the WHOLE list before defining anything: a partial list
+            // or a bad element must leave the operator table untouched.
+            var names = new List<string>();
             Cell cur = nameCell;
             while (cur.Tag == Tag.Lis)
             {
@@ -910,11 +916,17 @@ public static partial class MetaBuiltins
                     throw new ShumwayPrologException(IsoError.TypeError("atom",
                         engine.MaterializeCellToTerm is { } hm && hm(head) is Term ht
                             ? ht : new VarTerm("_")));
-                string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
-                ValidateOpDefine(target, name, precedence, opType);
-                target.Define(name, precedence, opType);
+                names.Add(AtomTable.GetById(head.AsAtomId)?.Name ?? "");
                 cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
             }
+            if (cur.Tag is Tag.Ref or Tag.AttVar)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
+            if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
+                throw new ShumwayPrologException(IsoError.TypeError("list", nameTerm));
+            foreach (string name in names)
+                ValidateOpDefine(target, name, precedence, opType);
+            foreach (string name in names)
+                target.Define(name, precedence, opType);
             return true;
         }
         // A non-atom, non-list third argument: ISO calls it type_error(list, N).

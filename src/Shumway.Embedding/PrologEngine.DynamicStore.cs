@@ -144,6 +144,15 @@ public sealed partial class PrologEngine
     /// silently failing on a static predicate.</summary>
     internal bool IsDynamic(int functorId) => _dynStore.IsDynamic(functorId);
 
+    /// <summary>True when any loaded module declared this functor
+    /// <c>:- multifile</c>. Reported by predicate_property/2.</summary>
+    internal bool IsMultifileFunctor(int functorId)
+    {
+        foreach (var m in _modules.Values)
+            if (m.MultifileFunctors.Contains(functorId)) return true;
+        return false;
+    }
+
     /// <summary>Snapshot of every functor declared <c>:- dynamic</c>.
     /// Used by <c>garbage_collect_clauses/0</c> to iterate them.
     ///</summary>

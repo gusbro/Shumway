@@ -153,6 +153,8 @@ public static class StandardBuiltins
             Io, "writeq(+Stream, +Term)", "Writes a term in quoted (parseable) form to a stream (ISO §8.14.5).");
         BuiltinsRegistry.Register("print",           1, IOBuiltins.Print,
             Io, "print(+Term)", "Writes a term using print conventions.");
+        BuiltinsRegistry.Register("print",           2, IOBuiltins.Print2,
+            Io, "print(+Stream, +Term)", "Writes a term to a stream using print conventions.");
 
         // Streams: write + read modes; format/3 stream-aware.
         BuiltinsRegistry.Register("open",      3, StreamBuiltins.Open,

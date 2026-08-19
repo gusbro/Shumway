@@ -362,6 +362,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `portray_clause(+Clause)` | Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, synthetic variable names renamed to A, B, C, ... |
 | `portray_clause(+Stream, +Clause)` | Like portray_clause/1 but writes to the given stream. |
 | `print(+Term)` | Writes a term using print conventions. |
+| `print(+Stream, +Term)` | Writes a term to a stream using print conventions. |
 | `prolog_load_context(?Key, ?Value)` | SWI/Scryer load-context introspection (module / file / source / directory), used by term_expansion/goal_expansion hooks to read the module being loaded. Fails outside a consult. |
 | `prolog_to_os_filename(?PrologPath, ?OsPath)` | Converts between Shumway's canonical '/'-separated path form and the host's native form (ADR-044). Either argument may be the bound one; on Unix both forms are the same. |
 | `put(+Code)` | Writes the character with the given code to the current output stream. Edinburgh-style alias of put_code/1. |

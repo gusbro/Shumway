@@ -10,6 +10,26 @@ public static partial class MetaBuiltins
     /// open findall buffer and unifies <c>List</c> with its collected
     /// solutions. Each solution is materialised with its own variable map
     /// so distinct solutions never accidentally share a variable.</summary>
+    /// <summary><c>'$check_partial_list'(L)</c> — succeeds when L is a
+    /// partial list (a variable, or a list ending in [] or a variable) and
+    /// raises <c>type_error(list, L)</c> otherwise. The solutions argument
+    /// of findall/bagof/setof is checked with it BEFORE the goal runs.
+    /// </summary>
+    public static bool CheckPartialList(Activation engine)
+    {
+        Cell given = ResolveLocal(engine, engine.GetRegister(0));
+        Cell cur = given;
+        while (true)
+        {
+            if (cur.Tag is Tag.Ref or Tag.AttVar or Tag.Pstr) return true;
+            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) return true;
+            if (cur.Tag != Tag.Lis)
+                throw new Shumway.Core.PrologRuntimeException(
+                    "type_error", "list", engine, given);
+            cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        }
+    }
+
     public static bool FindallCollect(Activation engine)
     {
         var frame = FindallHost(engine).PopFindallFrame();

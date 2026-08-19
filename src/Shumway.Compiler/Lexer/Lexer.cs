@@ -374,16 +374,24 @@ public sealed class Lexer
             }
             else if (c == '/' && Peek(1) == '*')
             {
+                var openPos = CurrentPosition();
                 Advance(); Advance();
+                bool closed = false;
                 while (_offset < _source.Length)
                 {
                     if (_source[_offset] == '*' && Peek(1) == '/')
                     {
                         Advance(); Advance();
+                        closed = true;
                         break;
                     }
                     Advance();
                 }
+                // §6.4.1: a block comment must be closed — running off the end
+                // of input is a syntax error, not an implicit close.
+                if (!closed)
+                    throw new LexerException(
+                        $"Unterminated block comment opened at {openPos}.", openPos);
             }
             else if (ArityCompat && c == '#' && AtLineStart()
                      && string.CompareOrdinal(_source, _offset, "#line", 0, 5) == 0)
@@ -797,6 +805,7 @@ public sealed class Lexer
             // dialect scope accepts them.
             'e' when LenientEscapes => 27,
             's' when LenientEscapes => 32,
+            'd' when LenientEscapes => 127,
             '\\' => '\\',
             '\'' => '\'',
             '"' => '"',

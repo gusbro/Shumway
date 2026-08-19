@@ -293,6 +293,7 @@ internal static class Prelude
         % variable Goal. It must NOT use an isolated sub-engine — that lacked the
         % parent's bundle-precompiled predicates and hid the goal's side effects.
         findall(Template, Goal, List) :-
+            '$check_partial_list'(List),
             ( '$findall_push', call(Goal), '$findall_record_s'(Template), fail
             ; '$findall_collect'(List) ).
 
@@ -310,6 +311,7 @@ internal static class Prelude
         % still resolves in the meta-caller's module; the quantified variables
         % are collected from INSIDE the tag as well.
         bagof(Template, Goal, Bag) :-
+            '$check_partial_list'(Bag),
             '$bagof_parts'(Goal, Inner, QVars),
             term_variables(Inner, GoalVars),
             term_variables(t(Template, QVars), BoundVars),
@@ -322,6 +324,7 @@ internal static class Prelude
                 '$bagof_groups'(Pairs, Witness, Bag)
             ).
         setof(Template, Goal, Set) :-
+            '$check_partial_list'(Set),
             bagof(Template, Goal, Bag),
             sort(Bag, Set).
         '$bagof_parts'('$mqual'(M, G), '$mqual'(M, S), Q) :- !, '$bagof_strip'(G, S, Q).
@@ -383,7 +386,16 @@ internal static class Prelude
             nonvar(H),
             '$module_clause_enum'(M, H, H-B).
         clause(H, B) :-
-            nonvar(H),
+            (   var(H) -> throw(error(instantiation_error, _))
+            ;   \+ callable(H) -> throw(error(type_error(callable, H), _))
+            ;   nonvar(B), \+ callable(B) ->
+                    throw(error(type_error(callable, B), _))
+            ;   predicate_property(H, built_in) ->
+                    functor(H, N, A),
+                    throw(error(permission_error(
+                        access, private_procedure, N/A), _))
+            ;   true
+            ),
             '$clause_enum'(H, H-B).
 
         %! current_predicate(?PredicateIndicator) | Database | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own.
@@ -465,6 +477,9 @@ internal static class Prelude
         % Proper lists take the native '$list_length' fast path; everything
         % else (partial list, improper term, bad Length) walks with the
         % original term kept for the type_error(list, Culprit).
+        length(L, N) :-
+            integer(N), N < 0, !,
+            throw(error(domain_error(not_less_than_zero, N), length/2)).
         length(L, N) :-
             nonvar(L), '$list_length'(L, M), !,
             (   integer(N) -> N = M
@@ -1030,10 +1045,18 @@ internal static class Prelude
         '$atomic_to_atom'(X, A) :- atom_string(A, X).
 
         %! atomic_list_concat(+List, -Atom) | Atoms & strings | Concatenates a list of atomic terms into a single atom.
-        atomic_list_concat([], '').
-        atomic_list_concat([X|Xs], Atom) :-
+        atomic_list_concat(List, Atom) :-
+            '$alc_check_list'(List),
+            (   var(Atom) -> true
+            ;   atom(Atom) -> true
+            ;   throw(error(type_error(atom, Atom), atomic_list_concat/2))
+            ),
+            '$alc_concat'(List, Atom).
+
+        '$alc_concat'([], '').
+        '$alc_concat'([X|Xs], Atom) :-
             '$atomic_to_atom'(X, AX),
-            atomic_list_concat(Xs, Rest),
+            '$alc_concat'(Xs, Rest),
             atom_concat(AX, Rest, Atom).
 
         %! atomic_list_concat(?List, +Separator, ?Atom) | Atoms & strings | Joins a list of atomics with a separator, or splits an atom on the separator.
@@ -1046,8 +1069,8 @@ internal static class Prelude
             % so a bad argument errors rather than half-building an atom.
             '$alc_check_list'(List),
             (   var(Sep) -> throw(error(instantiation_error, atomic_list_concat/3))
-            ;   atom(Sep) -> true
-            ;   throw(error(type_error(atom, Sep), atomic_list_concat/3))
+            ;   atomic(Sep) -> true
+            ;   throw(error(type_error(atomic, Sep), atomic_list_concat/3))
             ),
             (   var(Atom) -> true
             ;   atom(Atom) -> true
@@ -1249,8 +1272,11 @@ internal static class Prelude
 
         %! findall(?Template, :Goal, -List, ?Tail) | Findall & aggregation | Like findall/3 but the result is a difference list ending in Tail.
         findall(Template, Goal, List, Tail) :-
+            '$check_partial_list'(List),
+            '$check_partial_list'(Tail),
             findall(Template, Goal, List0),
             append(List0, Tail, List).
+
 
         %! retractall(+Head) | Database | Removes every clause whose head unifies with Head.
         % retract/1 is re-satisfiable, so a failure-driven loop retracts

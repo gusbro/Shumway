@@ -169,10 +169,12 @@ public class ControlAndListsConformance
     {
         // A non-callable spliced into goal position (`{1^true}`-style
         // sources) must be a CATCHABLE runtime type_error(callable, _),
-        // never a compile-time crash that kills the load.
+        // never a compile-time crash that kills the load. §7.6.2 converts
+        // the WHOLE construct, so the culprit is `(true,4)` — GNU agrees,
+        // and the conversion fires before `true` runs.
         var engine = new PrologEngine();
         Assert.True(engine.Query(
-            "catch((true, 4), error(type_error(callable, 4), _), true).").Success);
+            "catch((true, 4), error(type_error(callable, (true, 4)), _), true).").Success);
     }
 
     [Fact]
