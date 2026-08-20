@@ -249,4 +249,59 @@ public class PstrOpcodeTests
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
         Assert.Equal(28, engine.P);
     }
+
+    // ---------- The two list cursors agree on a chars PSTR (ADR-047) ----------
+    //
+    // These are the two paths that drifted apart: a callee head matching [H|T]
+    // runs get_list, an inline list pattern compiles to a unify_list run. When
+    // only one of them knew about PSTR, the same unification succeeded through
+    // one and failed through the other. Nothing produces a chars PSTR from
+    // Prolog yet (the literal pool is codes until the flag flips), so the
+    // header is planted directly.
+
+    private static int PlantCharsPstr(Activation engine, string text)
+        => engine.MakePstr(text, TextKind.Chars);
+
+    [Fact]
+    public void GetList_OnACharsPstr_YieldsACharAtomHead()
+    {
+        var engine = new Activation();
+        var interp = new BytecodeInterpreter(engine);
+        engine.SetRegister(0, Cell.Ref(PlantCharsPstr(engine, "ab")));
+
+        // get_list X0 ; unify_variable X1 (head) ; unify_variable X2 (tail)
+        var code = BuildCode(
+            Opcode.GetList, 0,
+            Opcode.UnifyVariableX, 1,
+            Opcode.UnifyVariableX, 2,
+            Opcode.Halt);
+        Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
+
+        Cell head = engine.GetRegister(1);
+        Assert.Equal(Tag.Atom, head.Tag);
+        Assert.Equal("a", AtomTable.GetById(head.AsAtomId)!.Name);
+    }
+
+    [Fact]
+    public void UnifyList_OnACharsPstr_YieldsTheSameHeadAsGetList()
+    {
+        var engine = new Activation();
+        var interp = new BytecodeInterpreter(engine);
+
+        int cursorIdx = engine.AllocateHeap(1);
+        engine.SetHeap(cursorIdx, engine.GetHeap(PlantCharsPstr(engine, "ab")));
+        engine.SetUnifyPointer(cursorIdx);
+        engine.SetWriteMode(false);
+
+        var code = BuildCode(
+            Opcode.UnifyList,
+            Opcode.UnifyVariableX, 1,
+            Opcode.UnifyVariableX, 2,
+            Opcode.Halt);
+        Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
+
+        Cell head = engine.GetRegister(1);
+        Assert.Equal(Tag.Atom, head.Tag);
+        Assert.Equal("a", AtomTable.GetById(head.AsAtomId)!.Name);
+    }
 }

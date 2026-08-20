@@ -464,9 +464,11 @@ public sealed partial class Activation
             if (++steps == StructEqCycleThreshold)
                 (visited = _structEqVisited ??= new HashSet<long>()).Clear();
 
-            // Both PSTR: bulk-compare the packed runs and hand on the tails.
-            // Strictly an optimisation over the element-wise spine below.
-            if (a.Tag == Tag.Pstr && b.Tag == Tag.Pstr)
+            // Both PSTR of the same presentation: bulk-compare the packed runs
+            // and hand on the tails. Strictly an optimisation over the
+            // element-wise spine below, which handles every other pairing —
+            // including a kind mismatch, where the heads differ by tag.
+            if (a.Tag == Tag.Pstr && b.Tag == Tag.Pstr && a.AsPstrKind == b.AsPstrKind)
             {
                 if (!ArePstrCodesEqual(a, b)) return false;
                 stack.Add(PstrFinalTailCell(a));
@@ -634,7 +636,7 @@ public sealed partial class Activation
         }
         if (c.Tag == Tag.Pstr && c.AsPstrLength > 0)
         {
-            head = Cell.Int(GetPstrCodeUnit(c, 0));
+            head = PstrHeadCell(c.AsPstrKind, GetPstrCodeUnit(c, 0));
             if (c.AsPstrLength == 1)
             {
                 tail = _heap[Deref(ComputePstrTailIndex(c))];

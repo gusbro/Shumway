@@ -445,8 +445,7 @@ public sealed partial class Activation
             return false;
         }
 
-        int firstUnit = GetPstrCodeUnit(hdr, 0);
-        head = Cell.Int(firstUnit);
+        head = PstrHeadCell(hdr.AsPstrKind, GetPstrCodeUnit(hdr, 0));
 
         int newLength = hdr.AsPstrLength - 1;
         if (newLength == 0)
@@ -462,6 +461,20 @@ public sealed partial class Activation
             _heap[headerIdx] = Cell.Pstr(newLength, newBufferIdx, newOffset, hdr.AsPstrKind);
         }
         return true;
+    }
+
+    /// <summary>The element a packed list yields at a given position: a
+    /// one-character atom or a code, per the header's <see cref="TextKind"/>.
+    /// Every uncons path goes through here — the four of them producing their
+    /// own head cell is how <c>X = "abc", X = [97,98,99]</c> came to fail
+    /// through one cursor and succeed through another.</summary>
+    private static Cell PstrHeadCell(TextKind kind, int codeUnit)
+    {
+        if (kind == TextKind.Codes) return Cell.Int(codeUnit);
+        int cached = AtomTable.GetSingleCharAtomId(codeUnit);
+        return Cell.Atom(cached >= 0
+            ? cached
+            : AtomTable.Intern(((char)codeUnit).ToString(), permanent: false).Id);
     }
 
     private int GetPstrCodeUnit(Cell header, int i)
@@ -1362,6 +1375,11 @@ public sealed partial class Activation
         int aLen = aHdr.AsPstrLength;
         int bLen = bHdr.AsPstrLength;
 
+        // [a,b,c] and [97,98,99] are different lists. An empty segment carries
+        // no elements, so its presentation says nothing and must not decide.
+        if (aLen > 0 && bLen > 0 && aHdr.AsPstrKind != bHdr.AsPstrKind)
+            return false;
+
         if (aLen > bLen)
         {
             (aAddr, bAddr) = (bAddr, aAddr);
@@ -1409,14 +1427,12 @@ public sealed partial class Activation
     {
         Cell pstrHdr = _heap[pstrAddr];
         int length = pstrHdr.AsPstrLength;
-        int firstUnit = GetPstrCodeUnit(pstrHdr, 0);
 
         int lisHeadIdx = _heap[lisAddr].AsHeapIndex;
         int lisTailIdx = lisHeadIdx + 1;
 
-        // Unify the head: a fresh Int cell against the LIS's head slot.
         int headSlot = AllocateHeap(1);
-        _heap[headSlot] = Cell.Int(firstUnit);
+        _heap[headSlot] = PstrHeadCell(pstrHdr.AsPstrKind, GetPstrCodeUnit(pstrHdr, 0));
         if (!Unify(headSlot, lisHeadIdx)) return false;
 
         if (length == 1)

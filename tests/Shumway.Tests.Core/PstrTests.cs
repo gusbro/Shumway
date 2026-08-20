@@ -461,4 +461,105 @@ public class PstrTests
         Assert.Equal(Tag.Pstr, tail.Tag);
         Assert.Equal(TextKind.Codes, tail.AsPstrKind);
     }
+
+    // ---------- Chars unify as chars (ADR-047 decision 2) ----------
+
+    private static int ConsList(Activation e, params Cell[] items)
+    {
+        Cell tail = Cell.Atom(AtomTable.EmptyListId);
+        for (int i = items.Length - 1; i >= 0; i--)
+        {
+            int pair = e.AllocateHeap(2);
+            e.SetHeap(pair, items[i]);
+            e.SetHeap(pair + 1, tail);
+            tail = Cell.Lis(pair);
+        }
+        int slot = e.AllocateHeap(1);
+        e.SetHeap(slot, tail);
+        return slot;
+    }
+
+    private static Cell CharAtom(char c) => Cell.Atom(AtomTable.GetSingleCharAtomId(c));
+
+    [Fact]
+    public void Uncons_OfACharsPstrYieldsCharAtoms()
+    {
+        var engine = new Activation();
+        int p = engine.MakePstr("ab", TextKind.Chars);
+        Assert.True(engine.TryUnconsListLike(engine.GetHeap(p), out Cell head, out _));
+        Assert.Equal(Tag.Atom, head.Tag);
+        Assert.Equal("a", AtomTable.GetById(head.AsAtomId)!.Name);
+    }
+
+    [Fact]
+    public void Uncons_AboveTheLatin1CacheStillYieldsTheRightAtom()
+    {
+        var engine = new Activation();
+        int p = engine.MakePstr("中", TextKind.Chars);
+        Assert.True(engine.TryUnconsListLike(engine.GetHeap(p), out Cell head, out _));
+        Assert.Equal("中", AtomTable.GetById(head.AsAtomId)!.Name);
+    }
+
+    [Fact]
+    public void AdvancePstrHead_OfACharsPstrYieldsACharAtom()
+    {
+        var engine = new Activation();
+        int slot = engine.AllocateHeap(1);
+        engine.SetHeap(slot, engine.GetHeap(engine.MakePstr("ab", TextKind.Chars)));
+        Assert.True(engine.AdvancePstrHead(slot, out Cell head));
+        Assert.Equal(CharAtom('a'), head);
+    }
+
+    [Fact]
+    public void CharsPstr_UnifiesWithAConsListOfCharAtoms()
+    {
+        var engine = new Activation();
+        int p = engine.MakePstr("abc", TextKind.Chars);
+        int l = ConsList(engine, CharAtom('a'), CharAtom('b'), CharAtom('c'));
+        Assert.True(engine.Unify(p, l));
+    }
+
+    [Fact]
+    public void CharsPstr_DoesNotUnifyWithAConsListOfCodes()
+    {
+        var engine = new Activation();
+        int p = engine.MakePstr("abc", TextKind.Chars);
+        int l = ConsList(engine, Cell.Int('a'), Cell.Int('b'), Cell.Int('c'));
+        Assert.False(engine.Unify(p, l));
+    }
+
+    [Fact]
+    public void CodesPstr_DoesNotUnifyWithACharsPstrOfTheSameText()
+    {
+        // [a,b,c] and [97,98,99] hold the same text and are different lists.
+        var engine = new Activation();
+        int a = engine.MakePstr("abc", TextKind.Chars);
+        int b = engine.MakePstr("abc", TextKind.Codes);
+        Assert.False(engine.Unify(a, b));
+    }
+
+    [Fact]
+    public void EmptyPstrs_UnifyWhateverTheirDeclaredKind()
+    {
+        // A zero-length segment carries no elements, so its presentation says
+        // nothing: both are the empty list.
+        var engine = new Activation();
+        int a = engine.MakePstr("", TextKind.Chars);
+        int b = engine.MakePstr("", TextKind.Codes);
+        Assert.True(engine.Unify(a, b));
+    }
+
+    [Fact]
+    public void StructuralEquality_FollowsThePresentation()
+    {
+        var engine = new Activation();
+        int chars = engine.MakePstr("abc", TextKind.Chars);
+        int codes = engine.MakePstr("abc", TextKind.Codes);
+        int consChars = ConsList(engine, CharAtom('a'), CharAtom('b'), CharAtom('c'));
+
+        Assert.True(engine.AreStructurallyEqual(
+            engine.GetHeap(chars), engine.GetHeap(consChars)));
+        Assert.False(engine.AreStructurallyEqual(
+            engine.GetHeap(chars), engine.GetHeap(codes)));
+    }
 }

@@ -838,7 +838,7 @@ public sealed partial class Activation
     private int UnconsPstrToPair(Cell pstr)
     {
         int pair = AllocateHeap(2);
-        _heap[pair] = Cell.Int(GetPstrCodeUnit(pstr, 0));
+        _heap[pair] = PstrHeadCell(pstr.AsPstrKind, GetPstrCodeUnit(pstr, 0));
         if (pstr.AsPstrLength == 1)
         {
             _heap[pair + 1] = Cell.Ref(ComputePstrTailIndex(pstr));

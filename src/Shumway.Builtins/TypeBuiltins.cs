@@ -239,17 +239,18 @@ public static class TypeBuiltins
         long len = 0;
         while (true)
         {
-            cell = Resolve(engine, cell);
+            // The cursor, not `Tag.Lis`: these answer about the list's
+            // contents, and a packed list is a list (ADR-047).
+            cell = engine.NormalizeListCell(Resolve(engine, cell));
             if (cell.Tag == Tag.Atom && cell.AsAtomId == AtomTable.EmptyListId) break;
-            if (cell.Tag != Tag.Lis) return false;
-            int headIdx = cell.AsHeapIndex;
-            Cell head = Resolve(engine, engine.GetHeap(headIdx));
+            if (!engine.TryUnconsListLike(cell, out Cell rawHead, out Cell tail)) return false;
+            Cell head = Resolve(engine, rawHead);
             bool ok = chars
                 ? head.Tag == Tag.Atom && (AtomTable.GetById(head.AsAtomId)?.Name?.Length == 1)
                 : head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= 0x10FFFF;
             if (!ok) return false;
             len++;
-            cell = engine.GetHeap(headIdx + 1);
+            cell = tail;
         }
         return engine.UnifyRegisterWithCell(1, Cell.Int(len));
     }
