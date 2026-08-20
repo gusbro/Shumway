@@ -342,7 +342,7 @@ public static class AtomListBuiltins
             // type_error(integer, a), not a silent failure.
             // Only a PROPER list is validated-and-compared: a partial
             // one (atom_codes(abc, [0'a|T])) must still unify.
-            if (IsProperListCell(engine, codesCell))
+            if (ListCursor.IsProperListCell(engine, codesCell))
                 return ReadCodesString(engine, codesCell) == name;
             int listIdx = BuildIntCodesList(engine, name);
             return engine.UnifyRegisterWithHeapAt(1, listIdx);
@@ -588,23 +588,4 @@ public static class AtomListBuiltins
         int addr = engine.Deref(c.AsHeapIndex);
         return engine.GetHeap(addr);
     }
-    /// <summary>True when a bound second argument is fully GROUND as a
-    /// list — every element bound and the tail nil (or improper). Only
-    /// then is it type-checked and compared against the atom's text; a
-    /// partial list, or one holding unbound elements, is the generate
-    /// direction and must unify instead (atom_codes(A, [X]) after
-    /// atom_codes(A, [0'x]) binds X).</summary>
-    private static bool IsProperListCell(Activation engine, Cell c)
-    {
-        Cell cur = Resolve(engine, c);
-        int guard = engine.HeapTop + 2;
-        while (cur.Tag == Tag.Lis && guard-- > 0)
-        {
-            Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
-            if (head.Tag is Tag.Ref or Tag.AttVar) return false;
-            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
-        }
-        return cur.Tag is not (Tag.Ref or Tag.AttVar);
-    }
-
 }

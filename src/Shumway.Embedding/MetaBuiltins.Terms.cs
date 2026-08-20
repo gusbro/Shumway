@@ -915,15 +915,15 @@ public static partial class MetaBuiltins
             target.Define(name, precedence, opType);
             return true;
         }
-        if (nameCell.Tag == Tag.Lis)
+        if (Activation.IsListLike(nameCell))
         {
             // Validate the WHOLE list before defining anything: a partial list
             // or a bad element must leave the operator table untouched.
             var names = new List<string>();
             Cell cur = nameCell;
-            while (cur.Tag == Tag.Lis)
+            while (engine.TryUnconsListLike(cur, out Cell rawHead, out Cell opTail))
             {
-                Cell head = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex));
+                Cell head = ResolveLocal(engine, rawHead);
                 if (head.Tag is Tag.Ref or Tag.AttVar)
                     throw new ShumwayPrologException(IsoError.InstantiationError());
                 if (head.Tag != Tag.Atom)
@@ -931,7 +931,7 @@ public static partial class MetaBuiltins
                         engine.MaterializeCellToTerm is { } hm && hm(head) is Term ht
                             ? ht : new VarTerm("_")));
                 names.Add(AtomTable.GetById(head.AsAtomId)?.Name ?? "");
-                cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+                cur = engine.NormalizeListCell(ResolveLocal(engine, opTail));
             }
             if (cur.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
@@ -1268,10 +1268,10 @@ public static partial class MetaBuiltins
     private static string ReadCodesAsString(Activation engine, Cell codesCell)
     {
         var sb = new System.Text.StringBuilder();
-        Cell cur = ResolveLocal(engine, codesCell);
-        while (cur.Tag == Tag.Lis)
+        Cell cur = engine.NormalizeListCell(ResolveLocal(engine, codesCell));
+        while (engine.TryUnconsListLike(cur, out Cell rawHead, out Cell cTail))
         {
-            Cell head = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex));
+            Cell head = ResolveLocal(engine, rawHead);
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException("type_error", "character_code");
             // BMP-only, as char_code/2 (truncating builds another char).
@@ -1279,7 +1279,7 @@ public static partial class MetaBuiltins
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
             sb.Append((char)head.AsInt);
-            cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            cur = engine.NormalizeListCell(ResolveLocal(engine, cTail));
         }
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
             throw new PrologRuntimeException("type_error", "list");

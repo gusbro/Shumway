@@ -835,6 +835,21 @@ public sealed partial class Activation
     /// drifted apart: only the first one handled PSTR, so `X = "abc"` unified
     /// against a bound `Y = [97,98,99]` but not against the literal
     /// <c>[97,98,99]</c> written inline.</summary>
+    /// <summary>A <see cref="Tag.Lis"/> cell denoting the same list as
+    /// <paramref name="c"/>, materialising the two-cell pair for a packed list.
+    /// Term inspection (<c>functor/3</c>, <c>arg/3</c>, <c>=..</c>) reaches for
+    /// this so it can treat every list alike: those predicates read a
+    /// compound's parts out of consecutive heap slots, and a packed list's head
+    /// and tail are computed, not stored. Costs two cells and copies no
+    /// content — the pair's tail is the original slice. Anything that is not a
+    /// non-empty packed list comes back unchanged.</summary>
+    public Cell MaterializeListCell(Cell c)
+    {
+        if (c.Tag != Tag.Pstr) return c;
+        Cell n = NormalizeEmptyPstr(c);
+        return n.Tag == Tag.Pstr ? Cell.Lis(UnconsPstrToPair(n)) : n;
+    }
+
     private int UnconsPstrToPair(Cell pstr)
     {
         int pair = AllocateHeap(2);

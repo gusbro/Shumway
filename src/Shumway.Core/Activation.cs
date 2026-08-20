@@ -689,9 +689,11 @@ public sealed partial class Activation
         return true;
     }
 
-    /// <summary>The first non-<see cref="Tag.Pstr"/> tail cell of a PSTR chain
-    /// (mirrors the tail-following loop in <see cref="AppendPstrChain"/>).</summary>
-    private Cell PstrFinalTailCell(Cell header)
+    /// <summary>The first tail cell of a PSTR chain that is not a same-kind
+    /// PSTR (mirrors the tail-following loop in <see cref="AppendPstrChain"/>).
+    /// A packed list may be partial, so this is where a caller finds out
+    /// whether it ends in <c>[]</c> or in an unbound variable.</summary>
+    public Cell PstrFinalTailCell(Cell header)
     {
         TextKind kind = header.AsPstrKind;
         while (header.Tag == Tag.Pstr && header.AsPstrKind == kind)

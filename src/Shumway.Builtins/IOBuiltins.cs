@@ -581,7 +581,7 @@ public static class IOBuiltins
                 {
                     Cell arg = ConsumeArg(args, ref argIdx, name);
                     var sb = new System.Text.StringBuilder();
-                    Cell cur = Resolve(engine, arg);
+                    Cell cur = ListCursor.Resolve(engine, arg);
                     if (cur.Tag is Tag.Ref or Tag.AttVar)
                         throw new PrologRuntimeException("instantiation_error");
                     // A plain atom is accepted as text (SWI/SICStus), as is a
@@ -591,9 +591,11 @@ public static class IOBuiltins
                     else if (cur.Tag is not (Tag.Lis or Tag.Pstr)
                         && !(cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId))
                         throw new PrologRuntimeException("type_error", "list", engine, cur);
-                    while (cur.Tag == Tag.Lis)
+                    // The cursor, not Tag.Lis: a packed list passed the type
+                    // check above and then printed nothing.
+                    while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell sTail))
                     {
-                        Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
+                        Cell head = Resolve(engine, rawHead);
                         if (head.Tag is Tag.Ref or Tag.AttVar)
                             throw new PrologRuntimeException("instantiation_error");
                         if (head.Tag == Tag.Atom)
@@ -617,7 +619,7 @@ public static class IOBuiltins
                             throw new PrologRuntimeException(
                                 "type_error", "integer", engine, head);
                         }
-                        cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+                        cur = ListCursor.Resolve(engine, sTail);
                     }
                     if (cur.Tag is Tag.Ref or Tag.AttVar)
                         throw new PrologRuntimeException("instantiation_error");
@@ -943,11 +945,11 @@ public static class IOBuiltins
     private static string ReadTextListArg(Activation engine, Cell list)
     {
         var sb = new System.Text.StringBuilder();
-        Cell cur = list;
+        Cell cur = ListCursor.Resolve(engine, list);
         bool? codes = null;
-        while (cur.Tag == Tag.Lis)
+        while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell tTail))
         {
-            Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
+            Cell head = Resolve(engine, rawHead);
             if (head.Tag == Tag.Ref)
                 throw new PrologRuntimeException("instantiation_error");
 
@@ -985,11 +987,11 @@ public static class IOBuiltins
     private static List<Cell> ReadProperListAsCells(Activation engine, Cell c, string builtinName)
     {
         var result = new List<Cell>();
-        Cell cur = Resolve(engine, c);
-        while (cur.Tag == Tag.Lis)
+        Cell cur = ListCursor.Resolve(engine, c);
+        while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
         {
-            result.Add(engine.GetHeap(cur.AsHeapIndex));
-            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            result.Add(head);
+            cur = ListCursor.Resolve(engine, tail);
         }
         if (cur.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");

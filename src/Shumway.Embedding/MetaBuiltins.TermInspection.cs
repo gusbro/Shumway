@@ -66,7 +66,10 @@ public static partial class MetaBuiltins
     /// arguments.</summary>
     public static bool Functor(Activation engine)
     {
-        Cell t = ResolveLocal(engine, engine.GetRegister(0));
+        // A packed list is a list, so it must answer '.'/2 like the cons cell
+        // it denotes (ADR-047). Materialising the pair once here is what lets
+        // the arms below read a compound's parts out of heap slots.
+        Cell t = engine.MaterializeListCell(ResolveLocal(engine, engine.GetRegister(0)));
 
         if (t.Tag is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float)
         {
@@ -151,7 +154,7 @@ public static partial class MetaBuiltins
     /// a fresh compound with unbound arguments.</summary>
     public static bool CompoundNameArity(Activation engine)
     {
-        Cell t = ResolveLocal(engine, engine.GetRegister(0));
+        Cell t = engine.MaterializeListCell(ResolveLocal(engine, engine.GetRegister(0)));
         if (t.Tag == Tag.Str)
         {
             int functorIdx = t.AsHeapIndex;
@@ -200,7 +203,7 @@ public static partial class MetaBuiltins
     public static bool Arg(Activation engine)
     {
         Cell nCell = ResolveLocal(engine, engine.GetRegister(0));
-        Cell tCell = ResolveLocal(engine, engine.GetRegister(1));
+        Cell tCell = engine.MaterializeListCell(ResolveLocal(engine, engine.GetRegister(1)));
         // §8.5.2.3 order: the TERM is checked first — an unbound term is
         // an instantiation_error and a non-compound is
         // type_error(compound, T), whatever N looks like.
@@ -346,7 +349,7 @@ public static partial class MetaBuiltins
 
     public static bool Univ(Activation engine)
     {
-        Cell t = ResolveLocal(engine, engine.GetRegister(0));
+        Cell t = engine.MaterializeListCell(ResolveLocal(engine, engine.GetRegister(0)));
 
         // Decompose modes — build the list directly in the heap with
         // a single allocation, no intermediate Cell[] buffer.
@@ -414,11 +417,11 @@ public static partial class MetaBuiltins
             if (listC.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
             int count = 0;
-            Cell cur = listC;
-            while (cur.Tag == Tag.Lis)
+            Cell cur = engine.NormalizeListCell(listC);
+            while (engine.TryUnconsListLike(cur, out _, out Cell tail))
             {
                 count++;
-                cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+                cur = engine.NormalizeListCell(ResolveLocal(engine, tail));
             }
             if (cur.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());

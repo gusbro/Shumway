@@ -251,20 +251,20 @@ public static class StreamBuiltins
             if (tail.Tag == Tag.Atom && tail.AsAtomId == AtomTable.EmptyListId)
                 return s;
         }
-        else if (pathCell.Tag == Tag.Lis)
+        else if (Activation.IsListLike(pathCell))
         {
             var sb = new System.Text.StringBuilder();
             Cell cur = pathCell;
             int steps = 0, cap = engine.HeapTop + 1;
-            while (cur.Tag == Tag.Lis)
+            while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell pTail))
             {
                 if (++steps > cap) break;   // cyclic — fall to the type error
-                Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
+                Cell head = Resolve(engine, rawHead);
                 if (head.Tag != Tag.Atom) break;
                 string? c = AtomTable.GetById(head.AsAtomId)?.Name;
                 if (c is null || c.Length != 1) break;
                 sb.Append(c);
-                cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+                cur = ListCursor.Resolve(engine, pTail);
             }
             if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId)
                 return sb.ToString();

@@ -55,12 +55,12 @@ public static class MultiSolutionHelpers
     /// ground.</summary>
     public static bool ListLength(Activation engine)
     {
-        Cell cur = Resolve(engine, engine.GetRegister(0));
+        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
         int count = 0;
-        while (cur.Tag == Tag.Lis)
+        while (ListCursor.TryUncons(engine, cur, out _, out Cell tail))
         {
             count++;
-            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            cur = ListCursor.Resolve(engine, tail);
         }
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
             return false;
