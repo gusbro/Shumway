@@ -36,7 +36,11 @@ internal static class SwiLenient
                 text = Number.FormatPrologFloat(
                     Cell.DecodeFloat(c, engine.GetHeap(c.FloatPairedIndex)));
                 return true;
-            case Tag.String or Tag.Pstr: text = engine.AsString(c); return true;
+            // A PSTR is a packed text list, not a Tag.String — AsString throws
+            // on anything else, so every SWI-lenient coercion of one used to
+            // blow up with an InvalidOperationException instead of coercing.
+            case Tag.Pstr: text = engine.ReadPstrChain(c, out _); return true;
+            case Tag.String: text = engine.AsString(c); return true;
             default: text = ""; return false;
         }
     }

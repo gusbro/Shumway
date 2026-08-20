@@ -62,21 +62,22 @@ public static class StandardOrderComparator
             {
                 if (depth >= RecursionLimit)
                     return CompareCompoundsIterative(engine, a, b);
-                var (aName, aArity, aArgsBase) = DescribeCompound(engine, a);
-                var (bName, bArity, bArgsBase) = DescribeCompound(engine, b);
+                var (aName, aArity) = DescribeCompound(engine, a);
+                var (bName, bArity) = DescribeCompound(engine, b);
                 if (aArity != bArity) return aArity.CompareTo(bArity);
                 int nameCmp = string.CompareOrdinal(aName, bName);
                 if (nameCmp != 0) return nameCmp;
                 for (int i = 0; i < aArity; i++)
                 {
                     int c = CompareRec(engine,
-                        engine.GetHeap(aArgsBase + i),
-                        engine.GetHeap(bArgsBase + i), depth + 1);
+                        ArgAt(engine, a, i), ArgAt(engine, b, i), depth + 1);
                     if (c != 0) return c;
                 }
                 return 0;
             }
-            default: return 0;                             // PSTR etc.: tie
+            default:
+                throw new NotSupportedException(
+                    $"standard order: order class {aOrder} has no comparison.");
         }
     }
 
@@ -115,8 +116,8 @@ public static class StandardOrderComparator
                 case 2: { int c = CompareAtoms(a, b); if (c != 0) return c; break; }
                 case 3:
                 {
-                    var (aName, aArity, aArgsBase) = DescribeCompound(engine, a);
-                    var (bName, bArity, bArgsBase) = DescribeCompound(engine, b);
+                    var (aName, aArity) = DescribeCompound(engine, a);
+                    var (bName, bArity) = DescribeCompound(engine, b);
                     if (aArity != bArity) return aArity.CompareTo(bArity);
                     int nameCmp = string.CompareOrdinal(aName, bName);
                     if (nameCmp != 0) return nameCmp;
@@ -130,12 +131,14 @@ public static class StandardOrderComparator
                     // Push args in reverse so arg 0 is popped (compared) first.
                     for (int i = aArity - 1; i >= 0; i--)
                     {
-                        stack.Add(engine.GetHeap(aArgsBase + i));
-                        stack.Add(engine.GetHeap(bArgsBase + i));
+                        stack.Add(ArgAt(engine, a, i));
+                        stack.Add(ArgAt(engine, b, i));
                     }
                     break;
                 }
-                default: break;   // order 4 (PSTR etc.): tie, keep walking
+                default:
+                    throw new NotSupportedException(
+                        $"standard order: order class {aOrder} has no comparison.");
             }
         }
         return 0;
@@ -148,8 +151,11 @@ public static class StandardOrderComparator
         Tag.Ref or Tag.AttVar => 0,
         Tag.Int or Tag.Float or Tag.BigInt or Tag.Rational => 1,
         Tag.Atom => 2,
-        Tag.Str or Tag.Lis => 3,
-        _ => 4,                                            // PSTR etc. — defer
+        // A PSTR is the list it represents, so it orders with the compounds.
+        // The empty PSTR never reaches here — Resolve collapses it to its tail.
+        Tag.Str or Tag.Lis or Tag.Pstr => 3,
+        _ => throw new NotSupportedException(
+            $"standard order: tag {c.Tag} has no order class."),
     };
 
     private static int CompareNumbers(Activation engine, Cell a, Cell b)
@@ -185,17 +191,29 @@ public static class StandardOrderComparator
     /// <summary>Returns (functor name, arity, base heap index for args[0]).
     /// For a STR cell the args begin one past the functor cell; for a LIS
     /// cell they're the head and tail at consecutive indices.</summary>
-    private static (string Name, int Arity, int ArgsBase) DescribeCompound(Activation engine, Cell c)
+    /// <summary>Name and arity of a compound for ordering purposes. A list —
+    /// cons cell or PSTR alike — is <c>'.'/2</c>. Arguments are read with
+    /// <see cref="ArgAt"/> rather than from a base address, because a PSTR's
+    /// head and tail are computed, not stored at consecutive slots.</summary>
+    private static (string Name, int Arity) DescribeCompound(Activation engine, Cell c)
     {
-        if (c.Tag == Tag.Lis)
-            return (".", 2, c.AsHeapIndex);
+        if (Activation.IsListLike(c)) return (".", 2);
 
         // Tag.Str.
-        int functorIdx = c.AsHeapIndex;
-        Cell functorCell = engine.GetHeap(functorIdx);
+        Cell functorCell = engine.GetHeap(c.AsHeapIndex);
         var (atomId, arity) = FunctorTable.Lookup(functorCell.AsFunctorId);
-        string name = AtomTable.GetById(atomId)?.Name ?? "";
-        return (name, arity, functorIdx + 1);
+        return (AtomTable.GetById(atomId)?.Name ?? "", arity);
+    }
+
+    /// <summary>Argument <paramref name="i"/> of a compound cell.</summary>
+    private static Cell ArgAt(Activation engine, Cell c, int i)
+    {
+        if (Activation.IsListLike(c))
+        {
+            engine.TryUnconsListLike(c, out Cell head, out Cell tail);
+            return i == 0 ? head : tail;
+        }
+        return engine.GetHeap(c.AsHeapIndex + 1 + i);
     }
 
     private static (Cell Cell, int Addr) Resolve(Activation engine, Cell c)
@@ -203,8 +221,17 @@ public static class StandardOrderComparator
         // A bare ATTVAR cell carries its home index as payload, so it
         // compares by that address — like any variable.
         if (c.Tag == Tag.AttVar) return (c, c.AsHeapIndex);
-        if (c.Tag != Tag.Ref) return (c, -1);
+        if (c.Tag != Tag.Ref) return (engine.NormalizeListCell(c), -1);
         int addr = engine.Deref(c.AsHeapIndex);
-        return (engine.GetHeap(addr), addr);
+        Cell target = engine.GetHeap(addr);
+        // An empty PSTR is its tail (`[]`, or the variable it is open on), so
+        // it must not reach TypeOrder as a third kind of thing.
+        if (target.Tag == Tag.Pstr)
+        {
+            Cell norm = engine.NormalizeListCell(target);
+            if (norm.Tag is Tag.Ref or Tag.AttVar) return (norm, norm.AsHeapIndex);
+            return (norm, addr);
+        }
+        return (target, addr);
     }
 }

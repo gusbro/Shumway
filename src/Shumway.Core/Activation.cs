@@ -364,6 +364,10 @@ public sealed partial class Activation
         a = ResolveForStructuralCompare(a);
         b = ResolveForStructuralCompare(b);
 
+        // A PSTR and a cons cell can denote the same list, so the tag test
+        // cannot decide the pair — descend instead. (This is why `X = "abc",
+        // Y = [97,98,99], X = Y` succeeded and `X == Y` then said false.)
+        if (IsListLike(a) && IsListLike(b)) return StructuralCompareIterative(a, b);
         if (a.Tag != b.Tag) return false;
         switch (a.Tag)
         {
@@ -460,17 +464,17 @@ public sealed partial class Activation
             if (++steps == StructEqCycleThreshold)
                 (visited = _structEqVisited ??= new HashSet<long>()).Clear();
 
+            // Both PSTR: bulk-compare the packed runs and hand on the tails.
+            // Strictly an optimisation over the element-wise spine below.
+            if (a.Tag == Tag.Pstr && b.Tag == Tag.Pstr)
+            {
+                if (!ArePstrCodesEqual(a, b)) return false;
+                stack.Add(PstrFinalTailCell(a));
+                stack.Add(PstrFinalTailCell(b));
+                continue;
+            }
             switch (a.Tag)
             {
-                case Tag.Pstr:
-                    // PSTR (partial string): a packed char-code sequence + a
-                    // tail — NOT a functor+args structure, so it must NOT be
-                    // read as one. Match the leading code units, then push the
-                    // final (non-PSTR) tails as an ordinary pending pair.
-                    if (!ArePstrCodesEqual(a, b)) return false;
-                    stack.Add(PstrFinalTailCell(a));
-                    stack.Add(PstrFinalTailCell(b));
-                    break;
                 case Tag.Str:
                 {
                     int aIdx = a.AsHeapIndex, bIdx = b.AsHeapIndex;
@@ -487,32 +491,37 @@ public sealed partial class Activation
                     break;
                 }
                 case Tag.Lis:
+                case Tag.Pstr:
                 {
-                    // Walk the spine inline: compare each head-pair
-                    // in place (only a compound head is pushed for descent), so
-                    // a proper list of primitives runs at spine-loop speed with
-                    // no work-stack traffic. Past the budget, every visited cons
+                    // Walk the spine inline: compare each head-pair in place
+                    // (only a compound head is pushed for descent), so a proper
+                    // list of primitives runs at spine-loop speed with no
+                    // work-stack traffic. Either side may be packed — the uncons
+                    // hides which. Past the budget, every visited position pair
                     // is recorded so a cyclic spine (X=[1|X]) terminates.
-                    int aIdx = a.AsHeapIndex, bIdx = b.AsHeapIndex;
+                    Cell ca = a, cb = b;
                     while (true)
                     {
-                        if (visited != null && !visited.Add(((long)aIdx << 32) | (uint)bIdx))
+                        if (visited != null
+                            && !visited.Add(((long)SpineKey(ca) << 32) | (uint)SpineKey(cb)))
                             break;   // cyclic spine — equal so far
-                        Cell ha = ResolveForStructuralCompare(_heap[aIdx]);
-                        Cell hb = ResolveForStructuralCompare(_heap[bIdx]);
+                        TryUnconsListLike(ca, out Cell hac, out Cell tac);
+                        TryUnconsListLike(cb, out Cell hbc, out Cell tbc);
+                        Cell ha = ResolveForStructuralCompare(hac);
+                        Cell hb = ResolveForStructuralCompare(hbc);
                         if (TryCompareLeafPair(ha, hb, out bool headEqual))
                         {
                             if (!headEqual) return false;
                         }
                         else { stack.Add(ha); stack.Add(hb); }   // compound head
 
-                        Cell ta = ResolveForStructuralCompare(_heap[aIdx + 1]);
-                        Cell tb = ResolveForStructuralCompare(_heap[bIdx + 1]);
-                        if (ta.Tag == Tag.Lis && tb.Tag == Tag.Lis)
+                        Cell ta = ResolveForStructuralCompare(tac);
+                        Cell tb = ResolveForStructuralCompare(tbc);
+                        if (IsListLike(ta) && IsListLike(tb))
                         {
                             if (++steps == StructEqCycleThreshold)
                                 (visited = _structEqVisited ??= new HashSet<long>()).Clear();
-                            aIdx = ta.AsHeapIndex; bIdx = tb.AsHeapIndex;
+                            ca = ta; cb = tb;
                             continue;
                         }
                         stack.Add(ta); stack.Add(tb);   // final tail pair
@@ -535,6 +544,8 @@ public sealed partial class Activation
     /// the caller must recurse into their contents.</summary>
     private bool TryCompareLeafPair(Cell a, Cell b, out bool equal)
     {
+        // Both list-like (cons and/or PSTR): not decided here, descend.
+        if (IsListLike(a) && IsListLike(b)) { equal = false; return false; }
         if (a.Tag != b.Tag) { equal = false; return true; }
         switch (a.Tag)
         {
@@ -566,6 +577,14 @@ public sealed partial class Activation
         }
     }
 
+    /// <summary>Position key for the cycle-detection set. A cons cell is
+    /// identified by its pair index; a PSTR slice by where in its buffer it
+    /// starts, which advances monotonically, so a packed run cannot spin.</summary>
+    private static int SpineKey(Cell c)
+        => c.Tag == Tag.Lis
+            ? c.AsHeapIndex
+            : ~(c.AsPstrBufferIndex * Cell.PstrCodeUnitsPerBuffer + c.AsPstrOffset);
+
     private Cell ResolveForStructuralCompare(Cell c)
     {
         // An attributed variable is still a variable: it
@@ -574,11 +593,77 @@ public sealed partial class Activation
         // unbound variable. This also handles a bare ATTVAR cell read
         // straight out of a structure-argument slot.
         if (c.Tag == Tag.AttVar) return Cell.Ref(c.AsHeapIndex);
+        if (c.Tag == Tag.Pstr) return NormalizeEmptyPstr(c);
         if (c.Tag != Tag.Ref) return c;
         int addr = Deref(c.AsHeapIndex);
         Cell target = _heap[addr];
+        if (target.Tag == Tag.Pstr) return NormalizeEmptyPstr(target);
         return target.Tag is Tag.Ref or Tag.AttVar ? Cell.Ref(addr) : target;
     }
+
+    /// <summary>A zero-length PSTR carries no elements, so it IS its own tail —
+    /// which is how <c>UnifyPstr</c> already treats it. Collapsing it here means
+    /// every comparison, type test and ordering downstream sees the empty list
+    /// as the atom <c>[]</c> (or as the variable it is open on), instead of as a
+    /// third thing that happens to be tagged PSTR.</summary>
+    private Cell NormalizeEmptyPstr(Cell c)
+    {
+        while (c.Tag == Tag.Pstr && c.AsPstrLength == 0)
+        {
+            int tailAddr = Deref(ComputePstrTailIndex(c));
+            Cell tail = _heap[tailAddr];
+            if (tail.Tag is Tag.Ref or Tag.AttVar) return Cell.Ref(tailAddr);
+            c = tail;
+        }
+        return c;
+    }
+
+    /// <summary>Peels one element off a list-like cell — a cons cell or a
+    /// non-empty PSTR. A PSTR is the list it represents, so both shapes have to
+    /// answer the same question, and every walker that compares or orders lists
+    /// goes through here rather than reading <c>_heap[idx]</c> / <c>[idx+1]</c>
+    /// directly.</summary>
+    public bool TryUnconsListLike(Cell c, out Cell head, out Cell tail)
+    {
+        if (c.Tag == Tag.Lis)
+        {
+            int idx = c.AsHeapIndex;
+            head = _heap[idx];
+            tail = _heap[idx + 1];
+            return true;
+        }
+        if (c.Tag == Tag.Pstr && c.AsPstrLength > 0)
+        {
+            head = Cell.Int(GetPstrCodeUnit(c, 0));
+            if (c.AsPstrLength == 1)
+            {
+                tail = _heap[Deref(ComputePstrTailIndex(c))];
+                if (tail.Tag is Tag.Ref or Tag.AttVar)
+                    tail = Cell.Ref(Deref(ComputePstrTailIndex(c)));
+            }
+            else
+            {
+                int absoluteStart = c.AsPstrOffset + 1;
+                tail = Cell.Pstr(
+                    c.AsPstrLength - 1,
+                    c.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
+                    absoluteStart % Cell.PstrCodeUnitsPerBuffer);
+            }
+            return true;
+        }
+        head = default;
+        tail = default;
+        return false;
+    }
+
+    /// <summary>True when the cell denotes a non-empty list — a cons cell or a
+    /// non-empty PSTR. The two are the same thing to every list operation.</summary>
+    public static bool IsListLike(Cell c)
+        => c.Tag == Tag.Lis || (c.Tag == Tag.Pstr && c.AsPstrLength > 0);
+
+    /// <summary>Public form of <see cref="NormalizeEmptyPstr"/> for builtins
+    /// that classify or order a cell: an empty PSTR is its tail.</summary>
+    public Cell NormalizeListCell(Cell c) => c.Tag == Tag.Pstr ? NormalizeEmptyPstr(c) : c;
 
     /// <summary>Compares the leading code units of two PSTRs (<see cref="Tag.Pstr"/>)
     /// — the packed (possibly partial) char-code sequence, NOT the tail. A PSTR is
