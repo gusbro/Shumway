@@ -91,11 +91,10 @@ internal static class TermConverters
         }
         if (typeof(T) == typeof(string))
         {
-            // .NET strings map to Prolog strings (StringTerm). Atoms
-            // are reserved for true symbolic names; a user that wants
-            // atom semantics for a string value registers a custom
-            // converter or builds an AtomTerm explicitly.
-            result = new StringTerm((string)(object)value!);
+            // A .NET string is text as a VALUE, and text as a value is an atom
+            // (ADR-047 decision 6). A caller who wants text as a SEQUENCE asks
+            // for a list; there is no third thing at the boundary.
+            result = new AtomTerm((string)(object)value!);
             return true;
         }
         if (typeof(T) == typeof(BigInteger))
@@ -215,14 +214,13 @@ internal static class TermConverters
         }
         if (typeof(T) == typeof(string))
         {
-            // Accept either a StringTerm (the natural counterpart of
-            // ToTerm<string>) or an AtomTerm (the common case when
-            // the term came from a Prolog source) — both are
-            // lossless for a string round-trip.
-            if (term is StringTerm s) { result = (T)(object)s.Content; return true; }
-            if (term is AtomTerm a) { result = (T)(object)a.Name; return true; }
+            // An atom, or a list of characters or codes — packed or in cons
+            // cells, which reach here identically (ADR-047 decision 6). All of
+            // them are text, and all of them give the same C# string, so the
+            // same method called down two Prolog paths gets the same argument.
+            if (term.TryAsText(out string text)) { result = (T)(object)text; return true; }
             throw new InvalidCastException(
-                $"FromTerm<string> expects a string or atom term, got {term}.");
+                $"FromTerm<string> expects an atom or a list of text, got {term}.");
         }
         if (typeof(T) == typeof(BigInteger))
         {

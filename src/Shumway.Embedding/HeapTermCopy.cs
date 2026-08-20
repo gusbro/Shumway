@@ -110,10 +110,20 @@ internal static class HeapTermCopy
             case Tag.Int:
             case Tag.Foreign:
                 return c;
+            case Tag.Pstr:
+                // A COMPLETE packed list holds no variables and is never mutated
+                // in place, so the copy can be the cell itself — the same
+                // structure sharing an atom gets. That makes copy_term/2 and
+                // assertz of a megabyte of text cost one cell instead of a
+                // materialise-and-rebuild of 2n+1. A partial one has a variable
+                // in its tail and has to go the long way.
+                if (engine.PstrFinalTailCell(c) is { Tag: Tag.Atom } fin
+                    && fin.AsAtomId == AtomTable.EmptyListId)
+                    return c;
+                goto case Tag.Float;
             case Tag.Float:
             case Tag.BigInt:
             case Tag.Rational:
-            case Tag.Pstr:
                 // Ground side-table / buffer leaf: delegate this one node to the
                 // proven AST path (allocates a fresh side-table entry, exactly
                 // as the old whole-term round-trip did).

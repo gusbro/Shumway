@@ -209,14 +209,30 @@ between threads as long as access is serialised (no
 | `ToString()` | `"X = 1, Y = foo(2)"` style. |
 
 A `Term` is the parser's AST (`AtomTerm`, `IntTerm`, `FloatTerm`,
-`BigIntTerm`, `StringTerm`, `CompoundTerm`, `VarTerm`). Cast / pattern-
-match for typed access:
+`BigIntTerm`, `CompoundTerm`, `VarTerm`). Cast / pattern-match for typed access:
 
 ```csharp
 if (sol["X"] is IntTerm i) Console.WriteLine(i.Value);
 if (sol["L"] is CompoundTerm cons && cons.Functor == "." && cons.Args.Length == 2)
     Console.WriteLine($"list head = {cons.Args[0]}");
 ```
+
+**Text** reaches C# as one of two things, decided by what it *is* in Prolog and
+never by how the engine stored it (ADR-047): text as a **value** is an atom, and
+text as a **sequence** is a list. A double-quoted literal is a list, so it
+arrives as one — the same list whether or not the engine packed it — and a
+foreign predicate called with a packed list and with the equivalent cons list
+receives the same argument.
+
+`Term.TryAsText` reads either shape, plus an atom, when what you want is the
+characters:
+
+```csharp
+if (sol["X"]!.TryAsText(out string text)) Console.WriteLine(text);
+```
+
+`Get<string>(name)` uses it, so a `string` binding works whichever way the
+Prolog side produced the text.
 
 ### Loading constraint and coroutining libraries
 

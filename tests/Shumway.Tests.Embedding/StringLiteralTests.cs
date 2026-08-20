@@ -11,7 +11,16 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class StringLiteralTests
 {
-    private static Term Str(string s) => new StringTerm(s);
+    // A double-quoted literal reaches C# as the LIST it is (ADR-047 decision 6):
+    // the representation is not observable at the boundary, so what arrives is
+    // the same whether or not the engine stored it packed.
+    private static Term Str(string s)
+    {
+        Term t = new AtomTerm("[]");
+        for (int i = s.Length - 1; i >= 0; i--)
+            t = new CompoundTerm(".", new Term[] { new IntTerm(s[i]), t });
+        return t;
+    }
     private static Term Atom(string n) => new AtomTerm(n);
 
     [Fact]

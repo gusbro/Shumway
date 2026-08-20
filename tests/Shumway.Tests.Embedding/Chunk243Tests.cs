@@ -53,7 +53,7 @@ public class Chunk243Tests
         var t = (CompoundTerm)engine.ToTerm(u);
         Assert.Equal("c243_user", t.Functor);
         Assert.Equal(2, t.Args.Length);  // Name + Age only
-        Assert.Equal("alice", ((StringTerm)t.Args[0]).Content);
+        Assert.Equal("alice", ((AtomTerm)t.Args[0]).Name);
         Assert.Equal(30L, ((IntTerm)t.Args[1]).Value);
     }
 
