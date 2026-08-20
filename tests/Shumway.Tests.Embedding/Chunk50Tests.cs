@@ -24,7 +24,7 @@ public class Chunk50Tests
     {
         Term t = new AtomTerm("[]");
         for (int i = s.Length - 1; i >= 0; i--)
-            t = new CompoundTerm(".", new Term[] { new IntTerm(s[i]), t });
+            t = new CompoundTerm(".", new Term[] { new AtomTerm(s[i].ToString()), t });
         return t;
     }
 

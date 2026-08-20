@@ -1,3 +1,4 @@
+using Shumway.Core;
 using Shumway.Compiler.Ast;
 using Shumway.Embedding;
 using Xunit;
@@ -63,7 +64,7 @@ public class Chunk243Tests
         var engine = new PrologEngine();
         var t = new CompoundTerm("c243_user", new Term[]
         {
-            new StringTerm("bob"),
+            new StringTerm("bob", TextKind.Codes),
             new IntTerm(42),
         });
         var u = engine.FromTerm<C243User>(t);

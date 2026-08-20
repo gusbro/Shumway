@@ -1,3 +1,4 @@
+using Shumway.Core;
 using System.Numerics;
 using Shumway.Compiler.Ast;
 using Shumway.Embedding;
@@ -92,7 +93,7 @@ public class Chunk238Tests
         // both are lossless.
         var engine = new PrologEngine();
         Assert.Equal("hola", engine.FromTerm<string>(new AtomTerm("hola")));
-        Assert.Equal("hola", engine.FromTerm<string>(new StringTerm("hola")));
+        Assert.Equal("hola", engine.FromTerm<string>(new StringTerm("hola", TextKind.Codes)));
     }
 
     [Fact]
@@ -169,7 +170,7 @@ public class Chunk238Tests
         engine.RegisterConverter<Money>(
             toTerm: (e, m) => new CompoundTerm("money", new Term[]
             {
-                new StringTerm(m.Amount.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                new StringTerm(m.Amount.ToString(System.Globalization.CultureInfo.InvariantCulture), TextKind.Codes),
                 new AtomTerm(m.Currency),
             }),
             fromTerm: t =>

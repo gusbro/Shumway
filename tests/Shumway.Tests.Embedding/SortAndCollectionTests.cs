@@ -1,3 +1,4 @@
+using Shumway.Core;
 using Shumway.Compiler.Ast;
 using Shumway.Embedding;
 using Xunit;
@@ -14,7 +15,7 @@ public class SortAndCollectionTests
     private static Term Atom(string n) => new AtomTerm(n);
     private static Term Int(long v) => new IntTerm(v);
     private static Term Flt(double v) => new FloatTerm(v);
-    private static Term Str(string s) => new StringTerm(s);
+    private static Term Str(string s) => new StringTerm(s, TextKind.Codes);
     private static Term Nil() => new AtomTerm("[]");
     private static Term Cons(Term h, Term t) => new CompoundTerm(".", new[] { h, t });
     private static Term List(params Term[] items)

@@ -36,11 +36,11 @@ eager `use_module` with its import list.
 
 ## Writing code against these libraries
 
-**`double_quotes` usually needs no change.** Shumway's default is `string`
-(a PSTR), which behaves as a list of codes wherever a library consumes text,
-so `phrase(csv(Rows), "a,1\n")` works as written. Set `codes` explicitly only
-if a library inspects the text with `is_list/1` or similar. (While a
-swi-dialect library itself loads the flag is `codes` — what those library
+**`double_quotes` is `chars` by default** (ADR-047), which is what most
+modern SWI code expects. It is a parse-time flag and the literal is stored
+packed either way, so choosing `codes` costs nothing: set it explicitly when
+a library is written against code lists. (While a swi-dialect library itself
+loads, the flag is whatever that dialect pack declares — what those library
 sources are written against.)
 
 **A native Shumway builtin wins over an imported library predicate of the same

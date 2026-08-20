@@ -73,7 +73,7 @@ public sealed class PredicateCompiler
 
     public CompiledPredicate Compile(IReadOnlyList<Clause> clauses)
         => Compile(clauses,
-            new LiteralPool<string>(),
+            new LiteralPool<Shumway.Core.TextLiteral>(),
             new LiteralPool<double>(),
             new LiteralPool<System.Numerics.BigInteger>());
 
@@ -82,7 +82,7 @@ public sealed class PredicateCompiler
     /// total width so all recorded offsets stay valid).</summary>
     public CompiledPredicate Compile(
         IReadOnlyList<Clause> clauses,
-        LiteralPool<string> stringLiterals,
+        LiteralPool<Shumway.Core.TextLiteral> stringLiterals,
         LiteralPool<double> floatLiterals,
         LiteralPool<System.Numerics.BigInteger> bigIntLiterals,
         bool enableIndexing = true,
@@ -139,7 +139,7 @@ public sealed class PredicateCompiler
     /// <c>enableIndexing: true</c>.</summary>
     private CompiledPredicate CompileCore(
         IReadOnlyList<Clause> clauses,
-        LiteralPool<string> stringLiterals,
+        LiteralPool<Shumway.Core.TextLiteral> stringLiterals,
         LiteralPool<double> floatLiterals,
         LiteralPool<System.Numerics.BigInteger> bigIntLiterals,
         bool enableIndexing = true,

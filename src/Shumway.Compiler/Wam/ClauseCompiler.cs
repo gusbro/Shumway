@@ -53,7 +53,7 @@ namespace Shumway.Compiler.Wam;
 /// </summary>
 public sealed partial class ClauseCompiler
 {
-    private LiteralPool<string> _stringLiterals = new();
+    private LiteralPool<Shumway.Core.TextLiteral> _stringLiterals = new();
     private LiteralPool<double> _floatLiterals = new();
     private LiteralPool<System.Numerics.BigInteger> _bigIntLiterals = new();
 
@@ -101,13 +101,13 @@ public sealed partial class ClauseCompiler
 
     public CompiledClause Compile(Clause clause)
         => Compile(clause,
-            new LiteralPool<string>(),
+            new LiteralPool<Shumway.Core.TextLiteral>(),
             new LiteralPool<double>(),
             new LiteralPool<System.Numerics.BigInteger>());
 
     public CompiledClause Compile(
         Clause clause,
-        LiteralPool<string> stringLiterals,
+        LiteralPool<Shumway.Core.TextLiteral> stringLiterals,
         LiteralPool<double> floatLiterals,
         LiteralPool<System.Numerics.BigInteger> bigIntLiterals)
     {

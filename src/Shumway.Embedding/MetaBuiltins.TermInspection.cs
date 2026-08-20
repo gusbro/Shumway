@@ -560,8 +560,8 @@ public static partial class MetaBuiltins
         using var sw = new System.IO.StringWriter();
         Shumway.Builtins.TermRenderer.Render(engine, engine.GetRegister(0), sw,
             new Shumway.Builtins.TermRenderOptions { Operators = engine.Operators, Quoted = true });
-        // Produce a PSTR — the string representation the string builtins consume.
-        return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(sw.ToString(), TextKind.Codes)));
+        // The SWI string family produces text as a sequence of chars (ADR-047).
+        return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(sw.ToString(), TextKind.Chars)));
     }
 
     /// <summary><c>'$nb_setarg'(+Arg, +Term, +Value)</c> — the C# helper behind

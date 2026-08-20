@@ -41,7 +41,7 @@ public class Phase33W6Tests
         var pred = new CompiledPredicate(code, predFid, arity, 1,
             Array.Empty<CallSite>(), Array.Empty<int>());
         var module = new CompiledModule(new[] { pred },
-            Array.Empty<string>(), Array.Empty<double>());
+            Array.Empty<TextLiteral>(), Array.Empty<double>());
         var entry = new BundleEntry("w6mod_" + predName, source: "",
             compiledBytecode: CompiledModuleCodec.Encode(module),
             compiledIl: null,

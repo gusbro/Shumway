@@ -182,13 +182,25 @@ public sealed class RationalTerm : Term
     public override string ToString() => $"{Num} rdiv {Den}";
 }
 
+/// <summary>A text literal the compiler will pack (ADR-047). It is not a string
+/// TYPE: it denotes the list of characters or of codes named by
+/// <see cref="Kind"/>, and that is what it materialises into. The node exists so
+/// the compiler can carry a whole literal to the packer without building the
+/// cons list first.</summary>
 public sealed class StringTerm : Term
 {
     public string Content { get; }
-    public StringTerm(string content) => Content = content;
+    public Shumway.Core.TextKind Kind { get; }
 
-    public override bool Equals(object? obj) => obj is StringTerm o && Content == o.Content;
-    public override int GetHashCode() => HashCode.Combine(typeof(StringTerm), Content);
+    public StringTerm(string content, Shumway.Core.TextKind kind)
+    {
+        Content = content;
+        Kind = kind;
+    }
+
+    public override bool Equals(object? obj) =>
+        obj is StringTerm o && Content == o.Content && Kind == o.Kind;
+    public override int GetHashCode() => HashCode.Combine(typeof(StringTerm), Content, Kind);
     public override string ToString() => $"\"{Content}\"";
 }
 

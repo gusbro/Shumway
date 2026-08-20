@@ -22,13 +22,16 @@ public class PstrListSemanticsTests
         // `unify_list` run, a bound variable goes value-against-value. Only the
         // second knew about PSTRs, so the same logical unification succeeded one
         // way and failed the other.
-        Holds("X = \"abc\", X = [97, 98, 99].");
-        Holds("X = \"abc\", Y = [97, 98, 99], X = Y.");
-        Holds("X = \"abc\", X = [H|T], H == 97, T = [98, 99].");
+        Holds("X = \"abc\", X = [a, b, c].");
+        Holds("X = \"abc\", Y = [a, b, c], X = Y.");
+        Holds("X = \"abc\", X = [H|T], H == a, T = [b, c].");
         // …and still fails where it must.
         var engine = new PrologEngine();
-        Assert.False(engine.Query("X = \"abc\", X = [97, 98].").Success);
-        Assert.False(engine.Query("X = \"abc\", X = [97, 98, 99, 100].").Success);
+        Assert.False(engine.Query("X = \"abc\", X = [a, b].").Success);
+        Assert.False(engine.Query("X = \"abc\", X = [a, b, c, d].").Success);
+        // …and a list of the same TEXT in the other presentation is a
+        // different list (ADR-047 decision 2).
+        Assert.False(engine.Query("X = \"abc\", X = [97, 98, 99].").Success);
         Assert.False(engine.Query("X = \"abc\", X = [].").Success);
     }
 
@@ -36,12 +39,12 @@ public class PstrListSemanticsTests
     public void StructuralEqualitySeesThroughTheRepresentation()
     {
         // `==` after a successful `=` must be true: they are the same term.
-        Holds("X = \"abc\", Y = [97, 98, 99], X = Y, X == Y.");
-        Holds("X = \"abc\", X == [97, 98, 99].");
-        Assert.False(new PrologEngine().Query("X = \"abc\", X == [97, 98].").Success);
+        Holds("X = \"abc\", Y = [a, b, c], X = Y, X == Y.");
+        Holds("X = \"abc\", X == [a, b, c].");
+        Assert.False(new PrologEngine().Query("X = \"abc\", X == [a, b].").Success);
         Holds("X = \"abc\", Y = \"abc\", X == Y.");
         // A nested one, so the descent is exercised rather than the top switch.
-        Holds("f(\"ab\", 1) == f([97, 98], 1).");
+        Holds("f(\"ab\", 1) == f([a, b], 1).");
     }
 
     [Fact]
@@ -49,13 +52,13 @@ public class PstrListSemanticsTests
     {
         // It had its own order class and two PSTRs always tied, so sort/2 and
         // compare/3 were wrong for any program mixing text with other terms.
-        Holds("compare(=, \"abc\", [97, 98, 99]).");
-        Holds("compare(<, \"abc\", [97, 98, 100]).");
-        Holds("compare(>, \"abc\", [97, 98]).");
+        Holds("compare(=, \"abc\", [a, b, c]).");
+        Holds("compare(<, \"abc\", [a, b, d]).");
+        Holds("compare(>, \"abc\", [a, b]).");
         Holds("compare(<, \"ab\", \"ac\").");
         Holds("msort([\"b\", a, \"a\"], L), L == [a, \"a\", \"b\"].");
         // Duplicates collapse only when they really are equal.
-        Holds("sort([\"ab\", [97, 98]], L), L == [\"ab\"].");
+        Holds("sort([\"ab\", [a, b]], L), L == [\"ab\"].");
     }
 
     [Fact]
@@ -70,8 +73,8 @@ public class PstrListSemanticsTests
     {
         // A partial string's tail has nowhere to live in the packed AST node,
         // so copy_term/2 and findall/3 used to drop it silently.
-        Holds("atom_codes(ab, L), append(L, T, P), copy_term(P-T, _-QT), var(QT).");
-        Holds("X = \"abc\", copy_term(X, Y), Y == [97, 98, 99].");
+        Holds("atom_chars(ab, L), append(L, T, P), copy_term(P-T, _-QT), var(QT).");
+        Holds("X = \"abc\", copy_term(X, Y), Y == [a, b, c].");
         Holds("findall(Z, member(Z, [\"ab\", \"cd\"]), R), R == [\"ab\", \"cd\"].");
     }
 }

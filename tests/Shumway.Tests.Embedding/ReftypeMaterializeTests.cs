@@ -1,3 +1,4 @@
+using Shumway.Core;
 using Shumway.Compiler.Ast;
 using Shumway.Embedding;
 using Xunit;
@@ -48,7 +49,7 @@ public class ReftypeMaterializeTests
     {
         // Arity "string" (ntype 4) and atom (ntype 3) are the same thing in Shumway:
         // a string materializes as ntype 4 but reads back as an atom.
-        var r = Reftype.Materialize(new StringTerm("foo"));
+        var r = Reftype.Materialize(new StringTerm("foo", TextKind.Codes));
         Assert.Equal(Reftype.Codes.String, r.Ntype);
         Assert.Equal("foo", r.Cstr);
         Assert.Equal(new AtomTerm("foo"), Reftype.Dematerialize(r));

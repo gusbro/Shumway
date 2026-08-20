@@ -85,7 +85,7 @@ public sealed partial class BytecodeInterpreter
     // Not readonly: ADR-015 recompiles a dynamic predicate
     // mid-query, which may intern new literals into the persistent pools;
     // RefreshLiteralPools swaps in the grown snapshots.
-    private IReadOnlyList<string> _stringLiterals;
+    private IReadOnlyList<TextLiteral> _stringLiterals;
     private IReadOnlyList<double> _floatLiterals;
     private IReadOnlyList<System.Numerics.BigInteger> _bigIntLiterals;
     private readonly IReadOnlyList<SwitchTable> _switchTables;
@@ -176,18 +176,18 @@ public sealed partial class BytecodeInterpreter
     public Func<Activation, int, bool>?[]? IlByFunctorId { get; set; }
 
     public BytecodeInterpreter(Activation engine)
-        : this(engine, Array.Empty<string>(), Array.Empty<double>(), Array.Empty<SwitchTable>())
+        : this(engine, Array.Empty<TextLiteral>(), Array.Empty<double>(), Array.Empty<SwitchTable>())
     {
     }
 
-    public BytecodeInterpreter(Activation engine, IReadOnlyList<string> stringLiterals)
+    public BytecodeInterpreter(Activation engine, IReadOnlyList<TextLiteral> stringLiterals)
         : this(engine, stringLiterals, Array.Empty<double>(), Array.Empty<SwitchTable>())
     {
     }
 
     public BytecodeInterpreter(
         Activation engine,
-        IReadOnlyList<string> stringLiterals,
+        IReadOnlyList<TextLiteral> stringLiterals,
         IReadOnlyList<double> floatLiterals)
         : this(engine, stringLiterals, floatLiterals, Array.Empty<SwitchTable>())
     {
@@ -195,7 +195,7 @@ public sealed partial class BytecodeInterpreter
 
     public BytecodeInterpreter(
         Activation engine,
-        IReadOnlyList<string> stringLiterals,
+        IReadOnlyList<TextLiteral> stringLiterals,
         IReadOnlyList<double> floatLiterals,
         IReadOnlyList<SwitchTable> switchTables)
         : this(engine, stringLiterals, floatLiterals, switchTables,
@@ -212,7 +212,7 @@ public sealed partial class BytecodeInterpreter
     /// directly.</summary>
     public BytecodeInterpreter(
         Activation engine,
-        IReadOnlyList<string> stringLiterals,
+        IReadOnlyList<TextLiteral> stringLiterals,
         IReadOnlyList<double> floatLiterals,
         IReadOnlyList<SwitchTable> switchTables,
         IReadOnlyList<System.Numerics.BigInteger> bigIntLiterals)
@@ -236,14 +236,14 @@ public sealed partial class BytecodeInterpreter
     }
 
     public Activation Activation => _engine;
-    public IReadOnlyList<string> StringLiterals => _stringLiterals;
+    public IReadOnlyList<TextLiteral> StringLiterals => _stringLiterals;
     public IReadOnlyList<double> FloatLiterals => _floatLiterals;
     public IReadOnlyList<System.Numerics.BigInteger> BigIntLiterals => _bigIntLiterals;
 
     /// <summary>ADR-015: swaps in the grown literal pools after a
     /// mid-query dynamic-predicate recompile interned new literals.</summary>
     public void RefreshLiteralPools(
-        IReadOnlyList<string> strings,
+        IReadOnlyList<TextLiteral> strings,
         IReadOnlyList<double> floats,
         IReadOnlyList<System.Numerics.BigInteger> bigInts)
     {
@@ -2322,7 +2322,8 @@ public sealed partial class BytecodeInterpreter
                 {
                     int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                    int headerIdx = _engine.MakePstr(ResolveLiteral(literalId), TextKind.Codes);
+                    TextLiteral lit = ResolveLiteral(literalId);
+                    int headerIdx = _engine.MakePstr(lit.Text, lit.Kind);
                     if (!_engine.UnifyRegisterWithHeapAt(arg, headerIdx))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -2336,7 +2337,8 @@ public sealed partial class BytecodeInterpreter
                 {
                     int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                    int headerIdx = _engine.MakePstr(ResolveLiteral(literalId), TextKind.Codes);
+                    TextLiteral lit = ResolveLiteral(literalId);
+                    int headerIdx = _engine.MakePstr(lit.Text, lit.Kind);
                     _engine.SetRegister(arg, Cell.Ref(headerIdx));
                     _engine.SetPc(pc + 9); inClause = true;
                     break;

@@ -163,15 +163,16 @@ public static class DcgTransform
 
     /// <summary>Recognises a DCG terminal that consumes a fixed prefix of the
     /// input: a proper cons list (its elements) or a non-empty double-quoted
-    /// string (its character codes). Returns false for the empty terminal,
-    /// improper lists, and non-terminals.</summary>
+    /// literal (its characters, as chars or as codes per the literal's own
+    /// presentation — ADR-047). Returns false for the empty terminal, improper
+    /// lists, and non-terminals.</summary>
     private static bool TryTerminalElements(Term term, out List<Term> elems)
     {
         elems = new List<Term>();
         if (term is StringTerm s)
         {
             if (s.Content.Length == 0) return false;
-            foreach (char ch in s.Content) elems.Add(new IntTerm(ch));
+            foreach (char ch in s.Content) elems.Add(TextElement(ch, s.Kind));
             return true;
         }
         // Proper cons list [e1, …, en].
@@ -209,16 +210,24 @@ public static class DcgTransform
         return newArgs is null ? head : new CompoundTerm(hc.Functor, newArgs) { Position = hc.Position };
     }
 
+    /// <summary>One element of a text literal, as the literal's own
+    /// presentation says: a terminal written under <c>double_quotes=chars</c>
+    /// must match one-character atoms, not codes.</summary>
+    private static Term TextElement(char ch, Shumway.Core.TextKind kind) =>
+        kind == Shumway.Core.TextKind.Chars
+            ? new AtomTerm(ch.ToString())
+            : new IntTerm(ch);
+
     /// <summary>Builds "PushBack ++ Tail" as a cons chain, for a semicontext
     /// head's pushback list. Accepts a cons list, <c>[]</c>, or a
-    /// double-quoted string terminal (expanded to a code list).</summary>
+    /// double-quoted literal (expanded to its own presentation).</summary>
     private static Term BuildPushbackList(Term pushBack, Term tail)
     {
         if (pushBack is StringTerm s)
         {
             Term acc = tail;
             for (int i = s.Content.Length - 1; i >= 0; i--)
-                acc = new CompoundTerm(".", new Term[] { new IntTerm(s.Content[i]), acc });
+                acc = new CompoundTerm(".", new Term[] { TextElement(s.Content[i], s.Kind), acc });
             return acc;
         }
         return BuildListWithTail(pushBack, tail);

@@ -255,7 +255,7 @@ public static class TermReader
             // materializer could not read it back: a cell the engine can build and cannot show
             // is a NotSupportedException waiting for the first program that builds one.
             case Tag.String:
-                results.Add(new StringTerm(engine.AsString(cell)));
+                results.Add(new StringTerm(engine.AsString(cell), TextKind.Codes));
                 break;
 
             // Foreign cells round-trip as `'$foreign'(N)` compounds — the

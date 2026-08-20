@@ -17,9 +17,9 @@ public enum DoubleQuotesMode
     /// <summary>The string as a single atom — <c>"abc"</c> →
     /// <c>'abc'</c>.</summary>
     Atom,
-    /// <summary>Shumway's native PSTR representation — kept as the
-    /// default because it's the cheapest representation the engine
-    /// has (no list cell allocations per character).</summary>
+    /// <summary>SWI compatibility alias for <see cref="Chars"/>. There is no
+    /// string TYPE (ADR-047 decision 5); the value is kept distinct only so
+    /// <c>current_prolog_flag/2</c> reports back what was set.</summary>
     String,
 }
 
@@ -33,7 +33,10 @@ public enum DoubleQuotesMode
 /// </summary>
 public sealed class PrologFlags
 {
-    public DoubleQuotesMode DoubleQuotes { get; set; } = DoubleQuotesMode.String;
+    // ADR-047 decision 4: chars by default, matching where the modern
+    // ecosystem went. Packing made it free — a literal costs n/3 cells in every
+    // mode now, so the default no longer has to be chosen for cost.
+    public DoubleQuotesMode DoubleQuotes { get; set; } = DoubleQuotesMode.Chars;
 
     /// <summary>ISO §6.4.2 character-conversion flag. When
     /// <c>true</c>, the lexer maps every character it reads outside

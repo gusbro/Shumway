@@ -644,7 +644,7 @@ public sealed class Parser
                     // StandardBuiltins) rather than silently succeeding.
                     string nativeText = _lexer.SkipNativeGoalBlock(pos);
                     return new CompoundTerm("$native_goal",
-                        new Term[] { new StringTerm(nativeText) { Position = pos } })
+                        new Term[] { new StringTerm(nativeText, Shumway.Core.TextKind.Codes) { Position = pos } })
                         { Position = pos };
                 }
                 return ReadBrace(pos);
@@ -698,32 +698,19 @@ public sealed class Parser
     /// so the rest of the pipeline sees plain Prolog terms.</summary>
     private Term BuildStringLiteral(string text, Shumway.Compiler.Lexer.SourcePosition pos)
     {
-        switch (_flags.DoubleQuotes)
+        // Every text mode produces a StringTerm, which the compiler packs
+        // (ADR-047 decision 8). Building the cons list here is what made a
+        // literal cost 2n+1 cells; the flag now decides only what the list's
+        // ELEMENTS are, and that travels with the datum from here on.
+        if (text.Length == 0 && _flags.DoubleQuotes != DoubleQuotesMode.Atom)
+            return new AtomTerm("[]") { Position = pos };
+        return _flags.DoubleQuotes switch
         {
-            case DoubleQuotesMode.Codes:
-            {
-                Term acc = new AtomTerm("[]") { Position = pos };
-                for (int i = text.Length - 1; i >= 0; i--)
-                    acc = new CompoundTerm(".", new Term[] { new IntTerm(text[i]), acc }) { Position = pos };
-                return acc;
-            }
-            case DoubleQuotesMode.Chars:
-            {
-                Term acc = new AtomTerm("[]") { Position = pos };
-                for (int i = text.Length - 1; i >= 0; i--)
-                    acc = new CompoundTerm(".", new Term[]
-                    {
-                        new AtomTerm(text[i].ToString()),
-                        acc
-                    }) { Position = pos };
-                return acc;
-            }
-            case DoubleQuotesMode.Atom:
-                return new AtomTerm(text) { Position = pos };
-            case DoubleQuotesMode.String:
-            default:
-                return new StringTerm(text) { Position = pos };
-        }
+            DoubleQuotesMode.Codes => new StringTerm(text, Shumway.Core.TextKind.Codes) { Position = pos },
+            DoubleQuotesMode.Atom => new AtomTerm(text) { Position = pos },
+            // `string` is an SWI compatibility alias for chars, not a type.
+            _ => new StringTerm(text, Shumway.Core.TextKind.Chars) { Position = pos },
+        };
     }
 
     // SWI argument mode (LenientArgumentPriority): an argument / list element

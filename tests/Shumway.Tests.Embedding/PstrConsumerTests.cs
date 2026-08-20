@@ -56,13 +56,14 @@ public class PstrConsumerTests
         // '$is_char_list'/'$is_code_list' answer about a list's elements, which
         // is a question about the term, not about how it is stored. SWI's
         // library(error) uses them as the fast path of must_be/2.
-        Holds("'$is_code_list'(\"abc\", 3).");
-        Fails("'$is_char_list'(\"abc\", _).");
+        Holds("'$is_char_list'(\"abc\", 3).");
+        Fails("'$is_code_list'(\"abc\", _).");
 
         // '$is_partial_string'/1 is the fast path of must_be(chars, X) in the
         // Scryer-dialect libraries. Testing the tag made it true for a packed
         // list of CODES, so that fast path accepted a code list as chars.
-        Fails("'$is_partial_string'(\"abc\").");
+        Holds("'$is_partial_string'(\"abc\").");
+        Fails("'$is_partial_string'(\"abc\" = _).");
         Holds("'$is_partial_string'([a, b, c]).");
         Holds("'$is_partial_string'([a, b | _]).");
         Holds("'$is_partial_string'([]).");
@@ -82,20 +83,20 @@ public class PstrConsumerTests
     [Fact]
     public void MemberNthReverseAndLastWalkAPackedList()
     {
-        Holds("member(0'b, \"abc\").");
-        Fails("member(0'z, \"abc\").");
-        Holds("nth0(1, \"abc\", 0'b).");
-        Holds("nth1(1, \"abc\", 0'a).");
-        Holds("reverse(\"abc\", [0'c, 0'b, 0'a]).");
-        Holds("last(\"abc\", 0'c).");
-        Holds("list_to_set(\"aab\", [0'a, 0'b]).");
+        Holds("member(b, \"abc\").");
+        Fails("member(z, \"abc\").");
+        Holds("nth0(1, \"abc\", b).");
+        Holds("nth1(1, \"abc\", a).");
+        Holds("reverse(\"abc\", [c, b, a]).");
+        Holds("last(\"abc\", c).");
+        Holds("list_to_set(\"aab\", [a, b]).");
     }
 
     [Fact]
     public void NthEnumeratesEveryPositionOfAPackedList()
     {
         // The variable-index direction re-walks the spine on each backtrack.
-        Holds("findall(I-C, nth0(I, \"abc\", C), [0-0'a, 1-0'b, 2-0'c]).");
+        Holds("findall(I-C, nth0(I, \"abc\", C), [0-a, 1-b, 2-c]).");
     }
 
     [Fact]
@@ -106,9 +107,9 @@ public class PstrConsumerTests
         // slots, and a packed list's head and tail are computed instead. They
         // used to answer type_error(compound, "abc").
         Holds("functor(\"abc\", '.', 2).");
-        Holds("arg(1, \"abc\", 0'a).");
-        Holds("arg(2, \"abc\", T), T == [0'b, 0'c].");
-        Holds("X = \"abc\", X =.. L, L == ['.', 0'a, [0'b, 0'c]].");
+        Holds("arg(1, \"abc\", a).");
+        Holds("arg(2, \"abc\", T), T == [b, c].");
+        Holds("X = \"abc\", X =.. L, L == ['.', a, [b, c]].");
         // The empty one is the atom [], which is not compound.
         Fails("functor(\"\", '.', 2).");
         Holds("functor(\"\", [], 0).");
@@ -128,10 +129,12 @@ public class PstrConsumerTests
     [Fact]
     public void AtomCodesAndFriendsReadAPackedList()
     {
-        Holds("atom_codes(A, \"abc\"), A == abc.");
-        Holds("number_codes(N, \"42\"), N == 42.");
+        Holds("atom_chars(A, \"abc\"), A == abc.");
+        Holds("number_chars(N, \"42\"), N == 42.");
         Holds("atom_chars(A, [a, b, c]), A == abc.");
-        Holds("name(N, \"42\"), N == 42.");
+        // name/2 is codes-only (GNU); under the chars default the literal
+        // has to be spelled as codes for it.
+        Holds("name(N, [0'4, 0'2]), N == 42.");
     }
 
     [Fact]
@@ -157,16 +160,16 @@ public class PstrConsumerTests
     {
         // It used to print "abc" — which also meant quoted, ignore_ops,
         // max_depth and numbervars were all ignored for it.
-        Assert.Equal("[97,98,99]", Written("write(\"abc\")"));
-        Assert.Equal(Written("write([97,98,99])"), Written("write(\"abc\")"));
+        Assert.Equal("[a,b,c]", Written("write(\"abc\")"));
+        Assert.Equal(Written("write([a,b,c])"), Written("write(\"abc\")"));
         Assert.Equal("[]", Written("write(\"\")"));
     }
 
     [Fact]
     public void TheWriteOptionsApplyToAPackedList()
     {
-        Assert.Equal("'.'(97,'.'(98,'.'(99,[])))", Written("write_canonical(\"abc\")"));
-        Assert.Equal("[97,98|...]", Written("write_term(\"abc\", [max_depth(2)])"));
+        Assert.Equal("'.'(a,'.'(b,'.'(c,[])))", Written("write_canonical(\"abc\")"));
+        Assert.Equal("[a,b|...]", Written("write_term(\"abc\", [max_depth(2)])"));
     }
 
     [Fact]
@@ -183,7 +186,7 @@ public class PstrConsumerTests
         // The empty list is the atom [].
         Assert.Equal("[]", Written("write_term(\"\", [portray_text(true)])"));
         // Off by default.
-        Assert.Equal("[97,98,99]", Written("write_term(\"abc\", [])"));
+        Assert.Equal("[a,b,c]", Written("write_term(\"abc\", [])"));
     }
 
     [Fact]

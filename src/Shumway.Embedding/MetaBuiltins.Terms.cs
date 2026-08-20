@@ -203,6 +203,12 @@ public static partial class MetaBuiltins
                 // explicit set_prolog_flag(unknown, _) afterwards overrides.
                 host.Flags.Unknown = "fail";
                 engine.OnUnknown = Shumway.Core.UnknownAction.Fail;
+                // Arity's double-quoted literals are CODE lists. The engine
+                // default went to chars (ADR-047 decision 4), so the dialect
+                // has to say so — and its DCGs pack just the same, since both
+                // presentations are packed.
+                host.Flags.DoubleQuotes =
+                    Shumway.Compiler.Parsing.DoubleQuotesMode.Codes;
             }
             return true;
         }

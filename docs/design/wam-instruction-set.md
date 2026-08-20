@@ -777,7 +777,9 @@ Sets the argument register to a PSTR literal.
 Operands: `reg head_dest`
 Total size: 5 bytes
 
-Decomposes a PSTR in the unify cursor: gets the first character (as an atom or code, per the `double_quotes` flag), stores it in `head_dest`, and advances the cursor to the rest of the PSTR.
+Decomposes a packed list in the unify cursor: gets the first element (a one-character atom or a code, per the PSTR header's own presentation — never per the `double_quotes` flag, ADR-047), stores it in `head_dest`, and advances the cursor to the rest.
+
+**Defined and interpreted but never emitted**, and scheduled for removal: it additionally mutates the cursor cell without trailing.
 
 Used for PSTR-to-list pattern matching like `[H|T] = Pstr`.
 

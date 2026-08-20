@@ -67,7 +67,7 @@ public static class AtomCharBuiltins
         if (atomCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
-            int pstrIdx = engine.MakePstr(name, TextKind.Codes);
+            int pstrIdx = engine.MakePstr(name, TextKind.Chars);
             return engine.UnifyRegisterWithCell(1, Cell.Ref(pstrIdx));
         }
 
@@ -640,7 +640,7 @@ public static class AtomCharBuiltins
                 throw new PrologRuntimeException("type_error", "string");
             throw new PrologRuntimeException("type_error", "number");
         }
-        return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(text, TextKind.Codes)));
+        return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(text, TextKind.Chars)));
     }
 
     /// <summary>The decimal text of an integer or float cell; null when the
@@ -783,14 +783,16 @@ public static class AtomCharBuiltins
     {
         hasUnbound = false;
         var sb = new StringBuilder();
-        Cell cursor = Resolve(engine, listCell);
-        if (cursor.Tag == Tag.Pstr)
+        Cell cursor = ListCursor.Resolve(engine, listCell);
+        // A packed run whose presentation MATCHES what this call wants is
+        // consumed in bulk; one that does not falls through to the element
+        // loop, which raises the ISO element error from the element's own tag
+        // rather than from an assumption about the representation (ADR-047).
+        if (cursor.Tag == Tag.Pstr && cursor.AsPstrLength > 0
+            && cursor.AsPstrKind == (asCodes ? TextKind.Codes : TextKind.Chars))
         {
-            // A PSTR is a code list; for number_chars its elements are codes,
-            // not one-char atoms — the ISO element-type error applies.
-            if (!asCodes) throw new PrologRuntimeException("type_error", "character");
             sb.Append(engine.ReadPstrChain(cursor, out cursor));
-            cursor = Resolve(engine, cursor);
+            cursor = ListCursor.Resolve(engine, cursor);
         }
         // ISO §8.16.8.3.a — when Number is a VARIABLE, a partial list (unbound
         // tail) is instantiation_error, which takes precedence over a type_error
@@ -806,11 +808,11 @@ public static class AtomCharBuiltins
         {
             Cell spine = cursor;
             int spineSteps = 0, spineCap = engine.HeapTop + 1;
-            while (spine.Tag == Tag.Lis)
+            while (ListCursor.TryUncons(engine, spine, out _, out Cell spineTail))
             {
                 if (++spineSteps > spineCap)
                     throw new PrologRuntimeException("type_error", "list");
-                spine = Resolve(engine, engine.GetHeap(spine.AsHeapIndex + 1));
+                spine = ListCursor.Resolve(engine, spineTail);
             }
             if (spine.Tag == Tag.Ref || spine.Tag == Tag.AttVar)
             {
@@ -823,11 +825,11 @@ public static class AtomCharBuiltins
         // so a cyclic argument raises type_error(list) instead of looping until
         // the process runs out of memory (an uncatchable .NET failure).
         int steps = 0, stepCap = engine.HeapTop + 1;
-        while (cursor.Tag == Tag.Lis)
+        while (ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell aTail))
         {
             if (++steps > stepCap)
                 throw new PrologRuntimeException("type_error", "list");
-            Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
+            Cell head = Resolve(engine, rawHead);
             if (head.Tag == Tag.Ref)
             {
                 hasUnbound = true;
@@ -855,7 +857,7 @@ public static class AtomCharBuiltins
                         "type_error", "character", engine, head);
                 if (!hasUnbound) sb.Append(name[0]);
             }
-            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+            cursor = ListCursor.Resolve(engine, aTail);
         }
         if (cursor.Tag == Tag.Ref)
             hasUnbound = true;
@@ -877,15 +879,17 @@ public static class AtomCharBuiltins
             throw new PrologRuntimeException("type_error", "list", engine, listStart);
         while (true)
         {
-            // A PSTR (double-quoted literal under the default flag) IS a
-            // code list; consume its text and continue at its tail.
-            if (cursor.Tag == Tag.Pstr)
+            // A packed run of CODES is consumed in bulk; a packed run of chars
+            // falls through to the element loop, where its one-character atom
+            // heads raise the ISO element error like any other non-integer.
+            if (cursor.Tag == Tag.Pstr && cursor.AsPstrKind == TextKind.Codes
+                && cursor.AsPstrLength > 0)
             {
                 sb.Append(engine.ReadPstrChain(cursor, out cursor));
                 continue;
             }
-            if (cursor.Tag != Tag.Lis) break;
-            Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
+            if (!ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell cTail)) break;
+            Cell head = Resolve(engine, rawHead);
             // ISO §8.16.7 / §8.16.8 type errors: a non-int element is
             // type_error(character_code); an unbound element is
             // instantiation_error (precedence rule applies).
@@ -899,7 +903,7 @@ public static class AtomCharBuiltins
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
             sb.Append((char)head.AsInt);
-            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+            cursor = ListCursor.Resolve(engine, cTail);
         }
         // A non-nil tail is a partial / non-proper list — ISO reports this
         // as a type_error(list, _) (the entire arg, not just the tail).
@@ -921,14 +925,13 @@ public static class AtomCharBuiltins
             && !(cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId)
             && cursor.Tag is not (Tag.Ref or Tag.AttVar))
             throw new PrologRuntimeException("type_error", "list", engine, cursor);
-        // A PSTR is a CODE list, not a char list; its elements are
-        // integers, so the ISO element-type error applies
-        // (type_error(character)), not type_error(list).
-        if (cursor.Tag == Tag.Pstr)
-            throw new PrologRuntimeException("type_error", "character");
-        while (cursor.Tag == Tag.Lis)
+        // A packed list is a list, and whether its elements are chars or codes
+        // is in its header — not in its tag (ADR-047). A packed CODE list still
+        // raises type_error(character) here, but because its elements are
+        // integers, which the loop below decides, rather than by assumption.
+        while (ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell hTail))
         {
-            Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
+            Cell head = Resolve(engine, rawHead);
             if (head.Tag == Tag.Ref)
                 throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Atom)
@@ -937,7 +940,7 @@ public static class AtomCharBuiltins
             if (name.Length != 1)
                 throw new PrologRuntimeException("type_error", "character", engine, head);
             sb.Append(name[0]);
-            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+            cursor = ListCursor.Resolve(engine, hTail);
         }
         if (cursor.Tag == Tag.Ref)
         {

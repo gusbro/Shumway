@@ -259,7 +259,7 @@ public sealed partial class Activation
     /// runtime — same lookup the bytecode interpreter does, but
     /// accessible from the Activation surface so Tier-1 IL doesn't need
     /// to carry its own pool reference.</summary>
-    public IReadOnlyList<string>? CurrentStringLiterals { get; set; }
+    public IReadOnlyList<TextLiteral>? CurrentStringLiterals { get; set; }
 
     /// <summary>Per-query bytecode program, set alongside
     /// <see cref="CurrentFunctorAddresses"/>. IL-emitted <c>Call</c>
@@ -573,7 +573,7 @@ public sealed partial class Activation
     /// literal pools after an <c>assertz</c> / <c>asserta</c> may have
     /// interned a new string / float / bigint literal. Wired at query
     /// setup; the incremental assert paths invoke it.</summary>
-    public Action<IReadOnlyList<string>, IReadOnlyList<double>,
+    public Action<IReadOnlyList<TextLiteral>, IReadOnlyList<double>,
         IReadOnlyList<System.Numerics.BigInteger>>? RefreshLiteralPoolsCallback { get; set; }
 
     /// <summary>Snapshot of <see cref="CurrentViewGen"/> from a given CP

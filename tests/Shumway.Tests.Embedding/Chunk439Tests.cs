@@ -253,16 +253,16 @@ public class Chunk439Tests
     }
 
     [Fact]
-    public void DcgStringTerminal_DefaultStringMode_MatchesCodes()
+    public void DcgStringTerminal_DefaultMode_MatchesChars()
     {
         var e = new PrologEngine();
-        // Default double_quotes = string: the StringTerm terminal expands
-        // in DcgTransform to its character codes (PSTR's representation).
-        // Pre-chunk-439 this threw "DcgTransform: cannot add diff-list
-        // args to StringTerm".
+        // A terminal expands to the literal's OWN presentation, which under the
+        // default is chars (ADR-047). It used to expand to codes whatever the
+        // literal was, so a grammar written under `chars` matched nothing.
         e.ConsultString("ab --> \"ab\".");
-        Assert.True(e.Query("phrase(ab, [97, 98]).").Success);
-        Assert.False(e.Query("phrase(ab, [98, 97]).").Success);
+        Assert.True(e.Query("phrase(ab, [a, b]).").Success);
+        Assert.False(e.Query("phrase(ab, [b, a]).").Success);
+        Assert.False(e.Query("phrase(ab, [97, 98]).").Success);
     }
 
     [Fact]

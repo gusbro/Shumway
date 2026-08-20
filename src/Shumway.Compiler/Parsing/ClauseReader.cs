@@ -272,7 +272,7 @@ public sealed class ClauseReader
                 new Term[]
                 {
                     new CompoundTerm("$native_decls",
-                        new Term[] { new StringTerm(declsText) { Position = clause.Position } })
+                        new Term[] { new StringTerm(declsText, Shumway.Core.TextKind.Codes) { Position = clause.Position } })
                         { Position = clause.Position },
                 })
                 { Position = clause.Position });

@@ -1,3 +1,4 @@
+using Shumway.Core;
 using System;
 using System.Runtime.InteropServices;
 using Shumway.Compiler.Ast;
@@ -29,7 +30,7 @@ public class NativeReftypeMarshalTests
     public void Atom_RoundTrips() => Assert.Equal(new AtomTerm("hello"), RoundTrip(new AtomTerm("hello")));
 
     [Fact]
-    public void String_RoundTripsToAtom() => Assert.Equal(new AtomTerm("foo"), RoundTrip(new StringTerm("foo")));
+    public void String_RoundTripsToAtom() => Assert.Equal(new AtomTerm("foo"), RoundTrip(new StringTerm("foo", TextKind.Codes)));
 
     [Fact]
     public void Var_RoundTripsToFreshVar() => Assert.IsType<VarTerm>(RoundTrip(new VarTerm("X")));

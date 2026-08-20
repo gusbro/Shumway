@@ -32,7 +32,7 @@ public class Chunk70Tests
     {
         Term t = new AtomTerm("[]");
         for (int i = s.Length - 1; i >= 0; i--)
-            t = new CompoundTerm(".", new Term[] { new IntTerm(s[i]), t });
+            t = new CompoundTerm(".", new Term[] { new AtomTerm(s[i].ToString()), t });
         return t;
     }
 
@@ -70,10 +70,10 @@ public class Chunk70Tests
         var sol = engine.Query(
             "string_concat(\"ab\", \"cd\", R), R = [H1, H2, H3, H4].");
         Assert.True(sol.Success);
-        Assert.Equal(new IntTerm('a'), sol["H1"]);
-        Assert.Equal(new IntTerm('b'), sol["H2"]);
-        Assert.Equal(new IntTerm('c'), sol["H3"]);
-        Assert.Equal(new IntTerm('d'), sol["H4"]);
+        Assert.Equal(new AtomTerm("a"), sol["H1"]);
+        Assert.Equal(new AtomTerm("b"), sol["H2"]);
+        Assert.Equal(new AtomTerm("c"), sol["H3"]);
+        Assert.Equal(new AtomTerm("d"), sol["H4"]);
     }
 
     [Fact]
@@ -190,8 +190,8 @@ public class Chunk70Tests
             "string_concat(\"ab\", \"cd\", R), R = [H1, H2, H3, H4], " +
             "string_chars(R, [C1, C2, C3, C4]).");
         Assert.True(sol.Success);
-        Assert.Equal(new IntTerm('a'), sol["H1"]);
-        Assert.Equal(new IntTerm('d'), sol["H4"]);
+        Assert.Equal(new AtomTerm("a"), sol["H1"]);
+        Assert.Equal(new AtomTerm("d"), sol["H4"]);
         Assert.Equal(new AtomTerm("a"), sol["C1"]);
         Assert.Equal(new AtomTerm("d"), sol["C4"]);
     }

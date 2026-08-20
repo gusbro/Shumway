@@ -29,8 +29,8 @@ public static class IlRuntimeHelpers
     /// reachable from an IL <c>call</c>.</summary>
     public static bool GetPstr(Activation engine, int literalId, int argReg)
     {
-        string s = ResolveStringLiteral(engine, literalId);
-        int headerIdx = engine.MakePstr(s, TextKind.Codes);
+        TextLiteral lit = ResolveStringLiteral(engine, literalId);
+        int headerIdx = engine.MakePstr(lit.Text, lit.Kind);
         return engine.UnifyRegisterWithHeapAt(argReg, headerIdx);
     }
 
@@ -39,12 +39,12 @@ public static class IlRuntimeHelpers
     /// unifying (the caller is filling a fresh arg slot).</summary>
     public static void PutPstr(Activation engine, int literalId, int argReg)
     {
-        string s = ResolveStringLiteral(engine, literalId);
-        int headerIdx = engine.MakePstr(s, TextKind.Codes);
+        TextLiteral lit = ResolveStringLiteral(engine, literalId);
+        int headerIdx = engine.MakePstr(lit.Text, lit.Kind);
         engine.SetRegister(argReg, Cell.Ref(headerIdx));
     }
 
-    private static string ResolveStringLiteral(Activation engine, int literalId)
+    private static TextLiteral ResolveStringLiteral(Activation engine, int literalId)
     {
         var pool = engine.CurrentStringLiterals
             ?? throw new InvalidOperationException(

@@ -286,7 +286,7 @@ PSTRs solve the fundamental performance problem of representing strings as `[H|T
 
 **Decomposition is lazy**: `[H|T] = pstr("hello")` does not allocate cons cells. `T` is another PSTR header pointing to the buffer with an incremented offset.
 
-**Default `double_quotes` is `string`.** The flag can be set per module with `:- set_prolog_flag(double_quotes, D)`, where `D` is `codes`, `chars`, `atom`, or `string`. PSTRs typically appear when reading from streams, from C# strings via the embedding API, or via explicit conversion builtins rather than from source literals.
+**Default `double_quotes` is `chars`** (ADR-047). The flag can be set per module with `:- set_prolog_flag(double_quotes, D)`, where `D` is `codes`, `chars`, `atom`, or `string` — the last an SWI compatibility alias for `chars`, not a separate type. It is a **parse-time** flag: it decides what term a literal denotes when it is read, and has no effect on terms that already exist. Whatever it selects, a literal is stored packed, so it costs `n/3` cells rather than `2n+1`.
 
 **The choice of UTF-16** aligns with .NET strings. Conversion to/from C# `string` is essentially a memory copy. Surrogate pairs are handled correctly at decomposition time.
 

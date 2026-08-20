@@ -31,7 +31,7 @@ public class PstrOpcodeTests
     public void PutPstr_SetsRegisterToRefAtPstrHeader()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "hello" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("hello", TextKind.Codes) });
 
         var code = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
@@ -50,7 +50,7 @@ public class PstrOpcodeTests
     public void PutPstr_EmptyStringLiteral_ProducesZeroLengthPstr()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("", TextKind.Codes) });
 
         var code = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
@@ -66,7 +66,7 @@ public class PstrOpcodeTests
         int x0 = engine.AllocateHeapUnbound();
         engine.SetRegister(0, Cell.Ref(x0));
 
-        var interp = new BytecodeInterpreter(engine, new[] { "hi" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("hi", TextKind.Codes) });
         var code = BuildCode(Opcode.GetPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
@@ -83,7 +83,7 @@ public class PstrOpcodeTests
     public void GetPstr_AgainstMatchingPstr_Succeeds()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "abc" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("abc", TextKind.Codes) });
 
         // put_pstr "abc" → X[0], then get_pstr "abc" against X[0] should re-unify cleanly.
         var code = BuildCode(
@@ -97,7 +97,7 @@ public class PstrOpcodeTests
     public void GetPstr_AgainstMismatchedPstr_Fails()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "abc", "xyz" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("abc", TextKind.Codes), new TextLiteral("xyz", TextKind.Codes) });
 
         var code = BuildCode(
             Opcode.PutPstr, 0, 0,           // X[0] := "abc"
@@ -110,7 +110,7 @@ public class PstrOpcodeTests
     public void GetPstr_LiteralIdOutOfRange_Throws()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, Array.Empty<string>());
+        var interp = new BytecodeInterpreter(engine, Array.Empty<TextLiteral>());
 
         var code = BuildCode(Opcode.GetPstr, 5, 0, Opcode.Halt);
         var ex = Assert.Throws<InvalidOperationException>(() => interp.Run(code, 0));
@@ -133,7 +133,7 @@ public class PstrOpcodeTests
     public void UnifyPstrHead_DecomposesFirstCodeUnitAndAdvancesCursor()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "ab" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("ab", TextKind.Codes) });
 
         // Build "ab" PSTR, then point the unify cursor at the header and decompose.
         // Allocate a heap slot for the cursor cell and copy the PSTR header into it.
@@ -162,7 +162,7 @@ public class PstrOpcodeTests
     public void UnifyPstrHead_LastCodeUnit_ReplacesCursorWithPstrTail()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "a" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("a", TextKind.Codes) });
         var build = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(build, 0));
 
@@ -187,7 +187,7 @@ public class PstrOpcodeTests
     {
         // Empty PSTR case: build "" then try to decompose.
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("", TextKind.Codes) });
         var build = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(build, 0));
 
@@ -205,7 +205,7 @@ public class PstrOpcodeTests
     public void UnifyPstrHead_ChainOfThreeSteps_ProducesEachCodeUnitInOrder()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "xyz" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("xyz", TextKind.Codes) });
         var build = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(build, 0));
 
@@ -237,7 +237,7 @@ public class PstrOpcodeTests
     {
         // put_pstr "abc"; try_me_else BP; get_pstr "xyz" (fail); halt; halt(BP)
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "abc", "xyz" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("abc", TextKind.Codes), new TextLiteral("xyz", TextKind.Codes) });
 
         var code = BuildCode(
             Opcode.PutPstr, 0, 0,           // 0..8

@@ -860,7 +860,9 @@ public static partial class MetaBuiltins
         }
         else // string
         {
-            int pstrIdx = engine.MakePstr(captured, TextKind.Codes);
+            // `string(S)` is the SWI sink, and double_quotes=string is a
+            // compatibility alias for chars (ADR-047 decision 5).
+            int pstrIdx = engine.MakePstr(captured, TextKind.Chars);
             int slot = engine.AllocateHeap(1);
             engine.SetHeap(slot, Cell.Ref(pstrIdx));
             return engine.Unify(sinkArgAddr, slot);

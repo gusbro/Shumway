@@ -15,11 +15,11 @@ public class PstrBoundaryTests
     public void APackedListAndAConsListReachCSharpAsTheSameThing()
     {
         var engine = new PrologEngine();
-        var sol = engine.Query("X = \"abc\", Y = [0'a, 0'b, 0'c], X == Y.");
+        var sol = engine.Query("X = \"abc\", Y = [a, b, c], X == Y.");
         Assert.True(sol.Success);
 
         var a = engine.Query("X = \"abc\".");
-        var b = engine.Query("X = [0'a, 0'b, 0'c].");
+        var b = engine.Query("X = [a, b, c].");
         Assert.True(a.Success && b.Success);
         Assert.Equal(b["X"], a["X"]);
     }
@@ -33,7 +33,7 @@ public class PstrBoundaryTests
         var c = Assert.IsType<CompoundTerm>(sol["X"]);
         Assert.Equal(".", c.Functor);
         Assert.Equal(2, c.Args.Length);
-        Assert.Equal(new IntTerm('a'), c.Args[0]);
+        Assert.Equal(new AtomTerm("a"), c.Args[0]);
     }
 
     [Fact]
