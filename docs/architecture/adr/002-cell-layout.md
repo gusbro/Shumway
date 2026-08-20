@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted ([Phase 1](../../history/phase-1-closure.md)).
+Accepted ([Phase 1](../../history/phase-1-closure.md)). Amended by
+[ADR-047](047-pstr-is-a-list.md) (2026-08-20): tag 0x8 (`STRING`) is removed and
+the PSTR header payload gains a presentation bit. The amendments are marked
+inline below.
 
 ## Context
 
@@ -46,14 +49,19 @@ Bits 59..0:  payload (60 bits, interpretation depends on tag)
 | 0x5 | INT      | Signed 60-bit integer (inline). |
 | 0x6 | FLOAT    | 4 high bits of double + heap index to INT cell with 60 low bits. |
 | 0x7 | BIGINT   | Id in the per-engine BigInteger table. |
-| 0x8 | STRING   | Id in the per-engine string table (opaque, non-list). |
+| 0x8 | (free)   | Was `STRING`, an opaque non-list string. Removed by ADR-047: there is no opaque string type; packed text is a list. |
 | 0x9 | FOREIGN  | Id in the per-engine foreign object table. |
 | 0xA | ATTVAR   | Heap index to the variable's own home cell (a self-referencing variable, like REF). Implemented in Phase 4 — see chunk 77. |
-| 0xB | PSTR     | Partial string header (see PSTR design doc). |
-| 0xC | PSTRBUF  | Partial-string buffer (`PstrBuffer`). |
+| 0xB | PSTR     | Packed list header: presentation bit, length, buffer index, offset (see PSTR design doc). |
+| 0xC | PSTRBUF  | Packed-list buffer, 3 UTF-16 code units (`PstrBuffer`). |
 | 0xD | RAWINT   | Untagged control word (`RawInt`) in environment / choice-point slots — lets the conservative GC scan tell control data from heap references. |
 | 0xE | RATIONAL | Id in the per-engine rational table (`Rational`, ADR-039). |
-| 0xF | (reserved) | Available for future extensions. |
+| 0xF | (free)   | Available for future extensions. |
+
+> **Amended by ADR-047.** Tags 0x8 and 0xF are the two free slots. The tag space
+> is 4 bits and cannot grow without changing the cell layout, so a new tag is a
+> major decision (see `decision-policy.md`) and 0x8 is not to be reclaimed
+> casually just because it is now free.
 
 ### The heap is fully blittable
 
@@ -108,6 +116,19 @@ The second cell is a structurally valid INT cell (the iterator does not need a s
 
 This costs 2 cells per float. For our target workloads (grammar processing, embedded rules), floats are not on the hot path, so this is acceptable.
 
+#### PSTR packs its payload (amended by ADR-047)
+
+The PSTR header carries four fields in its payload: a presentation bit (59), a
+length (58..32), a buffer index (31..2) and an in-cell offset (1..0). The offset
+is what makes a slice of a packed list a *computed value*
+rather than an allocation: unconsing one character produces a new header with an
+incremented offset and no heap traffic at all.
+
+That is also why the split is arranged the way it is — the buffer index and
+offset keep the bit positions they had before the presentation bit was added, so
+the GC's relocation of a PSTR header is unchanged. See ADR-047 and
+`pstr-design.md`.
+
 #### Unbound variables: REF self-pointing
 
 A variable is represented as a REF cell whose payload points to its own heap index. When the variable is bound, the cell is overwritten to point to the bound target (REF) or to contain the bound value directly (for atomic constants).
@@ -116,8 +137,8 @@ A variable is represented as a REF cell whose payload points to its own heap ind
 
 When binding an unbound variable:
 
-- **To a constant (ATOM, INT, FLOAT, BIGINT, STRING, FOREIGN)**: copy the constant cell into the variable's cell. Dereferencing later is one step.
-- **To a STR or LIS**: write a REF cell pointing to the STR/LIS cell. Dereferencing later goes through one indirection.
+- **To a constant (ATOM, INT, FLOAT, BIGINT, RATIONAL, FOREIGN)**: copy the constant cell into the variable's cell. Dereferencing later is one step.
+- **To a STR, LIS or PSTR**: write a REF cell pointing to the STR/LIS/PSTR cell. Dereferencing later goes through one indirection. A PSTR belongs on this side because it is a compound (ADR-047), even though its header is self-describing.
 
 This optimization (copy for constants, REF for compounds) is the classical WAM choice. The trail entry is the same in both cases (just the heap index of the modified cell).
 
@@ -201,14 +222,14 @@ public enum Tag : byte
     Int = 0x5,
     Float = 0x6,
     BigInt = 0x7,
-    String = 0x8,
+    // 0x8 free (was String; removed by ADR-047)
     Foreign = 0x9,
     AttVar = 0xA,  // attributed variable (Phase 4, chunk 77): payload = own home index
-    Pstr = 0xB,
+    Pstr = 0xB,        // packed list header (ADR-047)
     PstrBuffer = 0xC,
     RawInt = 0xD,      // untagged control word (env / CP slots)
     Rational = 0xE,    // rational table id (ADR-039)
-    // 0xF reserved
+    // 0xF free
 }
 ```
 
@@ -226,6 +247,7 @@ public enum Tag : byte
 - ADR-003 (Atom Three-Tier System): atom ids in cells correspond to entries in the global atom table.
 - ADR-004 (Two Trails): trail entries refer to heap indices that point to cells.
 - ADR-005 (Stack Layout): stack frames are also cells.
+- ADR-047 (A packed string is a list): amends the tag table (0x8 freed) and the PSTR header payload.
 
 ## Related Design Docs
 

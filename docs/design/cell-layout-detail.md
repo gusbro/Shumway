@@ -39,14 +39,14 @@ public enum Tag : byte
     Int     = 0x5,
     Float   = 0x6,
     BigInt  = 0x7,
-    String  = 0x8,
+    // 0x8 free (was String; removed by ADR-047)
     Foreign = 0x9,
     AttVar  = 0xA,   // attributed variable (Phase 4; CLP(FD)/CLP(R) build on it)
-    Pstr    = 0xB,
+    Pstr    = 0xB,   // packed list header (ADR-047)
     PstrBuffer = 0xC, // PSTR buffer cell: 3 UTF-16 code units
     RawInt  = 0xD,   // non-heap-ref control word (env/CP fields) — ADR-016 heap-GC scan
     Rational = 0xE,  // rational table id (ADR-039)
-    // 0xF reserved for future use
+    // 0xF free
 }
 ```
 
@@ -332,19 +332,15 @@ public BigInteger AsBigInt(Cell c)
 
 The BigInt table grows during a query. It is **not** trail-reversed (truncating it would be expensive). At end-of-query, the table is cleared.
 
-### STRING (0x8) — Opaque string
+### 0x8 — free
 
-```
-Bits 63..60: 0x8
-Bits 59..32: 0 (reserved)
-Bits 31..0:  id in the engine's string table
-```
+Was `STRING`, an opaque string that was not unifiable as a list. **Removed by
+ADR-047**: there is no opaque string type. Text as a value is an atom; text as a
+sequence is a list, packed or not. The tag had no producer in `src/` by the time
+it was removed.
 
-An opaque string (not unifiable as a list). Used for efficient interop with .NET `string` values that don't need character-by-character manipulation in Prolog.
-
-**Construction and extraction** are analogous to BIGINT.
-
-The string table grows during a query. Cleared at end-of-query (or when the engine is reset).
+The tag space is 4 bits and cannot grow, so 0x8 and 0xF are the last two slots.
+Claiming either is a major decision (`decision-policy.md`).
 
 ### FOREIGN (0x9) — Reference to .NET object
 
@@ -370,7 +366,7 @@ public Cell MakeForeign(object obj)
 **Notes**:
 - The foreign table holds strong references to objects, keeping them alive while the engine references them.
 - The table is cleared at engine reset/disposal.
-- Backtracking does not unwind foreign object additions (similar to BigInt and String tables).
+- Backtracking does not unwind foreign object additions (similar to the BigInt and Rational tables).
 
 ### ATTVAR (0xA) — Attributed variable
 
@@ -379,18 +375,24 @@ cell (a self-referencing variable, like REF); its attributes live in a
 per-activation side table. Backs `attvar/1`, `put_attr`/`get_attr`, the
 `attr_unify_hook` / `verify_attributes/4` wakeup, and CLP(FD)/CLP(R).
 
-### PSTR (0xB) — Partial string
+### PSTR (0xB) — Packed list header
 
-PSTR cells are described in detail in `pstr-design.md`. The summary:
+A **list**, stored packed — not a string type (ADR-047). Described in full in
+`pstr-design.md`; the summary:
 
 ```
 Bits 63..60: 0xB (PSTR header)
-Bits 59..32: length in UTF-16 code units (28 bits)
+Bit  59:     presentation — 1 = chars, 0 = codes
+Bits 58..32: length in UTF-16 code units (27 bits)
 Bits 31..2:  heap index of the first buffer cell (30 bits)
 Bits 1..0:   offset within that buffer cell (0..2, 2 bits)
 ```
 
-Each PSTR header is followed by buffer cells (each holding 3 UTF-16 code units), and a tail cell at the end.
+The header is followed by buffer cells (3 UTF-16 code units each) and a tail
+cell. The presentation bit sits at 59 so that the buffer index and offset keep
+the bit positions they had before it existed, leaving the GC's relocation of a
+PSTR header untouched — losing that bit during a collection would silently turn
+a list of chars into a list of codes.
 
 See `pstr-design.md` for the complete specification.
 
@@ -478,7 +480,7 @@ The same logic applies to stack scanning, register scanning, and predicate bytec
 
 When binding an unbound variable to a value, the WAM has two patterns:
 
-- **For atomic values** (ATOM, INT, FLOAT, BIGINT, STRING, FOREIGN): copy the value cell into the variable's cell. Future dereferences see the value directly, no indirection.
+- **For atomic values** (ATOM, INT, FLOAT, BIGINT, RATIONAL, FOREIGN): copy the value cell into the variable's cell. Future dereferences see the value directly, no indirection.
 
 ```csharp
 public void BindVarToAtomic(int varIdx, Cell value)
@@ -535,7 +537,6 @@ For Prolog semantic equality (`==/2`), the engine performs structural comparison
 
 - For inline tags (ATOM, INT, REF): bitwise comparison is sufficient.
 - For BIGINT: compare the actual BigInteger values from the table.
-- For STRING: compare the actual strings.
 - For FOREIGN: reference equality (`ReferenceEquals`).
 - For STR/LIS/PSTR: recursive structural comparison.
 
@@ -573,7 +574,7 @@ These invariants are not checked at runtime in the hot path. Debug-build asserti
 
 The following bit patterns are reserved and should never appear in valid cells:
 
-- Tag 0xF (no semantics defined yet). Tags 0xC (`PstrBuffer`), 0xD (`RawInt`) and 0xE (`Rational`) are in use.
+- Tags 0x8 and 0xF (no semantics defined). Tags 0xC (`PstrBuffer`), 0xD (`RawInt`) and 0xE (`Rational`) are in use.
 - The all-zero cell (`0x0000_0000_0000_0000`) is technically a valid REF cell pointing to heap[0], but in practice, the cell at heap[0] is either an unbound REF to itself or part of an allocated structure. Code should be careful when interpreting zero-initialized memory as cells.
 
 ## See also

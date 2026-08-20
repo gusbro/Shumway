@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted ([Phase 1](../../history/phase-1-closure.md)).
+Accepted ([Phase 1](../../history/phase-1-closure.md)). Amended by
+[ADR-047](047-pstr-is-a-list.md) (2026-08-20): there is no string *type* at the
+boundary, so the `String`/`Pstr` surface (`MakeString`, `AsString`, `IsString`,
+`AsPstr`, `TermKind.String`, `TermKind.Pstr`) goes away. The amendments are
+marked inline below; they describe where the arc lands, not what ships today.
 
 ## Context
 
@@ -76,8 +80,7 @@ public class PrologEngine : IDisposable
     public Term MakeInt(long value);
     public Term MakeInt(BigInteger value);
     public Term MakeFloat(double value);
-    public Term MakeString(string value);
-    public Term MakePstr(string value);
+    public Term MakeText(string value, TextKind kind = TextKind.Chars);  // ADR-047
     public Term MakeForeign(object obj);
     public Term Nil { get; }
     public Term MakeCompound(string functor, params Term[] args);
@@ -119,8 +122,6 @@ public readonly struct Term : IEquatable<Term>
     public bool IsInt { get; }
     public bool IsBigInt { get; }
     public bool IsFloat { get; }
-    public bool IsString { get; }
-    public bool IsPstr { get; }
     public bool IsCompound { get; }
     public bool IsList { get; }
     public bool IsEmptyList { get; }
@@ -132,8 +133,6 @@ public readonly struct Term : IEquatable<Term>
     public long AsInt { get; }              // throws if not int (or out of long range)
     public BigInteger AsBigInt { get; }
     public double AsFloat { get; }
-    public string AsString { get; }
-    public string AsPstr { get; }
     public object AsForeign { get; }
     
     public string Functor { get; }
@@ -147,6 +146,8 @@ public readonly struct Term : IEquatable<Term>
     public bool TryGetInt(out long value);
     public bool TryGetFloat(out double value);
     public bool TryGetForeign<T>(out T value);
+    public bool TryAsText(out string value);  // ADR-047: reads an atom or a
+                                              // text list without materializing nodes
     
     public string ToString();
     public string ToCanonicalString();
@@ -161,14 +162,30 @@ public enum TermKind
     Integer,
     BigInteger,
     Float,
-    String,
-    Pstr,
     Compound,
     List,
     EmptyList,
     Foreign,
 }
 ```
+
+> **Amended by ADR-047 — the representation is not observable at the boundary.**
+> Text reaches C# as one of two things, decided by what it *is* in Prolog and
+> never by how it happens to be stored:
+>
+> - **text as a value** is an atom, and crosses as `string`;
+> - **text as a sequence** is a list, and crosses as a list.
+>
+> A packed list therefore reports `TermKind.List`, answers `IsList`, and
+> enumerates element by element exactly like the cons list it denotes. This is
+> load-bearing: a `[PrologPredicate]` method called once with a packed list and
+> once with the equivalent cons list must receive the same argument, or the two
+> callers are not interchangeable and the internal representation has leaked into
+> the contract.
+>
+> `TryAsText` is the escape hatch for the cost, not for the type: it reads a text
+> list (packed or not) or an atom into a `string` without materializing per-element
+> nodes. The caller opts into it; nothing about the term changes.
 
 A `Term` is a lightweight reference to a heap cell. **Term lifetime is scoped**: a `Term` is valid only within the operation that produced it (typically a `Solution` from a `Query`). Once the operation completes (the foreach loop ends, the query is disposed), terms obtained from it should not be used. Using a term outside its scope is undefined behavior.
 
@@ -325,7 +342,7 @@ Built-in conversions are provided for common .NET types:
 | `int`, `long` | Integer (inline or BigInteger) |
 | `BigInteger` | BigInteger |
 | `double`, `float` | Float |
-| `string` | String (or Pstr if `[PrologStringAs(StringKind.Pstr)]` is on the field) |
+| `string` | Atom (ADR-047; a text *list* is requested with `[PrologText(TextKind.Chars)]` on the field) |
 | `bool` | Atom `true` or `false` |
 | `char` | Atom of one char |
 | `DateTime` | Compound `datetime(Year, Month, Day, ...)` |
@@ -468,7 +485,10 @@ public class EngineConfig
     public int SafePointInstructionInterval { get; set; } = 1024;
 }
 
-public enum DoubleQuotesMode { Codes, Chars, Atom, Pstr, String }
+// ADR-047: default is Chars. String is an SWI compatibility alias that produces
+// a packed list of chars — not a distinct type. There is no Pstr mode: packing
+// is a storage decision, never a term-type decision.
+public enum DoubleQuotesMode { Codes, Chars, Atom, String }
 public enum DebugLevel { None, Basic, Full }
 public enum CompilationStrategy { Interpreted, Tiered, EagerIl }
 ```

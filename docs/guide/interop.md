@@ -168,11 +168,15 @@ Everything below is on `Shumway.Core` (`Activation`, `Cell`, `Tag`, `AtomTable`,
 | `engine.UnifyRegisterWithCell(i, cell)` | unify argument `i` with a cell (bind the output) |
 | `Cell.Int(v)` `Cell.Atom(id)` `Cell.Lis(pairIdx)` `Cell.Str(fnIdx)` `Cell.Functor(fid)` | build cells |
 | `cell.AsInt` `cell.AsAtomId` `cell.AsHeapIndex` `cell.Tag` | read a cell |
+| `engine.TryUnconsListLike(c, out h, out t)` | peel one element off **any** list — cons or packed text |
+| `Activation.IsListLike(c)` | true for a non-empty list of either storage |
 
 Cell layout (ADR-002 / ADR-017):
 
 - **List** `[H|T]`: a `Tag.Lis` cell whose `AsHeapIndex` points at a 2-cell pair
-  `[head, tail]`. The empty list is `Cell.Atom(AtomTable.EmptyListId)`.
+  `[head, tail]`. The empty list is `Cell.Atom(AtomTable.EmptyListId)`. A list of
+  text may instead be **packed** into a `Tag.Pstr` header — same list, denser
+  storage; see "Lists of text" below.
 - **Compound** `f(A0,…,An)`: a `Tag.Str` cell whose `AsHeapIndex` points at a
   `Tag.Functor` cell, immediately followed by the argument cells.
 - **Unbound variable**: `Tag.Ref`. Always `Deref` before inspecting a cell.
@@ -202,6 +206,76 @@ public static bool SumDirect(Activation e)
     // c is now [] (proper list) or a var (partial) — check if you need to
     return e.UnifyRegisterWithCell(1, Cell.Int(sum)); // bind argument 1
 }
+```
+
+> **A list is not always `Tag.Lis`.** The loop above is correct for a list of
+> integers built by ordinary means, and wrong for a list of **text**. Read the
+> next subsection before walking any list that might hold characters or codes.
+
+### Lists of text: use the cursor, not the tag
+
+A list of characters or codes may be stored **packed** — one `Tag.Pstr` header
+plus 3 UTF-16 code units per cell, instead of the `2n+1` cells a cons list
+costs. It is still a list: it unifies with `[H|T]`, `is_list/1` is true of it,
+and it is `==` to the cons list of the same content (ADR-047). Only the storage
+differs, and at this tier you can see the storage — that is the whole point of
+this tier.
+
+That means a hand-written `while (c.Tag == Tag.Lis)` over text **silently
+computes an answer over zero elements**. It does not throw and does not fail;
+the loop just never starts. The same predicate then returns different answers
+for two Prolog lists that are `==`, depending on how each was built.
+
+Peel elements with the cursor instead. It handles both shapes and costs the same
+as the tag test on the cons path:
+
+```csharp
+[PrologPredicate("count_letter_a/2")]                 // count_letter_a(+Text, -N)
+public static bool CountLetterA(Activation e)
+{
+    Cell c = Dr(e, e.GetRegister(0));
+    long n = 0;
+    while (e.TryUnconsListLike(c, out Cell head, out Cell tail))
+    {
+        Cell h = Dr(e, head);
+        if (h.Tag == Tag.Int && h.AsInt == 'a') n++;          // codes
+        else if (h.Tag == Tag.Atom && h.AsAtomId == AId) n++; // chars
+        c = Dr(e, tail);
+    }
+    return e.UnifyRegisterWithCell(1, Cell.Int(n));
+}
+```
+
+| instead of | use |
+|---|---|
+| `c.Tag == Tag.Lis` | `Activation.IsListLike(c)` |
+| `e.GetHeap(pair)` / `e.GetHeap(pair + 1)` | `e.TryUnconsListLike(c, out head, out tail)` |
+| assuming `[]` terminates | `e.NormalizeListCell(c)`, then test for `[]` |
+
+Two notes on the loop above:
+
+- **The head's tag depends on the list, not on the storage.** A list of codes
+  yields `Tag.Int`, a list of chars yields `Tag.Atom` — exactly as the cons list
+  would. Compare atom **ids** (`AtomTable.Intern("a").Id`, hoisted into a static
+  like `AId`), never strings.
+- **Do not assume the tail is `[]`.** A packed list may be *partial* — its tail
+  an unbound variable — which is what makes lazy stream reading possible. The
+  cursor returns that tail to you as a `Tag.Ref`; treat it as you would a
+  partial cons list.
+
+If you only need the text as a .NET string, do not walk it at all:
+
+```csharp
+Cell c = Dr(e, e.GetRegister(0));
+if (c.Tag == Tag.Pstr) { string s = e.ReadPstrChain(c, out Cell tail); /* ... */ }
+```
+
+**Building is unaffected.** Cons cells are always valid; nothing here is ever
+obliged to produce packed text. When you do want the cheaper representation,
+`MakePstr` allocates it and returns the header's heap index:
+
+```csharp
+return e.UnifyRegisterWithCell(1, e.GetHeap(e.MakePstr(text)));
 ```
 
 Reading a compound is the same idea — index past the functor cell:
