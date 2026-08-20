@@ -102,7 +102,13 @@ public static class TermRenderer
                 }
                 RenderCompound(engine, cell, output, options, maxPriority);
                 break;
+            // A packed list is the list it denotes, so it renders through the
+            // same arm — which is also what gives it quoting, ignore_ops,
+            // max_depth and numbervars. Printing it as "…" bypassed all four,
+            // and wrote the text unescaped, so a list holding a quote character
+            // did not read back.
             case Tag.Lis:
+            case Tag.Pstr:
                 if (options.MaxDepth > 0)
                 {
                     if (options.CurrentDepth >= options.MaxDepth)
@@ -116,15 +122,6 @@ public static class TermRenderer
                     break;
                 }
                 RenderList(engine, cell, output, options);
-                break;
-            case Tag.Pstr:
-                output.Write('"');
-                // Read the chain from the CELL, not from a heap index: an
-                // element taken straight out of a list arrives already
-                // dereferenced (derefAddr == -1), and AsPstrString's
-                // index-based entry point cannot be used then.
-                output.Write(engine.ReadPstrChain(cell, out _));
-                output.Write('"');
                 break;
             default:
                 output.Write('<');
@@ -140,9 +137,10 @@ public static class TermRenderer
         // surface that as the deref address and leave the AttVar-tagged
         // cell for the caller's switch.
         if (cell.Tag == Tag.AttVar) return cell.AsHeapIndex;
+        if (cell.Tag == Tag.Pstr) { cell = engine.NormalizeListCell(cell); return -1; }
         if (cell.Tag != Tag.Ref) return -1;
         int addr = engine.Deref(cell.AsHeapIndex);
-        cell = engine.GetHeap(addr);
+        cell = engine.NormalizeListCell(engine.GetHeap(addr));
         return addr;
     }
 
@@ -403,17 +401,20 @@ public static class TermRenderer
             while (true)
             {
                 Resolve(engine, ref cur);
-                if (cur.Tag != Tag.Lis) break;
+                if (!engine.TryUnconsListLike(cur, out Cell cHead, out Cell cTail)) break;
                 output.Write("'.'(");
-                Render(engine, engine.GetHeap(cur.AsHeapIndex), output, options, 999);
+                Render(engine, cHead, output, options, 999);
                 output.Write(',');
                 depth++;
-                cur = engine.GetHeap(cur.AsHeapIndex + 1);
+                cur = cTail;
             }
             Render(engine, cur, output, options, 999);
             for (int i = 0; i < depth; i++) output.Write(')');
             return;
         }
+        if (options.PortrayText && TryRenderAsText(engine, lisCell, output, options))
+            return;
+
         output.Write('[');
         bool first = true;
         Cell cursor = lisCell;
@@ -424,7 +425,7 @@ public static class TermRenderer
         while (true)
         {
             Resolve(engine, ref cursor);
-            if (cursor.Tag != Tag.Lis) break;
+            if (!engine.TryUnconsListLike(cursor, out Cell head, out Cell tail)) break;
             if (!first)
             {
                 consDepth++;
@@ -435,15 +436,14 @@ public static class TermRenderer
                 }
                 output.Write(',');   // ISO: no layout between elements
             }
-            int headIdx = cursor.AsHeapIndex;
             // Each element is an argument-priority (999) position: a ','/2
             // element must parenthesise (`[(a,b)]`, not `[a,b]` — which would
             // re-read as a two-element list), as must any operator ≥ 1000.
             // Plain Render, NOT RenderOperand: an ATOM that is an operator is
             // a legal argument bare (ISO §6.3.3 — `[:-,-]`, not `[(:-),(-)]`);
             // the operand-position parens are only for operator operands.
-            Render(engine, engine.GetHeap(headIdx), output, options, 999);
-            cursor = engine.GetHeap(headIdx + 1);
+            Render(engine, head, output, options, 999);
+            cursor = tail;
             first = false;
         }
         // Cursor is now whatever the tail dereffed to.
@@ -458,6 +458,65 @@ public static class TermRenderer
             Render(engine, cursor, output, options, 999);   // arg-priority tail
         }
         output.Write(']');
+    }
+
+    /// <summary><c>portray_text(true)</c>: writes a list of one-character atoms,
+    /// or of printable codes, as <c>"…"</c>. Returns false — leaving the output
+    /// untouched — for anything else, including the empty list, which is the
+    /// atom <c>[]</c> and prints as itself.
+    ///
+    /// <para>The scan is over the list's CONTENT (ADR-047 decision 7): two
+    /// terms that are <c>==</c> must print the same, so a packed list and the
+    /// cons list it denotes cannot be told apart here. A mixed list of chars
+    /// and codes is not text.</para></summary>
+    private static bool TryRenderAsText(
+        Activation engine, Cell lisCell, TextWriter output, TermRenderOptions options)
+    {
+        var sb = new System.Text.StringBuilder();
+        Cell cur = lisCell;
+        bool? chars = null;
+        int guard = engine.HeapTop + 2;
+        while (guard-- > 0)
+        {
+            Resolve(engine, ref cur);
+            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) break;
+            if (!engine.TryUnconsListLike(cur, out Cell head, out Cell tail)) return false;
+            Resolve(engine, ref head);
+            if (head.Tag == Tag.Atom)
+            {
+                if (chars == false) return false;
+                string n = NameOfAtom(head.AsAtomId);
+                if (n.Length != 1) return false;
+                chars = true;
+                sb.Append(n);
+            }
+            else if (head.Tag == Tag.Int)
+            {
+                if (chars == true) return false;
+                long c = head.AsInt;
+                // Printable, plus the three layout codes. Without this a list
+                // of small integers would portray as control characters.
+                if (c > char.MaxValue || !(c >= 32 || c is 9 or 10 or 13)) return false;
+                chars = false;
+                sb.Append((char)c);
+            }
+            else return false;
+            cur = tail;
+        }
+        if (guard < 0 || sb.Length == 0) return false;
+
+        output.Write('"');
+        foreach (char c in sb.ToString())
+        {
+            if (c == '"') { output.Write("\\\""); continue; }
+            string? esc = EscapeQuotedChar(c);
+            // EscapeQuotedChar escapes the SINGLE quote for atoms; inside
+            // double quotes that character is literal.
+            if (esc is not null && c != '\'') output.Write(esc);
+            else output.Write(c);
+        }
+        output.Write('"');
+        return true;
     }
 
     /// <summary>Writes an atom name with quoting applied when

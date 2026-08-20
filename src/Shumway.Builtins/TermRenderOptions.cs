@@ -26,6 +26,13 @@ public sealed class TermRenderOptions
     public bool IgnoreOps { get; set; } = false;
     public bool Numbervars { get; set; } = false;
 
+    /// <summary><c>portray_text(true)</c>: a list of characters or of printable
+    /// codes renders as <c>"…"</c> instead of element by element. Off by
+    /// default — the ISO form is the list. The decision is made on the list's
+    /// CONTENT, never on how it is stored (ADR-047 decision 7), so a packed
+    /// list and the cons list it denotes print identically.</summary>
+    public bool PortrayText { get; set; } = false;
+
     /// <summary><c>max_depth(N)</c>: compounds/list tails nested deeper
     /// than N render as <c>...</c> / <c>|...</c>. 0 = unlimited.</summary>
     public int MaxDepth { get; set; }

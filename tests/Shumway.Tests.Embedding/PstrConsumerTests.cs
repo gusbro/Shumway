@@ -141,4 +141,55 @@ public class PstrConsumerTests
         // that same list.
         Fails("catch(open(\"no_such_file_qq.txt\", read, _), error(existence_error(_, _), _), fail).");
     }
+
+    // ---------- the writer decides by value (ADR-047 decision 7) ----------
+
+    private static string Written(string goal)
+    {
+        var engine = new PrologEngine();
+        var sol = engine.Query($"with_output_to(atom(A), {goal}).");
+        Assert.True(sol.Success, $"Query failed: {goal}");
+        return ((AtomTerm)sol["A"]!).Name;
+    }
+
+    [Fact]
+    public void WriteOfAPackedListIsWriteOfTheConsList()
+    {
+        // It used to print "abc" — which also meant quoted, ignore_ops,
+        // max_depth and numbervars were all ignored for it.
+        Assert.Equal("[97,98,99]", Written("write(\"abc\")"));
+        Assert.Equal(Written("write([97,98,99])"), Written("write(\"abc\")"));
+        Assert.Equal("[]", Written("write(\"\")"));
+    }
+
+    [Fact]
+    public void TheWriteOptionsApplyToAPackedList()
+    {
+        Assert.Equal("'.'(97,'.'(98,'.'(99,[])))", Written("write_canonical(\"abc\")"));
+        Assert.Equal("[97,98|...]", Written("write_term(\"abc\", [max_depth(2)])"));
+    }
+
+    [Fact]
+    public void PortrayTextIsOffByDefaultAndDecidesOnContent()
+    {
+        // Same output for the packed list and the cons list of the same
+        // content: two terms that are == must print identically.
+        Assert.Equal("\"abc\"", Written("write_term(\"abc\", [portray_text(true)])"));
+        Assert.Equal("\"abc\"", Written("write_term([a,b,c], [portray_text(true)])"));
+        // A list of small integers is not text.
+        Assert.Equal("[1,2,3]", Written("write_term([1,2,3], [portray_text(true)])"));
+        // Mixed chars and codes is not text either.
+        Assert.Equal("[a,98]", Written("write_term([a,98], [portray_text(true)])"));
+        // The empty list is the atom [].
+        Assert.Equal("[]", Written("write_term(\"\", [portray_text(true)])"));
+        // Off by default.
+        Assert.Equal("[97,98,99]", Written("write_term(\"abc\", [])"));
+    }
+
+    [Fact]
+    public void PortrayedTextEscapesSoItReadsBack()
+    {
+        Assert.Equal("\"a\\\"b\"",
+            Written("write_term([0'a, 0'\", 0'b], [portray_text(true), quoted(true)])"));
+    }
 }
