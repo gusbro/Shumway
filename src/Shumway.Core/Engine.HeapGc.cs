@@ -409,7 +409,7 @@ public sealed partial class Activation
                     : c;
             case Tag.Pstr:
                 return InBounds(c.AsPstrBufferIndex, oldTop)
-                    ? Cell.Pstr(c.AsPstrLength, forward[c.AsPstrBufferIndex], c.AsPstrOffset)
+                    ? Cell.Pstr(c.AsPstrLength, forward[c.AsPstrBufferIndex], c.AsPstrOffset, c.AsPstrKind)
                     : c;
             default:
                 return c;   // atomic / leaf

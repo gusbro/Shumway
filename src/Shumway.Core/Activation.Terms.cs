@@ -203,7 +203,7 @@ public sealed partial class Activation
     /// code units), and a tail cell initialised to <c>[]</c>, contiguously on the heap.
     /// Returns the heap index of the header. Total cells used: <c>1 + ceil(len/3) + 1</c>.
     /// </summary>
-    public int MakePstr(string value)
+    public int MakePstr(string value, TextKind kind)
     {
         ArgumentNullException.ThrowIfNull(value);
         int codeUnits = value.Length;
@@ -224,7 +224,7 @@ public sealed partial class Activation
         }
 
         _heap[tailIdx] = Cell.Atom(AtomTable.EmptyListId);
-        _heap[headerIdx] = Cell.Pstr(codeUnits, bufferStart, 0);
+        _heap[headerIdx] = Cell.Pstr(codeUnits, bufferStart, 0, kind);
         return headerIdx;
     }
 
@@ -254,7 +254,8 @@ public sealed partial class Activation
     public string ReadPstrChain(Cell header, out Cell tail)
     {
         var sb = new System.Text.StringBuilder(header.AsPstrLength);
-        while (header.Tag == Tag.Pstr)
+        TextKind kind = header.AsPstrKind;
+        while (header.Tag == Tag.Pstr && header.AsPstrKind == kind)
         {
             int length = header.AsPstrLength;
             for (int i = 0; i < length; i++)
@@ -270,7 +271,8 @@ public sealed partial class Activation
 
     private void AppendPstrChain(System.Text.StringBuilder sb, Cell header)
     {
-        while (header.Tag == Tag.Pstr)
+        TextKind kind = header.AsPstrKind;
+        while (header.Tag == Tag.Pstr && header.AsPstrKind == kind)
         {
             int length = header.AsPstrLength;
             for (int i = 0; i < length; i++)
@@ -294,7 +296,8 @@ public sealed partial class Activation
     {
         int total = 0;
         Cell header = _heap[headerIdx];
-        while (header.Tag == Tag.Pstr)
+        TextKind kind = header.AsPstrKind;
+        while (header.Tag == Tag.Pstr && header.AsPstrKind == kind)
         {
             total += header.AsPstrLength;
             int tailIdx = ComputePstrTailIndex(header);
@@ -334,6 +337,13 @@ public sealed partial class Activation
         if (bHdr.Tag != Tag.Pstr)
             throw new InvalidOperationException(
                 $"MakePstrConcat: B's cell tag is {bHdr.Tag}, expected Pstr.");
+        // Chaining a chars segment onto a codes one would build the mixed list
+        // [a,b,c,97,98] behind a single header, and every chain walker would
+        // have to stop mid-buffer. Callers concatenate same-kind text or fall
+        // back to the cons path.
+        if (aHdr.AsPstrKind != bHdr.AsPstrKind)
+            throw new InvalidOperationException(
+                $"MakePstrConcat: A is {aHdr.AsPstrKind}, B is {bHdr.AsPstrKind}.");
 
         int totalALength = GetPstrChainLength(aIdx);
         int bChainLength = GetPstrChainLength(bIdx);
@@ -365,14 +375,15 @@ public sealed partial class Activation
         // unification path's recursive Unify on tail indices follows the
         // chain transparently (UnifyPstrPstr dispatches on Pstr-Pstr).
         _heap[tailIdx] = _heap[bIdx];
-        _heap[headerIdx] = Cell.Pstr(totalALength, bufferStart, 0);
+        _heap[headerIdx] = Cell.Pstr(totalALength, bufferStart, 0, aHdr.AsPstrKind);
         return headerIdx;
     }
 
     private void FillCharsFromPstrChain(Cell header, char[] dst)
     {
         int writeIdx = 0;
-        while (header.Tag == Tag.Pstr)
+        TextKind kind = header.AsPstrKind;
+        while (header.Tag == Tag.Pstr && header.AsPstrKind == kind)
         {
             int length = header.AsPstrLength;
             for (int i = 0; i < length; i++)
@@ -448,7 +459,7 @@ public sealed partial class Activation
             int absoluteStart = hdr.AsPstrOffset + 1;
             int newBufferIdx = hdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer;
             int newOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
-            _heap[headerIdx] = Cell.Pstr(newLength, newBufferIdx, newOffset);
+            _heap[headerIdx] = Cell.Pstr(newLength, newBufferIdx, newOffset, hdr.AsPstrKind);
         }
         return true;
     }
@@ -1380,7 +1391,7 @@ public sealed partial class Activation
         int sliceLength = bLen - aLen;
 
         int sliceSlot = AllocateHeap(1);
-        _heap[sliceSlot] = Cell.Pstr(sliceLength, sliceBufferIdx, sliceOffset);
+        _heap[sliceSlot] = Cell.Pstr(sliceLength, sliceBufferIdx, sliceOffset, bHdr.AsPstrKind);
         return Unify(aTailIdx, sliceSlot);
     }
 
@@ -1419,7 +1430,7 @@ public sealed partial class Activation
         int newOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
 
         int sliceSlot = AllocateHeap(1);
-        _heap[sliceSlot] = Cell.Pstr(length - 1, newBufferIdx, newOffset);
+        _heap[sliceSlot] = Cell.Pstr(length - 1, newBufferIdx, newOffset, pstrHdr.AsPstrKind);
         return Unify(sliceSlot, lisTailIdx);
     }
 

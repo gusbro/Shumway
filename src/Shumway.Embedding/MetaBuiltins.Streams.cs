@@ -860,7 +860,7 @@ public static partial class MetaBuiltins
         }
         else // string
         {
-            int pstrIdx = engine.MakePstr(captured);
+            int pstrIdx = engine.MakePstr(captured, TextKind.Codes);
             int slot = engine.AllocateHeap(1);
             engine.SetHeap(slot, Cell.Ref(pstrIdx));
             return engine.Unify(sinkArgAddr, slot);

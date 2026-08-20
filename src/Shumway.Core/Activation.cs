@@ -647,7 +647,8 @@ public sealed partial class Activation
                 tail = Cell.Pstr(
                     c.AsPstrLength - 1,
                     c.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
-                    absoluteStart % Cell.PstrCodeUnitsPerBuffer);
+                    absoluteStart % Cell.PstrCodeUnitsPerBuffer,
+                    c.AsPstrKind);
             }
             return true;
         }
@@ -690,7 +691,8 @@ public sealed partial class Activation
     /// (mirrors the tail-following loop in <see cref="AppendPstrChain"/>).</summary>
     private Cell PstrFinalTailCell(Cell header)
     {
-        while (header.Tag == Tag.Pstr)
+        TextKind kind = header.AsPstrKind;
+        while (header.Tag == Tag.Pstr && header.AsPstrKind == kind)
         {
             int tailIdx = ComputePstrTailIndex(header);
             Cell tail = _heap[tailIdx];

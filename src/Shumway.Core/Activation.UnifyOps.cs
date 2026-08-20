@@ -849,7 +849,8 @@ public sealed partial class Activation
             _heap[pair + 1] = Cell.Pstr(
                 pstr.AsPstrLength - 1,
                 pstr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
-                absoluteStart % Cell.PstrCodeUnitsPerBuffer);
+                absoluteStart % Cell.PstrCodeUnitsPerBuffer,
+                pstr.AsPstrKind);
         }
         return pair;
     }

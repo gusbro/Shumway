@@ -30,7 +30,7 @@ public static class IlRuntimeHelpers
     public static bool GetPstr(Activation engine, int literalId, int argReg)
     {
         string s = ResolveStringLiteral(engine, literalId);
-        int headerIdx = engine.MakePstr(s);
+        int headerIdx = engine.MakePstr(s, TextKind.Codes);
         return engine.UnifyRegisterWithHeapAt(argReg, headerIdx);
     }
 
@@ -40,7 +40,7 @@ public static class IlRuntimeHelpers
     public static void PutPstr(Activation engine, int literalId, int argReg)
     {
         string s = ResolveStringLiteral(engine, literalId);
-        int headerIdx = engine.MakePstr(s);
+        int headerIdx = engine.MakePstr(s, TextKind.Codes);
         engine.SetRegister(argReg, Cell.Ref(headerIdx));
     }
 

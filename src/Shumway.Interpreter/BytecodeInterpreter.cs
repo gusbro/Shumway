@@ -2322,7 +2322,7 @@ public sealed partial class BytecodeInterpreter
                 {
                     int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                    int headerIdx = _engine.MakePstr(ResolveLiteral(literalId));
+                    int headerIdx = _engine.MakePstr(ResolveLiteral(literalId), TextKind.Codes);
                     if (!_engine.UnifyRegisterWithHeapAt(arg, headerIdx))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -2336,7 +2336,7 @@ public sealed partial class BytecodeInterpreter
                 {
                     int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                    int headerIdx = _engine.MakePstr(ResolveLiteral(literalId));
+                    int headerIdx = _engine.MakePstr(ResolveLiteral(literalId), TextKind.Codes);
                     _engine.SetRegister(arg, Cell.Ref(headerIdx));
                     _engine.SetPc(pc + 9); inClause = true;
                     break;

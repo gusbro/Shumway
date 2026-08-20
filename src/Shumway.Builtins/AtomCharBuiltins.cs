@@ -67,7 +67,7 @@ public static class AtomCharBuiltins
         if (atomCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
-            int pstrIdx = engine.MakePstr(name);
+            int pstrIdx = engine.MakePstr(name, TextKind.Codes);
             return engine.UnifyRegisterWithCell(1, Cell.Ref(pstrIdx));
         }
 
@@ -640,7 +640,7 @@ public static class AtomCharBuiltins
                 throw new PrologRuntimeException("type_error", "string");
             throw new PrologRuntimeException("type_error", "number");
         }
-        return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(text)));
+        return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(text, TextKind.Codes)));
     }
 
     /// <summary>The decimal text of an integer or float cell; null when the

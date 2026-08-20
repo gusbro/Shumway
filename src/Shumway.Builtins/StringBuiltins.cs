@@ -63,7 +63,7 @@ public static class StringBuiltins
             }
             string a = ReadStringOrAtom(engine, 0, "string_concat/3");
             string b = ReadStringOrAtom(engine, 1, "string_concat/3");
-            int pstrIdx = engine.MakePstr(a + b);
+            int pstrIdx = engine.MakePstr(a + b, TextKind.Codes);
             return engine.UnifyRegisterWithCell(2, Cell.Ref(pstrIdx));
         }
 
@@ -81,14 +81,14 @@ public static class StringBuiltins
         {
             string a = ReadStringOrAtom(engine, 0, "string_concat/3");
             if (!ab.StartsWith(a, StringComparison.Ordinal)) return false;
-            int bPstr = engine.MakePstr(ab.Substring(a.Length));
+            int bPstr = engine.MakePstr(ab.Substring(a.Length), TextKind.Codes);
             return engine.UnifyRegisterWithCell(1, Cell.Ref(bPstr));
         }
         if (bGround)
         {
             string b = ReadStringOrAtom(engine, 1, "string_concat/3");
             if (!ab.EndsWith(b, StringComparison.Ordinal)) return false;
-            int aPstr = engine.MakePstr(ab.Substring(0, ab.Length - b.Length));
+            int aPstr = engine.MakePstr(ab.Substring(0, ab.Length - b.Length), TextKind.Codes);
             return engine.UnifyRegisterWithCell(0, Cell.Ref(aPstr));
         }
 
@@ -126,8 +126,8 @@ public static class StringBuiltins
                 _splitIdx = splitIdx + 1;
                 engine.PushBuiltinChoicePoint(Resume, arity: 3);  // restore string_concat/3 args
             }
-            int aPstr = engine.MakePstr(_ab.Substring(0, splitIdx));
-            int bPstr = engine.MakePstr(_ab.Substring(splitIdx));
+            int aPstr = engine.MakePstr(_ab.Substring(0, splitIdx), TextKind.Codes);
+            int bPstr = engine.MakePstr(_ab.Substring(splitIdx), TextKind.Codes);
             if (!engine.UnifyRegisterWithCell(0, Cell.Ref(aPstr))) return false;
             if (!engine.UnifyRegisterWithCell(1, Cell.Ref(bPstr))) return false;
             if (isResume) engine.ResumeAtReturnPc(_returnPc);
@@ -152,7 +152,7 @@ public static class StringBuiltins
         if (strCell.Tag == Tag.Ref)
         {
             string s = ReadCharAtomsToString(engine, engine.GetRegister(1), "string_chars/2");
-            int pstrIdx = engine.MakePstr(s);
+            int pstrIdx = engine.MakePstr(s, TextKind.Codes);
             return engine.UnifyRegisterWithCell(0, Cell.Ref(pstrIdx));
         }
 
@@ -174,7 +174,7 @@ public static class StringBuiltins
         if (strCell.Tag == Tag.Ref)
         {
             string s = ReadCodesToString(engine, engine.GetRegister(1), "string_codes/2");
-            int pstrIdx = engine.MakePstr(s);
+            int pstrIdx = engine.MakePstr(s, TextKind.Codes);
             return engine.UnifyRegisterWithCell(0, Cell.Ref(pstrIdx));
         }
 
@@ -348,7 +348,7 @@ public static class StringBuiltins
             int lisIdx = spine + 2 * i;
             int headIdx = lisIdx + 1;
             engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            int pstrIdx = engine.MakePstr(pieces[i]);
+            int pstrIdx = engine.MakePstr(pieces[i], TextKind.Codes);
             engine.SetHeap(headIdx, Cell.Ref(pstrIdx));
         }
         engine.SetHeap(spine + 2 * pieces.Count, Cell.Atom(AtomTable.EmptyListId));

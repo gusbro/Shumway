@@ -558,7 +558,7 @@ public static partial class MetaBuiltins
         Shumway.Builtins.TermRenderer.Render(engine, engine.GetRegister(0), sw,
             new Shumway.Builtins.TermRenderOptions { Operators = engine.Operators, Quoted = true });
         // Produce a PSTR — the string representation the string builtins consume.
-        return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(sw.ToString())));
+        return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(sw.ToString(), TextKind.Codes)));
     }
 
     /// <summary><c>'$nb_setarg'(+Arg, +Term, +Value)</c> — the C# helper behind
