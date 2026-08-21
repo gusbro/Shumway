@@ -657,6 +657,14 @@ public sealed partial class Activation
 
         // Entire control stack — conservative. Control words are RawInt
         // (leaves); every real ref is marked no matter which frame it is in.
+        //
+        // The cost of that is retention: a slot a frame no longer reads still
+        // roots whatever it holds, and last-call optimisation reuses frames
+        // without clearing the slots above the live count. It is why a lazy
+        // DCG holds every window it has consumed — the windows are dead but a
+        // stale environment slot still names them. Making this precise needs a
+        // per-frame live-slot count at the current continuation, which the
+        // engine does not compute today.
         for (int i = 0; i < _stackTop; i++)
             GcMarkReferents(_stack[i]);
 
@@ -680,10 +688,9 @@ public sealed partial class Activation
             }
         }
 
-        // Catch frames: the catcher and recovery terms are heap roots. The
-        // SnapE / RecoveryE environment chains are covered by
-        // ComputeFrameLiveCounts (scanned above), so only the heap terms
-        // are marked here.
+        // Catch frames: the catcher and recovery terms are heap roots. Their
+        // SnapE / RecoveryE environment chains need nothing here — the whole
+        // control stack is scanned above — so only the heap terms are marked.
         for (int i = 0; i < _catchFrames.Count; i++)
         {
             CatchFrame cf = _catchFrames[i];

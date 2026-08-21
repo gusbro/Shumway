@@ -623,6 +623,9 @@ public sealed partial class Activation
     /// <summary>Number of attribute records allocated — diagnostic surface.</summary>
     internal int AttrTableCount => _attrTable.Count;
 
+    /// <summary>Attribute records currently held — a diagnostic.</summary>
+    public int AttrRecordCount => _attrTable.Count;
+
     /// <summary>A snapshot of the attribute table's keys — the heap home of
     /// every variable that carries attributes, or carried them before it was
     /// bound.

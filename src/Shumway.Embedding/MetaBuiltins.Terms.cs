@@ -498,14 +498,17 @@ public static partial class MetaBuiltins
     /// </list>
     /// An unrecognised key unifies with <c>[0, 0]</c> (lenient, so a program
     /// probing several keys keeps working).</summary>
-    /// <summary><c>'$heap_live'(-Live, -Total)</c> — TEMPORARY PROBE. Runs the
-    /// mark phase and reports how many heap cells are reachable, without moving
-    /// anything. Answers "how much would a collector recover here".</summary>
+    /// <summary><c>'$heap_live'(-Live, -Total, -AttrRecords)</c> — runs the mark
+    /// phase and reports how many heap cells are reachable plus how many
+    /// attribute records the table holds, without moving anything. Answers "how
+    /// much would a collector recover here, and how much of the table is
+    /// bookkeeping".</summary>
     public static bool HeapLive(Activation engine)
     {
         var (live, total) = engine.HeapLiveProbe();
         return engine.UnifyRegisterWithCell(0, Cell.Int(live))
-            && engine.UnifyRegisterWithCell(1, Cell.Int(total));
+            && engine.UnifyRegisterWithCell(1, Cell.Int(total))
+            && engine.UnifyRegisterWithCell(2, Cell.Int(engine.AttrRecordCount));
     }
 
     /// <summary><c>term_cells(@Term, -Cells)</c> — the number of heap cells the

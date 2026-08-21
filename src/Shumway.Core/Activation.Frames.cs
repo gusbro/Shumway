@@ -79,6 +79,28 @@ public sealed partial class Activation
         UpdateGcDiagActive();
     }
 
+    /// <summary>Drops the attribute record of a variable whose ATTVAR-restoring
+    /// trail entry the cut just discarded.
+    ///
+    /// <para>The record outlives the binding because a backtrack restores the
+    /// ATTVAR cell and would find its constraints gone otherwise — so it may be
+    /// dropped exactly when the entry that would do that restoring is dropped,
+    /// and not before. The cut drops it when the cell is YOUNGER than the
+    /// surviving choice point, which means an outer backtrack truncates the
+    /// cell away entirely and there is nothing left to restore.</para>
+    ///
+    /// <para>Without this the table grows one dead record per constrained
+    /// variable for the life of the query, and because the record is a GC root
+    /// it holds the variable's whole term with it — which is what made a lazy
+    /// DCG retain every window it had already consumed.</para></summary>
+    private void DropDeadAttrRecord(int home)
+    {
+        // Still an attributed variable — the binding was undone, or this entry
+        // was about something else at the same address. Nothing to drop.
+        if ((uint)home < (uint)_heapTop && _heap[home].Tag == Tag.AttVar) return;
+        _attrTable.Remove(home);
+    }
+
     private static void Validate(ActivationConfig c)
     {
         if (c.InitialHeapSize <= 0) throw new ArgumentException("InitialHeapSize must be > 0", nameof(c));
@@ -1054,6 +1076,10 @@ public sealed partial class Activation
             {
                 entry.BindingTrailMarker = bindingWrite;
                 _extraTrail[extraWrite++] = entry;
+            }
+            else if (_attrTable.Count > 0 && entry.Type == TrailType.ValueChange)
+            {
+                DropDeadAttrRecord(entry.HeapIdx);
             }
             extraRead++;
         }
