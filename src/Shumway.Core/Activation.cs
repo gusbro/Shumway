@@ -61,7 +61,6 @@ public sealed partial class Activation
     // ----- Per-engine auxiliary value tables (ADR-002) -----
     private readonly List<BigInteger> _bigIntTable = new();
     private readonly List<Rational> _rationalTable = new();
-    private readonly List<string> _stringTable = new();
     private readonly List<object?> _foreignTable = new();
 
     /// <summary>The <c>prefer_rationals</c> prolog_flag snapshot for this
@@ -391,8 +390,6 @@ public sealed partial class Activation
                 return _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]);
             case Tag.Rational:
                 return _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]);
-            case Tag.String:
-                return string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]);
             // Compounds and PSTR descend: use an explicit work-stack (O(1) C#
             // stack, no per-element recursion) with a visited-pair set so a
             // cyclic / rational term (X=f(X), Y=f(Y), X==Y) terminates
@@ -568,9 +565,6 @@ public sealed partial class Activation
                 return true;
             case Tag.Rational:
                 equal = _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]);
-                return true;
-            case Tag.String:
-                equal = string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]);
                 return true;
             default:
                 // Str / Lis / Pstr — a descending tag; not decided here.

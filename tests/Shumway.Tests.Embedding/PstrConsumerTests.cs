@@ -260,4 +260,26 @@ public class PstrConsumerTests
         Assert.True(shared.Success && twice.Success);
         Assert.True(((IntTerm)shared["C"]!).Value < ((IntTerm)twice["C"]!).Value);
     }
+
+    // ---------- string/1 without a string type (ADR-047 decision 5) ----------
+
+    [Fact]
+    public void StringOneAsksAboutContentNotStorage()
+    {
+        // Testing the tag would answer differently for a packed list and the
+        // cons list it denotes, which are the same term.
+        Holds("string(\"abc\").");
+        Holds("string([a,b,c]).");
+        Holds("string([0'a,0'b,0'c]).");
+        // Deliberate divergence from SWI, which says false for a char list:
+        // here it is the same term as "abc", so no other answer is available.
+
+        Fails("string(abc).");
+        Fails("string(42).");
+        Fails("string([a,98]).");      // mixed is not text
+        Fails("string([a,b|_]).");     // partial is not a proper list
+        // The empty literal denotes [], which is an atom.
+        Fails("string(\"\").");
+        Fails("string([]).");
+    }
 }

@@ -4,9 +4,9 @@
 
 Accepted ([Phase 1](../../history/phase-1-closure.md)). Amended by
 [ADR-047](047-pstr-is-a-list.md) (2026-08-20): there is no string *type* at the
-boundary, so the `String`/`Pstr` surface (`MakeString`, `AsString`, `IsString`,
-`AsPstr`, `TermKind.String`, `TermKind.Pstr`) goes away. The amendments are
-marked inline below; they describe where the arc lands, not what ships today.
+boundary, so the `String`/`Pstr` surface (`MakeString`, `AsString`, `AsPstr`,
+`TermKind.String`, `TermKind.Pstr`) is gone. The amendments are marked inline
+below.
 
 ## Context
 

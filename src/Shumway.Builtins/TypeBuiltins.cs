@@ -63,13 +63,44 @@ public static class TypeBuiltins
         return t is Tag.Int or Tag.BigInt or Tag.Float or Tag.Rational;
     }
 
-    /// <summary><c>string(X)</c> — X is a string cell (SWI). Shumway has a
-    /// distinct string representation (Tag.String / PSTR); an atom is not a
-    /// string.</summary>
+    /// <summary><c>string(X)</c> (SWI) — X is a non-empty proper list of
+    /// characters or of character codes.
+    ///
+    /// <para>There is no string TYPE to test (ADR-047 decision 5): what
+    /// <c>double_quotes=string</c> produces is a text list. Testing the tag
+    /// instead would answer differently for a packed list and the cons list it
+    /// denotes, which are the same term — the representation probe decision 1
+    /// exists to prevent. So this asks about CONTENT.</para>
+    ///
+    /// <para>Divergence from SWI, deliberately: <c>string([a,b,c])</c> is true
+    /// here and false there. Here it is the same term as <c>"abc"</c>, so no
+    /// other answer is available. <c>string("")</c> is false — the empty
+    /// literal denotes <c>[]</c>, which is an atom.</para></summary>
     public static bool IsString(Activation engine)
     {
-        var t = Tag0(engine);
-        return t is Tag.String or Tag.Pstr;
+        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
+        int guard = engine.HeapTop + 2;
+        bool? chars = null;
+        while (guard-- > 0)
+        {
+            if (ListCursor.IsNil(cur)) return chars is not null;
+            if (!engine.TryUnconsListLike(cur, out Cell rawHead, out Cell tail)) return false;
+            Cell head = ListCursor.Resolve(engine, rawHead);
+            if (head.Tag == Tag.Atom
+                && AtomTable.GetById(head.AsAtomId)?.Name is { Length: 1 })
+            {
+                if (chars == false) return false;
+                chars = true;
+            }
+            else if (head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= 0x10FFFF)
+            {
+                if (chars == true) return false;
+                chars = false;
+            }
+            else return false;
+            cur = ListCursor.Resolve(engine, tail);
+        }
+        return false;
     }
 
     /// <summary><c>'$is_partial_string'(X)</c> — X is a list of one-character
@@ -109,7 +140,7 @@ public static class TypeBuiltins
     public static bool IsAtomic(Activation engine)
     {
         var t = Tag0(engine);
-        return t is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float or Tag.String;
+        return t is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float;
     }
 
     /// <summary><c>compound(X)</c> — X is a compound term: a structure or a
@@ -170,7 +201,6 @@ public static class TypeBuiltins
             case Tag.BigInt:
             case Tag.Rational:
             case Tag.Float:
-            case Tag.String:
                 return true;
             // A packed list may be partial — its open tail is an unbound
             // variable, and a term holding one is not ground.

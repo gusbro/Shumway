@@ -126,7 +126,6 @@ public static class StreamBuiltins
             case Tag.Atom:
             case Tag.Lis:
             case Tag.Pstr:
-            case Tag.String:
                 return;
             case Tag.Str:
                 throw new PrologRuntimeException(

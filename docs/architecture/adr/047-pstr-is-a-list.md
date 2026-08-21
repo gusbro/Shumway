@@ -2,10 +2,14 @@
 
 ## Status
 
-Accepted (2026-08-20, branch `pstr-chars`). Implementation staged; stage 1 —
-the five semantic defects, fixed without moving the representation — shipped in
-`af33bad`. The remaining stages (presentation bit, producers, default flip,
-lazy reading, removal of `Tag.String`) are tracked in the arc plan.
+Accepted and implemented (2026-08, branch `pstr-chars`): the presentation bit,
+the type and consumer sweep, the writer, the .NET boundary, the `chars` default,
+the producers, lazy input, and the removal of `Tag.String`.
+
+Two things it names are NOT delivered and are called out where they arise:
+astral-plane correctness (a separate arc), and bounded memory for lazy input —
+which needs a precise control-stack scan the engine does not have. See
+"Consequences".
 
 ## Context
 
@@ -120,7 +124,14 @@ selects.
 
 `double_quotes = string` produces a packed list of **chars**. There is no opaque
 string type. `Tag.String` (0x8) is deleted — it has no producer in `src/`.
-`string/1` therefore belongs in the SWI shim, not the engine.
+
+`string/1` survives as a **content** test: a non-empty proper list of characters
+or of codes. Testing the tag would answer differently for a packed list and the
+cons list it denotes, which are the same term — exactly the representation probe
+decision 1 exists to prevent. The divergence from SWI is deliberate and narrow:
+`string([a,b,c])` is true here and false there, because here it is the same term
+as `"abc"` and no other answer is available. `string("")` is false — the empty
+literal denotes `[]`, which is an atom.
 
 ### 6. The representation is not observable at the .NET boundary
 

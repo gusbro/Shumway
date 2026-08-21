@@ -134,7 +134,6 @@ internal static class FindallSnapshot
             case Tag.Float:
             case Tag.BigInt:
             case Tag.Rational:
-            case Tag.String:
             case Tag.Pstr:
             case Tag.Foreign:
                 // A snapshot outlives the heap state it was taken from, so

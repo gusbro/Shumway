@@ -49,7 +49,7 @@ Bits 59..0:  payload (60 bits, interpretation depends on tag)
 | 0x5 | INT      | Signed 60-bit integer (inline). |
 | 0x6 | FLOAT    | 4 high bits of double + heap index to INT cell with 60 low bits. |
 | 0x7 | BIGINT   | Id in the per-engine BigInteger table. |
-| 0x8 | (free)   | Was `STRING`, an opaque non-list string. Removed by ADR-047: there is no opaque string type; packed text is a list. |
+| 0x8 | (free)   | Freed by ADR-047: there is no opaque string type, so packed text is a list like any other. |
 | 0x9 | FOREIGN  | Id in the per-engine foreign object table. |
 | 0xA | ATTVAR   | Heap index to the variable's own home cell (a self-referencing variable, like REF). Implemented in Phase 4 — see chunk 77. |
 | 0xB | PSTR     | Packed list header: presentation bit, length, buffer index, offset (see PSTR design doc). |

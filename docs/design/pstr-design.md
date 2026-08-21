@@ -288,11 +288,6 @@ and no change of operand width — which is what keeps a change to the fundament
 representation of text out of the instruction set, and keeps bundles with
 persisted IL linking.
 
-`UnifyPstrHead` (0x52) is defined and interpreted but **never emitted**. It is
-scheduled for removal along with `AdvancePstrHead`, which additionally mutates
-the heap without trailing — harmless while nothing emits it, a loaded gun if
-anything ever does.
-
 ## Lazy stream reading
 
 A PSTR with an unbound tail is exactly the shape `phrase_from_file/2` needs, and

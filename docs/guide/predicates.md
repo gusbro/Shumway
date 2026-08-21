@@ -38,7 +38,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `nonvar(@Term)` | Succeeds if the argument is not an unbound variable. |
 | `number(@Term)` | Succeeds if the argument is a number. |
 | `rational(@Term)` | Succeeds if the argument is a rational number (an integer is a rational with denominator 1). |
-| `string(@Term)` | Succeeds if the argument is a string. |
+| `string(@Term)` | Succeeds if the argument is a non-empty proper list of characters or of codes (SWI compatibility; there is no string type — see ADR-047). |
 | `var(@Term)` | Succeeds if the argument is an unbound variable. |
 
 ## Arithmetic

@@ -103,10 +103,10 @@ Tags defined in v1:
 | 0x5 | INT      | Signed 60-bit inline integer |
 | 0x6 | FLOAT    | 4 high bits + heap index to INT cell with 60 low bits |
 | 0x7 | BIGINT   | Id in per-engine bigint table |
-| 0x8 | STRING   | Id in per-engine string table (opaque, non-list) |
+| 0x8 | (free)   | Was STRING, an opaque non-list string; removed by ADR-047 — text as a value is an atom, text as a sequence is a list |
 | 0x9 | FOREIGN  | Id in per-engine foreign object table |
 | 0xA | ATTVAR   | Heap index to own home cell (attributed variables — CLP(FD)/CLP(R) build on these) |
-| 0xB | PSTR     | Partial string (Scryer-style, UTF-16) |
+| 0xB | PSTR     | Packed list header (ADR-047): presentation bit, length, buffer index, offset |
 | 0xC | PSTRBUF  | PSTR buffer cell (3 UTF-16 code units) |
 | 0xD | RAWINT   | Non-heap-reference control word (env/CP fields) — lets the conservative heap-GC scan (ADR-016) distinguish control values from Refs |
 | 0xE | RATIONAL | Id in the per-engine rational table (ADR-039) |

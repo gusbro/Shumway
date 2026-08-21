@@ -334,10 +334,8 @@ The BigInt table grows during a query. It is **not** trail-reversed (truncating 
 
 ### 0x8 — free
 
-Was `STRING`, an opaque string that was not unifiable as a list. **Removed by
-ADR-047**: there is no opaque string type. Text as a value is an atom; text as a
-sequence is a list, packed or not. The tag had no producer in `src/` by the time
-it was removed.
+Freed by ADR-047: there is no opaque string type. Text as a value is an atom;
+text as a sequence is a list, packed or not.
 
 The tag space is 4 bits and cannot grow, so 0x8 and 0xF are the last two slots.
 Claiming either is a major decision (`decision-policy.md`).

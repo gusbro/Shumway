@@ -542,16 +542,39 @@ public static partial class MetaBuiltins
     /// text is parsed as a term; otherwise <c>Term</c> is rendered (operator
     /// notation, quoted) and unified with a fresh string. Options are accepted
     /// and currently ignored.</summary>
+    /// <summary>The characters of a cons-cell text list — chars or codes.
+    /// A packed one is read with ReadPstrChain; this is the other shape, and
+    /// both denote the same list (ADR-047).</summary>
+    private static string ReadTextListAsString(Activation engine, Cell list)
+    {
+        var sb = new System.Text.StringBuilder();
+        Cell cur = list;
+        while (engine.TryUnconsListLike(cur, out Cell rawHead, out Cell tail))
+        {
+            Cell head = ResolveLocal(engine, rawHead);
+            if (head.Tag == Tag.Atom
+                && AtomTable.GetById(head.AsAtomId)?.Name is { Length: 1 } n1)
+                sb.Append(n1);
+            else if (head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= char.MaxValue)
+                sb.Append((char)head.AsInt);
+            else
+                throw new ShumwayPrologException(IsoError.TypeError("text",
+                    MaterializeRegister(engine, 1)));
+            cur = engine.NormalizeListCell(ResolveLocal(engine, tail));
+        }
+        return sb.ToString();
+    }
+
     public static bool TermString(Activation engine)
     {
-        Cell strCell = ResolveLocal(engine, engine.GetRegister(1));
-        if (strCell.Tag is Tag.String or Tag.Pstr)
+        Cell strCell = engine.NormalizeListCell(ResolveLocal(engine, engine.GetRegister(1)));
+        if (Activation.IsListLike(strCell))
         {
-            // String → Term: read the text (Pstr is the string type the string
-            // builtins use — atom_string/string_chars/…) and parse it.
+            // Text → Term: read the characters and parse them. A cons list of
+            // text reads the same as the packed one it denotes (ADR-047).
             string text = strCell.Tag == Tag.Pstr
-                ? engine.AsPstrString(engine.Deref(engine.GetRegister(1).AsHeapIndex))
-                : engine.AsString(strCell);
+                ? engine.ReadPstrChain(strCell, out _)
+                : ReadTextListAsString(engine, strCell);
             string source = text.TrimEnd().EndsWith(".", StringComparison.Ordinal) ? text : text + ".";
             Term parsed = ParseClauseText(engine, source);
             Cell newCell = Materializer.MaterializeAsCell(engine, parsed);

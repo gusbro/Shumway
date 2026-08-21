@@ -30,7 +30,6 @@ public class OpcodeTableTests
     [InlineData(Opcode.GetConstantA1, 5, 1, "get_constant_a1")]
     [InlineData(Opcode.GetListA1, 1, 0, "get_list_a1")]
     [InlineData(Opcode.GetPstr, 9, 2, "get_pstr")]
-    [InlineData(Opcode.UnifyPstrHead, 5, 1, "unify_pstr_head")]
     [InlineData(Opcode.Meta, 6, 0, "meta")]
     [InlineData(Opcode.ReservedExtension, 1, 0, "reserved_extension")]
     public void Get_ReturnsDocumentedEntry(Opcode op, byte size, byte numOperands, string mnemonic)

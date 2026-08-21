@@ -196,7 +196,7 @@ Unifies the argument with a non-empty list (cons cell).
 
 These instructions appear before a `call` or `execute` to set up the argument registers for the callee.
 
-### put_variable_x (0x20)
+### put_variable_x (0x0D)
 
 Operands: `reg dest_perm_and_arg`, `reg arg`
 Total size: 9 bytes
@@ -209,14 +209,14 @@ X[dest_perm_and_arg] := new_var
 X[arg] := new_var
 ```
 
-### put_variable_y (0x21)
+### put_variable_y (0x0E)
 
 Operands: `perm dest`, `reg arg`
 Total size: 9 bytes
 
 Creates a new unbound variable, stores it in `Y[dest]` and `X[arg]`.
 
-### put_value_x (0x22)
+### put_value_x (0x0F)
 
 Operands: `reg src`, `reg arg`
 Total size: 9 bytes
@@ -227,7 +227,7 @@ Copies a temporary variable to the argument register.
 X[arg] := X[src]
 ```
 
-### put_value_y (0x23)
+### put_value_y (0x10)
 
 Operands: `perm src`, `reg arg`
 Total size: 9 bytes
@@ -238,7 +238,7 @@ Copies a permanent variable to the argument register.
 X[arg] := Y[src]
 ```
 
-### put_constant (0x24)
+### put_constant (0x11)
 
 Operands: `atom_id const`, `reg arg`
 Total size: 9 bytes
@@ -249,7 +249,7 @@ Sets the argument register to a constant atom.
 X[arg] := Atom(const)
 ```
 
-### put_integer (0x25)
+### put_integer (0x12)
 
 Operands: `int_value value`, `reg arg`
 Total size: 9 bytes
@@ -260,14 +260,14 @@ Sets the argument register to an integer.
 X[arg] := Int(value)
 ```
 
-### put_atom (0x26)
+### put_atom (0x13)
 
 Operands: `atom_id atom`, `reg arg`
 Total size: 9 bytes
 
 Same as `put_constant`. Provided for symmetry with `get_atom`.
 
-### put_nil (0x27)
+### put_nil (0x14)
 
 Operands: `reg arg`
 Total size: 5 bytes
@@ -278,7 +278,7 @@ Sets the argument register to `[]`.
 X[arg] := Atom([])
 ```
 
-### put_structure (0x28)
+### put_structure (0x15)
 
 Operands: `functor_id functor`, `reg arg`
 Total size: 9 bytes
@@ -293,7 +293,7 @@ X[arg] := Str(str_addr)
 
 Subsequent `unify_*` instructions in write mode populate the arguments.
 
-### put_list (0x29)
+### put_list (0x16)
 
 Operands: `reg arg`
 Total size: 5 bytes
@@ -314,7 +314,7 @@ Subsequent `unify_*` write head and tail.
 
 These instructions follow `get_structure`, `get_list`, `put_structure`, or `put_list`. Their behavior depends on the mode (read vs write).
 
-### unify_variable_x (0x40)
+### unify_variable_x (0x1B)
 
 Operands: `reg target`
 Total size: 5 bytes
@@ -322,14 +322,14 @@ Total size: 5 bytes
 - Read mode: copies the cell at the unify pointer to `X[target]`, advances the pointer.
 - Write mode: creates a new unbound variable on the heap and stores it both in the structure (at the unify pointer) and in `X[target]`.
 
-### unify_variable_y (0x41)
+### unify_variable_y (0x1C)
 
 Operands: `perm target`
 Total size: 5 bytes
 
 Same as `unify_variable_x` but the target is a permanent variable.
 
-### unify_value_x (0x42)
+### unify_value_x (0x1D)
 
 Operands: `reg src`
 Total size: 5 bytes
@@ -337,14 +337,14 @@ Total size: 5 bytes
 - Read mode: unifies `X[src]` with the cell at the unify pointer.
 - Write mode: writes `X[src]` to the heap at the unify pointer.
 
-### unify_value_y (0x43)
+### unify_value_y (0x1E)
 
 Operands: `perm src`
 Total size: 5 bytes
 
 Same as `unify_value_x` but reading from a permanent.
 
-### unify_constant (0x44)
+### unify_constant (0x1F)
 
 Operands: `atom_id const`
 Total size: 5 bytes
@@ -352,28 +352,28 @@ Total size: 5 bytes
 - Read mode: unifies the cell at the unify pointer with `Atom(const)`.
 - Write mode: writes `Atom(const)` to the heap.
 
-### unify_integer (0x45)
+### unify_integer (0x20)
 
 Operands: `int_value value`
 Total size: 5 bytes
 
 Like `unify_constant` but for integer literals.
 
-### unify_atom (0x46)
+### unify_atom (0x21)
 
 Operands: `atom_id atom`
 Total size: 5 bytes
 
 Same as `unify_constant`. Symmetry with `get_atom`/`put_atom`.
 
-### unify_nil (0x47)
+### unify_nil (0x22)
 
 Operands: (none)
 Total size: 1 byte
 
 Equivalent to `unify_atom` with the `[]` atom id. Common pattern.
 
-### unify_void (0x48)
+### unify_void (0x23)
 
 Operands: `int count`
 Total size: 5 bytes
@@ -387,7 +387,7 @@ Used for anonymous variables (`_`) in clause heads and structures.
 
 ## Control instructions
 
-### allocate (0x50)
+### allocate (0x28)
 
 Operands: `int num_perms`
 Total size: 5 bytes
@@ -406,7 +406,7 @@ current_e := new_e
 
 See ADR-005 for stack layout.
 
-### deallocate (0x51)
+### deallocate (0x29)
 
 Operands: (none)
 Total size: 1 byte
@@ -420,7 +420,7 @@ current_e := stack[current_e + 0].Data
 
 Note: stack top is not reduced here; that's handled later (typically at trust_me or when the predicate fully returns).
 
-### call (0x52)
+### call (0x2A)
 
 Operands: `address target`, `int num_live_perms`
 Total size: 9 bytes
@@ -434,7 +434,7 @@ pc := target
 
 `num_live_perms` is informational (for environment trimming, a future optimization). Currently unused.
 
-### execute (0x53)
+### execute (0x2B)
 
 Operands: `address target`
 Total size: 5 bytes
@@ -448,7 +448,7 @@ pc := target
 
 The compiler emits `execute` instead of `call` for the last goal in a clause body.
 
-### proceed (0x54)
+### proceed (0x2C)
 
 Operands: (none)
 Total size: 1 byte
@@ -459,7 +459,7 @@ Returns from the current predicate.
 pc := current_cp
 ```
 
-### halt (0x55)
+### halt (0x2D)
 
 Operands: (none)
 Total size: 1 byte
@@ -470,7 +470,7 @@ Halts the engine. Used at the top level when a query completes.
 
 ## Choice point instructions
 
-### try_me_else (0x60)
+### try_me_else (0x34)
 
 Operands: `address next_clause`, `int arity`
 Total size: 9 bytes
@@ -500,7 +500,7 @@ hb := heap_top
 
 See ADR-005 for CP layout.
 
-### retry_me_else (0x61)
+### retry_me_else (0x35)
 
 Operands: `address next_clause`
 Total size: 5 bytes
@@ -514,7 +514,7 @@ int offset = current_b + 1 + arity
 stack[offset + 3] := next_clause  // update BP for next backtrack
 ```
 
-### trust_me (0x62)
+### trust_me (0x36)
 
 Operands: (none)
 Total size: 1 byte
@@ -527,7 +527,7 @@ current_b := stack[offset + 2].Data  // previous CP
 stack_top := current_b  // (subject to E being lower)
 ```
 
-### try (0x63)
+### try (0x37)
 
 Operands: `address clause_addr`
 Total size: 5 bytes
@@ -536,21 +536,21 @@ Used in indexed dispatch. Creates a CP pointing to the next alternative (the ins
 
 Similar to `try_me_else` but used when several alternatives are listed.
 
-### retry (0x64)
+### retry (0x38)
 
 Operands: `address clause_addr`
 Total size: 5 bytes
 
 Used in indexed dispatch. On backtrack, restores state from CP and jumps to `clause_addr`. The CP is retained for further alternatives.
 
-### trust (0x65)
+### trust (0x39)
 
 Operands: `address clause_addr`
 Total size: 5 bytes
 
 Used in indexed dispatch. On backtrack, restores state, discards the CP, and jumps to `clause_addr` (the last alternative).
 
-### enter_dynamic (0x66) — ADR-015 chunk C
+### enter_dynamic (0x3A) — ADR-015 chunk C
 
 Operands: none
 Total size: 1 byte
@@ -565,7 +565,7 @@ chain's enumeration — the ISO logical update view.
 engine.CurrentViewGen := host.DbGeneration
 ```
 
-### check_visible (0x67) — ADR-015 chunk C
+### check_visible (0x3B) — ADR-015 chunk C
 
 Operands: `long_value born`, `long_value died`
 Total size: 17 bytes
@@ -592,7 +592,7 @@ bump count) needs more than 32 bits for a long-running engine.
 
 ## Indexing instructions
 
-### switch_on_term (0x70)
+### switch_on_term (0x3C)
 
 Operands: `address var_label`, `address const_label`, `address list_label`, `address struct_label`
 Total size: 17 bytes
@@ -609,21 +609,21 @@ switch (c.Tag):
     default (FOREIGN, PSTR, etc.): goto var_label
 ```
 
-### switch_on_atom (0x71)
+### switch_on_atom (0x3D)
 
 Operands: `int table_id`
 Total size: 5 bytes
 
 Looks up A1's atom id in `CodeArea.SwitchTables[table_id]` and jumps to the matching address or to the default.
 
-### switch_on_integer (0x72)
+### switch_on_integer (0x3E)
 
 Operands: `int table_id`
 Total size: 5 bytes
 
 Looks up A1's integer value in the switch table.
 
-### switch_on_structure (0x73)
+### switch_on_structure (0x3F)
 
 Operands: `int table_id`
 Total size: 5 bytes
@@ -634,7 +634,7 @@ Looks up A1's structure's functor id in the switch table.
 
 ## Cut instructions
 
-### neck_cut (0x80)
+### neck_cut (0x44)
 
 Operands: (none)
 Total size: 1 byte
@@ -648,7 +648,7 @@ compact_trails()
 
 The "saved b" is implicit (it's the value of `current_b` at the moment of clause entry, which the compiler tracks).
 
-### get_level (0x81)
+### get_level (0x45)
 
 Operands: `perm dest`
 Total size: 5 bytes
@@ -659,7 +659,7 @@ Saves the current `current_b` to a permanent variable, for use by a deep cut.
 Y[dest] := current_b
 ```
 
-### cut (0x82)
+### cut (0x46)
 
 Operands: `perm src`
 Total size: 5 bytes
@@ -677,7 +677,7 @@ if (current_b > target):
 
 ## Builtin call instructions
 
-### call_builtin (0x90)
+### call_builtin (0x47)
 
 Operands: `int builtin_id`, `int arity`
 Total size: 9 bytes
@@ -712,40 +712,40 @@ For the most frequent builtins, dedicated opcodes avoid the `call_builtin` dispa
 
 The most frequent patterns get dedicated opcodes for performance.
 
-### get_constant_a1 (0xA0)
+### get_constant_a1 (0x48)
 
 Operands: `atom_id const`
 Total size: 5 bytes
 
 Equivalent to `get_constant const, X[0]`.
 
-### get_constant_a2 (0xA1)
+### get_constant_a2 (0x49)
 
 Operands: `atom_id const`
 Total size: 5 bytes
 
 Equivalent to `get_constant const, X[1]`.
 
-### put_constant_a1 (0xA2)
+### put_constant_a1 (0x4A)
 
 Operands: `atom_id const`
 Total size: 5 bytes
 
 Equivalent to `put_constant const, X[0]`.
 
-### put_constant_a2 (0xA3)
+### put_constant_a2 (0x4B)
 
 Operands: `atom_id const`
 Total size: 5 bytes
 
-### get_list_a1 (0xA4)
+### get_list_a1 (0x4C)
 
 Operands: (none)
 Total size: 1 byte
 
 Equivalent to `get_list X[0]`.
 
-### get_list_a2 (0xA5)
+### get_list_a2 (0x4D)
 
 Operands: (none)
 Total size: 1 byte
@@ -758,38 +758,27 @@ Total size: 1 byte
 
 These are specific to partial-string handling for grammar processing.
 
-### get_pstr (0xC0)
+### get_pstr (0x50)
 
 Operands: `int pstr_literal_id`, `reg arg`
 Total size: 9 bytes
 
 Unifies the argument with a PSTR literal. The literal is in `CodeArea.StringLiterals[pstr_literal_id]`.
 
-### put_pstr (0xC1)
+### put_pstr (0x51)
 
 Operands: `int pstr_literal_id`, `reg arg`
 Total size: 9 bytes
 
 Sets the argument register to a PSTR literal.
 
-### unify_pstr_head (0xC2)
-
-Operands: `reg head_dest`
-Total size: 5 bytes
-
-Decomposes a packed list in the unify cursor: gets the first element (a one-character atom or a code, per the PSTR header's own presentation — never per the `double_quotes` flag, ADR-047), stores it in `head_dest`, and advances the cursor to the rest.
-
-**Defined and interpreted but never emitted**, and scheduled for removal: it additionally mutates the cursor cell without trailing.
-
-Used for PSTR-to-list pattern matching like `[H|T] = Pstr`.
-
-(More PSTR instructions are defined in `pstr-design.md`.)
+(PSTR instructions are defined in `pstr-design.md`.)
 
 ---
 
 ## Meta opcode
 
-### meta (0xFE)
+### meta (0x61)
 
 Operands: `byte sub_opcode`, then sub-specific operands
 Total size: variable

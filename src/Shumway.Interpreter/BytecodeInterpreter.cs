@@ -2344,22 +2344,6 @@ public sealed partial class BytecodeInterpreter
                     break;
                 }
 
-                case Opcode.UnifyPstrHead:
-                {
-                    int dest = BytecodeIO.ReadInt32(code, pc + 1);
-                    if (!_engine.AdvancePstrHead(_engine.UnifyPointer, out Cell head))
-                    {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
-                    }
-                    _engine.SetRegister(dest, head);
-                    // The cursor stays put: heap[UnifyPointer] now holds either the
-                    // advanced PSTR header (still iterable) or the PSTR's tail value
-                    // (so subsequent unify_nil / unify_value can match against it).
-                    _engine.SetPc(pc + 5); inClause = true;
-                    break;
-                }
-
                 // ---------- Float literal opcodes ----------
 
                 case Opcode.GetFloat:

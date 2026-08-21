@@ -14,7 +14,10 @@ public enum Tag : byte
     Int = 0x5,
     Float = 0x6,
     BigInt = 0x7,
-    String = 0x8,
+    // 0x8 free — was String, an opaque non-list string type.
+    // Removed by ADR-047: text as a value is an atom, text as a sequence is a
+    // list. 0x8 and 0xF are the last two slots in a 4-bit tag space, so
+    // claiming either is a major decision (decision-policy.md).
     Foreign = 0x9,
     AttVar = 0xA,
     Pstr = 0xB,

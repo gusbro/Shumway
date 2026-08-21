@@ -132,24 +132,6 @@ public sealed partial class Activation
 
     internal int RationalTableCount => _rationalTable.Count;
 
-    /// <summary>Stores <paramref name="value"/> in the engine's string table and returns
-    /// a STRING cell whose payload is its id.</summary>
-    public Cell MakeString(string value)
-    {
-        ArgumentNullException.ThrowIfNull(value);
-        int id = _stringTable.Count;
-        _stringTable.Add(value);
-        return Cell.String(id);
-    }
-
-    /// <summary>Returns the string referenced by a STRING cell.</summary>
-    public string AsString(Cell cell)
-    {
-        if (cell.Tag != Tag.String)
-            throw new InvalidOperationException($"Cell tag is {cell.Tag}, expected String.");
-        return _stringTable[cell.AsStringId];
-    }
-
     /// <summary>Stores <paramref name="value"/> in the engine's foreign-object table and
     /// returns a FOREIGN cell whose payload is its id. The value may be <c>null</c>.</summary>
     public Cell MakeForeign(object? value)
@@ -464,46 +446,6 @@ public sealed partial class Activation
         return GetPstrCodeUnit(header, i);
     }
 
-    /// <summary>
-    /// Decomposes the PSTR header at heap[<paramref name="headerIdx"/>] into its first
-    /// code unit and a tail header, updating the cell at <paramref name="headerIdx"/>
-    /// in place. When the PSTR had one remaining code unit, the cell is replaced with
-    /// the PSTR's own tail value (typically <c>Atom([])</c>); otherwise it's replaced
-    /// with an advanced PSTR header sharing the original buffer.
-    ///
-    /// <para>The extracted head is returned as <c>Int(code_unit)</c> — only
-    /// supports <c>codes</c> mode for <c>double_quotes</c>; the <c>chars</c> path is
-    /// deferred until the flags subsystem lands.</para>
-    /// </summary>
-    /// <returns>true if a head was extracted; false if the cell was not a PSTR or had
-    /// length zero (in which case no state is changed).</returns>
-    public bool AdvancePstrHead(int headerIdx, out Cell head)
-    {
-        Cell hdr = _heap[headerIdx];
-        if (hdr.Tag != Tag.Pstr || hdr.AsPstrLength == 0)
-        {
-            head = default;
-            return false;
-        }
-
-        head = PstrHeadCell(hdr.AsPstrKind, GetPstrCodeUnit(hdr, 0));
-
-        int newLength = hdr.AsPstrLength - 1;
-        if (newLength == 0)
-        {
-            int tailIdx = ComputePstrTailIndex(hdr);
-            _heap[headerIdx] = _heap[tailIdx];
-        }
-        else
-        {
-            int absoluteStart = hdr.AsPstrOffset + 1;
-            int newBufferIdx = hdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer;
-            int newOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
-            _heap[headerIdx] = Cell.Pstr(newLength, newBufferIdx, newOffset, hdr.AsPstrKind);
-        }
-        return true;
-    }
-
     /// <summary>The element a packed list yields at a given position: a
     /// one-character atom or a code, per the header's <see cref="TextKind"/>.
     /// Every uncons path goes through here — the four of them producing their
@@ -536,7 +478,6 @@ public sealed partial class Activation
     }
 
     internal int BigIntTableCount => _bigIntTable.Count;
-    internal int StringTableCount => _stringTable.Count;
     internal int ForeignTableCount => _foreignTable.Count;
 
     // ----- Trail accessors -----
@@ -971,7 +912,6 @@ public sealed partial class Activation
             Tag.Lis => UnifyLis(aCell.AsHeapIndex, bCell.AsHeapIndex, depth, activePairs),
             Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
             Tag.Rational => _rationalTable[aCell.AsRationalId].Equals(_rationalTable[bCell.AsRationalId]),
-            Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
             Tag.Float => UnifyFloat(aCell, bCell),
             _ => throw new InvalidOperationException($"Unify reached cell with unexpected tag {aCell.Tag}."),
@@ -1031,7 +971,6 @@ public sealed partial class Activation
             Tag.Lis => UnifyLis(a.AsHeapIndex, b.AsHeapIndex),
             Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
             Tag.Rational => _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]),
-            Tag.String => string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
             Tag.Float => UnifyFloat(a, b),
             _ => throw new InvalidOperationException($"UnifyCells reached unexpected tag {a.Tag}."),
@@ -1190,7 +1129,6 @@ public sealed partial class Activation
             Tag.Lis => UnifyLisWithOccursCheck(a.AsHeapIndex, b.AsHeapIndex),
             Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
             Tag.Rational => _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]),
-            Tag.String => string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
             Tag.Float => UnifyFloat(a, b),
             _ => throw new InvalidOperationException($"UnifyCellsWithOccursCheck reached unexpected tag {a.Tag}."),
@@ -1261,7 +1199,6 @@ public sealed partial class Activation
             Tag.Lis => UnifyLisWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex, activePairs),
             Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
             Tag.Rational => _rationalTable[aCell.AsRationalId].Equals(_rationalTable[bCell.AsRationalId]),
-            Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
             Tag.Float => UnifyFloat(aCell, bCell),
             _ => throw new InvalidOperationException($"UnifyWithOccursCheck reached cell with unexpected tag {aCell.Tag}."),

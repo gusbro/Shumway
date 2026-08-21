@@ -159,7 +159,9 @@ internal static class SwiShim
         '$pml_elem'(url(_, Label), S) :- !, write(S, Label).
         '$pml_elem'(at_same_line, _) :- !.
         '$pml_elem'(A, S) :- atom(A), !, write(S, A).
-        '$pml_elem'(A, S) :- string(A), !, write(S, A).
+        % A "string" is a text list here (ADR-047), so write/2 would print the
+        % list — the element has to go out as its characters.
+        '$pml_elem'(A, S) :- string(A), !, format(S, "~s", [A]).
         '$pml_elem'(_, _).
 
         % message_to_codes(+Kind, +Term, -Codes) — the codes of a translated message.

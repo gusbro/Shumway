@@ -71,44 +71,6 @@ public class AuxiliaryTablesTests
         Assert.Throws<InvalidOperationException>(() => engine.AsBigInt(Cell.Atom(0)));
     }
 
-    // ---------- String ----------
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("hello")]
-    [InlineData("emoji 😀 still works")]   // surrogate pair
-    public void MakeString_RoundTrips(string value)
-    {
-        var engine = new Activation();
-        Cell cell = engine.MakeString(value);
-        Assert.Equal(Tag.String, cell.Tag);
-        Assert.Equal(value, engine.AsString(cell));
-    }
-
-    [Fact]
-    public void MakeString_DoesNotDeduplicate()
-    {
-        // The string table is append-only; identical content goes into separate slots.
-        // Deduplication is the atom table's job; STRING cells are opaque.
-        var engine = new Activation();
-        Cell a = engine.MakeString("foo");
-        Cell b = engine.MakeString("foo");
-        Assert.NotEqual(a.AsStringId, b.AsStringId);
-    }
-
-    [Fact]
-    public void MakeString_Null_Throws()
-    {
-        var engine = new Activation();
-        Assert.Throws<ArgumentNullException>(() => engine.MakeString(null!));
-    }
-
-    [Fact]
-    public void AsString_OnWrongTag_Throws()
-    {
-        var engine = new Activation();
-        Assert.Throws<InvalidOperationException>(() => engine.AsString(Cell.Atom(0)));
-    }
 
     // ---------- Foreign ----------
 
@@ -214,48 +176,6 @@ public class AuxiliaryTablesTests
         Assert.Equal(BigInteger.Parse("999999999999999999999"), engine.AsBigInt(engine.GetHeap(v)));
     }
 
-    // ---------- Unify: String ----------
-
-    [Fact]
-    public void Unify_StringsEqualContent_SucceedsEvenWhenIdsDiffer()
-    {
-        var engine = new Activation();
-        int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeString("hello"));
-        int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeString("hello"));   // distinct id
-        Assert.NotEqual(engine.GetHeap(a).AsStringId, engine.GetHeap(b).AsStringId);
-        Assert.True(engine.Unify(a, b));
-    }
-
-    [Fact]
-    public void Unify_StringsDifferentContent_Fails()
-    {
-        var engine = new Activation();
-        int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeString("hello"));
-        int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeString("world"));
-        Assert.False(engine.Unify(a, b));
-    }
-
-    [Fact]
-    public void Unify_StringVsAtom_Fails()
-    {
-        var engine = new Activation();
-        int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeString("hello"));
-        int b = engine.AllocateHeap(1); engine.SetHeap(b, Cell.Atom(0));
-        Assert.False(engine.Unify(a, b));
-    }
-
-    [Fact]
-    public void Unify_VarWithString_CopiesCellIntoVar()
-    {
-        var engine = new Activation();
-        int v = engine.AllocateHeapUnbound();
-        int s = engine.AllocateHeap(1);
-        Cell strCell = engine.MakeString("hello");
-        engine.SetHeap(s, strCell);
-
-        Assert.True(engine.Unify(v, s));
-        Assert.Equal(strCell, engine.GetHeap(v));
-    }
 
     // ---------- Unify: Foreign ----------
 

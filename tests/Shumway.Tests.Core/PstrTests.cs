@@ -501,16 +501,6 @@ public class PstrTests
     }
 
     [Fact]
-    public void AdvancePstrHead_OfACharsPstrYieldsACharAtom()
-    {
-        var engine = new Activation();
-        int slot = engine.AllocateHeap(1);
-        engine.SetHeap(slot, engine.GetHeap(engine.MakePstr("ab", TextKind.Chars)));
-        Assert.True(engine.AdvancePstrHead(slot, out Cell head));
-        Assert.Equal(CharAtom('a'), head);
-    }
-
-    [Fact]
     public void CharsPstr_UnifiesWithAConsListOfCharAtoms()
     {
         var engine = new Activation();
