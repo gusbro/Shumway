@@ -394,6 +394,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("statistics", 0, Statistics0,
             Reflect, "statistics",
             "Writes a report of runtime, walltime and heap/trail/stack use to the current output.");
+        BuiltinsRegistry.Register("$heap_live", 2, HeapLive);
         BuiltinsRegistry.Register("term_cells", 2, TermCells,
             Reflect, "term_cells(@Term, -Cells)",
             "Heap cells the term occupies, shared substructure counted once. "

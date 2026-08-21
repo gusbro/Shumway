@@ -1668,7 +1668,12 @@ public static partial class MetaBuiltins
     /// <summary><c>'$attv_snapshot'(-S)</c> — S is an opaque snapshot of the
     /// set of attributed-variable homes known to the engine right now. The
     /// C# half of <c>call_residue_vars/2</c>, paired with
-    /// <c>'$attv_new_since'/2</c>.</summary>
+    /// <c>'$attv_new_since'/2</c>.
+    ///
+    /// <para>The set holds raw HEAP ADDRESSES and lives in the engine's
+    /// object table, which the heap collector does not walk. It is therefore
+    /// one of the holders a collector that runs with attributed variables live
+    /// would have to relocate.</para></summary>
     public static bool AttvSnapshot(Activation engine)
     {
         var set = new System.Collections.Generic.HashSet<int>(

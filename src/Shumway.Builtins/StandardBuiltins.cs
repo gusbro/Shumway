@@ -173,6 +173,10 @@ public static class StandardBuiltins
             Io, "write(+Stream, +Term)", "Writes a term to the given stream.");
         BuiltinsRegistry.Register("nl",        1, StreamBuiltins.NlOnStream,
             Io, "nl(+Stream)", "Writes a newline to the given stream.");
+        BuiltinsRegistry.Register("$lazy_window", 6, StreamBuiltins.LazyWindow);
+        BuiltinsRegistry.Register("partial_string", 3, StreamBuiltins.PartialString,
+            Io, "partial_string(+Text, ?Ls, ?Ls0)",
+            "Ls is the packed list of Text's characters with Ls0 as its tail.");
         BuiltinsRegistry.Register("get_char",  2, StreamBuiltins.GetChar,
             Io, "get_char(+Stream, -Char)", "Reads and consumes one character from a stream.");
         BuiltinsRegistry.Register("peek_char", 2, StreamBuiltins.PeekChar,

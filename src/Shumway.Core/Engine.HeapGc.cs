@@ -330,6 +330,12 @@ public sealed partial class Activation
         _gcOldTop = oldTop;
 
         MarkRoots(oldTop);
+        // Attributed variables: the attr table is keyed by the variable's home
+        // heap index and its entries hold attribute-term indices, so both are
+        // roots. Same for the transient wakeup queue. Marking them is the half
+        // of "collect with attvars live" that is purely additive; relocating
+        // them is the other half.
+        MarkAttrRoots(oldTop);
         // Pending b_setval restores hold old-value cells (possibly compounds).
         MarkExternalTrailRoots(GcMarkReferents);
         OnGcMark?.Invoke(GcMarkCell, GcMarkReferents);
@@ -381,6 +387,46 @@ public sealed partial class Activation
         _hb = RelocBoundary(_hb, forward);
 
         return oldTop - live;
+    }
+
+    /// <summary>Marks the attributed-variable roots: every attvar home the
+    /// attribute table knows about, every attribute term hanging off it, and
+    /// every index the pending-wakeup queue carries.</summary>
+    private void MarkAttrRoots(int oldTop)
+    {
+        foreach (var kv in _attrTable)
+        {
+            if ((uint)kv.Key < (uint)oldTop) GcMarkCell(kv.Key);
+            foreach (var (_, attrValueIdx) in kv.Value)
+                if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
+        }
+        foreach (var (_, attrValueIdx, otherIdx) in _pendingWakeups)
+        {
+            if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
+            if ((uint)otherIdx < (uint)oldTop) GcMarkCell(otherIdx);
+        }
+    }
+
+    /// <summary>TEMPORARY PROBE — how many cells are reachable right now.
+    /// Runs the mark phase and reports; moves nothing.</summary>
+    public (int Live, int Total) HeapLiveProbe()
+    {
+        int oldTop = _heapTop;
+        if (oldTop == 0) return (0, 0);
+        bool[] marked = _gcMarked is { } m && m.Length >= oldTop ? m : (_gcMarked = new bool[oldTop]);
+        System.Array.Clear(marked, 0, oldTop);
+        if (_gcWork is null || _gcWork.Length < 1024) _gcWork = new int[1024];
+        _gcWorkTop = 0;
+        _gcOldTop = oldTop;
+        MarkRoots(oldTop);
+        MarkAttrRoots(oldTop);
+        MarkExternalTrailRoots(GcMarkReferents);
+        OnGcMark?.Invoke(GcMarkCell, GcMarkReferents);
+        while (_gcWorkTop > 0)
+            GcMarkReferents(_heap[_gcWork[--_gcWorkTop]]);
+        int live = 0;
+        for (int i = 0; i < oldTop; i++) if (marked[i]) live++;
+        return (live, oldTop);
     }
 
     /// <summary>Returns <paramref name="c"/> with its heap-index payload

@@ -931,6 +931,129 @@ public static class StreamBuiltins
         if (h.PastEof && h.EofAction == "reset") h.PastEof = false;
     }
 
+    /// <summary><c>'$lazy_window'(+Stream, +Offset, +N, +Kind, -Window, -Length)</c>
+    /// — the up-to-N characters of the stream starting at character
+    /// <paramref name="Offset"/>, as a packed list, plus how many there are
+    /// (0 at end of input).
+    ///
+    /// <para>IDEMPOTENT, which is the whole point. Reading is a side effect and
+    /// backtracking cannot undo it: a grammar that tries one clause, fails and
+    /// tries the next wakes the same lazy cell twice, and a plain read would
+    /// hand it the NEXT characters the second time — silently parsing a
+    /// different input. One window is cached per stream, keyed by its offset,
+    /// so a re-run gets the same characters back and the memory stays
+    /// bounded.</para>
+    ///
+    /// <para>It reads through the stream's own reader, so the encoding declared
+    /// in <c>open/4</c> and the ADR-045 newline translation both apply.</para></summary>
+    public static bool LazyWindow(Activation engine)
+    {
+        var h = ResolveReader(engine, engine.GetRegister(0));
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream");
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "input,binary_stream");
+
+        long offset = RequireInt(engine, 1, "offset");
+        int want = (int)System.Math.Min(RequireInt(engine, 2, "window size"), 1 << 20);
+        if (want <= 0) throw new PrologRuntimeException("type_error", "positive_integer");
+
+        Cell kindCell = Resolve(engine, engine.GetRegister(3));
+        TextKind kind = kindCell.Tag == Tag.Atom
+            && AtomTable.GetById(kindCell.AsAtomId)?.Name == "codes"
+            ? TextKind.Codes
+            : TextKind.Chars;
+
+        string window;
+        if (h.LazyWindowOffset == offset && h.LazyWindow is { } cached)
+        {
+            window = cached;                       // the re-run: same characters
+        }
+        else if (offset == h.LazyRead)
+        {
+            var buf = new char[want];
+            int got = 0;
+            while (got < want)
+            {
+                int c = h.Reader!.Read();
+                if (c < 0) { h.PastEof = true; break; }
+                buf[got++] = (char)c;
+            }
+            window = new string(buf, 0, got);
+            h.LazyWindowOffset = offset;
+            h.LazyWindow = window;
+            h.LazyRead = offset + got;
+        }
+        else
+        {
+            // Asked for a window the stream has already read past and no longer
+            // holds. Only a lazy list kept across an unrelated read of the same
+            // stream can produce this.
+            throw new PrologRuntimeException("permission_error", "reposition,stream");
+        }
+
+        return engine.UnifyRegisterWithHeapAt(4, engine.MakeTextList(window, kind))
+            && engine.UnifyRegisterWithCell(5, Cell.Int(window.Length));
+    }
+
+    private static long RequireInt(Activation engine, int reg, string what)
+    {
+        Cell c = Resolve(engine, engine.GetRegister(reg));
+        if (c.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (c.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer");
+        return c.AsInt;
+    }
+
+    /// <summary><c>partial_string(+Text, ?Ls, ?Ls0)</c> — <c>Ls</c> is the
+    /// packed list of <c>Text</c>'s characters with <c>Ls0</c> as its tail
+    /// (Scryer's <c>library(iso_ext)</c> primitive). An empty <c>Text</c> makes
+    /// <c>Ls</c> and <c>Ls0</c> the same list.</summary>
+    public static bool PartialString(Activation engine)
+    {
+        Cell src = ListCursor.Resolve(engine, engine.GetRegister(0));
+        if (src.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+
+        var sb = new System.Text.StringBuilder();
+        TextKind kind = TextKind.Chars;
+        bool sawAny = false;
+        Cell cur = src;
+        while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell tail))
+        {
+            Cell head = Resolve(engine, rawHead);
+            if (head.Tag == Tag.Atom
+                && AtomTable.GetById(head.AsAtomId)?.Name is { Length: 1 } n1)
+            {
+                if (sawAny && kind != TextKind.Chars)
+                    throw new PrologRuntimeException("type_error", "character", engine, head);
+                kind = TextKind.Chars;
+                sb.Append(n1);
+            }
+            else if (head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= char.MaxValue)
+            {
+                if (sawAny && kind != TextKind.Codes)
+                    throw new PrologRuntimeException("type_error", "character_code", engine, head);
+                kind = TextKind.Codes;
+                sb.Append((char)head.AsInt);
+            }
+            else
+            {
+                throw new PrologRuntimeException("type_error", "character", engine, head);
+            }
+            sawAny = true;
+            cur = ListCursor.Resolve(engine, tail);
+        }
+        if (!ListCursor.IsNil(cur))
+            throw new PrologRuntimeException("type_error", "list", engine, src);
+
+        if (!sawAny) return engine.UnifyRegisters(1, 2);
+        int hdr = engine.MakePstrOpen(sb.ToString(), kind);
+        return engine.UnifyRegisterWithHeapAt(1, hdr)
+            && engine.UnifyRegisterWithHeapAt(2, engine.GetPstrTailIndex(hdr));
+    }
+
     private static bool ReadCharInto(Activation engine, StreamHandle h, int regOut)
     {
         if (!h.IsReader)

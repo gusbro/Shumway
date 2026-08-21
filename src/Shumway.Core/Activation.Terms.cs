@@ -203,6 +203,24 @@ public sealed partial class Activation
     /// code units), and a tail cell initialised to <c>[]</c>, contiguously on the heap.
     /// Returns the heap index of the header. Total cells used: <c>1 + ceil(len/3) + 1</c>.
     /// </summary>
+    /// <summary>Like <see cref="MakePstr"/> but leaves the tail cell an UNBOUND
+    /// variable instead of <c>[]</c>, so the result is a PARTIAL list. Returns
+    /// the header index; the tail's own index is
+    /// <see cref="GetPstrTailIndex"/> of it.
+    ///
+    /// <para>This is what lazy stream reading is built on: a window of text
+    /// whose tail is a frozen variable, so a DCG walking it pulls the next
+    /// window only when it reaches the end of this one. The design always
+    /// admitted the shape — a PSTR tail may be a <c>Ref</c> — and this is the
+    /// constructor for it.</para></summary>
+    public int MakePstrOpen(string value, TextKind kind)
+    {
+        int headerIdx = MakePstr(value, kind);
+        int tailIdx = ComputePstrTailIndex(_heap[headerIdx]);
+        _heap[tailIdx] = Cell.Ref(tailIdx);
+        return headerIdx;
+    }
+
     /// <summary>Builds the list of characters or codes named by
     /// <paramref name="kind"/>, PACKED (ADR-047 decision 8) — the single entry
     /// point every runtime text producer goes through. Returns a heap index
@@ -605,11 +623,22 @@ public sealed partial class Activation
     /// <summary>Number of attribute records allocated — diagnostic surface.</summary>
     internal int AttrTableCount => _attrTable.Count;
 
-    /// <summary>A snapshot of the attribute table's keys — the heap homes of
-    /// every variable that carries (or once carried; entries survive
-    /// binding) attributes. <c>call_residue_vars/2</c> diffs two snapshots.
-    /// Addresses are stable across the diff: the heap GC stands down while
-    /// the attribute table is non-empty.</summary>
+    /// <summary>A snapshot of the attribute table's keys — the heap home of
+    /// every variable that carries attributes, or carried them before it was
+    /// bound.
+    ///
+    /// <para>Entries outlive the binding because backtracking restores the
+    /// ATTVAR cell (<see cref="BindAttVarToValue"/> trails the original):
+    /// dropping one at bind time would bring the variable back with its
+    /// constraints gone. That is the reason, and the only one — in particular
+    /// it is NOT for <c>call_residue_vars/2</c>, whose second half filters
+    /// bound variables out itself.</para>
+    ///
+    /// <para>Callers diff two snapshots by raw heap address, which is sound
+    /// only while addresses do not move — today because the heap collector
+    /// stands down whenever the attribute table is non-empty. A collector that
+    /// runs with attributed variables live has to relocate the saved snapshots
+    /// as well.</para></summary>
     public int[] AttrTableKeysSnapshot()
     {
         var keys = new int[_attrTable.Count];
@@ -1541,6 +1570,11 @@ public sealed partial class Activation
     /// <paramref name="attvarHome"/>, recording the term it was bound
     /// to (<paramref name="otherIdx"/>). A no-op when the variable
     /// carries no attributes.</summary>
+    /// <para>Called from the head-matching ops too (<c>get_struct</c>,
+    /// <c>get_list</c> and their unify-cursor twins): binding an attributed
+    /// variable by MATCHING a clause head against it is a binding like any
+    /// other, and used not to wake anything — so a <c>freeze/2</c> on a
+    /// variable that a callee's head decomposed never fired.</para>
     private void QueueAttrWakeups(int attvarHome, int otherIdx)
     {
         if (!_attrTable.TryGetValue(attvarHome, out var record)) return;

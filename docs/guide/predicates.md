@@ -353,6 +353,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `nl(+Stream)` | Writes a newline to the given stream. |
 | `open(+File, +Mode, -Stream)` | Opens a file as a stream handle. |
 | `open(+File, +Mode, -Stream, +Options)` | Opens a file with options (alias, type, encoding(utf8\|iso_latin_1\|ascii), eof_action) — ISO §8.11.5. |
+| `partial_string(+Text, ?Ls, ?Ls0)` | Ls is the packed list of Text's characters with Ls0 as its tail. |
 | `peek_byte(-Byte)` | Peeks one byte from the current input binary stream (ISO §8.13.2). |
 | `peek_byte(+Stream, -Byte)` | Peeks one byte from a binary stream (ISO §8.13.2). |
 | `peek_char(-Char)` | Peeks one character from the current input stream (ISO §8.12.2). |
@@ -433,6 +434,10 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `phrase(:Body, ?List)` | phrase(Body, List, []) — succeeds when the DCG Body derives List. |
 | `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime. |
+| `phrase_from_file(:Body, +File)` | Runs the DCG Body over File's text, read lazily; the file is closed on the way out. |
+| `phrase_from_file(:Body, +File, +Options)` | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes). |
+| `phrase_from_stream(:Body, +Stream)` | Runs the DCG Body over Stream's text, read lazily in windows. |
+| `phrase_from_stream(:Body, +Stream, +Kind)` | As phrase_from_stream/2, with Kind (chars or codes) choosing the list's elements. |
 
 ## Global variables
 

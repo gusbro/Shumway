@@ -318,6 +318,7 @@ public sealed partial class Activation
             int h = AllocateHeap(2);
             _heap[h] = Cell.Str(h + 1);
             _heap[h + 1] = Cell.Functor(functorId);
+            QueueAttrWakeups(finalAddr, h);
             BindAttVarToValue(finalAddr, h, _heap[h]);
             _writeMode = true;
             _unifyPointer = h + 2;
@@ -796,6 +797,7 @@ public sealed partial class Activation
             // while any attvar is live), so the extra cell is immaterial.
             int h = AllocateHeap(1);
             _heap[h] = Cell.Lis(h + 1);
+            QueueAttrWakeups(finalAddr, h);
             BindAttVarToValue(finalAddr, h, _heap[h]);
             _writeMode = true;
             _unifyPointer = h + 1;
@@ -915,6 +917,7 @@ public sealed partial class Activation
             int h = AllocateHeap(2);
             _heap[h] = Cell.Str(h + 1);
             _heap[h + 1] = Cell.Functor(functorId);
+            QueueAttrWakeups(addr, h);
             BindAttVarToValue(addr, h, _heap[h]);
             _writeMode = true;
             _unifyPointer = h + 2;
@@ -971,6 +974,7 @@ public sealed partial class Activation
         {
             int h = AllocateHeap(1);
             _heap[h] = Cell.Lis(h + 1);
+            QueueAttrWakeups(addr, h);
             BindAttVarToValue(addr, h, _heap[h]);
             _writeMode = true;
             _unifyPointer = h + 1;

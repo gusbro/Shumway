@@ -119,6 +119,7 @@ public static class PredicateDoc
         CollectDocComments(Prelude.Source, entries);
         CollectDocComments(Clpfd.Source, entries);
         CollectDocComments(Coroutining.Source, entries);
+        CollectDocComments(Pio.Source, entries);
         return entries;
     }
 

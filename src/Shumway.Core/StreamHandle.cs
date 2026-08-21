@@ -70,6 +70,20 @@ public sealed class StreamHandle
     /// seek. Defaults to true — a seekable file is repositionable.</summary>
     public bool Repositionable { get; set; } = true;
 
+    // ----- lazy text windows (ADR-047 phrase_from_stream) -----
+    //
+    // Reading is a side effect and backtracking cannot undo it, so a lazy
+    // window has to be IDEMPOTENT: waking the same cell twice — which happens
+    // whenever a grammar tries one clause, fails, and tries the next — must
+    // hand back the same characters, not the ones after them. One window is
+    // cached at a time, keyed by its character offset, which is all a re-run
+    // ever asks for and keeps the memory bounded.
+    public long LazyWindowOffset { get; set; } = -1;
+    public string? LazyWindow { get; set; }
+    /// <summary>Characters consumed from this stream by the lazy reader — the
+    /// offset the next unread window starts at.</summary>
+    public long LazyRead { get; set; }
+
     /// <summary>True once <c>close/1</c> has run; the handle stays
     /// in the registry briefly so an inadvertent second-close can
     /// report <c>existence_error</c> rather than crashing.</summary>
