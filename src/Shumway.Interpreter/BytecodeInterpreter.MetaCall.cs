@@ -109,6 +109,23 @@ public sealed partial class BytecodeInterpreter
     /// queue is drained in a loop.</summary>
     private bool RunWakeups(ProgramView code)
     {
+        // The drain holds heap indices (the goals-variable slot, the built
+        // verify_attributes goal) in C# locals ACROSS meta-calls, which reach
+        // safe points. Collection has to stand down for the region, not for the
+        // rest of the query the way the old attvar bail did.
+        _engine.EnterGcInhibit();
+        try
+        {
+            return RunWakeupsInhibited(code);
+        }
+        finally
+        {
+            _engine.ExitGcInhibit();
+        }
+    }
+
+    private bool RunWakeupsInhibited(ProgramView code)
+    {
         while (_engine.HasPendingWakeups)
         {
             var batch = _engine.TakePendingWakeups();

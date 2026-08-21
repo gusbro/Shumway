@@ -23,13 +23,43 @@ public sealed partial class Activation
         public Cell Live;      // the LIVE Cleanup term (dereffed cell) — an
                                // async fire runs THIS, so its bindings reach
                                // the caller (test: scc(true, scc(...), Y=3), !
-                               // must leave Y=3). Heap GC bails while any
-                               // handler is live, so the cell stays valid.
+                               // must leave Y=3). A GC root — see
+                               // MarkCleanupRoots.
     }
 
     private List<CleanupHandler>? _cleanupHandlers;
     private List<(int Ref, Cell Live, bool UseLive)>? _pendingCleanupRefs;
     private int _nextCleanupRef = 1;
+
+    /// <summary>Marks the LIVE Cleanup terms as heap roots. A handler holds its
+    /// goal so an async fire runs the real term and its bindings reach the
+    /// caller; nothing else need reference it, so without this the collector
+    /// frees the goal out from under a handler that has not fired yet.</summary>
+    internal void MarkCleanupRoots()
+    {
+        if (_cleanupHandlers is { } hs)
+            foreach (var h in hs) GcMarkReferents(h.Live);
+        if (_pendingCleanupRefs is { } ps)
+            foreach (var p in ps) GcMarkReferents(p.Live);
+    }
+
+    /// <summary>Relocates those same Cleanup terms.</summary>
+    internal void RelocateCleanupRoots(System.Func<Cell, Cell> relocate)
+    {
+        if (_cleanupHandlers is { } hs)
+            for (int i = 0; i < hs.Count; i++)
+            {
+                var h = hs[i];
+                h.Live = relocate(h.Live);
+                hs[i] = h;
+            }
+        if (_pendingCleanupRefs is { } ps)
+            for (int i = 0; i < ps.Count; i++)
+            {
+                var (r, live, useLive) = ps[i];
+                ps[i] = (r, relocate(live), useLive);
+            }
+    }
 
     /// <summary>Registers a cleanup handler at the current choice-point level and
     /// returns its Ref (the key the caller stored the Cleanup goal under).

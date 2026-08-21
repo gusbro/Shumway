@@ -1676,9 +1676,8 @@ public static partial class MetaBuiltins
     /// would have to relocate.</para></summary>
     public static bool AttvSnapshot(Activation engine)
     {
-        var set = new System.Collections.Generic.HashSet<int>(
-            engine.AttrTableKeysSnapshot());
-        return engine.UnifyRegisterWithCell(0, engine.MakeForeign(set));
+        return engine.UnifyRegisterWithCell(0,
+            engine.MakeForeign(new AttrSnapshot(engine.AttrTableKeysSnapshot())));
     }
 
     /// <summary><c>'$attv_new_since'(+S, -Vars)</c> — Vars is the list of
@@ -1686,14 +1685,14 @@ public static partial class MetaBuiltins
     /// taken and are still unbound attributed variables now.</summary>
     public static bool AttvNewSince(Activation engine)
     {
-        var snapshot = engine.AsForeign<System.Collections.Generic.HashSet<int>>(
+        var snapshot = engine.AsForeign<AttrSnapshot>(
                 engine.GetRegister(0) is { Tag: Tag.Ref } r
                     ? engine.GetHeap(engine.Deref(r.AsHeapIndex))
                     : engine.GetRegister(0))
             ?? throw new Shumway.Core.PrologRuntimeException("type_error", "attv_snapshot");
         var fresh = new System.Collections.Generic.List<int>();
         foreach (int addr in engine.AttrTableKeysSnapshot())
-            if (!snapshot.Contains(addr) && engine.IsAttVarAt(addr))
+            if (!snapshot.Homes.Contains(addr) && engine.IsAttVarAt(addr))
                 fresh.Add(addr);
         fresh.Sort();   // stable first-created-first order (heap addresses grow)
         return engine.UnifyRegisterWithHeapAt(1, BuildRefList(engine, fresh));

@@ -297,6 +297,15 @@ public sealed partial class Activation
     /// and rewriting the trail). The debugger's rewind history records this per mark: a
     /// mark taken before a collection indexes a heap and a trail that no longer exist,
     /// and matching the count is how such marks are recognised and refused.</summary>
+    // Non-zero while a region is running that holds heap indices outside the
+    // root set — the attribute wakeup drain. Raised/lowered in pairs.
+    private int _gcInhibit;
+
+    /// <summary>Suppresses collection while a half-built structure is held in
+    /// C# locals. Nests; every raise must be paired with a lower.</summary>
+    public void EnterGcInhibit() => _gcInhibit++;
+    public void ExitGcInhibit() => _gcInhibit--;
+
     public int HeapGcCount { get; private set; }
 
     /// <summary>Runs a mark-compact collection of the heap. Returns the
@@ -305,16 +314,20 @@ public sealed partial class Activation
     /// machine state is consistent (no half-built structure).</summary>
     public int CollectHeap()
     {
-        // Bail when attributed variables are in use: their attribute
-        // terms are roots reachable only via the attr table (keyed by
-        // the attvar's home heap index, which itself must be relocated),
-        // plus an attr-modify side log and a transient wakeup queue that
-        // also carry heap indices. Relocating all of that correctly is
-        // future work; until then a no-op is the safe choice.
-        if (_attrTable.Count > 0 || _pendingWakeups.Count > 0) return 0;
-        // setup_call_cleanup handlers hold the LIVE Cleanup cell outside the
-        // heap-root set (Activation.Cleanup) — same treatment as attvars.
-        if (HasCleanupHandlers || HasPendingCleanups) return 0;
+        // The collector used to bail here whenever an attributed variable or a
+        // setup_call_cleanup handler was live, which meant a single dif/2
+        // turned it off for the rest of the query. Those structures hold heap
+        // indices the heap walk does not reach, so they are marked and
+        // relocated explicitly — see MarkExternalHolders /
+        // RelocateExternalHolders.
+        //
+        // What that bail ALSO did, without saying so, was make the wakeup drain
+        // atomic with respect to collection: it builds a verify_attributes goal
+        // from heap indices held in C# locals and then meta-calls it, and a
+        // collection in the middle leaves those locals naming moved cells. That
+        // is what GcInhibit protects now — a bounded region rather than the
+        // rest of the query.
+        if (_gcInhibit > 0) return 0;
 
         int oldTop = _heapTop;
         if (oldTop == 0) return 0;
@@ -335,7 +348,7 @@ public sealed partial class Activation
         // roots. Same for the transient wakeup queue. Marking them is the half
         // of "collect with attvars live" that is purely additive; relocating
         // them is the other half.
-        MarkAttrRoots(oldTop);
+        MarkExternalHolders(oldTop);
         // Pending b_setval restores hold old-value cells (possibly compounds).
         MarkExternalTrailRoots(GcMarkReferents);
         OnGcMark?.Invoke(GcMarkCell, GcMarkReferents);
@@ -377,6 +390,7 @@ public sealed partial class Activation
 
         // ---- relocate every external holder of a heap index. ----
         RelocateRoots(forward, oldTop);
+        RelocateExternalHolders(forward);
         RelocateExternalTrail(c => RelocateCell(c, forward));
         OnGcRelocate?.Invoke(
             idx => RelocIndex(idx, forward),
@@ -389,10 +403,16 @@ public sealed partial class Activation
         return oldTop - live;
     }
 
-    /// <summary>Marks the attributed-variable roots: every attvar home the
-    /// attribute table knows about, every attribute term hanging off it, and
-    /// every index the pending-wakeup queue carries.</summary>
-    private void MarkAttrRoots(int oldTop)
+    /// <summary>Marks the roots that live OUTSIDE the heap-root set. Each of
+    /// these is a structure the collector does not otherwise walk but which
+    /// holds heap indices, so a cell reachable only from one of them would be
+    /// freed under a live reference.
+    ///
+    /// <para>The attribute trail log is the subtle one: it holds an attribute's
+    /// PREVIOUS value so backtracking can restore it. Nothing else need
+    /// reference that term — the current value replaced it — so without this it
+    /// is collected and backtracking restores a dangling index.</para></summary>
+    private void MarkExternalHolders(int oldTop)
     {
         foreach (var kv in _attrTable)
         {
@@ -400,12 +420,72 @@ public sealed partial class Activation
             foreach (var (_, attrValueIdx) in kv.Value)
                 if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
         }
+        foreach (var (home, _, oldValue) in _attrTrailLog)
+        {
+            if ((uint)home < (uint)oldTop) GcMarkCell(home);
+            if ((uint)oldValue < (uint)oldTop) GcMarkCell(oldValue);
+        }
         foreach (var (_, attrValueIdx, otherIdx) in _pendingWakeups)
         {
             if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
             if ((uint)otherIdx < (uint)oldTop) GcMarkCell(otherIdx);
         }
+        MarkCleanupRoots();
     }
+
+    /// <summary>Relocates every external holder's heap indices. Runs in the
+    /// same pass as the rest of the relocation: compaction reuses addresses, so
+    /// an index left unmapped can come to name an unrelated cell.</summary>
+    private void RelocateExternalHolders(int[] forward)
+    {
+        // The attribute table is rebuilt: its KEYS are heap indices, so this is
+        // a re-key, not an in-place edit.
+        if (_attrTable.Count > 0)
+        {
+            var moved = new System.Collections.Generic.List<(int Home,
+                System.Collections.Generic.Dictionary<int, int> Record)>(_attrTable.Count);
+            foreach (var kv in _attrTable)
+            {
+                var record = kv.Value;
+                foreach (int module in
+                    new System.Collections.Generic.List<int>(record.Keys))
+                    record[module] = RelocIndex(record[module], forward);
+                moved.Add((RelocIndex(kv.Key, forward), record));
+            }
+            _attrTable.Clear();
+            foreach (var (home, record) in moved) _attrTable[home] = record;
+        }
+
+        for (int i = 0; i < _attrTrailLog.Count; i++)
+        {
+            var (home, module, oldValue) = _attrTrailLog[i];
+            _attrTrailLog[i] = (RelocIndex(home, forward), module,
+                                oldValue < 0 ? oldValue : RelocIndex(oldValue, forward));
+        }
+
+        for (int i = 0; i < _pendingWakeups.Count; i++)
+        {
+            var (module, attrValueIdx, otherIdx) = _pendingWakeups[i];
+            _pendingWakeups[i] = (module,
+                RelocIndex(attrValueIdx, forward),
+                RelocIndex(otherIdx, forward));
+        }
+
+        RelocateCleanupRoots(c => RelocateCell(c, forward));
+
+        // call_residue_vars snapshots observe by raw address and deliberately
+        // do NOT retain, so they are relocated but never marked.
+        foreach (object? o in _foreignTable)
+            if (o is AttrSnapshot snap)
+            {
+                var mapped = new System.Collections.Generic.HashSet<int>(snap.Homes.Count);
+                foreach (int home in snap.Homes)
+                    mapped.Add(RelocIndex(home, forward));
+                snap.Homes.Clear();
+                foreach (int home in mapped) snap.Homes.Add(home);
+            }
+    }
+
 
     /// <summary>TEMPORARY PROBE — how many cells are reachable right now.
     /// Runs the mark phase and reports; moves nothing.</summary>
@@ -419,7 +499,7 @@ public sealed partial class Activation
         _gcWorkTop = 0;
         _gcOldTop = oldTop;
         MarkRoots(oldTop);
-        MarkAttrRoots(oldTop);
+        MarkExternalHolders(oldTop);
         MarkExternalTrailRoots(GcMarkReferents);
         OnGcMark?.Invoke(GcMarkCell, GcMarkReferents);
         while (_gcWorkTop > 0)
