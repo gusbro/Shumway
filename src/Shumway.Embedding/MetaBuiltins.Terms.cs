@@ -498,6 +498,72 @@ public static partial class MetaBuiltins
     /// </list>
     /// An unrecognised key unifies with <c>[0, 0]</c> (lenient, so a program
     /// probing several keys keeps working).</summary>
+    /// <summary><c>term_cells(@Term, -Cells)</c> — the number of heap cells the
+    /// term occupies, counting shared substructure once.
+    ///
+    /// <para>ADR-047: making a packed list indistinguishable from the cons list
+    /// it denotes leaves someone debugging a memory problem with no way to ask
+    /// what their text is costing. This answers the question they actually
+    /// have. It reports a RESOURCE, so unlike a boolean "is it packed?" there
+    /// is nothing here for a program to branch on — which is what keeps the
+    /// representation unobservable while still being measurable.</para></summary>
+    public static bool TermCells(Activation engine)
+    {
+        var seen = new HashSet<int>();
+        var work = new List<Cell> { engine.GetRegister(0) };
+        while (work.Count > 0)
+        {
+            Cell c = work[^1];
+            work.RemoveAt(work.Count - 1);
+            switch (c.Tag)
+            {
+                case Tag.Ref:
+                {
+                    int addr = engine.Deref(c.AsHeapIndex);
+                    if (!seen.Add(addr)) break;
+                    Cell target = engine.GetHeap(addr);
+                    // An unbound variable IS its cell; anything else continues.
+                    if (target.Tag != Tag.Ref || target.AsHeapIndex != addr)
+                        work.Add(target);
+                    break;
+                }
+                case Tag.AttVar:
+                    seen.Add(c.AsHeapIndex);
+                    break;
+                case Tag.Float:
+                    seen.Add(c.FloatPairedIndex);
+                    break;
+                case Tag.Str:
+                {
+                    int f = c.AsHeapIndex;
+                    if (!seen.Add(f)) break;
+                    var (_, arity) = FunctorTable.Lookup(engine.GetHeap(f).AsFunctorId);
+                    for (int i = 1; i <= arity; i++)
+                        if (seen.Add(f + i)) work.Add(engine.GetHeap(f + i));
+                    break;
+                }
+                case Tag.Lis:
+                {
+                    int h = c.AsHeapIndex;
+                    if (seen.Add(h)) work.Add(engine.GetHeap(h));
+                    if (seen.Add(h + 1)) work.Add(engine.GetHeap(h + 1));
+                    break;
+                }
+                case Tag.Pstr:
+                {
+                    // Header, buffer run and tail. A slice shares the buffer of
+                    // the list it came from, and the set counts each address
+                    // once, so two slices of one string do not double-count.
+                    int tail = engine.GetPstrTailIndexOf(c);
+                    for (int i = c.AsPstrBufferIndex; i <= tail; i++) seen.Add(i);
+                    work.Add(engine.GetHeap(tail));
+                    break;
+                }
+            }
+        }
+        return engine.UnifyRegisterWithCell(1, Cell.Int(seen.Count));
+    }
+
     public static bool Statistics2(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -558,6 +624,16 @@ public static partial class MetaBuiltins
               .Append(Count(engine.HeapCapacity)).Append(" (")
               .Append(Count((long)engine.HeapCapacity * 8 / 1024)).Append(" KB)\n");
         // ADR-004 — two trails, reported as the two they are.
+        // How much of that heap is packed text. Reported as a resource, like
+        // every other line here — it is the answer to "is my text costing what
+        // I think", which ADR-047 deliberately gives no boolean for.
+        int packed = 0;
+        for (int i = 0; i < engine.HeapTop; i++)
+            if (engine.GetHeap(i).Tag == Tag.PstrBuffer) packed++;
+        report.Append("Packed:    ").Append(Count(packed))
+              .Append(" cells of packed text (")
+              .Append(Count((long)packed * Cell.PstrCodeUnitsPerBuffer))
+              .Append(" characters)\n");
         report.Append("Trail:     ").Append(Count(engine.BindingTrailTop))
               .Append(" bindings, ").Append(Count(engine.ExtraTrailTop)).Append(" other\n");
         report.Append("Stack:     ").Append(Count(engine.StackTop)).Append(" words in use of ")
@@ -1253,23 +1329,8 @@ public static partial class MetaBuiltins
     }
 
     private static bool UnifyCodesList(Activation engine, int regOut, string text)
-    {
-        if (text.Length == 0)
-        {
-            return engine.UnifyRegisterWithCell(regOut,
-                Cell.Atom(AtomTable.EmptyListId));
-        }
-        int baseIdx = engine.AllocateHeap(2 * text.Length + 1);
-        for (int i = 0; i < text.Length; i++)
-        {
-            int lisIdx = baseIdx + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            engine.SetHeap(headIdx, Cell.Int(text[i]));
-        }
-        engine.SetHeap(baseIdx + 2 * text.Length, Cell.Atom(AtomTable.EmptyListId));
-        return engine.UnifyRegisterWithHeapAt(regOut, baseIdx);
-    }
+        => engine.UnifyRegisterWithHeapAt(regOut,
+            engine.MakeTextList(text, TextKind.Codes));
 
     private static string ReadCodesAsString(Activation engine, Cell codesCell)
     {

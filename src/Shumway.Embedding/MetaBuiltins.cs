@@ -394,6 +394,10 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("statistics", 0, Statistics0,
             Reflect, "statistics",
             "Writes a report of runtime, walltime and heap/trail/stack use to the current output.");
+        BuiltinsRegistry.Register("term_cells", 2, TermCells,
+            Reflect, "term_cells(@Term, -Cells)",
+            "Heap cells the term occupies, shared substructure counted once. "
+            + "A diagnostic: it reports what a term costs, not how it is stored.");
         BuiltinsRegistry.Register("statistics", 2, Statistics2,
             Reflect, "statistics(?Key, ?Value)",
             "Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds.");

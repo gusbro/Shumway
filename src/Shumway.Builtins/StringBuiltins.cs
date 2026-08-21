@@ -325,49 +325,10 @@ public static class StringBuiltins
     }
 
     private static int BuildCharAtomList(Activation engine, string s)
-    {
-        if (s.Length == 0)
-        {
-            int nilSlot = engine.AllocateHeap(1);
-            engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
-            return nilSlot;
-        }
-        int start = engine.AllocateHeap(2 * s.Length + 1);
-        for (int i = 0; i < s.Length; i++)
-        {
-            int lisIdx = start + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            // Single-char atom cache: see AtomCharBuiltins.BuildCharAtomList.
-            int code = s[i];
-            int atomId = AtomTable.GetSingleCharAtomId(code);
-            if (atomId < 0)
-                atomId = AtomTable.Intern(s[i].ToString(), permanent: false).Id;
-            engine.SetHeap(headIdx, Cell.Atom(atomId));
-        }
-        engine.SetHeap(start + 2 * s.Length, Cell.Atom(AtomTable.EmptyListId));
-        return start;
-    }
+        => engine.MakeTextList(s, TextKind.Chars);
 
     private static int BuildCodeList(Activation engine, string s)
-    {
-        if (s.Length == 0)
-        {
-            int nilSlot = engine.AllocateHeap(1);
-            engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
-            return nilSlot;
-        }
-        int start = engine.AllocateHeap(2 * s.Length + 1);
-        for (int i = 0; i < s.Length; i++)
-        {
-            int lisIdx = start + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            engine.SetHeap(headIdx, Cell.Int(s[i]));
-        }
-        engine.SetHeap(start + 2 * s.Length, Cell.Atom(AtomTable.EmptyListId));
-        return start;
-    }
+        => engine.MakeTextList(s, TextKind.Codes);
 
     private static int BuildPstrList(Activation engine, List<string> pieces)
     {

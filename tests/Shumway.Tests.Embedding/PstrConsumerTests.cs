@@ -195,4 +195,69 @@ public class PstrConsumerTests
         Assert.Equal("\"a\\\"b\"",
             Written("write_term([0'a, 0'\", 0'b], [portray_text(true), quoted(true)])"));
     }
+
+    // ---------- the producers pack (ADR-047 decision 8) ----------
+
+    private const int N = 300;
+
+    /// <summary>An engine holding <c>big(A)</c> with a 300-character atom.</summary>
+    private static PrologEngine WithBigAtom()
+    {
+        var e = new PrologEngine();
+        e.ConsultString("big('" + new string('x', N) + "').");
+        return e;
+    }
+
+    private static long Cells(PrologEngine e, string query, string var)
+    {
+        var sol = e.Query($"{query}, term_cells({var}, C).");
+        Assert.True(sol.Success, $"Query failed: {query}");
+        return ((IntTerm)sol["C"]!).Value;
+    }
+
+    [Fact]
+    public void TextProducersBuildPackedListsNotConsCells()
+    {
+        // The measurement the arc exists for. Packed, a 300-character list is
+        // ceil(300/3) buffer cells + a tail + the binding's own slot; as cons
+        // it is 2n+1.
+        const long packed = N / 3 + 2;
+        Assert.Equal(packed, Cells(WithBigAtom(), "big(A), atom_codes(A, T)", "T"));
+        Assert.Equal(packed, Cells(WithBigAtom(), "big(A), atom_chars(A, T)", "T"));
+        Assert.Equal(packed, Cells(WithBigAtom(), "big(A), atom_string(A, T)", "T"));
+        Assert.Equal(packed, Cells(WithBigAtom(), "big(A), atom_length(A, _), name(A, T)", "T"));
+    }
+
+    [Fact]
+    public void APackedListCostsTheSameThroughEitherPresentation()
+    {
+        Assert.Equal(Cells(WithBigAtom(), "big(A), atom_codes(A, T)", "T"),
+                     Cells(WithBigAtom(), "big(A), atom_chars(A, T)", "T"));
+    }
+
+    [Fact]
+    public void ThePackedAndConsFormsOfTheSameListDifferOnlyInCost()
+    {
+        // Same term by every observation, different number of cells — which is
+        // exactly what term_cells/2 exists to report.
+        var e = WithBigAtom();
+        var sol = e.Query(
+            "big(A), atom_chars(A, Packed), "
+            + "findall(C, member(C, Packed), Cons), "
+            + "Packed == Cons, term_cells(Packed, P), term_cells(Cons, K).");
+        Assert.True(sol.Success);
+        long p = ((IntTerm)sol["P"]!).Value, k = ((IntTerm)sol["K"]!).Value;
+        Assert.Equal(N / 3 + 2, p);
+        Assert.Equal(2L * N + 1, k);
+    }
+
+    [Fact]
+    public void TermCellsCountsSharedStructureOnce()
+    {
+        var e = new PrologEngine();
+        var shared = e.Query("S = g(1,2,3), T = f(S, S), term_cells(T, C).");
+        var twice = e.Query("T = f(g(1,2,3), g(1,2,3)), term_cells(T, C).");
+        Assert.True(shared.Success && twice.Success);
+        Assert.True(((IntTerm)shared["C"]!).Value < ((IntTerm)twice["C"]!).Value);
+    }
 }

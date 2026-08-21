@@ -203,6 +203,24 @@ public sealed partial class Activation
     /// code units), and a tail cell initialised to <c>[]</c>, contiguously on the heap.
     /// Returns the heap index of the header. Total cells used: <c>1 + ceil(len/3) + 1</c>.
     /// </summary>
+    /// <summary>Builds the list of characters or codes named by
+    /// <paramref name="kind"/>, PACKED (ADR-047 decision 8) — the single entry
+    /// point every runtime text producer goes through. Returns a heap index
+    /// whose cell is the list: the atom <c>[]</c> when the text is empty, a
+    /// PSTR header otherwise.
+    ///
+    /// <para>This is where the arc's measurement lands: <c>atom_codes/2</c> of a
+    /// 4000-character atom used to write 8002 cells and now writes 1337. Six
+    /// near-identical cons builders across four files collapsed into it.</para></summary>
+    public int MakeTextList(string text, TextKind kind)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (text.Length != 0) return MakePstr(text, kind);
+        int nil = AllocateHeap(1);
+        _heap[nil] = Cell.Atom(AtomTable.EmptyListId);
+        return nil;
+    }
+
     public int MakePstr(string value, TextKind kind)
     {
         ArgumentNullException.ThrowIfNull(value);
@@ -402,6 +420,11 @@ public sealed partial class Activation
     /// <summary>Heap index of the cell that immediately follows a PSTR's buffer cells.
     /// That cell is the tail value (typically <c>[]</c>, a variable, another PSTR, or
     /// a LIS in the "fallback to cons" case).</summary>
+    /// <summary>Tail-cell index of a PSTR given the header CELL rather than its
+    /// heap address — a slice arrives as a computed value with no address of
+    /// its own.</summary>
+    public int GetPstrTailIndexOf(Cell header) => ComputePstrTailIndex(header);
+
     public int GetPstrTailIndex(int headerIdx)
     {
         Cell header = _heap[headerIdx];

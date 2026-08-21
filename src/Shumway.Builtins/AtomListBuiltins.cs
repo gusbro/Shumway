@@ -26,11 +26,11 @@ public static class AtomListBuiltins
         if (listCell.Tag != Tag.Ref)
         {
             int count = 0;
-            Cell cursor = listCell;
-            while (cursor.Tag == Tag.Lis)
+            Cell cursor = engine.NormalizeListCell(listCell);
+            while (ListCursor.TryUncons(engine, cursor, out _, out Cell lenTail))
             {
                 count++;
-                cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+                cursor = ListCursor.Resolve(engine, lenTail);
             }
             if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
                 return false;   // partial / improper list
@@ -89,11 +89,11 @@ public static class AtomListBuiltins
         // the tail), reserve the result cells in one allocation, then walk
         // again filling — no intermediate buffer.
         int count = 0;
-        Cell cursor = Resolve(engine, engine.GetRegister(0));
-        while (cursor.Tag == Tag.Lis)
+        Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(0));
+        while (ListCursor.TryUncons(engine, cursor, out _, out Cell countTail))
         {
             count++;
-            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+            cursor = ListCursor.Resolve(engine, countTail);
         }
         if (cursor.Tag == Tag.Ref)
             return AppendSplit(engine, engine.BuiltinReturnPc);
@@ -110,14 +110,14 @@ public static class AtomListBuiltins
         // head cell, start + 2i + 1; the cell after the head — the next
         // pair's LIS slot, or the final extra slot — is the tail.)
         int start = engine.AllocateHeap(2 * count + 1);
-        cursor = Resolve(engine, engine.GetRegister(0));
+        cursor = ListCursor.Resolve(engine, engine.GetRegister(0));
         for (int i = 0; i < count; i++)
         {
-            int srcHeadIdx = cursor.AsHeapIndex;
+            ListCursor.TryUncons(engine, cursor, out Cell head, out Cell tail);
             int lisIdx = start + 2 * i;
             engine.SetHeap(lisIdx, Cell.Lis(lisIdx + 1));
-            engine.SetHeap(lisIdx + 1, engine.GetHeap(srcHeadIdx));
-            cursor = Resolve(engine, engine.GetHeap(srcHeadIdx + 1));
+            engine.SetHeap(lisIdx + 1, head);
+            cursor = ListCursor.Resolve(engine, tail);
         }
         engine.SetHeap(start + 2 * count, l2);
 
@@ -132,12 +132,11 @@ public static class AtomListBuiltins
     {
         // L3 must be ground enough to walk — collect its elements.
         var elems = new List<Cell>();
-        Cell cursor = Resolve(engine, engine.GetRegister(2));
-        while (cursor.Tag == Tag.Lis)
+        Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(2));
+        while (ListCursor.TryUncons(engine, cursor, out Cell el, out Cell elTail))
         {
-            int headIdx = cursor.AsHeapIndex;
-            elems.Add(engine.GetHeap(headIdx));
-            cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
+            elems.Add(el);
+            cursor = ListCursor.Resolve(engine, elTail);
         }
         if (cursor.Tag == Tag.Ref)
             // L3 is a partial list while L1 is open too — nothing closed to
@@ -163,11 +162,11 @@ public static class AtomListBuiltins
         // without a choice point — the cursor would leave a dead CP after the
         // match while the remaining splits can only fail.
         int m = 0;
-        Cell c2 = Resolve(engine, engine.GetRegister(1));
-        while (c2.Tag == Tag.Lis)
+        Cell c2 = ListCursor.Resolve(engine, engine.GetRegister(1));
+        while (ListCursor.TryUncons(engine, c2, out _, out Cell c2Tail))
         {
             m++;
-            c2 = Resolve(engine, engine.GetHeap(c2.AsHeapIndex + 1));
+            c2 = ListCursor.Resolve(engine, c2Tail);
         }
         if (c2.Tag == Tag.Atom && c2.AsAtomId == AtomTable.EmptyListId)
         {
@@ -363,25 +362,7 @@ public static class AtomListBuiltins
     }
 
     private static int BuildIntCodesList(Activation engine, string s)
-    {
-        if (s.Length == 0)
-        {
-            int nilSlot = engine.AllocateHeap(1);
-            engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
-            return nilSlot;
-        }
-
-        int start = engine.AllocateHeap(2 * s.Length + 1);
-        for (int i = 0; i < s.Length; i++)
-        {
-            int lisIdx = start + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            engine.SetHeap(headIdx, Cell.Int(s[i]));
-        }
-        engine.SetHeap(start + 2 * s.Length, Cell.Atom(AtomTable.EmptyListId));
-        return start;
-    }
+        => engine.MakeTextList(s, TextKind.Codes);
 
     private static string ReadCodesString(Activation engine, Cell codesCell)
     {
@@ -396,15 +377,17 @@ public static class AtomListBuiltins
             throw new PrologRuntimeException("type_error", "list", engine, listStart);
         while (true)
         {
-            // A PSTR is a code list; consume its text and continue at its
-            // tail.
-            if (cursor.Tag == Tag.Pstr)
+            // A packed run of CODES is consumed in bulk; a chars run falls
+            // through to the element loop and raises the ISO element error
+            // from its own head's tag (ADR-047).
+            if (cursor.Tag == Tag.Pstr && cursor.AsPstrKind == TextKind.Codes
+                && cursor.AsPstrLength > 0)
             {
                 sb.Append(engine.ReadPstrChain(cursor, out cursor));
                 continue;
             }
-            if (cursor.Tag != Tag.Lis) break;
-            Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
+            if (!ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell rTail)) break;
+            Cell head = Resolve(engine, rawHead);
             if (head.Tag == Tag.Ref)
                 throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Int)
@@ -416,7 +399,7 @@ public static class AtomListBuiltins
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
             sb.Append((char)head.AsInt);
-            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+            cursor = ListCursor.Resolve(engine, rTail);
         }
         if (cursor.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");

@@ -425,6 +425,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
 | `statistics` | Writes a report of runtime, walltime and heap/trail/stack use to the current output. |
 | `statistics(?Key, ?Value)` | Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds. |
+| `term_cells(@Term, -Cells)` | Heap cells the term occupies, shared substructure counted once. A diagnostic: it reports what a term costs, not how it is stored. |
 
 ## Grammar
 
