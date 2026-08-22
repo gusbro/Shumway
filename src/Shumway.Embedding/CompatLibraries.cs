@@ -66,9 +66,14 @@ internal static class CompatLibraries
     // succeeds. The true dif/2 would delay; a program that later forces such a
     // pair equal would observe the difference. Sufficient for the common
     // "these are already bound / will never be unified" usage.
+    // The real, SUSPENDING dif/2 lives in the coroutining library. This
+    // entry used to be a decide-once stub — ( X \= Y -> true ; ... ) —
+    // which silently FORGOT an undecided disequality: dif(A, B) with both
+    // unbound succeeded and never failed anything later (Trealla
+    // test0400/0402/0210 caught it over rational trees, where the real
+    // dif already behaves).
     private const string Dif = """
-        :- public dif/2.
-        dif(X, Y) :- ( X \= Y -> true ; X == Y -> fail ; true ).
+        :- use_module(library(coroutining)).
         """;
 
     // library('$project_atts') — Scryer's attribute-projection bootstrap
