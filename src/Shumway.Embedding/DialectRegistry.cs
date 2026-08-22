@@ -58,7 +58,7 @@ internal static class DialectRegistry
         {
             "lists" or "dcgs" or "format" or "charsio" or "error"
                 or "pairs" or "ordsets" or "debug" or "gensym"
-                or "iso_ext" => (true, ""),
+                or "iso_ext" or "terms" => (true, ""),
             "freeze" or "when" => (true, ":- use_module(library(coroutining)).\n"),
             "clpz" => (true, ":- use_module(library(clpfd)).\n"),
             _ => (false, ""),

@@ -139,7 +139,8 @@ public class EnvFrameTests
     {
         var engine = new Activation(new ActivationConfig { InitialStackSize = 3, MaxStackSize = 3 });
         engine.Allocate(0);                         // exactly fills the cap (size 3)
-        Assert.Throws<InvalidOperationException>(() => engine.Allocate(0));
+        var ex = Assert.Throws<PrologRuntimeException>(() => engine.Allocate(0));
+        Assert.Equal("resource_error", ex.Kind);   // catchable: error(resource_error(memory), _)
     }
 
     // ---------- Deallocate ----------

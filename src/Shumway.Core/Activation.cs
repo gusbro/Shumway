@@ -299,16 +299,19 @@ public sealed partial class Activation
 
         long newSize = buffer.Length;
         while (newSize < required) newSize *= 2;
+        // Exhaustion is a CATCHABLE resource_error(memory), not a .NET
+        // exception: catch/3's unwind resets the tops, after which the
+        // engine is fully usable (the guard runs BEFORE any mutation, so
+        // nothing is half-done). length(L, 2_000_000_000) inside catch/3
+        // must leave the query alive.
         if (maxSize > 0 && newSize > maxSize)
         {
             if (required > maxSize)
-                throw new InvalidOperationException($"Activation {name} overflow: would need {required} cells, max is {maxSize}.");
+                throw new PrologRuntimeException("resource_error", "memory");
             newSize = maxSize;
         }
         if (newSize > int.MaxValue)
-            throw new InvalidOperationException(
-                $"Activation {name} overflow: would exceed int.MaxValue "
-                + $"(top={top}, extra={extra}, len={buffer.Length}).");
+            throw new PrologRuntimeException("resource_error", "memory");
         Profiler.Realloc(name, (long)newSize * System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
         Array.Resize(ref buffer, (int)newSize);
     }

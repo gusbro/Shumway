@@ -183,8 +183,11 @@ public static class ArithmeticBuiltins
             long xVal = x.AsInt;
             return xVal >= loVal && xVal <= hiVal;
         }
-        if (x.Tag == Tag.Ref)
+        if (x.Tag is Tag.Ref or Tag.AttVar)
         {
+            // An ATTVAR is an unbound variable: enumerate into it too — the
+            // unify below queues its wakeups, so freeze(X, Filter),
+            // between(L, H, X) filters instead of failing outright.
             // Enumerate loVal..hiVal. The resume state lives in ONE per-CALL
             // cursor object + a cached delegate re-pushed unchanged on every
             // backtrack — a long range costs O(1) managed allocation, not one
