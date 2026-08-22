@@ -8,9 +8,9 @@ namespace Shumway.Tests.Embedding;
 /// of the one it has.
 ///
 /// <para><b>Memory is not bounded yet</b>, and there is deliberately no test
-/// claiming it is: the lazy tails are attributed variables and the heap
-/// collector stands down while any is live, so consumed windows accumulate.
-/// That is a heap-GC arc, not a defect of what is tested here.</para>
+/// claiming it is: the conservative control-stack scan roots dead frame
+/// slots, so consumed windows stay reachable. That is the precise-stack-scan
+/// arc (ADR-016), not a defect of what is tested here.</para>
 /// </summary>
 public class LazyPhraseTests : IDisposable
 {
@@ -36,7 +36,6 @@ public class LazyPhraseTests : IDisposable
     {
         var e = new PrologEngine();
         e.ConsultString("""
-            :- use_module(library(lazy_input)).
             lines([L|Ls]) --> line(L), !, lines(Ls).
             lines([]) --> [].
             line([]) --> "\n", !.
@@ -50,6 +49,23 @@ public class LazyPhraseTests : IDisposable
     {
         var e = WithLines();
         string f = Write("three.txt", "a\nb\nc\n");
+        Assert.True(e.Query($"phrase_from_file(lines([[a],[b],[c]]), '{f}').").Success);
+    }
+
+    [Fact]
+    public void TheGrammarRunsPromotedToTier1()
+    {
+        var e = WithLines();
+        e.IlPromotion.Threshold = 1;
+        e.IlPromotion.BackgroundCompilation = false;
+        // Heat the grammar on plain lists so it is IL by the lazy run: the
+        // point is that IL-compiled head unification against the frozen tail
+        // queues the '$lazy' wakeup and the Tier-1 flush runs it.
+        for (int i = 0; i < 3; i++)
+            Assert.True(e.Query("""phrase(lines(_), "x\ny\n").""").Success);
+        Assert.True(e.IlPromotion.PromotedCount > 0,
+            "the grammar did not promote — this test is not exercising Tier-1");
+        string f = Write("t1.txt", "a\nb\nc\n");
         Assert.True(e.Query($"phrase_from_file(lines([[a],[b],[c]]), '{f}').").Success);
     }
 
@@ -88,7 +104,6 @@ public class LazyPhraseTests : IDisposable
     {
         var e = new PrologEngine();
         e.ConsultString("""
-            :- use_module(library(lazy_input)).
             two([A,B]) --> [A], [B].
             """);
         string f = Write("ab.txt", "ab");

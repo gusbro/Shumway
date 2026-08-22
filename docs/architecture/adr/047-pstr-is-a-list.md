@@ -7,9 +7,12 @@ the type and consumer sweep, the writer, the .NET boundary, the `chars` default,
 the producers, lazy input, and the removal of `Tag.String`.
 
 Two things it names are NOT delivered and are called out where they arise:
-astral-plane correctness (a separate arc), and bounded memory for lazy input —
-which needs a precise control-stack scan the engine does not have. See
-"Consequences".
+astral-plane correctness (a separate arc), and bounded memory for lazy input.
+The memory promise is bounded memory *for grammars that commit*: a grammar
+that can still backtrack must keep the input it consumed, by definition —
+no representation changes that. Even the committing case is not delivered
+yet: it needs a precise control-stack scan the engine does not have (the
+conservative scan keeps dead frame slots alive). See "Consequences".
 
 ## Context
 
@@ -334,9 +337,12 @@ workable.
 - `double_quotes = chars` becomes free, so the default can match the ecosystem.
 - The writer, the type predicates and the boundary all get simpler, because each
   has one case instead of two.
-- Lazy stream reading (`phrase_from_file/2,3`) becomes possible: a PSTR with an
-  open tail is precisely the shape it needs, and we already have `freeze/2` and
-  attributed variables.
+- Lazy stream reading (`phrase_from_file/2,3`, `phrase_from_stream/2,3`)
+  becomes possible: a PSTR with an open tail is precisely the shape it needs.
+  Shipped as prelude predicates — no library import. The tail suspends on the
+  native `'$lazy'` attribute module, whose value is the goal itself and whose
+  wakeup the drain meta-calls directly, so the coroutining library (and its
+  `verify_attributes/4` machinery) is not involved.
 
 ### Negative
 
@@ -356,10 +362,16 @@ workable.
 - **Surrogate pairs.** The current code treats a lone code unit as a character.
   Astral-plane correctness is a separate arc with its own design.
 - **`mmap`-backed buffers** — a stream option under which a single cell aliases
-  an entire file. Attractive for `phrase_from_file/2` over huge inputs,
-  but it needs a PSTR whose buffer lives outside the heap, which collides with
-  relocation in *our* GC and with pinning in .NET's. Weighed against the
-  `freeze/2` window when lazy reading is implemented.
+  an entire file, the OS doing the paging. Rejected on three grounds. The
+  decisive one is encoding: our text is UTF-16 code units and a file is bytes,
+  so the mapping could never be aliased — every window would be transcoded
+  into the heap anyway, which is exactly what the lazy window already does
+  (an engine whose strings are UTF-8 bytes can alias; ours cannot). Second,
+  ADR-045: a text read translates CR-LF to `
+`, so the bytes on disk are not
+  the list the program sees. Third, a buffer outside the heap collides with
+  relocation in *our* GC, with pinning in .NET's, and does not exist at all
+  on the browser-wasm target (ADR-042).
 
 ## Test strategy
 

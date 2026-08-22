@@ -78,11 +78,12 @@ public sealed partial class BytecodeInterpreter
     private bool FlushPendingWakeupsSlow(ProgramView code)
     {
         Shumway.Core.Profiler.Note("wakeup_flush");
-        if (!_engine.HasAnyAttributeHook)
+        if (!_engine.HasAnyAttributeHook && !_engine.PendingWakeupsHaveLazy)
         {
             // No attribute-unification hook of any shape is linked — neither a
             // per-module verify_attributes/3 or /4 nor a bare one — so attributed
-            // variables stay hookless (the foundation).
+            // variables stay hookless (the foundation). Native '$lazy' entries
+            // are exempt: their goal runs without any Prolog hook.
             _engine.ClearPendingWakeups();
             return true;
         }
@@ -138,6 +139,19 @@ public sealed partial class BytecodeInterpreter
             for (int i = 0; i < batch.Count; i++)
             {
                 var (moduleId, attrValueIdx, otherIdx) = batch[i];
+                if (moduleId == Shumway.Core.Activation.LazyAttrModuleId)
+                {
+                    // Native '$lazy' — the attribute value IS the goal. No
+                    // verify_attributes hook exists or is wanted; hand the
+                    // goal straight to the run-goals pass, which fires it
+                    // AFTER the binding, like a frozen goal.
+                    int c = _engine.AllocateHeap(2);
+                    _engine.SetHeap(c, Shumway.Core.Cell.Ref(attrValueIdx));
+                    _engine.SetHeap(c + 1,
+                        Shumway.Core.Cell.Atom(Shumway.Core.AtomTable.EmptyListId));
+                    goalLists[i] = Shumway.Core.Cell.Lis(c);
+                    continue;
+                }
                 // ADR-040 — resolve THIS module's hook per module: its own
                 // verify_attributes/3 (Scryer style) or /4 (module-local first,
                 // bare fallback). Two dialects' libraries each own their hook.

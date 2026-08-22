@@ -251,7 +251,38 @@ public sealed partial class Activation
     /// <c>verify_attributes/3</c>. Used by the merge rule to decide whether a shared
     /// module's values must be pre-unified (no hook) or left for the hook.</summary>
     internal bool ModuleHasHook(int moduleId) =>
-        Verify4FunctorId(moduleId) >= 0 || Verify3FunctorId(moduleId) >= 0;
+        moduleId == LazyAttrModuleId
+        || Verify4FunctorId(moduleId) >= 0 || Verify3FunctorId(moduleId) >= 0;
+
+    private static int _lazyAttrModuleId = -1;
+    /// <summary>The reserved attribute module <c>'$lazy'</c>, handled natively:
+    /// its attribute value IS a goal, and the wakeup drain meta-calls it
+    /// directly instead of resolving a <c>verify_attributes</c> hook. This is
+    /// what lets the prelude's lazy-input predicates suspend on a variable
+    /// without the coroutining library being loaded.</summary>
+    public static int LazyAttrModuleId
+    {
+        get
+        {
+            if (_lazyAttrModuleId < 0)
+                _lazyAttrModuleId = AtomTable.Intern("$lazy", permanent: true).Id;
+            return _lazyAttrModuleId;
+        }
+    }
+
+    /// <summary>Whether any queued wakeup belongs to the native <c>'$lazy'</c>
+    /// module. The flush gate needs this: with no Prolog hook linked it
+    /// discards the queue, but native entries carry a goal that must run
+    /// regardless. Only called when the queue is non-empty.</summary>
+    public bool PendingWakeupsHaveLazy
+    {
+        get
+        {
+            for (int i = 0; i < _pendingWakeups.Count; i++)
+                if (_pendingWakeups[i].Module == LazyAttrModuleId) return true;
+            return false;
+        }
+    }
 
     /// <summary>Per-query string literal pool. Set by the embedding
     /// layer at query setup so IL-emitted <c>get_pstr</c> / <c>put_pstr</c>

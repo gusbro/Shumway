@@ -50,20 +50,6 @@ public sealed partial class PrologEngine
         MarkModuleNonDebuggable(Coroutining.ModuleName);   // ADR-035 — a library, not the user's code
     }
 
-    /// <summary>Loads the pure-I/O library: <c>phrase_from_file/2,3</c> and
-    /// <c>phrase_from_stream/2,3</c>, which run a DCG over a stream read lazily
-    /// in windows. Opt-in, and it pulls coroutining in with it — the lazy
-    /// list's tail is a frozen variable.</summary>
-    private bool _lazyInputLoaded;
-    public void UseLazyInput()
-    {
-        if (_lazyInputLoaded) return;
-        _lazyInputLoaded = true;
-        UseCoroutining();
-        ConsultString(LazyInput.Source);
-        MarkModuleNonDebuggable(LazyInput.ModuleName);   // ADR-035 — a library, not the user's code
-    }
-
     // Compatibility libraries loaded on demand by use_module(library(Name)),
     // tracked so a repeated import (or a program that imports the same library
     // as one of its dependencies) does not re-consult and trip the
@@ -618,7 +604,6 @@ public sealed partial class PrologEngine
                 case "clpfd": UseClpfd(); return null;
                 case "clpr":  UseClpr();  return null;
                 case "coroutining": UseCoroutining(); return null;
-                case "lazy_input": UseLazyInput(); return null;
                 default:
                     // (1.5) the module is ALREADY LOADED (typically from a
                     // bundle whose manifests LoadBundle reconstructed):

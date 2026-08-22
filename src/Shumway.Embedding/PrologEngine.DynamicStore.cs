@@ -858,7 +858,6 @@ public sealed partial class PrologEngine
     private static readonly string[] LibraryModules =
     {
         Prelude.ModuleName, Clpfd.ModuleName, Clpr.ModuleName, Coroutining.ModuleName,
-        LazyInput.ModuleName,
     };
 
     internal static bool IsLibraryModule(string moduleName)

@@ -299,6 +299,31 @@ placed at those dispatch points and is correct for both tiers.
   1,048,576 cells (**8 MB**), same lint output. ~8× high-water drop, and
   the 2 M/4 M/8 M doubling-realloc churn is eliminated.
 
+- **2026-08 — the collector runs with attributed variables live.** It used
+  to stand down for the rest of the query the moment any ATTVAR existed —
+  and since the attribute record survives the binding, a single resolved
+  `dif/2` disabled collection permanently (measured: 2,400,926 cells for a
+  workload whose attvar-free baseline is 320,119; with the bail removed,
+  304,125). Removing the bail meant rooting and relocating the five holders
+  of heap indices that live outside the ordinary root set: the attribute
+  table (its KEYS are heap addresses — collection re-keys it), the
+  attribute trail log (it holds the PREVIOUS value nothing else references;
+  unmarked, backtracking would restore a dangling index), the pending-wakeup
+  queue, `setup_call_cleanup`'s live cells, and `call_residue_vars`
+  snapshots (relocated but NOT marked — they observe without retaining,
+  via the nominal `AttrSnapshot` type). One trap the bail had been hiding:
+  it also made the wakeup drain atomic. The drain holds heap indices in C#
+  locals across meta-calls that reach safe points, so it runs under a
+  scoped `GcInhibit` region. The attribute table also stops accumulating
+  dead records: an entry is dropped exactly when trail compaction discards
+  the `ValueChange` entry that would have restored its ATTVAR cell.
+
+  What this does NOT deliver is bounded memory for lazy input (ADR-047):
+  the conservative control-stack scan roots every slot of every frame,
+  including dead slots of frames LCO reused, so a tail-recursive grammar
+  retains consumed windows. Making the stack scan precise is its own arc —
+  an under-count frees live data, which is why it was not folded in here.
+
 ## Implementation sketch (for the follow-up chunks)
 
 1. Mark phase: tri-state mark bits (side array, not in the cell) seeded

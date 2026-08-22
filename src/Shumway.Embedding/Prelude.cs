@@ -115,6 +115,17 @@ internal static class Prelude
         :- public ':'/2.
         :- public phrase/2.
         :- public phrase/3.
+        :- public phrase_from_stream/2.
+        :- public phrase_from_stream/3.
+        :- public phrase_from_file/2.
+        :- public phrase_from_file/3.
+        % public like coroutining's '$co_alias_check'/1: the goal a wakeup
+        % meta-calls resolves globally, not module-locally.
+        :- public '$lazy_text_step'/4.
+        :- meta_predicate(phrase_from_stream(2, *)).
+        :- meta_predicate(phrase_from_stream(2, *, *)).
+        :- meta_predicate(phrase_from_file(2, *)).
+        :- meta_predicate(phrase_from_file(2, *, *)).
         :- public display/1.
         :- public display/2.
         :- public recorda/2.
@@ -1256,6 +1267,52 @@ internal static class Prelude
         '$phrase'(\+ A, S0, S) :- !, \+ '$phrase'(A, S0, _), S0 = S.
         '$phrase'(call(G), S0, S) :- !, call(G, S0, S).
         '$phrase'(G, S0, S) :- call(G, S0, S).
+
+        %! phrase_from_stream(:Body, +Stream) | Grammar | Runs the DCG Body over Stream's text, read lazily in windows.
+        phrase_from_stream(Body, Stream) :-
+            phrase_from_stream(Body, Stream, chars).
+
+        %! phrase_from_stream(:Body, +Stream, +Kind) | Grammar | As phrase_from_stream/2, with Kind (chars or codes) choosing the list's elements.
+        phrase_from_stream(Body, Stream, Kind) :-
+            '$lazy_text'(Stream, Kind, 0, Ls),
+            phrase(Body, Ls).
+
+        %! phrase_from_file(:Body, +File) | Grammar | Runs the DCG Body over File's text, read lazily; the file is closed on the way out.
+        phrase_from_file(Body, File) :-
+            phrase_from_file(Body, File, []).
+
+        %! phrase_from_file(:Body, +File, +Options) | Grammar | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes).
+        phrase_from_file(Body, File, Options) :-
+            '$lazy_kind'(Options, Kind, OpenOptions),
+            setup_call_cleanup(open(File, read, Stream, OpenOptions),
+                               phrase_from_stream(Body, Stream, Kind),
+                               close(Stream)).
+
+        % The delayed goal runs AFTER the binding that woke it, so Ls already
+        % holds whatever the grammar unified it with. That is why the step
+        % UNIFIES Ls with the window rather than binding it: the grammar's
+        % [H|T] meets the packed window and peels one element out of it.
+        %
+        % The offset is carried explicitly because reading is a side effect
+        % backtracking cannot undo: a grammar that tries one clause, fails and
+        % tries the next wakes the SAME cell twice, and a plain read would hand
+        % it the next characters the second time — quietly parsing an input the
+        % file does not contain. '$lazy_window'/6 is idempotent per offset.
+        '$lazy_text'(Stream, Kind, Offset, Ls) :-
+            '$lazy_freeze'(Ls, '$lazy_text_step'(Stream, Kind, Offset, Ls)).
+
+        '$lazy_text_step'(Stream, Kind, Offset, Ls) :-
+            '$lazy_window'(Stream, Offset, 4096, Kind, Window, Length),
+            ( Length =:= 0 ->
+                Ls = []
+            ; Next is Offset + Length,
+              '$lazy_text'(Stream, Kind, Next, Ls0),
+              partial_string(Window, Ls, Ls0)
+            ).
+
+        '$lazy_kind'([], chars, []).
+        '$lazy_kind'([text_kind(K)|T], K, Rest) :- !, '$lazy_kind'(T, _, Rest).
+        '$lazy_kind'([O|T], K, [O|Rest]) :- '$lazy_kind'(T, K, Rest).
 
         %! display(+Term) | Input / output | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted.
         display(X) :- write_term(X, [ignore_ops(true)]).
