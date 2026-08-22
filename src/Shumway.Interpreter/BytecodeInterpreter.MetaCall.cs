@@ -238,32 +238,6 @@ public sealed partial class BytecodeInterpreter
             || (cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId);
     }
 
-    /// <summary>Runs one goal term in the live engine. Handles
-    /// the <c>,/2</c> conjunction and the <c>true</c> / <c>fail</c>
-    /// constants; any other goal is dispatched as a plain call — a
-    /// builtin runs directly, a user/prelude predicate runs via
-    /// <see cref="RunGoalInEngine"/>. An undefined predicate raises an
-    /// existence error.</summary>
-    /// <summary>§7.8.3 body conversion for a control construct whose two
-    /// arguments sit in X0/X1 (the shape DispatchCall has built by the
-    /// time it routes). A non-callable in either branch makes the WHOLE
-    /// reconstructed goal the type_error culprit.</summary>
-    private void CheckControlGoalFromRegisters(int atomId)
-    {
-        Cell a = DerefCell(_engine.GetRegister(0));
-        Cell b = DerefCell(_engine.GetRegister(1));
-        if (IsBodyConvertible(a) && IsBodyConvertible(b)) return;
-        // Rebuild ','(A, B) so the ball names the goal the caller wrote.
-        int fid = Shumway.Core.FunctorTable.Intern(atomId, 2);
-        int strBase = _engine.AllocateHeap(3);
-        _engine.SetHeap(strBase, Cell.Functor(fid));
-        _engine.SetHeap(strBase + 1, a);
-        _engine.SetHeap(strBase + 2, b);
-        throw new PrologRuntimeException(
-            "type_error", "callable", _engine, Cell.Str(strBase));
-    }
-
-
     private bool IsBodyConvertible(Cell c)
     {
         c = DerefCell(c);
@@ -319,6 +293,12 @@ public sealed partial class BytecodeInterpreter
         }
     }
 
+    /// <summary>Runs one goal term in the live engine. Handles
+    /// the <c>,/2</c> conjunction and the <c>true</c> / <c>fail</c>
+    /// constants; any other goal is dispatched as a plain call — a
+    /// builtin runs directly, a user/prelude predicate runs via
+    /// <see cref="RunGoalInEngine"/>. An undefined predicate raises an
+    /// existence error.</summary>
     private bool MetaCallInEngine(ProgramView code, Cell goal)
     {
         goal = DerefCell(goal);
@@ -524,7 +504,8 @@ public sealed partial class BytecodeInterpreter
         // cached path is covered too.
         if (totalArity == 2 && Shumway.Core.AtomTable.GetById(atomId)?.Name
                 is "," or ";" or "->" or "*->")
-            CheckControlGoalFromRegisters(atomId);
+            Shumway.Core.MetaBodyConvert.CheckControlGoalFromRegisters(
+                _engine, atomId);
         bool routeCacheable = resolutionModule < 0 && (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits
         long routeKey = ((long)atomId << 16) | (uint)totalArity;
         if (routeCacheable && cache.TryGetValue(routeKey, out var route))

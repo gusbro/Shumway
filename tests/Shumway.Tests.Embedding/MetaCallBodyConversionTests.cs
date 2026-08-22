@@ -54,4 +54,34 @@ public class MetaCallBodyConversionTests
             "t/1 did not promote - this test is not exercising Tier-1");
         Assert.True(e.Query("t(L), L == [1, 2].").Success);
     }
+
+    [Theory]
+    [InlineData("call(X)")]
+    [InlineData("once(X)")]
+    [InlineData("findall(_, X, _)")]
+    [InlineData("\\+ X")]
+    public void ANumberInARuntimeBodyRaisesBeforeAnythingRuns(string wrap)
+    {
+        // GNU raises type_error(callable, (fail,3)) for all four, with the
+        // WHOLE construct as culprit and `fail` never executing.
+        var e = new PrologEngine();
+        var r = e.Query(
+            $"X = (fail, 3), catch({wrap}, error(type_error(callable, C), _), true), C == (fail, 3).");
+        Assert.True(r.Success);
+    }
+
+    [Fact]
+    public void TheTier1TwinChecksNumbersToo()
+    {
+        var e = new PrologEngine();
+        e.IlPromotion.Threshold = 1;
+        e.IlPromotion.BackgroundCompilation = false;
+        e.ConsultString(
+            "t :- X = (fail, 3), catch(call(X), error(type_error(callable, C), _), true), C == (fail, 3).");
+        for (int i = 0; i < 3; i++)
+            Assert.True(e.Query("t.").Success);
+        Assert.True(e.IlPromotion.PromotedCount > 0,
+            "t/0 did not promote - this test is not exercising Tier-1");
+        Assert.True(e.Query("t.").Success);
+    }
 }

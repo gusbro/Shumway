@@ -29,12 +29,75 @@ public static class MetaBodyConvert
     private static readonly int ColonFid =
         FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
 
+    /// <summary>SS7.8.3: a control construct's arguments must convert to a
+    /// body BEFORE any of it runs — a number in goal position anywhere in the
+    /// skeleton makes the WHOLE construct the type_error culprit, and nothing
+    /// executes. Expects the construct's two arguments in X0/X1 (the shape
+    /// both dispatchers have built by the time they route). Sees through
+    /// '$mqual'/':' tags — PrepareMqualGoal distributes the module tag over a
+    /// construct's args before this check runs — and strips them from the
+    /// culprit so the ball names the goal the caller wrote.</summary>
+    public static void CheckControlGoalFromRegisters(Activation engine, int atomId)
+    {
+        Cell a = StripQual(engine, engine.GetRegister(0));
+        Cell b = StripQual(engine, engine.GetRegister(1));
+        if (IsBodyConvertible(engine, a) && IsBodyConvertible(engine, b)) return;
+        int fid = FunctorTable.Intern(atomId, 2);
+        int strBase = engine.AllocateHeap(3);
+        engine.SetHeap(strBase, Cell.Functor(fid));
+        engine.SetHeap(strBase + 1, a);
+        engine.SetHeap(strBase + 2, b);
+        throw new PrologRuntimeException(
+            "type_error", "callable", engine, Cell.Str(strBase));
+    }
+
+    private static Cell StripQual(Activation engine, Cell c)
+    {
+        while (true)
+        {
+            c = Deref(engine, c);
+            if (c.Tag != Tag.Str) return c;
+            int fIdx = c.AsHeapIndex;
+            if (engine.GetHeap(fIdx).AsFunctorId != MqualFid) return c;
+            c = engine.GetHeap(fIdx + 2);
+        }
+    }
+
+    private static bool IsBodyConvertible(Activation engine, Cell c)
+    {
+        c = Deref(engine, c);
+        switch (c.Tag)
+        {
+            case Tag.Ref:
+            case Tag.AttVar:
+            case Tag.Atom:
+                return true;
+            case Tag.Str:
+            {
+                int fIdx = c.AsHeapIndex;
+                int fid = engine.GetHeap(fIdx).AsFunctorId;
+                if (fid == ConjFid || fid == DisjFid
+                    || fid == ArrowFid || fid == SoftArrowFid)
+                    return IsBodyConvertible(engine, engine.GetHeap(fIdx + 1))
+                        && IsBodyConvertible(engine, engine.GetHeap(fIdx + 2));
+                if (fid == MqualFid || fid == ColonFid)
+                    return IsBodyConvertible(engine, engine.GetHeap(fIdx + 2));
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    private static Cell Deref(Activation engine, Cell c) =>
+        c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
+
     /// <summary>Returns the converted goal — the input untouched (and
     /// <paramref name="wrapped"/> left false) when nothing needed wrapping,
     /// which is allocation-free.</summary>
     public static Cell WrapVariableSubgoals(Activation engine, Cell c, ref bool wrapped)
     {
-        Cell d = c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
+        Cell d = Deref(engine, c);
         switch (d.Tag)
         {
             case Tag.Ref:

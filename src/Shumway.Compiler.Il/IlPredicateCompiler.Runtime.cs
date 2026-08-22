@@ -256,6 +256,13 @@ public sealed partial class IlPredicateCompiler
             for (int i = 0; i < extraCount; i++)
                 engine.SetRegister(goalArity + i, extra[i]);
 
+            // §7.8.3 — a control construct's arguments must convert
+            // BEFORE any of it runs. Same spot as the bytecode twin:
+            // ahead of the route cache, so the cached path is covered.
+            if (totalArity == 2 && AtomTable.GetById(atomId)?.Name
+                    is "," or ";" or "->" or "*->")
+                MetaBodyConvert.CheckControlGoalFromRegisters(engine, atomId);
+
             // shared meta-call route cache (see MetaRoute.cs).
             // Same cache the bytecode interpreter's DispatchCall fills; each
             // dispatcher executes a cached kind exactly as its own slow path.
