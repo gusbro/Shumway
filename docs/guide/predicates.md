@@ -25,15 +25,22 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `acyclic_term(@Term)` | Succeeds if the argument is a finite (acyclic) term. |
 | `atom(@Term)` | Succeeds if the argument is an atom. |
+| `atom_si(@Term)` | Sound atom test: instantiation_error when unbound, type_error(atom, Term) when bound to a non-atom. |
 | `atomic(@Term)` | Succeeds if the argument is atomic (atom, number or string). |
+| `atomic_si(@Term)` | Sound atomic test (si family). |
 | `attvar(@Term)` | Succeeds if the argument is an attributed variable. |
 | `callable(@Term)` | Succeeds if the argument is an atom or a compound term. |
+| `can_be(+Type, @Term)` | Scryer library(si) form: like must_be/2 but an unbound Term (or one whose subterms are yet unbound enough) is still admissible — only a term already incompatible with Type raises. |
+| `character_si(@Term)` | Sound one-char-atom test (si family). |
+| `chars_si(@Term)` | Sound list-of-characters test (si family). |
 | `compound(@Term)` | Succeeds if the argument is a compound term. |
 | `cyclic_term(@Term)` | Succeeds if the argument is a cyclic (infinite/rational) term. |
 | `float(@Term)` | Succeeds if the argument is a float. |
 | `ground(@Term)` | Succeeds if the argument contains no unbound variables. |
 | `integer(@Term)` | Succeeds if the argument is an integer. |
+| `integer_si(@Term)` | Sound integer test (si family). |
 | `is_list(@Term)` | Succeeds if the argument is a proper list. |
+| `list_si(@Term)` | Sound proper-list test: instantiation_error while the tail is unbound, type_error(list, Term) on a non-list tail. |
 | `must_be(+Type, @Value)` | Throws instantiation_error if Value is unbound (unless Type is var), or type_error(Type, Value) if it is not of Type. |
 | `nonvar(@Term)` | Succeeds if the argument is not an unbound variable. |
 | `number(@Term)` | Succeeds if the argument is a number. |
@@ -230,6 +237,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `last(?List, ?Last)` | Relates a list to its last element. |
 | `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. |
 | `list_to_set(+List, -Set)` | Removes duplicates from a list, keeping the first occurrence of each. |
+| `map_list_to_pairs(:Key, +List, -KeyedPairs)` | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key (SWI library(pairs) form). |
 | `maplist(:Goal, ?List)` | Succeeds if Goal holds for every element of List. |
 | `maplist(:Goal, ?List1, ?List2)` | Succeeds if Goal holds for corresponding elements of two lists. |
 | `maplist(:Goal, ?List1, ?List2, ?List3)` | Succeeds if Goal holds for corresponding elements of three lists. |

@@ -67,6 +67,15 @@ internal static class Prelude
         :- public exclude/3.
         :- public partition/4.
         :- public pairs_keys_values/3.
+        :- public map_list_to_pairs/3.
+        :- public can_be/2.
+        :- public atom_si/1.
+        :- public atomic_si/1.
+        :- public integer_si/1.
+        :- public character_si/1.
+        :- public list_si/1.
+        :- public chars_si/1.
+        :- meta_predicate(map_list_to_pairs(2, *, *)).
         :- public predsort/3.
         :- public sort/4.
         :- public atomic_concat/3.
@@ -1015,6 +1024,47 @@ internal static class Prelude
         pairs_keys_values([], [], []).
         pairs_keys_values([K-V|Ps], [K|Ks], [V|Vs]) :-
             pairs_keys_values(Ps, Ks, Vs).
+
+        %! map_list_to_pairs(:Key, +List, -KeyedPairs) | Lists | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key (SWI library(pairs) form).
+        map_list_to_pairs(_, [], []).
+        map_list_to_pairs(F, [X|Xs], [K-X|Ps]) :-
+            call(F, X, K),
+            map_list_to_pairs(F, Xs, Ps).
+
+        %! can_be(+Type, @Term) | Type checking | Scryer library(si) form: like must_be/2 but an unbound Term (or one whose subterms are yet unbound enough) is still admissible — only a term already incompatible with Type raises.
+        can_be(Type, Term) :-
+            ( var(Term) -> must_be_type_ok(Type)
+            ; must_be(Type, Term)
+            ).
+        must_be_type_ok(Type) :-
+            ( var(Type) -> throw(error(instantiation_error, can_be/2))
+            ; true
+            ).
+
+        % The library(si) family (Scryer/Trealla): sound type tests — an
+        % unbound (or not-yet-listlike) term is an instantiation_error, a
+        % wrong one a type_error; plain success otherwise. "si" reads both
+        % as Prolog "si" (if) and "sufficiently instantiated".
+        %! atom_si(@Term) | Type checking | Sound atom test: instantiation_error when unbound, type_error(atom, Term) when bound to a non-atom.
+        atom_si(X) :- ( var(X) -> throw(error(instantiation_error, atom_si/1)) ; atom(X) -> true ; throw(error(type_error(atom, X), atom_si/1)) ).
+        %! atomic_si(@Term) | Type checking | Sound atomic test (si family).
+        atomic_si(X) :- ( var(X) -> throw(error(instantiation_error, atomic_si/1)) ; atomic(X) -> true ; throw(error(type_error(atomic, X), atomic_si/1)) ).
+        %! integer_si(@Term) | Type checking | Sound integer test (si family).
+        integer_si(X) :- ( var(X) -> throw(error(instantiation_error, integer_si/1)) ; integer(X) -> true ; throw(error(type_error(integer, X), integer_si/1)) ).
+        %! character_si(@Term) | Type checking | Sound one-char-atom test (si family).
+        character_si(X) :- ( var(X) -> throw(error(instantiation_error, character_si/1)) ; atom(X), atom_length(X, 1) -> true ; throw(error(type_error(character, X), character_si/1)) ).
+        %! list_si(@Term) | Type checking | Sound proper-list test: instantiation_error while the tail is unbound, type_error(list, Term) on a non-list tail.
+        list_si(L) :- '$list_si'(L, L).
+        '$list_si'(V, _) :- var(V), !, throw(error(instantiation_error, list_si/1)).
+        '$list_si'([], _) :- !.
+        '$list_si'([_|T], W) :- !, '$list_si'(T, W).
+        '$list_si'(_, W) :- throw(error(type_error(list, W), list_si/1)).
+        %! chars_si(@Term) | Type checking | Sound list-of-characters test (si family).
+        chars_si(Cs) :- '$chars_si'(Cs, Cs).
+        '$chars_si'(V, _) :- var(V), !, throw(error(instantiation_error, chars_si/1)).
+        '$chars_si'([], _) :- !.
+        '$chars_si'([C|T], W) :- !, character_si(C), '$chars_si'(T, W).
+        '$chars_si'(_, W) :- throw(error(type_error(list, W), chars_si/1)).
 
         %! pairs_keys(+Pairs, -Keys) | Lists | The keys of a list of Key-Value pairs.
         :- public pairs_keys/2.

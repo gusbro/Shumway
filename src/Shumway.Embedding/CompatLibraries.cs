@@ -37,6 +37,7 @@ internal static class CompatLibraries
             "format" => Format,
             "dif"    => Dif,
             "$project_atts" => ProjectAtts,
+            "atts" => Atts,
             // Covered by Shumway's prelude / builtins — importing them is a
             // no-op that just marks the module available. `loader` is Scryer's
             // bootstrap module; the one predicate real libraries import from it
@@ -74,6 +75,70 @@ internal static class CompatLibraries
     // dif already behaves).
     private const string Dif = """
         :- use_module(library(coroutining)).
+        """;
+
+    // library(atts) — the SICStus attributed-variable API (put_atts/get_atts
+    // + the `:- attribute Spec` declaration) over the engine's native
+    // per-module attribute-list primitives ('$put_to_attr_list' & co, the
+    // ones the Scryer clpz certification exercised). The module a
+    // put_atts/get_atts call belongs to is the module of the clause being
+    // COMPILED — baked in by goal_expansion via prolog_load_context, which is
+    // how Scryer's own atts.pl does it. Client modules define their
+    // verify_attributes/3 hook; the engine's per-module dispatch (ADR-040)
+    // finds it without registration.
+    private const string Atts = """
+        :- module(atts).
+        :- public put_atts/2.
+        :- public get_atts/2.
+        :- public '$atts_put'/3.
+        :- public '$atts_get'/3.
+        :- multifile goal_expansion/2.
+        :- multifile term_expansion/2.
+
+        % The declaration op, in the USER layer (ADR-046 escape hatch): the
+        % CLIENT's file is what parses `:- attribute frozen/1.`, so the op
+        % must be visible outside this module's own layer.
+        :- op(1199, fx, user:attribute).
+
+        % `:- attribute f/1, g/2.` declares which attribute functors belong
+        % to the declaring module. The engine keys attributes by (module,
+        % functor) dynamically, so the declaration is metadata — accepted,
+        % dropped.
+        term_expansion((:- attribute(_)), []).
+
+        goal_expansion(put_atts(V, Spec), '$atts_put'(V, M, Spec)) :-
+            prolog_load_context(module, M).
+        goal_expansion(get_atts(V, Spec), '$atts_get'(V, M, Spec)) :-
+            prolog_load_context(module, M).
+
+        %! put_atts(-Var, +AccessSpec) | Attributed variables | SICStus atts: sets attributes of Var per AccessSpec — +Attr (or bare Attr) adds/replaces, -Attr removes, a list applies each in order. The attribute's MODULE is the calling module, resolved at compile time.
+        put_atts(V, Spec) :- '$atts_put'(V, user, Spec).
+
+        %! get_atts(-Var, ?AccessSpec) | Attributed variables | SICStus atts: queries attributes of Var — +Attr (or bare Attr) unifies with the attribute, -Attr succeeds iff absent, an unbound AccessSpec returns the full list.
+        get_atts(V, Spec) :- '$atts_get'(V, user, Spec).
+
+        '$atts_put'(_, _, Spec) :-
+            var(Spec), !, throw(error(instantiation_error, put_atts/2)).
+        '$atts_put'(V, M, [S|Ss]) :- !,
+            '$atts_put'(V, M, S),
+            ( Ss == [] -> true ; '$atts_put'(V, M, Ss) ).
+        '$atts_put'(_, _, []) :- !.
+        '$atts_put'(V, M, +A) :- !, '$put_to_attr_list'(V, M, A).
+        '$atts_put'(V, M, -A) :- !, '$del_from_attr_list'(V, M, A).
+        '$atts_put'(V, M, A) :- '$put_to_attr_list'(V, M, A).
+
+        '$atts_get'(V, M, Spec) :-
+            ( var(Spec) -> get_attr(V, M, Spec)
+            ; '$atts_get_spec'(Spec, V, M)
+            ).
+        '$atts_get_spec'([], _, _) :- !.
+        '$atts_get_spec'([S|Ss], V, M) :- !,
+            '$atts_get_spec'(S, V, M), '$atts_get_spec'(Ss, V, M).
+        '$atts_get_spec'(+A, V, M) :- !, '$get_from_attr_list'(V, M, A).
+        '$atts_get_spec'(-A, V, M) :- !,
+            functor(A, F, N), functor(Probe, F, N),
+            \+ '$get_from_attr_list'(V, M, Probe).
+        '$atts_get_spec'(A, V, M) :- '$get_from_attr_list'(V, M, A).
         """;
 
     // library('$project_atts') — Scryer's attribute-projection bootstrap

@@ -61,6 +61,11 @@ internal static class DialectRegistry
                 or "iso_ext" or "terms" => (true, ""),
             "freeze" or "when" => (true, ":- use_module(library(coroutining)).\n"),
             "clpz" => (true, ":- use_module(library(clpfd)).\n"),
+            // Trealla's clpz references arithmetic:popcount/2 in its
+            // reification residuals; the rest of their arithmetic.pl is
+            // evaluable-function machinery our `is` covers natively.
+            "arithmetic" => (true,
+                ":- module(arithmetic).\n:- public popcount/2.\npopcount(N, C) :- C is popcount(N).\n"),
             _ => (false, ""),
         });
 
