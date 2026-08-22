@@ -1072,7 +1072,7 @@ public sealed partial class PrologEngine
                 if (!seen.Add(fid)) return false;
                 var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
                 string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
-                return !string.IsNullOrEmpty(name) && name.IndexOf('$') < 0;
+                return name is { Length: > 0 } && name.IndexOf('$') < 0;
             }
             foreach (var c in manifest.Clauses)
             {
@@ -1141,7 +1141,7 @@ public sealed partial class PrologEngine
         string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
         // '$' anywhere: engine/transform internals and already-mangled
         // spellings — neither participates in the convenience.
-        if (string.IsNullOrEmpty(name) || name.IndexOf('$') >= 0) return -1;
+        if (name is not { Length: > 0 } || name.IndexOf('$') >= 0) return -1;
         string? found = null;
         List<string>? candidates = null;
         foreach (string mod in _directlyConsultedModules)

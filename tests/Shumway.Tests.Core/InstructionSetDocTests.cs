@@ -32,7 +32,7 @@ public class InstructionSetDocTests
         Assert.True(File.Exists(path), $"{path} is missing.");
 
         var byMnemonic = new Dictionary<string, Opcode>();
-        foreach (Opcode op in Enum.GetValues<Opcode>())
+        foreach (Opcode op in (Opcode[])Enum.GetValues(typeof(Opcode)))
         {
             var info = OpcodeTable.Get(op);
             if (info.IsDefined && info.Mnemonic is { Length: > 0 })
