@@ -95,7 +95,13 @@ public static class TermRenderer
             }
             case Tag.Str:
             {
-                if (!EnterCycleNode(options, cell.AsHeapIndex, out bool strAdded))
+                // With max_depth set the depth limit already terminates a
+                // rational tree — and it decides HOW MUCH of the cycle shows
+                // (max_depth(3) on X=f(X) is f(f(f(...)))), so the cycle
+                // gate must not cut first.
+                bool strAdded = false;
+                if (options.MaxDepth == 0
+                    && !EnterCycleNode(options, cell.AsHeapIndex, out strAdded))
                 {
                     output.Write("...");
                     break;
@@ -128,7 +134,7 @@ public static class TermRenderer
             case Tag.Pstr:
             {
                 bool lisAdded = false;
-                if (cell.Tag == Tag.Lis
+                if (options.MaxDepth == 0 && cell.Tag == Tag.Lis
                     && !EnterCycleNode(options, cell.AsHeapIndex, out lisAdded))
                 {
                     output.Write("...");
@@ -473,7 +479,7 @@ public static class TermRenderer
             // Spine back-edge (a cyclic cons chain): the entry cons was
             // gated by the caller; every FURTHER cons joins the path here
             // so `L = [a|L]` terminates as `[a,a|...]`.
-            if (!first && cursor.Tag == Tag.Lis)
+            if (!first && options.MaxDepth == 0 && cursor.Tag == Tag.Lis)
             {
                 if (!EnterCycleNode(options, cursor.AsHeapIndex, out bool consAdded))
                 {
