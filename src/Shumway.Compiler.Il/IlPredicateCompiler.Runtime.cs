@@ -195,7 +195,8 @@ public sealed partial class IlPredicateCompiler
         /// a neck_cut at the callee entry commits to the call's
         /// barrier rather than the IL caller's.</para>
         /// </summary>
-        public static int Dispatch(Activation engine, int callArity, int cutBarrier)
+        public static int Dispatch(
+            Activation engine, int callArity, int cutBarrier, bool convertBody)
         {
             Cell goal = DerefCell(engine, engine.GetRegister(0));
 
@@ -204,6 +205,15 @@ public sealed partial class IlPredicateCompiler
             // updating X0; the module steers the user-address resolution below so
             // a bare goal functor resolves against that module's locals first.
             int resolutionModule = PrepareMqualGoal(engine, ref goal);
+
+            // SS7.6.2 — convert the body at the call/N boundary (and only
+            // there; '$call'/2 dispatches an already-converted body). See
+            // MetaBodyConvert; the bytecode DispatchCall is the twin.
+            if (convertBody && goal.Tag == Tag.Str)
+            {
+                bool wrapped = false;
+                goal = MetaBodyConvert.WrapVariableSubgoals(engine, goal, ref wrapped);
+            }
 
             // Save call/N's extra args before SetRegister reshuffles them.
             // Per-engine scratch: consumed into registers below,
@@ -275,10 +285,11 @@ public sealed partial class IlPredicateCompiler
                     case MetaRouteKind.CallRecurse:
                         return Dispatch(engine,
                             Shumway.Builtins.BuiltinsRegistry.GetById(route.Arg).Arity,
-                            engine.B);
+                            engine.B, convertBody: true);
                     case MetaRouteKind.DollarCall:
                         return Dispatch(engine, 1,
-                            (int)DerefCell(engine, engine.GetRegister(1)).AsInt);
+                            (int)DerefCell(engine, engine.GetRegister(1)).AsInt,
+                            convertBody: false);
                     case MetaRouteKind.Builtin:
                         return InvokeBuiltinGoal(engine, route.Arg);
                     case MetaRouteKind.BarrierHelperJump:
@@ -388,14 +399,14 @@ public sealed partial class IlPredicateCompiler
                     // (a fresh call boundary).
                     if (routeCacheable)
                         cache[routeKey] = new MetaRoute(MetaRouteKind.CallRecurse, builtinId);
-                    return Dispatch(engine, builtin.Arity, engine.B);
+                    return Dispatch(engine, builtin.Arity, engine.B, convertBody: true);
                 }
                 if (builtin.IsDollarCall)
                 {
                     if (routeCacheable)
                         cache[routeKey] = new MetaRoute(MetaRouteKind.DollarCall, builtinId);
                     int innerBarrier = (int)DerefCell(engine, engine.GetRegister(1)).AsInt;
-                    return Dispatch(engine, 1, innerBarrier);
+                    return Dispatch(engine, 1, innerBarrier, convertBody: false);
                 }
                 if (routeCacheable)
                     cache[routeKey] = new MetaRoute(MetaRouteKind.Builtin, builtinId);

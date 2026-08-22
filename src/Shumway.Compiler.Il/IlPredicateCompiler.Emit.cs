@@ -880,6 +880,9 @@ public sealed partial class IlPredicateCompiler
                         emit.LoadArgument(0);
                         emit.Call(EngineBGetter);
                     }
+                    // convertBody: call/N converts (SS7.6.2); $call/2
+                    // dispatches an already-converted body.
+                    emit.LoadConstant(!builtinEntry.IsDollarCall);
                     emit.Call(IlMetaCallHelperDispatchMethod);
                     emit.StoreLocal(target);
 

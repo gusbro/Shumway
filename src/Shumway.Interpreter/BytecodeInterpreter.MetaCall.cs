@@ -263,6 +263,7 @@ public sealed partial class BytecodeInterpreter
             "type_error", "callable", _engine, Cell.Str(strBase));
     }
 
+
     private bool IsBodyConvertible(Cell c)
     {
         c = DerefCell(c);
@@ -418,7 +419,8 @@ public sealed partial class BytecodeInterpreter
     ///
     /// <para>Returns false only on an unrecoverable failure (no choice
     /// point remains).</para></summary>
-    private bool DispatchCall(ProgramView code, int callArity, int barrier)
+    private bool DispatchCall(
+        ProgramView code, int callArity, int barrier, bool convertBody = true)
     {
         // Sizing diagnostic (profile builds only): how many goals are dispatched by
         // runtime term inspection — the cost class the link-time
@@ -442,6 +444,23 @@ public sealed partial class BytecodeInterpreter
         // real goal; the module (or -1) steers the user-address resolution below
         // so a bare goal functor resolves against that module's locals first.
         int resolutionModule = PrepareMqualGoal(ref goal);
+
+        // SS7.6.2 converts the WHOLE body up front, at the call/N boundary:
+        // in call(G) with G = (C=(!), (X=1,C;X=2)), C is a variable AT
+        // CONVERSION TIME, so it converts to call(C) and the ! it is later
+        // bound to cuts only within that call. Dispatching lazily loses
+        // this: by the time '$call' reaches C, its home cell holds a plain
+        // `!`, indistinguishable from one written literally. So variable
+        // sub-goals wrap HERE — and only here: '$call'/2 dispatches a body
+        // this conversion already produced (convertBody: false), and
+        // re-converting there would re-lose sub-goals bound mid-body.
+        // Allocation-free when the skeleton has no variable positions.
+        if (convertBody && goal.Tag == Tag.Str)
+        {
+            bool wrapped = false;
+            goal = Shumway.Core.MetaBodyConvert.WrapVariableSubgoals(
+                _engine, goal, ref wrapped);
+        }
 
         // Save call/N's extra arguments before the registers are reloaded.
         // The per-engine scratch is safe here: the extras are consumed into

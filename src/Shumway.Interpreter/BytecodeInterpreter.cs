@@ -2241,7 +2241,7 @@ public sealed partial class BytecodeInterpreter
                         // control helper: X1 carries the barrier
                         // the enclosing call established for a `!` in X0.
                         int barrier = (int)DerefCell(_engine.GetRegister(1)).AsInt;
-                        if (!DispatchCall(code, 1, barrier))
+                        if (!DispatchCall(code, 1, barrier, convertBody: false))
                             return InterpreterResult.Failed;
                         break;
                     }
