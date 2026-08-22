@@ -842,10 +842,20 @@ public sealed partial class Activation
     /// each first. Returns <c>true</c> on success, <c>false</c> on failure. On failure the
     /// caller is responsible for unwinding the trail back to the pre-unify state.
     /// </summary>
+    /// <summary>Set by the depth guard inside the unify walk to request an
+    /// escalated (pair-guarded) RESTART from the entry point. Never survives
+    /// an entry call: consumed (or found clear) before it returns.</summary>
+    private bool _unifyEscalate;
+
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool Unify(int aIdx, int bIdx)
-        => Unify(aIdx, bIdx, 0, null);
+    {
+        if (Unify(aIdx, bIdx, 0, null)) return true;
+        if (!_unifyEscalate) return false;
+        _unifyEscalate = false;
+        return Unify(aIdx, bIdx, 0, new HashSet<long>());
+    }
 
     /// <summary>C#-recursion depth past which plain unification escalates to
     /// the guarded (pair-set) mode. Typical terms never reach it and pay
@@ -870,7 +880,18 @@ public sealed partial class Activation
     {
         Profiler.Unify();
         if (activePairs is null && depth >= UnifyRecursionLimit)
-            activePairs = new HashSet<long>();
+        {
+            // Escalate by RESTART, not in place: a set created here only
+            // covers THIS subtree — the recursion unwinds below the limit,
+            // dives into the cycle again with a fresh empty set, and the
+            // pair knowledge is lost forever (A=A*B, B=C*A*C, A=B hung
+            // exactly so, oscillating around the limit). The entry point
+            // re-runs the WHOLE unification with the guard on from depth 0;
+            // bindings already made are monotone (they re-unify via the
+            // address shortcut or the pair set), so no rollback is needed.
+            _unifyEscalate = true;
+            return false;
+        }
         int aAddr = Deref(aIdx);
         int bAddr = Deref(bIdx);
         if (aAddr == bAddr) return true;
@@ -967,8 +988,8 @@ public sealed partial class Activation
         {
             Tag.Atom => a.AsAtomId == b.AsAtomId,
             Tag.Int => a.AsInt == b.AsInt,
-            Tag.Str => UnifyStr(a.AsHeapIndex, b.AsHeapIndex),
-            Tag.Lis => UnifyLis(a.AsHeapIndex, b.AsHeapIndex),
+            Tag.Str => GuardedUnifyStr(a.AsHeapIndex, b.AsHeapIndex),
+            Tag.Lis => GuardedUnifyLis(a.AsHeapIndex, b.AsHeapIndex),
             Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
             Tag.Rational => _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
@@ -1025,6 +1046,22 @@ public sealed partial class Activation
     /// notably long cons-cell lists, which is precisely why PSTR exists for strings —
     /// would warrant a future switch to an explicit push-down list.</para>
     /// </summary>
+    private bool GuardedUnifyStr(int fA, int fB)
+    {
+        if (UnifyStr(fA, fB)) return true;
+        if (!_unifyEscalate) return false;
+        _unifyEscalate = false;
+        return UnifyStr(fA, fB, 0, new HashSet<long>());
+    }
+
+    private bool GuardedUnifyLis(int hA, int hB)
+    {
+        if (UnifyLis(hA, hB)) return true;
+        if (!_unifyEscalate) return false;
+        _unifyEscalate = false;
+        return UnifyLis(hA, hB, 0, new HashSet<long>());
+    }
+
     private bool UnifyStr(int fA, int fB, int depth = 0, HashSet<long>? activePairs = null)
     {
         int functorIdA = _heap[fA].AsFunctorId;

@@ -110,4 +110,19 @@ public class Phase33I9CyclicCompareTests
         Assert.True(Holds("X = f(100000000000000000000, X), " +
                           "Y = f(100000000000000000000, Y), X == Y."));
     }
+
+    [Fact]
+    public void UnifyingDistinctlyShapedRationalTreesTerminates()
+    {
+        // Unification's depth guard used to escalate IN PLACE: the pair set
+        // covered only the subtree that crossed the limit, the recursion
+        // unwound below it, dove into the cycle again with a fresh empty set,
+        // and the walk cycled forever with bounded depth (Trealla test0406).
+        // The guard now escalates by RESTART from the root.
+        var e = new PrologEngine();
+        Assert.True(e.Query("A=A*B, B=C*A*C, A=B, A==B.").Success);
+        Assert.True(e.Query("X=f(X), Y=f(f(Y)), X=Y, X==Y.").Success);
+        // A cyclic pair that must FAIL still fails (no false positives).
+        Assert.False(e.Query("X=f(X), Y=g(Y), X=Y.").Success);
+    }
 }
