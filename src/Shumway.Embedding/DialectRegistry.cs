@@ -46,7 +46,25 @@ internal static class DialectRegistry
             _ => (false, ""),
         });
 
-    private static readonly Pack[] Packs = { Scryer, Swi };
+    // The trealla pack — Trealla's default is double_quotes = chars. Its
+    // library sources are pure Prolog over ordinary builtins (no '$' C
+    // internals the way Scryer's are), so a configured tree
+    // (-L trealla:dir) resolves most names from the FILE; this pack covers
+    // what an unconfigured engine can still honour. freeze/when live in our
+    // coroutining library, clpz maps onto native clpfd (`in`/`ins`/label).
+    private static readonly Pack Trealla = new(
+        "trealla", DoubleQuotesMode.Chars,
+        name => name switch
+        {
+            "lists" or "dcgs" or "format" or "charsio" or "error"
+                or "pairs" or "ordsets" or "debug" or "gensym"
+                or "iso_ext" => (true, ""),
+            "freeze" or "when" => (true, ":- use_module(library(coroutining)).\n"),
+            "clpz" => (true, ":- use_module(library(clpfd)).\n"),
+            _ => (false, ""),
+        });
+
+    private static readonly Pack[] Packs = { Scryer, Swi, Trealla };
 
     /// <summary>True when <paramref name="name"/> is a registered dialect.</summary>
     internal static bool IsKnownDialect(string name) =>

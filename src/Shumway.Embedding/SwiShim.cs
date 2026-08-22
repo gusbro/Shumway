@@ -172,8 +172,6 @@ internal static class SwiShim
             atom_codes(A, Codes).
 
         % ----- term copying / identity -----
-        :- public copy_term_nat/2.
-        copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).
         :- public duplicate_term/2.
         duplicate_term(Term, Copy) :- copy_term(Term, Copy).
         :- public same_term/2.

@@ -112,6 +112,19 @@ internal static class Prelude
         :- public time/1.
         :- public chdir/1.
         :- public append/2.
+        :- public flatten/2.
+        :- public limit/2.
+        :- public offset/2.
+        :- public copy_term_nat/2.
+        :- public bb_put/2.
+        :- public bb_get/2.
+        :- public bb_update/3.
+        :- public bb_delete/2.
+        :- public bb_b_put/2.
+        :- public read_term_from_chars/3.
+        :- public write_term_to_chars/3.
+        :- meta_predicate(limit(*, 0)).
+        :- meta_predicate(offset(*, 0)).
         :- public ':'/2.
         :- public phrase/2.
         :- public phrase/3.
@@ -1243,6 +1256,59 @@ internal static class Prelude
         %! append(+ListOfLists, -List) | Lists | Concatenates a list of lists (SWI library form).
         append([], []).
         append([L|Ls], As) :- append(L, Ws, As), append(Ls, Ws).
+
+        %! flatten(+Nested, -Flat) | Lists | Flattens nested lists into a single list (SWI/Trealla library form); a non-list element (or variable) becomes an element of Flat.
+        flatten(Nested, Flat) :- '$flatten'(Nested, [], Flat0), !, Flat = Flat0.
+        '$flatten'(V, T, [V|T]) :- var(V), !.
+        '$flatten'([], T, T) :- !.
+        '$flatten'([H|R], T, F) :- !, '$flatten'(R, T, F1), '$flatten'(H, F1, F).
+        '$flatten'(X, T, [X|T]).
+
+        %! limit(+N, :Goal) | Control | Solutions of Goal, at most the first N (SWI solution_sequences / Trealla form). Fails when N < 1.
+        limit(N, Goal) :-
+            ( integer(N) -> true
+            ; throw(error(type_error(integer, N), limit/2)) ),
+            N >= 1,
+            call_nth(Goal, Nth),
+            ( Nth =:= N -> ! ; true ).
+
+        %! offset(+N, :Goal) | Control | Solutions of Goal after skipping the first N.
+        offset(N, Goal) :-
+            ( integer(N) -> true
+            ; throw(error(type_error(integer, N), offset/2)) ),
+            call_nth(Goal, Nth),
+            Nth > N.
+
+        %! copy_term_nat(?Term, -Copy) | Term inspection & construction | copy_term/2 ignoring attributes (SWI/Trealla).
+        copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).
+
+        %! bb_put(+Key, +Value) | Global variables | Blackboard store (SICStus/Trealla): non-backtrackable global assignment.
+        bb_put(Key, Value) :- nb_setval(Key, Value).
+
+        %! bb_get(+Key, -Value) | Global variables | Reads a blackboard entry; FAILS when Key is unset (unlike nb_getval/2, which throws).
+        bb_get(Key, Value) :-
+            catch(nb_getval(Key, V0), _, fail),
+            V0 \== '$bb_absent',
+            Value = V0.
+
+        %! bb_update(+Key, ?Old, +New) | Global variables | Unifies Old with the current value and replaces it with New; fails (leaving the entry unchanged) when Old does not match.
+        bb_update(Key, Old, New) :- bb_get(Key, Old), bb_put(Key, New).
+
+        %! bb_delete(+Key, -Value) | Global variables | Unifies Value with the current value and removes the entry.
+        bb_delete(Key, Value) :- bb_get(Key, Value), nb_setval(Key, '$bb_absent').
+
+        %! bb_b_put(+Key, +Value) | Global variables | Backtrackable blackboard assignment: the previous value is restored on backtracking.
+        bb_b_put(Key, Value) :- b_setval(Key, Value).
+
+        %! read_term_from_chars(+Chars, -Term, +Options) | Input / output | Reads a term from a character list (Trealla arity/order).
+        read_term_from_chars(Chars, Term, Options) :-
+            atom_chars(Atom, Chars),
+            read_term_from_atom(Atom, Term, Options).
+
+        %! write_term_to_chars(+Term, +Options, -Chars) | Input / output | Writes a term to a character list with write_term/2's options (Trealla arity/order).
+        write_term_to_chars(Term, Options, Chars) :-
+            with_output_to(atom(Atom), write_term(Term, Options)),
+            atom_chars(Atom, Chars).
 
         %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038 — an export-qualified module's own version of a builtin-named predicate (Scryer iso_ext's copy_term/3) must win for M:Goal.
         ':'(Module, Goal) :- call(Module:Goal).

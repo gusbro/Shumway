@@ -80,6 +80,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `compound_name_arity(?Compound, ?Name, ?Arity)` | Like functor/3 but restricted to compound terms (arity >= 1) (SWI). |
 | `copy_term(+Term, -Copy)` | Copies a term with fresh variables. |
 | `copy_term(+Term, -Copy, -Goals)` | Copies a term with fresh variables and collects the residual attribute goals. |
+| `copy_term_nat(?Term, -Copy)` | copy_term/2 ignoring attributes (SWI/Trealla). |
 | `expand_term(+Term, -Expanded)` | If Term has the form Head --> Body, expands it via the DCG transformation Shumway applies internally on consult. Non-DCG terms pass through unchanged. |
 | `functor(?Term, ?Name, ?Arity)` | Relates a term to its functor name and arity. |
 | `get_seed(-Seed)` | Unifies Seed with a value that set_seed/1 can later use to reproduce exactly the random sequence that follows this call (the generator is reseeded as a side effect). |
@@ -135,7 +136,9 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `halt(+Status)` | Halts the engine with the given exit code. |
 | `if(:Condition, :Then, :Else)` | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
+| `limit(+N, :Goal)` | Solutions of Goal, at most the first N (SWI solution_sequences / Trealla form). Fails when N < 1. |
 | `notrace` | Turns the four-port tracer off. |
+| `offset(+N, :Goal)` | Solutions of Goal after skipping the first N. |
 | `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |
 | `repeat` | Succeeds, and succeeds again on every backtrack — an unbounded choice point. |
 | `setup_call_cleanup(:Setup, :Goal, :Cleanup)` | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. |
@@ -218,6 +221,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `append(?List1, ?List2, ?List)` | Concatenates List1 and List2 into List; backtracks over splits of List. |
 | `delete(+List, +Elem, -Rest)` | Rest is List with every element that unifies with Elem removed. |
 | `exclude(:Goal, +List, -Excluded)` | Excluded holds the elements of List for which Goal fails. |
+| `flatten(+Nested, -Flat)` | Flattens nested lists into a single list (SWI/Trealla library form); a non-list element (or variable) becomes an element of Flat. |
 | `foldl(:Goal, ?List, +V0, -V)` | Folds Goal over a list, threading an accumulator from V0 to V. |
 | `foldl(:Goal, ?List1, ?List2, +V0, -V)` | Folds Goal over two lists, threading an accumulator from V0 to V. |
 | `include(:Goal, +List, -Included)` | Included holds the elements of List for which Goal succeeds. |
@@ -379,6 +383,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `read(+Stream, -Term)` | Reads one term from a stream (ISO §8.14.2). |
 | `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `read_term(+Stream, -Term, +Options)` | Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options. |
+| `read_term_from_chars(+Chars, -Term, +Options)` | Reads a term from a character list (Trealla arity/order). |
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `rename(+From, +To)` | Renames / moves a file from From to To. Raises existence_error if From doesn't exist or permission_error if To already exists. |
 | `rmdir(+Path)` | Removes the directory Path. Fails when the directory is non-empty; raises existence_error if it doesn't exist. |
@@ -407,6 +412,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `write_canonical(+Stream, +Term)` | Writes a term in canonical form to a stream (ISO §8.14.6). |
 | `write_term(+Term, +Options)` | Writes a term honouring the given list of write options. |
 | `write_term(+Stream, +Term, +Options)` | Writes a term to a stream honouring options (ISO §8.14.3). |
+| `write_term_to_chars(+Term, +Options, -Chars)` | Writes a term to a character list with write_term/2's options (Trealla arity/order). |
 | `writeln(+Term)` | Writes a term followed by a newline. |
 | `writeq(+Term)` | Writes a term in quoted (parseable) form (ISO §8.14.5). |
 | `writeq(+Stream, +Term)` | Writes a term in quoted (parseable) form to a stream (ISO §8.14.5). |
@@ -445,6 +451,11 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `b_getval(+Key, -Value)` | Reads a backtrackable global variable; existence_error if unset. |
 | `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. |
+| `bb_b_put(+Key, +Value)` | Backtrackable blackboard assignment: the previous value is restored on backtracking. |
+| `bb_delete(+Key, -Value)` | Unifies Value with the current value and removes the entry. |
+| `bb_get(+Key, -Value)` | Reads a blackboard entry; FAILS when Key is unset (unlike nb_getval/2, which throws). |
+| `bb_put(+Key, +Value)` | Blackboard store (SICStus/Trealla): non-backtrackable global assignment. |
+| `bb_update(+Key, ?Old, +New)` | Unifies Old with the current value and replaces it with New; fails (leaving the entry unchanged) when Old does not match. |
 | `flag(+Key, ?Old, +New)` | Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked. |
 | `get_flag(+Key, -Value)` | Reads a flag's value (0 if never set). |
 | `nb_current(?Key, ?Value)` | Enumerates global variables; fails for an unset Key (no throw). |
