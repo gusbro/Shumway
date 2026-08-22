@@ -3,8 +3,10 @@ namespace Shumway.Embedding;
 /// <summary>
 /// Pure I/O — running a DCG over a stream's text without reading the whole
 /// thing first. An <em>opt-in</em> module, loaded by
-/// <see cref="PrologEngine.UsePio"/> or by <c>use_module(library(pio))</c>;
-/// Scryer's library of the same name is where the idea and the name come from.
+/// <see cref="PrologEngine.UseLazyInput"/> or by
+/// <c>use_module(library(lazy_input))</c>. The technique is Scryer's
+/// <c>library(pio)</c>; the name is not, because Scryer and SWI both ship a
+/// <c>pio</c> and their contents differ from each other and from this.
 ///
 /// <para>The input is a packed list whose tail is a frozen variable (ADR-047).
 /// A grammar walks the window it already has, allocating nothing per element,
@@ -22,12 +24,12 @@ namespace Shumway.Embedding;
 /// consumed windows accumulate. See ADR-047; the fix is a heap-GC arc, not a
 /// change here.</para>
 /// </summary>
-internal static class Pio
+internal static class LazyInput
 {
-    public const string ModuleName = "pio";
+    public const string ModuleName = "lazy_input";
 
     public const string Source = """
-        :- module(pio).
+        :- module(lazy_input).
         :- use_module(library(coroutining)).
 
         :- public phrase_from_stream/2.
@@ -54,7 +56,7 @@ internal static class Pio
 
         %! phrase_from_file(:Body, +File, +Options) | Grammar | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes).
         phrase_from_file(Body, File, Options) :-
-            '$pio_kind'(Options, Kind, OpenOptions),
+            '$lazy_kind'(Options, Kind, OpenOptions),
             setup_call_cleanup(open(File, read, Stream, OpenOptions),
                                phrase_from_stream(Body, Stream, Kind),
                                close(Stream)).
@@ -81,8 +83,8 @@ internal static class Pio
               partial_string(Window, Ls, Ls0)
             ).
 
-        '$pio_kind'([], chars, []).
-        '$pio_kind'([text_kind(K)|T], K, Rest) :- !, '$pio_kind'(T, _, Rest).
-        '$pio_kind'([O|T], K, [O|Rest]) :- '$pio_kind'(T, K, Rest).
+        '$lazy_kind'([], chars, []).
+        '$lazy_kind'([text_kind(K)|T], K, Rest) :- !, '$lazy_kind'(T, _, Rest).
+        '$lazy_kind'([O|T], K, [O|Rest]) :- '$lazy_kind'(T, K, Rest).
         """;
 }

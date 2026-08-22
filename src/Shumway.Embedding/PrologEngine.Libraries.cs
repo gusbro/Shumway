@@ -54,14 +54,14 @@ public sealed partial class PrologEngine
     /// <c>phrase_from_stream/2,3</c>, which run a DCG over a stream read lazily
     /// in windows. Opt-in, and it pulls coroutining in with it — the lazy
     /// list's tail is a frozen variable.</summary>
-    private bool _pioLoaded;
-    public void UsePio()
+    private bool _lazyInputLoaded;
+    public void UseLazyInput()
     {
-        if (_pioLoaded) return;
-        _pioLoaded = true;
+        if (_lazyInputLoaded) return;
+        _lazyInputLoaded = true;
         UseCoroutining();
-        ConsultString(Pio.Source);
-        MarkModuleNonDebuggable(Pio.ModuleName);   // ADR-035 — a library, not the user's code
+        ConsultString(LazyInput.Source);
+        MarkModuleNonDebuggable(LazyInput.ModuleName);   // ADR-035 — a library, not the user's code
     }
 
     // Compatibility libraries loaded on demand by use_module(library(Name)),
@@ -618,7 +618,7 @@ public sealed partial class PrologEngine
                 case "clpfd": UseClpfd(); return null;
                 case "clpr":  UseClpr();  return null;
                 case "coroutining": UseCoroutining(); return null;
-                case "pio": UsePio(); return null;
+                case "lazy_input": UseLazyInput(); return null;
                 default:
                     // (1.5) the module is ALREADY LOADED (typically from a
                     // bundle whose manifests LoadBundle reconstructed):

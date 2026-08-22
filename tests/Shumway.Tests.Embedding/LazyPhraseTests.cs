@@ -36,7 +36,7 @@ public class LazyPhraseTests : IDisposable
     {
         var e = new PrologEngine();
         e.ConsultString("""
-            :- use_module(library(pio)).
+            :- use_module(library(lazy_input)).
             lines([L|Ls]) --> line(L), !, lines(Ls).
             lines([]) --> [].
             line([]) --> "\n", !.
@@ -88,7 +88,7 @@ public class LazyPhraseTests : IDisposable
     {
         var e = new PrologEngine();
         e.ConsultString("""
-            :- use_module(library(pio)).
+            :- use_module(library(lazy_input)).
             two([A,B]) --> [A], [B].
             """);
         string f = Write("ab.txt", "ab");
