@@ -60,11 +60,13 @@ public sealed class PrologFlags
     /// <c>:</c> is accepted and ignored).</summary>
     public bool ArityCompat { get; set; }
 
-    /// <summary>SWI digit-group separators (<c>10_000</c>) — see
-    /// <c>Lexer.DigitSeparators</c>. Off by default (ISO); the swi dialect
-    /// load scope turns it on for the duration of that library subtree's
-    /// consult, so SWI sources parse and everything else stays strict.</summary>
-    public bool DigitSeparators { get; set; }
+    /// <summary>Digit-group separators (<c>10_000</c>) — see
+    /// <c>Lexer.DigitSeparators</c>. ON by default: strict ISO lexes
+    /// <c>1_000</c> as the integer 1 followed by the variable <c>_000</c>,
+    /// which no term position accepts — so giving the spelling a meaning
+    /// cannot change any conforming program, and SWI, Trealla and Scryer
+    /// all read it. The separator must sit strictly between digits.</summary>
+    public bool DigitSeparators { get; set; } = true;
 
     /// <summary>SWI-lenient §6.3.1.3: allow a bare operator atom whose priority
     /// exceeds the operand position's maximum (<c>:- dynamic foo/2 as
