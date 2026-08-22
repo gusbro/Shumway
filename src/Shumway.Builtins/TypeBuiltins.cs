@@ -184,42 +184,62 @@ public static class TypeBuiltins
 
     private static bool IsGroundCell(Activation engine, Cell cell)
     {
-        if (cell.Tag == Tag.Ref)
+        // Iterative, cycle-safe walk: ground(F1) with F1=f(1,F2), F2=f(1,F1)
+        // must terminate (a rational tree with no variables IS ground), and a
+        // 200k-deep list must not overflow the C# stack. The containers are
+        // lazy — a leaf argument allocates nothing.
+        List<Cell>? work = null;
+        HashSet<int>? visited = null;
+        while (true)
         {
-            int addr = engine.Deref(cell.AsHeapIndex);
-            cell = engine.GetHeap(addr);
-            if (cell.Tag == Tag.Ref) return false;
-        }
-        switch (cell.Tag)
-        {
-            // An attributed variable is an UNBOUND variable (freeze/dif/clpfd
-            // attach attributes to it) — a term holding one is not ground.
-            case Tag.AttVar:
-                return false;
-            case Tag.Atom:
-            case Tag.Int:
-            case Tag.BigInt:
-            case Tag.Rational:
-            case Tag.Float:
-                return true;
-            // A packed list may be partial — its open tail is an unbound
-            // variable, and a term holding one is not ground.
-            case Tag.Pstr:
-                return IsGroundCell(engine, engine.PstrFinalTailCell(cell));
-            case Tag.Str:
-                int functorIdx = cell.AsHeapIndex;
-                var (_, arity) = FunctorTable.Lookup(
-                    engine.GetHeap(functorIdx).AsFunctorId);
-                for (int i = 0; i < arity; i++)
-                    if (!IsGroundCell(engine, engine.GetHeap(functorIdx + 1 + i)))
-                        return false;
-                return true;
-            case Tag.Lis:
-                int headIdx = cell.AsHeapIndex;
-                return IsGroundCell(engine, engine.GetHeap(headIdx))
-                    && IsGroundCell(engine, engine.GetHeap(headIdx + 1));
-            default:
-                return true;
+            if (cell.Tag == Tag.Ref)
+            {
+                int addr = engine.Deref(cell.AsHeapIndex);
+                cell = engine.GetHeap(addr);
+                if (cell.Tag == Tag.Ref) return false;
+            }
+            switch (cell.Tag)
+            {
+                // An attributed variable is an UNBOUND variable (freeze/dif/
+                // clpfd attach attributes to it) — a term holding one is not
+                // ground.
+                case Tag.AttVar:
+                    return false;
+                // A packed list may be partial — its open tail is an unbound
+                // variable, and a term holding one is not ground.
+                case Tag.Pstr:
+                    cell = engine.PstrFinalTailCell(cell);
+                    continue;
+                case Tag.Str:
+                {
+                    int functorIdx = cell.AsHeapIndex;
+                    visited ??= new HashSet<int>();
+                    if (visited.Add(functorIdx))
+                    {
+                        var (_, arity) = FunctorTable.Lookup(
+                            engine.GetHeap(functorIdx).AsFunctorId);
+                        work ??= new List<Cell>();
+                        for (int i = 0; i < arity; i++)
+                            work.Add(engine.GetHeap(functorIdx + 1 + i));
+                    }
+                    break;
+                }
+                case Tag.Lis:
+                {
+                    int headIdx = cell.AsHeapIndex;
+                    visited ??= new HashSet<int>();
+                    if (visited.Add(headIdx))
+                    {
+                        work ??= new List<Cell>();
+                        work.Add(engine.GetHeap(headIdx));
+                        work.Add(engine.GetHeap(headIdx + 1));
+                    }
+                    break;
+                }
+            }
+            if (work is null || work.Count == 0) return true;
+            cell = work[work.Count - 1];
+            work.RemoveAt(work.Count - 1);
         }
     }
 

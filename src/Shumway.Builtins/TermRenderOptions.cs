@@ -42,6 +42,15 @@ public sealed class TermRenderOptions
     /// shared Default instance stays immutable in practice.</summary>
     public int CurrentDepth { get; set; }
 
+    /// <summary>Cycle safety for the writer (rational trees): the heap
+    /// addresses of the compound nodes currently being rendered — the path
+    /// from the root. A revisit is a back-edge; the first is followed (one
+    /// unroll, matching how much of the cycle other systems show) and any
+    /// further one renders <c>...</c>. Reset by the entry wrapper; lazy, so
+    /// an acyclic term allocates nothing.</summary>
+    internal System.Collections.Generic.HashSet<int>? OnPath;
+    internal int CycleUnrollBudget = 1;
+
     /// <summary><c>portrayed(true)</c>: called for every subterm before
     /// default rendering; returning true means the hook produced the
     /// output (SICStus portray/1 protocol — the embedding wires it to a

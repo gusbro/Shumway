@@ -23,7 +23,13 @@ public static class TermRenderer
         => Render(engine, cell, output, TermRenderOptions.Default);
 
     public static void Render(Activation engine, Cell cell, TextWriter output, TermRenderOptions options)
-        => Render(engine, cell, output, options, maxPriority: 1200);
+    {
+        // Entry funnel — reset the cycle-safety state (the Default options
+        // instance is shared across calls).
+        options.OnPath?.Clear();
+        options.CycleUnrollBudget = 1;
+        Render(engine, cell, output, options, maxPriority: 1200);
+    }
 
     /// <summary>Renders <paramref name="cell"/> bounded by
     /// <paramref name="maxPriority"/>: if the term itself is an operator
@@ -88,20 +94,31 @@ public static class TermRenderer
                 break;
             }
             case Tag.Str:
-                if (options.MaxDepth > 0)
+            {
+                if (!EnterCycleNode(options, cell.AsHeapIndex, out bool strAdded))
                 {
-                    if (options.CurrentDepth >= options.MaxDepth)
-                    {
-                        output.Write("...");
-                        break;
-                    }
-                    options.CurrentDepth++;
-                    try { RenderCompound(engine, cell, output, options, maxPriority); }
-                    finally { options.CurrentDepth--; }
+                    output.Write("...");
                     break;
                 }
-                RenderCompound(engine, cell, output, options, maxPriority);
+                try
+                {
+                    if (options.MaxDepth > 0)
+                    {
+                        if (options.CurrentDepth >= options.MaxDepth)
+                        {
+                            output.Write("...");
+                            break;
+                        }
+                        options.CurrentDepth++;
+                        try { RenderCompound(engine, cell, output, options, maxPriority); }
+                        finally { options.CurrentDepth--; }
+                        break;
+                    }
+                    RenderCompound(engine, cell, output, options, maxPriority);
+                }
+                finally { if (strAdded) options.OnPath!.Remove(cell.AsHeapIndex); }
                 break;
+            }
             // A packed list is the list it denotes, so it renders through the
             // same arm — which is also what gives it quoting, ignore_ops,
             // max_depth and numbervars. Printing it as "…" bypassed all four,
@@ -109,26 +126,53 @@ public static class TermRenderer
             // did not read back.
             case Tag.Lis:
             case Tag.Pstr:
-                if (options.MaxDepth > 0)
+            {
+                bool lisAdded = false;
+                if (cell.Tag == Tag.Lis
+                    && !EnterCycleNode(options, cell.AsHeapIndex, out lisAdded))
                 {
-                    if (options.CurrentDepth >= options.MaxDepth)
-                    {
-                        output.Write("...");
-                        break;
-                    }
-                    options.CurrentDepth++;
-                    try { RenderList(engine, cell, output, options); }
-                    finally { options.CurrentDepth--; }
+                    output.Write("...");
                     break;
                 }
-                RenderList(engine, cell, output, options);
+                try
+                {
+                    if (options.MaxDepth > 0)
+                    {
+                        if (options.CurrentDepth >= options.MaxDepth)
+                        {
+                            output.Write("...");
+                            break;
+                        }
+                        options.CurrentDepth++;
+                        try { RenderList(engine, cell, output, options); }
+                        finally { options.CurrentDepth--; }
+                        break;
+                    }
+                    RenderList(engine, cell, output, options);
+                }
+                finally { if (lisAdded) options.OnPath!.Remove(cell.AsHeapIndex); }
                 break;
+            }
             default:
                 output.Write('<');
                 output.Write(cell.Tag.ToString());
                 output.Write('>');
                 break;
         }
+    }
+
+    /// <summary>Cycle gate: true = proceed (and <paramref name="added"/>
+    /// says whether this frame owns the path entry and must remove it on the
+    /// way out); false = back-edge with the unroll budget spent — the caller
+    /// renders <c>...</c> instead.</summary>
+    private static bool EnterCycleNode(TermRenderOptions options, int nodeAddr, out bool added)
+    {
+        var path = options.OnPath ??= new System.Collections.Generic.HashSet<int>();
+        added = path.Add(nodeAddr);
+        if (added) return true;
+        if (options.CycleUnrollBudget <= 0) return false;
+        options.CycleUnrollBudget--;
+        return true;
     }
 
     private static int Resolve(Activation engine, ref Cell cell)
@@ -422,9 +466,24 @@ public static class TermRenderer
         // gate incremented); every further cons consumes another. When the
         // budget runs out the tail elides to `|...`.
         int consDepth = options.CurrentDepth;
+        System.Collections.Generic.List<int>? spine = null;
         while (true)
         {
             Resolve(engine, ref cursor);
+            // Spine back-edge (a cyclic cons chain): the entry cons was
+            // gated by the caller; every FURTHER cons joins the path here
+            // so `L = [a|L]` terminates as `[a,a|...]`.
+            if (!first && cursor.Tag == Tag.Lis)
+            {
+                if (!EnterCycleNode(options, cursor.AsHeapIndex, out bool consAdded))
+                {
+                    output.Write("|...]");
+                    RemoveSpine(options, spine);
+                    return;
+                }
+                if (consAdded)
+                    (spine ??= new System.Collections.Generic.List<int>()).Add(cursor.AsHeapIndex);
+            }
             if (!engine.TryUnconsListLike(cursor, out Cell head, out Cell tail)) break;
             if (!first)
             {
@@ -432,6 +491,7 @@ public static class TermRenderer
                 if (options.MaxDepth > 0 && consDepth > options.MaxDepth)
                 {
                     output.Write("|...]");
+                    RemoveSpine(options, spine);
                     return;
                 }
                 output.Write(',');   // ISO: no layout between elements
@@ -458,6 +518,14 @@ public static class TermRenderer
             Render(engine, cursor, output, options, 999);   // arg-priority tail
         }
         output.Write(']');
+        RemoveSpine(options, spine);
+    }
+
+    private static void RemoveSpine(
+        TermRenderOptions options, System.Collections.Generic.List<int>? spine)
+    {
+        if (spine is null) return;
+        foreach (int addr in spine) options.OnPath!.Remove(addr);
     }
 
     /// <summary><c>portray_text(true)</c>: writes a list of one-character atoms,
