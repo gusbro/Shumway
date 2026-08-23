@@ -305,7 +305,7 @@ public sealed partial class PrologEngine
             // library(when): SWI's when.pl dispatches conditions through
             // '$eval_when_condition'/2, a kernel helper we lack; Shumway ships its
             // own coroutining when/2.
-            ["when"] = new[] { "$eval_when_condition" },
+            ["when"] = new[] { "$eval_when_condition", "library(atts)" },
             // library(arithmetic): user-defined evaluable functions ride SWI's
             // GLOBAL goal_expansion + module introspection (import_module,
             // imported_from). On Shumway that hook mis-expands every later
@@ -348,6 +348,14 @@ public sealed partial class PrologEngine
             // yet certified on Shumway (its own campaign, like Scryer's clpz
             // was); native clpfd speaks the same in/ins/#=/label vocabulary.
             ["clpz"] = new[] { "clpz_current_propagator" },
+            // ANY tree's atts-based freeze/when/dif (Trealla's and Scryer's
+            // are both Triska's code): the engine's native coroutining is
+            // the certified implementation of all three, and the atts-based
+            // ones ride hook subtleties of their home VM (R10 measured the
+            // regressions: the whole dif family flipped when the mounted
+            // tree's versions shadowed ours).
+            ["freeze"] = new[] { "library(atts)" },
+            ["dif"] = new[] { "library(atts)" },
             // SCRYER library(time): wraps the '$cpu_now' native. Shumway's
             // native time/1 and sleep/1 are already bare-global; the file's
             // versions would shadow them with broken ones.
@@ -390,6 +398,8 @@ public sealed partial class PrologEngine
             case "charsio": break;                       // builtin charsio surface
             case "error": break;                         // native must_be/can_be
             case "clpz": UseClpfd(); break;              // until their clpz certifies
+            case "freeze": UseCoroutining(); break;
+            case "dif": UseCoroutining(); break;
             case "time": break;                          // native time/1 + sleep/1 serve
         }
     }

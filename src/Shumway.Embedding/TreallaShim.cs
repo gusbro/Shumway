@@ -20,8 +20,10 @@ internal static class TreallaShim
 
         % memberchk's partial-list core: Tail comes back NONVAR when E was
         % found in the proper prefix, or as the open tail itself when the
-        % walk hit it (the caller decides whether to extend); a proper list
-        % without E simply fails.
+        % walk hit it (their wrapper decides whether to extend). NOT a
+        % delegation to memberchk/2: their lists module IMPORT rebinds the
+        % bare name in user scope at dispatch time, so a shim body calling
+        % memberchk/2 re-enters their wrapper — which calls this — forever.
         '$memberchk'(E, Ls, Tail) :-
             (   var(Ls) -> Tail = Ls
             ;   Ls = [X|Xs] ->
