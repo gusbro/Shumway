@@ -156,9 +156,26 @@ internal sealed class BundleLoader
         Justification = "Only reached when the bundle declares foreign assemblies, "
         + "which are loaded from disk beside it and are outside the trimmer's view "
         + "by construction.")]
+    /// <summary>Arity programs assume unknown=fail (a call to a predicate
+    /// nothing defined or asserted just fails). Applied when a loaded
+    /// bundle carries the Arity bit — separate compilation must not lose
+    /// the CALL semantics the sources were written against. Deliberately
+    /// does NOT flip arity_compat itself: that is a consult/parse mode,
+    /// and it would leak into unrelated files consulted after the bundle
+    /// (their goal directives would be skipped as Arity annotations).</summary>
+    private void ApplyArityRuntimeFlags()
+    {
+        E._flags.Unknown = "fail";
+    }
+
     internal void LoadBundleCore(Bundle bundle, string? bundleDir)
     {
         ArgumentNullException.ThrowIfNull(bundle);
+        // A bundle linked from Arity modules expects Arity call semantics:
+        // a call to an undefined (or abolished) predicate FAILS. Set the
+        // flags before any entry loads; an explicit later
+        // set_prolog_flag(unknown, _) still overrides.
+        if (bundle.ArityCompat) ApplyArityRuntimeFlags();
         // auto-register every foreign DLL the linker
         // recorded into the bundle. Each entry is a filename only;
         // we look for it adjacent to the bundle file first, then
@@ -201,6 +218,9 @@ internal sealed class BundleLoader
             foreach (var member in bundle.ArchiveMembers)
             {
                 var shmo = ShmoReader.FromBytes(member.ShmoBytes);
+                // librarian archives keep the per-object flag — any Arity
+                // member switches the runtime to Arity call semantics.
+                if (shmo.ArityCompat) ApplyArityRuntimeFlags();
                 combined.Add(new BundleEntry(
                     shmo.ModuleName, shmo.Source,
                     compiledBytecode: shmo.Bytecode,
@@ -231,15 +251,19 @@ internal sealed class BundleLoader
         }
         foreach (var entry in effectiveEntries)
         {
-            // replay the entry's `:- op/3` definitions
-            // into the runtime operator table BEFORE loading it. A
-            // source-stripped entry otherwise loses its ops entirely (the
-            // debug path re-executes them via ConsultString, for which this
-            // replay is an idempotent no-op) — and any runtime read/1 /
-            // string_term/2 of text using them would mis-parse.
+            // replay the entry's `:- op/3` definitions BEFORE loading it.
+            // ADR-046 — into the MODULE'S OWN LAYER, not the global table
+            // (a bundle module's private syntax must not change how later
+            // user text parses). A '*'-suffixed type marks an EXPORTED op:
+            // it is also re-advertised so a post-load use_module of this
+            // module installs it in the importer, and — bare-global modules
+            // aside — a directly-usable module's exports reach user via the
+            // same ImportAllExportsIntoUser path as a live consult.
             foreach (var od in entry.Operators)
             {
-                var opType = od.Type switch
+                bool exported = od.Type.EndsWith('*');
+                string typeName = exported ? od.Type[..^1] : od.Type;
+                var opType = typeName switch
                 {
                     "fx" => Shumway.Compiler.Parsing.OperatorType.Fx,
                     "fy" => Shumway.Compiler.Parsing.OperatorType.Fy,
@@ -250,7 +274,21 @@ internal sealed class BundleLoader
                     "yfx" => Shumway.Compiler.Parsing.OperatorType.Yfx,
                     _ => (Shumway.Compiler.Parsing.OperatorType?)null,
                 } ;
-                if (opType is { } t) E.DefineOperator(od.Name, od.Priority, t);
+                if (opType is not { } t) continue;
+                // Bare-global text (no :- module/2) defined its ops in USER
+                // at consult time — replay matches; only an export-qualified
+                // module's ops are scoped to its layer.
+                var opTarget = entry.IsExportQualified
+                    ? E.ModuleOperatorLayer(entry.ModuleName)
+                    : E.Operators;
+                opTarget.Define(od.Name, od.Priority, t);
+                if (exported)
+                {
+                    if (!E._moduleExportedOps.TryGetValue(entry.ModuleName, out var xl))
+                        E._moduleExportedOps[entry.ModuleName] = xl = new();
+                    if (!xl.Contains((od.Priority, t, od.Name)))
+                        xl.Add((od.Priority, t, od.Name));
+                }
             }
             // source-less load. When the bundle was built
             // with --strip (or compiled in Release with

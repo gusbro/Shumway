@@ -456,8 +456,6 @@ public sealed partial class IlPredicateCompiler
             new[] { typeof(int), typeof(int), typeof(int), typeof(int) })!;
     private static readonly MethodInfo EnginePutListMethod =
         typeof(Activation).GetMethod(nameof(Activation.PutList), new[] { typeof(int) })!;
-    private static readonly MethodInfo EngineMakePstrMethod =
-        typeof(Activation).GetMethod(nameof(Activation.MakePstr), new[] { typeof(string) })!;
     private static readonly MethodInfo EngineUnifyRegisterWithHeapAtMethod =
         typeof(Activation).GetMethod(
             nameof(Activation.UnifyRegisterWithHeapAt),

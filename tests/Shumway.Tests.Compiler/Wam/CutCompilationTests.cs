@@ -173,7 +173,7 @@ public class CutCompilationTests
 
         var engine = new Activation();
         var interp = new BytecodeInterpreter(
-            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+            engine, Array.Empty<TextLiteral>(), Array.Empty<double>(), program.SwitchTables);
         Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));
         Assert.Equal(-1, engine.B);                           // try_me_else CP was cut away
     }
@@ -197,7 +197,7 @@ public class CutCompilationTests
 
         var engine = new Activation();
         var interp = new BytecodeInterpreter(
-            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+            engine, Array.Empty<TextLiteral>(), Array.Empty<double>(), program.SwitchTables);
         Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));
         Assert.Equal(-1, engine.B);                           // q's CP was cut away
     }
@@ -223,7 +223,7 @@ public class CutCompilationTests
 
         var engine = new Activation();
         var interp = new BytecodeInterpreter(
-            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+            engine, Array.Empty<TextLiteral>(), Array.Empty<double>(), program.SwitchTables);
         Assert.Equal(InterpreterResult.Failed, interp.Run(program.Bytecode, 0));
     }
 
@@ -243,7 +243,7 @@ public class CutCompilationTests
 
         var engine = new Activation();
         var interp = new BytecodeInterpreter(
-            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+            engine, Array.Empty<TextLiteral>(), Array.Empty<double>(), program.SwitchTables);
         Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));
     }
 }

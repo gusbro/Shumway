@@ -42,7 +42,6 @@ public readonly struct Cell : IEquatable<Cell>
     public int AsFunctorId => (int)Data;
     public int AsBigIntId => (int)Data;
     public int AsRationalId => (int)Data;
-    public int AsStringId => (int)Data;
     public int AsForeignId => (int)Data;
 
     /// <summary>
@@ -113,10 +112,6 @@ public readonly struct Cell : IEquatable<Cell>
     public static Cell BigInt(int tableId)
         => new(((long)Tag.BigInt << TagShift) | (uint)tableId);
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Cell String(int tableId)
-        => new(((long)Tag.String << TagShift) | (uint)tableId);
-
     /// <summary>An exact rational (ADR-039). Payload is an id into the
     /// activation's rational side table — the <see cref="BigInt"/> pattern.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -182,10 +177,16 @@ public readonly struct Cell : IEquatable<Cell>
 
     // ---------- PSTR (partial string) ----------
     //
-    // PSTR header payload (60 bits): length(28) | bufferIdx(30) | offset(2)
-    //   length:    UTF-16 code units in the string slice, 0..2^28-1
+    // PSTR header payload (60 bits): kind(1) | length(27) | bufferIdx(30) | offset(2)
+    //   kind:      TextKind - bit 59, 1 = Chars, 0 = Codes (ADR-047)
+    //   length:    UTF-16 code units in the string slice, 0..2^27-1
     //   bufferIdx: heap index of the first buffer cell, 0..2^30-1
     //   offset:    starting code-unit position within the first buffer cell, 0..2
+    //
+    // The kind bit sits at 59 and not below the length so that bufferIdx and
+    // offset keep the bit positions they had before it existed: the GC rebuilds
+    // a relocated header (Engine.HeapGc.cs) and dropping the bit there would
+    // turn a list of chars into a list of codes mid-collection.
     //
     // PSTR buffer payload (60 bits): reserved(12) | cu0(16) | cu1(16) | cu2(16)
     //   Three UTF-16 code units packed per buffer cell. The reserved high 12 bits
@@ -195,12 +196,16 @@ public readonly struct Cell : IEquatable<Cell>
     public const int PstrCodeUnitsPerBuffer = 3;
 
     /// <summary>Maximum representable PSTR length in code units.</summary>
-    public const int MaxPstrLength = (1 << 28) - 1;
+    public const int MaxPstrLength = (1 << 27) - 1;
 
     /// <summary>Maximum representable heap index for a PSTR buffer cell.</summary>
     public const int MaxPstrBufferIndex = (1 << 30) - 1;
 
-    public static Cell Pstr(int length, int bufferIdx, int offset)
+    /// <summary><paramref name="kind"/> has no default: a slice must carry the
+    /// kind of the PSTR it came from, and a producer must state what it is
+    /// building. Defaulting it would make "forgot to pass it" indistinguishable
+    /// from "meant Codes".</summary>
+    public static Cell Pstr(int length, int bufferIdx, int offset, TextKind kind)
     {
         if ((uint)length > (uint)MaxPstrLength)
             throw new ArgumentOutOfRangeException(nameof(length),
@@ -212,7 +217,8 @@ public readonly struct Cell : IEquatable<Cell>
             throw new ArgumentOutOfRangeException(nameof(offset),
                 "PSTR offset must be 0, 1, or 2.");
 
-        long payload = ((long)length << 32) | ((long)bufferIdx << 2) | (uint)offset;
+        long payload = ((long)kind << 59)
+                     | ((long)length << 32) | ((long)bufferIdx << 2) | (uint)offset;
         return new Cell(((long)Tag.Pstr << TagShift) | payload);
     }
 
@@ -225,7 +231,11 @@ public readonly struct Cell : IEquatable<Cell>
     }
 
     /// <summary>Length in UTF-16 code units. Only meaningful for <see cref="Tag.Pstr"/> cells.</summary>
-    public int AsPstrLength => (int)((Data >> 32) & 0x0FFF_FFFFL);
+    public int AsPstrLength => (int)((Data >> 32) & 0x07FF_FFFFL);
+
+    /// <summary>Whether the packed list's elements are chars or codes (ADR-047).
+    /// Only meaningful for <see cref="Tag.Pstr"/> cells.</summary>
+    public TextKind AsPstrKind => (TextKind)((Data >> 59) & 1L);
 
     /// <summary>Heap index of the first buffer cell. Only meaningful for <see cref="Tag.Pstr"/> cells.</summary>
     public int AsPstrBufferIndex => (int)((Data >> 2) & 0x3FFF_FFFFL);

@@ -998,7 +998,10 @@ public static class ShmoLinker
             var nativeLibNames = config.NativeLibraries
                 .Select(p => System.IO.Path.GetFileName(p)).ToList();
             bundle = new Bundle(entries, foreignAssemblyNames, snapshot: null,
-                archiveMembers: null, nativeLibraries: nativeLibNames);
+                archiveMembers: null, nativeLibraries: nativeLibNames,
+                // any Arity module makes the whole program expect
+                // Arity call semantics at runtime (unknown=fail).
+                arityCompat: objects.Any(o => o.ArityCompat));
             // --with-compiled-il routes the bundle through
             // BundleWriter.ToBytes, which (under includeCompiledIl=true)
             // runs PersistedIlBuilder per entry to materialise IL for
@@ -2020,6 +2023,7 @@ public static class ShmoLinker
         bw.Write((uint)BundleFormat.CurrentVersion);
         // Must match BundleWriter.ToBytes byte for byte — see the note there.
         BundleFormat.WriteGeneratorVersion(bw);
+        bw.Write(bundle.ArityCompat);
         bw.Write((uint)bundle.Entries.Count);
         foreach (var e in bundle.Entries)
         {

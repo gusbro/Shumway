@@ -11,6 +11,36 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class IfThenStringSearchTests
 {
+    // ----- ifthen / ifthenelse (Arity explicit control, chunk 268 completed) -----
+
+    [Fact]
+    public void IfThen_ConditionSucceeds_RunsThen()
+        => Assert.True(new PrologEngine().Query(
+            "ifthen(member(X, [1, 2]), Y = X), X == 1, Y == 1.").Success);
+
+    [Fact]
+    public void IfThen_ConditionFails_SucceedsWithoutThen()
+        // The Arity contract: ifthen SUCCEEDS when the condition fails —
+        // unlike (P -> Q), which fails.
+        => Assert.True(new PrologEngine().Query(
+            "ifthen(fail, throw(never)), true.").Success);
+
+    [Fact]
+    public void IfThen_ThenFails_Fails()
+        => Assert.False(new PrologEngine().Query(
+            "ifthen(true, fail).").Success);
+
+    [Fact]
+    public void IfThenElse_PicksBranchAndCommits()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "ifthenelse(member(X, [a, b]), R = then(X), R = else), "
+            + "R == then(a).").Success);
+        Assert.True(e.Query(
+            "ifthenelse(fail, R = then, R = else), R == else.").Success);
+    }
+
     // ----- string_term / string_termq -----
 
     [Fact]

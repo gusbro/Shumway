@@ -43,10 +43,45 @@ internal static class DialectRegistry
             "apply" or "apply_macros" or "lists" or "pairs" or "ordsets"
                 or "error" or "debug" or "aggregate" or "assoc"
                 or "yall" => (true, ""),
+            // Import-scoped, like SWI itself: both map onto the engine's
+            // call_with_limit/2 / call_with_offset/2.
+            "solution_sequences" => (true,
+                ":- module(solution_sequences, [limit/2, offset/2]).\n"
+                + "limit(N, Goal) :- call_with_limit(N, Goal).\n"
+                + "offset(N, Goal) :- call_with_offset(N, Goal).\n"),
             _ => (false, ""),
         });
 
-    private static readonly Pack[] Packs = { Scryer, Swi };
+    // The trealla pack — Trealla's default is double_quotes = chars. Its
+    // library sources are pure Prolog over ordinary builtins (no '$' C
+    // internals the way Scryer's are), so a configured tree
+    // (-L trealla:dir) resolves most names from the FILE; this pack covers
+    // what an unconfigured engine can still honour. freeze/when live in our
+    // coroutining library, clpz maps onto native clpfd (`in`/`ins`/label).
+    private static readonly Pack Trealla = new(
+        "trealla", DoubleQuotesMode.Chars,
+        name => name switch
+        {
+            // NOT "dcgs" and NOT "format": Trealla's dcgs has seq//1 & co
+            // and its format IS the format_//2 non-terminal — beyond the
+            // prelude's phrase/2,3 and format/2,3. Falling through lets the
+            // scryer pack's real shims serve them (a no-op here also STARVES
+            // the format native-override, which re-resolves "format" under
+            // this dialect scope).
+            "lists" or "charsio" or "error"
+                or "pairs" or "ordsets" or "debug" or "gensym"
+                or "iso_ext" or "terms" => (true, ""),
+            "freeze" or "when" => (true, ":- use_module(library(coroutining)).\n"),
+            "clpz" => (true, ":- use_module(library(clpfd)).\n"),
+            // Trealla's clpz references arithmetic:popcount/2 in its
+            // reification residuals; the rest of their arithmetic.pl is
+            // evaluable-function machinery our `is` covers natively.
+            "arithmetic" => (true,
+                ":- module(arithmetic).\n:- public popcount/2.\npopcount(N, C) :- C is popcount(N).\n"),
+            _ => (false, ""),
+        });
+
+    private static readonly Pack[] Packs = { Scryer, Swi, Trealla };
 
     /// <summary>True when <paramref name="name"/> is a registered dialect.</summary>
     internal static bool IsKnownDialect(string name) =>

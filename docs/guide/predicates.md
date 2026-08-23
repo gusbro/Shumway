@@ -15,7 +15,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `=(?Term1, ?Term2)` | Unifies the two terms. |
 | `==(@Term1, @Term2)` | Succeeds if the two terms are structurally identical. |
-| `\=(?Term1, ?Term2)` | Succeeds if the two terms do not unify. |
+| `\=(?Term1, ?Term2)` | Succeeds if the two terms do not unify. Attributed-variable hooks run: freeze fires during the trial, dif can veto it. |
 | `\==(@Term1, @Term2)` | Succeeds if the two terms are not structurally identical. |
 | `unify_with_occurs_check(?Term1, ?Term2)` | Like =/2 but fails rather than building a cyclic term (ISO §8.2.2). |
 
@@ -25,20 +25,27 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `acyclic_term(@Term)` | Succeeds if the argument is a finite (acyclic) term. |
 | `atom(@Term)` | Succeeds if the argument is an atom. |
+| `atom_si(@Term)` | Sound atom test: instantiation_error when unbound, type_error(atom, Term) when bound to a non-atom. |
 | `atomic(@Term)` | Succeeds if the argument is atomic (atom, number or string). |
+| `atomic_si(@Term)` | Sound atomic test (si family). |
 | `attvar(@Term)` | Succeeds if the argument is an attributed variable. |
 | `callable(@Term)` | Succeeds if the argument is an atom or a compound term. |
+| `can_be(+Type, @Term)` | Scryer library(si) form: like must_be/2 but an unbound Term (or one whose subterms are yet unbound enough) is still admissible — only a term already incompatible with Type raises. |
+| `character_si(@Term)` | Sound one-char-atom test (si family). |
+| `chars_si(@Term)` | Sound list-of-characters test (si family). |
 | `compound(@Term)` | Succeeds if the argument is a compound term. |
 | `cyclic_term(@Term)` | Succeeds if the argument is a cyclic (infinite/rational) term. |
 | `float(@Term)` | Succeeds if the argument is a float. |
 | `ground(@Term)` | Succeeds if the argument contains no unbound variables. |
 | `integer(@Term)` | Succeeds if the argument is an integer. |
+| `integer_si(@Term)` | Sound integer test (si family). |
 | `is_list(@Term)` | Succeeds if the argument is a proper list. |
+| `list_si(@Term)` | Sound proper-list test: instantiation_error while the tail is unbound, type_error(list, Term) on a non-list tail. |
 | `must_be(+Type, @Value)` | Throws instantiation_error if Value is unbound (unless Type is var), or type_error(Type, Value) if it is not of Type. |
 | `nonvar(@Term)` | Succeeds if the argument is not an unbound variable. |
 | `number(@Term)` | Succeeds if the argument is a number. |
 | `rational(@Term)` | Succeeds if the argument is a rational number (an integer is a rational with denominator 1). |
-| `string(@Term)` | Succeeds if the argument is a string. |
+| `string(@Term)` | Succeeds if the argument is a non-empty proper list of characters or of codes (SWI compatibility; there is no string type — see ADR-047). |
 | `var(@Term)` | Succeeds if the argument is an unbound variable. |
 
 ## Arithmetic
@@ -52,6 +59,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `>(+Expr1, +Expr2)` | Arithmetic greater-than comparison. |
 | `>=(+Expr1, +Expr2)` | Arithmetic greater-than-or-equal comparison. |
 | `between(+Low, +High, ?X)` | Succeeds when X is in the inclusive integer range; enumerates it when unbound. |
+| `evaluable_property(+Callable, ?Property)` | Properties of an arithmetic function: built_in, static, template(Callable, ReturnType). |
 | `is(?Result, +Expr)` | Evaluates the arithmetic expression on the right and unifies it with the left. |
 | `plus(?Int1, ?Int2, ?Sum)` | Relates Int1 + Int2 = Sum, solving for whichever single argument is unbound. |
 | `succ(?Int1, ?Int2)` | Relates a non-negative integer to its successor, in either direction. |
@@ -79,6 +87,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `compound_name_arity(?Compound, ?Name, ?Arity)` | Like functor/3 but restricted to compound terms (arity >= 1) (SWI). |
 | `copy_term(+Term, -Copy)` | Copies a term with fresh variables. |
 | `copy_term(+Term, -Copy, -Goals)` | Copies a term with fresh variables and collects the residual attribute goals. |
+| `copy_term_nat(?Term, -Copy)` | copy_term/2 ignoring attributes (SWI/Trealla). |
 | `expand_term(+Term, -Expanded)` | If Term has the form Head --> Body, expands it via the DCG transformation Shumway applies internally on consult. Non-DCG terms pass through unchanged. |
 | `functor(?Term, ?Name, ?Arity)` | Relates a term to its functor name and arity. |
 | `get_seed(-Seed)` | Unifies Seed with a value that set_seed/1 can later use to reproduce exactly the random sequence that follows this call (the generator is reseeded as a side effect). |
@@ -98,11 +107,13 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `string_termq(?Atom, ?Term)` | writeq-style variant of string_term/2: atoms / functors are quoted when needed so the rendered atom re-parses to the same term. Equivalent to term_to_atom/2. |
 | `subsumes_term(@General, @Specific)` | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term. |
 | `term_attvars(+Term, -Vars)` | Unifies Vars with the attributed variables reachable from Term. |
+| `term_singletons(@Term, -Singletons)` | Unifies Singletons with the variables occurring exactly once in Term, in order of first appearance. |
 | `term_string(?Term, ?String)` | Converts between a term and its textual string representation (SWI). |
 | `term_string(?Term, ?String, +Options)` | As term_string/2 with an (accepted, ignored) SWI option list. |
 | `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
 | `term_variables(+Term, -Variables)` | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5). |
 | `unifiable(@X, @Y, -Unifier)` | If X and Y unify, Unifier is the list of V=Value bindings that make them equal; else fails. |
+| `variant(@Term1, @Term2)` | True when the terms are structural variants: equal up to a consistent renaming of variables (mutual subsumption). |
 
 ## Control
 
@@ -120,6 +131,9 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `call(:Goal, +Extra1, ..., +Extra7)` | Calls a goal extended with seven extra arguments (ISO requires call/2..8). |
 | `call_cleanup(:Goal, :Cleanup)` | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes. |
 | `call_det(:Goal, -Deterministic)` | Calls Goal once and unifies Deterministic with true if Goal succeeded without leaving a choice point, false otherwise. |
+| `call_nth(:Goal, ?N)` | True when Goal has an Nth solution: with N bound, commits to that solution; with N unbound, enumerates solutions numbering each. |
+| `call_with_limit(+N, :Goal)` | Solutions of Goal, at most the first N. Fails when N < 1. |
+| `call_with_offset(+N, :Goal)` | Solutions of Goal after skipping the first N. |
 | `catch(:Goal, ?Catcher, :Recovery)` | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
 | `compile_all` | Eagerly compiles every compilable static predicate to Tier-1 IL now, instead of waiting for each to promote lazily on use. For a program that will do enough queries to want the whole set hot up front (a server warming up). No-op when Tier-1 is disabled or under Native AOT. Always succeeds. |
 | `compile_all(-Count)` | As compile_all/0, unifying Count with the number of predicates newly compiled to Tier-1 IL by this call. |
@@ -131,6 +145,9 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `get_cpu_time(-Time)` | Binds Time to a high-resolution monotonic process timer, in milliseconds (float; GNU-Prolog timing primitive). |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
+| `if(:Condition, :Then, :Else)` | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded. |
+| `ifthen(:Condition, :Then)` | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails — unlike (Condition -> Then), which fails. |
+| `ifthenelse(:Condition, :Then, :Else)` | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
 | `notrace` | Turns the four-port tracer off. |
 | `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |
@@ -161,12 +178,16 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `abolish_table(+PredicateIndicator)` | Discards the tabled answers of one predicate, given as Name/Arity. |
 | `assert(+Clause)` | Synonym for assertz/1 (historical SWI/GProlog name). |
 | `asserta(+Clause)` | Adds a clause to the front of its dynamic predicate. |
+| `asserta(+Clause, -Ref)` | Adds Clause at the front of its predicate and unifies Ref with its clause reference. |
 | `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
-| `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate. |
+| `assertz(+Clause, -Ref)` | Adds Clause at the end of its predicate and unifies Ref with its clause reference. |
+| `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate; Module:Head reads from that module's viewpoint. |
+| `clause(?Head, ?Body, ?Ref)` | clause/2 with a clause reference: fetches by Ref when bound, else enumerates Head's clauses binding Ref (de facto standard). |
 | `compact_dynamic_buffer` | Invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
 | `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Validates Name/Arity names a dynamic predicate, then triggers the same full rebuild as the 0-arg form. The single buffer holds every dynamic predicate's bytecode interleaved, so independent per-predicate reclamation isn't currently feasible without partial-relink support — the API surface is per-predicate for forward compatibility. |
 | `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl (SWI-style). |
-| `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators. |
+| `consult_text(+Text)` | Consults Text (an atom or a chars/codes list) as Prolog source — the in-language form of the embedding API's ConsultString. A module loaded this way keeps its exports scoped (no auto-import into user). |
+| `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own. |
 | `ensure_loaded(+File)` | Loads File unless it is already loaded, in which case it does nothing (ISO 7.4.2.8). Lets several files each name their own dependencies without any of them being loaded twice. A File that CHANGED on disk since it was loaded is reloaded. Argument and errors are as consult/1. |
 | `erase(+Ref)` | Removes the recorded entry with reference Ref. Fails on an unknown / already-erased reference. |
 | `eraseall(+Key)` | Removes every recorded entry stored under Key. |
@@ -178,7 +199,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `key_count(+Key, -Count)` | Unifies Count with the number of recorded entries stored under Key. |
 | `keys(?Key)` | Enumerates on backtracking every key currently in the recorded database. If Key is ground, succeeds iff at least one entry is stored under it. |
 | `listing` | Lists the clauses of every user-defined predicate — consulted or asserted, never builtins or library predicates. |
-| `listing(+Spec)` | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity). |
+| `listing(+Spec)` | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec). |
 | `nref(+Ref, -Next)` | Unifies Next with the reference of the entry immediately after Ref in its key's chain. Fails if Ref is the last entry. |
 | `pref(+Ref, -Prev)` | Unifies Prev with the reference of the entry immediately before Ref in its key's chain. Fails if Ref is the first entry. |
 | `reconsult(+File)` | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched (classical GProlog / SICStus semantics). |
@@ -212,6 +233,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `append(?List1, ?List2, ?List)` | Concatenates List1 and List2 into List; backtracks over splits of List. |
 | `delete(+List, +Elem, -Rest)` | Rest is List with every element that unifies with Elem removed. |
 | `exclude(:Goal, +List, -Excluded)` | Excluded holds the elements of List for which Goal fails. |
+| `flatten(+Nested, -Flat)` | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat. |
 | `foldl(:Goal, ?List, +V0, -V)` | Folds Goal over a list, threading an accumulator from V0 to V. |
 | `foldl(:Goal, ?List1, ?List2, +V0, -V)` | Folds Goal over two lists, threading an accumulator from V0 to V. |
 | `include(:Goal, +List, -Included)` | Included holds the elements of List for which Goal succeeds. |
@@ -220,6 +242,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `last(?List, ?Last)` | Relates a list to its last element. |
 | `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. |
 | `list_to_set(+List, -Set)` | Removes duplicates from a list, keeping the first occurrence of each. |
+| `map_list_to_pairs(:Key, +List, -KeyedPairs)` | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key (SWI library(pairs) form). |
 | `maplist(:Goal, ?List)` | Succeeds if Goal holds for every element of List. |
 | `maplist(:Goal, ?List1, ?List2)` | Succeeds if Goal holds for corresponding elements of two lists. |
 | `maplist(:Goal, ?List1, ?List2, ?List3)` | Succeeds if Goal holds for corresponding elements of three lists. |
@@ -259,6 +282,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `atom_length(+Atom, ?Length)` | Relates an atom to its length in characters. |
 | `atom_number(?Atom, ?Number)` | Converts between an atom and the number it denotes; fails if the atom is not numeric. |
 | `atom_string(?Atom, ?String)` | Converts between an atom and a string. |
+| `atomic_concat(+Atomic1, +Atomic2, -Atom)` | Concatenates two atomic terms into a single atom. |
 | `atomic_list_concat(+List, -Atom)` | Concatenates a list of atomic terms into a single atom. |
 | `atomic_list_concat(?List, +Separator, ?Atom)` | Joins a list of atomics with a separator, or splits an atom on the separator. |
 | `char_code(?Char, ?Code)` | Relates a one-character atom to its character code. |
@@ -313,6 +337,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `current_output(-Stream)` | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
 | `current_stream(?Filename, ?Mode, ?Stream)` | Enumerates open streams (ISO §8.11.8.1). |
 | `delete(+File)` | Deletes the file File. Raises existence_error if absent, permission_error if locked / read-only. |
+| `delete_file(+File)` | Deletes the file File; the widely-shared name for delete/1. Raises existence_error if absent, permission_error if locked / read-only. |
 | `directory(+Path, -Name, -Mode, -Time, -Date, -Size)` | Backtracks over the entries in Path, binding Name (atom), Mode (Arity-style bitfield: 1=read-only, 2=hidden, 4=system, 16=directory, 32=archive), Time (HH:MM:SS atom), Date (YYYY-MM-DD atom) and Size (bytes; 0 for directories). |
 | `directory_files(+Directory, -Files)` | Unifies Files with the list of entry names (atoms) in Directory, including '.' and '..' — SWI-compatible. |
 | `display(+Term)` | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted. |
@@ -346,6 +371,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `nl(+Stream)` | Writes a newline to the given stream. |
 | `open(+File, +Mode, -Stream)` | Opens a file as a stream handle. |
 | `open(+File, +Mode, -Stream, +Options)` | Opens a file with options (alias, type, encoding(utf8\|iso_latin_1\|ascii), eof_action) — ISO §8.11.5. |
+| `partial_string(+Text, ?Ls, ?Ls0)` | Ls is the packed list of Text's characters with Ls0 as its tail. |
 | `peek_byte(-Byte)` | Peeks one byte from the current input binary stream (ISO §8.13.2). |
 | `peek_byte(+Stream, -Byte)` | Peeks one byte from a binary stream (ISO §8.13.2). |
 | `peek_char(-Char)` | Peeks one character from the current input stream (ISO §8.12.2). |
@@ -356,6 +382,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `portray_clause(+Clause)` | Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, synthetic variable names renamed to A, B, C, ... |
 | `portray_clause(+Stream, +Clause)` | Like portray_clause/1 but writes to the given stream. |
 | `print(+Term)` | Writes a term using print conventions. |
+| `print(+Stream, +Term)` | Writes a term to a stream using print conventions. |
 | `prolog_load_context(?Key, ?Value)` | SWI/Scryer load-context introspection (module / file / source / directory), used by term_expansion/goal_expansion hooks to read the module being loaded. Fails outside a consult. |
 | `prolog_to_os_filename(?PrologPath, ?OsPath)` | Converts between Shumway's canonical '/'-separated path form and the host's native form (ADR-044). Either argument may be the bound one; on Unix both forms are the same. |
 | `put(+Code)` | Writes the character with the given code to the current output stream. Edinburgh-style alias of put_code/1. |
@@ -370,6 +397,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `read(+Stream, -Term)` | Reads one term from a stream (ISO §8.14.2). |
 | `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `read_term(+Stream, -Term, +Options)` | Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options. |
+| `read_term_from_chars(+Chars, -Term, +Options)` | Reads a term from a character list, honouring read_term/2 options. |
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `rename(+From, +To)` | Renames / moves a file from From to To. Raises existence_error if From doesn't exist or permission_error if To already exists. |
 | `rmdir(+Path)` | Removes the directory Path. Fails when the directory is non-empty; raises existence_error if it doesn't exist. |
@@ -398,6 +426,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `write_canonical(+Stream, +Term)` | Writes a term in canonical form to a stream (ISO §8.14.6). |
 | `write_term(+Term, +Options)` | Writes a term honouring the given list of write options. |
 | `write_term(+Stream, +Term, +Options)` | Writes a term to a stream honouring options (ISO §8.14.3). |
+| `write_term_to_chars(+Term, +Options, -Chars)` | Writes a term to a character list with write_term/2's options. |
 | `writeln(+Term)` | Writes a term followed by a newline. |
 | `writeq(+Term)` | Writes a term in quoted (parseable) form (ISO §8.14.5). |
 | `writeq(+Stream, +Term)` | Writes a term in quoted (parseable) form to a stream (ISO §8.14.5). |
@@ -417,6 +446,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
 | `statistics` | Writes a report of runtime, walltime and heap/trail/stack use to the current output. |
 | `statistics(?Key, ?Value)` | Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds. |
+| `term_cells(@Term, -Cells)` | Heap cells the term occupies, shared substructure counted once. A diagnostic: it reports what a term costs, not how it is stored. |
 
 ## Grammar
 
@@ -424,6 +454,10 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `phrase(:Body, ?List)` | phrase(Body, List, []) — succeeds when the DCG Body derives List. |
 | `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime. |
+| `phrase_from_file(:Body, +File)` | Runs the DCG Body over File's text, read lazily; the file is closed on the way out. |
+| `phrase_from_file(:Body, +File, +Options)` | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes). |
+| `phrase_from_stream(:Body, +Stream)` | Runs the DCG Body over Stream's text, read lazily in windows. |
+| `phrase_from_stream(:Body, +Stream, +Kind)` | As phrase_from_stream/2, with Kind (chars or codes) choosing the list's elements. |
 
 ## Global variables
 
@@ -431,6 +465,11 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `b_getval(+Key, -Value)` | Reads a backtrackable global variable; existence_error if unset. |
 | `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. |
+| `bb_b_put(+Key, +Value)` | Backtrackable blackboard assignment: the previous value is restored on backtracking. |
+| `bb_delete(+Key, -Value)` | Unifies Value with the current value and removes the entry. |
+| `bb_get(+Key, -Value)` | Reads a blackboard entry; FAILS when Key is unset (unlike nb_getval/2, which throws). |
+| `bb_put(+Key, +Value)` | Blackboard store (SICStus/Trealla): non-backtrackable global assignment. |
+| `bb_update(+Key, ?Old, +New)` | Unifies Old with the current value and replaces it with New; fails (leaving the entry unchanged) when Old does not match. |
 | `flag(+Key, ?Old, +New)` | Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked. |
 | `get_flag(+Key, -Value)` | Reads a flag's value (0 if never set). |
 | `nb_current(?Key, ?Value)` | Enumerates global variables; fails for an unset Key (no throw). |

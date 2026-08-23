@@ -31,7 +31,7 @@ public class PstrOpcodeTests
     public void PutPstr_SetsRegisterToRefAtPstrHeader()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "hello" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("hello", TextKind.Codes) });
 
         var code = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
@@ -50,7 +50,7 @@ public class PstrOpcodeTests
     public void PutPstr_EmptyStringLiteral_ProducesZeroLengthPstr()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("", TextKind.Codes) });
 
         var code = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
@@ -66,7 +66,7 @@ public class PstrOpcodeTests
         int x0 = engine.AllocateHeapUnbound();
         engine.SetRegister(0, Cell.Ref(x0));
 
-        var interp = new BytecodeInterpreter(engine, new[] { "hi" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("hi", TextKind.Codes) });
         var code = BuildCode(Opcode.GetPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
@@ -83,7 +83,7 @@ public class PstrOpcodeTests
     public void GetPstr_AgainstMatchingPstr_Succeeds()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "abc" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("abc", TextKind.Codes) });
 
         // put_pstr "abc" → X[0], then get_pstr "abc" against X[0] should re-unify cleanly.
         var code = BuildCode(
@@ -97,7 +97,7 @@ public class PstrOpcodeTests
     public void GetPstr_AgainstMismatchedPstr_Fails()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "abc", "xyz" });
+        var interp = new BytecodeInterpreter(engine, new[] { new TextLiteral("abc", TextKind.Codes), new TextLiteral("xyz", TextKind.Codes) });
 
         var code = BuildCode(
             Opcode.PutPstr, 0, 0,           // X[0] := "abc"
@@ -110,7 +110,7 @@ public class PstrOpcodeTests
     public void GetPstr_LiteralIdOutOfRange_Throws()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, Array.Empty<string>());
+        var interp = new BytecodeInterpreter(engine, Array.Empty<TextLiteral>());
 
         var code = BuildCode(Opcode.GetPstr, 5, 0, Opcode.Halt);
         var ex = Assert.Throws<InvalidOperationException>(() => interp.Run(code, 0));
@@ -127,126 +127,58 @@ public class PstrOpcodeTests
         Assert.Throws<InvalidOperationException>(() => interp.Run(code, 0));
     }
 
-    // ---------- unify_pstr_head ----------
+    // ---------- The two list cursors agree on a chars PSTR (ADR-047) ----------
+    //
+    // These are the two paths that drifted apart: a callee head matching [H|T]
+    // runs get_list, an inline list pattern compiles to a unify_list run. When
+    // only one of them knew about PSTR, the same unification succeeded through
+    // one and failed through the other. Nothing produces a chars PSTR from
+    // Prolog yet (the literal pool is codes until the flag flips), so the
+    // header is planted directly.
+
+    private static int PlantCharsPstr(Activation engine, string text)
+        => engine.MakePstr(text, TextKind.Chars);
 
     [Fact]
-    public void UnifyPstrHead_DecomposesFirstCodeUnitAndAdvancesCursor()
+    public void GetList_OnACharsPstr_YieldsACharAtomHead()
     {
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "ab" });
+        var interp = new BytecodeInterpreter(engine);
+        engine.SetRegister(0, Cell.Ref(PlantCharsPstr(engine, "ab")));
 
-        // Build "ab" PSTR, then point the unify cursor at the header and decompose.
-        // Allocate a heap slot for the cursor cell and copy the PSTR header into it.
-        var build = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(build, 0));
-
-        int pstrHdrIdx = engine.GetRegister(0).AsHeapIndex;
-        int cursorIdx = engine.AllocateHeap(1);
-        engine.SetHeap(cursorIdx, engine.GetHeap(pstrHdrIdx));   // copy the PSTR header
-        engine.SetUnifyPointer(cursorIdx);
-        engine.SetWriteMode(false);
-
-        var step = BuildCode(Opcode.UnifyPstrHead, 1, Opcode.Halt);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(step, 0));
-
-        // X[1] is the first code unit as Int (codes mode).
-        Assert.Equal(Cell.Int('a'), engine.GetRegister(1));
-
-        // Cursor cell now holds the advanced PSTR header (length 1, content "b").
-        Cell advanced = engine.GetHeap(cursorIdx);
-        Assert.Equal(Tag.Pstr, advanced.Tag);
-        Assert.Equal(1, advanced.AsPstrLength);
-    }
-
-    [Fact]
-    public void UnifyPstrHead_LastCodeUnit_ReplacesCursorWithPstrTail()
-    {
-        var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "a" });
-        var build = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(build, 0));
-
-        int pstrHdrIdx = engine.GetRegister(0).AsHeapIndex;
-        int cursorIdx = engine.AllocateHeap(1);
-        engine.SetHeap(cursorIdx, engine.GetHeap(pstrHdrIdx));
-        engine.SetUnifyPointer(cursorIdx);
-        engine.SetWriteMode(false);
-
-        var step = BuildCode(Opcode.UnifyPstrHead, 1, Opcode.Halt);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(step, 0));
-
-        Assert.Equal(Cell.Int('a'), engine.GetRegister(1));
-        // After consuming the last char, the cursor holds the PSTR's tail value — for
-        // a fresh PSTR built by MakePstr that's the empty-list atom.
-        Cell tail = engine.GetHeap(cursorIdx);
-        Assert.Equal(Cell.Atom(AtomTable.EmptyListId), tail);
-    }
-
-    [Fact]
-    public void UnifyPstrHead_OnEmptyOrNonPstr_Fails()
-    {
-        // Empty PSTR case: build "" then try to decompose.
-        var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "" });
-        var build = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(build, 0));
-
-        int pstrHdrIdx = engine.GetRegister(0).AsHeapIndex;
-        int cursorIdx = engine.AllocateHeap(1);
-        engine.SetHeap(cursorIdx, engine.GetHeap(pstrHdrIdx));
-        engine.SetUnifyPointer(cursorIdx);
-        engine.SetWriteMode(false);
-
-        var step = BuildCode(Opcode.UnifyPstrHead, 1, Opcode.Halt);
-        Assert.Equal(InterpreterResult.Failed, interp.Run(step, 0));
-    }
-
-    [Fact]
-    public void UnifyPstrHead_ChainOfThreeSteps_ProducesEachCodeUnitInOrder()
-    {
-        var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "xyz" });
-        var build = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(build, 0));
-
-        int pstrHdrIdx = engine.GetRegister(0).AsHeapIndex;
-        int cursorIdx = engine.AllocateHeap(1);
-        engine.SetHeap(cursorIdx, engine.GetHeap(pstrHdrIdx));
-        engine.SetUnifyPointer(cursorIdx);
-        engine.SetWriteMode(false);
-
-        // unify_pstr_head X[1]; unify_pstr_head X[2]; unify_pstr_head X[3]; halt
+        // get_list X0 ; unify_variable X1 (head) ; unify_variable X2 (tail)
         var code = BuildCode(
-            Opcode.UnifyPstrHead, 1,
-            Opcode.UnifyPstrHead, 2,
-            Opcode.UnifyPstrHead, 3,
+            Opcode.GetList, 0,
+            Opcode.UnifyVariableX, 1,
+            Opcode.UnifyVariableX, 2,
             Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
-        Assert.Equal(Cell.Int('x'), engine.GetRegister(1));
-        Assert.Equal(Cell.Int('y'), engine.GetRegister(2));
-        Assert.Equal(Cell.Int('z'), engine.GetRegister(3));
-        // After the last step the cursor holds the tail (Atom([])).
-        Assert.Equal(Cell.Atom(AtomTable.EmptyListId), engine.GetHeap(cursorIdx));
+        Cell head = engine.GetRegister(1);
+        Assert.Equal(Tag.Atom, head.Tag);
+        Assert.Equal("a", AtomTable.GetById(head.AsAtomId)!.Name);
     }
 
-    // ---------- Backtrack-on-fail ----------
-
     [Fact]
-    public void GetPstr_FailureBacktracksToBp()
+    public void UnifyList_OnACharsPstr_YieldsTheSameHeadAsGetList()
     {
-        // put_pstr "abc"; try_me_else BP; get_pstr "xyz" (fail); halt; halt(BP)
         var engine = new Activation();
-        var interp = new BytecodeInterpreter(engine, new[] { "abc", "xyz" });
+        var interp = new BytecodeInterpreter(engine);
+
+        int cursorIdx = engine.AllocateHeap(1);
+        engine.SetHeap(cursorIdx, engine.GetHeap(PlantCharsPstr(engine, "ab")));
+        engine.SetUnifyPointer(cursorIdx);
+        engine.SetWriteMode(false);
 
         var code = BuildCode(
-            Opcode.PutPstr, 0, 0,           // 0..8
-            Opcode.TryMeElse, 28, 0,        // 9..17 (BP=28)
-            Opcode.GetPstr, 1, 0,           // 18..26  — fails
-            Opcode.Halt,                    // 27 (success branch)
-            Opcode.Halt);                   // 28 (BP target)
-
+            Opcode.UnifyList,
+            Opcode.UnifyVariableX, 1,
+            Opcode.UnifyVariableX, 2,
+            Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
-        Assert.Equal(28, engine.P);
+
+        Cell head = engine.GetRegister(1);
+        Assert.Equal(Tag.Atom, head.Tag);
+        Assert.Equal("a", AtomTable.GetById(head.AsAtomId)!.Name);
     }
 }

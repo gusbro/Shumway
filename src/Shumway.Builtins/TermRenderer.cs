@@ -23,7 +23,13 @@ public static class TermRenderer
         => Render(engine, cell, output, TermRenderOptions.Default);
 
     public static void Render(Activation engine, Cell cell, TextWriter output, TermRenderOptions options)
-        => Render(engine, cell, output, options, maxPriority: 1200);
+    {
+        // Entry funnel — reset the cycle-safety state (the Default options
+        // instance is shared across calls).
+        options.OnPath?.Clear();
+        options.UnrolledOnce?.Clear();
+        Render(engine, cell, output, options, maxPriority: 1200);
+    }
 
     /// <summary>Renders <paramref name="cell"/> bounded by
     /// <paramref name="maxPriority"/>: if the term itself is an operator
@@ -33,6 +39,13 @@ public static class TermRenderer
         TermRenderOptions options, int maxPriority)
     {
         int derefAddr = Resolve(engine, ref cell);
+
+        // portrayed(true): the user's portray/1 gets first shot at every
+        // subterm; on success its output IS the rendering.
+        if (options.Portray is { } portray
+            && cell.Tag is not (Tag.Ref or Tag.AttVar)
+            && portray(engine, cell, output))
+            return;
 
         switch (cell.Tag)
         {
@@ -81,16 +94,79 @@ public static class TermRenderer
                 break;
             }
             case Tag.Str:
-                RenderCompound(engine, cell, output, options, maxPriority);
+            {
+                // With max_depth set the depth limit already terminates a
+                // rational tree — and it decides HOW MUCH of the cycle shows
+                // (max_depth(3) on X=f(X) is f(f(f(...)))), so the cycle
+                // gate must not cut first.
+                bool strAdded = false, strUnrolling = false;
+                if (options.MaxDepth == 0
+                    && !EnterCycleNode(options, cell.AsHeapIndex, out strAdded, out strUnrolling))
+                {
+                    output.Write("...");
+                    break;
+                }
+                try
+                {
+                    if (options.MaxDepth > 0)
+                    {
+                        if (options.CurrentDepth >= options.MaxDepth)
+                        {
+                            output.Write("...");
+                            break;
+                        }
+                        options.CurrentDepth++;
+                        try { RenderCompound(engine, cell, output, options, maxPriority); }
+                        finally { options.CurrentDepth--; }
+                        break;
+                    }
+                    RenderCompound(engine, cell, output, options, maxPriority);
+                }
+                finally
+                {
+                    if (strAdded) options.OnPath!.Remove(cell.AsHeapIndex);
+                    if (strUnrolling) options.UnrolledOnce!.Remove(cell.AsHeapIndex);
+                }
                 break;
+            }
+            // A packed list is the list it denotes, so it renders through the
+            // same arm — which is also what gives it quoting, ignore_ops,
+            // max_depth and numbervars. Printing it as "…" bypassed all four,
+            // and wrote the text unescaped, so a list holding a quote character
+            // did not read back.
             case Tag.Lis:
-                RenderList(engine, cell, output, options);
-                break;
             case Tag.Pstr:
-                output.Write('"');
-                output.Write(engine.AsPstrString(derefAddr));
-                output.Write('"');
+            {
+                bool lisAdded = false, lisUnrolling = false;
+                if (options.MaxDepth == 0 && cell.Tag == Tag.Lis
+                    && !EnterCycleNode(options, cell.AsHeapIndex, out lisAdded, out lisUnrolling))
+                {
+                    output.Write("...");
+                    break;
+                }
+                try
+                {
+                    if (options.MaxDepth > 0)
+                    {
+                        if (options.CurrentDepth >= options.MaxDepth)
+                        {
+                            output.Write("...");
+                            break;
+                        }
+                        options.CurrentDepth++;
+                        try { RenderList(engine, cell, output, options); }
+                        finally { options.CurrentDepth--; }
+                        break;
+                    }
+                    RenderList(engine, cell, output, options);
+                }
+                finally
+                {
+                    if (lisAdded) options.OnPath!.Remove(cell.AsHeapIndex);
+                    if (lisUnrolling) options.UnrolledOnce!.Remove(cell.AsHeapIndex);
+                }
                 break;
+            }
             default:
                 output.Write('<');
                 output.Write(cell.Tag.ToString());
@@ -99,15 +175,42 @@ public static class TermRenderer
         }
     }
 
+    /// <summary>Cycle gate for a compound reached in ARGUMENT position:
+    /// true = proceed; <paramref name="added"/> / <paramref name="unrolling"/>
+    /// say what this frame owns (path entry / the cell's one permitted
+    /// unroll) and must remove on the way out. False = on the path and
+    /// already unrolled — the caller renders <c>...</c>.</summary>
+    private static bool EnterCycleNode(
+        TermRenderOptions options, int nodeAddr, out bool added, out bool unrolling)
+    {
+        unrolling = false;
+        var path = options.OnPath ??= new System.Collections.Generic.HashSet<int>();
+        added = path.Add(nodeAddr);
+        if (added) return true;
+        var unrolled = options.UnrolledOnce ??= new System.Collections.Generic.HashSet<int>();
+        unrolling = unrolled.Add(nodeAddr);
+        return unrolling;
+    }
+
+    /// <summary>Is this (resolved) cell a compound whose node is currently
+    /// on the render path? List elements, spine cells and tails elide
+    /// immediately when it is (the Trealla-printer policy) — only struct
+    /// arguments unroll, once per cell.</summary>
+    private static bool IsOnPath(TermRenderOptions options, Cell cell)
+        => options.OnPath is { } path
+            && cell.Tag is Tag.Str or Tag.Lis
+            && path.Contains(cell.AsHeapIndex);
+
     private static int Resolve(Activation engine, ref Cell cell)
     {
         // A bare ATTVAR cell carries its own home index as payload —
         // surface that as the deref address and leave the AttVar-tagged
         // cell for the caller's switch.
         if (cell.Tag == Tag.AttVar) return cell.AsHeapIndex;
+        if (cell.Tag == Tag.Pstr) { cell = engine.NormalizeListCell(cell); return -1; }
         if (cell.Tag != Tag.Ref) return -1;
         int addr = engine.Deref(cell.AsHeapIndex);
-        cell = engine.GetHeap(addr);
+        cell = engine.NormalizeListCell(engine.GetHeap(addr));
         return addr;
     }
 
@@ -132,6 +235,18 @@ public static class TermRenderer
                     return;
                 }
             }
+        }
+
+        // Curly-brace notation: '{}'(Body) is {Body}. UNLIKE list notation it
+        // does NOT survive ignore_ops(true) — write_canonical prints the
+        // functional {}(Body) (SWI and Scryer agree; Scryer conformity test
+        // 96). The braces bracket the body, so it renders at full priority.
+        if (arity == 1 && name == "{}" && !options.IgnoreOps)
+        {
+            output.Write('{');
+            Render(engine, engine.GetHeap(functorIdx + 1), output, options, 1200);
+            output.Write('}');
+            return;
         }
 
         // Operator-form rendering: consult the lookup table if enabled. The
@@ -236,15 +351,17 @@ public static class TermRenderer
                     (name == "-"
                      && RendersLeadingDigit(engine, engine.GetHeap(functorIdx + 1), options))
                     || IsBareOperatorAtomCell(engine, engine.GetHeap(functorIdx + 1), options)
-                    // Neumerkel vn #43: a prefix operator applied to an operand
-                    // that is itself an operator of EQUAL priority is
+                    // Neumerkel vn #43: prefix `-` applied to an operand that
+                    // is a LEFT-CLOSED operator of EQUAL priority is
                     // parenthesised — `- X^2` → `- (X^2)` (`-` fy 200, `^` xfy
-                    // 200). Strict priority (fy allows equal) would omit these,
-                    // but the conformity Codex wants them; the >-priority case is
-                    // already parenthesised by argMax below, so this only adds the
-                    // equal-priority set.
-                    || OperandIsOperatorPriorityAtLeast(
-                           engine, engine.GetHeap(functorIdx + 1), prefixPrec, options);
+                    // 200). ONLY for `-`: Scryer's conformity prints
+                    // `+ (1*2)^3` bare (both re-read fine; SICStus-lineage
+                    // parenthesises the `-` family for the negative-literal
+                    // hazard's sake, and vn #43 pins that). The >-priority
+                    // case is already parenthesised by argMax below.
+                    || (name == "-"
+                        && OperandIsOperatorPriorityAtLeast(
+                               engine, engine.GetHeap(functorIdx + 1), prefixPrec, options));
                 if (needsParens) output.Write('(');
                 string prefixText = (!options.Quoted || NeedsNoQuoting(name))
                     ? name : QuotedAtomName(name);
@@ -354,31 +471,73 @@ public static class TermRenderer
             while (true)
             {
                 Resolve(engine, ref cur);
-                if (cur.Tag != Tag.Lis) break;
+                if (!engine.TryUnconsListLike(cur, out Cell cHead, out Cell cTail)) break;
                 output.Write("'.'(");
-                Render(engine, engine.GetHeap(cur.AsHeapIndex), output, options, 999);
+                Render(engine, cHead, output, options, 999);
                 output.Write(',');
                 depth++;
-                cur = engine.GetHeap(cur.AsHeapIndex + 1);
+                cur = cTail;
             }
             Render(engine, cur, output, options, 999);
             for (int i = 0; i < depth; i++) output.Write(')');
             return;
         }
+        if (options.PortrayText && TryRenderAsText(engine, lisCell, output, options))
+            return;
+
         output.Write('[');
         bool first = true;
         Cell cursor = lisCell;
+        // max_depth: the ENTRY cons already consumed one level (the Render
+        // gate incremented); every further cons consumes another. When the
+        // budget runs out the tail elides to `|...`.
+        int consDepth = options.CurrentDepth;
+        System.Collections.Generic.List<int>? spine = null;
         while (true)
         {
             Resolve(engine, ref cursor);
-            if (cursor.Tag != Tag.Lis) break;
-            if (!first) output.Write(',');   // ISO: no layout between elements
-            int headIdx = cursor.AsHeapIndex;
+            // Spine back-edge (a cyclic cons chain): the entry cons was
+            // gated by the caller; every FURTHER cons joins the path here,
+            // and a revisit elides IMMEDIATELY (the tail-position policy) —
+            // `L = [a|L]` is `[a|...]`.
+            if (!first && options.MaxDepth == 0 && cursor.Tag == Tag.Lis)
+            {
+                var spinePath = options.OnPath ??= new System.Collections.Generic.HashSet<int>();
+                if (!spinePath.Add(cursor.AsHeapIndex))
+                {
+                    output.Write("|...]");
+                    RemoveSpine(options, spine);
+                    return;
+                }
+                (spine ??= new System.Collections.Generic.List<int>()).Add(cursor.AsHeapIndex);
+            }
+            if (!engine.TryUnconsListLike(cursor, out Cell head, out Cell tail)) break;
+            if (!first)
+            {
+                consDepth++;
+                if (options.MaxDepth > 0 && consDepth > options.MaxDepth)
+                {
+                    output.Write("|...]");
+                    RemoveSpine(options, spine);
+                    return;
+                }
+                output.Write(',');   // ISO: no layout between elements
+            }
             // Each element is an argument-priority (999) position: a ','/2
             // element must parenthesise (`[(a,b)]`, not `[a,b]` — which would
             // re-read as a two-element list), as must any operator ≥ 1000.
-            RenderOperand(engine, engine.GetHeap(headIdx), output, options, 999);
-            cursor = engine.GetHeap(headIdx + 1);
+            // Plain Render, NOT RenderOperand: an ATOM that is an operator is
+            // a legal argument bare (ISO §6.3.3 — `[:-,-]`, not `[(:-),(-)]`);
+            // the operand-position parens are only for operator operands.
+            // A revisited ELEMENT elides immediately (never unrolls) —
+            // L = [L, a | b] prints [...,a|b].
+            Cell headResolved = head;
+            Resolve(engine, ref headResolved);
+            if (options.MaxDepth == 0 && IsOnPath(options, headResolved))
+                output.Write("...");
+            else
+                Render(engine, head, output, options, 999);
+            cursor = tail;
             first = false;
         }
         // Cursor is now whatever the tail dereffed to.
@@ -390,9 +549,81 @@ public static class TermRenderer
         else
         {
             output.Write('|');   // ISO: compact improper-list tail
-            RenderOperand(engine, cursor, output, options, 999);   // arg-priority tail
+            // A revisited TAIL elides immediately — [1|f([1|...])] ends at
+            // the second f, not with another unroll.
+            if (options.MaxDepth == 0 && IsOnPath(options, cursor))
+                output.Write("...");
+            else
+                Render(engine, cursor, output, options, 999);   // arg-priority tail
         }
         output.Write(']');
+        RemoveSpine(options, spine);
+    }
+
+    private static void RemoveSpine(
+        TermRenderOptions options, System.Collections.Generic.List<int>? spine)
+    {
+        if (spine is null) return;
+        foreach (int addr in spine) options.OnPath!.Remove(addr);
+    }
+
+    /// <summary><c>portray_text(true)</c>: writes a list of one-character atoms,
+    /// or of printable codes, as <c>"…"</c>. Returns false — leaving the output
+    /// untouched — for anything else, including the empty list, which is the
+    /// atom <c>[]</c> and prints as itself.
+    ///
+    /// <para>The scan is over the list's CONTENT (ADR-047 decision 7): two
+    /// terms that are <c>==</c> must print the same, so a packed list and the
+    /// cons list it denotes cannot be told apart here. A mixed list of chars
+    /// and codes is not text.</para></summary>
+    private static bool TryRenderAsText(
+        Activation engine, Cell lisCell, TextWriter output, TermRenderOptions options)
+    {
+        var sb = new System.Text.StringBuilder();
+        Cell cur = lisCell;
+        bool? chars = null;
+        int guard = engine.HeapTop + 2;
+        while (guard-- > 0)
+        {
+            Resolve(engine, ref cur);
+            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) break;
+            if (!engine.TryUnconsListLike(cur, out Cell head, out Cell tail)) return false;
+            Resolve(engine, ref head);
+            if (head.Tag == Tag.Atom)
+            {
+                if (chars == false) return false;
+                string n = NameOfAtom(head.AsAtomId);
+                if (n.Length != 1) return false;
+                chars = true;
+                sb.Append(n);
+            }
+            else if (head.Tag == Tag.Int)
+            {
+                if (chars == true) return false;
+                long c = head.AsInt;
+                // Printable, plus the three layout codes. Without this a list
+                // of small integers would portray as control characters.
+                if (c > char.MaxValue || !(c >= 32 || c is 9 or 10 or 13)) return false;
+                chars = false;
+                sb.Append((char)c);
+            }
+            else return false;
+            cur = tail;
+        }
+        if (guard < 0 || sb.Length == 0) return false;
+
+        output.Write('"');
+        foreach (char c in sb.ToString())
+        {
+            if (c == '"') { output.Write("\\\""); continue; }
+            string? esc = EscapeQuotedChar(c);
+            // EscapeQuotedChar escapes the SINGLE quote for atoms; inside
+            // double quotes that character is literal.
+            if (esc is not null && c != '\'') output.Write(esc);
+            else output.Write(c);
+        }
+        output.Write('"');
+        return true;
     }
 
     /// <summary>Writes an atom name with quoting applied when

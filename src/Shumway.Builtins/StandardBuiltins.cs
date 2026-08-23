@@ -27,8 +27,13 @@ public static class StandardBuiltins
         const string Cmp = "Unification & comparison";
         BuiltinsRegistry.Register("=",   2, UnifyBuiltins.Unify,
             Cmp, "=(?Term1, ?Term2)", "Unifies the two terms.");
-        BuiltinsRegistry.Register("\\=", 2, UnifyBuiltins.NotUnifiable,
-            Cmp, "\\=(?Term1, ?Term2)", "Succeeds if the two terms do not unify.");
+        // \=/2 itself is a prelude wrapper over this three-state core: the
+        // trial-only builtin cannot run attvar hooks (freeze must fire, dif
+        // may veto), so an attvar-touching trial defers to \+ X = Y there.
+        BuiltinsRegistry.Register("$not_unifiable3", 3, UnifyBuiltins.NotUnifiable3,
+            Cmp, "'$not_unifiable3'(?Term1, ?Term2, -Verdict)",
+            "Trial-unification verdict behind \\=/2: t (cannot unify), f (unifies), "
+            + "m (bound an attributed variable - the wrapper must re-decide with hooks).");
         BuiltinsRegistry.Register("==",  2, UnifyBuiltins.StructurallyEqual,
             Cmp, "==(@Term1, @Term2)", "Succeeds if the two terms are structurally identical.");
         BuiltinsRegistry.Register("\\==",2, UnifyBuiltins.StructurallyNotEqual,
@@ -90,7 +95,9 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("is_list", 1, TypeBuiltins.IsList,
             Types, "is_list(@Term)", "Succeeds if the argument is a proper list.");
         BuiltinsRegistry.Register("string", 1, TypeBuiltins.IsString,
-            Types, "string(@Term)", "Succeeds if the argument is a string.");
+            Types, "string(@Term)",
+            "Succeeds if the argument is a non-empty proper list of characters or of codes "
+            + "(SWI compatibility; there is no string type — see ADR-047).");
         // Scryer internal fast-path predicate (library error/iso_ext/crypto/…).
         BuiltinsRegistry.Register("$is_partial_string", 1, TypeBuiltins.IsPartialString);
         BuiltinsRegistry.Register("ground",  1, TypeBuiltins.IsGround,
@@ -115,6 +122,8 @@ public static class StandardBuiltins
         const string Attr = "Attributed variables";
         BuiltinsRegistry.Register("put_attr", 3, AttvarBuiltins.PutAttr,
             Attr, "put_attr(+Var, +Module, +Value)", "Attaches (or replaces) a module's attribute on a variable.");
+        BuiltinsRegistry.Register("$lazy_freeze", 2, AttvarBuiltins.LazyFreeze,
+            Attr, "'$lazy_freeze'(-Var, :Goal)", "Internal: delays Goal on Var via the native '$lazy' attribute module.");
         BuiltinsRegistry.Register("get_attr", 3, AttvarBuiltins.GetAttr,
             Attr, "get_attr(+Var, +Module, -Value)", "Reads a module's attribute from a variable.");
         BuiltinsRegistry.Register("del_attr", 2, AttvarBuiltins.DelAttr,
@@ -153,6 +162,8 @@ public static class StandardBuiltins
             Io, "writeq(+Stream, +Term)", "Writes a term in quoted (parseable) form to a stream (ISO §8.14.5).");
         BuiltinsRegistry.Register("print",           1, IOBuiltins.Print,
             Io, "print(+Term)", "Writes a term using print conventions.");
+        BuiltinsRegistry.Register("print",           2, IOBuiltins.Print2,
+            Io, "print(+Stream, +Term)", "Writes a term to a stream using print conventions.");
 
         // Streams: write + read modes; format/3 stream-aware.
         BuiltinsRegistry.Register("open",      3, StreamBuiltins.Open,
@@ -171,6 +182,10 @@ public static class StandardBuiltins
             Io, "write(+Stream, +Term)", "Writes a term to the given stream.");
         BuiltinsRegistry.Register("nl",        1, StreamBuiltins.NlOnStream,
             Io, "nl(+Stream)", "Writes a newline to the given stream.");
+        BuiltinsRegistry.Register("$lazy_window", 6, StreamBuiltins.LazyWindow);
+        BuiltinsRegistry.Register("partial_string", 3, StreamBuiltins.PartialString,
+            Io, "partial_string(+Text, ?Ls, ?Ls0)",
+            "Ls is the packed list of Text's characters with Ls0 as its tail.");
         BuiltinsRegistry.Register("get_char",  2, StreamBuiltins.GetChar,
             Io, "get_char(+Stream, -Char)", "Reads and consumes one character from a stream.");
         BuiltinsRegistry.Register("peek_char", 2, StreamBuiltins.PeekChar,
@@ -265,6 +280,8 @@ public static class StandardBuiltins
         // Multi-solution helpers called from the prelude.
         BuiltinsRegistry.Register("$list_length",              2, MultiSolutionHelpers.ListLength);
         BuiltinsRegistry.Register("$make_var_list",            2, MultiSolutionHelpers.MakeVarList);
+        BuiltinsRegistry.Register("$type_error_callable",      1, ControlBuiltins.TypeErrorCallable);
+        BuiltinsRegistry.Register("$is_evaluable",             2, ControlBuiltins.IsEvaluable);
         BuiltinsRegistry.Register("$sub_atom_decompositions",  2, MultiSolutionHelpers.SubAtomDecompositions);
         BuiltinsRegistry.Register("$sub_atom_enum",            5, MultiSolutionHelpers.SubAtomEnum);
         // Branch-cut barrier capture (MetaTransform cut transparency).

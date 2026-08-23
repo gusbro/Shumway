@@ -158,7 +158,7 @@ public class Chunk75Tests
             "shape(circle). shape(square). shape(triangle).").ReadAll().ToList();
         var pred = new PredicateCompiler().Compile(
             clauses,
-            new LiteralPool<string>(),
+            new LiteralPool<Shumway.Core.TextLiteral>(),
             new LiteralPool<double>(),
             new LiteralPool<System.Numerics.BigInteger>(),
             enableIndexing: false);

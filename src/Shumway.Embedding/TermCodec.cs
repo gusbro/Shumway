@@ -2,6 +2,7 @@ using System.IO;
 using System.Numerics;
 using System.Text;
 using Shumway.Compiler.Ast;
+using Shumway.Core;
 
 namespace Shumway.Embedding;
 
@@ -67,6 +68,7 @@ public static class TermCodec
             case StringTerm s:
                 w.Write(TagString);
                 WriteString(w, s.Content);
+                w.Write((byte)s.Kind);
                 break;
             case CompoundTerm c:
                 w.Write(TagCompound);
@@ -104,7 +106,14 @@ public static class TermCodec
             case TagFloat:
                 return new FloatTerm(r.ReadDouble());
             case TagString:
-                return new StringTerm(ReadString(r));
+            {
+                string text = ReadString(r);
+                byte kind = r.ReadByte();
+                if (kind > (byte)TextKind.Chars)
+                    throw new InvalidDataException(
+                        $"TermCodec: unknown TextKind {kind}.");
+                return new StringTerm(text, (TextKind)kind);
+            }
             case TagCompound:
             {
                 string functor = ReadString(r);

@@ -374,16 +374,24 @@ public sealed class Lexer
             }
             else if (c == '/' && Peek(1) == '*')
             {
+                var openPos = CurrentPosition();
                 Advance(); Advance();
+                bool closed = false;
                 while (_offset < _source.Length)
                 {
                     if (_source[_offset] == '*' && Peek(1) == '/')
                     {
                         Advance(); Advance();
+                        closed = true;
                         break;
                     }
                     Advance();
                 }
+                // §6.4.1: a block comment must be closed — running off the end
+                // of input is a syntax error, not an implicit close.
+                if (!closed)
+                    throw new LexerException(
+                        $"Unterminated block comment opened at {openPos}.", openPos);
             }
             else if (ArityCompat && c == '#' && AtLineStart()
                      && string.CompareOrdinal(_source, _offset, "#line", 0, 5) == 0)
@@ -797,6 +805,7 @@ public sealed class Lexer
             // dialect scope accepts them.
             'e' when LenientEscapes => 27,
             's' when LenientEscapes => 32,
+            'd' when LenientEscapes => 127,
             '\\' => '\\',
             '\'' => '\'',
             '"' => '"',
@@ -985,6 +994,16 @@ public sealed class Lexer
                 Advance();
                 int e = ReadEscapeSequence(pos);
                 if (e != EscapeContinuation) sb.Append((char)e);
+            }
+            else if ((c < ' ' || c == '\x7f') && !ArityCompat)
+            {
+                // §6.4.2.1: same rule as a quoted ATOM — a raw control
+                // character is not a valid double-quoted-token char; it has to
+                // be an escape (\\t, \\n, …) or, for a newline, the
+                // \\<newline> continuation. Arity-era sources are exempt.
+                throw new LexerException(
+                    $"Raw control character (0x{(int)c:x2}) in string "
+                    + $"at {pos} — use an escape sequence.", pos);
             }
             else
             {

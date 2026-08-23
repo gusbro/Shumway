@@ -26,6 +26,40 @@ public sealed class TermRenderOptions
     public bool IgnoreOps { get; set; } = false;
     public bool Numbervars { get; set; } = false;
 
+    /// <summary><c>portray_text(true)</c>: a list of characters or of printable
+    /// codes renders as <c>"…"</c> instead of element by element. Off by
+    /// default — the ISO form is the list. The decision is made on the list's
+    /// CONTENT, never on how it is stored (ADR-047 decision 7), so a packed
+    /// list and the cons list it denotes print identically.</summary>
+    public bool PortrayText { get; set; } = false;
+
+    /// <summary><c>max_depth(N)</c>: compounds/list tails nested deeper
+    /// than N render as <c>...</c> / <c>|...</c>. 0 = unlimited.</summary>
+    public int MaxDepth { get; set; }
+
+    /// <summary>Mutable render-time nesting counter for
+    /// <see cref="MaxDepth"/>. Only touched when MaxDepth &gt; 0, so the
+    /// shared Default instance stays immutable in practice.</summary>
+    public int CurrentDepth { get; set; }
+
+    /// <summary>Cycle safety for the writer (rational trees): the heap
+    /// addresses of the compound nodes currently being rendered — the path
+    /// from the root. What a back-edge renders depends on POSITION, the
+    /// policy Trealla's printer follows: a revisited list TAIL elides to
+    /// <c>|...]</c> and a revisited list ELEMENT to <c>...</c>, both
+    /// immediately; a revisited STRUCT ARGUMENT is unrolled once per cell
+    /// (<see cref="UnrolledOnce"/>) so <c>L=[1|F], F=f(L)</c> shows
+    /// <c>[1|f([1|...])]</c>. Reset by the entry wrapper; lazy, so an
+    /// acyclic term allocates nothing.</summary>
+    internal System.Collections.Generic.HashSet<int>? OnPath;
+    internal System.Collections.Generic.HashSet<int>? UnrolledOnce;
+
+    /// <summary><c>portrayed(true)</c>: called for every subterm before
+    /// default rendering; returning true means the hook produced the
+    /// output (SICStus portray/1 protocol — the embedding wires it to a
+    /// re-entrant call of the user's portray/1).</summary>
+    public Func<Activation, Cell, System.IO.TextWriter, bool>? Portray { get; set; }
+
     /// <summary>The <c>variable_names(Bindings)</c> write_term option
     /// (SWI / SICStus): a map from a variable's dereferenced heap index to
     /// the source name it should print as, instead of the default

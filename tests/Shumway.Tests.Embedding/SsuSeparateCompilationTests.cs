@@ -47,12 +47,14 @@ public sealed class SsuSeparateCompilationTests
     [Fact]
     public void SsuRule_WithGuard_CommitsAfterGuard()
     {
-        // `(Head, Guard) => Body` lowers to `Head :- Guard, !, Body`.
+        // `(Head, Guard) => Body` — SWI style: the OUTPUT binding lives in
+        // the body (a pattern in an output position would not match the
+        // caller's unbound variable under single-sided unification).
         var e = LinkAndLoad("g",
             ":- public sign/2.\n"
-            + "sign(N, s(neg)), N < 0 => true.\n"
-            + "sign(N, s(zero)), N =:= 0 => true.\n"
-            + "sign(N, s(pos)), N > 0 => true.\n",
+            + "sign(N, S), N < 0 => S = s(neg).\n"
+            + "sign(N, S), N =:= 0 => S = s(zero).\n"
+            + "sign(N, S), N > 0 => S = s(pos).\n",
             new PredicateRef("sign", 2));
 
         Assert.True(e.Query("sign(-3, S), S == s(neg).").Success);

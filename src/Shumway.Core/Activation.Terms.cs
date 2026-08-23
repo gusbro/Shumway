@@ -132,24 +132,6 @@ public sealed partial class Activation
 
     internal int RationalTableCount => _rationalTable.Count;
 
-    /// <summary>Stores <paramref name="value"/> in the engine's string table and returns
-    /// a STRING cell whose payload is its id.</summary>
-    public Cell MakeString(string value)
-    {
-        ArgumentNullException.ThrowIfNull(value);
-        int id = _stringTable.Count;
-        _stringTable.Add(value);
-        return Cell.String(id);
-    }
-
-    /// <summary>Returns the string referenced by a STRING cell.</summary>
-    public string AsString(Cell cell)
-    {
-        if (cell.Tag != Tag.String)
-            throw new InvalidOperationException($"Cell tag is {cell.Tag}, expected String.");
-        return _stringTable[cell.AsStringId];
-    }
-
     /// <summary>Stores <paramref name="value"/> in the engine's foreign-object table and
     /// returns a FOREIGN cell whose payload is its id. The value may be <c>null</c>.</summary>
     public Cell MakeForeign(object? value)
@@ -203,7 +185,43 @@ public sealed partial class Activation
     /// code units), and a tail cell initialised to <c>[]</c>, contiguously on the heap.
     /// Returns the heap index of the header. Total cells used: <c>1 + ceil(len/3) + 1</c>.
     /// </summary>
-    public int MakePstr(string value)
+    /// <summary>Like <see cref="MakePstr"/> but leaves the tail cell an UNBOUND
+    /// variable instead of <c>[]</c>, so the result is a PARTIAL list. Returns
+    /// the header index; the tail's own index is
+    /// <see cref="GetPstrTailIndex"/> of it.
+    ///
+    /// <para>This is what lazy stream reading is built on: a window of text
+    /// whose tail is a frozen variable, so a DCG walking it pulls the next
+    /// window only when it reaches the end of this one. The design always
+    /// admitted the shape — a PSTR tail may be a <c>Ref</c> — and this is the
+    /// constructor for it.</para></summary>
+    public int MakePstrOpen(string value, TextKind kind)
+    {
+        int headerIdx = MakePstr(value, kind);
+        int tailIdx = ComputePstrTailIndex(_heap[headerIdx]);
+        _heap[tailIdx] = Cell.Ref(tailIdx);
+        return headerIdx;
+    }
+
+    /// <summary>Builds the list of characters or codes named by
+    /// <paramref name="kind"/>, PACKED (ADR-047 decision 8) — the single entry
+    /// point every runtime text producer goes through. Returns a heap index
+    /// whose cell is the list: the atom <c>[]</c> when the text is empty, a
+    /// PSTR header otherwise.
+    ///
+    /// <para>This is where the arc's measurement lands: <c>atom_codes/2</c> of a
+    /// 4000-character atom used to write 8002 cells and now writes 1337. Six
+    /// near-identical cons builders across four files collapsed into it.</para></summary>
+    public int MakeTextList(string text, TextKind kind)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (text.Length != 0) return MakePstr(text, kind);
+        int nil = AllocateHeap(1);
+        _heap[nil] = Cell.Atom(AtomTable.EmptyListId);
+        return nil;
+    }
+
+    public int MakePstr(string value, TextKind kind)
     {
         ArgumentNullException.ThrowIfNull(value);
         int codeUnits = value.Length;
@@ -224,7 +242,7 @@ public sealed partial class Activation
         }
 
         _heap[tailIdx] = Cell.Atom(AtomTable.EmptyListId);
-        _heap[headerIdx] = Cell.Pstr(codeUnits, bufferStart, 0);
+        _heap[headerIdx] = Cell.Pstr(codeUnits, bufferStart, 0, kind);
         return headerIdx;
     }
 
@@ -254,7 +272,8 @@ public sealed partial class Activation
     public string ReadPstrChain(Cell header, out Cell tail)
     {
         var sb = new System.Text.StringBuilder(header.AsPstrLength);
-        while (header.Tag == Tag.Pstr)
+        TextKind kind = header.AsPstrKind;
+        while (header.Tag == Tag.Pstr && header.AsPstrKind == kind)
         {
             int length = header.AsPstrLength;
             for (int i = 0; i < length; i++)
@@ -270,7 +289,8 @@ public sealed partial class Activation
 
     private void AppendPstrChain(System.Text.StringBuilder sb, Cell header)
     {
-        while (header.Tag == Tag.Pstr)
+        TextKind kind = header.AsPstrKind;
+        while (header.Tag == Tag.Pstr && header.AsPstrKind == kind)
         {
             int length = header.AsPstrLength;
             for (int i = 0; i < length; i++)
@@ -294,7 +314,8 @@ public sealed partial class Activation
     {
         int total = 0;
         Cell header = _heap[headerIdx];
-        while (header.Tag == Tag.Pstr)
+        TextKind kind = header.AsPstrKind;
+        while (header.Tag == Tag.Pstr && header.AsPstrKind == kind)
         {
             total += header.AsPstrLength;
             int tailIdx = ComputePstrTailIndex(header);
@@ -334,6 +355,13 @@ public sealed partial class Activation
         if (bHdr.Tag != Tag.Pstr)
             throw new InvalidOperationException(
                 $"MakePstrConcat: B's cell tag is {bHdr.Tag}, expected Pstr.");
+        // Chaining a chars segment onto a codes one would build the mixed list
+        // [a,b,c,97,98] behind a single header, and every chain walker would
+        // have to stop mid-buffer. Callers concatenate same-kind text or fall
+        // back to the cons path.
+        if (aHdr.AsPstrKind != bHdr.AsPstrKind)
+            throw new InvalidOperationException(
+                $"MakePstrConcat: A is {aHdr.AsPstrKind}, B is {bHdr.AsPstrKind}.");
 
         int totalALength = GetPstrChainLength(aIdx);
         int bChainLength = GetPstrChainLength(bIdx);
@@ -365,14 +393,15 @@ public sealed partial class Activation
         // unification path's recursive Unify on tail indices follows the
         // chain transparently (UnifyPstrPstr dispatches on Pstr-Pstr).
         _heap[tailIdx] = _heap[bIdx];
-        _heap[headerIdx] = Cell.Pstr(totalALength, bufferStart, 0);
+        _heap[headerIdx] = Cell.Pstr(totalALength, bufferStart, 0, aHdr.AsPstrKind);
         return headerIdx;
     }
 
     private void FillCharsFromPstrChain(Cell header, char[] dst)
     {
         int writeIdx = 0;
-        while (header.Tag == Tag.Pstr)
+        TextKind kind = header.AsPstrKind;
+        while (header.Tag == Tag.Pstr && header.AsPstrKind == kind)
         {
             int length = header.AsPstrLength;
             for (int i = 0; i < length; i++)
@@ -391,6 +420,11 @@ public sealed partial class Activation
     /// <summary>Heap index of the cell that immediately follows a PSTR's buffer cells.
     /// That cell is the tail value (typically <c>[]</c>, a variable, another PSTR, or
     /// a LIS in the "fallback to cons" case).</summary>
+    /// <summary>Tail-cell index of a PSTR given the header CELL rather than its
+    /// heap address — a slice arrives as a computed value with no address of
+    /// its own.</summary>
+    public int GetPstrTailIndexOf(Cell header) => ComputePstrTailIndex(header);
+
     public int GetPstrTailIndex(int headerIdx)
     {
         Cell header = _heap[headerIdx];
@@ -412,45 +446,18 @@ public sealed partial class Activation
         return GetPstrCodeUnit(header, i);
     }
 
-    /// <summary>
-    /// Decomposes the PSTR header at heap[<paramref name="headerIdx"/>] into its first
-    /// code unit and a tail header, updating the cell at <paramref name="headerIdx"/>
-    /// in place. When the PSTR had one remaining code unit, the cell is replaced with
-    /// the PSTR's own tail value (typically <c>Atom([])</c>); otherwise it's replaced
-    /// with an advanced PSTR header sharing the original buffer.
-    ///
-    /// <para>The extracted head is returned as <c>Int(code_unit)</c> — only
-    /// supports <c>codes</c> mode for <c>double_quotes</c>; the <c>chars</c> path is
-    /// deferred until the flags subsystem lands.</para>
-    /// </summary>
-    /// <returns>true if a head was extracted; false if the cell was not a PSTR or had
-    /// length zero (in which case no state is changed).</returns>
-    public bool AdvancePstrHead(int headerIdx, out Cell head)
+    /// <summary>The element a packed list yields at a given position: a
+    /// one-character atom or a code, per the header's <see cref="TextKind"/>.
+    /// Every uncons path goes through here — the four of them producing their
+    /// own head cell is how <c>X = "abc", X = [97,98,99]</c> came to fail
+    /// through one cursor and succeed through another.</summary>
+    private static Cell PstrHeadCell(TextKind kind, int codeUnit)
     {
-        Cell hdr = _heap[headerIdx];
-        if (hdr.Tag != Tag.Pstr || hdr.AsPstrLength == 0)
-        {
-            head = default;
-            return false;
-        }
-
-        int firstUnit = GetPstrCodeUnit(hdr, 0);
-        head = Cell.Int(firstUnit);
-
-        int newLength = hdr.AsPstrLength - 1;
-        if (newLength == 0)
-        {
-            int tailIdx = ComputePstrTailIndex(hdr);
-            _heap[headerIdx] = _heap[tailIdx];
-        }
-        else
-        {
-            int absoluteStart = hdr.AsPstrOffset + 1;
-            int newBufferIdx = hdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer;
-            int newOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
-            _heap[headerIdx] = Cell.Pstr(newLength, newBufferIdx, newOffset);
-        }
-        return true;
+        if (kind == TextKind.Codes) return Cell.Int(codeUnit);
+        int cached = AtomTable.GetSingleCharAtomId(codeUnit);
+        return Cell.Atom(cached >= 0
+            ? cached
+            : AtomTable.Intern(((char)codeUnit).ToString(), permanent: false).Id);
     }
 
     private int GetPstrCodeUnit(Cell header, int i)
@@ -471,7 +478,6 @@ public sealed partial class Activation
     }
 
     internal int BigIntTableCount => _bigIntTable.Count;
-    internal int StringTableCount => _stringTable.Count;
     internal int ForeignTableCount => _foreignTable.Count;
 
     // ----- Trail accessors -----
@@ -558,11 +564,25 @@ public sealed partial class Activation
     /// <summary>Number of attribute records allocated — diagnostic surface.</summary>
     internal int AttrTableCount => _attrTable.Count;
 
-    /// <summary>A snapshot of the attribute table's keys — the heap homes of
-    /// every variable that carries (or once carried; entries survive
-    /// binding) attributes. <c>call_residue_vars/2</c> diffs two snapshots.
-    /// Addresses are stable across the diff: the heap GC stands down while
-    /// the attribute table is non-empty.</summary>
+    /// <summary>Attribute records currently held — a diagnostic.</summary>
+    public int AttrRecordCount => _attrTable.Count;
+
+    /// <summary>A snapshot of the attribute table's keys — the heap home of
+    /// every variable that carries attributes, or carried them before it was
+    /// bound.
+    ///
+    /// <para>Entries outlive the binding because backtracking restores the
+    /// ATTVAR cell (<see cref="BindAttVarToValue"/> trails the original):
+    /// dropping one at bind time would bring the variable back with its
+    /// constraints gone. That is the reason, and the only one — in particular
+    /// it is NOT for <c>call_residue_vars/2</c>, whose second half filters
+    /// bound variables out itself.</para>
+    ///
+    /// <para>Callers diff two snapshots by raw heap address, which is sound
+    /// only while addresses do not move — today because the heap collector
+    /// stands down whenever the attribute table is non-empty. A collector that
+    /// runs with attributed variables live has to relocate the saved snapshots
+    /// as well.</para></summary>
     public int[] AttrTableKeysSnapshot()
     {
         var keys = new int[_attrTable.Count];
@@ -800,10 +820,14 @@ public sealed partial class Activation
                 // backtracking into a guarded goal restores its catcher.
                 if (entry.OldValue.Data == CatchTrailPush)
                 {
+                    if (CatchDiag)
+                        System.Console.Error.WriteLine($"[catch] undo-push recIdx={entry.HeapIdx} count={_catchFrames.Count}");
                     _catchFrames.RemoveAt(_catchFrames.Count - 1);
                 }
                 else
                 {
+                    if (CatchDiag)
+                        System.Console.Error.WriteLine($"[catch] undo-deact idx={entry.HeapIdx} count={_catchFrames.Count}");
                     CatchFrame f = _catchFrames[entry.HeapIdx];
                     f.Active = true;
                     _catchFrames[entry.HeapIdx] = f;
@@ -822,10 +846,20 @@ public sealed partial class Activation
     /// each first. Returns <c>true</c> on success, <c>false</c> on failure. On failure the
     /// caller is responsible for unwinding the trail back to the pre-unify state.
     /// </summary>
+    /// <summary>Set by the depth guard inside the unify walk to request an
+    /// escalated (pair-guarded) RESTART from the entry point. Never survives
+    /// an entry call: consumed (or found clear) before it returns.</summary>
+    private bool _unifyEscalate;
+
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool Unify(int aIdx, int bIdx)
-        => Unify(aIdx, bIdx, 0, null);
+    {
+        if (Unify(aIdx, bIdx, 0, null)) return true;
+        if (!_unifyEscalate) return false;
+        _unifyEscalate = false;
+        return Unify(aIdx, bIdx, 0, new HashSet<long>());
+    }
 
     /// <summary>C#-recursion depth past which plain unification escalates to
     /// the guarded (pair-set) mode. Typical terms never reach it and pay
@@ -850,7 +884,18 @@ public sealed partial class Activation
     {
         Profiler.Unify();
         if (activePairs is null && depth >= UnifyRecursionLimit)
-            activePairs = new HashSet<long>();
+        {
+            // Escalate by RESTART, not in place: a set created here only
+            // covers THIS subtree — the recursion unwinds below the limit,
+            // dives into the cycle again with a fresh empty set, and the
+            // pair knowledge is lost forever (A=A*B, B=C*A*C, A=B hung
+            // exactly so, oscillating around the limit). The entry point
+            // re-runs the WHOLE unification with the guard on from depth 0;
+            // bindings already made are monotone (they re-unify via the
+            // address shortcut or the pair set), so no rollback is needed.
+            _unifyEscalate = true;
+            return false;
+        }
         int aAddr = Deref(aIdx);
         int bAddr = Deref(bIdx);
         if (aAddr == bAddr) return true;
@@ -892,7 +937,6 @@ public sealed partial class Activation
             Tag.Lis => UnifyLis(aCell.AsHeapIndex, bCell.AsHeapIndex, depth, activePairs),
             Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
             Tag.Rational => _rationalTable[aCell.AsRationalId].Equals(_rationalTable[bCell.AsRationalId]),
-            Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
             Tag.Float => UnifyFloat(aCell, bCell),
             _ => throw new InvalidOperationException($"Unify reached cell with unexpected tag {aCell.Tag}."),
@@ -948,11 +992,10 @@ public sealed partial class Activation
         {
             Tag.Atom => a.AsAtomId == b.AsAtomId,
             Tag.Int => a.AsInt == b.AsInt,
-            Tag.Str => UnifyStr(a.AsHeapIndex, b.AsHeapIndex),
-            Tag.Lis => UnifyLis(a.AsHeapIndex, b.AsHeapIndex),
+            Tag.Str => GuardedUnifyStr(a.AsHeapIndex, b.AsHeapIndex),
+            Tag.Lis => GuardedUnifyLis(a.AsHeapIndex, b.AsHeapIndex),
             Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
             Tag.Rational => _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]),
-            Tag.String => string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
             Tag.Float => UnifyFloat(a, b),
             _ => throw new InvalidOperationException($"UnifyCells reached unexpected tag {a.Tag}."),
@@ -1007,6 +1050,22 @@ public sealed partial class Activation
     /// notably long cons-cell lists, which is precisely why PSTR exists for strings —
     /// would warrant a future switch to an explicit push-down list.</para>
     /// </summary>
+    private bool GuardedUnifyStr(int fA, int fB)
+    {
+        if (UnifyStr(fA, fB)) return true;
+        if (!_unifyEscalate) return false;
+        _unifyEscalate = false;
+        return UnifyStr(fA, fB, 0, new HashSet<long>());
+    }
+
+    private bool GuardedUnifyLis(int hA, int hB)
+    {
+        if (UnifyLis(hA, hB)) return true;
+        if (!_unifyEscalate) return false;
+        _unifyEscalate = false;
+        return UnifyLis(hA, hB, 0, new HashSet<long>());
+    }
+
     private bool UnifyStr(int fA, int fB, int depth = 0, HashSet<long>? activePairs = null)
     {
         int functorIdA = _heap[fA].AsFunctorId;
@@ -1111,7 +1170,6 @@ public sealed partial class Activation
             Tag.Lis => UnifyLisWithOccursCheck(a.AsHeapIndex, b.AsHeapIndex),
             Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
             Tag.Rational => _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]),
-            Tag.String => string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
             Tag.Float => UnifyFloat(a, b),
             _ => throw new InvalidOperationException($"UnifyCellsWithOccursCheck reached unexpected tag {a.Tag}."),
@@ -1182,7 +1240,6 @@ public sealed partial class Activation
             Tag.Lis => UnifyLisWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex, activePairs),
             Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
             Tag.Rational => _rationalTable[aCell.AsRationalId].Equals(_rationalTable[bCell.AsRationalId]),
-            Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
             Tag.Float => UnifyFloat(aCell, bCell),
             _ => throw new InvalidOperationException($"UnifyWithOccursCheck reached cell with unexpected tag {aCell.Tag}."),
@@ -1191,9 +1248,11 @@ public sealed partial class Activation
 
     // The compound walk threads an active-pair set so unifying two CYCLIC
     // terms (X = f(X), Y = f(Y), unify_with_occurs_check(X, Y)) terminates:
-    // re-entering a pair already on the walk's path means the unification
-    // could only succeed by building an infinite tree, which sound
-    // unification must reject — so it FAILS (SWI behaves the same).
+    // re-entering a pair already on the walk's path SUCCEEDS — the pair is
+    // the one being unified above us, and assuming it equal is the rational-
+    // tree fixpoint (this engine's terms ARE rational trees; Trealla agrees).
+    // The occurs CHECK itself guards only the creation of NEW cycles: a
+    // variable binding to a term it occurs in (OccursIn, on the Ref paths).
     private bool UnifyStrWithOccursCheck(int fA, int fB, HashSet<long>? activePairs = null)
     {
         int functorIdA = _heap[fA].AsFunctorId;
@@ -1201,7 +1260,7 @@ public sealed partial class Activation
         if (functorIdA != functorIdB) return false;
         long pairKey = ((long)fA << 32) | (uint)fB;
         activePairs ??= new HashSet<long>();
-        if (!activePairs.Add(pairKey)) return false;   // cyclic pair → fail
+        if (!activePairs.Add(pairKey)) return true;   // cyclic pair → coinductive success
         var (_, arity) = FunctorTable.Lookup(functorIdA);
         bool ok = true;
         for (int i = 1; i <= arity && ok; i++)
@@ -1214,7 +1273,7 @@ public sealed partial class Activation
     {
         long pairKey = ((long)hA << 32) | (uint)hB;
         activePairs ??= new HashSet<long>();
-        if (!activePairs.Add(pairKey)) return false;   // cyclic pair → fail
+        if (!activePairs.Add(pairKey)) return true;   // cyclic pair → coinductive success
         bool ok = UnifyWithOccursCheck(hA, hB, activePairs)
                && UnifyWithOccursCheck(hA + 1, hB + 1, activePairs);
         activePairs.Remove(pairKey);
@@ -1223,25 +1282,21 @@ public sealed partial class Activation
 
     /// <summary>True iff the variable cell at <paramref name="targetAddr"/>
     /// is structurally reachable from the (dereferenced) value at
-    /// <paramref name="sourceAddr"/> — OR that value is CYCLIC. Both mean
-    /// the bind must be rejected: sound unification only ever produces
-    /// finite trees, so binding a variable to an already-cyclic term fails
-    /// (SWI behaves the same; a naive walk would loop forever). Walks the
-    /// source iteratively over an explicit stack (no C# recursion), with an
-    /// on-path set for cycle detection (a negative stack entry is the exit
-    /// marker that leaves the path) and a done set so shared (DAG) subterms
-    /// are checked once, not re-flagged as cycles.</summary>
+    /// <paramref name="sourceAddr"/>. An already-CYCLIC source is NOT an
+    /// occurrence: this engine's terms are rational trees, so binding a
+    /// fresh variable to an existing cyclic term is sound (Trealla agrees) —
+    /// the check only bars the variable from appearing inside the value.
+    /// Walks the source iteratively over an explicit stack (no C#
+    /// recursion) with a done set, so shared subterms are checked once and
+    /// a cyclic source terminates instead of looping.</summary>
     private bool OccursIn(int targetAddr, int sourceAddr)
     {
         var stack = new Stack<int>();
-        var onPath = new HashSet<int>();
         HashSet<int>? done = null;
         stack.Push(sourceAddr);
         while (stack.Count > 0)
         {
-            int raw = stack.Pop();
-            if (raw < 0) { onPath.Remove(~raw); continue; }   // exit marker
-            int addr = Deref(raw);
+            int addr = Deref(stack.Pop());
             if (addr == targetAddr) return true;
             Cell c = _heap[addr];
             switch (c.Tag)
@@ -1249,10 +1304,7 @@ public sealed partial class Activation
                 case Tag.Str:
                 {
                     int fIdx = c.AsHeapIndex;
-                    if (onPath.Contains(fIdx)) return true;   // cyclic source
                     if (!(done ??= new HashSet<int>()).Add(fIdx)) break;
-                    onPath.Add(fIdx);
-                    stack.Push(~fIdx);
                     int functorId = _heap[fIdx].AsFunctorId;
                     var (_, arity) = FunctorTable.Lookup(functorId);
                     for (int i = 1; i <= arity; i++) stack.Push(fIdx + i);
@@ -1261,10 +1313,7 @@ public sealed partial class Activation
                 case Tag.Lis:
                 {
                     int hIdx = c.AsHeapIndex;
-                    if (onPath.Contains(hIdx)) return true;   // cyclic source
                     if (!(done ??= new HashSet<int>()).Add(hIdx)) break;
-                    onPath.Add(hIdx);
-                    stack.Push(~hIdx);
                     stack.Push(hIdx);
                     stack.Push(hIdx + 1);
                     break;
@@ -1273,10 +1322,7 @@ public sealed partial class Activation
                 {
                     // PSTR characters are immediate ints — only the
                     // logical tail can carry a variable.
-                    if (onPath.Contains(addr)) return true;   // cyclic source
                     if (!(done ??= new HashSet<int>()).Add(addr)) break;
-                    onPath.Add(addr);
-                    stack.Push(~addr);
                     int tailIdx = ComputePstrTailIndex(c);
                     stack.Push(tailIdx);
                     break;
@@ -1351,6 +1397,11 @@ public sealed partial class Activation
         int aLen = aHdr.AsPstrLength;
         int bLen = bHdr.AsPstrLength;
 
+        // [a,b,c] and [97,98,99] are different lists. An empty segment carries
+        // no elements, so its presentation says nothing and must not decide.
+        if (aLen > 0 && bLen > 0 && aHdr.AsPstrKind != bHdr.AsPstrKind)
+            return false;
+
         if (aLen > bLen)
         {
             (aAddr, bAddr) = (bAddr, aAddr);
@@ -1380,7 +1431,7 @@ public sealed partial class Activation
         int sliceLength = bLen - aLen;
 
         int sliceSlot = AllocateHeap(1);
-        _heap[sliceSlot] = Cell.Pstr(sliceLength, sliceBufferIdx, sliceOffset);
+        _heap[sliceSlot] = Cell.Pstr(sliceLength, sliceBufferIdx, sliceOffset, bHdr.AsPstrKind);
         return Unify(aTailIdx, sliceSlot);
     }
 
@@ -1398,14 +1449,12 @@ public sealed partial class Activation
     {
         Cell pstrHdr = _heap[pstrAddr];
         int length = pstrHdr.AsPstrLength;
-        int firstUnit = GetPstrCodeUnit(pstrHdr, 0);
 
         int lisHeadIdx = _heap[lisAddr].AsHeapIndex;
         int lisTailIdx = lisHeadIdx + 1;
 
-        // Unify the head: a fresh Int cell against the LIS's head slot.
         int headSlot = AllocateHeap(1);
-        _heap[headSlot] = Cell.Int(firstUnit);
+        _heap[headSlot] = PstrHeadCell(pstrHdr.AsPstrKind, GetPstrCodeUnit(pstrHdr, 0));
         if (!Unify(headSlot, lisHeadIdx)) return false;
 
         if (length == 1)
@@ -1419,7 +1468,7 @@ public sealed partial class Activation
         int newOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
 
         int sliceSlot = AllocateHeap(1);
-        _heap[sliceSlot] = Cell.Pstr(length - 1, newBufferIdx, newOffset);
+        _heap[sliceSlot] = Cell.Pstr(length - 1, newBufferIdx, newOffset, pstrHdr.AsPstrKind);
         return Unify(sliceSlot, lisTailIdx);
     }
 
@@ -1491,6 +1540,11 @@ public sealed partial class Activation
     /// <paramref name="attvarHome"/>, recording the term it was bound
     /// to (<paramref name="otherIdx"/>). A no-op when the variable
     /// carries no attributes.</summary>
+    /// <para>Called from the head-matching ops too (<c>get_struct</c>,
+    /// <c>get_list</c> and their unify-cursor twins): binding an attributed
+    /// variable by MATCHING a clause head against it is a binding like any
+    /// other, and used not to wake anything — so a <c>freeze/2</c> on a
+    /// variable that a callee's head decomposed never fired.</para>
     private void QueueAttrWakeups(int attvarHome, int otherIdx)
     {
         if (!_attrTable.TryGetValue(attvarHome, out var record)) return;

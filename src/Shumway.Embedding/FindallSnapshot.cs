@@ -134,9 +134,10 @@ internal static class FindallSnapshot
             case Tag.Float:
             case Tag.BigInt:
             case Tag.Rational:
-            case Tag.String:
             case Tag.Pstr:
             case Tag.Foreign:
+                // A snapshot outlives the heap state it was taken from, so
+                // unlike copy_term it cannot share a packed list's buffer.
                 throw ValueLeaf;   // fall back to the AST path
             case Tag.Str:
                 return CopyStr(engine, c.AsHeapIndex, cells, varMap, structMap);

@@ -28,6 +28,18 @@ internal static class ReplTopLevel
 
     private static int MainCore(string[] args)
     {
+        // UTF-8 stdout/stderr (no BOM): Windows consoles default to the OEM
+        // codepage (CP850 writes é as 0x82), so any non-ASCII text a
+        // program emits reaches pipes and files mojibake'd. Every peer engine
+        // (SWI, GNU on modern terminals, Trealla, Scryer) emits UTF-8. Only
+        // when attached to a real console or pipe — under redirection .NET
+        // already writes UTF-8; and never touch input, where the encoding
+        // must match what the terminal actually sends.
+        try
+        {
+            Console.OutputEncoding = new System.Text.UTF8Encoding(false);
+        }
+        catch { /* headless host without a console — keep the default */ }
         // -h / --help — only among the REPL's OWN arguments: anything after the `--`
         // separator belongs to the consulted program (the argv Prolog flag), including
         // a --help of its own.

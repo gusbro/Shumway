@@ -40,6 +40,12 @@ public static class AstTermRenderer
     public static string Render(Term term, int maxPrec)
         => Render(term, maxPrec, DefaultOps);
 
+    /// <summary>The <c>writeq</c>-flavoured render with the default operator
+    /// table — what <c>listing</c>/<c>portray_clause</c> emit, where an atom
+    /// that would not re-read as itself must be quoted.</summary>
+    public static string RenderQuoted(Term term, int maxPrec = 1200)
+        => Render(term, maxPrec, DefaultOps, quoted: true);
+
     /// <summary>Operator-aware overload using a caller-supplied table —
     /// pass <see cref="PrologEngine.Operators"/> to render terms that
     /// mention operators introduced at runtime (e.g. CLP(FD)'s
@@ -65,6 +71,10 @@ public static class AstTermRenderer
             case BigIntTerm b: return b.Value.ToString(CultureInfo.InvariantCulture);
             case CompoundTerm { Functor: ".", Args.Length: 2 } list:
                 return RenderList(list, ops, quoted);
+            // '{}'(X) reads back as {X} — the canonical form would re-parse
+            // but is not what writeq/portray_clause emit.
+            case CompoundTerm { Functor: "{}", Args.Length: 1 } curly:
+                return "{" + Render(curly.Args[0], 1200, ops, quoted) + "}";
             case CompoundTerm c:
                 return RenderCompound(c, maxPrec, ops, quoted);
             default:
@@ -90,7 +100,19 @@ public static class AstTermRenderer
                 _ when IsSymbolic(c.Functor) => c.Functor,
                 _ => $" {c.Functor} ",
             };
-            string body = $"{Render(c.Args[0], leftMax, ops, quoted)}{sep}{Render(c.Args[1], rightMax, ops, quoted)}";
+            string leftStr = Render(c.Args[0], leftMax, ops, quoted);
+            string rightStr = Render(c.Args[1], rightMax, ops, quoted);
+            // A tight symbolic operator fuses with a graphic-ending operand
+            // into ONE token on re-read (`.. = ..` as `..=..`; `X = -1` as
+            // `X=-1`, lexing `=-`): pad exactly where adjacency would fuse.
+            if (sep.Length > 0 && IsGraphicChar(sep[0]))
+            {
+                if (leftStr.Length > 0 && IsGraphicChar(leftStr[^1]))
+                    sep = " " + sep;
+                if (rightStr.Length > 0 && IsGraphicChar(rightStr[0]))
+                    sep += " ";
+            }
+            string body = $"{leftStr}{sep}{rightStr}";
             return iPrec > maxPrec ? $"({body})" : body;
         }
         if (c.Args.Length == 1 && ops.TryGetPrefix(c.Functor, out int pPrec, out var pType))
@@ -103,7 +125,11 @@ public static class AstTermRenderer
         {
             int argMax = sType == OperatorType.Yf ? sPrec : sPrec - 1;
             string sep = IsSymbolic(c.Functor) ? c.Functor : $" {c.Functor}";
-            string body = $"{Render(c.Args[0], argMax, ops, quoted)}{sep}";
+            string operandStr = Render(c.Args[0], argMax, ops, quoted);
+            if (sep.Length > 0 && IsGraphicChar(sep[0])
+                && operandStr.Length > 0 && IsGraphicChar(operandStr[^1]))
+                sep = " " + sep;
+            string body = $"{operandStr}{sep}";
             return sPrec > maxPrec ? $"({body})" : body;
         }
         // Canonical form. Arguments sit at priority 999 (below the
@@ -123,9 +149,15 @@ public static class AstTermRenderer
     {
         if (name.Length == 0) return false;
         foreach (char ch in name)
-            if ("+-*/\\^<>=~:.?@#&$".IndexOf(ch) < 0) return false;
+            if (!IsGraphicChar(ch)) return false;
         return true;
     }
+
+    /// <summary>A char of the Prolog graphic-token alphabet: two adjacent
+    /// graphic chars lex as one token, so renderers must pad where rendered
+    /// pieces would otherwise fuse.</summary>
+    internal static bool IsGraphicChar(char ch)
+        => "+-*/\\^<>=~:.?@#&$".IndexOf(ch) >= 0;
 
     private static string RenderList(CompoundTerm cons, OperatorTable ops, bool quoted)
     {

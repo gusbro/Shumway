@@ -310,6 +310,29 @@ public static class ShmoCompiler
                     isExportQualified = true;
                     foreach (var spec in ReadPiListLenient(modDir.Args[1]))
                         exportSet.Add(spec);
+                    // ADR-046 — op(P,T,N) entries of the export list persist
+                    // with a '*' suffix on the type: EXPORTED (installed into
+                    // an importer's layer / advertised at LoadBundle), vs the
+                    // module's private ops from bare `:- op` directives.
+                    Term exCursor = modDir.Args[1];
+                    while (exCursor is CompoundTerm { Functor: ".", Args: [var exEl, var exRest] })
+                    {
+                        if (exEl is CompoundTerm { Functor: "op",
+                                Args: [IntTerm xp, AtomTerm xt, var xn] })
+                        {
+                            if (xn is AtomTerm xa)
+                                operatorDefs.Add(new ShmoOperatorDef(
+                                    (int)xp.Value, xt.Name + "*", xa.Name));
+                            else
+                                while (xn is CompoundTerm { Functor: ".", Args: [AtomTerm xe, var xr] })
+                                {
+                                    operatorDefs.Add(new ShmoOperatorDef(
+                                        (int)xp.Value, xt.Name + "*", xe.Name));
+                                    xn = xr;
+                                }
+                        }
+                        exCursor = exRest;
+                    }
                     continue;
                 }
                 // ADR-038 — `:- use_module(library(X))` / `…, [Filter]`. Record the
@@ -1056,12 +1079,17 @@ public static class ShmoCompiler
 
     private static bool TryReadFunctorSpec(Term term, out PredicateRef spec)
     {
+        // arity_compat — strip an Arity directive annotation (`foo/8:far`,
+        // `f/2:system(...)`); see PrologEngine's twin. `:` is LOOSER than `/`
+        // (600 vs 400, as in GNU/SWI/Scryer), so the annotation wraps the whole
+        // indicator; the tighter grouping is accepted too, for sources read
+        // under a table that puts `:` below `/`.
+        if (term is CompoundTerm { Functor: ":", Args.Length: 2 } outerColon)
+            term = outerColon.Args[0];
         if (term is CompoundTerm slash && slash.Functor == "/" && slash.Args.Length == 2
             && slash.Args[0] is AtomTerm name)
         {
             Term arityTerm = slash.Args[1];
-            // arity_compat — strip an Arity directive annotation
-            // (`foo/8:far`, `f/2:system(...)`); see PrologEngine's twin.
             if (arityTerm is CompoundTerm colon && colon.Functor == ":"
                 && colon.Args.Length == 2)
                 arityTerm = colon.Args[0];

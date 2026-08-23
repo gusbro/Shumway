@@ -180,25 +180,27 @@ public class TermUnificationConformance
         Assert.Equal(Int(2), sol["Y"]);
     }
 
-    // Sound unification against an ALREADY-cyclic input (built by plain =/2)
-    // must FAIL, not hang: it can never produce a finite tree. SWI behaves
-    // the same. These used to loop forever in the occurs-check walk.
+    // An ALREADY-cyclic input (built by plain =/2) is a legal rational
+    // tree in this engine: the occurs check bars only the creation of NEW
+    // cycles, so a fresh variable binds to it and two cyclic operands
+    // unify coinductively (Trealla agrees; these used to loop forever in
+    // the occurs-check walk, then to fail under the pre-rational policy).
 
     [Fact]
-    public void UnifyWithOccursCheck_CyclicOperandAgainstVar_Fails()
+    public void UnifyWithOccursCheck_CyclicOperandAgainstVar_Binds()
     {
         var engine = new PrologEngine();
-        Assert.False(engine.Query(
-            "X = f(X), unify_with_occurs_check(X, Y).").Success);
-        Assert.False(engine.Query(
-            "X = [a|X], unify_with_occurs_check(X, Y).").Success);
+        Assert.True(engine.Query(
+            "X = f(X), unify_with_occurs_check(X, Y), Y == X.").Success);
+        Assert.True(engine.Query(
+            "X = [a|X], unify_with_occurs_check(X, Y), Y == X.").Success);
     }
 
     [Fact]
-    public void UnifyWithOccursCheck_TwoCyclicOperands_Fails()
+    public void UnifyWithOccursCheck_TwoCyclicOperands_UnifyCoinductively()
     {
         var engine = new PrologEngine();
-        Assert.False(engine.Query(
+        Assert.True(engine.Query(
             "X = f(X), Y = f(Y), unify_with_occurs_check(X, Y).").Success);
     }
 
@@ -301,6 +303,39 @@ public class TermUnificationConformance
         Assert.True(sol.Success);
         Assert.Equal(Atom("post"), sol["X"]);
     }
+    // ===== occurs check over rational trees =====
+    // The engine's terms are rational trees, so unify_with_occurs_check's
+    // check guards only the creation of NEW cycles (a variable binding into
+    // a term it occurs in). Already-cyclic INPUTS unify coinductively and a
+    // fresh variable may bind to one (Trealla agrees; their test0518).
+
+    [Fact]
+    public void OccursCheck_CyclicVsCyclic_SucceedsCoinductively()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "V = V-X, W = W-X, unify_with_occurs_check(V, W).").Success);
+        Assert.True(e.Query(
+            "V = V-X, W = W-Y, unify_with_occurs_check(V, W), X == Y.").Success);
+    }
+
+    [Fact]
+    public void OccursCheck_FreshVarBindsToCyclicTerm()
+        => Assert.True(new PrologEngine().Query(
+            "V = V-_, unify_with_occurs_check(V, W), W == V.").Success);
+
+    [Fact]
+    public void OccursCheck_StillBarsNewCycles()
+    {
+        var e = new PrologEngine();
+        Assert.False(e.Query("unify_with_occurs_check(X, f(X)).").Success);
+        // ...including one reached DEEP in a cyclic-vs-cyclic walk: the
+        // coinductive pair success must not leak past the fresh X4 = s(X4)
+        // bind attempt.
+        Assert.True(e.Query(
+            "V = V-X, W = W-s(X), \\+ unify_with_occurs_check(V, W).").Success);
+    }
+
 
     [Fact]
     public void NotUnifiable_CompoundsDifferentArity_Succeeds() =>

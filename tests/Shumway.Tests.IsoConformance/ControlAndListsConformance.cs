@@ -119,11 +119,93 @@ public class ControlAndListsConformance
     }
 
     [Fact]
+    public void Length_TailIdenticalToLength_Fails()
+    {
+        // length(L, L): any candidate binds the open tail to a k-skeleton and
+        // then fails unifying that LIST with the integer k — false is the
+        // limit the plain enumeration loops toward. SWI fails too; Scryer and
+        // Trealla throw resource_error(finite_memory) (accepted divergence).
+        var engine = new PrologEngine();
+        Assert.False(engine.Query("length(L, L).").Success);
+        Assert.False(engine.Query("L = [a|X], length(L, X).").Success);
+        // The identity check must not disturb the neighbours: a var LENGTH
+        // that is an ELEMENT is fine, and a nonvar non-integer still errors.
+        Assert.True(engine.Query("length([N|T], N), N == 1, T == [].").Success);
+        Assert.True(engine.Query(
+            "catch(length([a|_], [a|_]), error(type_error(integer, _), _), true).").Success);
+    }
+
+    [Fact]
     public void Reverse_ReversesList()
     {
         var engine = new PrologEngine();
         // reverse/2 is a builtin (chunk 30-something).
         var sol = engine.Query("reverse([1, 2, 3], R).");
         Assert.True(sol.Success);
+    }
+
+    [Fact]
+    public void Findall_CutInGoal_StaysLocal()
+    {
+        // §7.8.3: a cut in the GOAL argument of findall/bagof is local to
+        // the goal — it must stop the enumeration WITHOUT killing the
+        // driver's collect alternative. The static collect-loop rewrite
+        // once spliced the goal bare and the cut escaped into the driver.
+        var engine = new PrologEngine();
+        Assert.True(engine.Query(
+            "findall(X, (member(X, [1,2,3]), !), L), L == [1].").Success);
+        Assert.True(engine.Query(
+            "findall(X, (member(X, [1,2,3]), (X < 2 -> true ; !)), L), L == [1,2].").Success);
+        Assert.True(engine.Query(
+            "bagof(X, (member(X, [1,2,3]), !), L), L == [1].").Success);
+    }
+
+    [Fact]
+    public void Findall_RuleFormOverPartialList()
+    {
+        // length/2 over a partial list enumerates extensions; a cut in the
+        // goal ends the enumeration keeping the last solution.
+        var engine = new PrologEngine();
+        Assert.True(engine.Query(
+            "findall(T-N, (length([1,2,3|T], N), (N < 6 -> true ; !)), L), "
+            + "L = [[]-3, [_]-4, [_,_]-5, [_,_,_]-6].").Success);
+    }
+
+    [Fact]
+    public void Length_IsoErrors()
+    {
+        var engine = new PrologEngine();
+        Assert.True(engine.Query(
+            "catch(length(_, a), error(type_error(integer, a), _), true).").Success);
+        Assert.True(engine.Query(
+            "catch(length(a, _), error(type_error(list, a), _), true).").Success);
+    }
+
+    [Fact]
+    public void NonCallableGoal_RaisesAtRuntime()
+    {
+        // A non-callable spliced into goal position (`{1^true}`-style
+        // sources) must be a CATCHABLE runtime type_error(callable, _),
+        // never a compile-time crash that kills the load. §7.6.2 converts
+        // the WHOLE construct, so the culprit is `(true,4)` — GNU agrees,
+        // and the conversion fires before `true` runs.
+        var engine = new PrologEngine();
+        Assert.True(engine.Query(
+            "catch((true, 4), error(type_error(callable, (true, 4)), _), true).").Success);
+    }
+
+    [Fact]
+    public void SoftCutIf3_RunsEveryConditionSolution()
+    {
+        // SICStus if/3: Then for EVERY solution of Cond; Else only when
+        // Cond never succeeded. predicate_property reports it built_in
+        // (the Logtalk conformity testers gate on that).
+        var engine = new PrologEngine();
+        Assert.True(engine.Query(
+            "findall(X, if(member(X, [1,2]), true, fail), L), L == [1,2].").Success);
+        Assert.True(engine.Query("if(fail, true, X = e), X == e.").Success);
+        Assert.True(engine.Query("predicate_property(if(_,_,_), built_in).").Success);
+        Assert.True(engine.Query("predicate_property('*->'(_,_), built_in).").Success);
+        Assert.True(engine.Query("\\+ current_predicate((',')/2).").Success);
     }
 }

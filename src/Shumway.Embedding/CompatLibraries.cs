@@ -37,6 +37,7 @@ internal static class CompatLibraries
             "format" => Format,
             "dif"    => Dif,
             "$project_atts" => ProjectAtts,
+            "atts" => Atts,
             // Covered by Shumway's prelude / builtins — importing them is a
             // no-op that just marks the module available. `loader` is Scryer's
             // bootstrap module; the one predicate real libraries import from it
@@ -66,9 +67,97 @@ internal static class CompatLibraries
     // succeeds. The true dif/2 would delay; a program that later forces such a
     // pair equal would observe the difference. Sufficient for the common
     // "these are already bound / will never be unified" usage.
+    // The real, SUSPENDING dif/2 lives in the coroutining library. This
+    // entry used to be a decide-once stub — ( X \= Y -> true ; ... ) —
+    // which silently FORGOT an undecided disequality: dif(A, B) with both
+    // unbound succeeded and never failed anything later (Trealla
+    // test0400/0402/0210 caught it over rational trees, where the real
+    // dif already behaves).
     private const string Dif = """
-        :- public dif/2.
-        dif(X, Y) :- ( X \= Y -> true ; X == Y -> fail ; true ).
+        :- use_module(library(coroutining)).
+        """;
+
+    // library(atts) — the SICStus attributed-variable API (put_atts/get_atts
+    // + the `:- attribute Spec` declaration) over the engine's native
+    // per-module attribute-list primitives ('$put_to_attr_list' & co, the
+    // ones the Scryer clpz certification exercised). The module a
+    // put_atts/get_atts call belongs to is the module of the clause being
+    // COMPILED — baked in by goal_expansion via prolog_load_context, which is
+    // how Scryer's own atts.pl does it. Client modules define their
+    // verify_attributes/3 hook; the engine's per-module dispatch (ADR-040)
+    // finds it without registration.
+    private const string Atts = """
+        % get_attr/put_attr/del_attr are EXPORT-QUALIFIED (ADR-038): an
+        % importer of library(atts) sees these hProlog-COMPAT wrappers —
+        % get_attr(V, M, Val) is get_atts(V, Access) with Access =.. [M, Val],
+        % the bridge Triska's solvers rely on (clpz's fd_get stores via
+        % put_atts and reads via get_attr expecting the SAME value) — while
+        % everyone else keeps the engine's raw-value builtins.
+        :- module(atts, [get_attr/3, put_attr/3, del_attr/2,
+                         put_atts/2, get_atts/2,
+                         '$atts_put'/3, '$atts_get'/3]).
+        :- multifile goal_expansion/2.
+        :- multifile term_expansion/2.
+
+        % The declaration op, in the USER layer (ADR-046 escape hatch): the
+        % CLIENT's file is what parses `:- attribute frozen/1.`, so the op
+        % must be visible outside this module's own layer.
+        :- op(1199, fx, user:attribute).
+
+        % `:- attribute f/1, g/2.` declares which attribute functors belong
+        % to the declaring module. The engine keys attributes by (module,
+        % functor) dynamically, so the declaration is metadata — accepted,
+        % dropped.
+        term_expansion((:- attribute(_)), []).
+
+        goal_expansion(put_atts(V, Spec), '$atts_put'(V, M, Spec)) :-
+            prolog_load_context(module, M).
+        goal_expansion(get_atts(V, Spec), '$atts_get'(V, M, Spec)) :-
+            prolog_load_context(module, M).
+
+        %! put_atts(-Var, +AccessSpec) | Attributed variables | SICStus atts: sets attributes of Var per AccessSpec — +Attr (or bare Attr) adds/replaces, -Attr removes, a list applies each in order. The attribute's MODULE is the calling module, resolved at compile time.
+        put_atts(V, Spec) :- '$atts_put'(V, user, Spec).
+
+        %! get_atts(-Var, ?AccessSpec) | Attributed variables | SICStus atts: queries attributes of Var — +Attr (or bare Attr) unifies with the attribute, -Attr succeeds iff absent, an unbound AccessSpec returns the full list.
+        get_atts(V, Spec) :- '$atts_get'(V, user, Spec).
+
+        get_attr(V, M, Value) :-
+            var(V), atom(M),
+            Access =.. [M, Value],
+            '$atts_get'(V, M, +Access).
+        put_attr(V, M, Value) :-
+            atom(M),
+            Access =.. [M, Value],
+            '$atts_put'(V, M, +Access).
+        del_attr(V, M) :-
+            ( var(V), atom(M) ->
+                Access =.. [M, _],
+                '$atts_put'(V, M, -Access)
+            ; true
+            ).
+
+        '$atts_put'(_, _, Spec) :-
+            var(Spec), !, throw(error(instantiation_error, put_atts/2)).
+        '$atts_put'(V, M, [S|Ss]) :- !,
+            '$atts_put'(V, M, S),
+            ( Ss == [] -> true ; '$atts_put'(V, M, Ss) ).
+        '$atts_put'(_, _, []) :- !.
+        '$atts_put'(V, M, +A) :- !, '$put_to_attr_list'(V, M, A).
+        '$atts_put'(V, M, -A) :- !, '$del_from_attr_list'(V, M, A).
+        '$atts_put'(V, M, A) :- '$put_to_attr_list'(V, M, A).
+
+        '$atts_get'(V, M, Spec) :-
+            ( var(Spec) -> get_attr(V, M, Spec)
+            ; '$atts_get_spec'(Spec, V, M)
+            ).
+        '$atts_get_spec'([], _, _) :- !.
+        '$atts_get_spec'([S|Ss], V, M) :- !,
+            '$atts_get_spec'(S, V, M), '$atts_get_spec'(Ss, V, M).
+        '$atts_get_spec'(+A, V, M) :- !, '$get_from_attr_list'(V, M, A).
+        '$atts_get_spec'(-A, V, M) :- !,
+            functor(A, F, N), functor(Probe, F, N),
+            \+ '$get_from_attr_list'(V, M, Probe).
+        '$atts_get_spec'(A, V, M) :- '$get_from_attr_list'(V, M, A).
         """;
 
     // library('$project_atts') — Scryer's attribute-projection bootstrap
@@ -123,7 +212,8 @@ internal static class CompatLibraries
 
     // library(format) — the DCG-format non-terminal format_//2. Supports the
     // directives real programs use: ~s (char/code list, spliced verbatim),
-    // ~d (integer), ~a (atom), ~n (newline), ~~ (literal tilde); any other
+    // ~d (integer), ~a (atom), ~w / ~q (write / writeq via
+    // write_term_to_chars), ~n (newline), ~~ (literal tilde); any other
     // character is emitted literally. Self-contained (does not depend on
     // library(dcgs) load order).
     private const string Format = """
@@ -134,6 +224,10 @@ internal static class CompatLibraries
             { number_chars(A, Cs) }, '$fmt_seq'(Cs), format_(Fs, As).
         format_(['~', 'a' | Fs], [A | As]) --> !,
             { atom_chars(A, Cs) }, '$fmt_seq'(Cs), format_(Fs, As).
+        format_(['~', 'w' | Fs], [A | As]) --> !,
+            { write_term_to_chars(A, [], Cs) }, '$fmt_seq'(Cs), format_(Fs, As).
+        format_(['~', 'q' | Fs], [A | As]) --> !,
+            { write_term_to_chars(A, [quoted(true)], Cs) }, '$fmt_seq'(Cs), format_(Fs, As).
         format_(['~', 'n' | Fs], As) --> !, ['\n'], format_(Fs, As).
         format_(['~', '~' | Fs], As) --> !, ['~'], format_(Fs, As).
         format_([C | Fs], As) --> [C], format_(Fs, As).

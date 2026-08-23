@@ -200,8 +200,8 @@ public class Chunk239Tests
         Assert.Equal(".", c.Functor);
         var pair = (CompoundTerm)c.Args[0];
         Assert.Equal("-", pair.Functor);
-        // string maps to StringTerm by default (chunk 238 mapping).
-        Assert.Equal("x", ((StringTerm)pair.Args[0]).Content);
+        // A .NET string is text as a value, so it maps to an atom (ADR-047).
+        Assert.Equal("x", ((AtomTerm)pair.Args[0]).Name);
         Assert.Equal(1L, ((IntTerm)pair.Args[1]).Value);
     }
 

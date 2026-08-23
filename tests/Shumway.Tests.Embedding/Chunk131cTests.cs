@@ -62,9 +62,14 @@ public class Chunk131cTests
     public void AtomCodes_NonIntListElement_RaisesTypeErrorCharacterCode()
     {
         var e = new PrologEngine();
-        var sol = e.Query("catch(atom_codes(_A, [foo]), error(type_error(T, _), _), true).");
+        // A non-integer code element is type_error(integer, E) with the
+        // element as culprit — GNU's reading, and what the ISO battery
+        // accepts.
+        var sol = e.Query(
+            "catch(atom_codes(_A, [foo]), error(type_error(T, V), _), true).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("character_code"), sol["T"]);
+        Assert.Equal(Atom("integer"), sol["T"]);
+        Assert.Equal(Atom("foo"), sol["V"]);
     }
 
     [Fact]

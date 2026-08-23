@@ -25,7 +25,6 @@ public class CellTests
         Assert.Equal(0x5, (byte)Tag.Int);
         Assert.Equal(0x6, (byte)Tag.Float);
         Assert.Equal(0x7, (byte)Tag.BigInt);
-        Assert.Equal(0x8, (byte)Tag.String);
         Assert.Equal(0x9, (byte)Tag.Foreign);
         Assert.Equal(0xA, (byte)Tag.AttVar);
         Assert.Equal(0xB, (byte)Tag.Pstr);
@@ -153,16 +152,6 @@ public class CellTests
         var c = Cell.BigInt(tableId);
         Assert.Equal(Tag.BigInt, c.Tag);
         Assert.Equal(tableId, c.AsBigIntId);
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(456)]
-    public void String_RoundTrips(int tableId)
-    {
-        var c = Cell.String(tableId);
-        Assert.Equal(Tag.String, c.Tag);
-        Assert.Equal(tableId, c.AsStringId);
     }
 
     [Theory]

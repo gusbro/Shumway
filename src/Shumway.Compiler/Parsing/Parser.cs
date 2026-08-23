@@ -27,7 +27,13 @@ namespace Shumway.Compiler.Parsing;
 public sealed class Parser
 {
     private readonly Lexer.Lexer _lexer;
-    private readonly OperatorTable _operators;
+    private OperatorTable _operators;
+
+    /// <summary>ADR-046 — retargets the parser at another operator layer
+    /// mid-stream. Called by the ClauseReader when a <c>:- module/2</c>
+    /// directive switches the rest of the file to the module's table.</summary>
+    internal void SwitchOperators(OperatorTable operators)
+        => _operators = operators;
     private readonly PrologFlags _flags;
     private readonly List<Token> _lookahead = new();
 
@@ -290,11 +296,15 @@ public sealed class Parser
         // atom is the left operand of `/` and the right is a non-negative
         // integer. Every Prolog accepts that, so it is exempt.
         bool isIndicator = name == "/" && right is IntTerm ri && ri.Value >= 0;
-        if (leftBareOp && !isIndicator && !_flags.LenientBareOperatorOperands)
+        // Arity sources use quoted operator atoms as plain operands
+        // (Blint's `Char = '/'`) — arity_compat rides the same leniency the
+        // dialect scopes get; the bare ISO default stays strict.
+        bool lenientOperand = _flags.LenientBareOperatorOperands || _flags.ArityCompat;
+        if (leftBareOp && !isIndicator && !lenientOperand)
             throw new ParseException(
                 $"Operator atom cannot be the left operand of '{name}' "
                 + "without parentheses.", pos);
-        if (rightBareOp && !_flags.LenientBareOperatorOperands)
+        if (rightBareOp && !lenientOperand)
             throw new ParseException(
                 $"Operator atom cannot be the right operand of '{name}' "
                 + "without parentheses.", pos);
@@ -313,7 +323,7 @@ public sealed class Parser
         int leftMax = opType == OperatorType.Yf ? opPrec : opPrec - 1;
         if (builtPrec > leftMax) return false;
 
-        if (leftBareOp && !_flags.LenientBareOperatorOperands)
+        if (leftBareOp && !_flags.LenientBareOperatorOperands && !_flags.ArityCompat)
             throw new ParseException(
                 $"Operator atom cannot be the operand of postfix '{name}' "
                 + "without parentheses.", PeekToken().Position);
@@ -555,11 +565,19 @@ public sealed class Parser
                 // `[!, X]`, `[! | T]` are ordinary lists with the cut atom as
                 // an element (ISO-valid, and used by real libraries such as
                 // Scryer's clpz). A real snip `[! Goal !]` always has a goal
-                // after the opening '!'.
+                // after the opening '!' — so an INFIX operator right after the
+                // '!' also means list, with '!' as its left operand
+                // (`[!-1, !-2]`); goals never start with an infix-only token.
                 if (PeekToken().Kind == TokenKind.Atom && PeekToken().Text == "!"
                     && !PeekToken().WasQuoted
                     && PeekTokenAt(1).Kind is not (TokenKind.RBracket
-                        or TokenKind.Comma or TokenKind.Bar))
+                        or TokenKind.Comma or TokenKind.Bar
+                        // A goal can start with neither a number ([!-1, …]:
+                        // the lexer folds the sign in) …
+                        or TokenKind.Integer or TokenKind.Float)
+                    // … nor an infix operator taking the '!' as left operand.
+                    && !(PeekTokenAt(1).Kind == TokenKind.Atom
+                        && _operators.TryGetInfix(PeekTokenAt(1).Text, out _, out _)))
                 {
                     NextToken();   // consume the opening '!'
                     Term snipBody = ReadTermInternal(1200, out _);
@@ -630,7 +648,7 @@ public sealed class Parser
                     // StandardBuiltins) rather than silently succeeding.
                     string nativeText = _lexer.SkipNativeGoalBlock(pos);
                     return new CompoundTerm("$native_goal",
-                        new Term[] { new StringTerm(nativeText) { Position = pos } })
+                        new Term[] { new StringTerm(nativeText, Shumway.Core.TextKind.Codes) { Position = pos } })
                         { Position = pos };
                 }
                 return ReadBrace(pos);
@@ -684,32 +702,19 @@ public sealed class Parser
     /// so the rest of the pipeline sees plain Prolog terms.</summary>
     private Term BuildStringLiteral(string text, Shumway.Compiler.Lexer.SourcePosition pos)
     {
-        switch (_flags.DoubleQuotes)
+        // Every text mode produces a StringTerm, which the compiler packs
+        // (ADR-047 decision 8). Building the cons list here is what made a
+        // literal cost 2n+1 cells; the flag now decides only what the list's
+        // ELEMENTS are, and that travels with the datum from here on.
+        if (text.Length == 0 && _flags.DoubleQuotes != DoubleQuotesMode.Atom)
+            return new AtomTerm("[]") { Position = pos };
+        return _flags.DoubleQuotes switch
         {
-            case DoubleQuotesMode.Codes:
-            {
-                Term acc = new AtomTerm("[]") { Position = pos };
-                for (int i = text.Length - 1; i >= 0; i--)
-                    acc = new CompoundTerm(".", new Term[] { new IntTerm(text[i]), acc }) { Position = pos };
-                return acc;
-            }
-            case DoubleQuotesMode.Chars:
-            {
-                Term acc = new AtomTerm("[]") { Position = pos };
-                for (int i = text.Length - 1; i >= 0; i--)
-                    acc = new CompoundTerm(".", new Term[]
-                    {
-                        new AtomTerm(text[i].ToString()),
-                        acc
-                    }) { Position = pos };
-                return acc;
-            }
-            case DoubleQuotesMode.Atom:
-                return new AtomTerm(text) { Position = pos };
-            case DoubleQuotesMode.String:
-            default:
-                return new StringTerm(text) { Position = pos };
-        }
+            DoubleQuotesMode.Codes => new StringTerm(text, Shumway.Core.TextKind.Codes) { Position = pos },
+            DoubleQuotesMode.Atom => new AtomTerm(text) { Position = pos },
+            // `string` is an SWI compatibility alias for chars, not a type.
+            _ => new StringTerm(text, Shumway.Core.TextKind.Chars) { Position = pos },
+        };
     }
 
     // SWI argument mode (LenientArgumentPriority): an argument / list element

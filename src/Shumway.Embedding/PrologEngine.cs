@@ -128,6 +128,48 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     internal Activation? _liveConsultEngine;
     internal readonly OperatorTable _operators = OperatorTable.Default();
 
+    /// <summary>ADR-046 — per-module operator layers, each parented by
+    /// <see cref="_operators"/> (the <c>user</c> table). Created on demand;
+    /// a module that never declares an operator has no entry and reads
+    /// straight from the user table (zero-cost common case). Distinct from
+    /// <c>_moduleOperators</c> (the flat attribution list separate
+    /// compilation persists).</summary>
+    internal readonly Dictionary<string, OperatorTable> _moduleOpLayers = new();
+
+    /// <summary>ADR-046 — the operators each module EXPORTS (the
+    /// <c>op(P,T,N)</c> terms of its export list). Applied to the
+    /// importer's layer by <c>use_module</c>.</summary>
+    internal readonly Dictionary<string,
+        List<(int Precedence, OperatorType Type, string Name)>> _moduleExportedOps = new();
+
+    /// <summary>The operator layer used to READ module
+    /// <paramref name="module"/>'s text: its own layer over the user
+    /// table, or the user table itself for bare/user text.</summary>
+    internal OperatorTable ModuleOperatorLayer(string module)
+    {
+        if (module == DefaultModuleName) return _operators;
+        if (!_moduleOpLayers.TryGetValue(module, out var t))
+        {
+            _moduleOpLayers[module] = t = new OperatorTable(_operators);
+            // The separate-compilation attribution (module -> its op defs,
+            // persisted into the .shmo) listens on the user table; a layer
+            // define must feed the same collector. Read through at fire
+            // time — the collector delegate is (re)wired per consult.
+            t.OnDefine = (n, prec, ty) => _operators.OnDefine?.Invoke(n, prec, ty);
+        }
+        return t;
+    }
+
+    /// <summary>ADR-046 — applies the operators exported by
+    /// <paramref name="sourceModule"/> to <paramref name="target"/> (the
+    /// importer's layer, or the user table for a top-level import).</summary>
+    internal void ApplyExportedOperators(string sourceModule, OperatorTable target)
+    {
+        if (!_moduleExportedOps.TryGetValue(sourceModule, out var ops)) return;
+        foreach (var (prec, type, opName) in ops)
+            target.Define(opName, prec, type);
+    }
+
     /// <summary>Save-state chronological log of every source
     /// string passed to <see cref="ConsultString"/>, excluding the
     /// auto-loaded prelude (which the ctor always loads first).
@@ -255,6 +297,21 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// wrapped for the calling context.</summary>
     internal readonly Dictionary<int, Term> _metaPredicateTemplates = new();
 
+    /// <summary>The control constructs' meta-templates. They are not
+    /// predicates, so no <c>:- meta_predicate</c> directive can name them
+    /// (`','(0,0)` in a directive reads as the conjunction-of-specs form),
+    /// but predicate_property/2 must still report their goal arguments —
+    /// Logtalk's compiler reads exactly this to decide what to wrap.</summary>
+    private void SeedControlMetaTemplates()
+    {
+        foreach (string ctl in new[] { ",", ";", "->", "*->" })
+        {
+            int fid = FunctorTable.Intern(AtomTable.Intern(ctl, permanent: true).Id, 2);
+            _metaPredicateTemplates[fid] = new CompoundTerm(ctl,
+                new Term[] { new IntTerm(0), new IntTerm(0) });
+        }
+    }
+
     /// <summary>The module that declared a dynamic functor <c>:- dynamic</c>,
     /// or <c>null</c> if it was auto-promoted (implicit_dynamic) with no
     /// declaration.</summary>
@@ -372,6 +429,10 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// which is what a client like Logtalk's linter checks to decide a call is
     /// to a known system predicate rather than an undefined one.</summary>
     internal readonly HashSet<int> _preludeFunctors = new();
+
+    /// <summary>True for a predicate the PRELUDE defines — library code a
+    /// program sees as built_in, so current_predicate/1 skips it.</summary>
+    internal bool IsPreludeFunctor(int functorId) => _preludeFunctors.Contains(functorId);
 
     /// <summary>The sink that I/O builtins (<c>write/1</c>, <c>nl/0</c>,
     /// <c>writeln/1</c>) write into. Defaults to <see cref="System.Console.Out"/>;
@@ -657,6 +718,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // Meta-builtins (findall/3 etc.) live in the Embedding layer because
         // they spawn sub-PrologEngines — Builtins can't reference Embedding.
         MetaBuiltins.EnsureRegistered();
+        SeedControlMetaTemplates();
 
         // Every operator defined (a `:- op` applies here at parse time) is
         // routed to the active consult's collection frame, so the

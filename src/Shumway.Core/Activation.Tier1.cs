@@ -14,6 +14,11 @@ public sealed partial class Activation
     // for one query's linked layout).
     public IReadOnlyDictionary<int, int>? CurrentFunctorAddresses { get; set; }
 
+    /// <summary>write_term's <c>portrayed(true)</c> hook: runs the user's
+    /// portray/1 re-entrantly for a subterm, returning true when it
+    /// produced the output. Wired by the embedding at query setup.</summary>
+    public Func<Activation, Cell, System.IO.TextWriter, bool>? PortrayHook { get; set; }
+
     // ADR-038 — the per-query module import map for runtime variable meta-calls.
     // Keyed by a packed (moduleAtomId, bareFunctorId) → the mangled Source$name
     // functor id the importing module bound that name to. A '$mqual'-tagged goal
@@ -32,6 +37,13 @@ public sealed partial class Activation
     /// invisibility is preserved for everything else. Null outside a
     /// live-consult query.</summary>
     public System.Collections.Generic.HashSet<int>? LiveConsultVisibleFids { get; set; }
+
+    /// <summary>functor ids DECLARED by a `:- discontiguous` or
+    /// `:- multifile` directive. Such a predicate is known even with no
+    /// clauses: calling it FAILS rather than raising existence_error,
+    /// whatever the <c>unknown</c> flag says. Installed at query setup;
+    /// null when nothing declared one.</summary>
+    public System.Collections.Generic.HashSet<int>? DeclaredEmptyFids { get; set; }
 
     /// <summary>runtime action for a call to an undefined
     /// procedure (the ISO <c>unknown</c> prolog flag, wired through
@@ -239,7 +251,38 @@ public sealed partial class Activation
     /// <c>verify_attributes/3</c>. Used by the merge rule to decide whether a shared
     /// module's values must be pre-unified (no hook) or left for the hook.</summary>
     internal bool ModuleHasHook(int moduleId) =>
-        Verify4FunctorId(moduleId) >= 0 || Verify3FunctorId(moduleId) >= 0;
+        moduleId == LazyAttrModuleId
+        || Verify4FunctorId(moduleId) >= 0 || Verify3FunctorId(moduleId) >= 0;
+
+    private static int _lazyAttrModuleId = -1;
+    /// <summary>The reserved attribute module <c>'$lazy'</c>, handled natively:
+    /// its attribute value IS a goal, and the wakeup drain meta-calls it
+    /// directly instead of resolving a <c>verify_attributes</c> hook. This is
+    /// what lets the prelude's lazy-input predicates suspend on a variable
+    /// without the coroutining library being loaded.</summary>
+    public static int LazyAttrModuleId
+    {
+        get
+        {
+            if (_lazyAttrModuleId < 0)
+                _lazyAttrModuleId = AtomTable.Intern("$lazy", permanent: true).Id;
+            return _lazyAttrModuleId;
+        }
+    }
+
+    /// <summary>Whether any queued wakeup belongs to the native <c>'$lazy'</c>
+    /// module. The flush gate needs this: with no Prolog hook linked it
+    /// discards the queue, but native entries carry a goal that must run
+    /// regardless. Only called when the queue is non-empty.</summary>
+    public bool PendingWakeupsHaveLazy
+    {
+        get
+        {
+            for (int i = 0; i < _pendingWakeups.Count; i++)
+                if (_pendingWakeups[i].Module == LazyAttrModuleId) return true;
+            return false;
+        }
+    }
 
     /// <summary>Per-query string literal pool. Set by the embedding
     /// layer at query setup so IL-emitted <c>get_pstr</c> / <c>put_pstr</c>
@@ -247,7 +290,7 @@ public sealed partial class Activation
     /// runtime — same lookup the bytecode interpreter does, but
     /// accessible from the Activation surface so Tier-1 IL doesn't need
     /// to carry its own pool reference.</summary>
-    public IReadOnlyList<string>? CurrentStringLiterals { get; set; }
+    public IReadOnlyList<TextLiteral>? CurrentStringLiterals { get; set; }
 
     /// <summary>Per-query bytecode program, set alongside
     /// <see cref="CurrentFunctorAddresses"/>. IL-emitted <c>Call</c>
@@ -466,6 +509,17 @@ public sealed partial class Activation
     /// by the dispatchers right before raising existence_error.</summary>
     public Func<int, int>? ResolveLateHelper { get; set; }
 
+    /// <summary>The consult-direct bare-call fallback: a bare goal no other
+    /// route resolved is resolved to a DIRECTLY-consulted explicit module's
+    /// local when exactly ONE such module defines the name — consulting a
+    /// source means being able to call its predicates, module directive or
+    /// not. Two candidates throw the ambiguity existence_error (qualify to
+    /// choose); a module loaded only as a use_module dependency never
+    /// participates. Returns the address, or -1. Consulted by the
+    /// dispatchers after <see cref="ResolveLateHelper"/>, right before
+    /// <see cref="UnknownProcedure.Fails"/>.</summary>
+    public Func<int, int>? ResolveModuleLocalFallback { get; set; }
+
     /// <summary>Re-entrant semidet solve of a goal on THIS live activation, reusing
     /// the already-linked program (no fresh transient-region link, no new machine) —
     /// the cheap host→Prolog path for a foreign predicate that calls back into Prolog
@@ -550,7 +604,7 @@ public sealed partial class Activation
     /// literal pools after an <c>assertz</c> / <c>asserta</c> may have
     /// interned a new string / float / bigint literal. Wired at query
     /// setup; the incremental assert paths invoke it.</summary>
-    public Action<IReadOnlyList<string>, IReadOnlyList<double>,
+    public Action<IReadOnlyList<TextLiteral>, IReadOnlyList<double>,
         IReadOnlyList<System.Numerics.BigInteger>>? RefreshLiteralPoolsCallback { get; set; }
 
     /// <summary>Snapshot of <see cref="CurrentViewGen"/> from a given CP

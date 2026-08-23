@@ -23,9 +23,10 @@ public class PstrHeadMatchTests
         e.ConsultString("h([H|T], H, T).");
         var s = e.Query("h(\"ab\", H, T).");
         Assert.True(s.Success);
-        Assert.Equal(97L, Assert.IsType<IntTerm>(s["H"]).Value);
-        // The tail stays a (lazy) partial string representing "b".
-        Assert.True(e.Query("h(\"ab\", _, T), T = [0'b].").Success);
+        // The default is chars (ADR-047), so the head is a one-character atom.
+        Assert.Equal("a", Assert.IsType<AtomTerm>(s["H"]).Name);
+        // The tail stays a (lazy) packed slice representing "b".
+        Assert.True(e.Query("h(\"ab\", _, T), T = [b].").Success);
     }
 
     [Fact]
@@ -35,11 +36,11 @@ public class PstrHeadMatchTests
         e.ConsultString("""
             digits([D|T]) --> digit(D), digits(T).
             digits([D]) --> digit(D).
-            digit(D) --> [D], { D >= 0'0, D =< 0'9 }.
+            digit(D) --> [D], { char_code(D, C), C >= 0'0, C =< 0'9 }.
             """);
         var s = e.Query("phrase(digits(L), \"123\", R), R == [].");
         Assert.True(s.Success);
-        Assert.Equal(".(49, .(50, .(51, [])))", s["L"]!.ToString());
+        Assert.Equal(".(1, .(2, .(3, [])))", s["L"]!.ToString());
     }
 
     [Fact]
@@ -48,7 +49,7 @@ public class PstrHeadMatchTests
         var e = new PrologEngine();
         var s = e.Query("X = \"ab\", ( X = [H|_] -> R = H ; R = no ).");
         Assert.True(s.Success);
-        Assert.Equal(97L, Assert.IsType<IntTerm>(s["R"]).Value);
+        Assert.Equal("a", Assert.IsType<AtomTerm>(s["R"]).Name);
     }
 
     [Fact]

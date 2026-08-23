@@ -141,6 +141,23 @@ public static class MetaTransform
     private static Term TransformGoal(Term goal, ref int counter, List<Clause> helpers,
         string? cutK = null)
     {
+        // ISO §7.6.2: converting a control construct to a body fails when any
+        // goal position inside it holds a number, and the conversion happens
+        // BEFORE the body runs — `\+ (fail,1)` raises, it does not succeed on
+        // `fail`. Emitted as a runtime throw/1 (not a compile-time C# throw)
+        // so the error stays inside whatever catch/3 region encloses it, and
+        // done HERE so the culprit is the construct as WRITTEN, before cut
+        // barriers and catch markers are spliced in.
+        if (IsControlConstruct(goal) && HasNumberInGoalPosition(goal))
+        {
+            // For \+/not the CONVERSION applies to the argument, so the
+            // culprit is the inner construct — \+ (true;1) raises
+            // type_error(callable, (true;1)), the ISO (and Scryer) shape.
+            Term culprit = goal is CompoundTerm { Functor: "\\+" or "not", Args.Length: 1 } neg
+                ? neg.Args[0] : goal;
+            return WithPosition(BodyConversionThrow(culprit), goal.Position);
+        }
+
         // Conjunction: recurse into both halves.
         if (goal is CompoundTerm { Functor: "," } conj && conj.Args.Length == 2)
         {
@@ -242,12 +259,15 @@ public static class MetaTransform
             && fa.Args.Length == 3
             && InlinableGoal(fa.Args[1]))
         {
+            Term spliced = GoalHasLocalCut(fa.Args[1])
+                ? new CompoundTerm("call", new[] { fa.Args[1] })
+                : fa.Args[1];
             Term collectLoop = new CompoundTerm(",", new[]
             {
                 (Term)new AtomTerm("$findall_push"),
                 new CompoundTerm(",", new[]
                 {
-                    fa.Args[1],
+                    spliced,
                     new CompoundTerm(",", new[]
                     {
                         (Term)new CompoundTerm("$findall_record_s", new[] { fa.Args[0] }),
@@ -255,11 +275,12 @@ public static class MetaTransform
                     }),
                 }),
             });
-            Term rewritten = new CompoundTerm(";", new[]
-            {
-                collectLoop,
-                (Term)new CompoundTerm("$findall_collect", new[] { fa.Args[2] }),
-            }) { Position = goal.Position };
+            Term rewritten = WithResultListCheck(fa.Args[2],
+                new CompoundTerm(";", new[]
+                {
+                    collectLoop,
+                    (Term)new CompoundTerm("$findall_collect", new[] { fa.Args[2] }),
+                }), goal.Position);
             // ADR-035 — name the collect-loop's $disj helper for the meta-predicate
             // it stands for, so the debugger shows/stops on it as findall/3 (a real
             // user goal) rather than a transparent user ';'.
@@ -276,8 +297,9 @@ public static class MetaTransform
             && bs.Args.Length == 3
             && InlinableGoal(bs.Args[1]))
         {
-            Term rewritten = RewriteBagof(
-                bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], ref counter);
+            Term rewritten = WithResultListCheck(bs.Args[2], RewriteBagof(
+                bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], ref counter),
+                goal.Position);
             // ADR-035 — the inner collect-loop ';' is bagof/setof, not a user ';'.
             _nextHelperKind = bs.Functor;
             return TransformGoal(rewritten, ref counter, helpers);
@@ -357,9 +379,10 @@ public static class MetaTransform
                     ? (Term)a0
                     : new CompoundTerm(a0.Name, ct2.Args.AsSpan(1).ToArray())
                         { Position = goal.Position };
-                return TransformGoal(direct, ref counter, helpers);
+                if (!NeedsRuntimeBodyConversion(direct, ct2))
+                    return TransformGoal(direct, ref counter, helpers);
             }
-            if (first is CompoundTerm c0)
+            else if (first is CompoundTerm c0)
             {
                 Term[] combined = new Term[c0.Args.Length + extra];
                 System.Array.Copy(c0.Args, 0, combined, 0, c0.Args.Length);
@@ -368,7 +391,8 @@ public static class MetaTransform
                 Term direct = extra == 0
                     ? (Term)c0
                     : new CompoundTerm(c0.Functor, combined) { Position = goal.Position };
-                return TransformGoal(direct, ref counter, helpers);
+                if (!NeedsRuntimeBodyConversion(direct, ct2))
+                    return TransformGoal(direct, ref counter, helpers);
             }
         }
 
@@ -599,8 +623,94 @@ public static class MetaTransform
 
     /// <summary>A goal this transform may inline: syntactically callable AND not
     /// the opaque <c>$mqual</c> marker.</summary>
+    /// <summary>A <c>!</c> anywhere cut-transparent in a findall/bagof
+    /// GOAL argument (top level, <c>,</c>-chain, <c>;</c> arms, <c>-&gt;</c>
+    /// thens). Splicing such a goal into the collect loop would let the cut
+    /// reach the DRIVER's disjunction and kill the collect alternative —
+    /// wrap it in call/1 instead so the cut stays local (§7.8.3).</summary>
+    private static bool GoalHasLocalCut(Term t) => t switch
+    {
+        AtomTerm { Name: "!" } => true,
+        CompoundTerm { Functor: "," or ";", Args.Length: 2 } c
+            => GoalHasLocalCut(c.Args[0]) || GoalHasLocalCut(c.Args[1]),
+        CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } c
+            => GoalHasLocalCut(c.Args[1]),
+        _ => false,
+    };
+
     private static bool InlinableGoal(Term t) =>
         (t is AtomTerm || t is CompoundTerm) && !IsMqualGoal(t);
+
+    /// <summary>The closure of a <c>call/N</c> is checked for extendability
+    /// as given, so <c>call(',', A, B)</c> passes as the atom <c>','</c>/0
+    /// and the BUILT goal is a control construct. Inlining that skips the
+    /// ISO §7.6.2 body conversion, so <c>call(',', fail, X)</c> with X = 3
+    /// would fail on <c>fail</c> instead of raising
+    /// <c>type_error(callable, (fail,3))</c>.
+    /// <para>Only the goals that can actually hit the conversion are handed
+    /// to the runtime dispatcher: an appended argument that is a variable or
+    /// a number. Everything else keeps the inline form, which is both faster
+    /// and the one that gives a metacalled <c>!</c> its own cut barrier.</para>
+    /// </summary>
+    /// <summary>§8.10: the collected-solutions argument of findall/bagof/setof
+    /// has to be a partial list, checked BEFORE the goal runs — the inline
+    /// rewrites bypass the prelude clause that would otherwise do it.</summary>
+    private static Term WithResultListCheck(
+        Term resultArg, Term body, Shumway.Compiler.Lexer.SourcePosition pos)
+    {
+        if (resultArg is VarTerm) return WithPosition(body, pos);
+        return new CompoundTerm(",", new[]
+        {
+            (Term)new CompoundTerm("$check_partial_list", new[] { resultArg }),
+            body,
+        }) { Position = pos };
+    }
+
+    private static bool NeedsRuntimeBodyConversion(Term direct, CompoundTerm callGoal)
+    {
+        if (!IsControlConstruct(direct)) return false;
+        for (int i = 1; i < callGoal.Args.Length; i++)
+            if (callGoal.Args[i] is VarTerm or IntTerm or FloatTerm
+                    or BigIntTerm or RationalTerm)
+                return true;
+        return false;
+    }
+
+    /// <summary>Descends the control-construct skeleton only: a number
+    /// nested inside an ordinary goal's arguments (`p(1)`) is data, one in
+    /// goal position (`(fail,1)`) is not convertible.</summary>
+    private static bool HasNumberInGoalPosition(Term t)
+    {
+        if (t is CompoundTerm { Functor: ":" or "$mqual", Args.Length: 2 } q)
+            t = q.Args[1];
+        if (t is IntTerm or FloatTerm or BigIntTerm or RationalTerm) return true;
+        if (t is CompoundTerm { Functor: "," or ";" or "->" or "*->", Args.Length: 2 } c)
+            return HasNumberInGoalPosition(c.Args[0])
+                || HasNumberInGoalPosition(c.Args[1]);
+        if (t is CompoundTerm { Functor: "\\+" or "not", Args.Length: 1 } n)
+            return HasNumberInGoalPosition(n.Args[0]);
+        return false;
+    }
+
+    private static Term BodyConversionThrow(Term culprit) =>
+        new CompoundTerm("throw", new Term[]
+        {
+            new CompoundTerm("error", new Term[]
+            {
+                new CompoundTerm("type_error",
+                    new Term[] { new AtomTerm("callable"), culprit }),
+                new VarTerm("_"),
+            }),
+        });
+
+    private static bool IsControlConstruct(Term t) => t switch
+    {
+        CompoundTerm { Functor: "," or ";" or "->" or "*->", Args.Length: 2 } => true,
+        CompoundTerm { Functor: "\\+" or "not" or "throw", Args.Length: 1 } => true,
+        CompoundTerm { Functor: "catch", Args.Length: 3 } => true,
+        AtomTerm { Name: "!" } => true,
+        _ => false,
+    };
 
     private static bool IsStaticallyExtendable(Term t)
     {
@@ -805,6 +915,14 @@ public static class MetaTransform
         var seen = new HashSet<string>();
         CollectNamedVars(innerGoal, freeVars, seen);
 
+        // §7.8.9: `\+ G` is `(call(G) -> fail ; true)`, so a cut inside G is
+        // LOCAL to it. Spliced bare into the helper's first clause it would
+        // cut the helper itself and take the second clause — the one that
+        // makes the negation succeed — with it, so `\+ ((!, fail))` failed.
+        if (GoalHasLocalCut(innerGoal))
+            innerGoal = new CompoundTerm("call", new[] { innerGoal })
+                { Position = innerGoal.Position };
+
         // Recurse into innerGoal too — a nested \+ inside the negated goal
         // should be transformed before being used as the helper's body.
         innerGoal = TransformGoal(innerGoal, ref counter, helpers);
@@ -867,6 +985,13 @@ public static class MetaTransform
             goal = caret.Args[1];
         }
 
+        // §7.6.2 on the goal the ^ wrappers were hiding: `setof(X, X^(true;4), L)`
+        // must raise type_error(callable, (true;4)) before anything runs.
+        if (IsControlConstruct(goal) && HasNumberInGoalPosition(goal))
+            goal = BodyConversionThrow(goal);
+        else if (goal is IntTerm or FloatTerm or BigIntTerm or RationalTerm)
+            goal = BodyConversionThrow(goal);
+
         // Name anonymous variables so they can be collected as witnesses.
         goal = NameAnonymousVars(goal, ref counter);
 
@@ -895,12 +1020,15 @@ public static class MetaTransform
         string collector = functor == "setof" ? "$setof_collect" : "$bagof_collect";
 
         // '$findall_push', Goal', '$findall_record'(Wt-T), fail
+        Term splicedGoal = GoalHasLocalCut(goal)
+            ? new CompoundTerm("call", new[] { goal })
+            : goal;
         Term collectLoop = new CompoundTerm(",", new[]
         {
             (Term)new AtomTerm("$findall_push"),
             new CompoundTerm(",", new[]
             {
-                goal,
+                splicedGoal,
                 new CompoundTerm(",", new[]
                 {
                     (Term)new CompoundTerm("$findall_record", new[]

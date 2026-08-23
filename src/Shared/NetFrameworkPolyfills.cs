@@ -87,6 +87,12 @@ namespace System
             public static Text.Encoding Latin1 => Text.Encoding.GetEncoding(28591);
         }
 
+        extension(double)
+        {
+            public static bool IsFinite(double d)
+                => !double.IsNaN(d) && !double.IsInfinity(d);
+        }
+
         extension(int)
         {
             /// <summary>The span TryParse. ToString allocates, but every caller
@@ -109,6 +115,29 @@ namespace System
 
         extension(Math)
         {
+            // Closed forms for the inverse hyperbolics. Above 1e154 the
+            // squaring would overflow to infinity and hand log a wrong answer
+            // (asinh(1e308) is ~710, not inf), so the large-magnitude branch
+            // uses log(2x) = log(x) + ln 2. Acosh/Atanh domain errors are the
+            // CALLER's job (the evaluator guards x >= 1 and |x| < 1).
+            public static double Asinh(double x)
+            {
+                if (double.IsNaN(x) || double.IsInfinity(x) || x == 0) return x;
+                double ax = Math.Abs(x);
+                double r = ax > 1e154
+                    ? Math.Log(ax) + 0.6931471805599453
+                    : Math.Log(ax + Math.Sqrt(ax * ax + 1));
+                return x < 0 ? -r : r;
+            }
+
+            public static double Acosh(double x)
+                => x > 1e154
+                    ? Math.Log(x) + 0.6931471805599453
+                    : Math.Log(x + Math.Sqrt(x * x - 1));
+
+            public static double Atanh(double x)
+                => 0.5 * Math.Log((1 + x) / (1 - x));
+
             public static int Clamp(int value, int min, int max)
                 => value < min ? min : value > max ? max : value;
 
@@ -215,6 +244,23 @@ namespace System
                     chars[i * 2 + 1] = "0123456789ABCDEF"[bytes[i] & 0xF];
                 }
                 return new string(chars);
+            }
+        }
+
+        extension(Numerics.BigInteger value)
+        {
+            /// <summary>BCL contract: bits of the shortest two's-complement
+            /// representation, sign bit excluded — 0 for 0 and -1; for a
+            /// negative value that is the bit length of (-value - 1).</summary>
+            public long GetBitLength()
+            {
+                Numerics.BigInteger m = value.Sign >= 0 ? value : -value - 1;
+                byte[] bytes = m.ToByteArray();   // little-endian magnitude, may pad 0x00
+                int top = bytes.Length - 1;
+                while (top > 0 && bytes[top] == 0) top--;
+                int msb = 0;
+                for (byte hi = bytes[top]; hi != 0; hi >>= 1) msb++;
+                return (long)top * 8 + msb;
             }
         }
 
@@ -422,6 +468,15 @@ namespace System.Numerics
             while ((value & 0x8000_0000_0000_0000UL) == 0) { count++; value <<= 1; }
             return count;
         }
+
+        public static int PopCount(ulong value)
+        {
+            int count = 0;
+            while (value != 0) { count++; value &= value - 1; }
+            return count;
+        }
+
+        public static int PopCount(uint value) => PopCount((ulong)value);
 
         public static int TrailingZeroCount(ulong value)
         {

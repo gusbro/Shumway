@@ -58,12 +58,14 @@ public static class TermReader
         // 0 = Expand a heap index into a Term.
         // 1 = Assemble a compound (STR/FUNCTOR) from Arity results.
         // 2 = Assemble a cons cell from 2 results (head, tail).
+        // 3 = Prepend a packed text run to 1 result (the PSTR's tail).
         public readonly int Kind;
         // Expand: the heap index to materialize.
         // Assemble: the functor/cons address to drop from the active path set.
         public readonly int A;
         public readonly int Arity;       // Assemble-compound: argument count.
-        public readonly string? Name;    // Assemble-compound: functor name.
+        public readonly string? Name;    // Assemble-compound: functor name;
+                                         // prepend-text: the packed run.
         public readonly int FunctorId;   // Assemble: cached functor id.
 
         private Frame(int kind, int a, int arity, string? name, int functorId)
@@ -76,6 +78,10 @@ public static class TermReader
             => new(1, exitAddr, arity, name, functorId);
         public static Frame BuildCons(int consFid, int exitAddr)
             => new(2, exitAddr, 0, null, consFid);
+        // Arity carries the TextKind: a packed run of chars prepends
+        // one-character atoms, a run of codes prepends integers.
+        public static Frame PrependText(string text, int consFid, int exitAddr, TextKind kind)
+            => new(3, exitAddr, (int)kind, text, consFid);
     }
 
     /// <summary>Materializes the term reachable from <paramref name="heapIdx"/>
@@ -131,7 +137,7 @@ public static class TermReader
                         break;
                     }
 
-                    default:  // case 2: Assemble cons (head, tail)
+                    case 2:  // Assemble cons (head, tail)
                     {
                         Term tail = results[results.Count - 1];
                         results.RemoveAt(results.Count - 1);
@@ -139,6 +145,24 @@ public static class TermReader
                         results.RemoveAt(results.Count - 1);
                         active.Remove(f.A);
                         results.Add(new CompoundTerm(".", new[] { head, tail }, f.FunctorId));
+                        break;
+                    }
+
+                    default:  // case 3: prepend a PSTR's packed run to its tail
+                    {
+                        Term tail = results[results.Count - 1];
+                        results.RemoveAt(results.Count - 1);
+                        string run = f.Name!;
+                        bool chars = (TextKind)f.Arity == TextKind.Chars;
+                        for (int i = run.Length - 1; i >= 0; i--)
+                        {
+                            Term head = chars
+                                ? new AtomTerm(run[i].ToString())
+                                : new IntTerm(run[i]);
+                            tail = new CompoundTerm(".", new[] { head, tail }, f.FunctorId);
+                        }
+                        active.Remove(f.A);
+                        results.Add(tail);
                         break;
                     }
                 }
@@ -202,17 +226,28 @@ public static class TermReader
                 break;
 
             case Tag.Pstr:
-                results.Add(new StringTerm(engine.AsPstrString(derefAddr)));
+            {
+                // A packed list crosses to C# as the LIST it is (ADR-047
+                // decision 6): the representation is not observable at the
+                // boundary, so a C# method called with a packed list and with
+                // the equivalent cons list must receive the same thing. Handing
+                // over a StringTerm instead meant every caller matching
+                // `Functor == "."` — 52 sites — silently missed it.
+                //
+                // Expand THIS segment only and let the machine expand the tail,
+                // which may be the next segment of a lazy concat and lands back
+                // here. Term.TryAsText is the way to read the text without
+                // paying for the nodes.
+                int runLength = cell.AsPstrLength;
+                var run = new char[runLength];
+                for (int i = 0; i < runLength; i++)
+                    run[i] = (char)engine.GetPstrCodeUnitAt(derefAddr, i);
+                if (consFid < 0)
+                    consFid = FunctorTable.Intern(AtomTable.ConsFunctorId, 2);
+                work.Add(Frame.PrependText(new string(run), consFid, -1, cell.AsPstrKind));
+                work.Add(Frame.Expand(engine.GetPstrTailIndex(derefAddr)));
                 break;
-
-            // A STRING cell is a string too — the whole string, held in the engine's table,
-            // rather than the PSTR's heap-resident run of characters. The engine can make one
-            // (Activation.MakeString) and compare it (==/2 handles the tag), and the
-            // materializer could not read it back: a cell the engine can build and cannot show
-            // is a NotSupportedException waiting for the first program that builds one.
-            case Tag.String:
-                results.Add(new StringTerm(engine.AsString(cell)));
-                break;
+            }
 
             // Foreign cells round-trip as `'$foreign'(N)` compounds — the
             // payload's identity (the engine's foreign table entry) is exposed

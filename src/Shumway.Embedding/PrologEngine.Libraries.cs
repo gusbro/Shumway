@@ -103,6 +103,12 @@ public sealed partial class PrologEngine
         string full;
         try { full = System.IO.Path.GetFullPath(path); } catch { full = path; }
         (_libraryDirDialect ??= new(System.StringComparer.OrdinalIgnoreCase))[full] = dialect;
+        // Trealla surfaces BUILTIN-level names (limit/2, load_text/2) that its
+        // programs use without importing anything, so mounting a trealla tree
+        // loads the (tiny) shim eagerly — the lazy WithDialect trigger only
+        // fires when a library file actually loads. The scryer/swi shims stay
+        // lazy: their names all arrive via imports.
+        if (dialect == TreallaShim.LibraryName) EnsureTreallaShim();
     }
 
     // The dialect a resolved library path belongs to (its directory's tag), or
@@ -213,13 +219,38 @@ public sealed partial class PrologEngine
         bool savedLenientQuote = Flags.LenientQuoteCharLiteral;
         bool savedLenientArgs = Flags.LenientArgumentPriority;
         bool savedLenientEsc = Flags.LenientEscapes;
+        string savedDisc = Flags.DiscontiguousCheck;
         // SWI-only OPERATORS, scoped like the flags: `as` (dynamic/table
         // decorations) would otherwise break user programs that use `as` as a
         // predicate or DCG-nonterminal head. Save prior definitions so nested
         // swi loads restore correctly and a user-defined `as` op survives.
         bool swiOps = dialect == SwiShim.LibraryName;
+        bool treallaOps = dialect == TreallaShim.LibraryName;
         bool hadAs = Operators.TryGetInfix("as", out int asPrec, out var asType);
         bool hadTl = Operators.TryGetPrefix("thread_local", out int tlPrec, out var tlType);
+        // Trealla-only OPERATORS, scoped like SWI's: the ? / ++ / -- / @
+        // mode-annotation prefixes its `:- help(f(?term, ...), ...)` doc
+        // directives use on every library predicate.
+        bool hadQm = Operators.TryGetPrefix("?", out int qmPrec, out var qmType);
+        bool hadPp = Operators.TryGetPrefix("++", out int ppPrec, out var ppType);
+        bool hadMm = Operators.TryGetPrefix("--", out int mmPrec, out var mmType);
+        bool hadAt = Operators.TryGetPrefix("@", out int atPrec, out var atType);
+        bool hadPc = Operators.TryGetPrefix(":", out int pcPrec, out var pcType);
+        // ANY dialect-tagged tree load accepts scattered clauses with a
+        // warning — third-party sources use the literate style; the strict
+        // default stays for native consults.
+        if (dialect is not null) Flags.DiscontiguousCheck = "warning";
+        if (treallaOps)
+        {
+            Operators.Define("?", 500, Shumway.Compiler.Parsing.OperatorType.Fx);
+            Operators.Define("++", 100, Shumway.Compiler.Parsing.OperatorType.Fy);
+            Operators.Define("--", 100, Shumway.Compiler.Parsing.OperatorType.Fy);
+            Operators.Define("@", 100, Shumway.Compiler.Parsing.OperatorType.Fy);
+            // PREFIX `:` for their `:callable` mode annotations — a
+            // separate entry from the INFIX `:` module qualifier at 200,
+            // which stays untouched (the module-arc invariant).
+            Operators.Define(":", 200, Shumway.Compiler.Parsing.OperatorType.Fy);
+        }
         if (dialect == SwiShim.LibraryName)
         {
             Flags.DigitSeparators = true;
@@ -236,6 +267,8 @@ public sealed partial class PrologEngine
         if (dialect == SwiShim.LibraryName) EnsureSwiShim();
         // The scryer analogue: emulations of the Rust-VM '$...' natives.
         if (dialect == "scryer") EnsureScryerShim();
+        // The trealla analogue (its libraries are pure Prolog; the shim is tiny).
+        if (dialect == TreallaShim.LibraryName) EnsureTreallaShim();
         try { return body(); }
         finally
         {
@@ -246,6 +279,20 @@ public sealed partial class PrologEngine
             Flags.LenientQuoteCharLiteral = savedLenientQuote;
             Flags.LenientArgumentPriority = savedLenientArgs;
             Flags.LenientEscapes = savedLenientEsc;
+            Flags.DiscontiguousCheck = savedDisc;
+            if (treallaOps)
+            {
+                Operators.Define("?", hadQm ? qmPrec : 0,
+                    hadQm ? qmType : Shumway.Compiler.Parsing.OperatorType.Fx);
+                Operators.Define("++", hadPp ? ppPrec : 0,
+                    hadPp ? ppType : Shumway.Compiler.Parsing.OperatorType.Fy);
+                Operators.Define("--", hadMm ? mmPrec : 0,
+                    hadMm ? mmType : Shumway.Compiler.Parsing.OperatorType.Fy);
+                Operators.Define("@", hadAt ? atPrec : 0,
+                    hadAt ? atType : Shumway.Compiler.Parsing.OperatorType.Fy);
+                Operators.Define(":", hadPc ? pcPrec : 0,
+                    hadPc ? pcType : Shumway.Compiler.Parsing.OperatorType.Fy);
+            }
             if (swiOps)
             {
                 Operators.Define("as", hadAs ? asPrec : 0,
@@ -264,13 +311,13 @@ public sealed partial class PrologEngine
     // native equivalent is used (use_module is a no-op); a user's own same-named
     // library WITHOUT the marker loads normally. Value = a distinctive substring
     // (a call to the unsupported system predicate) sought in a first-pass read.
-    private static readonly Dictionary<string, string> NativeOverrideMarkers =
+    private static readonly Dictionary<string, string[]> NativeOverrideMarkers =
         new(StringComparer.Ordinal)
         {
             // library(when): SWI's when.pl dispatches conditions through
             // '$eval_when_condition'/2, a kernel helper we lack; Shumway ships its
             // own coroutining when/2.
-            ["when"] = "$eval_when_condition",
+            ["when"] = new[] { "$eval_when_condition", "library(atts)" },
             // library(arithmetic): user-defined evaluable functions ride SWI's
             // GLOBAL goal_expansion + module introspection (import_module,
             // imported_from). On Shumway that hook mis-expands every later
@@ -278,25 +325,49 @@ public sealed partial class PrologEngine
             // (user evaluables) is unsupported. The shim stubs
             // arithmetic_function/1 (accepted, unregistered) and
             // arithmetic_expression_value/2 (builtin evaluation).
-            ["arithmetic"] = "math_goal_expansion",
+            ["arithmetic"] = new[] { "math_goal_expansion" },
             // library(listing): Shumway ships listing/0,1 + portray_clause/1,2
             // natively; SWI's listing.pl needs dicts (`_{}`) + settings and
             // would shadow ours. do_portray_clause is its internal renderer.
-            ["listing"] = "do_portray_clause",
+            ["listing"] = new[] { "do_portray_clause" },
             // library(prolog_stack): prints the SWI VM backtrace via
             // prolog_frame_attribute — no such VM here; the shim's backtrace/1
             // no-op is the equivalent surface (debug.pl autoloads only that).
-            ["prolog_stack"] = "prolog_frame_attribute",
+            ["prolog_stack"] = new[] { "prolog_frame_attribute" },
             // SCRYER library(format): its rendering core (format_args_cells)
             // reaches builtins:parse_write_options via charsio — bootstrap
             // internals we don't provide. The scryer pack's own Format shim
             // (the one every engine WITHOUT a Scryer tree already uses) is the
             // equivalent surface.
-            ["format"] = "format_args_cells",
+            ["format"] = new[] { "format_args_cells", "library(pio)" },
+            // TREALLA library(builtins): its auto-load base wraps dozens of C
+            // natives ($load_ops, $bb_*, ...); the engine IS that layer.
+            ["builtins"] = new[] { "$load_ops" },
+            // TREALLA library(atts): get_atts/put_atts are C builtins there;
+            // Shumway ships its own atts (CompatLibraries) over the native
+            // attribute-list primitives.
+            ["atts"] = new[] { "user:goal_expansion(get_atts" },
+            // TREALLA library(iso_ext): rides $register_cleanup/$call_cleanup/
+            // $countall C natives; setup_call_cleanup & co are native here.
+            ["iso_ext"] = new[] { "$register_cleanup" },
+            // TREALLA library(charsio): rides $char_type/$get_chars natives;
+            // the engine's charsio surface is builtin.
+            ["charsio"] = new[] { "$char_type" },
+            // TREALLA library(error): rides $first_non_octet; must_be/can_be
+            // are native + prelude.
+            ["error"] = new[] { "$first_non_octet" },
+            // ANY tree's atts-based freeze/when/dif (Trealla's and Scryer's
+            // are both Triska's code): the engine's native coroutining is
+            // the certified implementation of all three, and the atts-based
+            // ones ride hook subtleties of their home VM (R10 measured the
+            // regressions: the whole dif family flipped when the mounted
+            // tree's versions shadowed ours).
+            ["freeze"] = new[] { "library(atts)" },
+            ["dif"] = new[] { "library(atts)" },
             // SCRYER library(time): wraps the '$cpu_now' native. Shumway's
             // native time/1 and sleep/1 are already bare-global; the file's
             // versions would shadow them with broken ones.
-            ["time"] = "$cpu_now",
+            ["time"] = new[] { "$cpu_now" },
         };
 
     /// <summary>True when <paramref name="name"/> is a native-override CANDIDATE
@@ -306,15 +377,23 @@ public sealed partial class PrologEngine
     /// short-circuits without touching the file.</summary>
     private bool ShouldUseNativeOverride(string name, string path)
     {
-        if (!NativeOverrideMarkers.TryGetValue(name, out string? marker)) return false;
-        try { return System.IO.File.ReadAllText(path).Contains(marker, StringComparison.Ordinal); }
+        if (!NativeOverrideMarkers.TryGetValue(name, out string[]? markers)) return false;
+        try
+        {
+            string text = System.IO.File.ReadAllText(path);
+            foreach (string marker in markers)
+                if (text.Contains(marker, StringComparison.Ordinal)) return true;
+            return false;
+        }
         catch { return false; }   // unreadable → fall through and load it
     }
 
     /// <summary>Ensures Shumway's native equivalent of an overridden library is
     /// loaded (called when the SWI file is discarded), so the predicates the
-    /// program expects are present.</summary>
-    private void LoadNativeOverride(string name)
+    /// program expects are present. Returns the name of an export-qualified
+    /// module when the native equivalent carries importer-facing wrappers
+    /// (atts; trealla's freeze), else null (bare-global surface).</summary>
+    private string? LoadNativeOverride(string name)
     {
         switch (name)
         {
@@ -323,8 +402,45 @@ public sealed partial class PrologEngine
             case "listing": break;                       // native listing/portray_clause builtins
             case "prolog_stack": EnsureSwiShim(); break; // shim backtrace/1 no-op
             case "format": UseCompatLibrary("format"); break;   // scryer pack Format shim
+            case "builtins": break;                      // the engine IS the builtins layer
+            case "atts": UseCompatLibrary("atts"); break;
+            case "iso_ext": break;                       // native setup_call_cleanup & co
+            case "charsio": break;                       // builtin charsio surface
+            case "error": break;                         // native must_be/can_be
+            case "freeze":
+                UseCoroutining();
+                // Trealla's frozen/2 answers 'freeze:freeze(Var, Goal)' — a
+                // re-establishing, module-qualified goal — where the engine's
+                // (SICStus-style) frozen/2 answers the bare goal. Their
+                // programs pattern-match that shape, so a trealla-dialect
+                // resolution of library(freeze) serves a wrapper module whose
+                // frozen/2 speaks their format; freeze/2 itself stays the
+                // native bare-global (not exported — no delegation loop).
+                if (_activeLibraryDialect == "trealla")
+                {
+                    if (_loadedCompatLibraries.Add("trealla_freeze"))
+                        ConsultStringInner(TreallaFreezeShim, recordInHistory: false, librarySource: true);
+                    return "trealla_freeze";
+                }
+                break;
+            case "dif": UseCoroutining(); break;
             case "time": break;                          // native time/1 + sleep/1 serve
         }
+        return null;
+    }
+
+    private bool _treallaShimLoaded;
+
+    /// <summary>Consults the Trealla compat shim once — triggered when a
+    /// trealla-dialect library loads (<see cref="WithDialect"/>).</summary>
+    internal void EnsureTreallaShim()
+    {
+        if (_treallaShimLoaded) return;
+        _treallaShimLoaded = true;
+        var savedDq = Flags.DoubleQuotes;
+        Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(TreallaShim.LibraryName);
+        try { ConsultStringInner(TreallaShim.Source, recordInHistory: false, librarySource: true); }
+        finally { Flags.DoubleQuotes = savedDq; }
     }
 
     private bool _swiShimLoaded;
@@ -338,7 +454,7 @@ public sealed partial class PrologEngine
         _swiShimLoaded = true;
         var savedDq = Flags.DoubleQuotes;
         Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(SwiShim.LibraryName);
-        try { ConsultStringInner(SwiShim.Source, recordInHistory: false); }
+        try { ConsultStringInner(SwiShim.Source, recordInHistory: false, librarySource: true); }
         finally { Flags.DoubleQuotes = savedDq; }
     }
 
@@ -357,8 +473,20 @@ public sealed partial class PrologEngine
     {
         if (_scryerShimLoaded) return;
         _scryerShimLoaded = true;
-        ConsultStringInner(ScryerShim.Source, recordInHistory: false);
+        ConsultStringInner(ScryerShim.Source, recordInHistory: false, librarySource: true);
     }
+
+    // The trealla-dialect frozen/2 wrapper (see LoadNativeOverride "freeze").
+    // Reads the native coroutining attribute directly; the freeze: module
+    // prefix in the answer is DATA (their format), never called here.
+    private const string TreallaFreezeShim = """
+        :- module(trealla_freeze, [frozen/2]).
+        frozen(X, G) :-
+            (   var(X), get_attr(X, coroutining, frozen(G0)) ->
+                G = freeze:freeze(X, G0)
+            ;   G = true
+            ).
+        """;
 
     internal bool UseCompatLibrary(string name)
     {
@@ -380,7 +508,7 @@ public sealed partial class PrologEngine
             // dialects' libraries parse correctly in the same engine.
             var savedDq = Flags.DoubleQuotes;
             Flags.DoubleQuotes = doubleQuotes;
-            try { ConsultStringInner(source, recordInHistory: false); }
+            try { ConsultStringInner(source, recordInHistory: false, librarySource: true); }
             finally { Flags.DoubleQuotes = savedDq; }
         }
         return true;
@@ -605,6 +733,14 @@ public sealed partial class PrologEngine
                 case "clpr":  UseClpr();  return null;
                 case "coroutining": UseCoroutining(); return null;
                 default:
+                    // (1.5) the module is ALREADY LOADED (typically from a
+                    // bundle whose manifests LoadBundle reconstructed):
+                    // import straight from the live manifest — predicates
+                    // AND exported operators — with no file involved.
+                    // SWI semantics: use_module of a loaded module imports.
+                    if (_modules.TryGetValue(libName, out var loadedManifest)
+                        && loadedManifest.IsExportQualified)
+                        return libName;
                     // (2) ADR-038 — a .pl/.shum on the library search path.
                     if (TryResolveLibrary(libName, out string libPath))
                     {
@@ -613,21 +749,32 @@ public sealed partial class PrologEngine
                         // here; discard the load and use Shumway's native equivalent
                         // (use_module becomes a no-op). A non-candidate, or a
                         // same-named file without the marker, loads normally.
-                        if (ShouldUseNativeOverride(libName, libPath))
-                        {
-                            LoadNativeOverride(libName);
-                            return null;
-                        }
                         // ADR-040 D5.2 — a dir tagged with a dialect loads its
                         // libraries in that dialect (name resolution +
-                        // double_quotes) for the whole subtree.
+                        // double_quotes) for the whole subtree. Computed BEFORE
+                        // the override check: a native override can be
+                        // dialect-sensitive (trealla's freeze wrapper), so it
+                        // must run inside the same dialect scope the file
+                        // itself would have loaded under.
                         string? dirDialect = DialectForResolvedPath(libPath);
+                        if (ShouldUseNativeOverride(libName, libPath))
+                        {
+                            string? overrideModule = dirDialect is not null
+                                ? WithDialect(dirDialect, () => LoadNativeOverride(libName))
+                                : LoadNativeOverride(libName);
+                            return libName == "atts" ? "atts" : overrideModule;
+                        }
                         return dirDialect is not null
                             ? WithDialect(dirDialect, () => LoadResolvedLibrary(libName, libPath))
                             : LoadResolvedLibrary(libName, libPath);
                     }
-                    // (3) built-in Scryer/Trealla compatibility table.
-                    if (UseCompatLibrary(libName)) return null;
+                    // (3) built-in Scryer/Trealla compatibility table. Most
+                    // entries are bare-global (nothing to import); atts is a
+                    // REAL module with exports (the hProlog-compat wrappers
+                    // shadow the raw builtins for importers only), so its
+                    // name flows back for RecordImports.
+                    if (UseCompatLibrary(libName))
+                        return libName == "atts" ? "atts" : null;
                     // (4) genuinely unknown.
                     if (throwOnUnresolved)
                         throw new Shumway.Core.PrologRuntimeException(
@@ -899,6 +1046,10 @@ public sealed partial class PrologEngine
     /// Invalidates the rewrite caches when it adds anything.</summary>
     internal void ImportAllExportsIntoUser(string sourceModule)
     {
+        // ADR-046 — the module's exported operators become part of the
+        // top-level syntax too (a directly-consulted module or a goal-form
+        // use_module is a user-level import).
+        ApplyExportedOperators(sourceModule, _operators);
         if (!_modules.TryGetValue(sourceModule, out ModuleManifest? srcManifest)) return;
         if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest)) return;
         bool changed = false;
@@ -1026,6 +1177,134 @@ public sealed partial class PrologEngine
     private readonly Dictionary<string,
         (object ClausesRef, int ClauseCount, int PublicCount, int ExportCount,
          HashSet<int> Mangled)> _moduleMangledCache = new();
+
+    /// <summary>Explicit (<c>:- module</c>) modules the user consulted
+    /// DIRECTLY — REPL command line, <c>consult/1</c>, the embedding's
+    /// ConsultFile/ConsultString — as opposed to arriving as a
+    /// <c>use_module</c> dependency. These are the modules whose locals the
+    /// consult-direct bare-call fallback may resolve
+    /// (<see cref="ResolveDirectConsultLocal"/>): consulting a source means
+    /// being able to call its predicates. A module that later gets consulted
+    /// directly joins the set from that moment on.</summary>
+    internal readonly HashSet<string> _directlyConsultedModules = new();
+
+    /// <summary>The (module, functor) pairs behind the qualified
+    /// <c>current_predicate(M:PI)</c>: what each module DEFINES — clause
+    /// heads, its <c>:- dynamic</c> declarations, a precompiled bundle's
+    /// recorded locals and publics. Imports and re-exports are not
+    /// definitions and are absent. Names are the user-facing bare spelling
+    /// (manifests hold pre-rewrite clauses); <c>$</c>-names never surface.
+    /// Modules sorted, fids first-seen order — a stable enumeration.</summary>
+    internal IEnumerable<(string Module, int Fid)> DefinedModulePredicates(string? onlyModule)
+    {
+        var names = new List<string>();
+        foreach (string mod in _modules.Keys)
+            if ((onlyModule is null || mod == onlyModule) && !mod.StartsWith('$'))
+                names.Add(mod);
+        names.Sort(StringComparer.Ordinal);
+        foreach (string mod in names)
+        {
+            ModuleManifest manifest = _modules[mod];
+            var seen = new HashSet<int>();
+            bool Fresh(int fid)
+            {
+                if (!seen.Add(fid)) return false;
+                var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
+                string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+                return name is { Length: > 0 } && name.IndexOf('$') < 0;
+            }
+            foreach (var c in manifest.Clauses)
+            {
+                if (c.Kind == Shumway.Compiler.Ast.ClauseKind.Directive) continue;
+                int fid = ConsultPipeline.HeadFunctorIdOf(c);
+                if (Fresh(fid)) yield return (mod, fid);
+            }
+            foreach (int fid in manifest.DynamicFunctors)
+                if (Fresh(fid)) yield return (mod, fid);
+            // Consult-path dynamics: the store is flat-global, but the
+            // declaring module is on record (first declarer wins) — a
+            // `:- dynamic` in M's source counts as M defining it.
+            foreach (var (fid, declarer) in _dynamicDeclaringModule)
+                if (declarer == mod && Fresh(fid)) yield return (mod, fid);
+            foreach (int fid in manifest.PublicFunctors)
+                if (Fresh(fid)) yield return (mod, fid);
+            if (_precompiledModuleLocals.TryGetValue(mod, out var bundleLocals))
+                foreach (int fid in bundleLocals)
+                    if (Fresh(fid)) yield return (mod, fid);
+        }
+    }
+
+    /// <summary>Whether <paramref name="module"/> DEFINES the functor — the
+    /// membership form of <see cref="DefinedModulePredicates"/>.</summary>
+    internal bool ModuleDefinesFunctor(string module, int fid)
+    {
+        foreach (var (_, f) in DefinedModulePredicates(module))
+            if (f == fid) return true;
+        return false;
+    }
+
+    /// <summary>The module <paramref name="module"/> imports the functor
+    /// from, or null — one hop of the import table, for the M:X viewpoint
+    /// resolution (predicate_property's imported_from, clause's view).</summary>
+    internal string? ModuleImportSource(string module, int fid)
+        => _modules.TryGetValue(module, out ModuleManifest? m)
+           && m.Imports.TryGetValue(fid, out string? src)
+            ? src : null;
+
+    /// <summary>Static clauses with head functor <paramref name="fid"/> in
+    /// ONE module — <see cref="StaticClausesFor"/> restricted to
+    /// <paramref name="module"/>, for the qualified <c>clause(M:H, B)</c>.</summary>
+    internal IEnumerable<Clause> StaticClausesInModule(string module, int fid)
+    {
+        if (!_modules.TryGetValue(module, out ModuleManifest? manifest)) yield break;
+        foreach (var c in manifest.Clauses)
+        {
+            if (c.Kind == Shumway.Compiler.Ast.ClauseKind.Directive) continue;
+            if (ConsultPipeline.HeadFunctorIdOf(c) == fid) yield return c;
+        }
+    }
+
+    /// <summary>The consult-direct bare-call fallback (the agreed top-level
+    /// semantics, uniform across REPL / web / embedding). Runs only where a
+    /// bare goal is otherwise about to raise <c>existence_error</c>, so it
+    /// can never shadow a builtin, a bare-global public, a dynamic (an
+    /// <c>assertz</c>-created one included) or a <c>user</c> import.
+    /// Resolves to the ONE directly consulted explicit module that defines
+    /// the name as a mangled local; two candidates throw the ambiguity
+    /// existence_error naming both. Returns the code address, or -1.</summary>
+    internal int ResolveDirectConsultLocal(Activation engine, int fid)
+    {
+        if (_directlyConsultedModules.Count == 0) return -1;
+        if (_dynStore.IsDynamic(fid)) return -1;
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        // '$' anywhere: engine/transform internals and already-mangled
+        // spellings — neither participates in the convenience.
+        if (name is not { Length: > 0 } || name.IndexOf('$') >= 0) return -1;
+        string? found = null;
+        List<string>? candidates = null;
+        foreach (string mod in _directlyConsultedModules)
+        {
+            if (!_modules.TryGetValue(mod, out ModuleManifest? m)) continue;
+            if (!GetModuleMangledSet(mod, m).Contains(fid)) continue;
+            found ??= mod;
+            (candidates ??= new List<string>()).Add(mod);
+        }
+        if (found is null) return -1;
+        if (candidates!.Count > 1)
+        {
+            candidates.Sort(StringComparer.Ordinal);
+            throw Shumway.Core.PrologRuntimeException.AmbiguousModuleLocal(fid, candidates);
+        }
+        int mangledFid = Shumway.Core.FunctorTable.Intern(
+            Shumway.Core.AtomTable.Intern(found + "$" + name, permanent: true).Id, arity);
+        if (engine.CurrentFunctorAddresses is { } map
+            && map.TryGetValue(mangledFid, out int addr)
+            && !Shumway.Core.CallTarget.IsUnresolved(addr)
+            && addr >= 0)
+            return addr;
+        return -1;
+    }
 
     /// <summary>True when every recorded static Module:Goal resolution of a
     /// cached transform still resolves the same today — the per-entry

@@ -17,34 +17,36 @@ public sealed class DialectScopedConsultTests
 {
     private static PrologEngine Engine() => new() { Out = new StringWriter() };
 
-    /// <summary>Scryer reads "abc" as a list of chars; ISO reads it as codes.</summary>
+    /// <summary>Reports how the consulting dialect read a double-quoted literal.
+    /// The swi pack declares codes; the engine default is chars (ADR-047), so
+    /// that is the pair which shows the scoping.</summary>
     private const string Probe = "kind(K) :- ( \"a\" = [X], atom(X) -> K = chars ; K = codes ).\n";
 
     [Fact]
-    public void WithoutADialectTheTextIsReadAsIso()
+    public void WithoutADialectTheTextIsReadWithTheEngineDefault()
     {
         var e = Engine();
         e.ConsultString(Probe);
-        Assert.True(e.Query("kind(codes).").Success);
+        Assert.True(e.Query("kind(chars).").Success);
     }
 
     [Fact]
-    public void UnderScryerTheSameTextReadsAsScryerDoes()
+    public void UnderADialectTheSameTextReadsAsThatSystemDoes()
     {
         var e = Engine();
-        e.WithLibraryDialect("scryer", () => { e.ConsultString(Probe); return true; });
-        Assert.True(e.Query("kind(chars).").Success);
+        e.WithLibraryDialect("swi", () => { e.ConsultString(Probe); return true; });
+        Assert.True(e.Query("kind(codes).").Success);
     }
 
     [Fact]
     public void TheDialectIsScopedToTheLoad()
     {
         var e = Engine();
-        e.WithLibraryDialect("scryer", () => { e.ConsultString(Probe); return true; });
+        e.WithLibraryDialect("swi", () => { e.ConsultString(Probe); return true; });
         // The flag it set must not leak: a later consult is the user's own
-        // program again.
+        // program again, read with the engine default.
         e.ConsultString("after(K) :- ( \"a\" = [X], atom(X) -> K = chars ; K = codes ).");
-        Assert.True(e.Query("after(codes).").Success);
+        Assert.True(e.Query("after(chars).").Success);
     }
 
     [Fact]

@@ -19,7 +19,20 @@ namespace Shumway.Compiler.Parsing;
 public sealed class ClauseReader
 {
     private readonly Parser _parser;
-    private readonly OperatorTable _operators;
+    private OperatorTable _operators;
+
+    /// <summary>ADR-046 — maps a module name to its operator layer (a table
+    /// parented by the base/user table this reader started with). Set by the
+    /// embedding consult and the shmo compiler; when null, a
+    /// <c>:- module/2</c> directive keeps the current table (legacy global
+    /// behaviour).</summary>
+    public Func<string, OperatorTable>? ModuleLayerProvider;
+
+    /// <summary>The table the reader is CURRENTLY parsing with — the module
+    /// layer after a <c>:- module/2</c> switch, else the table it was
+    /// constructed with. The consult pipeline injects imported operators
+    /// here when a mid-file <c>use_module</c> brings some in.</summary>
+    public OperatorTable CurrentOperators => _operators;
     private readonly PrologFlags _flags;
 
     public ClauseReader(string source)
@@ -63,6 +76,9 @@ public sealed class ClauseReader
     private static void DefineArityCompatOperators(OperatorTable operators)
     {
         operators.Define("extrn", 1150, OperatorType.Fx);
+        // Arity spells negation `not Goal`; the standard tables keep `not`
+        // a plain atom (ISO/GNU/SWI — `X == not` must parse).
+        operators.Define("not", 900, OperatorType.Fy);
     }
 
     private readonly global::Shumway.Compiler.Lexer.Lexer _lexer;
@@ -256,7 +272,7 @@ public sealed class ClauseReader
                 new Term[]
                 {
                     new CompoundTerm("$native_decls",
-                        new Term[] { new StringTerm(declsText) { Position = clause.Position } })
+                        new Term[] { new StringTerm(declsText, Shumway.Core.TextKind.Codes) { Position = clause.Position } })
                         { Position = clause.Position },
                 })
                 { Position = clause.Position });
@@ -385,8 +401,17 @@ public sealed class ClauseReader
         else if (body is CompoundTerm { Functor: "char_conversion", Args: var ccArgs }
                  && ccArgs.Length == 2)
             ApplyCharConversionDirective(ccArgs, clause.Position);
-        else if (body is CompoundTerm { Functor: "module", Args: [_, var exportList] })
+        else if (body is CompoundTerm { Functor: "module", Args: [var modName, var exportList] })
+        {
+            // ADR-046 — the rest of the file parses with the module's own
+            // operator layer; ops in the export list land there too.
+            if (ModuleLayerProvider is not null && modName is AtomTerm modAtom)
+            {
+                _operators = ModuleLayerProvider(modAtom.Name);
+                _parser.SwitchOperators(_operators);
+            }
             ApplyModuleListOps(exportList, clause.Position);
+        }
     }
 
     /// <summary>SICStus/Scryer allow <c>op(P, T, N)</c> entries in a module's export
@@ -482,8 +507,27 @@ public sealed class ClauseReader
         int precedence = (int)precTerm.Value;
         OperatorType type = ParseOperatorType(typeTerm.Name, pos);
 
-        foreach (string name in ExpandNames(args[2], pos))
-            _operators.Define(name, precedence, type);
+        // ADR-046 — `op(P, T, user:Name)` (SWI's escape) defines in the
+        // ROOT (user/global) table regardless of the module being read;
+        // `op(P, T, m:Name)` targets module m's layer. An unqualified name
+        // defines in the current layer.
+        Term nameSpec = args[2];
+        OperatorTable target = _operators;
+        if (nameSpec is CompoundTerm { Functor: ":", Args: [AtomTerm qual, var inner] })
+        {
+            nameSpec = inner;
+            if (qual.Name == "user")
+            {
+                target = _operators;
+                while (target.Parent is not null) target = target.Parent;
+            }
+            else if (ModuleLayerProvider is not null)
+            {
+                target = ModuleLayerProvider(qual.Name);
+            }
+        }
+        foreach (string name in ExpandNames(nameSpec, pos))
+            target.Define(name, precedence, type);
     }
 
     private static IEnumerable<string> ExpandNames(Term spec, SourcePosition pos)

@@ -42,12 +42,14 @@ public class ReadTermOptionsTests
     }
 
     [Fact]
-    public void Singletons_OnceOccurring_NonUnderscore_Only()
+    public void Singletons_OnceOccurringNamedVariables()
     {
-        // X occurs twice (excluded); _Z starts with _ (excluded); _ anonymous
-        // (excluded). Only Y qualifies.
+        // X occurs twice (excluded); `_` is anonymous (excluded). `_Z` IS a
+        // singleton — only the bare `_` is anonymous, and the "leading
+        // underscore means deliberately unused" convention belongs to the
+        // compiler's warning, not to read_term/2,3.
         var sol = ReadWith("foo(X, Y, X, _Z, _).",
-            "singletons(Sg)", "Sg = [ 'Y'=_ ]");
+            "singletons(Sg)", "Sg = [ 'Y'=_, '_Z'=_ ]");
         Assert.True(sol.Success);
     }
 

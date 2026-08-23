@@ -116,19 +116,83 @@ public static class StreamBuiltins
         return false;
     }
 
+    /// <summary>§8.11.5.3.e/f: the source/sink must be an ATOM (or the
+    /// chars-list / PSTR spellings SourceSinkText accepts). A compound is
+    /// domain_error(source_sink, S); a number is type_error(atom, S).</summary>
+    private static void ValidateSourceSink(Activation engine, Cell pathCell)
+    {
+        switch (pathCell.Tag)
+        {
+            case Tag.Atom:
+            case Tag.Lis:
+            case Tag.Pstr:
+                return;
+            case Tag.Str:
+                throw new PrologRuntimeException(
+                    "domain_error", "source_sink", engine, pathCell);
+            default:
+                throw new PrologRuntimeException("type_error", "atom", engine, pathCell);
+        }
+    }
+
     private static StreamHandle ResolveReader(Activation engine, Cell cell)
     {
         var h = ResolveStream(engine, cell);
         if (!h.IsReader)
-            throw new PrologRuntimeException("permission_error", "input,stream");
+            // The culprit is the stream-or-alias ARGUMENT as written
+            // (§8.12.1.3.d wants e.g. user_output, not a fresh var).
+            throw new PrologRuntimeException("permission_error", "input,stream",
+                engine, Resolve(engine, cell));
         return h;
+    }
+
+    /// <summary>Opens a file for text I/O with <c>FileShare.ReadWrite</c>. No
+    /// other Prolog locks the files it opens, and programs that reopen a file
+    /// they already hold open are ordinary — the .NET convenience
+    /// constructors would fail them with a sharing violation.</summary>
+    private static FileStream SharedFileStream(string path, FileMode fm, FileAccess fa)
+        => new(path, fm, fa, FileShare.ReadWrite);
+
+    private static StreamWriter SharedWriter(
+        string path, bool append, System.Text.Encoding? encoding)
+    {
+        var fs = SharedFileStream(
+            path, append ? FileMode.Append : FileMode.Create, FileAccess.Write);
+        return encoding is null
+            ? new StreamWriter(fs) { NewLine = "\n" }
+            : new StreamWriter(fs, encoding) { NewLine = "\n" };
+    }
+
+    private static TextReader SharedReader(string path, System.Text.Encoding? encoding)
+    {
+        var fs = SharedFileStream(path, FileMode.Open, FileAccess.Read);
+        // Explicit single-byte encodings keep the .NET reader (Latin-1 can
+        // never be ill-formed; ascii keeps its historical replacement
+        // behaviour). The DEFAULT and explicit utf8 go through the strict
+        // reader so an ill-formed sequence raises
+        // representation_error(character) instead of decoding to U+FFFD —
+        // except a UTF-16 BOM'd file, which keeps StreamReader's
+        // auto-detection (its lead 0xFF/0xFE bytes would read as ill-formed).
+        if (encoding is null || encoding is System.Text.UTF8Encoding)
+        {
+            // byte[] + offset overload: net48 has no Stream.Read(Span).
+            byte[] bom = new byte[2];
+            int got = fs.Read(bom, 0, 2);
+            fs.Position = 0;
+            bool utf16 = got == 2
+                && ((bom[0] == 0xFF && bom[1] == 0xFE)
+                    || (bom[0] == 0xFE && bom[1] == 0xFF));
+            if (!utf16) return new Shumway.Core.Utf8TextReader(fs);
+        }
+        return encoding is null ? new StreamReader(fs) : new StreamReader(fs, encoding);
     }
 
     private static StreamHandle ResolveWriter(Activation engine, Cell cell)
     {
         var h = ResolveStream(engine, cell);
         if (!h.IsWriter)
-            throw new PrologRuntimeException("permission_error", "output,stream");
+            throw new PrologRuntimeException("permission_error", "output,stream",
+                engine, Resolve(engine, cell));
         return h;
     }
 
@@ -140,13 +204,19 @@ public static class StreamBuiltins
         Cell modeCell = Resolve(engine, engine.GetRegister(1));
         if (pathCell.Tag == Tag.Ref || modeCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
-        if (pathCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
+        ValidateSourceSink(engine, pathCell);
         if (modeCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
+            throw new PrologRuntimeException("type_error", "atom", engine, modeCell);
+        // §8.11.5.3: the Stream argument must be UNBOUND.
+        Cell streamOut = Resolve(engine, engine.GetRegister(2));
+        if (streamOut.Tag is not (Tag.Ref or Tag.AttVar))
+            throw new PrologRuntimeException(
+                "uninstantiation_error", "", engine, streamOut);
 
-        string path = AtomTable.GetById(pathCell.AsAtomId)?.Name ?? "";
+        string path = SourceSinkText(engine, pathCell);
         string mode = AtomTable.GetById(modeCell.AsAtomId)?.Name ?? "";
+        if (mode is not ("read" or "write" or "append"))
+            throw new PrologRuntimeException("domain_error", "io_mode", engine, modeCell);
 
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
@@ -159,9 +229,9 @@ public static class StreamBuiltins
                 ? NullDeviceHandle(id, mode, path, alias: null)
                 : mode switch
             {
-                "write"  => new StreamHandle(id, new StreamWriter(path, append: false) { NewLine = "\n" }, "write", path),
-                "append" => new StreamHandle(id, new StreamWriter(path, append: true) { NewLine = "\n" }, "append", path),
-                "read"   => new StreamHandle(id, new StreamReader(path), "read", path),
+                "write"  => new StreamHandle(id, SharedWriter(path, false, null), "write", path),
+                "append" => new StreamHandle(id, SharedWriter(path, true, null), "append", path),
+                "read"   => new StreamHandle(id, SharedReader(path, null), "read", path),
                 _ => throw new PrologRuntimeException("domain_error",
                     "stream_mode (Phase 1 supports write / append / read)"),
             };
@@ -183,6 +253,42 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(2, MakeStreamTerm(engine, handle));
     }
 
+    /// <summary>The source-sink argument's text: an atom as always, or —
+    /// Scryer-compat, where text IS a chars list — a proper list of one-char
+    /// atoms (a PSTR included). Anything else keeps the ISO
+    /// type_error(atom).</summary>
+    internal static string SourceSinkText(Activation engine, Cell pathCell)
+    {
+        if (pathCell.Tag == Tag.Atom)
+            return AtomTable.GetById(pathCell.AsAtomId)?.Name ?? "";
+        if (pathCell.Tag == Tag.Pstr)
+        {
+            string s = engine.ReadPstrChain(pathCell, out Cell tail);
+            tail = Resolve(engine, tail);
+            if (tail.Tag == Tag.Atom && tail.AsAtomId == AtomTable.EmptyListId)
+                return s;
+        }
+        else if (Activation.IsListLike(pathCell))
+        {
+            var sb = new System.Text.StringBuilder();
+            Cell cur = pathCell;
+            int steps = 0, cap = engine.HeapTop + 1;
+            while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell pTail))
+            {
+                if (++steps > cap) break;   // cyclic — fall to the type error
+                Cell head = Resolve(engine, rawHead);
+                if (head.Tag != Tag.Atom) break;
+                string? c = AtomTable.GetById(head.AsAtomId)?.Name;
+                if (c is null || c.Length != 1) break;
+                sb.Append(c);
+                cur = ListCursor.Resolve(engine, pTail);
+            }
+            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId)
+                return sb.ToString();
+        }
+        throw new PrologRuntimeException("type_error", "atom", engine, pathCell);
+    }
+
     /// <summary><c>open(+File, +Mode, -Stream, +Options)</c> — ISO §8.11.5.
     /// The four-argument form takes an options list, recognising
     /// <c>alias(Name)</c> (registers the stream under a user-chosen
@@ -201,17 +307,25 @@ public static class StreamBuiltins
         Cell optsCell = Resolve(engine, engine.GetRegister(3));
         if (pathCell.Tag == Tag.Ref || modeCell.Tag == Tag.Ref || optsCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
-        if (pathCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
+        ValidateSourceSink(engine, pathCell);
         if (modeCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
+            throw new PrologRuntimeException("type_error", "atom", engine, modeCell);
+        // §8.11.5.3: the Stream argument must be UNBOUND.
+        Cell streamOut = Resolve(engine, engine.GetRegister(2));
+        if (streamOut.Tag is not (Tag.Ref or Tag.AttVar))
+            throw new PrologRuntimeException(
+                "uninstantiation_error", "", engine, streamOut);
 
-        string path = AtomTable.GetById(pathCell.AsAtomId)?.Name ?? "";
+        string path = SourceSinkText(engine, pathCell);
         string mode = AtomTable.GetById(modeCell.AsAtomId)?.Name ?? "";
+        if (mode is not ("read" or "write" or "append"))
+            throw new PrologRuntimeException("domain_error", "io_mode", engine, modeCell);
 
         // Parse the options list. Each option is a 1-arg compound;
         // anything else is a stream_option domain error.
         string? alias = null;
+        string eofAction = "eof_code";
+        bool repositionable = true;
         bool binary = false;
         System.Text.Encoding? encoding = null;
         Cell cur = optsCell;
@@ -221,14 +335,16 @@ public static class StreamBuiltins
             if (head.Tag == Tag.Ref)
                 throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Str)
-                throw new PrologRuntimeException("domain_error", "stream_option");
+                throw new PrologRuntimeException(
+                    "domain_error", "stream_option", engine, head);
 
             int functorIdx = head.AsHeapIndex;
             int functorId = engine.GetHeap(functorIdx).AsFunctorId;
             var (optAtomId, optArity) = FunctorTable.Lookup(functorId);
             string optName = AtomTable.GetById(optAtomId)?.Name ?? "";
             if (optArity != 1)
-                throw new PrologRuntimeException("domain_error", "stream_option");
+                throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
 
             Cell argCell = Resolve(engine, engine.GetHeap(functorIdx + 1));
             switch (optName)
@@ -241,18 +357,22 @@ public static class StreamBuiltins
                     // (GNU + Neumerkel agree), NOT type_error(atom) — consistent
                     // with the type(...) case below.
                     if (argCell.Tag != Tag.Atom)
-                        throw new PrologRuntimeException("domain_error", "stream_option");
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     alias = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
                     break;
                 case "type":
                     if (argCell.Tag == Tag.Ref)
                         throw new PrologRuntimeException("instantiation_error");
                     if (argCell.Tag != Tag.Atom)
-                        throw new PrologRuntimeException("domain_error", "stream_option");
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     string typeName = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
-                    if (typeName == "binary") binary = true;
-                    else if (typeName != "text")
-                        throw new PrologRuntimeException("domain_error", "stream_option");
+                    // A repeated option: the LAST one wins.
+                    if (typeName is "binary" or "text") binary = typeName == "binary";
+                    else
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     break;
                 case "encoding":
                     // SWI-style: encoding(utf8 | iso_latin_1 | ascii). The
@@ -264,7 +384,8 @@ public static class StreamBuiltins
                     if (argCell.Tag == Tag.Ref)
                         throw new PrologRuntimeException("instantiation_error");
                     if (argCell.Tag != Tag.Atom)
-                        throw new PrologRuntimeException("domain_error", "stream_option");
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     string encName = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
                     encoding = encName switch
                     {
@@ -272,27 +393,45 @@ public static class StreamBuiltins
                         "iso_latin_1" => System.Text.Encoding.Latin1,
                         "ascii" => System.Text.Encoding.ASCII,
                         _ => throw new PrologRuntimeException(
-                            "domain_error", "stream_option"),
+                            "domain_error", "stream_option", engine, head),
                     };
                     break;
                 case "eof_action":
-                    // Recognised but not yet plumbed through the read
-                    // side; reading at EOF always returns the
-                    // end_of_file atom (matching eof_code).
+                    if (argCell.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (argCell.Tag != Tag.Atom)
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
+                    eofAction = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
+                    if (eofAction is not ("error" or "eof_code" or "reset"))
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
                     break;
                 case "reposition":
                     // Recognised; SeekablePosition is implicit on
-                    // file streams — no plumbing needed yet.
+                    // file streams — no plumbing needed yet, but the
+                    // value is still validated (§8.11.5.4).
+                    if (argCell.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (argCell.Tag != Tag.Atom
+                        || AtomTable.GetById(argCell.AsAtomId)?.Name
+                            is not ("true" or "false"))
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
+                    repositionable =
+                        AtomTable.GetById(argCell.AsAtomId)?.Name == "true";
                     break;
                 default:
-                    throw new PrologRuntimeException("domain_error", "stream_option");
+                    throw new PrologRuntimeException(
+                        "domain_error", "stream_option", engine, head);
             }
             cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
         }
         if (cur.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-            throw new PrologRuntimeException("type_error", "list");
+            throw new PrologRuntimeException("type_error", "list",
+                engine, Resolve(engine, engine.GetRegister(3)));
 
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
@@ -300,7 +439,16 @@ public static class StreamBuiltins
         // ISO permission_error(open, source_sink, alias(_)) when the
         // requested alias is already taken.
         if (alias is not null && registry.IsAliasTaken(alias))
-            throw new PrologRuntimeException("permission_error", "open,source_sink");
+        {
+            // Culprit is the OPTION term alias(A) (§8.11.5.3.j).
+            int aliasFid = FunctorTable.Intern(
+                AtomTable.Intern("alias", permanent: true).Id, 1);
+            int ab = engine.AllocateHeap(2);
+            engine.SetHeap(ab, Cell.Functor(aliasFid));
+            engine.SetHeap(ab + 1, Cell.Atom(AtomTable.Intern(alias, permanent: true).Id));
+            throw new PrologRuntimeException("permission_error", "open,source_sink",
+                engine, Cell.Str(ab));
+        }
 
         int id = registry.NextId();
         StreamHandle handle;
@@ -322,10 +470,11 @@ public static class StreamBuiltins
                     "write"  => FileMode.Create,
                     "append" => FileMode.Append,
                     "read"   => FileMode.Open,
-                    _ => throw new PrologRuntimeException("domain_error", "stream_mode"),
+                    _ => throw new PrologRuntimeException(
+                        "domain_error", "io_mode", engine, modeCell),
                 };
                 FileAccess fa = mode == "read" ? FileAccess.Read : FileAccess.Write;
-                handle = new StreamHandle(id, new FileStream(path, fm, fa),
+                handle = new StreamHandle(id, SharedFileStream(path, fm, fa),
                     mode, path, alias);
             }
             else
@@ -335,22 +484,13 @@ public static class StreamBuiltins
                 handle = mode switch
                 {
                     "write"  => new StreamHandle(id,
-                        encoding is null
-                            ? new StreamWriter(path, append: false) { NewLine = "\n" }
-                            : new StreamWriter(path, false, encoding) { NewLine = "\n" },
-                        "write", path, alias),
+                        SharedWriter(path, false, encoding), "write", path, alias),
                     "append" => new StreamHandle(id,
-                        encoding is null
-                            ? new StreamWriter(path, append: true) { NewLine = "\n" }
-                            : new StreamWriter(path, true, encoding) { NewLine = "\n" },
-                        "append", path, alias),
+                        SharedWriter(path, true, encoding), "append", path, alias),
                     "read"   => new StreamHandle(id,
-                        encoding is null
-                            ? new StreamReader(path)
-                            : new StreamReader(path, encoding),
-                        "read", path, alias),
-                    _ => throw new PrologRuntimeException("domain_error",
-                        "stream_mode (Phase 1 supports write / append / read)"),
+                        SharedReader(path, encoding), "read", path, alias),
+                    _ => throw new PrologRuntimeException(
+                        "domain_error", "io_mode", engine, modeCell),
                 };
             }
         }
@@ -367,6 +507,8 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("system_error", ex.Message);
         }
 
+        handle.EofAction = eofAction;
+        handle.Repositionable = repositionable;
         registry.Add(handle);
         return engine.UnifyRegisterWithCell(2, MakeStreamTerm(engine, handle));
     }
@@ -391,6 +533,12 @@ public static class StreamBuiltins
     public static bool Close(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
+        // ISO §8.11.6: closing a standard stream has no effect — the
+        // user streams outlive every close and stay registered.
+        var st = engine.Streams!;
+        if (ReferenceEquals(h, st.UserInput) || ReferenceEquals(h, st.UserOutput)
+            || ReferenceEquals(h, st.UserError))
+            return true;
         if (h.Reader is not null) h.Reader.Dispose();
         if (h.Writer is not null) { h.Writer.Flush(); h.Writer.Dispose(); }
         if (h.BinaryStream is not null)
@@ -410,7 +558,13 @@ public static class StreamBuiltins
     public static bool Close2(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
-        bool force = ContainsForceTrue(engine, engine.GetRegister(1));
+        bool force = ParseCloseOptions(engine, engine.GetRegister(1));
+        // ISO §8.11.6: closing a standard stream has no effect — the
+        // user streams outlive every close and stay registered.
+        var st = engine.Streams!;
+        if (ReferenceEquals(h, st.UserInput) || ReferenceEquals(h, st.UserOutput)
+            || ReferenceEquals(h, st.UserError))
+            return true;
         try
         {
             if (h.Reader is not null) h.Reader.Dispose();
@@ -480,7 +634,7 @@ public static class StreamBuiltins
         var h = ResolveWriter(engine, engine.GetRegister(0));
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "output,binary_stream");
-        h.Writer!.WriteLine();
+        h.Writer!.Write('\n');   // LF on every platform (ADR-045)
         return true;
     }
 
@@ -603,7 +757,7 @@ public static class StreamBuiltins
     /// <summary><c>get_byte(+Stream, -Byte)</c> — ISO §8.13.1.</summary>
     public static bool GetByte2(Activation engine)
     {
-        var h = ResolveStream(engine, engine.GetRegister(0));
+        var h = ResolveReader(engine, engine.GetRegister(0));
         return ReadByteInto(engine, h, regOut: 1);
     }
 
@@ -618,7 +772,7 @@ public static class StreamBuiltins
     /// <summary><c>peek_byte(+Stream, -Byte)</c> — ISO §8.13.2.</summary>
     public static bool PeekByte2(Activation engine)
     {
-        var h = ResolveStream(engine, engine.GetRegister(0));
+        var h = ResolveReader(engine, engine.GetRegister(0));
         return PeekByteInto(engine, h, regOut: 1);
     }
 
@@ -636,7 +790,7 @@ public static class StreamBuiltins
     public static bool PutByte2(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
-        WriteOneByte(engine, h, regByte: 1);
+        WriteOneByte(engine, h, regByte: 1, streamReg: 0);
         return true;
     }
 
@@ -650,7 +804,10 @@ public static class StreamBuiltins
             // ISO §8.13.1.3.g: byte I/O on a text stream is
             // permission_error(input, text_stream, _).
             throw new PrologRuntimeException("permission_error", "input,text_stream");
+        CheckOutArgIsInByte(engine, regOut);
+        CheckPastEof(engine, h);
         int b = h.BinaryStream!.ReadByte();
+        if (b < 0) h.PastEof = true;
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(b));
     }
 
@@ -663,16 +820,22 @@ public static class StreamBuiltins
         var bs = h.BinaryStream!;
         if (!bs.CanSeek)
             throw new PrologRuntimeException("permission_error", "reposition,stream");
+        CheckOutArgIsInByte(engine, regOut);
+        CheckPastEof(engine, h);
         long pos = bs.Position;
         int b = bs.ReadByte();
         bs.Position = pos;
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(b));
     }
 
-    private static void WriteOneByte(Activation engine, StreamHandle h, int regByte)
+    private static void WriteOneByte(
+        Activation engine, StreamHandle h, int regByte, int streamReg = -1)
     {
         if (!h.IsWriter)
-            throw new PrologRuntimeException("permission_error", "output,stream");
+            throw new PrologRuntimeException("permission_error", "output,stream",
+                engine, streamReg >= 0
+                    ? Resolve(engine, engine.GetRegister(streamReg))
+                    : MakeStreamTerm(engine, h));
         if (!h.IsBinary)
             // ISO §8.13.3.3.g: byte I/O on a text stream is
             // permission_error(output, text_stream, _).
@@ -681,14 +844,232 @@ public static class StreamBuiltins
         if (c.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (c.Tag != Tag.Int)
-            throw new PrologRuntimeException("type_error", "byte");
+            throw new PrologRuntimeException("type_error", "byte", engine, c);
         long v = c.AsInt;
         if (v < 0 || v > 255)
-            throw new PrologRuntimeException("type_error", "byte");
+            throw new PrologRuntimeException("type_error", "byte", engine, c);
         h.BinaryStream!.WriteByte((byte)v);
     }
 
     // ---------- character / code helpers ----------
+
+    /// <summary>The §8.12 pre-read gate: touching a stream whose position
+    /// is already past-end-of-stream under <c>eof_action(error)</c> raises
+    /// <c>permission_error(input, past_end_of_stream, S)</c>. All other
+    /// combinations read normally (eof keeps yielding <c>end_of_file</c> —
+    /// GNU's default behaviour).</summary>
+    /// <summary>§8.12.1.3.c: a BOUND output argument that could never be a
+    /// read result is a type error up front — get_char(S, 1) raises
+    /// type_error(in_character, 1), it does not just fail. in_character =
+    /// one-char atom or end_of_file.</summary>
+    private static void CheckOutArgIsInCharacter(Activation engine, int regOut)
+    {
+        Cell c = Resolve(engine, engine.GetRegister(regOut));
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar) return;
+        if (c.Tag == Tag.Atom)
+        {
+            string? n = AtomTable.GetById(c.AsAtomId)?.Name;
+            if (n is not null && (n.Length == 1 || n == "end_of_file"
+                || (n.Length == 2 && char.IsSurrogatePair(n[0], n[1]))))
+                return;
+        }
+        throw new PrologRuntimeException("type_error", "in_character", engine, c);
+    }
+
+    /// <summary>§8.12.4.3.c: in_character_code = a char code or -1.</summary>
+    private static void CheckOutArgIsInCharacterCode(Activation engine, int regOut)
+    {
+        Cell c = Resolve(engine, engine.GetRegister(regOut));
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar) return;
+        if (c.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer", engine, c);
+        long v = c.AsInt;
+        if (v == -1 || (v >= 0 && v <= 0x10FFFF)) return;
+        throw new PrologRuntimeException("representation_error", "in_character_code");
+    }
+
+    /// <summary>§8.13.1.3.c: in_byte = 0..255 or -1.</summary>
+    private static void CheckOutArgIsInByte(Activation engine, int regOut)
+    {
+        Cell c = Resolve(engine, engine.GetRegister(regOut));
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar) return;
+        if (c.Tag == Tag.Int && (c.AsInt == -1 || (c.AsInt >= 0 && c.AsInt <= 255)))
+            return;
+        throw new PrologRuntimeException("type_error", "in_byte", engine, c);
+    }
+
+    /// <summary>§8.11.6 close-option list validation: the list and every
+    /// option must be instantiated; the only recognised option is
+    /// <c>force(true|false)</c> — anything else is
+    /// <c>domain_error(close_option, Culprit)</c>.</summary>
+    private static bool ParseCloseOptions(Activation engine, Cell optsCell)
+    {
+        bool force = false;
+        Cell cur = Resolve(engine, optsCell);
+        while (true)
+        {
+            if (cur.Tag is Tag.Ref or Tag.AttVar)
+                throw new PrologRuntimeException("instantiation_error");
+            if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId)
+                return force;
+            if (cur.Tag != Tag.Lis)
+                throw new PrologRuntimeException("type_error", "list", engine, cur);
+            Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
+            if (head.Tag is Tag.Ref or Tag.AttVar)
+                throw new PrologRuntimeException("instantiation_error");
+            bool ok = false;
+            if (head.Tag == Tag.Str)
+            {
+                Cell f = engine.GetHeap(head.AsHeapIndex);
+                var (aid, ar) = FunctorTable.Lookup(f.AsFunctorId);
+                if (ar == 1 && AtomTable.GetById(aid)?.Name == "force")
+                {
+                    Cell arg = Resolve(engine, engine.GetHeap(head.AsHeapIndex + 1));
+                    if (arg.Tag == Tag.Atom)
+                    {
+                        string? an = AtomTable.GetById(arg.AsAtomId)?.Name;
+                        if (an == "true") { force = true; ok = true; }
+                        else if (an == "false") ok = true;
+                    }
+                }
+            }
+            if (!ok)
+                throw new PrologRuntimeException(
+                    "domain_error", "close_option", engine, head);
+            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        }
+    }
+
+    private static void CheckPastEof(Activation engine, StreamHandle h)
+    {
+        if (h.PastEof && h.EofAction == "error")
+            throw new PrologRuntimeException("permission_error",
+                "input,past_end_of_stream", engine, MakeStreamTerm(engine, h));
+        if (h.PastEof && h.EofAction == "reset") h.PastEof = false;
+    }
+
+    /// <summary><c>'$lazy_window'(+Stream, +Offset, +N, +Kind, -Window, -Length)</c>
+    /// — the up-to-N characters of the stream starting at character
+    /// <paramref name="Offset"/>, as a packed list, plus how many there are
+    /// (0 at end of input).
+    ///
+    /// <para>IDEMPOTENT, which is the whole point. Reading is a side effect and
+    /// backtracking cannot undo it: a grammar that tries one clause, fails and
+    /// tries the next wakes the same lazy cell twice, and a plain read would
+    /// hand it the NEXT characters the second time — silently parsing a
+    /// different input. One window is cached per stream, keyed by its offset,
+    /// so a re-run gets the same characters back and the memory stays
+    /// bounded.</para>
+    ///
+    /// <para>It reads through the stream's own reader, so the encoding declared
+    /// in <c>open/4</c> and the ADR-045 newline translation both apply.</para></summary>
+    public static bool LazyWindow(Activation engine)
+    {
+        var h = ResolveReader(engine, engine.GetRegister(0));
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream");
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "input,binary_stream");
+
+        long offset = RequireInt(engine, 1, "offset");
+        int want = (int)System.Math.Min(RequireInt(engine, 2, "window size"), 1 << 20);
+        if (want <= 0) throw new PrologRuntimeException("type_error", "positive_integer");
+
+        Cell kindCell = Resolve(engine, engine.GetRegister(3));
+        TextKind kind = kindCell.Tag == Tag.Atom
+            && AtomTable.GetById(kindCell.AsAtomId)?.Name == "codes"
+            ? TextKind.Codes
+            : TextKind.Chars;
+
+        string window;
+        if (h.LazyWindowOffset == offset && h.LazyWindow is { } cached)
+        {
+            window = cached;                       // the re-run: same characters
+        }
+        else if (offset == h.LazyRead)
+        {
+            var buf = new char[want];
+            int got = 0;
+            while (got < want)
+            {
+                int c = h.Reader!.Read();
+                if (c < 0) { h.PastEof = true; break; }
+                buf[got++] = (char)c;
+            }
+            window = new string(buf, 0, got);
+            h.LazyWindowOffset = offset;
+            h.LazyWindow = window;
+            h.LazyRead = offset + got;
+        }
+        else
+        {
+            // Asked for a window the stream has already read past and no longer
+            // holds. Only a lazy list kept across an unrelated read of the same
+            // stream can produce this.
+            throw new PrologRuntimeException("permission_error", "reposition,stream");
+        }
+
+        return engine.UnifyRegisterWithHeapAt(4, engine.MakeTextList(window, kind))
+            && engine.UnifyRegisterWithCell(5, Cell.Int(window.Length));
+    }
+
+    private static long RequireInt(Activation engine, int reg, string what)
+    {
+        Cell c = Resolve(engine, engine.GetRegister(reg));
+        if (c.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (c.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer");
+        return c.AsInt;
+    }
+
+    /// <summary><c>partial_string(+Text, ?Ls, ?Ls0)</c> — <c>Ls</c> is the
+    /// packed list of <c>Text</c>'s characters with <c>Ls0</c> as its tail
+    /// (Scryer's <c>library(iso_ext)</c> primitive). An empty <c>Text</c> makes
+    /// <c>Ls</c> and <c>Ls0</c> the same list.</summary>
+    public static bool PartialString(Activation engine)
+    {
+        Cell src = ListCursor.Resolve(engine, engine.GetRegister(0));
+        if (src.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+
+        var sb = new System.Text.StringBuilder();
+        TextKind kind = TextKind.Chars;
+        bool sawAny = false;
+        Cell cur = src;
+        while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell tail))
+        {
+            Cell head = Resolve(engine, rawHead);
+            if (head.Tag == Tag.Atom
+                && AtomTable.GetById(head.AsAtomId)?.Name is { Length: 1 } n1)
+            {
+                if (sawAny && kind != TextKind.Chars)
+                    throw new PrologRuntimeException("type_error", "character", engine, head);
+                kind = TextKind.Chars;
+                sb.Append(n1);
+            }
+            else if (head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= char.MaxValue)
+            {
+                if (sawAny && kind != TextKind.Codes)
+                    throw new PrologRuntimeException("type_error", "character_code", engine, head);
+                kind = TextKind.Codes;
+                sb.Append((char)head.AsInt);
+            }
+            else
+            {
+                throw new PrologRuntimeException("type_error", "character", engine, head);
+            }
+            sawAny = true;
+            cur = ListCursor.Resolve(engine, tail);
+        }
+        if (!ListCursor.IsNil(cur))
+            throw new PrologRuntimeException("type_error", "list", engine, src);
+
+        if (!sawAny) return engine.UnifyRegisters(1, 2);
+        int hdr = engine.MakePstrOpen(sb.ToString(), kind);
+        return engine.UnifyRegisterWithHeapAt(1, hdr)
+            && engine.UnifyRegisterWithHeapAt(2, engine.GetPstrTailIndex(hdr));
+    }
 
     private static bool ReadCharInto(Activation engine, StreamHandle h, int regOut)
     {
@@ -698,7 +1079,10 @@ public static class StreamBuiltins
             // ISO §8.12.1.3.g: char I/O on a binary stream is
             // permission_error(input, binary_stream, _).
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
+        CheckOutArgIsInCharacter(engine, regOut);
+        CheckPastEof(engine, h);
         int c = h.Reader!.Read();
+        if (c < 0) h.PastEof = true;
         // Same single-char-atom cache as PeekCharInto.
         int atomId = c < 0
             ? _eofAtomId
@@ -714,6 +1098,8 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,stream");
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
+        CheckOutArgIsInCharacter(engine, regOut);
+        CheckPastEof(engine, h);
         int c = h.Reader!.Peek();
         // Hot path: the cached single-char atom id is a pure array
         // index — saves the lock + dictionary probe + 1-char string
@@ -737,7 +1123,10 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,stream");
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
+        CheckOutArgIsInCharacterCode(engine, regOut);
+        CheckPastEof(engine, h);
         int c = h.Reader!.Read();
+        if (c < 0) h.PastEof = true;
         // ISO §8.12.4: EOF is the integer -1.
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
     }
@@ -748,6 +1137,8 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,stream");
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
+        CheckOutArgIsInCharacterCode(engine, regOut);
+        CheckPastEof(engine, h);
         int c = h.Reader!.Peek();
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
     }
@@ -760,10 +1151,10 @@ public static class StreamBuiltins
         if (c.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (c.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "character");
+            throw new PrologRuntimeException("type_error", "character", engine, c);
         string name = AtomTable.GetById(c.AsAtomId)?.Name ?? "";
         if (name.Length != 1)
-            throw new PrologRuntimeException("type_error", "character");
+            throw new PrologRuntimeException("type_error", "character", engine, c);
         h.Writer!.Write(name[0]);
     }
 
@@ -775,7 +1166,7 @@ public static class StreamBuiltins
         if (c.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (c.Tag != Tag.Int)
-            throw new PrologRuntimeException("type_error", "integer");
+            throw new PrologRuntimeException("type_error", "integer", engine, c);
         long code = c.AsInt;
         if (code < 0 || code > char.MaxValue)
             throw new PrologRuntimeException("representation_error", "character_code");
@@ -791,8 +1182,27 @@ public static class StreamBuiltins
     {
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
+        RequireStreamOrVar(engine, engine.GetRegister(0));
         return engine.UnifyRegisterWithCell(
             0, MakeStreamTerm(engine, registry.CurrentInput));
+    }
+
+    /// <summary>current_input/1 and current_output/1 take a variable or a
+    /// term naming an OPEN stream; anything else (an unrelated atom, a
+    /// closed stream) is domain_error(stream, X) rather than a quiet
+    /// failure.</summary>
+    private static void RequireStreamOrVar(Activation engine, Cell cell)
+    {
+        Cell d = Resolve(engine, cell);
+        if (d.Tag is Tag.Ref or Tag.AttVar) return;
+        try
+        {
+            ResolveStream(engine, d);
+        }
+        catch (PrologRuntimeException)
+        {
+            throw new PrologRuntimeException("domain_error", "stream", engine, d);
+        }
     }
 
     /// <summary><c>current_output(Stream)</c> — ISO §8.11.2.</summary>
@@ -800,6 +1210,7 @@ public static class StreamBuiltins
     {
         StreamRegistry registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
+        RequireStreamOrVar(engine, engine.GetRegister(0));
         return engine.UnifyRegisterWithCell(
             0, MakeStreamTerm(engine, registry.CurrentOutput));
     }
@@ -847,21 +1258,32 @@ public static class StreamBuiltins
     /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.9.</summary>
     public static bool AtEndOfStream1(Activation engine)
     {
-        var h = ResolveStream(engine, engine.GetRegister(0));
-        if (h.Reader is null) return false;       // a writer is never "at end"
-        // user_input's underlying console reader doesn't support
-        // non-blocking Peek — report "not at end" conservatively.
-        if (ReferenceEquals(h, engine.Streams!.UserInput)) return false;
-        return h.Reader.Peek() < 0;
+        Cell arg = engine.GetRegister(0);
+        var h = ResolveStream(engine, arg);
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream",
+                engine, Resolve(engine, arg));
+        return AtEnd(engine, h);
     }
 
     /// <summary><c>at_end_of_stream/0</c> — checks current_input.</summary>
     public static bool AtEndOfStream0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput;
-        if (h?.Reader is null) return false;
+        return h is not null && AtEnd(engine, h);
+    }
+
+    /// <summary>True when the position is at OR past end (§8.11.9). A
+    /// binary reader has no TextReader — probe the seekable stream.</summary>
+    private static bool AtEnd(Activation engine, StreamHandle h)
+    {
+        if (!h.IsReader) return false;            // a writer is never "at end"
+        if (h.PastEof) return true;
+        // user_input's underlying console reader doesn't support
+        // non-blocking Peek — report "not at end" conservatively.
         if (ReferenceEquals(h, engine.Streams!.UserInput)) return false;
-        return h.Reader.Peek() < 0;
+        if (h.Reader is not null) return h.Reader.Peek() < 0;
+        return h.BinaryStream is { CanSeek: true } bs && bs.Position >= bs.Length;
     }
 
     // ---------- Helpers ----------

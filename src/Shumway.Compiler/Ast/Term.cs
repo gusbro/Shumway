@@ -17,6 +17,61 @@ public abstract class Term
 {
     /// <summary>Where in the source the term begins. Excluded from value equality.</summary>
     public SourcePosition Position { get; init; }
+
+    /// <summary>Reads this term as text: an atom's name, or the characters of a
+    /// proper list of one-character atoms or of character codes.
+    ///
+    /// <para>Text reaches C# as one of two things, decided by what it IS in
+    /// Prolog and never by how it was stored (ADR-047 decision 6): text as a
+    /// value is an atom, text as a sequence is a list. This is the one call
+    /// that reads both, for the caller who wants the characters and does not
+    /// care which shape they arrived in. A list mixing chars and codes is not
+    /// text; the empty list is the atom <c>[]</c> and reads as <c>""</c>.</para></summary>
+    public bool TryAsText(out string text)
+    {
+        switch (this)
+        {
+            case AtomTerm a when a.Name == "[]":
+                text = "";
+                return true;
+            case AtomTerm a:
+                text = a.Name;
+                return true;
+            case StringTerm s:
+                text = s.Content;
+                return true;
+        }
+
+        var sb = new System.Text.StringBuilder();
+        Term cursor = this;
+        bool? chars = null;
+        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+        {
+            switch (cons.Args[0])
+            {
+                case AtomTerm { Name.Length: 1 } c when chars != false:
+                    chars = true;
+                    sb.Append(c.Name);
+                    break;
+                case IntTerm n when chars != true
+                                    && n.Value >= 0 && n.Value <= char.MaxValue:
+                    chars = false;
+                    sb.Append((char)n.Value);
+                    break;
+                default:
+                    text = "";
+                    return false;
+            }
+            cursor = cons.Args[1];
+        }
+        if (cursor is not AtomTerm { Name: "[]" })
+        {
+            text = "";
+            return false;
+        }
+        text = sb.ToString();
+        return true;
+    }
 }
 
 public sealed class AtomTerm : Term
@@ -127,13 +182,25 @@ public sealed class RationalTerm : Term
     public override string ToString() => $"{Num} rdiv {Den}";
 }
 
+/// <summary>A text literal the compiler will pack (ADR-047). It is not a string
+/// TYPE: it denotes the list of characters or of codes named by
+/// <see cref="Kind"/>, and that is what it materialises into. The node exists so
+/// the compiler can carry a whole literal to the packer without building the
+/// cons list first.</summary>
 public sealed class StringTerm : Term
 {
     public string Content { get; }
-    public StringTerm(string content) => Content = content;
+    public Shumway.Core.TextKind Kind { get; }
 
-    public override bool Equals(object? obj) => obj is StringTerm o && Content == o.Content;
-    public override int GetHashCode() => HashCode.Combine(typeof(StringTerm), Content);
+    public StringTerm(string content, Shumway.Core.TextKind kind)
+    {
+        Content = content;
+        Kind = kind;
+    }
+
+    public override bool Equals(object? obj) =>
+        obj is StringTerm o && Content == o.Content && Kind == o.Kind;
+    public override int GetHashCode() => HashCode.Combine(typeof(StringTerm), Content, Kind);
     public override string ToString() => $"\"{Content}\"";
 }
 

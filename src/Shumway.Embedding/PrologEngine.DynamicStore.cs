@@ -22,6 +22,7 @@ public sealed partial class PrologEngine
     /// extraction's string intern).</summary>
     internal int Assertz(Clause clause)
     {
+        clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
         GetOrCreateDynamicSlot(fid).Add(clause);
@@ -33,6 +34,7 @@ public sealed partial class PrologEngine
     /// dynamic clause list. Returns the head's functor id.</summary>
     internal int Asserta(Clause clause)
     {
+        clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
         GetOrCreateDynamicSlot(fid).Insert(0, clause);
@@ -144,6 +146,15 @@ public sealed partial class PrologEngine
     /// silently failing on a static predicate.</summary>
     internal bool IsDynamic(int functorId) => _dynStore.IsDynamic(functorId);
 
+    /// <summary>True when any loaded module declared this functor
+    /// <c>:- multifile</c>. Reported by predicate_property/2.</summary>
+    internal bool IsMultifileFunctor(int functorId)
+    {
+        foreach (var m in _modules.Values)
+            if (m.MultifileFunctors.Contains(functorId)) return true;
+        return false;
+    }
+
     /// <summary>Snapshot of every functor declared <c>:- dynamic</c>.
     /// Used by <c>garbage_collect_clauses/0</c> to iterate them.
     ///</summary>
@@ -181,6 +192,40 @@ public sealed partial class PrologEngine
     /// clause's <c>died</c> slot in the running program's bytecode so an
     /// already-compiled dispatch's <c>check_visible</c> filters it out
     /// from now on.</summary>
+    // ---- clause references (asserta/2, clause/3, erase/1) ----
+    // Opaque ids handed out lazily per Clause OBJECT (the dynamic store
+    // keeps the identical instance from assert to retract, so identity is
+    // the stable key; clause_3_02 requires the same clause to yield the
+    // same reference on every lookup). Stale entries after erase/abolish
+    // are harmless: every fetch re-verifies liveness against the store.
+    private long _nextClauseRefId = 1;
+    private readonly Dictionary<long, (int Fid, Clause Clause)> _clauseRefsById = new();
+    private readonly Dictionary<Clause, long> _clauseRefIds = new(ReferenceEqualityComparer.Instance);
+
+    internal long ClauseRefFor(int fid, Clause clause)
+    {
+        if (_clauseRefIds.TryGetValue(clause, out long id)) return id;
+        id = _nextClauseRefId++;
+        _clauseRefIds[clause] = id;
+        _clauseRefsById[id] = (fid, clause);
+        return id;
+    }
+
+    internal bool TryGetClauseByRef(long id, out int fid, out Clause clause)
+    {
+        if (_clauseRefsById.TryGetValue(id, out var e))
+        {
+            (fid, clause) = e;
+            // liveness: the clause must still sit in its predicate's list.
+            if (_dynStore.TryGetClauses(fid, out var list))
+                for (int i = 0; i < list.Count; i++)
+                    if (ReferenceEquals(list[i], clause)) return true;
+        }
+        fid = 0;
+        clause = null!;
+        return false;
+    }
+
     internal bool RemoveDynamicByReference(
         Activation engine, int functorId, Clause clause, int knownIndex = -1)
     {
@@ -354,6 +399,7 @@ public sealed partial class PrologEngine
     {
         _dynStore.RemoveSlot(functorId);
         _dynStore.UnmarkDynamic(functorId);
+        _dynStore.Abolished.Add(functorId);
         InvalidateDynamicCache(functorId);
         // dropping a dynamic functor changes the
         // dynamic-region layout — the next query has to rebuild
@@ -781,11 +827,18 @@ public sealed partial class PrologEngine
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
-                    if (seen.Add(fid)) yield return (fid, false);
+                    // A dialect shim consults into `user`, so the module
+                    // filter above cannot catch its predicates — the
+                    // functor-level prelude set (librarySource consults)
+                    // does. They are library surface, not the program's.
+                    if (seen.Add(fid) && !_preludeFunctors.Contains(fid))
+                        yield return (fid, false);
                 }
         }
         foreach (var (fid, clauses) in _dynStore.Slots)
-            if (clauses.Count > 0 && seen.Add(fid)) yield return (fid, true);
+            if (clauses.Count > 0 && seen.Add(fid)
+                && !_preludeFunctors.Contains(fid))
+                yield return (fid, true);
         // source-stripped bundles populate
         // _precompiledStaticPredicates without ever touching
         // manifest.Clauses. Surface those so listing/0 enumerates
@@ -851,7 +904,7 @@ public sealed partial class PrologEngine
     {
         var seen = new HashSet<int>();
         foreach (int fid in _dynStore.Functors)
-            if (seen.Add(fid)) yield return fid;
+            if (!_dynStore.IsImplicitOnly(fid) && seen.Add(fid)) yield return fid;
         foreach (int fid in StaticHeadFunctors())
             if (seen.Add(fid)) yield return fid;
     }
@@ -874,9 +927,27 @@ public sealed partial class PrologEngine
                     set.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
             }
+            // A `:- discontiguous` / `:- multifile` declaration makes the
+            // predicate exist even with no clauses of its own.
+            set.UnionWith(manifest.DiscontiguousFunctors);
+            set.UnionWith(manifest.MultifileFunctors);
         }
         _staticHeadFunctorsCache = set;
         return set;
+    }
+
+    /// <summary>Functors a `:- discontiguous` / `:- multifile` directive
+    /// declared, host-lifetime. The activation holds this INSTANCE, not a
+    /// copy: Logtalk consults its compiled objects from inside a live query,
+    /// so a declaration seen mid-query has to take effect immediately.</summary>
+    private readonly HashSet<int> _declaredEmptyFids = new();
+
+    internal HashSet<int> DeclaredEmptyFunctors() => _declaredEmptyFids;
+
+    internal void RecordDeclaredEmpty(HashSet<int>? discontiguous, HashSet<int>? multifile)
+    {
+        if (discontiguous is not null) _declaredEmptyFids.UnionWith(discontiguous);
+        if (multifile is not null) _declaredEmptyFids.UnionWith(multifile);
     }
 
     /// <summary>True iff <paramref name="functorId"/> is the functor of any
@@ -890,6 +961,22 @@ public sealed partial class PrologEngine
         return StaticHeadFunctors().Contains(functorId);
     }
 
+    /// <summary>The §7.8 control constructs are callable (call/1 accepts
+    /// them) but live in no registry — current_predicate excludes them,
+    /// while predicate_property reports them built_in (SWI/SICStus
+    /// agree; the Logtalk conformity testers gate on it).</summary>
+    private static bool IsControlConstructFid(int functorId)
+    {
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
+        string? n = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        return (arity, n) switch
+        {
+            (2, "," or ";" or "->" or "*->") => true,
+            (0, "!") => true,
+            _ => false,
+        };
+    }
+
     /// <summary>The property atom ids for <paramref name="functorId"/>, as
     /// enumerated by <c>predicate_property/2</c>. An undefined predicate yields
     /// the empty list (so <c>predicate_property/2</c> fails for it). A defined
@@ -900,9 +987,11 @@ public sealed partial class PrologEngine
     internal List<int> PredicatePropertyAtomIds(int functorId)
     {
         var props = new List<int>();
-        if (!HasPredicate(functorId)) return props;
+        if (!HasPredicate(functorId) && !IsControlConstructFid(functorId))
+            return props;
         int kind;
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _)
+            || IsControlConstructFid(functorId)
             || _preludeFunctors.Contains(functorId))
             kind = AtomTable.Intern("built_in", permanent: true).Id;
         else if (_dynStore.IsDynamic(functorId))
@@ -922,18 +1011,60 @@ public sealed partial class PrologEngine
     /// silent no-op — the predicate is left undefined, no dispatch trampoline is
     /// fabricated), and throws <c>permission_error(modify, static_procedure)</c>
     /// for a static procedure or a builtin (you can't retractall those).</summary>
+    /// <summary>The §7.12.2.h ball for modifying a static procedure or
+    /// builtin, with the Name/Arity indicator riding in the Value slot so
+    /// the translated permission_error carries the culprit.</summary>
+    internal static Shumway.Core.PrologRuntimeException StaticProcedureError(int fid)
+    {
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+        return new Shumway.Core.PrologRuntimeException(
+            "permission_error", "modify,static_procedure",
+            (object)new CompoundTerm("/", new Term[]
+            {
+                new AtomTerm(Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "?"),
+                new IntTerm(arity),
+            }));
+    }
+
     internal bool IsRetractAllModifiable(int fid)
     {
         if (_dynStore.IsDynamic(fid)) return true;
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _) || HasStaticClauses(fid))
-            throw new Shumway.Core.PrologRuntimeException(
-                "permission_error", "modify,static_procedure");
+            throw StaticProcedureError(fid);
         return false;   // undefined → retractall is a no-op
+    }
+
+    /// <summary>abolish/1 modifiability: dynamic → true; builtin or static →
+    /// <c>permission_error(modify, static_procedure, Name/Arity)</c> with the
+    /// indicator as culprit; undefined → false (abolish is a silent no-op).</summary>
+    internal bool IsAbolishModifiable(int fid)
+    {
+        if (_dynStore.IsDynamic(fid)) return true;
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _) || HasStaticClauses(fid))
+        {
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+            throw new ShumwayPrologException(IsoError.PermissionError(
+                "modify", "static_procedure",
+                new CompoundTerm("/", new Term[]
+                {
+                    new AtomTerm(Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "?"),
+                    new IntTerm(arity),
+                })));
+        }
+        return false;
     }
 
     internal void EnsureDynamic(int fid)
     {
-        if (_dynStore.IsDynamic(fid)) return;
+        if (_dynStore.IsDynamic(fid))
+        {
+            // An asserted clause makes it a REAL dynamic: the implicit_dynamic
+            // scan's provisional mark (linker-only) is now backed by the
+            // database, so it enumerates and its empty chain fails like any
+            // declared dynamic.
+            _dynStore.ClearImplicitOnly(fid);
+            return;
+        }
 
         // implicit_dynamic flag (default true) auto-
         // promotes an undefined predicate on its first assertz/asserta.
@@ -979,8 +1110,7 @@ public sealed partial class PrologEngine
         // splits and builds the three-arg permission_error compound
         // (the third Obj slot stays as an anonymous variable, since
         // PrologRuntimeException can't carry a Term yet).
-        throw new Shumway.Core.PrologRuntimeException(
-            "permission_error", "modify,static_procedure");
+        throw StaticProcedureError(fid);
     }
 
     /// <summary>emits a fresh empty-dynamic trampoline for
@@ -1379,6 +1509,10 @@ public sealed partial class PrologEngine
     {
         switch (flagName)
         {
+            case "discontiguous_check":
+                if (valueName is "error" or "warning")
+                    _flags.DiscontiguousCheck = valueName;
+                break;
             case "implicit_dynamic":
                 if (valueName == "true") _flags.ImplicitDynamic = true;
                 else if (valueName == "false") _flags.ImplicitDynamic = false;
@@ -1390,8 +1524,10 @@ public sealed partial class PrologEngine
             case "arity_compat":
                 // consult-time directive form. The ClauseReader's
                 // pre-pass already flipped the live lexer for THIS file; this
-                // records it for subsequent consults.
-                if (valueName == "true") _flags.ArityCompat = true;
+                // records it for subsequent consults. Arity call semantics
+                // ride along: undefined predicates FAIL (a later explicit
+                // set_prolog_flag(unknown, _) overrides).
+                if (valueName == "true") { _flags.ArityCompat = true; _flags.Unknown = "fail"; }
                 else if (valueName == "false") _flags.ArityCompat = false;
                 break;
             case "unknown":
@@ -1445,6 +1581,11 @@ public sealed partial class PrologEngine
             if (publicsInSameConsult.Contains(fid)) continue;
             if (ClausesDefineFunctor(clauses, fid)) continue;
             _dynStore.MarkDynamic(fid);
+            // …but only the LINKER needs to know yet. The predicate is not in
+            // the database until something declares or asserts it, so it stays
+            // out of current_predicate/1 and calling it goes through the
+            // `unknown` flag (§8.8.2.1; GNU, SWI and Scryer all agree).
+            _dynStore.ImplicitOnly.Add(fid);
             if (!_dynStore.HasClauses(fid))
                 _dynStore[fid] = new List<Clause>();
         }
@@ -1706,6 +1847,14 @@ public sealed partial class PrologEngine
         // never silently fall outside the late-materialization registry.
         int last = name.LastIndexOf('$');
         if (last < 0 || last + 2 >= name.Length) return false;
+        // The helper's own name STARTS with '$' — bare it is '$disj_12',
+        // module-mangled 'mod$$disj_12' (a DOUBLE dollar). A single-dollar
+        // name is a mangled USER local, and a user predicate named like
+        // 'mod$test_326' fits the letters_digits shape by accident: register
+        // it (under its bare name, first-compile-wins) and the module wall
+        // leaks — a bare test_326 resolved cross-module, preempting both the
+        // existence_error and the consult-direct fallback's ambiguity check.
+        if (last > 0 && name[last - 1] != '$') return false;
         // NEVER register the query-stub's own '$q…' helpers: their ids are
         // deliberately REUSED query-to-query (MetaTransform.HelperPrefix "$q"),
         // so a first-compile-wins registry would materialize a PREVIOUS query's
@@ -1740,11 +1889,17 @@ public sealed partial class PrologEngine
             _runtimeAssertHelperPreds[p.FunctorId] = p;
             var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(p.FunctorId);
             string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
-            int dollar = name?.IndexOf('$') ?? -1;
-            if (name is not null && dollar > 0 && _modules.ContainsKey(name[..dollar]))
+            // The mangled form is '<module>$' + the helper's own '$'-leading
+            // name, so the split is the DOUBLE dollar — found from the END.
+            // Splitting at the first '$' misses every module whose own name
+            // starts with '$' ('$prelude'): its inline-catch recovery terms
+            // then have no bare alias and recovery setup has no address.
+            int cut = name?.LastIndexOf('$') ?? -1;
+            if (name is not null && cut > 0 && name[cut - 1] == '$'
+                && _modules.ContainsKey(name[..(cut - 1)]))
             {
                 int bareFid = FunctorTable.Intern(
-                    AtomTable.Intern(name[(dollar + 1)..], permanent: true).Id, arity);
+                    AtomTable.Intern(name[cut..], permanent: true).Id, arity);
                 _runtimeAssertHelperPreds.TryAdd(bareFid, p);
             }
         }

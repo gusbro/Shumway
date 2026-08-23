@@ -21,9 +21,8 @@ public static class ListBuiltins
     {
         Cell elem = engine.GetRegister(0);
         Cell cur = Resolve(engine, engine.GetRegister(1));
-        while (cur.Tag == Tag.Lis)
+        while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
         {
-            int headIdx = cur.AsHeapIndex;
             // Trial-unify with head. Save/restore on miss.
             int savedHeapTop = engine.HeapTop;
             int savedBindingTrail = engine.BindingTrailTop;
@@ -31,7 +30,7 @@ public static class ListBuiltins
             int savedHb = engine.Hb;
             engine.SetHb(engine.HeapTop);
 
-            if (engine.UnifyRegisterWithHeapAt(0, headIdx))
+            if (engine.UnifyRegisterWithCell(0, head))
             {
                 engine.SetHb(savedHb);
                 return true;
@@ -41,7 +40,7 @@ public static class ListBuiltins
             engine.SetHeapTop(savedHeapTop);
             engine.SetHb(savedHb);
 
-            cur = Resolve(engine, engine.GetHeap(headIdx + 1));
+            cur = Resolve(engine, tail);
         }
         return false;
     }
@@ -67,12 +66,11 @@ public static class ListBuiltins
 
         Cell cur = Resolve(engine, engine.GetRegister(1));
         long i = 0;
-        while (cur.Tag == Tag.Lis)
+        while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
         {
-            int headIdx = cur.AsHeapIndex;
             if (i == target)
-                return engine.UnifyRegisterWithHeapAt(2, headIdx);
-            cur = Resolve(engine, engine.GetHeap(headIdx + 1));
+                return engine.UnifyRegisterWithCell(2, head);
+            cur = Resolve(engine, tail);
             i++;
         }
         return false;
@@ -103,18 +101,21 @@ public static class ListBuiltins
     private static bool NthStep(Activation engine, NthCursor c, bool isResume)
     {
         Cell cur = Resolve(engine, engine.GetRegister(1));
-        for (int k = 0; k < c.Pos && cur.Tag == Tag.Lis; k++)
-            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
-        if (cur.Tag != Tag.Lis) return false;          // past the list end
+        for (int k = 0; k < c.Pos; k++)
+        {
+            if (!ListCursor.TryUncons(engine, cur, out _, out Cell skipped)) return false;
+            cur = Resolve(engine, skipped);
+        }
+        if (!ListCursor.TryUncons(engine, cur, out Cell head, out _))
+            return false;                              // past the list end
 
-        int headIdx = cur.AsHeapIndex;
         int pos = c.Pos;
         c.Pos = pos + 1;
         engine.PushBuiltinChoicePoint(c.Resume, arity: 3);
 
         long idxVal = c.OneBased ? pos + 1 : pos;
         if (engine.UnifyRegisterWithCell(0, Cell.Int(idxVal))
-            && engine.UnifyRegisterWithHeapAt(2, headIdx))
+            && engine.UnifyRegisterWithCell(2, head))
         {
             if (isResume) engine.ResumeAtReturnPc(c.ReturnPc);
             return true;
@@ -128,11 +129,10 @@ public static class ListBuiltins
     {
         var heads = new List<Cell>();
         Cell cur = Resolve(engine, engine.GetRegister(0));
-        while (cur.Tag == Tag.Lis)
+        while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
         {
-            int headIdx = cur.AsHeapIndex;
-            heads.Add(engine.GetHeap(headIdx));
-            cur = Resolve(engine, engine.GetHeap(headIdx + 1));
+            heads.Add(head);
+            cur = Resolve(engine, tail);
         }
         if (cur.Tag == Tag.Ref)
             // A partial list — the tail is unbound, so we can't
@@ -151,16 +151,17 @@ public static class ListBuiltins
     public static bool Last(Activation engine)
     {
         Cell cur = Resolve(engine, engine.GetRegister(0));
-        int lastHeadIdx = -1;
-        while (cur.Tag == Tag.Lis)
+        Cell last = default;
+        bool any = false;
+        while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
         {
-            int headIdx = cur.AsHeapIndex;
-            lastHeadIdx = headIdx;
-            cur = Resolve(engine, engine.GetHeap(headIdx + 1));
+            last = head;
+            any = true;
+            cur = Resolve(engine, tail);
         }
-        if (lastHeadIdx < 0) return false;   // empty list — no last element
+        if (!any) return false;              // empty list — no last element
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId) return false;
-        return engine.UnifyRegisterWithHeapAt(1, lastHeadIdx);
+        return engine.UnifyRegisterWithCell(1, last);
     }
 
     // ---------- list_to_set/2 ----------
@@ -171,10 +172,9 @@ public static class ListBuiltins
         // equal duplicates.
         var seen = new List<Cell>();
         Cell cur = Resolve(engine, engine.GetRegister(0));
-        while (cur.Tag == Tag.Lis)
+        while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell tail))
         {
-            int headIdx = cur.AsHeapIndex;
-            Cell head = Resolve(engine, engine.GetHeap(headIdx));
+            Cell head = Resolve(engine, rawHead);
             bool dup = false;
             foreach (Cell s in seen)
             {
@@ -185,7 +185,7 @@ public static class ListBuiltins
                 }
             }
             if (!dup) seen.Add(head);
-            cur = Resolve(engine, engine.GetHeap(headIdx + 1));
+            cur = Resolve(engine, tail);
         }
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId) return false;
         int listIdx = BuildList(engine, seen);
@@ -214,9 +214,9 @@ public static class ListBuiltins
         return start;
     }
 
+    // A list may be cons cells or packed, and both are the same term
+    // (ADR-047), so every walk here peels with ListCursor rather than reading
+    // Tag.Lis and the two slots behind it.
     private static Cell Resolve(Activation engine, Cell c)
-    {
-        if (c.Tag != Tag.Ref) return c;
-        return engine.GetHeap(engine.Deref(c.AsHeapIndex));
-    }
+        => ListCursor.Resolve(engine, c);
 }

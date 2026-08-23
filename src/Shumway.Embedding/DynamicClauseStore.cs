@@ -31,9 +31,38 @@ internal sealed class DynamicClauseStore
     public ISet<int> Functors => _functors;
 
     public bool IsDynamic(int fid) => _functors.Contains(fid);
-    public bool MarkDynamic(int fid) => _functors.Add(fid);
+    public bool MarkDynamic(int fid)
+    { Abolished.Remove(fid); ImplicitOnly.Remove(fid); return _functors.Add(fid); }
     public bool UnmarkDynamic(int fid) => _functors.Remove(fid);
-    public void MarkDynamicAll(IEnumerable<int> fids) => _functors.UnionWith(fids);
+    public void MarkDynamicAll(IEnumerable<int> fids)
+    { Abolished.ExceptWith(fids); ImplicitOnly.ExceptWith(fids); _functors.UnionWith(fids); }
+
+    /// <summary>Tombstones left by abolish/1: dispatching one of these
+    /// raises existence_error (the predicate is UNDEFINED) instead of
+    /// failing over its dead chain. Re-marking dynamic clears the
+    /// tombstone.</summary>
+    public readonly HashSet<int> Abolished = new();
+
+    /// <summary>Functors marked dynamic ONLY by the implicit_dynamic
+    /// consult-time scan — a literal <c>assertz(Head)</c> was seen in some
+    /// clause body, so the linker must emit a real trampoline for calls to
+    /// Head, but nothing has DECLARED or asserted it yet.
+    ///
+    /// <para>Such a predicate is not yet in the database: current_predicate/1
+    /// does not enumerate it and calling it goes through the <c>unknown</c>
+    /// flag like any other undefined procedure — which is what GNU Prolog,
+    /// SWI and Scryer all do, and what §8.8.2.1 says. A real
+    /// <c>:- dynamic</c> declaration or the first assert clears the mark and
+    /// it becomes an ordinary dynamic (empty chain FAILS, and it
+    /// enumerates).</para></summary>
+    public readonly HashSet<int> ImplicitOnly = new();
+
+    /// <summary>True when the scan is all that knows about this functor.</summary>
+    public bool IsImplicitOnly(int fid) => ImplicitOnly.Contains(fid);
+
+    /// <summary>Promotes an implicit mark to a real one — called when the
+    /// predicate is declared or actually gets a clause.</summary>
+    public void ClearImplicitOnly(int fid) => ImplicitOnly.Remove(fid);
     public int FunctorCount => _functors.Count;
 
     // ----- clause slots -----

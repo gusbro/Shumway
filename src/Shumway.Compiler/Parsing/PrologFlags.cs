@@ -17,9 +17,9 @@ public enum DoubleQuotesMode
     /// <summary>The string as a single atom — <c>"abc"</c> →
     /// <c>'abc'</c>.</summary>
     Atom,
-    /// <summary>Shumway's native PSTR representation — kept as the
-    /// default because it's the cheapest representation the engine
-    /// has (no list cell allocations per character).</summary>
+    /// <summary>SWI compatibility alias for <see cref="Chars"/>. There is no
+    /// string TYPE (ADR-047 decision 5); the value is kept distinct only so
+    /// <c>current_prolog_flag/2</c> reports back what was set.</summary>
     String,
 }
 
@@ -33,7 +33,10 @@ public enum DoubleQuotesMode
 /// </summary>
 public sealed class PrologFlags
 {
-    public DoubleQuotesMode DoubleQuotes { get; set; } = DoubleQuotesMode.String;
+    // ADR-047 decision 4: chars by default, matching where the modern
+    // ecosystem went. Packing made it free — a literal costs n/3 cells in every
+    // mode now, so the default no longer has to be chosen for cost.
+    public DoubleQuotesMode DoubleQuotes { get; set; } = DoubleQuotesMode.Chars;
 
     /// <summary>ISO §6.4.2 character-conversion flag. When
     /// <c>true</c>, the lexer maps every character it reads outside
@@ -57,11 +60,20 @@ public sealed class PrologFlags
     /// <c>:</c> is accepted and ignored).</summary>
     public bool ArityCompat { get; set; }
 
-    /// <summary>SWI digit-group separators (<c>10_000</c>) — see
-    /// <c>Lexer.DigitSeparators</c>. Off by default (ISO); the swi dialect
-    /// load scope turns it on for the duration of that library subtree's
-    /// consult, so SWI sources parse and everything else stays strict.</summary>
-    public bool DigitSeparators { get; set; }
+    /// <summary>Digit-group separators (<c>10_000</c>) — see
+    /// <c>Lexer.DigitSeparators</c>. ON by default: strict ISO lexes
+    /// <c>1_000</c> as the integer 1 followed by the variable <c>_000</c>,
+    /// which no term position accepts — so giving the spelling a meaning
+    /// cannot change any conforming program, and SWI, Trealla and Scryer
+    /// all read it. The separator must sit strictly between digits.</summary>
+    public bool DigitSeparators { get; set; } = true;
+
+    /// <summary>What a same-file predicate whose clauses are NOT adjacent
+    /// (and not declared <c>:- discontiguous</c>) does at load time:
+    /// <c>"error"</c> (the default — the split is almost always a bug) or
+    /// <c>"warning"</c> (report and accept, the SWI/Trealla field behavior;
+    /// the dialect load scopes set this so third-party trees load).</summary>
+    public string DiscontiguousCheck { get; set; } = "error";
 
     /// <summary>SWI-lenient §6.3.1.3: allow a bare operator atom whose priority
     /// exceeds the operand position's maximum (<c>:- dynamic foo/2 as

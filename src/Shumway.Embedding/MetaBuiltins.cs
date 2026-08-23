@@ -41,6 +41,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$te_after",        1, TeAfter);
         BuiltinsRegistry.Register("$findall_record_s", 1, FindallRecordSnapshot);
         BuiltinsRegistry.Register("$findall_collect", 1, FindallCollect);
+        BuiltinsRegistry.Register("$check_partial_list", 1, CheckPartialList);
         // In-engine bagof/setof plumbing — reuse the findall
         // frame stack ('$findall_push' / '$findall_record'); only the
         // collect step differs (it groups the solutions by witness).
@@ -229,10 +230,10 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$catch_begin", 2, CatchBegin);
         BuiltinsRegistry.Register("$catch_end",   0, CatchEnd);
         // setup_call_cleanup/3 cleanup-handler primitives.
-        BuiltinsRegistry.Register("$scc_register", 1, SccRegister);
+        BuiltinsRegistry.Register("$scc_register", 2, SccRegister);
         BuiltinsRegistry.Register("$cp_owners", 0, CpOwners);
         BuiltinsRegistry.Register("$scc_forget", 1, SccForget);
-        BuiltinsRegistry.Register("$pop_pending_cleanup", 1, PopPendingCleanup);
+        BuiltinsRegistry.Register("$pop_pending_cleanup", 2, PopPendingCleanup);
 
         // clause/2 and current_predicate/1 are now Prolog-level predicates
         // defined in the prelude. They call these helpers to
@@ -242,6 +243,9 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$clause_enum",               2, ClauseEnum);
         BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
         BuiltinsRegistry.Register("$current_predicate_enum",    1, CurrentPredicateEnum);
+        BuiltinsRegistry.Register("$module_predicate_enum",     2, ModulePredicateEnum);
+        BuiltinsRegistry.Register("$module_clause_enum",        3, ModuleClauseEnum);
+        BuiltinsRegistry.Register("$ctx_predicate_enum",        2, CtxPredicateEnum);
         BuiltinsRegistry.Register("$listable_predicates", 1, ListablePredicates);
         // listing path bypasses clause/2 + write/1 to
         // preserve the original VarTerm names parser captured. The
@@ -371,6 +375,16 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("current_char_conversion", 2, CurrentCharConversion,
             Reflect, "current_char_conversion(?InChar, ?OutChar)",
             "Enumerates the active char-conversion table (ISO §8.14.10).");
+        BuiltinsRegistry.Register("asserta", 2, AssertaRef,
+            "Database", "asserta(+Clause, -Ref)",
+            "Adds Clause at the front of its predicate and unifies Ref with its clause reference.");
+        BuiltinsRegistry.Register("assertz", 2, AssertzRef,
+            "Database", "assertz(+Clause, -Ref)",
+            "Adds Clause at the end of its predicate and unifies Ref with its clause reference.");
+        BuiltinsRegistry.Register("$clause_refs_of", 2, ClauseRefsOf);
+        BuiltinsRegistry.Register("$clause_ref_fetch", 3, ClauseRefFetch);
+        BuiltinsRegistry.Register("$op_ctx", 4, OpCtx);
+        BuiltinsRegistry.Register("$current_op_ctx", 4, CurrentOpCtx);
         BuiltinsRegistry.Register("op", 3, Op,
             Reflect, "op(+Priority, +Type, +Name)", "Declares an operator of the given priority and type.");
         BuiltinsRegistry.Register("set_prolog_flag",     2, SetPrologFlag,
@@ -380,6 +394,11 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("statistics", 0, Statistics0,
             Reflect, "statistics",
             "Writes a report of runtime, walltime and heap/trail/stack use to the current output.");
+        BuiltinsRegistry.Register("$heap_live", 3, HeapLive);
+        BuiltinsRegistry.Register("term_cells", 2, TermCells,
+            Reflect, "term_cells(@Term, -Cells)",
+            "Heap cells the term occupies, shared substructure counted once. "
+            + "A diagnostic: it reports what a term costs, not how it is stored.");
         BuiltinsRegistry.Register("statistics", 2, Statistics2,
             Reflect, "statistics(?Key, ?Value)",
             "Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds.");
@@ -478,6 +497,10 @@ public static partial class MetaBuiltins
             + "through LoadBundle, everything else is read as Prolog source. An "
             + "extensionless File that does not exist is retried as File.pl "
             + "(SWI-style).");
+        BuiltinsRegistry.Register("$load_text", 2, LoadTextCore,
+            Database, "'$load_text'(+TextAtom, +Options)",
+            "Native core of load_text/2 (Trealla): consults TextAtom's characters "
+            + "as Prolog source. Options are accepted and currently ignored.");
         BuiltinsRegistry.Register("ensure_loaded", 1, EnsureLoaded,
             Database, "ensure_loaded(+File)",
             "Loads File unless it is already loaded, in which case it does "
@@ -692,6 +715,11 @@ public static partial class MetaBuiltins
             Io, "delete(+File)",
             "Deletes the file File. Raises existence_error if absent, "
             + "permission_error if locked / read-only.");
+        BuiltinsRegistry.Register("delete_file", 1, Delete1,
+            Io, "delete_file(+File)",
+            "Deletes the file File; the widely-shared name for delete/1. "
+            + "Raises existence_error if absent, permission_error if "
+            + "locked / read-only.");
         BuiltinsRegistry.Register("rename", 2, Rename2,
             Io, "rename(+From, +To)",
             "Renames / moves a file from From to To. Raises existence_error "

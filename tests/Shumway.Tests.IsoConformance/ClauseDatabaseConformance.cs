@@ -222,4 +222,98 @@ public class ClauseDatabaseConformance
         }
         Assert.Equal(new[] { Int(1), Int(2) }, elements);
     }
+
+    [Fact]
+    public void Assert_NonCallable_IsTypeError()
+    {
+        // §8.9.1.3: head or body subterm that cannot be a goal raises
+        // type_error(callable, Culprit) at assert time — the culprit is
+        // the offending SUBTERM (4), not the whole clause.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(asserta(4), error(type_error(callable, 4), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(asserta((adb_foo :- 4)), error(type_error(callable, 4), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(asserta((adb_foo :- fail, 4)), error(type_error(callable, 4), _), true).").Success);
+    }
+
+    [Fact]
+    public void Assert_ControlConstructHead_IsPermissionError()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(asserta((!)), error(permission_error(modify, static_procedure, !/0), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(assertz(((a, b))), error(permission_error(modify, static_procedure, (',')/2), _), true).").Success);
+    }
+
+    [Fact]
+    public void Assert_OnBuiltin_ReportsIndicatorCulprit()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(asserta(atom(x)), error(permission_error(modify, static_procedure, atom/1), _), true).").Success);
+    }
+
+    [Fact]
+    public void Abolish_IsoErrorLadder()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(abolish(foo/a), error(type_error(integer, a), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(abolish(foo/(-1)), error(domain_error(not_less_than_zero, -1), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(abolish(5/2), error(type_error(atom, 5), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(abolish(abolish/1), error(permission_error(modify, static_procedure, abolish/1), _), true).").Success);
+        // Undefined → silent success.
+        Assert.True(e.Query("abolish(adb_nothing/2).").Success);
+    }
+
+    [Fact]
+    public void Abolish_ThenCall_IsExistenceError()
+    {
+        // §8.9.4: after abolish the predicate is UNDEFINED — a NEW call
+        // raises existence_error; a declared-but-empty dynamic still fails.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "assertz(adb_baz(1, 2)), abolish(adb_baz/2), "
+            + "catch(adb_baz(_, _), error(existence_error(procedure, adb_baz/2), _), true).").Success);
+        var e2 = new PrologEngine();
+        e2.ConsultString(":- dynamic adb_empty/1.");
+        Assert.True(e2.Query("\\+ adb_empty(_).").Success);
+    }
+
+    [Fact]
+    public void Abolish_RespectsUnknownFlag_AndReassertRevives()
+    {
+        // The abolished predicate is undefined, so a call goes through the
+        // `unknown` flag: fail → plain failure (DEC-10/Arity sources do
+        // abolish-then-call); a new assert clears the tombstone and the
+        // predicate works normally again.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "assertz(adb_ar(1)), abolish(adb_ar/1), "
+            + "set_prolog_flag(unknown, fail), \\+ adb_ar(_), "
+            + "\\+ retract(adb_ar(_)), "
+            + "assertz(adb_ar(9)), adb_ar(X), X == 9, retract(adb_ar(9)), "
+            + "set_prolog_flag(unknown, error).").Success);
+    }
+
+    [Fact]
+    public void Retract_RuleFormMatchesFacts()
+    {
+        // retract((H :- B)) treats a stored FACT as (H :- true).
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "assertz(adb_legs(spider, 8)), "
+            + "retract((adb_legs(spider, X) :- true)), X == 8.").Success);
+        // Undefined predicate → retract fails silently (no permission error).
+        Assert.False(e.Query("retract(adb_missing(_)).").Success);
+        // Retracting a builtin still raises, with the indicator culprit.
+        Assert.True(e.Query(
+            "catch(retract((atom(_) :- _)), error(permission_error(modify, static_procedure, atom/1), _), true).").Success);
+    }
 }

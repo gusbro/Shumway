@@ -70,19 +70,27 @@ public class Chunk131dTests
     public void Format_TildeD_NonInteger_RaisesTypeError()
     {
         var e = new PrologEngine();
-        var sol = e.Query("catch(format('~d', [foo]), error(type_error(T, _), _), true).");
+        // ~d takes an arithmetic EXPRESSION (GNU/SWI/SICStus): a
+        // non-evaluable argument is type_error(evaluable, Name/Arity),
+        // and format("~d", [1+1]) prints 2.
+        var sol = e.Query(
+            "catch(format('~d', [foo]), error(type_error(T, V), _), true).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("integer"), sol["T"]);
+        Assert.Equal(Atom("evaluable"), sol["T"]);
+        Assert.True(e.Query("catch(format('~d', [1.5]), "
+            + "error(type_error(integer, 1.5), _), true).").Success);
     }
 
     [Fact]
     public void Format_TildeS_NonIntListElement_RaisesTypeError()
     {
         var e = new PrologEngine();
+        // ~s takes a code list OR a char list, so a list of atoms is read as
+        // characters and a multi-char atom in it is type_error(character, _).
         var sol = e.Query(
             "catch(format('~s', [[foo, bar]]), error(type_error(T, _), _), true).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("character_code"), sol["T"]);
+        Assert.Equal(Atom("character"), sol["T"]);
     }
 
     // ---------- format-arg list shape ----------

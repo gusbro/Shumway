@@ -122,4 +122,34 @@ public class HeapGcTests
         Assert.Equal(0, e.CollectHeap());
         Assert.Equal(3, e.HeapTop);
     }
+
+    [Fact]
+    public void Collect_PreservesThePstrKindOfEverySurvivor()
+    {
+        // ADR-047: Relocate rebuilds a PSTR header around the buffer's new
+        // index. Dropping the presentation bit there would turn a list of
+        // chars into a list of codes mid-collection — non-deterministic, and
+        // only reproducible under memory pressure. Both kinds are live here,
+        // with garbage in front so the survivors actually move.
+        var e = new Activation();
+        ClearRegisters(e);
+
+        e.AllocateHeapUnbound();                      // garbage, forces a slide
+        e.AllocateHeapUnbound();
+        int chars = e.MakePstr("hello", TextKind.Chars);
+        e.AllocateHeapUnbound();                      // garbage between them
+        int codes = e.MakePstr("world", TextKind.Codes);
+        e.SetRegister(0, Cell.Ref(chars));
+        e.SetRegister(1, Cell.Ref(codes));
+
+        e.CollectHeap();
+
+        int charsNow = e.GetRegister(0).AsHeapIndex;
+        int codesNow = e.GetRegister(1).AsHeapIndex;
+        Assert.NotEqual(chars, charsNow);             // it really moved
+        Assert.Equal(TextKind.Chars, e.GetHeap(charsNow).AsPstrKind);
+        Assert.Equal(TextKind.Codes, e.GetHeap(codesNow).AsPstrKind);
+        Assert.Equal("hello", e.AsPstrString(charsNow));
+        Assert.Equal("world", e.AsPstrString(codesNow));
+    }
 }

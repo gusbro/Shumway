@@ -132,6 +132,104 @@ public class ArithmeticConformance
         Assert.Equal("evaluation_error", name);
     }
 
+    // ---------- §9 error shapes and Cor.2 evaluables ----------
+
+    [Fact]
+    public void Error_UnknownEvaluable_ReportsIndicator()
+    {
+        // The culprit is the procedure INDICATOR Name/Arity, not the term.
+        AssertSucceeds("catch(_ is foo, error(type_error(evaluable, V), _), true), V == foo/0.");
+        AssertSucceeds("catch(_ is foo(1,2,3), error(type_error(evaluable, V), _), true), V == foo/3.");
+    }
+
+    [Fact]
+    public void Error_IntegerOpOnFloat_ReportsCulpritValue()
+    {
+        AssertSucceeds(@"catch(_ is 1.0 /\ 2, error(type_error(integer, V), _), true), V == 1.0.");
+        AssertSucceeds(@"catch(_ is 5 mod 2.0, error(type_error(integer, V), _), true), V == 2.0.");
+        AssertSucceeds(@"catch(_ is \ 1.5, error(type_error(integer, V), _), true), V == 1.5.");
+    }
+
+    [Fact]
+    public void Error_DomainConditions_AreUndefined()
+    {
+        // §9.3 domain conditions: evaluation_error(undefined), not IEEE inf/nan.
+        AssertSucceeds("catch(_ is log(0), error(evaluation_error(undefined), _), true).");
+        AssertSucceeds("catch(_ is sqrt(-1.0), error(evaluation_error(undefined), _), true).");
+        AssertSucceeds("catch(_ is acosh(0.5), error(evaluation_error(undefined), _), true).");
+    }
+
+    [Fact]
+    public void Error_FloatOverflow_FromFiniteOperands()
+    {
+        // §9.1.4.1: a finite computation exceeding the float range is
+        // evaluation_error(float_overflow), never a silent infinity.
+        AssertSucceeds("catch(_ is exp(1000), error(evaluation_error(float_overflow), _), true).");
+        AssertSucceeds("catch(_ is 1.0e308 * 1.0e308, error(evaluation_error(float_overflow), _), true).");
+        AssertSucceeds("catch(_ is 1.0e308 / 1.0e-308, error(evaluation_error(float_overflow), _), true).");
+    }
+
+    [Fact]
+    public void Is_RoundHalvesGoTowardPositiveInfinity()
+    {
+        // ISO 9.1.6.1: round(x) = floor(x + 1/2).
+        var engine = new PrologEngine();
+        Assert.Equal(Int(-3), engine.Query("X is round(-3.5).")["X"]);
+        Assert.Equal(Int(-4), engine.Query("X is round(-4.5).")["X"]);
+        Assert.Equal(Int(5), engine.Query("X is round(4.5).")["X"]);
+    }
+
+    [Fact]
+    public void Is_TruncateOfHugeFloatIsExact()
+    {
+        // truncate(1.0e30) must produce the double's exact integer value
+        // (a 30-digit bignum), not a silently wrapped long. The double is
+        // not exactly 10^30, so pin magnitude + integrality, not equality.
+        AssertSucceeds("X is truncate(1.0e30), integer(X), abs(X - 10^30) < 10^15.");
+    }
+
+    [Fact]
+    public void Is_IntegerPowerWithNegativeExponent()
+    {
+        // ISO 9.3.10 (Cor.2): ±1 keep an integer value; 0 has none
+        // (undefined); any other integer base has no integer result —
+        // type_error(float, Base).
+        var engine = new PrologEngine();
+        Assert.Equal(Int(1), engine.Query("X is 1 ^ (-1).")["X"]);
+        Assert.Equal(Int(-1), engine.Query("X is (-1) ^ (-3).")["X"]);
+        AssertSucceeds("catch(_ is 0 ^ (-42), error(evaluation_error(undefined), _), true).");
+        AssertSucceeds("catch(_ is 2 ^ (-1), error(type_error(float, V), _), true), V == 2.");
+    }
+
+    [Fact]
+    public void Is_HyperbolicFamily()
+    {
+        // Cor.2 additions round-trip: atanh(tanh(x)) ≈ x, asinh(sinh(x)) ≈ x.
+        AssertSucceeds("X is atanh(tanh(0.5)), abs(X - 0.5) < 1.0e-9.");
+        AssertSucceeds("X is asinh(sinh(0.5)), abs(X - 0.5) < 1.0e-9.");
+        AssertSucceeds("X is acosh(cosh(0.5)), abs(X - 0.5) < 1.0e-9.");
+    }
+
+    [Fact]
+    public void Is_LogWithBaseAndLog10()
+    {
+        AssertSucceeds("X is log(2, 8), abs(X - 3.0) < 1.0e-9.");
+        AssertSucceeds("X is log10(1000), abs(X - 3.0) < 1.0e-9.");
+        AssertSucceeds("catch(_ is log(1, 10), error(evaluation_error(zero_divisor), _), true).");
+    }
+
+    [Fact]
+    public void Is_BitFunctions_MsbLsbPopcount()
+    {
+        var engine = new PrologEngine();
+        Assert.Equal(Int(7), engine.Query("X is msb(128).")["X"]);
+        Assert.Equal(Int(103), engine.Query("X is msb(2^103 + 1).")["X"]);
+        Assert.Equal(Int(103), engine.Query("X is lsb(2^103).")["X"]);
+        Assert.Equal(Int(4), engine.Query("X is popcount(170).")["X"]);
+        AssertSucceeds("catch(_ is popcount(3.14), error(type_error(integer, V), _), true), V == 3.14.");
+        AssertSucceeds("catch(_ is popcount(-1), error(domain_error(not_less_than_zero, V), _), true), V == -1.");
+    }
+
     // ---------- Helpers ----------
 
     private static void AssertBinding(string query, string varName, Term expected)

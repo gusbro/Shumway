@@ -63,47 +63,102 @@ public static class TypeBuiltins
         return t is Tag.Int or Tag.BigInt or Tag.Float or Tag.Rational;
     }
 
-    /// <summary><c>string(X)</c> — X is a string cell (SWI). Shumway has a
-    /// distinct string representation (Tag.String / PSTR); an atom is not a
-    /// string.</summary>
+    /// <summary><c>string(X)</c> (SWI) — X is a non-empty proper list of
+    /// characters or of character codes.
+    ///
+    /// <para>There is no string TYPE to test (ADR-047 decision 5): what
+    /// <c>double_quotes=string</c> produces is a text list. Testing the tag
+    /// instead would answer differently for a packed list and the cons list it
+    /// denotes, which are the same term — the representation probe decision 1
+    /// exists to prevent. So this asks about CONTENT.</para>
+    ///
+    /// <para>Divergence from SWI, deliberately: <c>string([a,b,c])</c> is true
+    /// here and false there. Here it is the same term as <c>"abc"</c>, so no
+    /// other answer is available. <c>string("")</c> is false — the empty
+    /// literal denotes <c>[]</c>, which is an atom.</para></summary>
     public static bool IsString(Activation engine)
     {
-        var t = Tag0(engine);
-        return t is Tag.String or Tag.Pstr;
+        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
+        int guard = engine.HeapTop + 2;
+        bool? chars = null;
+        while (guard-- > 0)
+        {
+            if (ListCursor.IsNil(cur)) return chars is not null;
+            if (!engine.TryUnconsListLike(cur, out Cell rawHead, out Cell tail)) return false;
+            Cell head = ListCursor.Resolve(engine, rawHead);
+            if (head.Tag == Tag.Atom
+                && AtomTable.GetById(head.AsAtomId)?.Name is { Length: 1 })
+            {
+                if (chars == false) return false;
+                chars = true;
+            }
+            else if (head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= 0x10FFFF)
+            {
+                if (chars == true) return false;
+                chars = false;
+            }
+            else return false;
+            cur = ListCursor.Resolve(engine, tail);
+        }
+        return false;
     }
 
-    /// <summary><c>'$is_partial_string'(X)</c> — Scryer's fast test for the
-    /// compact char-sequence representation (a partial string). True for a PSTR or
-    /// string cell; a plain cons-list of chars is not one (callers fall back to a
-    /// full character check). Used by Scryer's error/iso_ext/crypto/ffi/uuid.</summary>
+    /// <summary><c>'$is_partial_string'(X)</c> — X is a list of one-character
+    /// atoms, complete or with an open tail. It is the fast path of
+    /// <c>must_be(chars, X)</c> in the Scryer-dialect libraries.
+    ///
+    /// <para>It asks about the list's CONTENTS, not its storage (ADR-047):
+    /// testing the tag instead made it true for a packed list of CODES, so
+    /// <c>must_be(chars, "abc")</c> took the fast path and accepted a code
+    /// list.</para></summary>
     public static bool IsPartialString(Activation engine)
     {
-        var t = Tag0(engine);
-        return t is Tag.Pstr or Tag.String;
+        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
+        int guard = engine.HeapTop + 2;
+        bool sawChar = false;
+        while (guard-- > 0)
+        {
+            // An open tail is fine once some text has been read; a bare
+            // unbound variable is not a partial string.
+            if (cur.Tag is Tag.Ref or Tag.AttVar) return sawChar;
+            if (ListCursor.IsNil(cur)) return true;
+            if (!engine.TryUnconsListLike(cur, out Cell rawHead, out Cell tail))
+                return false;
+            Cell head = ListCursor.Resolve(engine, rawHead);
+            if (head.Tag != Tag.Atom) return false;
+            if ((AtomTable.GetById(head.AsAtomId)?.Name?.Length ?? 0) != 1) return false;
+            sawChar = true;
+            cur = ListCursor.Resolve(engine, tail);
+        }
+        return false;
     }
 
     /// <summary><c>atomic(X)</c> — X is a non-compound, non-variable term
-    /// (atom, integer, bigint, rational, float, string, PSTR).</summary>
+    /// (atom, integer, bigint, rational, float, string). A packed list is a
+    /// list (ADR-047), so it is NOT atomic; an empty one is the atom <c>[]</c>,
+    /// which is, and <see cref="Tag0"/> has already collapsed it.</summary>
     public static bool IsAtomic(Activation engine)
     {
         var t = Tag0(engine);
-        return t is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float or Tag.String or Tag.Pstr;
+        return t is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Rational or Tag.Float;
     }
 
-    /// <summary><c>compound(X)</c> — X is a compound term (STR or non-empty
-    /// LIS). An empty list (the atom <c>[]</c>) is NOT compound.</summary>
+    /// <summary><c>compound(X)</c> — X is a compound term: a structure or a
+    /// non-empty list, packed or not. An empty list (the atom <c>[]</c>) is NOT
+    /// compound.</summary>
     public static bool IsCompound(Activation engine)
     {
         var t = Tag0(engine);
-        return t is Tag.Str or Tag.Lis;
+        return t is Tag.Str or Tag.Lis or Tag.Pstr;
     }
 
     /// <summary><c>callable(X)</c> — X is an atom or a compound term (ISO
-    /// §8.3.6). An unbound variable, number, string or PSTR is not callable.</summary>
+    /// §8.3.6). A non-empty list is a compound, whether or not it is packed.
+    /// An unbound variable or a number is not callable.</summary>
     public static bool IsCallable(Activation engine)
     {
         var t = Tag0(engine);
-        return t is Tag.Atom or Tag.Str or Tag.Lis;
+        return t is Tag.Atom or Tag.Str or Tag.Lis or Tag.Pstr;
     }
 
     /// <summary><c>is_list(X)</c> — X is a proper list: a cons chain
@@ -114,18 +169,10 @@ public static class TypeBuiltins
         Cell cell = engine.GetRegister(0);
         while (true)
         {
-            cell = Resolve(engine, cell);
-            switch (cell.Tag)
-            {
-                case Tag.Atom when cell.AsAtomId == AtomTable.EmptyListId:
-                    return true;
-                case Tag.Lis:
-                    int headIdx = cell.AsHeapIndex;
-                    cell = engine.GetHeap(headIdx + 1);
-                    continue;
-                default:
-                    return false;
-            }
+            cell = ListCursor.Resolve(engine, cell);
+            if (ListCursor.IsNil(cell)) return true;
+            if (!engine.TryUnconsListLike(cell, out _, out Cell tail)) return false;
+            cell = tail;
         }
     }
 
@@ -137,40 +184,62 @@ public static class TypeBuiltins
 
     private static bool IsGroundCell(Activation engine, Cell cell)
     {
-        if (cell.Tag == Tag.Ref)
+        // Iterative, cycle-safe walk: ground(F1) with F1=f(1,F2), F2=f(1,F1)
+        // must terminate (a rational tree with no variables IS ground), and a
+        // 200k-deep list must not overflow the C# stack. The containers are
+        // lazy — a leaf argument allocates nothing.
+        List<Cell>? work = null;
+        HashSet<int>? visited = null;
+        while (true)
         {
-            int addr = engine.Deref(cell.AsHeapIndex);
-            cell = engine.GetHeap(addr);
-            if (cell.Tag == Tag.Ref) return false;
-        }
-        switch (cell.Tag)
-        {
-            // An attributed variable is an UNBOUND variable (freeze/dif/clpfd
-            // attach attributes to it) — a term holding one is not ground.
-            case Tag.AttVar:
-                return false;
-            case Tag.Atom:
-            case Tag.Int:
-            case Tag.BigInt:
-            case Tag.Rational:
-            case Tag.Float:
-            case Tag.Pstr:
-            case Tag.String:
-                return true;
-            case Tag.Str:
-                int functorIdx = cell.AsHeapIndex;
-                var (_, arity) = FunctorTable.Lookup(
-                    engine.GetHeap(functorIdx).AsFunctorId);
-                for (int i = 0; i < arity; i++)
-                    if (!IsGroundCell(engine, engine.GetHeap(functorIdx + 1 + i)))
-                        return false;
-                return true;
-            case Tag.Lis:
-                int headIdx = cell.AsHeapIndex;
-                return IsGroundCell(engine, engine.GetHeap(headIdx))
-                    && IsGroundCell(engine, engine.GetHeap(headIdx + 1));
-            default:
-                return true;
+            if (cell.Tag == Tag.Ref)
+            {
+                int addr = engine.Deref(cell.AsHeapIndex);
+                cell = engine.GetHeap(addr);
+                if (cell.Tag == Tag.Ref) return false;
+            }
+            switch (cell.Tag)
+            {
+                // An attributed variable is an UNBOUND variable (freeze/dif/
+                // clpfd attach attributes to it) — a term holding one is not
+                // ground.
+                case Tag.AttVar:
+                    return false;
+                // A packed list may be partial — its open tail is an unbound
+                // variable, and a term holding one is not ground.
+                case Tag.Pstr:
+                    cell = engine.PstrFinalTailCell(cell);
+                    continue;
+                case Tag.Str:
+                {
+                    int functorIdx = cell.AsHeapIndex;
+                    visited ??= new HashSet<int>();
+                    if (visited.Add(functorIdx))
+                    {
+                        var (_, arity) = FunctorTable.Lookup(
+                            engine.GetHeap(functorIdx).AsFunctorId);
+                        work ??= new List<Cell>();
+                        for (int i = 0; i < arity; i++)
+                            work.Add(engine.GetHeap(functorIdx + 1 + i));
+                    }
+                    break;
+                }
+                case Tag.Lis:
+                {
+                    int headIdx = cell.AsHeapIndex;
+                    visited ??= new HashSet<int>();
+                    if (visited.Add(headIdx))
+                    {
+                        work ??= new List<Cell>();
+                        work.Add(engine.GetHeap(headIdx));
+                        work.Add(engine.GetHeap(headIdx + 1));
+                    }
+                    break;
+                }
+            }
+            if (work is null || work.Count == 0) return true;
+            cell = work[work.Count - 1];
+            work.RemoveAt(work.Count - 1);
         }
     }
 
@@ -239,17 +308,18 @@ public static class TypeBuiltins
         long len = 0;
         while (true)
         {
-            cell = Resolve(engine, cell);
+            // The cursor, not `Tag.Lis`: these answer about the list's
+            // contents, and a packed list is a list (ADR-047).
+            cell = engine.NormalizeListCell(Resolve(engine, cell));
             if (cell.Tag == Tag.Atom && cell.AsAtomId == AtomTable.EmptyListId) break;
-            if (cell.Tag != Tag.Lis) return false;
-            int headIdx = cell.AsHeapIndex;
-            Cell head = Resolve(engine, engine.GetHeap(headIdx));
+            if (!engine.TryUnconsListLike(cell, out Cell rawHead, out Cell tail)) return false;
+            Cell head = Resolve(engine, rawHead);
             bool ok = chars
                 ? head.Tag == Tag.Atom && (AtomTable.GetById(head.AsAtomId)?.Name?.Length == 1)
                 : head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= 0x10FFFF;
             if (!ok) return false;
             len++;
-            cell = engine.GetHeap(headIdx + 1);
+            cell = tail;
         }
         return engine.UnifyRegisterWithCell(1, Cell.Int(len));
     }
@@ -292,10 +362,10 @@ public static class TypeBuiltins
 
     private static Tag Tag0(Activation engine) => Resolve(engine, engine.GetRegister(0)).Tag;
 
+    // Every type test in this file resolves through here, so collapsing an
+    // empty packed segment to what it denotes (usually the atom `[]`) once is
+    // what keeps `atomic("")`, `is_list("")` and the rest from having to know
+    // a zero-length PSTR exists.
     private static Cell Resolve(Activation engine, Cell cell)
-    {
-        if (cell.Tag != Tag.Ref) return cell;
-        int addr = engine.Deref(cell.AsHeapIndex);
-        return engine.GetHeap(addr);
-    }
+        => ListCursor.Resolve(engine, cell);
 }

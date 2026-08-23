@@ -68,6 +68,14 @@ public sealed class PrologRuntimeException : Exception
             Value = materialize(cell);
     }
 
+    /// <summary>Culprit the throw site holds as a raw number (boxed
+    /// <c>long</c> / <c>double</c> / <c>BigInteger</c>) rather than a heap
+    /// cell — for sites with no Activation at hand (the arithmetic
+    /// Apply* helpers, shared with the compiled tier). The embedding
+    /// translation turns it into the matching number term.</summary>
+    public PrologRuntimeException(string kind, string detail, object boxedCulprit)
+        : this(kind, detail) => Value = boxedCulprit;
+
     /// <summary>Stamps the offending builtin's <c>Name/Arity</c> onto the
     /// exception, if not already set. Called by the interpreter dispatch
     /// as the exception unwinds out of a builtin Impl so the ISO error
@@ -94,5 +102,22 @@ public sealed class PrologRuntimeException : Exception
         var (atomId, arity) = FunctorTable.Lookup(functorId);
         return new PrologRuntimeException("existence_error",
             (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + arity);
+    }
+
+    /// <summary>The consult-direct fallback's refusal to guess: a bare call
+    /// that two or more directly consulted modules define. Kind
+    /// <c>"ambiguous_module_local"</c>; Detail <c>"Name/Arity|m1,m2"</c> —
+    /// the translation splits it into
+    /// <c>error(existence_error(procedure, Name/Arity),
+    /// shumway(ambiguous_module_local, [m1, m2]))</c>, so an
+    /// existence-catcher still matches and the context says how to fix the
+    /// call (qualify it).</summary>
+    public static PrologRuntimeException AmbiguousModuleLocal(
+        int functorId, System.Collections.Generic.IReadOnlyList<string> modules)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        return new PrologRuntimeException("ambiguous_module_local",
+            (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + arity
+            + "|" + string.Join(",", modules));
     }
 }

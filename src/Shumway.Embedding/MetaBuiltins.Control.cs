@@ -257,6 +257,33 @@ public static partial class MetaBuiltins
     /// <c>type_error(atom, _)</c> for a non-atom, and
     /// <c>existence_error(source_sink, _)</c> when the path doesn't
     /// exist.</summary>
+    /// <summary><c>'$load_text'(+TextAtom, +Options)</c> — the native core of
+    /// the prelude's <c>load_text/2</c> (Trealla): consults the atom's text as
+    /// Prolog source in the live engine. The module(M) option (a default
+    /// module for module-less text) is not honoured — the text's own
+    /// <c>:- module</c> directive decides, which is what Trealla programs
+    /// pass anyway.</summary>
+    public static bool LoadTextCore(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "load_text/2 requires the engine to be hosted by a PrologEngine.");
+        Cell cell = MaterializeRegisterAsCell(engine, 0);
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (cell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException("type_error(atom, _)");
+        string source = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        // Trealla semantics: load_text does NOT auto-import a loaded module's
+        // exports (ops included) into user — unlike a direct consult. Loading
+        // at depth > 0 keeps the SWI-style auto-import off (the same way a
+        // use_module dependency loads).
+        host._useModuleLoadDepth++;
+        try { host.ConsultString(source); }
+        finally { host._useModuleLoadDepth--; }
+        return true;
+    }
+
     public static bool Consult(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -327,7 +354,19 @@ public static partial class MetaBuiltins
                 "type_error(atom, _)");
 
         string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
-        path = ConsultPipeline.ResolveSourcePath(path);
+        // A relative name resolves against the directory of the file being
+        // loaded, as `:- include/1` does — `:- ensure_loaded(file_1)` inside
+        // dir/main.pl means dir/file_1.pl, not one relative to the CWD.
+        string resolved = ConsultPipeline.ResolveSourcePath(path);
+        if (!System.IO.File.Exists(resolved)
+            && host._consultBaseDir is { } baseDir
+            && !System.IO.Path.IsPathRooted(path))
+        {
+            string rebased = ConsultPipeline.ResolveSourcePath(
+                System.IO.Path.Combine(baseDir, path));
+            if (System.IO.File.Exists(rebased)) resolved = rebased;
+        }
+        path = resolved;
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
                 $"existence_error(source_sink, '{path}')");
@@ -550,13 +589,169 @@ public static partial class MetaBuiltins
     public static bool Assertz(Activation engine) => AssertImpl(engine, prepend: false);
     public static bool Asserta(Activation engine) => AssertImpl(engine, prepend: true);
 
+    /// <summary>ISO §8.9.1.3 assert-time validation: the head must be an
+    /// atom or compound; the body must convert to a goal — a number (or
+    /// other non-callable) anywhere in the <c>,</c>/<c>;</c>/<c>-&gt;</c>
+    /// control skeleton raises <c>type_error(callable, Culprit)</c>. A var
+    /// in goal position is fine (it meta-calls). Without this the bad body
+    /// surfaces later as an uncatchable compiler exception at dispatch.</summary>
+    private static void ValidateAssertClause(Term clauseTerm)
+    {
+        if (clauseTerm is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        Term head = clauseTerm;
+        Term? body = null;
+        if (clauseTerm is CompoundTerm { Functor: ":-", Args.Length: 2 } rule)
+        {
+            head = rule.Args[0];
+            body = rule.Args[1];
+        }
+        if (head is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (head is not AtomTerm and not CompoundTerm)
+            throw new ShumwayPrologException(IsoError.TypeError("callable", head));
+        // Control constructs are not procedures — asserting a clause for
+        // `!`, `,`/2, `;`/2, `->`/2 or `*->`/2 is modifying a static
+        // procedure (WG17 reading; SWI and GNU agree).
+        string hn = head is AtomTerm ha ? ha.Name : ((CompoundTerm)head).Functor;
+        int harity = head is CompoundTerm hc ? hc.Args.Length : 0;
+        if ((harity == 0 && hn == "!")
+            || (harity == 1 && hn == ":-")
+            || (harity == 2 && hn is "," or ";" or "->" or "*->" or ":-"))
+            throw new ShumwayPrologException(IsoError.PermissionError(
+                "modify", "static_procedure",
+                new CompoundTerm("/", new Term[] { new AtomTerm(hn), new IntTerm(harity) })));
+        if (body is not null) ValidateGoalTerm(body);
+    }
+
+    private static void ValidateGoalTerm(Term goal)
+    {
+        switch (goal)
+        {
+            case VarTerm:
+                return;
+            case CompoundTerm { Args.Length: 2 } c
+                when c.Functor is "," or ";" or "->" or "*->":
+                ValidateGoalTerm(c.Args[0]);
+                ValidateGoalTerm(c.Args[1]);
+                return;
+            case AtomTerm or CompoundTerm:
+                return;
+            default:
+                throw new ShumwayPrologException(IsoError.TypeError("callable", goal));
+        }
+    }
+
+    /// <summary><c>asserta(Clause, -Ref)</c> / <c>assertz(Clause, -Ref)</c> —
+    /// the de-facto clause-reference forms. Ref must be UNBOUND
+    /// (uninstantiation_error otherwise) and binds to the opaque
+    /// <c>'$clause_ref'(Id)</c> for the freshly asserted clause.</summary>
+    public static bool AssertaRef(Activation engine) => AssertRefImpl(engine, prepend: true);
+    public static bool AssertzRef(Activation engine) => AssertRefImpl(engine, prepend: false);
+
+    private static bool AssertRefImpl(Activation engine, bool prepend)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("assert/2: PrologEngine host required.");
+        Term refArg = MaterializeRegister(engine, 1);
+        if (refArg is not VarTerm)
+            throw new ShumwayPrologException(IsoError.UninstantiationError(refArg));
+        var (fid, clause) = AssertCore(engine, host, prepend);
+        long id = host.ClauseRefFor(fid, clause);
+        Cell refCell = Materializer.MaterializeAsCell(engine,
+            new CompoundTerm("$clause_ref", new Term[] { new IntTerm(id) }));
+        return engine.UnifyRegisterWithCell(1, refCell);
+    }
+
+
+    /// <summary><c>'$clause_refs_of'(+Head, -Refs)</c> — the list of
+    /// <c>'$clause_ref'(Id)</c> terms for Head's predicate's CURRENT
+    /// clauses (call-time snapshot; clause/3's enumeration walks it).</summary>
+    public static bool ClauseRefsOf(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("clause/3: PrologEngine host required.");
+        int headHeap = engine.MaterializeRegisterForTrace(0);
+        int fid = ReadPatternHeadFunctorId(engine, ref headHeap);
+        IReadOnlyList<Clause> clauses = host.DynamicClausesFor(fid);
+        Term list = new AtomTerm("[]");
+        for (int i = clauses.Count - 1; i >= 0; i--)
+        {
+            long id = host.ClauseRefFor(fid, clauses[i]);
+            list = new CompoundTerm(".", new[]
+            {
+                (Term)new CompoundTerm("$clause_ref", new Term[] { new IntTerm(id) }),
+                list,
+            });
+        }
+        Cell c = Materializer.MaterializeAsCell(engine, list);
+        return engine.UnifyRegisterWithCell(1, c);
+    }
+
+    /// <summary><c>'$clause_ref_fetch'(+Ref, ?Head, ?Body)</c> — unifies
+    /// Head/Body with the clause the reference designates; fails when the
+    /// clause was erased/retracted. A bound non-reference is
+    /// <c>type_error(db_reference, Culprit)</c>.</summary>
+    public static bool ClauseRefFetch(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("clause/3: PrologEngine host required.");
+        Term r = MaterializeRegister(engine, 0);
+        if (r is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (r is not CompoundTerm { Functor: "$clause_ref", Args: [IntTerm idT] })
+            throw new ShumwayPrologException(IsoError.TypeError("db_reference", r));
+        if (!host.TryGetClauseByRef(idT.Value, out _, out Clause clause)) return false;
+        Term head = clause.Term is CompoundTerm { Functor: ":-", Args.Length: 2 } rule
+            ? rule.Args[0] : clause.Term;
+        Term body = clause.Term is CompoundTerm { Functor: ":-", Args.Length: 2 } rule2
+            ? rule2.Args[1] : new AtomTerm("true");
+        // ONE materialization of the whole (Head :- Body) pair so the
+        // clause's variables stay shared between the two unifications.
+        Cell pair = Materializer.MaterializeAsCell(engine,
+            new CompoundTerm(":-", new[] { head, body }));
+        int pairIdx = engine.AllocateHeap(1);
+        engine.SetHeap(pairIdx, pair);
+        int baseIdx = engine.Deref(pairIdx);
+        Cell str = engine.GetHeap(baseIdx);
+        if (str.Tag != Tag.Str) return false;
+        int args = str.AsHeapIndex + 1;
+        int hSlot = engine.AllocateHeap(2);
+        engine.SetHeap(hSlot, engine.GetHeap(args));
+        engine.SetHeap(hSlot + 1, engine.GetHeap(args + 1));
+        return engine.UnifyRegisterWithHeapAt(1, hSlot)
+            && engine.UnifyRegisterWithHeapAt(2, hSlot + 1);
+    }
+
+    /// <summary><c>'$clause_ref_erase'(+Ref)</c> — removes the referenced
+    /// clause (idempotent on a stale reference).</summary>
+    public static bool ClauseRefErase(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("erase/1: PrologEngine host required.");
+        Term r = MaterializeRegister(engine, 0);
+        if (r is not CompoundTerm { Functor: "$clause_ref", Args: [IntTerm idT] })
+            return false;
+        if (host.TryGetClauseByRef(idT.Value, out int fid, out Clause clause))
+            host.RemoveDynamicByReference(engine, fid, clause);
+        return true;
+    }
+
     private static bool AssertImpl(Activation engine, bool prepend)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "assert: PrologEngine host required.");
+        AssertCore(engine, host, prepend);
+        return true;
+    }
 
+    private static (int Fid, Clause Clause) AssertCore(
+        Activation engine, PrologEngine host, bool prepend)
+    {
         Term clauseTerm = MaterializeRegister(engine, 0);
+        clauseTerm = StripAssertQualifiers(clauseTerm);
+        ValidateAssertClause(clauseTerm);
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         // Asserta/Assertz extract the head functor id anyway —
         // take it from the return instead of re-extracting (a second
@@ -571,7 +766,7 @@ public static partial class MetaBuiltins
             host.PrependDynamicClauseIncremental(engine, fid, clause);
         else
             host.AppendDynamicClauseIncremental(engine, fid, clause);
-        return true;
+        return (fid, clause);
     }
 
     /// <summary><c>retract(Clause)</c> — finds the first asserted clause
@@ -595,7 +790,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "'$retractall_modifiable'/1: PrologEngine host required.");
         int headHeap = engine.MaterializeRegisterForTrace(0);
-        int fid = ReadPatternHeadFunctorId(engine, headHeap);
+        int fid = ReadPatternHeadFunctorId(engine, ref headHeap);
         return host.IsRetractAllModifiable(fid);
     }
 
@@ -613,15 +808,16 @@ public static partial class MetaBuiltins
         // wasted: the heap representation already has the functor id
         // sitting one slot inside the STR.
         int patternHeap = engine.MaterializeRegisterForTrace(0);
-        int patternFid = ReadPatternHeadFunctorId(engine, patternHeap);
+        int patternFid = ReadPatternHeadFunctorId(engine, ref patternHeap);
 
         // ISO §7.12.2.h — retracting from a static
         // predicate is permission_error(modify, static_procedure, _),
         // not a silent failure. The check fires after the head's type
         // check (above) so type errors win precedence.
-        if (!host.IsDynamic(patternFid))
-            throw new Shumway.Core.PrologRuntimeException(
-                "permission_error", "modify,static_procedure");
+        // Same triage as retractall: dynamic → run the retract loop;
+        // static/builtin → permission_error (thrown by the check);
+        // UNDEFINED → plain failure, not an error.
+        if (!host.IsRetractAllModifiable(patternFid)) return false;
 
         // scan the LIVE clause list directly — no snapshot copy.
         // This is sound for the first step: the scan runs to completion
@@ -646,37 +842,168 @@ public static partial class MetaBuiltins
         // heap address that's BELOW the CP's saved heap top — so
         // it survives the backtrack truncation. Capturing it once
         // here side-steps the register-clobber.
+        // §7.6.2 — the stored clause is the CONVERTED one, so the pattern has
+        // to be converted the same way or `retract((p(X) :- X, call(X)))` would
+        // stop matching what `assertz` of the same text just stored. A body
+        // that is a bare VARIABLE stays as it is: it is the pattern's wildcard
+        // (`retract((p(_) :- Body))`), not a goal to convert. GNU and SWI both
+        // behave exactly this way.
+        patternHeap = ConvertRetractPattern(engine, patternHeap);
+
         return RetractStep(engine, host, patternFid, candidates, returnPc,
             patternHeap);
     }
+
+    /// <summary>Rebuilds the retract pattern with §7.6.2 applied to its body,
+    /// sharing every leaf with the original so bindings still reach the
+    /// caller. Returns <paramref name="patternHeap"/> unchanged when the body
+    /// needs no conversion, which is the overwhelmingly common case.</summary>
+    private static int ConvertRetractPattern(Activation engine, int patternHeap)
+    {
+        Cell pat = engine.GetHeap(engine.Deref(patternHeap));
+        if (pat.Tag != Tag.Str) return patternHeap;
+        int sa = pat.AsHeapIndex;
+        Cell f = engine.GetHeap(sa);
+        if (f.Tag != Tag.Functor) return patternHeap;
+        var (atomId, arity) = FunctorTable.Lookup(f.AsFunctorId);
+        if (arity != 2 || AtomTable.GetById(atomId)?.Name != ":-") return patternHeap;
+
+        Cell body = ResolveLocal(engine, engine.GetHeap(sa + 1));
+        Cell converted = ConvertBodyCell(engine, body, topLevel: true);
+        if (converted.Equals(body)) return patternHeap;
+
+        int rebuilt = engine.AllocateHeap(3);
+        engine.SetHeap(rebuilt, f);
+        engine.SetHeap(rebuilt + 1, engine.GetHeap(sa + 1));
+        engine.SetHeap(rebuilt + 2, converted);
+        int home = engine.AllocateHeap(1);
+        engine.SetHeap(home, Cell.Str(rebuilt));
+        return home;
+    }
+
+    /// <summary>§7.6.2 on a body already on the heap: a variable goal becomes
+    /// <c>call(V)</c> (sharing V), and the control skeleton `,` / `;` / `-&gt;`
+    /// is descended. Everything else — and a top-level variable when
+    /// <paramref name="topLevel"/> — is returned as is.</summary>
+    private static Cell ConvertBodyCell(Activation engine, Cell body, bool topLevel)
+    {
+        if (body.Tag is Tag.Ref or Tag.AttVar)
+        {
+            if (topLevel) return body;
+            int callBase = engine.AllocateHeap(2);
+            engine.SetHeap(callBase, Cell.Functor(CallOneFunctorId));
+            engine.SetHeap(callBase + 1, body);
+            return Cell.Str(callBase);
+        }
+        if (body.Tag != Tag.Str) return body;
+        int sa = body.AsHeapIndex;
+        Cell f = engine.GetHeap(sa);
+        if (f.Tag != Tag.Functor) return body;
+        var (atomId, arity) = FunctorTable.Lookup(f.AsFunctorId);
+        if (arity != 2) return body;
+        if (AtomTable.GetById(atomId)?.Name is not ("," or ";" or "->")) return body;
+
+        Cell l = ResolveLocal(engine, engine.GetHeap(sa + 1));
+        Cell r = ResolveLocal(engine, engine.GetHeap(sa + 2));
+        Cell nl = ConvertBodyCell(engine, l, topLevel: false);
+        Cell nr = ConvertBodyCell(engine, r, topLevel: false);
+        if (nl.Equals(l) && nr.Equals(r)) return body;
+        int b = engine.AllocateHeap(3);
+        engine.SetHeap(b, f);
+        engine.SetHeap(b + 1, nl);
+        engine.SetHeap(b + 2, nr);
+        return Cell.Str(b);
+    }
+
+    private static readonly int CallOneFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("call", permanent: true).Id, 1);
 
     /// <summary>Reads the pattern's head functor id straight from the
     /// heap. Mirrors the ISO callability check in
     /// <see cref="ExtractHeadFunctorIdFromClause"/> but avoids the
     /// Term AST allocation — for retract's hot path the heap shape
     /// is sufficient.</summary>
-    private static int ReadPatternHeadFunctorId(Activation engine, int patternHeap)
+    /// <summary>Peels <c>Module:</c> qualifiers off an assert argument.
+    /// Dynamics are flat-global (invariant), so the qualifier validates and
+    /// drops — <c>assertz(m:f(1))</c>, <c>assertz(m:(H :- B))</c> and the
+    /// head-qualified <c>assertz((m:H :- B))</c> all assert the bare clause.
+    /// Nested qualifiers peel through (innermost wins, vacuously — they all
+    /// drop). A variable module is an instantiation_error, a non-atom a
+    /// type_error(atom) — checked before the drop.</summary>
+    private static Term StripAssertQualifiers(Term t)
+    {
+        t = StripColonChain(t);
+        if (t is CompoundTerm { Functor: ":-", Args.Length: 2 } rule
+            && rule.Args[0] is CompoundTerm { Functor: ":", Args.Length: 2 })
+        {
+            Term head = StripColonChain(rule.Args[0]);
+            t = new CompoundTerm(":-", new[] { head, rule.Args[1] })
+                { Position = rule.Position };
+        }
+        return t;
+    }
+
+    private static Term StripColonChain(Term t)
+    {
+        while (t is CompoundTerm { Functor: ":", Args.Length: 2 } q)
+        {
+            switch (q.Args[0])
+            {
+                case AtomTerm: break;
+                case VarTerm:
+                    throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+                default:
+                    throw new Shumway.Core.PrologRuntimeException("type_error", "atom");
+            }
+            t = q.Args[1];
+        }
+        return t;
+    }
+
+    private static readonly int _colonFunctorAtomId =
+        AtomTable.Intern(":", permanent: true).Id;
+
+    /// <summary>Reads the pattern's head functor id, peeling any top-level
+    /// <c>Module:</c> qualifier chain IN PLACE first: dynamics are
+    /// flat-global, so the qualifier validates and drops, and
+    /// <paramref name="patternHeap"/> moves to the inner subterm ITSELF —
+    /// the caller's variables keep their identity (a re-materialized copy
+    /// would silently stop binding them). Covers <c>retract(m:Head)</c> and
+    /// <c>retract(m:(H :- B))</c>; the head-qualified rule spelling stays on
+    /// the normal path (its ':'/2 head is not a dynamic predicate —
+    /// permission_error, as for any non-dynamic). The unqualified fast path
+    /// pays ONE extra int compare on the functor lookup it already did.</summary>
+    private static int ReadPatternHeadFunctorId(Activation engine, ref int patternHeap)
     {
         int idx = engine.Deref(patternHeap);
         Cell c = engine.GetHeap(idx);
-        // retract((Head :- Body)) — descend into the Head slot.
-        if (c.Tag == Tag.Str)
+        while (c.Tag == Tag.Str)
         {
             int sa = c.AsHeapIndex;
             Cell f = engine.GetHeap(sa);
-            if (f.Tag == Tag.Functor)
+            if (f.Tag != Tag.Functor) break;
+            int fid = f.AsFunctorId;
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            if (arity == 2 && atomId == _colonFunctorAtomId)
             {
-                int fid = f.AsFunctorId;
-                var (atomId, arity) = FunctorTable.Lookup(fid);
-                if (arity == 2 && atomId == _ruleFunctorAtomId)
-                {
-                    // Head is at sa + 1
-                    int headIdx = engine.Deref(sa + 1);
-                    Cell hc = engine.GetHeap(headIdx);
-                    return ReadFunctorIdFromCell(engine, hc);
-                }
-                return fid;
+                int mIdx = engine.Deref(sa + 1);
+                Cell mc = engine.GetHeap(mIdx);
+                if (mc.Tag == Tag.Ref || mc.Tag == Tag.AttVar)
+                    throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+                if (mc.Tag != Tag.Atom)
+                    throw new Shumway.Core.PrologRuntimeException("type_error", "atom");
+                patternHeap = idx = engine.Deref(sa + 2);
+                c = engine.GetHeap(idx);
+                continue;
             }
+            if (arity == 2 && atomId == _ruleFunctorAtomId)
+            {
+                // retract((Head :- Body)) — descend into the Head slot.
+                int headIdx = engine.Deref(sa + 1);
+                Cell hc = engine.GetHeap(headIdx);
+                return ReadFunctorIdFromCell(engine, hc);
+            }
+            return fid;
         }
         return ReadFunctorIdFromCell(engine, c);
     }
@@ -693,7 +1020,9 @@ public static partial class MetaBuiltins
         }
         if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        throw new Shumway.Core.PrologRuntimeException("type_error", "callable");
+        // Non-callable pattern (a number, a string): the cell rides along so
+        // the translated type_error(callable, Culprit) carries the value.
+        throw new Shumway.Core.PrologRuntimeException("type_error", "callable", engine, c);
     }
 
     private static readonly int _ruleFunctorAtomId =
@@ -758,7 +1087,8 @@ public static partial class MetaBuiltins
         Clause candidate = candidates[matchIndex];
         int savedHb = engine.Hb;
         engine.SetHb(engine.HeapTop);
-        Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
+        Cell candidateCell = Materializer.MaterializeAsCell(engine,
+            RuleFormCandidate(candidate.Term, IsRuleFormPattern(engine, patternHeap)));
         int candSlot = engine.AllocateHeap(1);
         engine.SetHeap(candSlot, candidateCell);
 
@@ -846,7 +1176,8 @@ public static partial class MetaBuiltins
 
             int savedHb = engine.Hb;
             engine.SetHb(engine.HeapTop);
-            Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
+            Cell candidateCell = Materializer.MaterializeAsCell(engine,
+                RuleFormCandidate(candidate.Term, IsRuleFormPattern(engine, patternHeap)));
             int candSlot = engine.AllocateHeap(1);
             engine.SetHeap(candSlot, candidateCell);
 
@@ -885,6 +1216,27 @@ public static partial class MetaBuiltins
     /// candidate on a PROVEN structural mismatch (distinct atoms / ints /
     /// functors at the same position) with zero allocation; only candidates
     /// it cannot refute pay the materialise-and-unify trial.</para></summary>
+    /// <summary>True when the retract pattern on the heap is the rule form
+    /// <c>(Head :- Body)</c>. A rule-form pattern must also match stored
+    /// FACTS — ISO treats a fact as <c>(Head :- true)</c> — so candidates
+    /// are normalized with <see cref="RuleFormCandidate"/> before the trial
+    /// unification.</summary>
+    private static bool IsRuleFormPattern(Activation engine, int patternHeap)
+    {
+        int idx = engine.Deref(patternHeap);
+        Cell c = engine.GetHeap(idx);
+        if (c.Tag != Tag.Str) return false;
+        Cell f = engine.GetHeap(c.AsHeapIndex);
+        if (f.Tag != Tag.Functor) return false;
+        var (aid, ar) = FunctorTable.Lookup(f.AsFunctorId);
+        return ar == 2 && aid == _ruleFunctorAtomId;
+    }
+
+    private static Term RuleFormCandidate(Term t, bool ruleForm)
+        => ruleForm && t is not CompoundTerm { Functor: ":-", Args.Length: 2 }
+            ? new CompoundTerm(":-", new[] { t, new AtomTerm("true") })
+            : t;
+
     private static int FindRetractMatch(
         Activation engine, IReadOnlyList<Clause> candidates, int startIndex,
         int endExclusive, int patternHeap)
@@ -892,9 +1244,11 @@ public static partial class MetaBuiltins
         // endExclusive bounds the scan explicitly — a resume's
         // candidates live in a pooled buffer that may be longer than the
         // snapshot it holds, so candidates.Count is not the right bound.
+        bool ruleForm = IsRuleFormPattern(engine, patternHeap);
         for (int i = startIndex; i < endExclusive; i++)
         {
-            if (DefiniteMismatch(engine, patternHeap, candidates[i].Term, depth: 4))
+            Term candTerm = RuleFormCandidate(candidates[i].Term, ruleForm);
+            if (DefiniteMismatch(engine, patternHeap, candTerm, depth: 4))
                 continue;
             int savedHeapTop = engine.HeapTop;
             int savedBindingTrail = engine.BindingTrailTop;
@@ -903,7 +1257,7 @@ public static partial class MetaBuiltins
             engine.SetHb(engine.HeapTop);
 
             Cell candidateCell =
-                Materializer.MaterializeAsCell(engine, candidates[i].Term);
+                Materializer.MaterializeAsCell(engine, candTerm);
             int candSlot = engine.AllocateHeap(1);
             engine.SetHeap(candSlot, candidateCell);
             bool matches = engine.Unify(patternHeap, candSlot);
@@ -1341,12 +1695,25 @@ public static partial class MetaBuiltins
     /// <summary><c>'$attv_snapshot'(-S)</c> — S is an opaque snapshot of the
     /// set of attributed-variable homes known to the engine right now. The
     /// C# half of <c>call_residue_vars/2</c>, paired with
-    /// <c>'$attv_new_since'/2</c>.</summary>
+    /// <c>'$attv_new_since'/2</c>.
+    ///
+    /// <para>The set holds raw HEAP ADDRESSES and lives in the engine's
+    /// object table, which the heap collector does not walk. It is therefore
+    /// one of the holders a collector that runs with attributed variables live
+    /// would have to relocate.</para></summary>
     public static bool AttvSnapshot(Activation engine)
     {
-        var set = new System.Collections.Generic.HashSet<int>(
-            engine.AttrTableKeysSnapshot());
-        return engine.UnifyRegisterWithCell(0, engine.MakeForeign(set));
+        // Only LIVE attributed variables enter the snapshot. The table
+        // keeps ORPHAN rows for homes whose promotion was backtracked
+        // (PutAttr overwrites them on re-promotion); snapshotting an
+        // orphan made a variable RE-constrained inside the goal read as
+        // "already constrained before it" — a second findall iteration
+        // over goals sharing subterms reported its residue vars as [].
+        var live = new System.Collections.Generic.HashSet<int>();
+        foreach (int addr in engine.AttrTableKeysSnapshot())
+            if (engine.IsAttVarAt(addr)) live.Add(addr);
+        return engine.UnifyRegisterWithCell(0,
+            engine.MakeForeign(new AttrSnapshot(live)));
     }
 
     /// <summary><c>'$attv_new_since'(+S, -Vars)</c> — Vars is the list of
@@ -1354,14 +1721,14 @@ public static partial class MetaBuiltins
     /// taken and are still unbound attributed variables now.</summary>
     public static bool AttvNewSince(Activation engine)
     {
-        var snapshot = engine.AsForeign<System.Collections.Generic.HashSet<int>>(
+        var snapshot = engine.AsForeign<AttrSnapshot>(
                 engine.GetRegister(0) is { Tag: Tag.Ref } r
                     ? engine.GetHeap(engine.Deref(r.AsHeapIndex))
                     : engine.GetRegister(0))
             ?? throw new Shumway.Core.PrologRuntimeException("type_error", "attv_snapshot");
         var fresh = new System.Collections.Generic.List<int>();
         foreach (int addr in engine.AttrTableKeysSnapshot())
-            if (!snapshot.Contains(addr) && engine.IsAttVarAt(addr))
+            if (!snapshot.Homes.Contains(addr) && engine.IsAttVarAt(addr))
                 fresh.Add(addr);
         fresh.Sort();   // stable first-created-first order (heap addresses grow)
         return engine.UnifyRegisterWithHeapAt(1, BuildRefList(engine, fresh));

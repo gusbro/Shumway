@@ -1,3 +1,4 @@
+using Shumway.Core;
 using System.Numerics;
 using Shumway.Compiler.Ast;
 using Shumway.Embedding;
@@ -27,7 +28,9 @@ public class Chunk238Tests
         Assert.IsType<IntTerm>(engine.ToTerm((byte)9));
         Assert.IsType<FloatTerm>(engine.ToTerm(3.14));
         Assert.IsType<FloatTerm>(engine.ToTerm(3.14f));
-        Assert.IsType<StringTerm>(engine.ToTerm("hello"));
+        // A .NET string is text as a VALUE, which is an atom (ADR-047
+        // decision 6). Text as a SEQUENCE is asked for as a list.
+        Assert.IsType<AtomTerm>(engine.ToTerm("hello"));
         Assert.IsType<AtomTerm>(engine.ToTerm(true));
         Assert.IsType<AtomTerm>(engine.ToTerm('x'));
         Assert.IsType<BigIntTerm>(engine.ToTerm(BigInteger.Parse("99999999999999999999")));
@@ -90,7 +93,7 @@ public class Chunk238Tests
         // both are lossless.
         var engine = new PrologEngine();
         Assert.Equal("hola", engine.FromTerm<string>(new AtomTerm("hola")));
-        Assert.Equal("hola", engine.FromTerm<string>(new StringTerm("hola")));
+        Assert.Equal("hola", engine.FromTerm<string>(new StringTerm("hola", TextKind.Codes)));
     }
 
     [Fact]
@@ -167,7 +170,7 @@ public class Chunk238Tests
         engine.RegisterConverter<Money>(
             toTerm: (e, m) => new CompoundTerm("money", new Term[]
             {
-                new StringTerm(m.Amount.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                new StringTerm(m.Amount.ToString(System.Globalization.CultureInfo.InvariantCulture), TextKind.Codes),
                 new AtomTerm(m.Currency),
             }),
             fromTerm: t =>

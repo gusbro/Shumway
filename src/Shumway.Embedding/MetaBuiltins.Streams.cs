@@ -52,25 +52,76 @@ public static partial class MetaBuiltins
     /// Properties: <c>file_name(F)</c>, <c>mode(M)</c>,
     /// <c>alias(A)</c>, <c>input</c>, <c>output</c>,
     /// <c>end_of_stream(at|not)</c>.</summary>
+    /// <summary>Property names stream_property/2 recognises — a BOUND
+    /// second argument outside this set is domain_error(stream_property).</summary>
+    private static readonly HashSet<string> KnownStreamProperties = new()
+    {
+        "file_name", "mode", "alias", "input", "output", "end_of_stream",
+        "position", "type", "reposition", "eof_action",
+    };
+
     public static bool StreamProperty(Activation engine)
     {
         var registry = engine.Streams
             ?? throw new InvalidOperationException("Activation has no stream registry.");
+        // §8.11.8.3: a bound first argument that is not a stream term is
+        // domain_error(stream, S); a bound property outside the recognised
+        // set is domain_error(stream_property, P).
+        Term sArg = MaterializeRegister(engine, 0);
+        if (sArg is not VarTerm
+            && sArg is not CompoundTerm { Functor: "$stream", Args.Length: 1 })
+            throw new ShumwayPrologException(IsoError.DomainError("stream", sArg));
+        Term pArg = MaterializeRegister(engine, 1);
+        bool knownProp = pArg switch
+        {
+            VarTerm => true,
+            AtomTerm a => a.Name is "input" or "output",
+            CompoundTerm { Args.Length: 1 } c => KnownStreamProperties.Contains(c.Functor),
+            _ => false,
+        };
+        if (!knownProp)
+            throw new ShumwayPrologException(IsoError.DomainError("stream_property", pArg));
+        // Bound-argument filtering: with the stream and/or the property
+        // functor known, only matching pairs enter the enumeration — a
+        // ground query like stream_property(S, mode(M)) is DETERMINISTIC
+        // (the SICStus conformity tests assert no choice point is left).
+        Shumway.Core.StreamHandle? onlyStream = null;
+        if (sArg is CompoundTerm { Functor: "$stream", Args: [IntTerm sid] })
+        {
+            onlyStream = registry.GetById((int)sid.Value);
+            if (onlyStream is null)
+                throw new ShumwayPrologException(IsoError.ExistenceError("stream", sArg));
+        }
+        string? onlyProp = pArg switch
+        {
+            AtomTerm pa => pa.Name,
+            CompoundTerm pc => pc.Functor,
+            _ => null,
+        };
+        bool Want(string name) => onlyProp is null || onlyProp == name;
         var pairs = new List<(Shumway.Core.StreamHandle Handle, Term Property)>();
         foreach (var h in registry.All())
         {
-            if (h.Filename is string fn)
+            if (onlyStream is not null && !ReferenceEquals(h, onlyStream)) continue;
+            if (Want("file_name") && h.Filename is string fn)
                 pairs.Add((h, new CompoundTerm("file_name",
                     new Term[] { new AtomTerm(Shumway.Core.PrologPath.ToCanonical(fn)) })));
-            pairs.Add((h, new CompoundTerm("mode", new Term[] { new AtomTerm(h.Mode) })));
-            if (h.Alias is string al)
+            if (Want("mode"))
+                pairs.Add((h, new CompoundTerm("mode", new Term[] { new AtomTerm(h.Mode) })));
+            if (Want("alias") && h.Alias is string al)
                 pairs.Add((h, new CompoundTerm("alias", new Term[] { new AtomTerm(al) })));
-            pairs.Add((h, h.IsReader ? (Term)new AtomTerm("input") : new AtomTerm("output")));
-            if (h.IsReader)
+            if (h.IsReader ? Want("input") : Want("output"))
+                pairs.Add((h, h.IsReader ? (Term)new AtomTerm("input") : new AtomTerm("output")));
+            if (h.IsReader && Want("end_of_stream"))
             {
-                string state = (ReferenceEquals(h, registry.UserInput)
-                                || h.Reader!.Peek() >= 0)
-                    ? "not" : "at";
+                // §8.11.8: not / at / past. A binary reader has no
+                // TextReader — probe the seekable stream instead.
+                string state = h.PastEof ? "past"
+                    : ReferenceEquals(h, registry.UserInput) ? "not"
+                    : h.Reader is not null ? (h.Reader.Peek() >= 0 ? "not" : "at")
+                    : h.BinaryStream is { CanSeek: true } bs
+                        ? (bs.Position < bs.Length ? "not" : "at")
+                        : "not";
                 pairs.Add((h, new CompoundTerm("end_of_stream",
                     new Term[] { new AtomTerm(state) })));
             }
@@ -78,14 +129,53 @@ public static partial class MetaBuiltins
             // .NET stream is seekable. user_input / user_output
             // (console-backed) aren't.
             long? pos = TryGetStreamPosition(h);
-            if (pos.HasValue)
+            if (Want("position") && pos.HasValue)
                 pairs.Add((h, new CompoundTerm("position",
                     new Term[] { new IntTerm(pos.Value) })));
+            if (Want("type"))
+                pairs.Add((h, new CompoundTerm("type",
+                    new Term[] { new AtomTerm(h.IsBinary ? "binary" : "text") })));
+            if (Want("reposition"))
+                pairs.Add((h, new CompoundTerm("reposition",
+                    new Term[] { new AtomTerm(
+                        pos.HasValue && h.Repositionable ? "true" : "false") })));
+            if (h.IsReader && Want("eof_action"))
+                pairs.Add((h, new CompoundTerm("eof_action",
+                    new Term[] { new AtomTerm(h.EofAction) })));
         }
+        // The name filter above still leaves one candidate per stream for a
+        // property like `alias(user_output)`. Compare the GROUND arguments too,
+        // so the cursor enumerates SOLUTIONS and a fully-specified query is
+        // deterministic.
+        if (pArg is CompoundTerm pWanted)
+            pairs.RemoveAll(pr => !PropertyArgsCanMatch(pr.Property, pWanted));
+
         int returnPc = engine.BuiltinReturnPc;
         var pairArr = pairs.ToArray();
         return IndexEnumCursor.Start(engine, pairArr.Length, 2, returnPc,  // arity 2 (stream_property/2)
             (e, i) => StreamPropertyUnify(e, pairArr, i));
+    }
+
+    /// <summary>Cheap pre-unification filter: could this candidate property
+    /// unify with the bound one? Only GROUND atom / integer arguments are
+    /// compared — anything else is left for the real unification.</summary>
+    private static bool PropertyArgsCanMatch(Term candidate, CompoundTerm wanted)
+    {
+        if (candidate is not CompoundTerm c
+            || c.Functor != wanted.Functor
+            || c.Args.Length != wanted.Args.Length)
+            return false;
+        for (int i = 0; i < c.Args.Length; i++)
+        {
+            switch (c.Args[i], wanted.Args[i])
+            {
+                case (AtomTerm a, AtomTerm b) when a.Name != b.Name: return false;
+                case (IntTerm a, IntTerm b) when a.Value != b.Value: return false;
+                case (AtomTerm, IntTerm):
+                case (IntTerm, AtomTerm): return false;
+            }
+        }
+        return true;
     }
 
     private static bool StreamPropertyUnify(
@@ -121,7 +211,8 @@ public static partial class MetaBuiltins
             if (h.BinaryStream is System.IO.Stream bs)
                 return bs.CanSeek ? bs.Position : null;
             if (h.Reader is Shumway.Core.PositionTrackingReader ptr)
-                return ptr.Inner is System.IO.StreamReader sr && sr.BaseStream.CanSeek
+                return (ptr.Inner is System.IO.StreamReader sr && sr.BaseStream.CanSeek)
+                    || (ptr.Inner is Shumway.Core.Utf8TextReader ur && ur.BaseStream.CanSeek)
                     ? ptr.CharsConsumed
                     : null;
             if (h.Writer is System.IO.StreamWriter sw)
@@ -152,20 +243,39 @@ public static partial class MetaBuiltins
         if (posCell.Tag == Tag.Ref)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (posCell.Tag != Tag.Int)
-            throw new Shumway.Core.PrologRuntimeException("domain_error", "stream_position");
+            throw new Shumway.Core.PrologRuntimeException(
+                "domain_error", "stream_position", engine, posCell);
         long target = posCell.AsInt;
 
+        // §8.11.7.3: `open(…, [reposition(false)])` refuses the seek even when
+        // the underlying stream could do it.
+        if (!h.Repositionable)
+            throw new Shumway.Core.PrologRuntimeException(
+                "permission_error", "reposition,stream", engine,
+                Shumway.Builtins.StreamBuiltins.MakeStreamTerm(engine, h));
+
         // Text read stream — reposition through the char-count tracker.
-        if (h.Reader is Shumway.Core.PositionTrackingReader ptr
-            && ptr.Inner is System.IO.StreamReader sr
-            && sr.BaseStream.CanSeek)
+        if (h.Reader is Shumway.Core.PositionTrackingReader ptr)
         {
-            sr.BaseStream.Position = 0;
-            sr.DiscardBufferedData();
-            ptr.ResetCount();
-            for (long i = 0; i < target; i++)
-                if (ptr.Read() < 0) break;   // EOF before target — clamp
-            return true;
+            bool rewound = false;
+            if (ptr.Inner is System.IO.StreamReader sr && sr.BaseStream.CanSeek)
+            {
+                sr.BaseStream.Position = 0;
+                sr.DiscardBufferedData();
+                rewound = true;
+            }
+            else if (ptr.Inner is Shumway.Core.Utf8TextReader ur && ur.BaseStream.CanSeek)
+            {
+                ur.Rewind();
+                rewound = true;
+            }
+            if (rewound)
+            {
+                ptr.ResetCount();
+                for (long i = 0; i < target; i++)
+                    if (ptr.Read() < 0) break;   // EOF before target — clamp
+                return true;
+            }
         }
 
         System.IO.Stream? baseStream = h.BinaryStream
@@ -193,9 +303,39 @@ public static partial class MetaBuiltins
     /// <c>.</c> followed by whitespace or EOF, parses the buffer as a
     /// Prolog term, and unifies the result with <c>Term</c>. Hits EOF
     /// before any text yields the atom <c>end_of_file</c>.</summary>
-    public static bool ReadTermFromStream(Activation engine) =>
-        ReadOneTermInto(engine,
+    /// <summary>read_term/2 has TWO readings: ISO §8.14.1's
+    /// <c>read_term(-Term, +Options)</c> over current input, and the
+    /// stream-first <c>read_term(+Stream, -Term)</c> Shumway also accepts.
+    /// A LIST (or <c>[]</c>) in argument 2 selects the ISO form — a stream
+    /// term is never a list, so the two never collide.</summary>
+    public static bool ReadTermFromStream(Activation engine)
+    {
+        Cell arg1 = ResolveLocal(engine, engine.GetRegister(0));
+        Cell arg2 = ResolveLocal(engine, engine.GetRegister(1));
+        // A list in argument 2, or an argument 1 that cannot be a stream
+        // (unbound — the term to read), selects the ISO reading.
+        bool arg1CouldBeStream =
+            (arg1.Tag == Tag.Str
+             && FunctorTable.Lookup(engine.GetHeap(arg1.AsHeapIndex).AsFunctorId)
+                is var (said, sar)
+             && sar == 1 && AtomTable.GetById(said)?.Name == "$stream")
+            || (arg1.Tag == Tag.Atom
+                && engine.Streams?.GetByAlias(
+                    AtomTable.GetById(arg1.AsAtomId)?.Name ?? "") is not null);
+        bool isoForm = arg2.Tag == Tag.Lis
+            || (arg2.Tag == Tag.Atom && arg2.AsAtomId == AtomTable.EmptyListId)
+            || arg2.Tag == Tag.Pstr
+            || !arg1CouldBeStream;
+        if (isoForm)
+        {
+            var input = engine.Streams?.CurrentInput
+                ?? throw new InvalidOperationException("Activation has no stream registry.");
+            return ReadTermWithOptionsCore(
+                engine, ResolveTextReaderFromHandle(input), termReg: 0, optReg: 1);
+        }
+        return ReadOneTermInto(engine,
             ResolveTextReader(engine, engine.GetRegister(0)), regOut: 1);
+    }
 
     /// <summary><c>read/1</c> — ISO §8.14.2. Reads one term from the
     /// current input stream.</summary>
@@ -214,6 +354,17 @@ public static partial class MetaBuiltins
     private static System.IO.TextReader ResolveTextReader(Activation engine, Cell streamArg)
     {
         var h = Shumway.Builtins.StreamBuiltins.ResolveStream(engine, streamArg);
+        // §8.14.1.3: reading from an output stream is
+        // permission_error(input, stream, S) — with the stream-or-alias
+        // ARGUMENT as culprit; a binary one is permission_error(input,
+        // binary_stream, S).
+        if (!h.IsReader)
+            throw new Shumway.Core.PrologRuntimeException(
+                "permission_error", "input,stream", engine, ResolveLocal(engine, streamArg));
+        if (h.IsBinary)
+            throw new Shumway.Core.PrologRuntimeException(
+                "permission_error", "input,binary_stream",
+                engine, ResolveLocal(engine, streamArg));
         return ResolveTextReaderFromHandle(h);
     }
 
@@ -239,11 +390,22 @@ public static partial class MetaBuiltins
         return h.Reader!;
     }
 
+    /// <summary>Marks the handle past-eof after a term read consumed the
+    /// end of input — <c>read(X)</c> yielding end_of_file leaves
+    /// <c>end_of_stream(past)</c> (§8.11.8), like get_char does.</summary>
+    private static void MarkPastEof(Activation engine, System.IO.TextReader reader)
+    {
+        if (engine.Streams is not { } reg) return;
+        foreach (var h in reg.All())
+            if (ReferenceEquals(h.Reader, reader)) { h.PastEof = true; return; }
+    }
+
     private static bool ReadOneTermInto(Activation engine, System.IO.TextReader reader, int regOut)
     {
         Term? parsed = ParseOneTerm(engine, reader);
         if (parsed is null)
         {
+            MarkPastEof(engine, reader);
             int eofId = AtomTable.Intern("end_of_file", permanent: true).Id;
             return engine.UnifyRegisterWithCell(regOut, Cell.Atom(eofId));
         }
@@ -277,18 +439,106 @@ public static partial class MetaBuiltins
     /// The option-list variables share the returned term's variable cells
     /// (built via a wrapper compound so the materializer ties same-named
     /// variables together).</summary>
+    /// <summary>Read options the reader recognises. A bound element outside
+    /// this set is domain_error(read_option, Element) — §8.14.1.3.</summary>
+    private static readonly HashSet<string> KnownReadOptions = new()
+    {
+        "variable_names", "singletons", "variables", "syntax_errors",
+        "term_position", "subterm_positions", "double_quotes", "cycles",
+        "backquoted_string", "character_escapes", "module", "comments",
+    };
+
+    /// <summary>§8.14.1.3 validation of read_term's option list, before any
+    /// input is consumed: unbound list or element → instantiation_error;
+    /// improper/non-list → type_error(list, WholeList); an element that is
+    /// not a recognised Name(Arg) → domain_error(read_option, Element).</summary>
+    private static void ValidateReadOptions(Activation engine, int optReg)
+    {
+        Term listTerm = MaterializeRegister(engine, optReg);
+        Cell node = ResolveLocal(engine, engine.GetRegister(optReg));
+        while (true)
+        {
+            if (node.Tag is Tag.Ref or Tag.AttVar)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
+            if (node.Tag == Tag.Atom && node.AsAtomId == AtomTable.EmptyListId) return;
+            if (node.Tag != Tag.Lis)
+                throw new ShumwayPrologException(IsoError.TypeError("list", listTerm));
+            int hb = node.AsHeapIndex;
+            Cell head = ResolveLocal(engine, engine.GetHeap(hb));
+            if (head.Tag is Tag.Ref or Tag.AttVar)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
+            bool ok = false;
+            if (head.Tag == Tag.Str)
+            {
+                var (aid, ar) = FunctorTable.Lookup(
+                    engine.GetHeap(head.AsHeapIndex).AsFunctorId);
+                ok = ar == 1
+                    && KnownReadOptions.Contains(AtomTable.GetById(aid)?.Name ?? "");
+            }
+            if (ok)
+            {
+                // The three list-valued options must take a list (partial or
+                // unbound is fine — they are OUTPUT arguments); anything else
+                // is domain_error(read_option, Option).
+                var (oaid, _) = FunctorTable.Lookup(
+                    engine.GetHeap(head.AsHeapIndex).AsFunctorId);
+                string oname = AtomTable.GetById(oaid)?.Name ?? "";
+                if (oname is "variables" or "variable_names" or "singletons")
+                {
+                    Cell v = ResolveLocal(engine, engine.GetHeap(head.AsHeapIndex + 1));
+                    if (v.Tag is not (Tag.Ref or Tag.AttVar or Tag.Lis or Tag.Pstr)
+                        && !(v.Tag == Tag.Atom && v.AsAtomId == AtomTable.EmptyListId))
+                        ok = false;
+                    else if (v.Tag == Tag.Lis && !IsPartialOrProperList(engine, v))
+                        ok = false;
+                }
+            }
+            if (!ok)
+            {
+                Term culprit = engine.MaterializeCellToTerm is { } mat
+                    && mat(head) is Term ht ? ht : new VarTerm("_");
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("read_option", culprit));
+            }
+            node = ResolveLocal(engine, engine.GetHeap(hb + 1));
+        }
+    }
+
+    /// <summary>True when the cell is a proper list or a PARTIAL one (an
+    /// unbound tail) — an improper tail (<c>[X|a]</c>) is not a valid
+    /// read-option value.</summary>
+    private static bool IsPartialOrProperList(Activation engine, Cell c)
+    {
+        Cell cur = c;
+        int guard = engine.HeapTop + 2;
+        while (cur.Tag == Tag.Lis && guard-- > 0)
+            cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        return cur.Tag is Tag.Ref or Tag.AttVar
+            || (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId);
+    }
+
     public static bool ReadTermWithOptions(Activation engine)
     {
-        var reader = ResolveTextReader(engine, engine.GetRegister(0));
+        ValidateReadOptions(engine, 2);
+        return ReadTermWithOptionsCore(
+            engine, ResolveTextReader(engine, engine.GetRegister(0)),
+            termReg: 1, optReg: 2);
+    }
+
+    private static bool ReadTermWithOptionsCore(
+        Activation engine, System.IO.TextReader reader, int termReg, int optReg)
+    {
+        ValidateReadOptions(engine, optReg);
         Term? parsed = ParseOneTerm(engine, reader);
         if (parsed is null)
         {
+            MarkPastEof(engine, reader);
             int eofId = AtomTable.Intern("end_of_file", permanent: true).Id;
-            if (!engine.UnifyRegisterWithCell(1, Cell.Atom(eofId))) return false;
+            if (!engine.UnifyRegisterWithCell(termReg, Cell.Atom(eofId))) return false;
             // ISO: at end_of_file the read options unify with the empty list.
             int nilSlot = engine.AllocateHeap(1);
             engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
-            return UnifyReadOptions(engine, 2, nilSlot, nilSlot, nilSlot);
+            return UnifyReadOptions(engine, optReg, nilSlot, nilSlot, nilSlot);
         }
 
         // Named (non-"_") variables in first-appearance order, with occurrence
@@ -310,7 +560,10 @@ public static partial class MetaBuiltins
             Term pair = new CompoundTerm("=",
                 new Term[] { new AtomTerm(nm), new VarTerm(nm) });
             vnList = new CompoundTerm(".", new Term[] { pair, vnList });
-            if (counts[nm] == 1 && !nm.StartsWith("_"))
+            // `_X` IS a singleton for read_term/2,3: only `_` itself is
+            // anonymous. (The compiler's singleton WARNING is the place where
+            // a leading underscore means "deliberately unused" — not here.)
+            if (counts[nm] == 1)
                 singList = new CompoundTerm(".", new Term[] { pair, singList });
         }
 
@@ -324,7 +577,7 @@ public static partial class MetaBuiltins
         int functorIdx = strCell.AsHeapIndex;
         int parsedIdx = functorIdx + 1, vnIdx = functorIdx + 2, singIdx = functorIdx + 3;
 
-        if (!engine.UnifyRegisterWithCell(1, engine.GetHeap(parsedIdx)))
+        if (!engine.UnifyRegisterWithCell(termReg, engine.GetHeap(parsedIdx)))
             return false;
 
         // variables/1: every distinct variable in the term, first-appearance
@@ -343,7 +596,7 @@ public static partial class MetaBuiltins
         int varsIdx = engine.AllocateHeap(1);
         engine.SetHeap(varsIdx, varsCell);
 
-        return UnifyReadOptions(engine, 2, vnIdx, singIdx, varsIdx);
+        return UnifyReadOptions(engine, optReg, vnIdx, singIdx, varsIdx);
     }
 
     /// <summary>Collects the named (non-anonymous) variable names of an AST in
@@ -466,6 +719,16 @@ public static partial class MetaBuiltins
         // (ReadTerm) then require true EOF — a trailing `.` leaves a Dot token, so
         // IsAtEnd is false and `"3."` is rejected. (Leading layout is fine.)
         if (chars.Length != chars.TrimEnd().Length) return null;
+        // A trailing COMMENT is junk too — `"3%"` and `"3/* */"` are syntax
+        // errors even though the lexer skips both. `0'%` is the one place a
+        // '%' belongs to the number itself, and the token parser has already
+        // handled that shape before this fallback runs.
+        if (!chars.Contains("0'", StringComparison.Ordinal))
+        {
+            int pct = chars.IndexOf('%');
+            if (pct >= 0 && chars.IndexOf('\n', pct) < 0) return null;
+            if (chars.EndsWith("*/", StringComparison.Ordinal)) return null;
+        }
         Term parsed;
         try
         {
@@ -492,6 +755,49 @@ public static partial class MetaBuiltins
     /// <paramref name="engine"/> — called from query setup.</summary>
     internal static void WireNumberFromChars(Activation engine)
         => engine.NumberFromChars = s => NumberFromCharsHook(engine, s);
+
+    /// <summary>Installs the <c>portray/1</c> hook write_term's
+    /// <c>portrayed(true)</c> and print/1,2 call for every subterm. The user's
+    /// portray/1 runs RE-ENTRANTLY on the live activation with current output
+    /// redirected at <paramref name="engine"/>'s writer, so whatever it writes
+    /// lands where the term would have. Succeeding means "I produced the
+    /// output"; failing means "render it normally".</summary>
+    internal static void WirePortrayHook(Activation engine, PrologEngine host)
+        => engine.PortrayHook = (e, cell, output) => PortraySubterm(e, host, cell, output);
+
+    private static readonly int _portrayFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("portray", permanent: true).Id, 1);
+
+    private static bool PortraySubterm(
+        Activation engine, PrologEngine host, Cell cell, System.IO.TextWriter output)
+    {
+        // No user portray/1 at all: the common case, and it must cost nothing.
+        if (!host.HasPredicate(_portrayFunctorId)) return false;
+        if (engine.ReentrantSolve is not { } solve) return false;
+
+        // portray/1's argument is the subterm ITSELF — no copy: the hook is
+        // allowed to inspect bindings, and copying would hide them.
+        int goalBase = engine.AllocateHeap(2);
+        engine.SetHeap(goalBase, Cell.Functor(_portrayFunctorId));
+        engine.SetHeap(goalBase + 1, cell);
+        Cell goal = Cell.Str(goalBase);
+
+        // Whatever portray/1 writes has to land in THIS renderer's sink, which
+        // is not necessarily current output (format_to_atom, with_output_to,
+        // write_term to a stream).
+        var registry = engine.Streams;
+        StreamHandle? savedOut = registry?.CurrentOutput;
+        var sink = new StreamHandle(-1, output, "write", null);
+        try
+        {
+            registry?.SetCurrentOutput(sink);
+            return solve(goal);
+        }
+        finally
+        {
+            if (savedOut is not null) registry?.SetCurrentOutput(savedOut);
+        }
+    }
 
     /// <summary><c>'$wot_begin'(Sink)</c> — the primitive under the prelude's
     /// <c>with_output_to/2</c>: validates the sink (<c>atom(_)</c> /
@@ -566,7 +872,9 @@ public static partial class MetaBuiltins
         }
         else // string
         {
-            int pstrIdx = engine.MakePstr(captured);
+            // `string(S)` is the SWI sink, and double_quotes=string is a
+            // compatibility alias for chars (ADR-047 decision 5).
+            int pstrIdx = engine.MakePstr(captured, TextKind.Chars);
             int slot = engine.AllocateHeap(1);
             engine.SetHeap(slot, Cell.Ref(pstrIdx));
             return engine.Unify(sinkArgAddr, slot);

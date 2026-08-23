@@ -34,6 +34,20 @@ public static class AttvarBuiltins
         return true;
     }
 
+    /// <summary><c>'$lazy_freeze'(-Var, :Goal)</c> — attaches <c>Goal</c> to
+    /// the unbound <c>Var</c> under the native <c>'$lazy'</c> attribute
+    /// module; the wakeup drain meta-calls the goal when <c>Var</c> is bound.
+    /// Internal (the prelude's lazy-input predicates): unlike
+    /// <c>freeze/2</c> it does not conjoin with an existing goal — each lazy
+    /// tail is a fresh variable frozen exactly once.</summary>
+    public static bool LazyFreeze(Activation engine)
+    {
+        int varAddr = RegisterToHeap(engine, 0);
+        int goalAddr = RegisterToHeap(engine, 1);
+        engine.PutAttr(varAddr, Activation.LazyAttrModuleId, goalAddr);
+        return true;
+    }
+
     // ---- library(atts) storage primitives (native) --------------------
     // Each atts module keeps a LIST of its attribute terms as the variable's
     // put_attr/get_attr value; these three walk/rebuild that list in C#. The

@@ -1,3 +1,4 @@
+using System.Linq;
 using Shumway.Builtins;
 using Shumway.Compiler.Ast;
 using Shumway.Core;
@@ -14,18 +15,57 @@ public static partial class MetaBuiltins
     /// each property in turn, so a bound <c>Property</c> acts as a filter. Head
     /// must be instantiated (ISO instantiation_error / type_error(callable)).
     /// Enough for the SWI/GNU-style introspection Logtalk's compiler relies on.</summary>
+    /// <summary>Cheap pre-unification filter: can this property term possibly
+    /// unify with the bound argument? Name and arity only — the cursor still
+    /// does the real unification.</summary>
+    private static bool PropertyCanMatch(Term prop, Term wanted) => (prop, wanted) switch
+    {
+        (_, VarTerm) => true,
+        (AtomTerm a, AtomTerm b) => a.Name == b.Name,
+        (CompoundTerm c, CompoundTerm d) =>
+            c.Functor == d.Functor && c.Args.Length == d.Args.Length,
+        _ => false,
+    };
+
+    /// <summary>The property names predicate_property/2 can answer. A bound
+    /// argument outside this set is domain_error(predicate_property, P).</summary>
+    private static bool IsKnownPredicateProperty(Term t) => t switch
+    {
+        AtomTerm a => a.Name is "built_in" or "dynamic" or "static" or "defined"
+            or "multifile" or "discontiguous" or "control_construct"
+            or "logtalk" or "foreign" or "iso" or "deterministic",
+        CompoundTerm { Functor: "imported_from", Args.Length: 1 } => true,
+        CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } => true,
+        CompoundTerm { Functor: "number_of_clauses", Args.Length: 1 } => true,
+        _ => false,
+    };
+
     public static bool PredicateProperty(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "predicate_property/2 requires a PrologEngine host.");
         Term head = MaterializeRegister(engine, 0);
-        // SWI-compat: a Module:Head query answers for the bare predicate.
-        // Logtalk's compiler asks exactly this shape when it compiles a
-        // module-qualified call (`user:freeze(X, G)`) to learn whether the
-        // callee is a meta-predicate.
+        // A Module:Head query answers from M's VIEWPOINT (the SICStus
+        // doctrine: current_predicate(M:PI) is strictly M's definitions,
+        // predicate_property is where visibility — imports included — shows).
+        // Innermost module wins for a nested qualification. Logtalk's
+        // compiler asks exactly this shape (`user:freeze(X, G)`) to learn
+        // whether the callee is a meta-predicate.
+        string? module = null;
         while (head is CompoundTerm { Functor: ":", Args.Length: 2 } qualified)
+        {
+            switch (qualified.Args[0])
+            {
+                case AtomTerm ma: module = ma.Name; break;
+                case VarTerm:
+                    throw new ShumwayPrologException(IsoError.InstantiationError());
+                default:
+                    throw new ShumwayPrologException(
+                        IsoError.TypeError("atom", qualified.Args[0]));
+            }
             head = qualified.Args[1];
+        }
         int fid;
         switch (head)
         {
@@ -41,14 +81,65 @@ public static partial class MetaBuiltins
             default:
                 throw new ShumwayPrologException(IsoError.TypeError("callable", head));
         }
-        var atomProps = host.PredicatePropertyAtomIds(fid);
-        if (atomProps.Count == 0) return false;
-        var props = new List<Term>(atomProps.Count + 1);
-        foreach (int atomId in atomProps)
-            props.Add(new AtomTerm(AtomTable.GetById(atomId)?.Name ?? "?"));
+        // A bound Property that names no property at all is a domain error
+        // (§predicate_property), not a quiet failure.
+        Term propTerm = MaterializeRegister(engine, 1);
+        if (propTerm is not VarTerm && !IsKnownPredicateProperty(propTerm))
+            throw new ShumwayPrologException(
+                IsoError.DomainError("predicate_property", propTerm));
+
+        // M's viewpoint: its own definition; else the import's SOURCE
+        // predicate plus imported_from(Source); else the bare-global /
+        // builtin the module sees like everyone else.
+        string? importedFrom = null;
+        List<Term> props;
+        if (module is not null && host.ModuleDefinesFunctor(module, fid))
+        {
+            props = new List<Term>
+            {
+                new AtomTerm(host.IsDynamic(fid) ? "dynamic" : "static"),
+                new AtomTerm("defined"),
+            };
+        }
+        else
+        {
+            if (module is not null
+                && host.ModuleImportSource(module, fid) is { } src
+                && host.ModuleDefinesFunctor(src, fid))
+            {
+                importedFrom = src;
+                props = new List<Term>
+                {
+                    new AtomTerm(host.IsDynamic(fid) ? "dynamic" : "static"),
+                    new AtomTerm("defined"),
+                };
+            }
+            else
+            {
+                var atomProps = host.PredicatePropertyAtomIds(fid);
+                if (atomProps.Count == 0) return false;
+                props = new List<Term>(atomProps.Count + 2);
+                foreach (int atomId in atomProps)
+                    props.Add(new AtomTerm(AtomTable.GetById(atomId)?.Name ?? "?"));
+            }
+        }
+        // `:- multifile PI` is a property of the predicate, whichever module
+        // declared it — the clauses accumulate across files.
+        if (props.Count > 0 && host.IsMultifileFunctor(fid))
+            props.Add(new AtomTerm("multifile"));
+        if (importedFrom is not null)
+            props.Add(new CompoundTerm("imported_from",
+                new Term[] { new AtomTerm(importedFrom) }));
         // The declared meta-template, when one was recorded (`:- meta_predicate`).
         if (host._metaPredicateTemplates.TryGetValue(fid, out Term? template))
             props.Add(new CompoundTerm("meta_predicate", new[] { template }));
+        // A BOUND Property narrows the list, so the cursor enumerates
+        // SOLUTIONS rather than every property this predicate has —
+        // `predicate_property(p(_), dynamic)` is then deterministic.
+        Term wanted = MaterializeRegister(engine, 1);
+        if (wanted is not VarTerm)
+            props = props.Where(pr => PropertyCanMatch(pr, wanted)).ToList();
+
         int returnPc = engine.BuiltinReturnPc;
         return Shumway.Core.IndexEnumCursor.Start(engine, props.Count, 2, returnPc,
             (e, i) => e.UnifyRegisterWithCell(
@@ -109,7 +200,11 @@ public static partial class MetaBuiltins
         "type_error" => WrapWithStampedContext(
             new CompoundTerm("type_error",
                 new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
+        "uninstantiation_error" => WrapWithStampedContext(
+            new CompoundTerm("uninstantiation_error",
+                new Term[] { ValueTermOrVar(re) }), re),
         "existence_error" => WrapWithStampedContext(BuildExistenceError(re), re),
+        "ambiguous_module_local" => BuildAmbiguousModuleLocal(re),
         "domain_error" => WrapWithStampedContext(
             new CompoundTerm("domain_error",
                 new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
@@ -138,8 +233,14 @@ public static partial class MetaBuiltins
     /// <see cref="PrologRuntimeException.Value"/>) when the throw site
     /// snapshotted one, or a fresh anonymous var otherwise.
     /// </summary>
-    private static Term ValueTermOrVar(PrologRuntimeException re) =>
-        re.Value as Term ?? new VarTerm("_");
+    private static Term ValueTermOrVar(PrologRuntimeException re) => re.Value switch
+    {
+        Term t => t,
+        long l => new IntTerm(l),
+        double d => new FloatTerm(d),
+        System.Numerics.BigInteger bi => new BigIntTerm(bi),
+        _ => new VarTerm("_"),
+    };
 
     /// <summary>Builds the procedure-indicator term for an
     /// <c>existence_error(procedure, Name/Arity)</c> from the
@@ -160,6 +261,35 @@ public static partial class MetaBuiltins
     /// <c>existence_error(procedure, Detail)</c> made
     /// <c>catch(open(...), error(existence_error(source_sink, _), _), _)</c>
     /// unreachable.</summary>
+    /// <summary>The consult-direct fallback's ambiguity ball:
+    /// <c>error(existence_error(procedure, N/A),
+    /// shumway(ambiguous_module_local, Modules))</c>. Still an
+    /// existence_error — a catcher for the undefined-procedure shape
+    /// matches — but the context lists the modules that each define the
+    /// name, so the message says how to disambiguate (qualify the call).
+    /// Detail is <c>"Name/Arity|m1,m2"</c> (see
+    /// <see cref="PrologRuntimeException.AmbiguousModuleLocal"/>).</summary>
+    private static Term BuildAmbiguousModuleLocal(PrologRuntimeException re)
+    {
+        int bar = re.Detail.LastIndexOf('|');
+        string pi = bar < 0 ? re.Detail : re.Detail[..bar];
+        Term modules = new AtomTerm("[]");
+        if (bar >= 0)
+        {
+            string[] names = re.Detail[(bar + 1)..].Split(',');
+            for (int i = names.Length - 1; i >= 0; i--)
+                modules = new CompoundTerm(".",
+                    new Term[] { new AtomTerm(names[i]), modules });
+        }
+        return new CompoundTerm("error", new Term[]
+        {
+            new CompoundTerm("existence_error",
+                new Term[] { new AtomTerm("procedure"), ProcedureIndicatorTerm(pi) }),
+            new CompoundTerm("shumway", new Term[]
+                { new AtomTerm("ambiguous_module_local"), modules }),
+        });
+    }
+
     private static Term BuildExistenceError(PrologRuntimeException re)
     {
         Term culprit = ProcedureIndicatorTerm(re.Detail);
@@ -323,8 +453,22 @@ public static partial class MetaBuiltins
     /// <summary><c>'$scc_register'(-Ref)</c> — registers a setup_call_cleanup
     /// cleanup handler at the current choice-point level; Ref keys the stored
     /// Cleanup goal.</summary>
-    public static bool SccRegister(Activation engine) =>
-        engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(engine.RegisterCleanupHandler()));
+    public static bool SccRegister(Activation engine)
+    {
+        // arg 1 is the LIVE Cleanup term — capture its dereffed cell so an
+        // async fire (cut / unwind / teardown) runs it with bindings intact.
+        Cell live = engine.GetRegister(1);
+        if (live.Tag == Tag.Ref)
+        {
+            int idx = engine.Deref(live.AsHeapIndex);
+            Cell at = engine.GetHeap(idx);
+            // Bound: keep the VALUE cell; unbound: keep a REF to its home
+            // (bindings made later flow through when the async fire runs).
+            live = at.Tag == Tag.Ref ? Cell.Ref(idx) : at;
+        }
+        return engine.UnifyRegisterWithCell(0,
+            Shumway.Core.Cell.Int(engine.RegisterCleanupHandler(live)));
+    }
 
     /// <summary><c>'$scc_forget'(+Ref)</c> — drops a handler the prelude fired
     /// synchronously so it can never fire again asynchronously.</summary>
@@ -339,8 +483,11 @@ public static partial class MetaBuiltins
     /// engine teardown path (cut / exception unwind / query end); fails when the
     /// queue is empty. The prelude's '$drain_cleanups'/0 loops on it.</summary>
     public static bool PopPendingCleanup(Activation engine) =>
-        engine.TryPopPendingCleanup(out int refId)
-        && engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(refId));
+        engine.TryPopPendingCleanup(out int refId, out Cell liveCleanup, out bool useLive)
+        && engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(refId))
+        && engine.UnifyRegisterWithCell(1,
+            useLive ? liveCleanup
+                    : Cell.Atom(AtomTable.Intern("$scc_use_copy", permanent: true).Id));
 
     /// <summary><c>module_property(?Module, ?Property)</c> — introspects a loaded
     /// module. Supports <c>exports(List)</c> (the <c>Name/Arity</c> indicators the

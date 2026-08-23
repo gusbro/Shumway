@@ -17,20 +17,20 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class Chunk411Tests
 {
-    // Module 'lib' exports the Arity-style ifthen/2 wrapper (PUBLIC).
+    // Module 'lib' exports the Arity-style (Blint-shaped) wrapif/2 wrapper (PUBLIC).
     private const string LibSource =
         ":- module(lib).\n"
-        + ":- public ifthen/2.\n"
-        + "ifthen(X,Y) :- X -> !, Y.\n"
-        + "ifthen(_,_) :- !.\n";
+        + ":- public wrapif/2.\n"
+        + "wrapif(X,Y) :- X -> !, Y.\n"
+        + "wrapif(_,_) :- !.\n";
 
     // Module 'app' calls it with statically-known goals — the cross-module
-    // unfold target. Note app has NO local ifthen.
+    // unfold target. Note app has NO local wrapif.
     private const string AppSource =
         ":- module(app).\n"
         + ":- public run/2.\n"
         + ":- dynamic hit/1.\n"
-        + "run(N, R) :- ifthen(N > 1, assertz(hit(N))), check(N, R).\n"
+        + "run(N, R) :- wrapif(N > 1, assertz(hit(N))), check(N, R).\n"
         + "check(N, big) :- hit(N), !.\n"
         + "check(_, small).\n";
 
@@ -78,18 +78,18 @@ public class Chunk411Tests
         var result = LinkBoth();
         Assert.True(result.Success);
         // Structural proof the unfold fired: app's recompiled bytecode has no
-        // remaining call edge to ifthen/2 (the goal became inline control
+        // remaining call edge to wrapif/2 (the goal became inline control
         // flow); the wrapper's standalone predicate still exists in lib.
         var bundle = BundleReader.FromBytes(result.Bytes!);
         var appEntry = bundle.Entries.First(e => e.ModuleName == "app");
         var module = CompiledModuleCodec.Decode(appEntry.CompiledBytecode!);
-        int ifthenAid = Shumway.Core.AtomTable.Intern("ifthen", permanent: true).Id;
-        int ifthenFid = Shumway.Core.FunctorTable.Intern(ifthenAid, 2);
+        int wrapifAid = Shumway.Core.AtomTable.Intern("wrapif", permanent: true).Id;
+        int wrapifFid = Shumway.Core.FunctorTable.Intern(wrapifAid, 2);
         bool anyCallToWrapper = module.Predicates
             .SelectMany(p => p.CallSites)
-            .Any(cs => cs.CalleeFunctorId == ifthenFid);
+            .Any(cs => cs.CalleeFunctorId == wrapifFid);
         Assert.False(anyCallToWrapper,
-            "app should no longer statically call ifthen/2 after the unfold");
+            "app should no longer statically call wrapif/2 after the unfold");
     }
 
     [Fact]
@@ -101,13 +101,13 @@ public class Chunk411Tests
         var engine = new PrologEngine();
         engine.LoadBundle(BundleReader.FromBytes(result.Bytes!));
         Assert.True(engine.Query(
-            "G = ifthen(true, true), call(G).").Success);
+            "G = wrapif(true, true), call(G).").Success);
     }
 
     [Fact]
     public void LocalWrapper_ShadowsPublicOne()
     {
-        // app2 defines its OWN local ifthen/2 with DIFFERENT semantics (always
+        // app2 defines its OWN local wrapif/2 with DIFFERENT semantics (always
         // runs Y regardless of X — not a known template, so it is NOT unfolded
         // and must keep shadowing the public wrapper for app2's own calls).
         var lib = ShmoCompiler.CompileSource(LibSource, "lib");
@@ -115,8 +115,8 @@ public class Chunk411Tests
             ":- module(app2).\n"
             + ":- public go/1.\n"
             + ":- dynamic mark/1.\n"
-            + "ifthen(_, Y) :- call(Y).\n"          // 1 clause, body not a control template
-            + "go(N) :- ifthen(fail, assertz(mark(N))).\n",
+            + "wrapif(_, Y) :- call(Y).\n"          // 1 clause, body not a control template
+            + "go(N) :- wrapif(fail, assertz(mark(N))).\n",
             "app2");
         var result = ShmoLinker.Link(new LinkConfig
         {

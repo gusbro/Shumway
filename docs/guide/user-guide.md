@@ -209,14 +209,30 @@ between threads as long as access is serialised (no
 | `ToString()` | `"X = 1, Y = foo(2)"` style. |
 
 A `Term` is the parser's AST (`AtomTerm`, `IntTerm`, `FloatTerm`,
-`BigIntTerm`, `StringTerm`, `CompoundTerm`, `VarTerm`). Cast / pattern-
-match for typed access:
+`BigIntTerm`, `CompoundTerm`, `VarTerm`). Cast / pattern-match for typed access:
 
 ```csharp
 if (sol["X"] is IntTerm i) Console.WriteLine(i.Value);
 if (sol["L"] is CompoundTerm cons && cons.Functor == "." && cons.Args.Length == 2)
     Console.WriteLine($"list head = {cons.Args[0]}");
 ```
+
+**Text** reaches C# as one of two things, decided by what it *is* in Prolog and
+never by how the engine stored it (ADR-047): text as a **value** is an atom, and
+text as a **sequence** is a list. A double-quoted literal is a list, so it
+arrives as one — the same list whether or not the engine packed it — and a
+foreign predicate called with a packed list and with the equivalent cons list
+receives the same argument.
+
+`Term.TryAsText` reads either shape, plus an atom, when what you want is the
+characters:
+
+```csharp
+if (sol["X"]!.TryAsText(out string text)) Console.WriteLine(text);
+```
+
+`Get<string>(name)` uses it, so a `string` binding works whichever way the
+Prolog side produced the text.
 
 ### Loading constraint and coroutining libraries
 
@@ -825,8 +841,48 @@ link-time meaning:
 | `:- ensure_linked Name/N.` | Tells the linker to treat this predicate as a **reachability root**. Use it when the predicate is called only via runtime meta-call (`call/1` with a constructed goal) — the static call graph won't see the edge, and without this hint the linker would drop the predicate as unreachable. |
 | `:- ensure_linked [a/1, b/2].` | List form of the above. |
 
-Other directives (`op/3`, `set_prolog_flag/2`, etc.) are honoured at
-consult time but do not affect link-time decisions.
+Other directives (`set_prolog_flag/2`, etc.) are honoured at consult time
+but do not affect link-time decisions.
+
+### Standard order of terms
+
+Shumway follows ISO 13211-1 §7.2.1 exactly, which differs from SWI on one
+point worth knowing: between a **float and an integer the TYPE decides,
+never the value** — every float sorts before every integer. The value only
+breaks ties within one type.
+
+```prolog
+?- compare(Order, 1.1, 1).      % Order = (<)   — float first, though 1.1 > 1
+?- msort([3, 1.5, 2, 0.5, 1], L).
+L = [0.5, 1.5, 1, 2, 3].
+```
+
+This matches GNU Prolog, SICStus and Scryer (SWI orders numbers by value).
+It affects everything built on the standard order: `sort/2`, `msort/2`,
+`setof/3`, `keysort/2`, `@</2` and friends.
+
+### Operator scope (ADR-046)
+
+Operator tables are **module-scoped**, following SWI/YAP/Ciao/Scryer:
+
+- `:- op(P, T, Name)` in a module's text defines the operator for that
+  module's own source only; in module-less text it is global (`user`
+  table), exactly the ISO behaviour.
+- `:- op(P, T, user:Name)` — from anywhere — defines in the global
+  (`user`) table (SWI's escape).
+- A module's export list may carry `op(P, T, Name)` terms: importing the
+  module (`use_module`, either form) activates those operators for the
+  importer — in the importing module's table, or in `user` when the
+  import happens at the top level (goal-form `use_module/1`, or directly
+  consulting the module file).
+- `op(0, T, Name)` inside a module hides an inherited global operator for
+  that module only.
+- Runtime `op/3` and `current_op/3` inside module code use the module's
+  table; at the top level they use the global one.
+- Separate compilation preserves all of this: a `.shmo`/`.shum` carries
+  each module's own and exported operators, and `LoadBundle` restores the
+  same scoping (a bundle module's private syntax never leaks into your
+  code; its exported operators arrive when you `use_module` it).
 
 ### How a goal resolves (the name-lookup algorithm)
 

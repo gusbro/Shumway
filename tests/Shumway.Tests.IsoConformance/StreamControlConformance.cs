@@ -123,6 +123,22 @@ public class StreamControlConformance : IDisposable
     }
 
     [Fact]
+    public void Open_AcceptsACharsListFileName()
+    {
+        // Scryer-compat: text is a chars list there, so open("f.txt", ...)
+        // arrives as a list of one-char atoms. An atom stays the ISO form;
+        // anything else keeps type_error(atom).
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"atom_chars('{path}', Cs), open(Cs, write, S), close(S).").Success);
+        Assert.True(e.Query(
+            $"atom_chars('{path}', Cs), open(Cs, read, S, []), close(S).").Success);
+        Assert.True(e.Query(
+            "catch(open(7, read, _), error(type_error(atom, 7), _), true).").Success);
+    }
+
+    [Fact]
     public void Open_ReadMode_ReadsBackWhatWasWritten()
     {
         File.WriteAllText(_tempPath, "hello");
@@ -228,10 +244,12 @@ public class StreamControlConformance : IDisposable
     public void CurrentStream_FindsUserOutput()
     {
         // user_output is always registered; current_stream/3 should
-        // surface it. Bind Mode = write to filter to just writers
-        // and check there's at least one with that mode.
+        // surface it. ISO §7.10.2.4 gives the standard output stream mode
+        // APPEND (not write), so filter on that.
         var e = new PrologEngine();
-        Assert.True(e.Query("current_stream(_, write, _).").Success);
+        Assert.True(e.Query("current_stream(_, append, _).").Success);
+        Assert.True(e.Query(
+            "stream_property(S, alias(user_output)), stream_property(S, mode(append)).").Success);
     }
 
     [Fact]
@@ -447,5 +465,75 @@ public class StreamControlConformance : IDisposable
         var e = new PrologEngine();
         Assert.True(e.Query(
             $"open('{path}', read, S), get_char(S, _), at_end_of_stream(S), close(S).").Success);
+    }
+
+    [Fact]
+    public void EofActionError_SecondReadPastEndRaises()
+    {
+        // §8.11.5 eof_action(error): the read that consumed eof yields
+        // end_of_file; the NEXT read raises permission_error(input,
+        // past_end_of_stream, S). Matches GNU. Default (eof_code) keeps
+        // yielding end_of_file.
+        File.WriteAllText(_tempPath, "");
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"open('{path}', read, S, [eof_action(error)]), get_char(S, end_of_file), "
+            + "catch(get_char(S, _), error(permission_error(input, past_end_of_stream, _), _), true), "
+            + "stream_property(S, end_of_stream(past)), close(S).").Success);
+        Assert.True(e.Query(
+            $"open('{path}', read, S), get_char(S, end_of_file), get_char(S, end_of_file), "
+            + "stream_property(S, end_of_stream(past)), close(S).").Success);
+    }
+
+    [Fact]
+    public void CloseOptions_AreValidated()
+    {
+        File.WriteAllText(_tempPath, "");
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"open('{path}', read, S), "
+            + "catch(close(S, _), error(instantiation_error, _), true), "
+            + "catch(close(S, [foo]), error(domain_error(close_option, foo), _), true), "
+            + "catch(close(S, [force(fail)]), error(domain_error(close_option, force(fail)), _), true), "
+            + "close(S, [force(true)]).").Success);
+    }
+
+    [Fact]
+    public void CloseUserStreams_IsANoOp()
+    {
+        // §8.11.6: the standard streams cannot be closed — close succeeds
+        // and the stream stays usable.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "close(user_input), close(user_output), "
+            + "current_input(S), stream_property(S, alias(user_input)).").Success);
+    }
+
+    [Fact]
+    public void ReadBuiltins_BoundOutArg_TypeChecksUpFront()
+    {
+        // §8.12/§8.13: a bound output argument that could never be a read
+        // result raises up front — it does not just fail.
+        File.WriteAllText(_tempPath, "ab");
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"open('{path}', read, S), "
+            + "catch(get_char(S, 1), error(type_error(in_character, 1), _), true), "
+            + "catch(get_code(S, a), error(type_error(integer, a), _), true), "
+            + "catch(get_char(S, ab), error(type_error(in_character, ab), _), true), "
+            + "close(S).").Success);
+    }
+
+    [Fact]
+    public void PermissionErrors_CarryTheStreamCulprit()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(get_char(user_output, _), error(permission_error(input, stream, user_output), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(at_end_of_stream(user_output), error(permission_error(input, stream, user_output), _), true).").Success);
     }
 }

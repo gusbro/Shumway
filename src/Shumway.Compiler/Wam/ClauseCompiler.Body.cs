@@ -157,7 +157,7 @@ public sealed partial class ClauseCompiler
                 s.Emitter.EmitGetFloat(_floatLiterals.Intern(f.Value), argSlot);
                 break;
             case StringTerm str:
-                s.Emitter.EmitGetPstr(_stringLiterals.Intern(str.Content), argSlot);
+                s.Emitter.EmitGetPstr(_stringLiterals.Intern(new Shumway.Core.TextLiteral(str.Content, str.Kind)), argSlot);
                 break;
             default:
                 throw new NotSupportedException(
@@ -455,7 +455,7 @@ public sealed partial class ClauseCompiler
                 case StringTerm str:
                     temps ??= new Dictionary<int, int>();
                     int strSlot = s.Xs.AllocateAnonymousSlot();
-                    s.Emitter.EmitPutPstr(_stringLiterals.Intern(str.Content), strSlot);
+                    s.Emitter.EmitPutPstr(_stringLiterals.Intern(new Shumway.Core.TextLiteral(str.Content, str.Kind)), strSlot);
                     temps[i] = strSlot;
                     break;
             }
@@ -572,8 +572,13 @@ public sealed partial class ClauseCompiler
                 gArgs = new Term[] { v };
                 break;
             default:
-                throw new NotSupportedException(
-                    $"Goal type {goal.GetType().Name} is not yet supported in clause bodies.");
+                // A non-callable in goal position (a number, a string)
+                // compiles to a runtime type_error(callable, Culprit) —
+                // a compile-time crash would be uncatchable
+                // (catch({1^true}, _, fail) must fail, not kill the load).
+                fName = "$type_error_callable";
+                gArgs = new Term[] { goal };
+                break;
         }
 
         // ADR-018 — arithmetic instruction set. `X is Expr` and the six
@@ -1112,7 +1117,7 @@ public sealed partial class ClauseCompiler
                 s.Emitter.EmitPutFloat(_floatLiterals.Intern(f.Value), argSlot);
                 break;
             case StringTerm str:
-                s.Emitter.EmitPutPstr(_stringLiterals.Intern(str.Content), argSlot);
+                s.Emitter.EmitPutPstr(_stringLiterals.Intern(new Shumway.Core.TextLiteral(str.Content, str.Kind)), argSlot);
                 break;
             default:
                 throw new NotSupportedException(

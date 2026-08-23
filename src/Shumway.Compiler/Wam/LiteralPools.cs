@@ -15,7 +15,7 @@ namespace Shumway.Compiler.Wam;
 /// </summary>
 public sealed class LiteralPools
 {
-    public LiteralPool<string> Strings { get; } = new();
+    public LiteralPool<Shumway.Core.TextLiteral> Strings { get; } = new();
     public LiteralPool<double> Floats { get; } = new();
     public LiteralPool<BigInteger> BigInts { get; } = new();
 }

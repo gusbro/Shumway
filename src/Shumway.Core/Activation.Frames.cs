@@ -79,6 +79,28 @@ public sealed partial class Activation
         UpdateGcDiagActive();
     }
 
+    /// <summary>Drops the attribute record of a variable whose ATTVAR-restoring
+    /// trail entry the cut just discarded.
+    ///
+    /// <para>The record outlives the binding because a backtrack restores the
+    /// ATTVAR cell and would find its constraints gone otherwise — so it may be
+    /// dropped exactly when the entry that would do that restoring is dropped,
+    /// and not before. The cut drops it when the cell is YOUNGER than the
+    /// surviving choice point, which means an outer backtrack truncates the
+    /// cell away entirely and there is nothing left to restore.</para>
+    ///
+    /// <para>Without this the table grows one dead record per constrained
+    /// variable for the life of the query, and because the record is a GC root
+    /// it holds the variable's whole term with it — which is what made a lazy
+    /// DCG retain every window it had already consumed.</para></summary>
+    private void DropDeadAttrRecord(int home)
+    {
+        // Still an attributed variable — the binding was undone, or this entry
+        // was about something else at the same address. Nothing to drop.
+        if ((uint)home < (uint)_heapTop && _heap[home].Tag == Tag.AttVar) return;
+        _attrTable.Remove(home);
+    }
+
     private static void Validate(ActivationConfig c)
     {
         if (c.InitialHeapSize <= 0) throw new ArgumentException("InitialHeapSize must be > 0", nameof(c));
@@ -259,6 +281,39 @@ public sealed partial class Activation
     /// <summary>Number of catch frames on the stack (active or not).</summary>
     public int CatchFrameCount => _catchFrames.Count;
 
+    internal static readonly bool CatchDiag =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_CATCH_DIAG") == "1";
+
+    /// <summary>The nested-driver FAILURE path: a still-active frame the
+    /// failed goal opened (its '$catch_end' only fires on success) must stop
+    /// catching — a later ball must not route into the dead goal. It cannot
+    /// be REMOVED, though: the goal's push/deactivate records are still on
+    /// the extra trail (the driver does not rewind it on failure), and the
+    /// outer unwind replays them against this stack — a physically shorter
+    /// stack then underflows the replay (their clpb's hook-failure inside
+    /// \+ was the finder). Deactivate trailed instead; each frame dies when
+    /// its own push entry unwinds.</summary>
+    public void DeactivateCatchFramesAbove(int count)
+    {
+        for (int i = _catchFrames.Count - 1; i >= count; i--)
+        {
+            if (!_catchFrames[i].Active) continue;
+            CatchFrame f = _catchFrames[i];
+            f.Active = false;
+            _catchFrames[i] = f;
+            if (CatchDiag)
+                System.Console.Error.WriteLine($"[catch] deact-above idx={i} xTop={_extraTrailTop}");
+            EnsureExtraTrailCapacity(1);
+            _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
+            {
+                Type = TrailType.CatchFrame,
+                HeapIdx = i,
+                OldValue = new Cell(CatchTrailDeactivate),
+                BindingTrailMarker = _bindingTrailTop,
+            };
+        }
+    }
+
     /// <summary>Reads the catch frame at <paramref name="index"/>.</summary>
     public CatchFrame GetCatchFrame(int index) => _catchFrames[index];
 
@@ -293,6 +348,8 @@ public sealed partial class Activation
             RecoveryE = (int)_stack[_e + EnvCeOffset].Data,
             RecoveryCp = (int)_stack[_e + EnvCpOffset].Data,
         });
+        if (CatchDiag)
+            System.Console.Error.WriteLine($"[catch] push idx={index} xTop={_extraTrailTop}");
         EnsureExtraTrailCapacity(1);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
@@ -321,6 +378,8 @@ public sealed partial class Activation
             CatchFrame f = _catchFrames[i];
             f.Active = false;
             _catchFrames[i] = f;
+            if (CatchDiag)
+                System.Console.Error.WriteLine($"[catch] deact idx={i} xTop={_extraTrailTop}");
             EnsureExtraTrailCapacity(1);
             _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
             {
@@ -362,12 +421,14 @@ public sealed partial class Activation
 
     public void UnwindToCatchFrame(int index)
     {
+        if (CatchDiag)
+            System.Console.Error.WriteLine($"[catch] unwindTo idx={index} count={_catchFrames.Count} xTop={_extraTrailTop}");
         CatchFrame f = _catchFrames[index];
         // setup_call_cleanup/3: an exception unwinding to this frame discards
         // every choice-point scope above it — fire the cleanup of any registered
         // scope that is being abandoned (its Goal's CPs sit above the frame's
         // snapshot level). The drain runs at the recovery goal's first safe point.
-        if (HasCleanupHandlers) FireCleanupsAbove(f.SnapB);
+        if (HasCleanupHandlers) FireCleanupsAbove(f.SnapB, heapIntact: false);
         if (AttrSweepEnabled)
         {
             int attrEntries = 0, oldHomeEntries = 0;
@@ -1045,6 +1106,10 @@ public sealed partial class Activation
             {
                 entry.BindingTrailMarker = bindingWrite;
                 _extraTrail[extraWrite++] = entry;
+            }
+            else if (_attrTable.Count > 0 && entry.Type == TrailType.ValueChange)
+            {
+                DropDeadAttrRecord(entry.HeapIdx);
             }
             extraRead++;
         }

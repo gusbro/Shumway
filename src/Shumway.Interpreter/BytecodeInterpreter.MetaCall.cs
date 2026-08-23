@@ -78,11 +78,12 @@ public sealed partial class BytecodeInterpreter
     private bool FlushPendingWakeupsSlow(ProgramView code)
     {
         Shumway.Core.Profiler.Note("wakeup_flush");
-        if (!_engine.HasAnyAttributeHook)
+        if (!_engine.HasAnyAttributeHook && !_engine.PendingWakeupsHaveLazy)
         {
             // No attribute-unification hook of any shape is linked — neither a
             // per-module verify_attributes/3 or /4 nor a bare one — so attributed
-            // variables stay hookless (the foundation).
+            // variables stay hookless (the foundation). Native '$lazy' entries
+            // are exempt: their goal runs without any Prolog hook.
             _engine.ClearPendingWakeups();
             return true;
         }
@@ -109,6 +110,23 @@ public sealed partial class BytecodeInterpreter
     /// queue is drained in a loop.</summary>
     private bool RunWakeups(ProgramView code)
     {
+        // The drain holds heap indices (the goals-variable slot, the built
+        // verify_attributes goal) in C# locals ACROSS meta-calls, which reach
+        // safe points. Collection has to stand down for the region, not for the
+        // rest of the query the way the old attvar bail did.
+        _engine.EnterGcInhibit();
+        try
+        {
+            return RunWakeupsInhibited(code);
+        }
+        finally
+        {
+            _engine.ExitGcInhibit();
+        }
+    }
+
+    private bool RunWakeupsInhibited(ProgramView code)
+    {
         while (_engine.HasPendingWakeups)
         {
             var batch = _engine.TakePendingWakeups();
@@ -121,6 +139,19 @@ public sealed partial class BytecodeInterpreter
             for (int i = 0; i < batch.Count; i++)
             {
                 var (moduleId, attrValueIdx, otherIdx) = batch[i];
+                if (moduleId == Shumway.Core.Activation.LazyAttrModuleId)
+                {
+                    // Native '$lazy' — the attribute value IS the goal. No
+                    // verify_attributes hook exists or is wanted; hand the
+                    // goal straight to the run-goals pass, which fires it
+                    // AFTER the binding, like a frozen goal.
+                    int c = _engine.AllocateHeap(2);
+                    _engine.SetHeap(c, Shumway.Core.Cell.Ref(attrValueIdx));
+                    _engine.SetHeap(c + 1,
+                        Shumway.Core.Cell.Atom(Shumway.Core.AtomTable.EmptyListId));
+                    goalLists[i] = Shumway.Core.Cell.Lis(c);
+                    continue;
+                }
                 // ADR-040 — resolve THIS module's hook per module: its own
                 // verify_attributes/3 (Scryer style) or /4 (module-local first,
                 // bare fallback). Two dialects' libraries each own their hook.
@@ -207,6 +238,61 @@ public sealed partial class BytecodeInterpreter
             || (cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId);
     }
 
+    private bool IsBodyConvertible(Cell c)
+    {
+        c = DerefCell(c);
+        switch (c.Tag)
+        {
+            case Tag.Ref:
+            case Tag.AttVar:
+            case Tag.Atom:
+                return true;
+            case Tag.Str:
+            {
+                int fIdx = c.AsHeapIndex;
+                var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
+                    _engine.GetHeap(fIdx).AsFunctorId);
+                if (ar == 2 && Shumway.Core.AtomTable.GetById(aid)?.Name
+                        is "," or ";" or "->" or "*->")
+                    return IsBodyConvertible(_engine.GetHeap(fIdx + 1))
+                        && IsBodyConvertible(_engine.GetHeap(fIdx + 2));
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>The same §7.8.3 check for a goal still in TERM form (the
+    /// in-engine meta-call path).</summary>
+    private void CheckBodyConvertible(Cell part, Cell whole)
+    {
+        Cell c = DerefCell(part);
+        switch (c.Tag)
+        {
+            case Tag.Ref:
+            case Tag.AttVar:
+            case Tag.Atom:
+                return;
+            case Tag.Str:
+            {
+                int fIdx = c.AsHeapIndex;
+                var (aid, ar) = Shumway.Core.FunctorTable.Lookup(
+                    _engine.GetHeap(fIdx).AsFunctorId);
+                if (ar == 2 && Shumway.Core.AtomTable.GetById(aid)?.Name
+                        is "," or ";" or "->" or "*->")
+                {
+                    CheckBodyConvertible(_engine.GetHeap(fIdx + 1), whole);
+                    CheckBodyConvertible(_engine.GetHeap(fIdx + 2), whole);
+                }
+                return;
+            }
+            default:
+                throw new PrologRuntimeException(
+                    "type_error", "callable", _engine, whole);
+        }
+    }
+
     /// <summary>Runs one goal term in the live engine. Handles
     /// the <c>,/2</c> conjunction and the <c>true</c> / <c>fail</c>
     /// constants; any other goal is dispatched as a plain call — a
@@ -236,12 +322,21 @@ public sealed partial class BytecodeInterpreter
             case Tag.AttVar:
                 throw new PrologRuntimeException("instantiation_error");
             default:
-                throw new PrologRuntimeException("type_error", "callable");
+                // The culprit rides along so the ISO ball reads
+                // type_error(callable, 1), not an anonymous slot.
+                throw new PrologRuntimeException("type_error", "callable", _engine, goal);
         }
 
         if (functorId == ConjFunctorId)
+        {
+            // §7.8.3: converting the goal to a body must succeed BEFORE
+            // any of it runs — call((fail, 3)) is
+            // type_error(callable, (fail,3)), with the WHOLE goal as the
+            // culprit, and `fail` never executes.
+            CheckBodyConvertible(goal, goal);
             return MetaCallInEngine(code, _engine.GetHeap(argBase))
                 && MetaCallInEngine(code, _engine.GetHeap(argBase + 1));
+        }
         if (functorId == TrueFunctorId) return true;
         if (functorId == FailFunctorId) return false;
 
@@ -274,6 +369,14 @@ public sealed partial class BytecodeInterpreter
             return RunGoalInEngine(code, lateAddr);
         }
 
+        // The consult-direct fallback: a directly consulted module's local.
+        int fbAddr = _engine.ResolveModuleLocalFallback?.Invoke(functorId) ?? -1;
+        if (fbAddr >= 0)
+        {
+            if (JumpDiag) CheckJumpTarget(code, fbAddr, functorId, "consult_local");
+            return RunGoalInEngine(code, fbAddr);
+        }
+
         // honour the `unknown` flag (throws on error).
         return !Shumway.Core.UnknownProcedure.Fails(_engine, functorId);
     }
@@ -296,7 +399,8 @@ public sealed partial class BytecodeInterpreter
     ///
     /// <para>Returns false only on an unrecoverable failure (no choice
     /// point remains).</para></summary>
-    private bool DispatchCall(ProgramView code, int callArity, int barrier)
+    private bool DispatchCall(
+        ProgramView code, int callArity, int barrier, bool convertBody = true)
     {
         // Sizing diagnostic (profile builds only): how many goals are dispatched by
         // runtime term inspection — the cost class the link-time
@@ -304,13 +408,39 @@ public sealed partial class BytecodeInterpreter
         // ADR-021's closing profile).
         Shumway.Core.Profiler.Note("meta_dispatch (DispatchCall)");
         int pc = _engine.P;
-        Cell goal = DerefCell(_engine.GetRegister(0));
+        Cell rawGoal = _engine.GetRegister(0);
+        Cell goal = DerefCell(rawGoal);
+
+        // §7.6.2 — a VARIABLE in goal position converts to `call(V)`, which
+        // gives it its own cut barrier. The argument slot still holds the REF
+        // even after the variable was bound, so a goal reached through one is
+        // recognisable here: `call((Z = (!), a(X), Z))` must keep a(X)'s
+        // choice point, because the `!` Z was bound to cuts only within its
+        // own metacall. A goal written literally keeps the inherited barrier.
+        if (rawGoal.Tag is Tag.Ref or Tag.AttVar) barrier = _engine.B;
 
         // '$mqual'(Module, Goal): a runtime-variable meta-goal tagged with the
         // module of the clause that meta-called it. Unwrap it, updating X0 to the
         // real goal; the module (or -1) steers the user-address resolution below
         // so a bare goal functor resolves against that module's locals first.
         int resolutionModule = PrepareMqualGoal(ref goal);
+
+        // SS7.6.2 converts the WHOLE body up front, at the call/N boundary:
+        // in call(G) with G = (C=(!), (X=1,C;X=2)), C is a variable AT
+        // CONVERSION TIME, so it converts to call(C) and the ! it is later
+        // bound to cuts only within that call. Dispatching lazily loses
+        // this: by the time '$call' reaches C, its home cell holds a plain
+        // `!`, indistinguishable from one written literally. So variable
+        // sub-goals wrap HERE — and only here: '$call'/2 dispatches a body
+        // this conversion already produced (convertBody: false), and
+        // re-converting there would re-lose sub-goals bound mid-body.
+        // Allocation-free when the skeleton has no variable positions.
+        if (convertBody && goal.Tag == Tag.Str)
+        {
+            bool wrapped = false;
+            goal = Shumway.Core.MetaBodyConvert.WrapVariableSubgoals(
+                _engine, goal, ref wrapped);
+        }
 
         // Save call/N's extra arguments before the registers are reloaded.
         // The per-engine scratch is safe here: the extras are consumed into
@@ -344,7 +474,7 @@ public sealed partial class BytecodeInterpreter
             case Tag.AttVar:
                 throw new PrologRuntimeException("instantiation_error");
             default:
-                throw new PrologRuntimeException("type_error", "callable");
+                throw new PrologRuntimeException("type_error", "callable", _engine, goal);
         }
 
         int totalArity = goalArity + extraCount;
@@ -367,6 +497,15 @@ public sealed partial class BytecodeInterpreter
         // A module-tagged goal bypasses the route cache: its resolution depends
         // on the module too, and the tagged path is the (uncommon) variable
         // meta-call, not the hot direct-call path.
+        // §7.8.3: a control construct's arguments must convert to a body
+        // BEFORE any of it runs — call((fail, 3)) and call(',', fail, 3)
+        // are both type_error(callable, (fail,3)), and `fail` must not
+        // execute first. Checked here (not after the route cache) so the
+        // cached path is covered too.
+        if (totalArity == 2 && Shumway.Core.AtomTable.GetById(atomId)?.Name
+                is "," or ";" or "->" or "*->")
+            Shumway.Core.MetaBodyConvert.CheckControlGoalFromRegisters(
+                _engine, atomId);
         bool routeCacheable = resolutionModule < 0 && (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits
         long routeKey = ((long)atomId << 16) | (uint)totalArity;
         if (routeCacheable && cache.TryGetValue(routeKey, out var route))
@@ -375,6 +514,7 @@ public sealed partial class BytecodeInterpreter
             {
                 case Shumway.Core.MetaRouteKind.Cut:
                     _engine.Cut(barrier);
+                    FlushPendingCleanups(code);   // setup_call_cleanup on meta-cut
                     _engine.AdvancePc(9);
                     return true;
                 case Shumway.Core.MetaRouteKind.True:
@@ -449,6 +589,7 @@ public sealed partial class BytecodeInterpreter
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.Cut, 0);
             _engine.Cut(barrier);
+            FlushPendingCleanups(code);   // setup_call_cleanup on meta-cut
             _engine.AdvancePc(9);
             return true;
         }
@@ -523,6 +664,12 @@ public sealed partial class BytecodeInterpreter
         int lateHelper = _engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
         if (lateHelper >= 0) return JumpToUserGoal(code, pc, lateHelper);
 
+        // The consult-direct fallback: a directly consulted module's local.
+        // Uncached — an assertz later in the query may create the bare
+        // dynamic, which must win from then on.
+        int consultLocal = _engine.ResolveModuleLocalFallback?.Invoke(functorId) ?? -1;
+        if (consultLocal >= 0) return JumpToUserGoal(code, pc, consultLocal);
+
         // No negative caching: an unresolved functor can become resolvable
         // later in the same query (auto-promotion).
         // honour the `unknown` flag (throws on error).
@@ -588,12 +735,20 @@ public sealed partial class BytecodeInterpreter
             int fidx = goal.AsHeapIndex;
             int fid = _engine.GetHeap(fidx).AsFunctorId;
             // Both the engine's $mqual(Module, Goal) tag and the ISO Module:Goal
-            // qualifier share the same (Module, Goal) layout. A user-written
-            // `M:G` with a non-atom module is not a valid qualification — leave it
-            // for the callable/type checks below rather than unwrapping it.
+            // qualifier share the same (Module, Goal) layout. A `M:G` with a
+            // bad module slot is the ISO error HERE — falling through used to
+            // dispatch ':'/2 as a predicate, whose prelude clause is
+            // call(M:G): an infinite loop, not an error.
             if (fid == MqualFunctorId) { }
-            else if (fid == ColonFunctorId
-                     && DerefCell(_engine.GetHeap(fidx + 1)).Tag == Tag.Atom) { }
+            else if (fid == ColonFunctorId)
+            {
+                Cell qc = DerefCell(_engine.GetHeap(fidx + 1));
+                if (qc.Tag == Tag.Ref || qc.Tag == Tag.AttVar)
+                    throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+                if (qc.Tag != Tag.Atom)
+                    throw new Shumway.Core.PrologRuntimeException(
+                        "type_error", "atom", _engine, qc);
+            }
             else break;
             Cell mCell = DerefCell(_engine.GetHeap(fidx + 1));
             if (mCell.Tag == Tag.Atom) module = mCell.AsAtomId;
@@ -745,6 +900,12 @@ public sealed partial class BytecodeInterpreter
         // DIFFERENT activation — materialize it into this one on demand.
         int late = _engine.ResolveLateHelper?.Invoke(fid) ?? -1;
         if (late >= 0) return late;
+        // The consult-direct fallback: a directly consulted module's local
+        // (the map's refused bare alias above lands here too — the fallback
+        // re-resolves it with the ambiguity check, instead of trusting the
+        // alias's first-come-wins pick).
+        int consultLocal = _engine.ResolveModuleLocalFallback?.Invoke(fid) ?? -1;
+        if (consultLocal >= 0) return consultLocal;
         // honour the `unknown` flag — error throws here,
         // fail/warning hand the caller the fail sentinel.
         if (Shumway.Core.UnknownProcedure.Fails(_engine, fid))
@@ -772,6 +933,7 @@ public sealed partial class BytecodeInterpreter
         int savedCp    = _engine.Cp;
         int savedB0    = _engine.B0;
         int savedB     = _engine.B;
+        int savedE     = _engine.E;
         int savedFloor = _backtrackFloor;
         int entryCatchFrames = _engine.CatchFrameCount;
 
@@ -815,6 +977,16 @@ public sealed partial class BytecodeInterpreter
             if (_engine.B > savedB) _engine.Cut(savedB);
             return true;
         }
+        // Failure: the last clause tried left ITS environment current — the
+        // final backtrack found no choice point to restore E from — so the
+        // caller would resume against a foreign frame. Nothing above savedE is
+        // live any more; put the caller's environment back.
+        _engine.SetE(savedE);
+        // A catch/3 the goal opened never ran its '$catch_end' (that only
+        // fires on success): deactivate the frames it left — trailed, never
+        // removed, or the outer unwind's replay of their still-live trail
+        // records underflows the frame stack.
+        _engine.DeactivateCatchFramesAbove(entryCatchFrames);
         return false;
     }
 

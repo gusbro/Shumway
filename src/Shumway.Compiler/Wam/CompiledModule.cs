@@ -20,7 +20,7 @@ public sealed class CompiledModule
     /// <summary>String literals referenced by <c>get_pstr</c> / <c>put_pstr</c>
     /// instructions in this module's bytecode. Indexed by the literal id
     /// baked into the bytecode operand.</summary>
-    public IReadOnlyList<string> StringLiterals { get; }
+    public IReadOnlyList<Shumway.Core.TextLiteral> StringLiterals { get; }
 
     /// <summary>Float literals referenced by <c>get_float</c> / <c>put_float</c>
     /// / <c>unify_float</c> instructions.</summary>
@@ -34,7 +34,7 @@ public sealed class CompiledModule
 
     public CompiledModule(
         IReadOnlyList<CompiledPredicate> predicates,
-        IReadOnlyList<string> stringLiterals,
+        IReadOnlyList<Shumway.Core.TextLiteral> stringLiterals,
         IReadOnlyList<double> floatLiterals)
         : this(predicates, stringLiterals, floatLiterals,
                Array.Empty<System.Numerics.BigInteger>())
@@ -43,7 +43,7 @@ public sealed class CompiledModule
 
     public CompiledModule(
         IReadOnlyList<CompiledPredicate> predicates,
-        IReadOnlyList<string> stringLiterals,
+        IReadOnlyList<Shumway.Core.TextLiteral> stringLiterals,
         IReadOnlyList<double> floatLiterals,
         IReadOnlyList<System.Numerics.BigInteger> bigIntLiterals)
     {

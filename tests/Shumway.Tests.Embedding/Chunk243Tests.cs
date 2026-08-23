@@ -1,3 +1,4 @@
+using Shumway.Core;
 using Shumway.Compiler.Ast;
 using Shumway.Embedding;
 using Xunit;
@@ -53,7 +54,7 @@ public class Chunk243Tests
         var t = (CompoundTerm)engine.ToTerm(u);
         Assert.Equal("c243_user", t.Functor);
         Assert.Equal(2, t.Args.Length);  // Name + Age only
-        Assert.Equal("alice", ((StringTerm)t.Args[0]).Content);
+        Assert.Equal("alice", ((AtomTerm)t.Args[0]).Name);
         Assert.Equal(30L, ((IntTerm)t.Args[1]).Value);
     }
 
@@ -63,7 +64,7 @@ public class Chunk243Tests
         var engine = new PrologEngine();
         var t = new CompoundTerm("c243_user", new Term[]
         {
-            new StringTerm("bob"),
+            new StringTerm("bob", TextKind.Codes),
             new IntTerm(42),
         });
         var u = engine.FromTerm<C243User>(t);

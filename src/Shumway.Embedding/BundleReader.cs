@@ -45,6 +45,7 @@ public static class BundleReader
         // The producing Shumway — recorded, never enforced: what to do about
         // a version difference is a policy question, not this reader's.
         var generatorVersion = BundleFormat.ReadGeneratorVersion(br);
+        bool arityCompat = br.ReadBoolean();
 
         uint moduleCount = br.ReadUInt32();
         var entries = new BundleEntry[moduleCount];
@@ -242,7 +243,7 @@ public static class BundleReader
             archiveMembers.Add(new BundleArchiveMember(fileName, shmoBytes));
         }
         return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers,
-            nativeLibraries, generatorVersion);
+            nativeLibraries, generatorVersion, arityCompat);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

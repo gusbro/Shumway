@@ -35,8 +35,12 @@ public sealed class SingleSidedUnificationTests
         Assert.True(e.Query("grade(95, a).").Success);
         Assert.True(e.Query("grade(85, b).").Success);   // 85>=90 fails, 85>=80 holds
         Assert.True(e.Query("grade(50, f).").Success);   // both guards fail
-        // The guard gates selection: 85 is not an 'a'.
-        Assert.False(e.Query("grade(85, a).").Success);
+        // The guard gates selection: 85 is not an 'a'. Every rule refused
+        // (guard fail for clause 1, head mismatch for the rest), which under
+        // SWI's => is an ERROR, not failure.
+        Assert.True(e.Query(
+            "catch(grade(85, a), error(existence_error(matching_rule, _), _), true).")
+            .Success);
     }
 
     [Fact]
@@ -59,12 +63,14 @@ public sealed class SingleSidedUnificationTests
     {
         var e = new PrologEngine();
         // The library shape SSU is written for: structural head patterns, one
-        // clause per constructor, deterministic.
+        // clause per constructor, deterministic. SWI style: OUTPUTS bind in
+        // the body — a head pattern in an output position would not match the
+        // caller's unbound variable under single-sided unification.
         e.ConsultString("""
-            depth(leaf, 0) => true.
+            depth(leaf, D) => D = 0.
             depth(node(L, R), D) => depth(L, DL), depth(R, DR), max(DL, DR, M), D is M + 1.
-            max(A, B, A), A >= B => true.
-            max(_, B, B) => true.
+            max(A, B, M), A >= B => M = A.
+            max(_, B, M) => M = B.
             """);
         Assert.True(e.Query("depth(leaf, 0).").Success);
         Assert.True(e.Query("depth(node(leaf, node(leaf, leaf)), 2).").Success);

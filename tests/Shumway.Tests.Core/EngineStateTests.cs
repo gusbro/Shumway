@@ -136,7 +136,8 @@ public class EngineStateTests
         engine.AllocateHeap(4); // exactly fills the max
         Assert.Equal(4, engine.HeapTop);
 
-        Assert.Throws<InvalidOperationException>(() => engine.AllocateHeapUnbound());
+        var ex = Assert.Throws<PrologRuntimeException>(() => engine.AllocateHeapUnbound());
+        Assert.Equal("resource_error", ex.Kind);   // catchable: error(resource_error(memory), _)
     }
 
     [Fact]

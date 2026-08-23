@@ -29,6 +29,7 @@ internal static class Prelude
         :- public member/2.
         :- public clause/2.
         :- public current_predicate/1.
+        :- public '$cp_ctx'/2.
         :- public length/2.
         :- public sub_atom/5.
         :- public maplist/2.
@@ -38,6 +39,12 @@ internal static class Prelude
         :- public foldl/5.
         :- public aggregate_all/3.
         :- public forall/2.
+        :- public if/3.
+        :- public ifthen/2.
+        :- public ifthenelse/3.
+        :- public evaluable_property/2.
+        :- public clause/3.
+        :- public call_nth/2.
         :- public catch/3.
         :- public '$catch_run'/1.
         :- public copy_term/3.
@@ -62,8 +69,18 @@ internal static class Prelude
         :- public exclude/3.
         :- public partition/4.
         :- public pairs_keys_values/3.
+        :- public map_list_to_pairs/3.
+        :- public can_be/2.
+        :- public atom_si/1.
+        :- public atomic_si/1.
+        :- public integer_si/1.
+        :- public character_si/1.
+        :- public list_si/1.
+        :- public chars_si/1.
+        :- meta_predicate(map_list_to_pairs(2, *, *)).
         :- public predsort/3.
         :- public sort/4.
+        :- public atomic_concat/3.
         :- public atomic_list_concat/2.
         :- public atomic_list_concat/3.
         :- public char_type/2.
@@ -72,13 +89,71 @@ internal static class Prelude
         :- public ignore/1.
         :- public time_out/3.
         :- meta_predicate(time_out(0, *, *)).
+        % The ISO/de-facto meta-predicates and control constructs, so
+        % predicate_property(G, meta_predicate(T)) reports the argument
+        % modes a portable program (and Logtalk's compiler) reads.
+        :- meta_predicate(findall(*, 0, *)).
+        :- meta_predicate(findall(*, 0, *, *)).
+        :- meta_predicate(bagof(*, ^, *)).
+        :- meta_predicate(setof(*, ^, *)).
+        :- meta_predicate(forall(0, 0)).
+        :- meta_predicate(aggregate_all(*, 0, *)).
+        :- meta_predicate(catch(0, *, 0)).
+        :- meta_predicate(\+(0)).
+        :- meta_predicate(once(0)).
+        :- meta_predicate(ignore(0)).
+        :- meta_predicate(call(0)).
+        :- meta_predicate(call(1, *)).
+        :- meta_predicate(call(2, *, *)).
+        :- meta_predicate(call(3, *, *, *)).
+        :- meta_predicate(call(4, *, *, *, *)).
+        :- meta_predicate(call(5, *, *, *, *, *)).
+        :- meta_predicate(call(6, *, *, *, *, *, *)).
+        :- meta_predicate(call(7, *, *, *, *, *, *, *)).
+        :- meta_predicate(call_nth(0, *)).
+        :- meta_predicate(setup_call_cleanup(0, 0, 0)).
+        :- meta_predicate(call_cleanup(0, 0)).
+        :- meta_predicate(if(0, 0, 0)).
+        :- meta_predicate(ifthen(0, 0)).
+        :- meta_predicate(ifthenelse(0, 0, 0)).
+        :- meta_predicate(apply(1, *)).
+        % Control constructs: callable, and their arguments are goals.
+        % (','/2 and friends are seeded in C# — PrologEngine's
+        % SeedControlMetaTemplates — since a ','-term in the directive is
+        % the conjunction-of-specs form and cannot name ','/2 itself.)
         :- public call_residue_vars/2.
         :- public time/1.
         :- public chdir/1.
         :- public append/2.
+        :- public flatten/2.
+        :- public call_with_limit/2.
+        :- public call_with_offset/2.
+        :- public copy_term_nat/2.
+        :- public variant/2.
+        :- public term_singletons/2.
+        :- public bb_put/2.
+        :- public bb_get/2.
+        :- public bb_update/3.
+        :- public bb_delete/2.
+        :- public bb_b_put/2.
+        :- public read_term_from_chars/3.
+        :- public write_term_to_chars/3.
+        :- meta_predicate(call_with_limit(*, 0)).
+        :- meta_predicate(call_with_offset(*, 0)).
         :- public ':'/2.
         :- public phrase/2.
         :- public phrase/3.
+        :- public phrase_from_stream/2.
+        :- public phrase_from_stream/3.
+        :- public phrase_from_file/2.
+        :- public phrase_from_file/3.
+        % public like coroutining's '$co_alias_check'/1: the goal a wakeup
+        % meta-calls resolves globally, not module-locally.
+        :- public '$lazy_text_step'/4.
+        :- meta_predicate(phrase_from_stream(2, *)).
+        :- meta_predicate(phrase_from_stream(2, *, *)).
+        :- meta_predicate(phrase_from_file(2, *)).
+        :- meta_predicate(phrase_from_file(2, *, *)).
         :- public display/1.
         :- public display/2.
         :- public recorda/2.
@@ -102,6 +177,10 @@ internal static class Prelude
         :- public '$call_arrow'/3.
         :- public '$call_softarrow'/3.
         :- public '$call_neg'/1.
+        % The portray/1 hook: user code adds clauses to it from anywhere, so
+        % it is multifile and dynamic before anyone declares it (SWI, SICStus).
+        :- multifile portray/1.
+        :- dynamic portray/1.
         :- dynamic attribute_goals/4.
         :- dynamic file_search_path/2.
         :- dynamic library_directory/1.
@@ -184,6 +263,77 @@ internal static class Prelude
         % that would hide the called goals' assert/retract).
         forall(Cond, Action) :- \+ ( call(Cond), \+ call(Action) ).
 
+        %! if(:Condition, :Then, :Else) | Control | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
+        if(C, T, E) :- ( C *-> T ; E ).
+
+        %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails — unlike (Condition -> Then), which fails.
+        ifthen(P, Q) :- ( P -> Q ; true ).
+
+        %! ifthenelse(:Condition, :Then, :Else) | Control | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails.
+        ifthenelse(P, Q, R) :- ( P -> Q ; R ).
+
+        %! call_nth(:Goal, ?N) | Control | True when Goal has an Nth solution: with N bound, commits to that solution; with N unbound, enumerates solutions numbering each.
+        call_nth(Goal, N) :-
+            (   var(Goal) -> throw(error(instantiation_error, call_nth/2))
+            ;   \+ callable(Goal) ->
+                throw(error(type_error(callable, Goal), call_nth/2))
+            ;   var(N) -> true
+            ;   integer(N) ->
+                (   N < 0 ->
+                    throw(error(domain_error(not_less_than_zero, N), call_nth/2))
+                ;   true
+                )
+            ;   throw(error(type_error(integer, N), call_nth/2))
+            ),
+            (   integer(N), N =:= 0 -> fail
+            ;   gensym('$call_nth', Key),
+                set_flag(Key, 0),
+                call(Goal),
+                get_flag(Key, C0),
+                C1 is C0 + 1,
+                set_flag(Key, C1),
+                % The counter is a FLAG (not trailed), so it keeps counting
+                % across Goal's backtracking — that is the whole point.
+                (   integer(N) -> ( C1 =:= N -> ! ; fail )
+                ;   N = C1
+                )
+            ).
+
+        %! clause(?Head, ?Body, ?Ref) | Database | clause/2 with a clause reference: fetches by Ref when bound, else enumerates Head's clauses binding Ref (de facto standard).
+        clause(Head, Body, Ref) :-
+            (   nonvar(Ref) -> '$clause_ref_fetch'(Ref, Head, Body)
+            ;   '$clause_refs_of'(Head, Refs),
+                member(Ref, Refs),
+                '$clause_ref_fetch'(Ref, Head, Body)
+            ).
+
+        %! evaluable_property(+Callable, ?Property) | Arithmetic | Properties of an arithmetic function: built_in, static, template(Callable, ReturnType).
+        evaluable_property(E, P) :-
+            (   var(E) -> throw(error(instantiation_error, evaluable_property/2))
+            ;   \+ callable(E) ->
+                throw(error(type_error(callable, E), evaluable_property/2))
+            ;   true
+            ),
+            (   var(P) -> true
+            ;   P = template(_, _) -> true
+            ;   ( P == built_in ; P == static ; P == (dynamic) ; P == foreign ) -> true
+            ;   throw(error(domain_error(evaluable_property, P), evaluable_property/2))
+            ),
+            functor(E, N, A),
+            '$is_evaluable'(N, A),
+            '$evaluable_property1'(N, A, P).
+
+        '$evaluable_property1'(_, _, built_in).
+        '$evaluable_property1'(_, _, static).
+        '$evaluable_property1'(N, A, template(T, R)) :-
+            (   A =:= 0 -> T = N, ( N == pi -> R = float ; N == e -> R = float ; R = number )
+            ;   functor(T, N, A), '$fill_number_args'(A, T), R = number
+            ).
+
+        '$fill_number_args'(0, _) :- !.
+        '$fill_number_args'(I, T) :-
+            arg(I, T, number), I1 is I - 1, '$fill_number_args'(I1, T).
+
         %! findall(?Template, :Goal, -List) | Findall & aggregation | Collects an instance of Template for every solution of Goal into a list.
         % Runs Goal in the LIVE engine via call/1 and the in-engine collect
         % primitives ('$findall_push' opens a solution frame, '$findall_record_s'
@@ -193,6 +343,7 @@ internal static class Prelude
         % variable Goal. It must NOT use an isolated sub-engine — that lacked the
         % parent's bundle-precompiled predicates and hid the goal's side effects.
         findall(Template, Goal, List) :-
+            '$check_partial_list'(List),
             ( '$findall_push', call(Goal), '$findall_record_s'(Template), fail
             ; '$findall_collect'(List) ).
 
@@ -210,6 +361,7 @@ internal static class Prelude
         % still resolves in the meta-caller's module; the quantified variables
         % are collected from INSIDE the tag as well.
         bagof(Template, Goal, Bag) :-
+            '$check_partial_list'(Bag),
             '$bagof_parts'(Goal, Inner, QVars),
             term_variables(Inner, GoalVars),
             term_variables(t(Template, QVars), BoundVars),
@@ -222,6 +374,7 @@ internal static class Prelude
                 '$bagof_groups'(Pairs, Witness, Bag)
             ).
         setof(Template, Goal, Set) :-
+            '$check_partial_list'(Set),
             bagof(Template, Goal, Bag),
             sort(Bag, Set).
         '$bagof_parts'('$mqual'(M, G), '$mqual'(M, S), Q) :- !, '$bagof_strip'(G, S, Q).
@@ -264,35 +417,144 @@ internal static class Prelude
             '$catch_end'.
         '$catch_run'(Recovery) :- call(Recovery).
 
-        %! clause(+Head, ?Body) | Database | Enumerates the clauses (Head :- Body) of a predicate.
+        %! clause(+Head, ?Body) | Database | Enumerates the clauses (Head :- Body) of a predicate; Module:Head reads from that module's viewpoint.
         % '$clause_enum' yields matching clauses lazily (a backtrackable
         % builtin): only the candidate being tried is materialised on the heap,
         % instead of building the whole O(#clauses) Head-Body pair list up front
         % for member/2 to walk. The Head-Body pair is built here so its
-        % variables are the caller's.
-        clause(H, B) :-
+        % variables are the caller's. The qualified form resolves the head
+        % from M's viewpoint: a dynamic is flat-global (the qualifier peels),
+        % M's own definition reads M's clauses only, an import reads its
+        % source's; anything else fails.
+        clause(H0, B) :-
+            nonvar(H0), H0 = ':'(_, _), !,
+            '$strip_module'(H0, M, H),
+            (   var(M) -> throw(error(instantiation_error, _))
+            ;   \+ atom(M) -> throw(error(type_error(atom, M), _))
+            ;   true
+            ),
             nonvar(H),
+            '$module_clause_enum'(M, H, H-B).
+        clause(H, B) :-
+            (   var(H) -> throw(error(instantiation_error, _))
+            ;   \+ callable(H) -> throw(error(type_error(callable, H), _))
+            ;   nonvar(B), \+ callable(B) ->
+                    throw(error(type_error(callable, B), _))
+            ;   predicate_property(H, built_in) ->
+                    functor(H, N, A),
+                    throw(error(permission_error(
+                        access, private_procedure, N/A), _))
+            ;   true
+            ),
             '$clause_enum'(H, H-B).
 
-        %! current_predicate(?PredicateIndicator) | Database | Enumerates the defined predicates as Name/Arity indicators.
+        %! current_predicate(?PredicateIndicator) | Database | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own.
         % '$current_predicate_enum' yields indicators lazily (a backtrackable
         % builtin), so the full O(n) indicator list is no longer built on the
-        % heap before member/2 walks it.
-        current_predicate(I) :-
-            '$check_predicate_indicator'(I),
-            '$current_predicate_enum'(I).
+        % heap before member/2 walks it. The qualified form M:PI answers for
+        % the predicates DEFINED in module M (imports are not definitions);
+        % an unbound M backtracks over the modules, SWI-style.
+        current_predicate(Spec) :-
+            (   nonvar(Spec), '$qualified_indicator'(Spec, M, I) ->
+                (   nonvar(M), \+ atom(M) ->
+                    throw(error(type_error(atom, M), _))
+                ;   true
+                ),
+                '$module_predicate_enum'(M, I)
+            ;   '$check_predicate_indicator'(Spec),
+                '$current_predicate_enum'(Spec)
+            ).
+
+        % The two spellings of a qualified indicator. The operator-natural
+        % M:F/A parses as (M:F)/A — ':' (200) binds tighter than '/' (400) —
+        % so the colon sits INSIDE the indicator; M:(F/A) is the explicit
+        % whole-indicator qualification. Fails for an unqualified spec.
+        '$qualified_indicator'(':'(Q0, R0), M, I) :- !,
+            '$strip_module'(':'(Q0, R0), M, I),
+            '$check_qualified_indicator'(I, ':'(Q0, R0)).
+        '$qualified_indicator'('/'(Q, A), M, '/'(N, A)) :-
+            nonvar(Q), Q = ':'(_, _),
+            '$strip_module'(Q, M, N),
+            (   atom(N) -> true
+            ;   var(N)  -> true
+            ;   throw(error(type_error(predicate_indicator, '/'(Q, A)), _))
+            ).
+
+        % Peels module qualifications to the INNERMOST pair: M1:M2:X is
+        % M2's X (the SWI reading). Shared by every M:X-aware builtin.
+        '$strip_module'(':'(M0, R), M, I) :-
+            (   nonvar(R), R = ':'(_, _) -> '$strip_module'(R, M, I)
+            ;   M = M0, I = R
+            ).
+
+        % The compile-time context for an in-module current_predicate/1 call
+        % (ModuleRewrite injects the textual module, the $mqual idea): an
+        % explicitly qualified spec keeps its own module; a plain one answers
+        % for the module's OWN definitions plus the global view.
+        '$cp_ctx'(M, Spec) :-
+            (   nonvar(Spec), '$qualified_indicator'(Spec, _, _) ->
+                current_predicate(Spec)
+            ;   '$check_predicate_indicator'(Spec),
+                '$ctx_predicate_enum'(M, Spec)
+            ).
 
         '$check_predicate_indicator'(I) :- var(I), !.
-        '$check_predicate_indicator'(_/_) :- !.
+        % §8.8.2.3: inside Name/Arity, a BOUND Name must be an atom and a
+        % BOUND Arity a non-negative integer — 0/dog, 3/3, f/f and f/(-1)
+        % are all type_error(predicate_indicator, Culprit), with the whole
+        % indicator as the culprit (GNU and SWI agree).
+        '$check_predicate_indicator'(I) :-
+            I = (N/A), !,
+            (   nonvar(N), \+ atom(N) ->
+                throw(error(type_error(predicate_indicator, I), _))
+            ;   nonvar(A), \+ integer(A) ->
+                throw(error(type_error(predicate_indicator, I), _))
+            ;   integer(A), A < 0 ->
+                throw(error(domain_error(not_less_than_zero, A), _))
+            ;   true
+            ).
         '$check_predicate_indicator'(I) :-
             throw(error(type_error(predicate_indicator, I), _)).
 
+        % Inside a qualification the culprit of a malformed indicator is the
+        % WHOLE qualified term (SWI: type_error(predicate_indicator, m:bad)).
+        '$check_qualified_indicator'(I, _) :- var(I), !.
+        '$check_qualified_indicator'(_/_, _) :- !.
+        '$check_qualified_indicator'(_, Spec) :-
+            throw(error(type_error(predicate_indicator, Spec), _)).
+
         %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound.
+        % Proper lists take the native '$list_length' fast path; everything
+        % else (partial list, improper term, bad Length) walks with the
+        % original term kept for the type_error(list, Culprit).
         length(L, N) :-
-            nonvar(L), !, '$list_length'(L, N).
+            integer(N), N < 0, !,
+            throw(error(domain_error(not_less_than_zero, N), length/2)).
         length(L, N) :-
-            integer(N), !, '$make_var_list'(N, L).
-        length(L, N) :- '$length_enum'(L, N, 0).
+            nonvar(L), '$list_length'(L, M), !,
+            (   integer(N) -> N = M
+            ;   var(N) -> N = M
+            ;   throw(error(type_error(integer, N), length/2))
+            ).
+        length(L, N) :- '$length_walk'(L, L, N, 0).
+
+        '$length_walk'(L, Orig, N, Acc) :-
+            (   var(L) ->
+                (   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
+                    % Length identical to the open tail (length(L,L),
+                    % length([a|X],X)): every enumeration candidate binds the
+                    % tail to a k-skeleton and then fails unifying that LIST
+                    % with the integer k as output — false is the limit the
+                    % enumeration never reaches. (SWI fails too; Scryer and
+                    % Trealla throw resource_error(finite_memory) instead —
+                    % accepted divergence, their test1095.)
+                ;   L == N -> fail
+                ;   var(N) -> '$length_enum'(L, N, Acc)
+                ;   throw(error(type_error(integer, N), length/2))
+                )
+            ;   L = [_|T] -> Acc1 is Acc + 1, '$length_walk'(T, Orig, N, Acc1)
+            ;   throw(error(type_error(list, Orig), length/2))
+            ).
 
         '$length_enum'([], N, N).
         '$length_enum'([_|T], N, Acc) :-
@@ -370,7 +632,15 @@ internal static class Prelude
         :- public setup_call_cleanup/3.
         setup_call_cleanup(Setup, Goal, Cleanup) :-
             once(Setup),
-            '$scc_register'(Ref),
+            % Cleanup must be callable NOW (WG17): an unbound Cleanup is an
+            % instantiation_error even if Goal would bind it later; the check
+            % runs after Setup so setup_call_cleanup(X=true, true, X) is fine.
+            (   var(Cleanup) ->
+                throw(error(instantiation_error, setup_call_cleanup/3))
+            ;   callable(Cleanup) -> true
+            ;   throw(error(type_error(callable, Cleanup), setup_call_cleanup/3))
+            ),
+            '$scc_register'(Ref, Cleanup),
             assertz('$cleanup_pending'(Ref, Cleanup)),
             '$catch_begin'(Error, '$scc_recover'(Ref, Error)),
             '$scc'(Goal, Ref, Cleanup),
@@ -416,8 +686,33 @@ internal static class Prelude
         % from a teardown path. A Cleanup exception propagates out of the drain as
         % a normal exception.
         :- public '$drain_cleanups'/0.
+        % A drained handler fired ASYNCHRONOUSLY (exception unwind, external
+        % cut, teardown). An exception the Cleanup itself throws here is
+        % DROPPED: when the trigger was an error unwind the original ball
+        % has already won (SWI/WG17 first-exception-wins — a late throw
+        % would surface as a phantom second error after the catch ran).
+        % Async fire runs the LIVE Cleanup term (handler slot) — its
+        % bindings reach the caller (scc(true, scc(...), Y=3), ! leaves
+        % Y=3). The retract stays the exactly-once guard. The catch goal is
+        % built at runtime so MetaTransform takes the runtime catch/3
+        % clause (see '$module_attr_goals' — an inlined static catch has no
+        % baked '$catchrec' address and silently fails); its ball is
+        % DROPPED: on an error unwind the original ball already won
+        % (first-exception-wins), a late throw would surface as a phantom
+        % second error after the catch ran.
+        % Live is the handler's live cell for a CUT fire (heap intact,
+        % bindings reach the caller) or the '$scc_use_copy' sentinel for an
+        % EXCEPTION/teardown fire (heap truncated below the catcher — the
+        % live cell may point at reclaimed memory; run the stable copy).
         '$drain_cleanups' :-
-            ( '$pop_pending_cleanup'(Ref) -> '$scc_fire'(Ref), '$drain_cleanups' ; true ).
+            ( '$pop_pending_cleanup'(Ref, Live)
+            -> '$scc_forget'(Ref),
+               ( retract('$cleanup_pending'(Ref, Copy))
+               -> ( Live == '$scc_use_copy' -> F = ignore(Copy) ; F = ignore(Live) ),
+                  catch(F, _, true)
+               ; true ),
+               '$drain_cleanups'
+            ; true ).
 
         %! call_cleanup(:Goal, :Cleanup) | Control | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes.
         :- public call_cleanup/2.
@@ -576,6 +871,34 @@ internal static class Prelude
             N == M, A1 == B1.
         %! \=@=(@Term1, @Term2) | Term ordering | Term1 and Term2 are NOT variants.
         A \=@= B :- \+ (A =@= B).
+
+        % ===== SSU (Head => Body) runtime support =====
+        % SsuTransform lowers each rule to '$ssu_match' + neck cut and adds a
+        % per-predicate no-match trailer. subsumes_term IS the single-
+        % sidedness: only the pattern's variables may bind; the unification
+        % then binds them for the guard/body. SWI is the reference engine.
+        :- public '$ssu_match'/2.
+        '$ssu_match'(Pattern, Goal) :-
+            subsumes_term(Pattern, Goal),
+            Pattern = Goal.
+        :- public '$ssu_no_match'/1.
+        '$ssu_no_match'(Goal) :-
+            functor(Goal, N, A),
+            throw(error(existence_error(matching_rule, Goal), N/A)).
+
+        % ===== \= over the three-state trial core =====
+        :- public (\=)/2.
+        %! \=(?Term1, ?Term2) | Unification & comparison | Succeeds if the two terms do not unify. Attributed-variable hooks run: freeze fires during the trial, dif can veto it.
+        % The native core only TRIAL-unifies (rollback, hooks never run). When
+        % the trial bound an attvar the verdict is unreliable — a hook could
+        % veto the unification (dif) or must observably fire (freeze) — so the
+        % m verdict re-decides through a real negated unification.
+        X \= Y :-
+            '$not_unifiable3'(X, Y, R),
+            (   R == t -> true
+            ;   R == m -> \+ X = Y
+            ;   fail
+            ).
 
         % ===== single-threaded mutex + message queues (SWI compat) =====
         % Shumway is single-threaded, so a mutex is a no-op and with_mutex/2 just
@@ -750,6 +1073,47 @@ internal static class Prelude
         pairs_keys_values([K-V|Ps], [K|Ks], [V|Vs]) :-
             pairs_keys_values(Ps, Ks, Vs).
 
+        %! map_list_to_pairs(:Key, +List, -KeyedPairs) | Lists | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key (SWI library(pairs) form).
+        map_list_to_pairs(_, [], []).
+        map_list_to_pairs(F, [X|Xs], [K-X|Ps]) :-
+            call(F, X, K),
+            map_list_to_pairs(F, Xs, Ps).
+
+        %! can_be(+Type, @Term) | Type checking | Scryer library(si) form: like must_be/2 but an unbound Term (or one whose subterms are yet unbound enough) is still admissible — only a term already incompatible with Type raises.
+        can_be(Type, Term) :-
+            ( var(Term) -> must_be_type_ok(Type)
+            ; must_be(Type, Term)
+            ).
+        must_be_type_ok(Type) :-
+            ( var(Type) -> throw(error(instantiation_error, can_be/2))
+            ; true
+            ).
+
+        % The library(si) family (Scryer/Trealla): sound type tests — an
+        % unbound (or not-yet-listlike) term is an instantiation_error, a
+        % wrong one a type_error; plain success otherwise. "si" reads both
+        % as Prolog "si" (if) and "sufficiently instantiated".
+        %! atom_si(@Term) | Type checking | Sound atom test: instantiation_error when unbound, type_error(atom, Term) when bound to a non-atom.
+        atom_si(X) :- ( var(X) -> throw(error(instantiation_error, atom_si/1)) ; atom(X) -> true ; throw(error(type_error(atom, X), atom_si/1)) ).
+        %! atomic_si(@Term) | Type checking | Sound atomic test (si family).
+        atomic_si(X) :- ( var(X) -> throw(error(instantiation_error, atomic_si/1)) ; atomic(X) -> true ; throw(error(type_error(atomic, X), atomic_si/1)) ).
+        %! integer_si(@Term) | Type checking | Sound integer test (si family).
+        integer_si(X) :- ( var(X) -> throw(error(instantiation_error, integer_si/1)) ; integer(X) -> true ; throw(error(type_error(integer, X), integer_si/1)) ).
+        %! character_si(@Term) | Type checking | Sound one-char-atom test (si family).
+        character_si(X) :- ( var(X) -> throw(error(instantiation_error, character_si/1)) ; atom(X), atom_length(X, 1) -> true ; throw(error(type_error(character, X), character_si/1)) ).
+        %! list_si(@Term) | Type checking | Sound proper-list test: instantiation_error while the tail is unbound, type_error(list, Term) on a non-list tail.
+        list_si(L) :- '$list_si'(L, L).
+        '$list_si'(V, _) :- var(V), !, throw(error(instantiation_error, list_si/1)).
+        '$list_si'([], _) :- !.
+        '$list_si'([_|T], W) :- !, '$list_si'(T, W).
+        '$list_si'(_, W) :- throw(error(type_error(list, W), list_si/1)).
+        %! chars_si(@Term) | Type checking | Sound list-of-characters test (si family).
+        chars_si(Cs) :- '$chars_si'(Cs, Cs).
+        '$chars_si'(V, _) :- var(V), !, throw(error(instantiation_error, chars_si/1)).
+        '$chars_si'([], _) :- !.
+        '$chars_si'([C|T], W) :- !, character_si(C), '$chars_si'(T, W).
+        '$chars_si'(_, W) :- throw(error(type_error(list, W), chars_si/1)).
+
         %! pairs_keys(+Pairs, -Keys) | Lists | The keys of a list of Key-Value pairs.
         :- public pairs_keys/2.
         pairs_keys(Pairs, Keys) :- pairs_keys_values(Pairs, Keys, _).
@@ -808,21 +1172,60 @@ internal static class Prelude
         '$atomic_to_atom'(X, A) :- atom_string(A, X).
 
         %! atomic_list_concat(+List, -Atom) | Atoms & strings | Concatenates a list of atomic terms into a single atom.
-        atomic_list_concat([], '').
-        atomic_list_concat([X|Xs], Atom) :-
+        atomic_list_concat(List, Atom) :-
+            '$alc_check_list'(List),
+            (   var(Atom) -> true
+            ;   atom(Atom) -> true
+            ;   throw(error(type_error(atom, Atom), atomic_list_concat/2))
+            ),
+            '$alc_concat'(List, Atom).
+
+        '$alc_concat'([], '').
+        '$alc_concat'([X|Xs], Atom) :-
             '$atomic_to_atom'(X, AX),
-            atomic_list_concat(Xs, Rest),
+            '$alc_concat'(Xs, Rest),
             atom_concat(AX, Rest, Atom).
+
+        %! atomic_concat(+Atomic1, +Atomic2, -Atom) | Atoms & strings | Concatenates two atomic terms into a single atom.
+        atomic_concat(A, B, C) :- atomic_list_concat([A, B], C).
 
         %! atomic_list_concat(?List, +Separator, ?Atom) | Atoms & strings | Joins a list of atomics with a separator, or splits an atom on the separator.
         atomic_list_concat(List, Sep, Atom) :-
-            var(List), nonvar(Atom), Sep \== '', !,
+            var(List), nonvar(Atom), nonvar(Sep), Sep \== '', !,
             '$alc_split'(Atom, Sep, List).
-        atomic_list_concat([], _, '').
-        atomic_list_concat([X], _, Atom) :- !, '$atomic_to_atom'(X, Atom).
-        atomic_list_concat([X, Y|Xs], Sep, Atom) :-
+        atomic_list_concat(List, Sep, Atom) :-
+            % Join direction: the list must be proper with atomic elements
+            % and the separator an atom — all checked before concatenating,
+            % so a bad argument errors rather than half-building an atom.
+            '$alc_check_list'(List),
+            (   var(Sep) -> throw(error(instantiation_error, atomic_list_concat/3))
+            ;   atomic(Sep) -> true
+            ;   throw(error(type_error(atomic, Sep), atomic_list_concat/3))
+            ),
+            (   var(Atom) -> true
+            ;   atom(Atom) -> true
+            ;   throw(error(type_error(atom, Atom), atomic_list_concat/3))
+            ),
+            '$atomic_to_atom'(Sep, SepAtom),
+            '$alc_join'(List, SepAtom, Atom).
+
+        '$alc_check_list'(L) :-
+            (   var(L) -> throw(error(instantiation_error, atomic_list_concat/3))
+            ;   L == [] -> true
+            ;   L = [X|Xs] ->
+                (   var(X) -> throw(error(instantiation_error, atomic_list_concat/3))
+                ;   atomic(X) -> true
+                ;   throw(error(type_error(atomic, X), atomic_list_concat/3))
+                ),
+                '$alc_check_list'(Xs)
+            ;   throw(error(type_error(list, L), atomic_list_concat/3))
+            ).
+
+        '$alc_join'([], _, '').
+        '$alc_join'([X], _, Atom) :- !, '$atomic_to_atom'(X, Atom).
+        '$alc_join'([X, Y|Xs], Sep, Atom) :-
             '$atomic_to_atom'(X, AX),
-            atomic_list_concat([Y|Xs], Sep, Rest),
+            '$alc_join'([Y|Xs], Sep, Rest),
             atom_concat(AX, Sep, P),
             atom_concat(P, Rest, Atom).
 
@@ -952,13 +1355,149 @@ internal static class Prelude
         append([], []).
         append([L|Ls], As) :- append(L, Ws, As), append(Ls, Ws).
 
+        %! flatten(+Nested, -Flat) | Lists | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat.
+        flatten(Nested, Flat) :- '$flatten'(Nested, [], Flat0), !, Flat = Flat0.
+        '$flatten'(V, T, [V|T]) :- var(V), !.
+        '$flatten'([], T, T) :- !.
+        '$flatten'([H|R], T, F) :- !, '$flatten'(R, T, F1), '$flatten'(H, F1, F).
+        '$flatten'(X, T, [X|T]).
+
+        %! call_with_limit(+N, :Goal) | Control | Solutions of Goal, at most the first N. Fails when N < 1.
+        % Dialect shims map their names onto this (SWI solution_sequences'
+        % and Trealla's limit/2).
+        call_with_limit(N, Goal) :-
+            ( integer(N) -> true
+            ; throw(error(type_error(integer, N), call_with_limit/2)) ),
+            N >= 1,
+            call_nth(Goal, Nth),
+            ( Nth =:= N -> ! ; true ).
+
+        %! call_with_offset(+N, :Goal) | Control | Solutions of Goal after skipping the first N.
+        % Dialect shims map their names onto this (SWI solution_sequences'
+        % and Trealla's offset/2).
+        call_with_offset(N, Goal) :-
+            ( integer(N) -> true
+            ; throw(error(type_error(integer, N), call_with_offset/2)) ),
+            call_nth(Goal, Nth),
+            Nth > N.
+
+        %! variant(@Term1, @Term2) | Term inspection & construction | True when the terms are structural variants: equal up to a consistent renaming of variables (mutual subsumption).
+        variant(A, B) :- subsumes_term(A, B), subsumes_term(B, A).
+
+        %! term_singletons(@Term, -Singletons) | Term inspection & construction | Unifies Singletons with the variables occurring exactly once in Term, in order of first appearance.
+        term_singletons(T, Singles) :-
+            '$tsing_occurrences'(T, [], RevOcc),
+            '$tsing_keep_single'(RevOcc, RevOcc, [], Singles).
+        '$tsing_occurrences'(T, Acc0, Acc) :-
+            (   var(T) -> Acc = [T|Acc0]
+            ;   '$tsing_args'(T, 1, Acc0, Acc)
+            ).
+        '$tsing_args'(T, I, Acc0, Acc) :-
+            functor(T, _, N),
+            (   I > N -> Acc = Acc0
+            ;   arg(I, T, A),
+                '$tsing_occurrences'(A, Acc0, Acc1),
+                I1 is I + 1,
+                '$tsing_args'(T, I1, Acc1, Acc)
+            ).
+        % Occurrences arrive newest-first; keeping while walking that order
+        % and prepending restores first-appearance order in one pass.
+        '$tsing_keep_single'([], _, Singles, Singles).
+        '$tsing_keep_single'([V|Vs], All, Acc, Singles) :-
+            (   '$tsing_count'(All, V, 0, 1) ->
+                '$tsing_keep_single'(Vs, All, [V|Acc], Singles)
+            ;   '$tsing_keep_single'(Vs, All, Acc, Singles)
+            ).
+        '$tsing_count'([], _, N, N).
+        '$tsing_count'([X|Xs], V, N0, N) :-
+            (   X == V -> N1 is N0 + 1 ; N1 = N0 ),
+            N1 =< 1,
+            '$tsing_count'(Xs, V, N1, N).
+
+        %! copy_term_nat(?Term, -Copy) | Term inspection & construction | copy_term/2 ignoring attributes (SWI/Trealla).
+        copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).
+
+        %! bb_put(+Key, +Value) | Global variables | Blackboard store (SICStus/Trealla): non-backtrackable global assignment.
+        % Attributed variables survive the blackboard (the SICStus/Trealla
+        % contract): a value carrying attvars is stored RESIDUALIZED — the
+        % attribute-free copy plus its copy_term/3 projection goals — and
+        % every bb_get re-copies and re-runs the goals, so each read is an
+        % independent fresh constraint set and the original variables are
+        % untouched. A plain value skips the walk entirely and is stored raw
+        % ('$bb_attr'/2 as user data would be misread — accepted edge).
+        bb_put(Key, Value) :- '$bb_wrap'(Value, W), nb_setval(Key, W).
+
+        '$bb_wrap'(Value, W) :-
+            (   term_attvars(Value, [_|_]) ->
+                copy_term(Value, Copy, Gs),
+                W = '$bb_attr'(Copy, Gs)
+            ;   W = Value
+            ).
+
+        %! bb_get(+Key, -Value) | Global variables | Reads a blackboard entry; FAILS when Key is unset (unlike nb_getval/2, which throws).
+        bb_get(Key, Value) :-
+            catch(nb_getval(Key, V0), _, fail),
+            V0 \== '$bb_absent',
+            '$bb_unwrap'(V0, Value).
+
+        '$bb_unwrap'(V0, Value) :-
+            (   nonvar(V0), V0 = '$bb_attr'(Copy, Gs) ->
+                copy_term(Copy-Gs, Value-Gs1),
+                '$bb_recall'(Gs1)
+            ;   Value = V0
+            ).
+
+        '$bb_recall'([]).
+        '$bb_recall'([G|Gs]) :- call(G), '$bb_recall'(Gs).
+
+        %! bb_update(+Key, ?Old, +New) | Global variables | Unifies Old with the current value and replaces it with New; fails (leaving the entry unchanged) when Old does not match.
+        bb_update(Key, Old, New) :- bb_get(Key, Old), bb_put(Key, New).
+
+        %! bb_delete(+Key, -Value) | Global variables | Unifies Value with the current value and removes the entry.
+        bb_delete(Key, Value) :- bb_get(Key, Value), nb_setval(Key, '$bb_absent').
+
+        %! bb_b_put(+Key, +Value) | Global variables | Backtrackable blackboard assignment: the previous value is restored on backtracking.
+        bb_b_put(Key, Value) :- '$bb_wrap'(Value, W), b_setval(Key, W).
+
+        %! consult_text(+Text) | Database | Consults Text (an atom or a chars/codes list) as Prolog source — the in-language form of the embedding API's ConsultString. A module loaded this way keeps its exports scoped (no auto-import into user).
+        :- public consult_text/1.
+        consult_text(Text) :-
+            (   var(Text) -> throw(error(instantiation_error, consult_text/1))
+            ;   atom(Text) -> A = Text
+            ;   Text = [C|_], integer(C) -> atom_codes(A, Text)
+            ;   atom_chars(A, Text)
+            ),
+            '$load_text'(A, []).
+
+        %! read_term_from_chars(+Chars, -Term, +Options) | Input / output | Reads a term from a character list, honouring read_term/2 options.
+        read_term_from_chars(Chars, Term, Options) :-
+            atom_chars(Atom, Chars),
+            read_term_from_atom(Atom, Term, Options).
+
+        %! write_term_to_chars(+Term, +Options, -Chars) | Input / output | Writes a term to a character list with write_term/2's options.
+        write_term_to_chars(Term, Options, Chars) :-
+            with_output_to(atom(Atom), write_term(Term, Options)),
+            atom_chars(Atom, Chars).
+
         %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038 — an export-qualified module's own version of a builtin-named predicate (Scryer iso_ext's copy_term/3) must win for M:Goal.
         ':'(Module, Goal) :- call(Module:Goal).
 
         %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []) — succeeds when the DCG Body derives List.
         phrase(Body, List) :- phrase(Body, List, []).
         %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime.
-        phrase(Body, S0, S) :- '$phrase'(Body, S0, S).
+        % SS7.6.2 for DCG bodies: a number anywhere in the control
+        % skeleton makes the WHOLE body non-translatable, checked BEFORE
+        % anything runs — phrase(({fail}, 1), _) raises, fail never runs.
+        phrase(Body, S0, S) :- '$dcg_body_check'(Body), '$phrase'(Body, S0, S).
+
+        '$dcg_body_check'(B) :- var(B), !.
+        '$dcg_body_check'((A, B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
+        '$dcg_body_check'((A ; B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
+        '$dcg_body_check'((A -> B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
+        '$dcg_body_check'('|'(A, B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
+        '$dcg_body_check'(N) :-
+            number(N), !, throw(error(type_error(callable, N), phrase/3)).
+        '$dcg_body_check'(_).
 
         '$phrase'(V, _, _) :- var(V), !, throw(error(instantiation_error, phrase/3)).
         '$phrase'([], S0, S) :- !, S0 = S.
@@ -975,6 +1514,52 @@ internal static class Prelude
         '$phrase'(\+ A, S0, S) :- !, \+ '$phrase'(A, S0, _), S0 = S.
         '$phrase'(call(G), S0, S) :- !, call(G, S0, S).
         '$phrase'(G, S0, S) :- call(G, S0, S).
+
+        %! phrase_from_stream(:Body, +Stream) | Grammar | Runs the DCG Body over Stream's text, read lazily in windows.
+        phrase_from_stream(Body, Stream) :-
+            phrase_from_stream(Body, Stream, chars).
+
+        %! phrase_from_stream(:Body, +Stream, +Kind) | Grammar | As phrase_from_stream/2, with Kind (chars or codes) choosing the list's elements.
+        phrase_from_stream(Body, Stream, Kind) :-
+            '$lazy_text'(Stream, Kind, 0, Ls),
+            phrase(Body, Ls).
+
+        %! phrase_from_file(:Body, +File) | Grammar | Runs the DCG Body over File's text, read lazily; the file is closed on the way out.
+        phrase_from_file(Body, File) :-
+            phrase_from_file(Body, File, []).
+
+        %! phrase_from_file(:Body, +File, +Options) | Grammar | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes).
+        phrase_from_file(Body, File, Options) :-
+            '$lazy_kind'(Options, Kind, OpenOptions),
+            setup_call_cleanup(open(File, read, Stream, OpenOptions),
+                               phrase_from_stream(Body, Stream, Kind),
+                               close(Stream)).
+
+        % The delayed goal runs AFTER the binding that woke it, so Ls already
+        % holds whatever the grammar unified it with. That is why the step
+        % UNIFIES Ls with the window rather than binding it: the grammar's
+        % [H|T] meets the packed window and peels one element out of it.
+        %
+        % The offset is carried explicitly because reading is a side effect
+        % backtracking cannot undo: a grammar that tries one clause, fails and
+        % tries the next wakes the SAME cell twice, and a plain read would hand
+        % it the next characters the second time — quietly parsing an input the
+        % file does not contain. '$lazy_window'/6 is idempotent per offset.
+        '$lazy_text'(Stream, Kind, Offset, Ls) :-
+            '$lazy_freeze'(Ls, '$lazy_text_step'(Stream, Kind, Offset, Ls)).
+
+        '$lazy_text_step'(Stream, Kind, Offset, Ls) :-
+            '$lazy_window'(Stream, Offset, 4096, Kind, Window, Length),
+            ( Length =:= 0 ->
+                Ls = []
+            ; Next is Offset + Length,
+              '$lazy_text'(Stream, Kind, Next, Ls0),
+              partial_string(Window, Ls, Ls0)
+            ).
+
+        '$lazy_kind'([], chars, []).
+        '$lazy_kind'([text_kind(K)|T], K, Rest) :- !, '$lazy_kind'(T, _, Rest).
+        '$lazy_kind'([O|T], K, [O|Rest]) :- '$lazy_kind'(T, K, Rest).
 
         %! display(+Term) | Input / output | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted.
         display(X) :- write_term(X, [ignore_ops(true)]).
@@ -1000,8 +1585,11 @@ internal static class Prelude
 
         %! findall(?Template, :Goal, -List, ?Tail) | Findall & aggregation | Like findall/3 but the result is a difference list ending in Tail.
         findall(Template, Goal, List, Tail) :-
+            '$check_partial_list'(List),
+            '$check_partial_list'(Tail),
             findall(Template, Goal, List0),
             append(List0, Tail, List).
+
 
         %! retractall(+Head) | Database | Removes every clause whose head unifies with Head.
         % retract/1 is re-satisfiable, so a failure-driven loop retracts
@@ -1012,6 +1600,16 @@ internal static class Prelude
         % on a STATIC one it raises permission_error. '$retractall_modifiable'
         % succeeds only for a dynamic predicate, so the retract loop runs just
         % then; undefined makes it fail into the `true` arm.
+        % The qualified form peels first: dynamics are flat-global, so M: on
+        % a database operation validates the module slot and drops.
+        retractall(H0) :-
+            nonvar(H0), H0 = ':'(_, _), !,
+            '$strip_module'(H0, M, H),
+            (   var(M) -> throw(error(instantiation_error, _))
+            ;   \+ atom(M) -> throw(error(type_error(atom, M), _))
+            ;   true
+            ),
+            retractall(H).
         retractall(Head) :-
             ( '$retractall_modifiable'(Head)
             -> ( retract(Head), fail ; true ),
@@ -1023,9 +1621,29 @@ internal static class Prelude
             '$listable_predicates'(All),
             '$listing_all'(All).
 
-        %! listing(+Spec) | Database | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity).
+        %! listing(+Spec) | Database | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec).
         % when no predicate matches, print a comment so
         % the user sees feedback instead of a silent `true.`
+        % The qualified form M:Spec must come first: M:Name/Arity parses as
+        % (M:Name)/Arity, which the plain Name/Arity clause would swallow.
+        % It lists what M itself defines (the current_predicate(M:PI) set).
+        listing(Spec) :-
+            nonvar(Spec), '$listing_qualified'(Spec, M, Name, Arity), !,
+            (   var(M) -> throw(error(instantiation_error, _))
+            ;   \+ atom(M) -> throw(error(type_error(atom, M), _))
+            ;   true
+            ),
+            findall(qpi(N, A),
+                    ( '$module_predicate_enum'(M, N/A),
+                      N = Name,
+                      ( var(Arity) -> true ; A = Arity ) ),
+                    PIs),
+            (   PIs == [] ->
+                write('% nothing to list for '), write(M), write(':'),
+                write(Name),
+                ( integer(Arity) -> write('/'), write(Arity) ; true ), nl
+            ;   '$listing_qpis'(PIs)
+            ).
         listing(Name/Arity) :-
             !,
             '$listable_predicates'(All),
@@ -1042,6 +1660,28 @@ internal static class Prelude
             ;
                 write('% no predicate matches '), write(Name), nl
             ).
+
+        % The two spellings of a qualified listing spec: (M:Name)/Arity — the
+        % operator parse of M:Name/Arity — and M:Name / M:(Name/Arity).
+        % Fails for an unqualified spec (the plain clauses then apply).
+        '$listing_qualified'(':'(Q, R), M, Name, Arity) :- !,
+            '$strip_module'(':'(Q, R), M, I),
+            (   var(I)  -> Name = I
+            ;   I = N/A -> Name = N, Arity = A
+            ;   atom(I) -> Name = I
+            ;   throw(error(type_error(predicate_indicator, ':'(Q, R)), _))
+            ).
+        '$listing_qualified'('/'(Q, Arity), M, Name, Arity) :-
+            nonvar(Q), Q = ':'(_, _),
+            '$strip_module'(Q, M, Name).
+
+        '$listing_qpis'([]).
+        '$listing_qpis'([qpi(N, A)|Rest]) :-
+            '$listable_predicates'(All),
+            (   member(pi(N, A, Dyn), All) -> '$listing_pred'(N, A, Dyn)
+            ;   true
+            ),
+            '$listing_qpis'(Rest).
 
         '$listing_all'([]).
         '$listing_all'([pi(Name, Arity, Dyn)|Rest]) :-

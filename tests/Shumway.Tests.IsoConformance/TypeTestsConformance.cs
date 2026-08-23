@@ -68,7 +68,13 @@ public class TypeTestsConformance
         Assert.True(Q("atomic(foo)."));
         Assert.True(Q("atomic(42)."));
         Assert.True(Q("atomic(3.14)."));
-        Assert.True(Q("atomic(\"str\")."));
+        // A double-quoted literal denotes a LIST — of codes under the ISO
+        // default, of chars under the modern one — so it is not atomic, however
+        // it happens to be stored (ADR-047). It was `true` here while the
+        // engine had a separate string type.
+        Assert.False(Q("atomic(\"str\")."));
+        // …but the empty one denotes [], which is an atom.
+        Assert.True(Q("atomic(\"\")."));
         Assert.False(Q("atomic([a, b])."));
         Assert.False(Q("atomic(foo(x))."));
         Assert.False(Q("atomic(_)."));

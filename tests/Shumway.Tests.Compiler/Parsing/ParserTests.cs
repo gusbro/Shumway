@@ -1,3 +1,4 @@
+using Shumway.Core;
 using Shumway.Compiler.Ast;
 using Shumway.Compiler.Lexer;
 using Shumway.Compiler.Parsing;
@@ -79,7 +80,9 @@ public class ParserTests
     [Fact]
     public void String_Literal()
     {
-        Assert.Equal(new StringTerm("hello"), Parse("\"hello\""));
+        // The default is chars (ADR-047 decision 4); the flag decides only what
+        // the list's elements are, and it travels with the datum from here.
+        Assert.Equal(new StringTerm("hello", TextKind.Chars), Parse("\"hello\""));
     }
 
     // ---------- Compound terms ----------

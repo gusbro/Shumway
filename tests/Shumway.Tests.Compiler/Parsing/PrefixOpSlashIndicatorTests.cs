@@ -105,8 +105,13 @@ public class PrefixOpSlashIndicatorTests
     {
         // 'not member(X, L)' — the operand starts with an alpha atom
         // (member), the / disambiguation does not engage, and the
-        // prefix form binds the conjunction.
-        var t = Parse("not member(X, L).");
+        // prefix form binds the conjunction. `not` must be DECLARED an
+        // operator first (the default table keeps it a plain atom, like
+        // ISO/GNU/SWI; Arity sources get it via arity_compat).
+        var ops = OperatorTable.Default();
+        ops.Define("not", 900, OperatorType.Fy);
+        var t = new Parser(new SourceLexer("not member(X, L)."), ops)
+            .ReadClauseTerm();
         var c = Assert.IsType<CompoundTerm>(t);
         Assert.Equal("not", c.Functor);
         Assert.Single(c.Args);

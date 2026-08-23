@@ -16,9 +16,20 @@ public sealed class OperatorTable
 {
     private readonly Dictionary<string, OperatorInfo> _byName = new();
 
-    /// <summary>Registers an operator. Replaces any prior definition of the same
-    /// (name, fixity) pair. Use <c>0</c> as the precedence to remove an
-    /// existing entry, matching the standard <c>:- op</c> behaviour.</summary>
+    /// <summary>ADR-046 — the table this layer inherits from (a module's
+    /// layer sits over the <c>user</c> table), or null for a root table.
+    /// Lookups fall through to the parent when this layer has no opinion
+    /// for the (name, fixity) pair; a local <c>op(0, T, N)</c> records a
+    /// TOMBSTONE that hides the parent's definition for this layer only.</summary>
+    public OperatorTable? Parent { get; }
+
+    public OperatorTable() { }
+    public OperatorTable(OperatorTable? parent) => Parent = parent;
+
+    /// <summary>Registers an operator in THIS layer. Replaces any prior
+    /// definition of the same (name, fixity) pair. Precedence <c>0</c>
+    /// removes: in a root table the entry disappears; in a layered table it
+    /// becomes a tombstone shadowing the parent (ADR-046).</summary>
     public void Define(string name, int precedence, OperatorType type)
     {
         ArgumentNullException.ThrowIfNull(name);
@@ -28,7 +39,7 @@ public sealed class OperatorTable
 
         if (!_byName.TryGetValue(name, out var info))
         {
-            if (precedence == 0) return;
+            if (precedence == 0 && Parent is null) return;
             info = new OperatorInfo();
             _byName[name] = info;
         }
@@ -37,19 +48,22 @@ public sealed class OperatorTable
         {
             info.PrefixPrecedence = precedence == 0 ? null : precedence;
             info.PrefixType = type;
+            info.PrefixSet = true;
         }
         else if (type.IsInfix())
         {
             info.InfixPrecedence = precedence == 0 ? null : precedence;
             info.InfixType = type;
+            info.InfixSet = true;
         }
         else // postfix
         {
             info.PostfixPrecedence = precedence == 0 ? null : precedence;
             info.PostfixType = type;
+            info.PostfixSet = true;
         }
 
-        if (info.IsEmpty) _byName.Remove(name);
+        if (Parent is null && info.IsEmpty) _byName.Remove(name);
         OnDefine?.Invoke(name, precedence, type);
     }
 
@@ -61,11 +75,18 @@ public sealed class OperatorTable
 
     public bool TryGetPrefix(string name, out int precedence, out OperatorType type)
     {
-        if (_byName.TryGetValue(name, out var info) && info.PrefixPrecedence is int p)
+        for (OperatorTable? t = this; t is not null; t = t.Parent)
         {
-            precedence = p;
-            type = info.PrefixType;
-            return true;
+            if (t._byName.TryGetValue(name, out var info) && info.PrefixSet)
+            {
+                if (info.PrefixPrecedence is int p)
+                {
+                    precedence = p;
+                    type = info.PrefixType;
+                    return true;
+                }
+                break;   // tombstone — the parent's definition stays hidden
+            }
         }
         precedence = 0;
         type = default;
@@ -74,11 +95,18 @@ public sealed class OperatorTable
 
     public bool TryGetInfix(string name, out int precedence, out OperatorType type)
     {
-        if (_byName.TryGetValue(name, out var info) && info.InfixPrecedence is int p)
+        for (OperatorTable? t = this; t is not null; t = t.Parent)
         {
-            precedence = p;
-            type = info.InfixType;
-            return true;
+            if (t._byName.TryGetValue(name, out var info) && info.InfixSet)
+            {
+                if (info.InfixPrecedence is int p)
+                {
+                    precedence = p;
+                    type = info.InfixType;
+                    return true;
+                }
+                break;
+            }
         }
         precedence = 0;
         type = default;
@@ -87,11 +115,18 @@ public sealed class OperatorTable
 
     public bool TryGetPostfix(string name, out int precedence, out OperatorType type)
     {
-        if (_byName.TryGetValue(name, out var info) && info.PostfixPrecedence is int p)
+        for (OperatorTable? t = this; t is not null; t = t.Parent)
         {
-            precedence = p;
-            type = info.PostfixType;
-            return true;
+            if (t._byName.TryGetValue(name, out var info) && info.PostfixSet)
+            {
+                if (info.PostfixPrecedence is int p)
+                {
+                    precedence = p;
+                    type = info.PostfixType;
+                    return true;
+                }
+                break;
+            }
         }
         precedence = 0;
         type = default;
@@ -105,13 +140,40 @@ public sealed class OperatorTable
     /// backtracking enumeration.</summary>
     public IEnumerable<(int Precedence, OperatorType Type, string Name)> Enumerate()
     {
+        // The EFFECTIVE view: this layer's entries shadow the parent's per
+        // (name, fixity); tombstones claim the slot and yield nothing, so
+        // a locally-removed inherited operator does not reappear.
+        var seenPrefix = new HashSet<string>();
+        var seenInfix = new HashSet<string>();
+        var seenPostfix = new HashSet<string>();
+        for (OperatorTable? t = this; t is not null; t = t.Parent)
+        {
+            foreach (var (name, info) in t._byName)
+            {
+                if (info.PrefixSet && seenPrefix.Add(name)
+                    && info.PrefixPrecedence is int pp)
+                    yield return (pp, info.PrefixType, name);
+                if (info.InfixSet && seenInfix.Add(name)
+                    && info.InfixPrecedence is int ip)
+                    yield return (ip, info.InfixType, name);
+                if (info.PostfixSet && seenPostfix.Add(name)
+                    && info.PostfixPrecedence is int ppx)
+                    yield return (ppx, info.PostfixType, name);
+            }
+        }
+    }
+
+    /// <summary>The entries of THIS layer only (no parent) — what a module
+    /// itself declared. Separate compilation persists exactly this set.</summary>
+    public IEnumerable<(int Precedence, OperatorType Type, string Name)> EnumerateLocal()
+    {
         foreach (var (name, info) in _byName)
         {
-            if (info.PrefixPrecedence is int pp)
+            if (info.PrefixSet && info.PrefixPrecedence is int pp)
                 yield return (pp, info.PrefixType, name);
-            if (info.InfixPrecedence is int ip)
+            if (info.InfixSet && info.InfixPrecedence is int ip)
                 yield return (ip, info.InfixType, name);
-            if (info.PostfixPrecedence is int ppx)
+            if (info.PostfixSet && info.PostfixPrecedence is int ppx)
                 yield return (ppx, info.PostfixType, name);
         }
     }
@@ -154,11 +216,6 @@ public sealed class OperatorTable
         // the engine, like DCG `-->`. The operator lets it parse; SsuTransform
         // rewrites the clause.
         t.Define("=>", 1200, OperatorType.Xfx);
-        // Scryer directive — marks a predicate as not counting toward inference
-        // limits. Shumway has no inference-limit machinery, so it is a pure no-op;
-        // the operator exists only so `:- non_counted_backtracking foo/N.` parses
-        // (e.g. loading Scryer's library(iso_ext)).
-        t.Define("non_counted_backtracking", 1150, OperatorType.Fx);
         t.Define("table", 1150, OperatorType.Fx);
         t.Define("mode", 1150, OperatorType.Fx);
         t.Define("ensure_linked", 1150, OperatorType.Fx);
@@ -178,9 +235,10 @@ public sealed class OperatorTable
         t.Define("*->", 1050, OperatorType.Xfy);
         t.Define(",", 1000, OperatorType.Xfy);
 
-        // Negation
+        // Negation. `not` is deliberately NOT an operator here — ISO, GNU
+        // and SWI all leave it a plain atom (`X == not` must parse); the
+        // arity_compat scope defines it (Arity writes `not Goal`).
         t.Define("\\+", 900, OperatorType.Fy);
-        t.Define("not", 900, OperatorType.Fy);
 
         // Comparison and unification
         t.Define("=", 700, OperatorType.Xfx);
@@ -210,7 +268,9 @@ public sealed class OperatorTable
         t.Define("-", 500, OperatorType.Yfx);
         t.Define("/\\", 500, OperatorType.Yfx);
         t.Define("\\/", 500, OperatorType.Yfx);
-        t.Define("xor", 500, OperatorType.Yfx);
+        // Not an ISO operator (GNU and Scryer do not declare it); SWI is the
+        // only system that does, at 400 yfx.
+        t.Define("xor", 400, OperatorType.Yfx);
 
         t.Define("*", 400, OperatorType.Yfx);
         t.Define("/", 400, OperatorType.Yfx);
@@ -230,8 +290,12 @@ public sealed class OperatorTable
         t.Define("+", 200, OperatorType.Fy);
         t.Define("\\", 200, OperatorType.Fy);
 
-        // Tag / qualifier — usually module qualification
-        t.Define(":", 200, OperatorType.Xfy);
+        // Module qualification. 600 xfy is what GNU, SWI and Scryer all use
+        // (measured, not assumed) — ISO 13211-1 does not define `:` at all, so
+        // the de-facto table is the whole authority. It puts `:` LOOSER than
+        // `/`, so `m:f/0` reads as `m:(f/0)`: the qualifier is outside the
+        // predicate indicator, as in every one of those systems.
+        t.Define(":", 600, OperatorType.Xfy);
 
         return t;
     }
@@ -240,10 +304,13 @@ public sealed class OperatorTable
     {
         public int? PrefixPrecedence;
         public OperatorType PrefixType;
+        public bool PrefixSet;      // this layer has an opinion (def or tombstone)
         public int? InfixPrecedence;
         public OperatorType InfixType;
+        public bool InfixSet;
         public int? PostfixPrecedence;
         public OperatorType PostfixType;
+        public bool PostfixSet;
 
         public bool IsEmpty =>
             PrefixPrecedence is null && InfixPrecedence is null && PostfixPrecedence is null;

@@ -69,7 +69,10 @@ public class Chunk98Tests
     {
         Assert.True(Holds(
             "findall(X, member(X, [1,2,3]), L, [end]), L == [1,2,3,end]."));
-        Assert.True(Holds("findall(X, fail, L, tail), L == tail."));
+        // The Tail argument is a partial list (§findall/4), so an atom tail
+        // is a type_error — the empty-solutions case hands Tail straight
+        // through instead.
+        Assert.True(Holds("findall(X, fail, L, T), L == T."));
     }
 
     // ---- format_to_atom ----

@@ -11,6 +11,17 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class Chunk34Tests
 {
+    // A double-quoted literal reaches C# as the LIST it is (ADR-047 decision 6):
+    // the representation is not observable at the boundary, so what arrives is
+    // the same whether or not the engine stored it packed.
+    private static Term Text(string s)
+    {
+        Term t = new AtomTerm("[]");
+        for (int i = s.Length - 1; i >= 0; i--)
+            t = new CompoundTerm(".", new Term[] { new AtomTerm(s[i].ToString()), t });
+        return t;
+    }
+
     private static Term Atom(string n) => new AtomTerm(n);
     private static Term Int(long v) => new IntTerm(v);
     private static Term Compound(string f, params Term[] args) => new CompoundTerm(f, args);
@@ -108,7 +119,7 @@ public class Chunk34Tests
         var engine = new PrologEngine();
         var sol = engine.Query("with_output_to(string(S), write(world)).");
         Assert.True(sol.Success);
-        Assert.Equal(new StringTerm("world"), sol["S"]);
+        Assert.Equal(Text("world"), sol["S"]);
     }
 
     [Fact]

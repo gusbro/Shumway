@@ -18,6 +18,11 @@ namespace Shumway.Builtins;
 /// </summary>
 public static class StringBuiltins
 {
+    // The SWI `string_*` family produces text as a SEQUENCE, and
+    // double_quotes=string is a compatibility alias for chars (ADR-047
+    // decision 5) — so what it builds is a list of chars.
+    private const TextKind StringKind = TextKind.Chars;
+
     /// <summary><c>string_length(String, Length)</c> — the integer
     /// length (in chars) of <paramref name="String"/>. <c>String</c>
     /// can be a PSTR or an atom (handy for callers that haven't yet
@@ -56,14 +61,18 @@ public static class StringBuiltins
             // and pointing the tail at B — no allocation for B's content.
             // Mixed PSTR/atom inputs fall back to the eager path because
             // atoms need to be materialised into a buffer regardless.
-            if (aCell.Tag == Tag.Pstr && bCell.Tag == Tag.Pstr)
+            // Lazy chaining needs both segments to be the same presentation —
+            // a chars segment with a codes tail is the mixed list [a,b,97,98]
+            // (ADR-047). Mixed inputs take the eager path below.
+            if (aCell.Tag == Tag.Pstr && bCell.Tag == Tag.Pstr
+                && aCell.AsPstrKind == bCell.AsPstrKind)
             {
                 int resultIdx = engine.MakePstrConcat(aIdx, bIdx);
                 return engine.UnifyRegisterWithCell(2, Cell.Ref(resultIdx));
             }
             string a = ReadStringOrAtom(engine, 0, "string_concat/3");
             string b = ReadStringOrAtom(engine, 1, "string_concat/3");
-            int pstrIdx = engine.MakePstr(a + b);
+            int pstrIdx = engine.MakePstr(a + b, StringKind);
             return engine.UnifyRegisterWithCell(2, Cell.Ref(pstrIdx));
         }
 
@@ -81,14 +90,14 @@ public static class StringBuiltins
         {
             string a = ReadStringOrAtom(engine, 0, "string_concat/3");
             if (!ab.StartsWith(a, StringComparison.Ordinal)) return false;
-            int bPstr = engine.MakePstr(ab.Substring(a.Length));
+            int bPstr = engine.MakePstr(ab.Substring(a.Length), StringKind);
             return engine.UnifyRegisterWithCell(1, Cell.Ref(bPstr));
         }
         if (bGround)
         {
             string b = ReadStringOrAtom(engine, 1, "string_concat/3");
             if (!ab.EndsWith(b, StringComparison.Ordinal)) return false;
-            int aPstr = engine.MakePstr(ab.Substring(0, ab.Length - b.Length));
+            int aPstr = engine.MakePstr(ab.Substring(0, ab.Length - b.Length), StringKind);
             return engine.UnifyRegisterWithCell(0, Cell.Ref(aPstr));
         }
 
@@ -126,8 +135,8 @@ public static class StringBuiltins
                 _splitIdx = splitIdx + 1;
                 engine.PushBuiltinChoicePoint(Resume, arity: 3);  // restore string_concat/3 args
             }
-            int aPstr = engine.MakePstr(_ab.Substring(0, splitIdx));
-            int bPstr = engine.MakePstr(_ab.Substring(splitIdx));
+            int aPstr = engine.MakePstr(_ab.Substring(0, splitIdx), StringKind);
+            int bPstr = engine.MakePstr(_ab.Substring(splitIdx), StringKind);
             if (!engine.UnifyRegisterWithCell(0, Cell.Ref(aPstr))) return false;
             if (!engine.UnifyRegisterWithCell(1, Cell.Ref(bPstr))) return false;
             if (isResume) engine.ResumeAtReturnPc(_returnPc);
@@ -152,7 +161,7 @@ public static class StringBuiltins
         if (strCell.Tag == Tag.Ref)
         {
             string s = ReadCharAtomsToString(engine, engine.GetRegister(1), "string_chars/2");
-            int pstrIdx = engine.MakePstr(s);
+            int pstrIdx = engine.MakePstr(s, StringKind);
             return engine.UnifyRegisterWithCell(0, Cell.Ref(pstrIdx));
         }
 
@@ -174,7 +183,7 @@ public static class StringBuiltins
         if (strCell.Tag == Tag.Ref)
         {
             string s = ReadCodesToString(engine, engine.GetRegister(1), "string_codes/2");
-            int pstrIdx = engine.MakePstr(s);
+            int pstrIdx = engine.MakePstr(s, StringKind);
             return engine.UnifyRegisterWithCell(0, Cell.Ref(pstrIdx));
         }
 
@@ -258,11 +267,40 @@ public static class StringBuiltins
 
     private static string ReadStringOrAtom(Activation engine, int regIdx, string builtinName)
     {
-        Cell c = Resolve(engine, engine.GetRegister(regIdx));
+        Cell c = engine.NormalizeListCell(Resolve(engine, engine.GetRegister(regIdx)));
+        // `[]` is the empty TEXT here, not the two-character atom name: a
+        // zero-length literal denotes the empty list (ADR-047), and
+        // string_concat("", X, X) has to keep holding.
         if (c.Tag == Tag.Atom)
-            return AtomTable.GetById(c.AsAtomId)?.Name ?? "";
+            return c.AsAtomId == AtomTable.EmptyListId
+                ? ""
+                : AtomTable.GetById(c.AsAtomId)?.Name ?? "";
         if (c.Tag == Tag.Pstr)
-            return engine.AsPstrString(engine.Deref(engine.GetRegister(regIdx).AsHeapIndex));
+            return engine.ReadPstrChain(c, out _);
+        if (Activation.IsListLike(c))
+        {
+            // A cons list of text is the same list a packed one denotes, so it
+            // has to read the same (ADR-047 decision 1).
+            var sb = new System.Text.StringBuilder();
+            Cell cur = c;
+            while (ListCursor.TryUncons(engine, cur, out Cell rawHead, out Cell tail))
+            {
+                Cell h = Resolve(engine, rawHead);
+                if (h.Tag == Tag.Atom
+                    && AtomTable.GetById(h.AsAtomId)?.Name is { Length: 1 } n1)
+                    sb.Append(n1);
+                else if (h.Tag == Tag.Int && h.AsInt >= 0 && h.AsInt <= char.MaxValue)
+                    sb.Append((char)h.AsInt);
+                else
+                    throw new PrologRuntimeException(
+                        "type_error", $"{builtinName}: string or atom");
+                cur = ListCursor.Resolve(engine, tail);
+            }
+            if (!ListCursor.IsNil(cur))
+                throw new PrologRuntimeException(
+                    "type_error", $"{builtinName}: string or atom");
+            return sb.ToString();
+        }
         if (c.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         throw new PrologRuntimeException("type_error", $"{builtinName}: string or atom");
@@ -287,49 +325,10 @@ public static class StringBuiltins
     }
 
     private static int BuildCharAtomList(Activation engine, string s)
-    {
-        if (s.Length == 0)
-        {
-            int nilSlot = engine.AllocateHeap(1);
-            engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
-            return nilSlot;
-        }
-        int start = engine.AllocateHeap(2 * s.Length + 1);
-        for (int i = 0; i < s.Length; i++)
-        {
-            int lisIdx = start + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            // Single-char atom cache: see AtomCharBuiltins.BuildCharAtomList.
-            int code = s[i];
-            int atomId = AtomTable.GetSingleCharAtomId(code);
-            if (atomId < 0)
-                atomId = AtomTable.Intern(s[i].ToString(), permanent: false).Id;
-            engine.SetHeap(headIdx, Cell.Atom(atomId));
-        }
-        engine.SetHeap(start + 2 * s.Length, Cell.Atom(AtomTable.EmptyListId));
-        return start;
-    }
+        => engine.MakeTextList(s, TextKind.Chars);
 
     private static int BuildCodeList(Activation engine, string s)
-    {
-        if (s.Length == 0)
-        {
-            int nilSlot = engine.AllocateHeap(1);
-            engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
-            return nilSlot;
-        }
-        int start = engine.AllocateHeap(2 * s.Length + 1);
-        for (int i = 0; i < s.Length; i++)
-        {
-            int lisIdx = start + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            engine.SetHeap(headIdx, Cell.Int(s[i]));
-        }
-        engine.SetHeap(start + 2 * s.Length, Cell.Atom(AtomTable.EmptyListId));
-        return start;
-    }
+        => engine.MakeTextList(s, TextKind.Codes);
 
     private static int BuildPstrList(Activation engine, List<string> pieces)
     {
@@ -348,7 +347,7 @@ public static class StringBuiltins
             int lisIdx = spine + 2 * i;
             int headIdx = lisIdx + 1;
             engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            int pstrIdx = engine.MakePstr(pieces[i]);
+            int pstrIdx = engine.MakePstr(pieces[i], StringKind);
             engine.SetHeap(headIdx, Cell.Ref(pstrIdx));
         }
         engine.SetHeap(spine + 2 * pieces.Count, Cell.Atom(AtomTable.EmptyListId));

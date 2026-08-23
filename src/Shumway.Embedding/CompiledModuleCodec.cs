@@ -612,17 +612,33 @@ public static class CompiledModuleCodec
 
     // ---------- Primitive table writers ----------
 
-    private static void WriteStringTable(BinaryWriter bw, IReadOnlyList<string> strings)
+    // Each entry carries its TextKind (ADR-047): "abc" read as chars and read
+    // as codes are different lists and get different pool ids, so the byte has
+    // to survive the round trip or a mis-read would show up as a chars/codes
+    // confusion very far from here.
+    private static void WriteStringTable(BinaryWriter bw, IReadOnlyList<TextLiteral> strings)
     {
         bw.Write(strings.Count);
-        foreach (string s in strings) WriteString(bw, s);
+        foreach (TextLiteral s in strings)
+        {
+            WriteString(bw, s.Text);
+            bw.Write((byte)s.Kind);
+        }
     }
 
-    private static List<string> ReadStringTable(BinaryReader br)
+    private static List<TextLiteral> ReadStringTable(BinaryReader br)
     {
         int count = br.ReadInt32();
-        var list = new List<string>(count);
-        for (int i = 0; i < count; i++) list.Add(ReadString(br));
+        var list = new List<TextLiteral>(count);
+        for (int i = 0; i < count; i++)
+        {
+            string text = ReadString(br);
+            byte kind = br.ReadByte();
+            if (kind > (byte)TextKind.Chars)
+                throw new InvalidDataException(
+                    $"CompiledModuleCodec: unknown TextKind {kind} in the string table.");
+            list.Add(new TextLiteral(text, (TextKind)kind));
+        }
         return list;
     }
 

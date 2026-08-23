@@ -68,11 +68,12 @@ public sealed class ViaConsultCompileTests
     {
         // The dependency defines an operator the root's clauses NEED to
         // parse — only a load (with the sibling dir on the search path,
-        // added implicitly) makes the root compilable.
+        // added implicitly) makes the root compilable. ADR-046: module
+        // operators are scoped, so the dependency EXPORTS the op (how real
+        // SWI/Scryer libraries hand their syntax to importers).
         using var t = new TempDir();
         t.Add("opsdep.pl",
-            ":- module(opsdep, [means/2]).\n" +
-            ":- op(700, xfx, ===>).\n" +
+            ":- module(opsdep, [means/2, op(700, xfx, ===>)]).\n" +
             "means(A ===> B, r(A, B)).\n");
         string root = t.Add("usermod.pl",
             ":- use_module(library(opsdep)).\n" +

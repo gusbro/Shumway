@@ -159,7 +159,9 @@ internal static class SwiShim
         '$pml_elem'(url(_, Label), S) :- !, write(S, Label).
         '$pml_elem'(at_same_line, _) :- !.
         '$pml_elem'(A, S) :- atom(A), !, write(S, A).
-        '$pml_elem'(A, S) :- string(A), !, write(S, A).
+        % A "string" is a text list here (ADR-047), so write/2 would print the
+        % list — the element has to go out as its characters.
+        '$pml_elem'(A, S) :- string(A), !, format(S, "~s", [A]).
         '$pml_elem'(_, _).
 
         % message_to_codes(+Kind, +Term, -Codes) — the codes of a translated message.
@@ -170,8 +172,6 @@ internal static class SwiShim
             atom_codes(A, Codes).
 
         % ----- term copying / identity -----
-        :- public copy_term_nat/2.
-        copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).
         :- public duplicate_term/2.
         duplicate_term(Term, Copy) :- copy_term(Term, Copy).
         :- public same_term/2.

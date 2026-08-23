@@ -55,27 +55,42 @@ public static class ClausePortrayer
             Term body = rule.Args[1];
             if (body is AtomTerm at && at.Name == "true")
             {
-                output.WriteLine(AstTermRenderer.Render(head) + ".");
+                output.WriteLine(Terminated(AstTermRenderer.RenderQuoted(head)));
                 return;
             }
-            output.WriteLine(AstTermRenderer.Render(head) + " :-");
-            PrintBody(output, body, indent: 4);
-            output.WriteLine(".");
+            output.WriteLine(AstTermRenderer.RenderQuoted(head) + " :-");
+            WriteBodyTerminated(output, body);
             return;
         }
         if (t is CompoundTerm dcg && dcg.Functor == "-->" && dcg.Args.Length == 2)
         {
-            output.WriteLine(AstTermRenderer.Render(dcg.Args[0]) + " -->");
-            PrintBody(output, dcg.Args[1], indent: 4);
-            output.WriteLine(".");
+            output.WriteLine(AstTermRenderer.RenderQuoted(dcg.Args[0]) + " -->");
+            WriteBodyTerminated(output, dcg.Args[1]);
             return;
         }
         if (t is CompoundTerm dir && dir.Functor == ":-" && dir.Args.Length == 1)
         {
-            output.WriteLine(":- " + AstTermRenderer.Render(dir.Args[0], 1199) + ".");
+            output.WriteLine(Terminated(
+                ":- " + AstTermRenderer.RenderQuoted(dir.Args[0], 1199)));
             return;
         }
-        output.WriteLine(AstTermRenderer.Render(t) + ".");
+        output.WriteLine(Terminated(AstTermRenderer.RenderQuoted(t)));
+    }
+
+    /// <summary>Appends the terminating period, with a separating space when
+    /// the text ends in a graphic char — `.. = ..` must print as
+    /// `.. = .. .`; a bare `.` would fuse into the atom and not re-read.</summary>
+    private static string Terminated(string s)
+        => s.Length > 0 && AstTermRenderer.IsGraphicChar(s[^1]) ? s + " ." : s + ".";
+
+    private static void WriteBodyTerminated(TextWriter output, Term body)
+    {
+        var bw = new StringWriter();
+        PrintBody(bw, body, indent: 4);
+        string text = bw.ToString();
+        output.Write(text);
+        output.WriteLine(
+            text.Length > 0 && AstTermRenderer.IsGraphicChar(text[^1]) ? " ." : ".");
     }
 
     /// <summary>Prints the body of a rule. The top-level
@@ -102,7 +117,17 @@ public static class ClausePortrayer
     {
         if (!NeedsMultiLine(goal))
         {
-            w.Write(AstTermRenderer.Render(goal, 999));
+            w.Write(AstTermRenderer.RenderQuoted(goal, 999));
+            return;
+        }
+
+        // A control construct with a ,-chain inside: the canonical functor
+        // form `;(A, B)` is exactly what a reader must NOT see — portray in
+        // the standard alternative layout, if-then-else conditions included.
+        if (goal is CompoundTerm ctrl && ctrl.Args.Length == 2
+            && (ctrl.Functor == ";" || ctrl.Functor == "->" || ctrl.Functor == "*->"))
+        {
+            WriteControl(w, ctrl, indent);
             return;
         }
 
@@ -134,9 +159,10 @@ public static class ClausePortrayer
         {
             // Regular compound foo(arg1, arg2, ...) — break args
             // each on its own line, aligned past the open paren.
-            w.Write(cc.Functor);
+            string fname = Shumway.Builtins.TermRenderer.QuotedAtomName(cc.Functor);
+            w.Write(fname);
             w.Write("(");
-            int argIndent = indent + cc.Functor.Length + 1;
+            int argIndent = indent + fname.Length + 1;
             for (int i = 0; i < cc.Args.Length; i++)
             {
                 if (i > 0) w.Write(new string(' ', argIndent));
@@ -149,7 +175,70 @@ public static class ClausePortrayer
 
         // Fallback (should not reach: NeedsMultiLine only returns
         // true for compounds containing `,`).
-        w.Write(AstTermRenderer.Render(goal, 999));
+        w.Write(AstTermRenderer.RenderQuoted(goal, 999));
+    }
+
+    /// <summary>The standard alternative layout for a multi-line control
+    /// construct — the <c>;</c>-chain flattened, one branch per
+    /// <c>;</c>-aligned block, an if-then's condition on its own line:
+    /// <code>
+    /// (   Cond ->
+    ///     Then
+    /// ;   Else
+    /// )
+    /// </code></summary>
+    private static void WriteControl(TextWriter w, CompoundTerm goal, int indent)
+    {
+        var branches = new List<Term>();
+        Term cur = goal;
+        while (cur is CompoundTerm { Functor: ";", Args.Length: 2 } semi)
+        {
+            branches.Add(semi.Args[0]);
+            cur = semi.Args[1];
+        }
+        branches.Add(cur);
+        w.Write("(   ");
+        for (int i = 0; i < branches.Count; i++)
+        {
+            if (i > 0)
+            {
+                w.Write(new string(' ', indent));
+                w.Write(";   ");
+            }
+            WriteBranch(w, branches[i], indent + 4);
+            w.WriteLine();
+        }
+        w.Write(new string(' ', indent));
+        w.Write(")");
+    }
+
+    /// <summary>One branch of the alternative layout, no trailing newline:
+    /// an if-then splits at the arrow; a conjunction breaks one goal per
+    /// line WITHOUT the extra paren wrap (the enclosing construct's
+    /// delimiters already bracket it).</summary>
+    private static void WriteBranch(TextWriter w, Term branch, int indent)
+    {
+        if (branch is CompoundTerm { Args.Length: 2 } ite
+            && (ite.Functor == "->" || ite.Functor == "*->"))
+        {
+            WriteGoal(w, ite.Args[0], indent);
+            w.WriteLine(" " + ite.Functor);
+            w.Write(new string(' ', indent));
+            WriteBranch(w, ite.Args[1], indent);
+            return;
+        }
+        if (branch is CompoundTerm { Functor: ",", Args.Length: 2 })
+        {
+            var goals = FlattenConjunction(branch);
+            for (int i = 0; i < goals.Count; i++)
+            {
+                if (i > 0) w.Write(new string(' ', indent));
+                WriteGoal(w, goals[i], indent);
+                if (i < goals.Count - 1) w.WriteLine(",");
+            }
+            return;
+        }
+        WriteGoal(w, branch, indent);
     }
 
     /// <summary>True when the goal's compact rendering would be
@@ -255,6 +344,10 @@ public static class ClausePortrayer
     }
 
     private static bool IsSyntheticName(string name)
-        => name.Length >= 2 && name[0] == '_'
-            && (name[1] == 'G' || name[1] == 'C');
+        => (name.Length >= 2 && name[0] == '_'
+            && (name[1] == 'G' || name[1] == 'C'))
+            // Transform-made vars ('$S0'/'$O1' from DcgTransform): source
+            // syntax cannot name a variable with '$', so these are always
+            // synthetic and must not leak into listing output.
+            || (name.Length >= 1 && name[0] == '$');
 }

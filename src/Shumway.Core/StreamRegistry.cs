@@ -58,11 +58,15 @@ public sealed class StreamRegistry
         UserInput = new StreamHandle(
             id: AllocateId(), reader: defaultIn ?? HostInput(),
             mode: "read", filename: null, alias: "user_input");
+        // ISO §7.10.2.4: the standard streams report eof_action(reset)
+        // (a tty read past eof may succeed again).
+        UserInput.EofAction = "reset";
         Register(UserInput);
 
         UserOutput = new StreamHandle(
             id: AllocateId(), writer: defaultOut,
-            mode: "write", filename: null, alias: "user_output");
+            // ISO §7.10.2.4: standard output has mode APPEND.
+            mode: "append", filename: null, alias: "user_output");
         Register(UserOutput);
 
         UserError = new StreamHandle(

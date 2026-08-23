@@ -255,8 +255,13 @@ public sealed partial class PrologEngine
         // it into this one. See TryMaterializeAssertHelper.
         int late = engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
         if (late >= 0) return late;
-        throw new InvalidOperationException(
-            "catch/3 recovery helper predicate has no compiled address.");
+        {
+            var (helperAtomId, helperArity) = FunctorTable.Lookup(functorId);
+            string helperName = AtomTable.GetById(helperAtomId)?.Name ?? "?";
+            throw new InvalidOperationException(
+                "catch/3 recovery helper predicate has no compiled address: "
+                + $"{helperName}/{helperArity}");
+        }
     }
 
     /// <summary>Parses and runs a query, returning the first solution if one
@@ -1551,7 +1556,7 @@ public sealed partial class PrologEngine
                 addressMap[ilFid] = marker;
             var (atomId, arity) = FunctorTable.Lookup(ilFid);
             string name = AtomTable.GetById(atomId)?.Name ?? "";
-            int dollar = name.IndexOf('$');
+            int dollar = ModuleSeparatorIndex(name);
             if (dollar <= 0) continue;
             if (!_modules.ContainsKey(name.Substring(0, dollar))) continue;
             int bareFid = FunctorTable.Intern(
@@ -1572,7 +1577,7 @@ public sealed partial class PrologEngine
                 addressMap[memberFid] = marker;
             var (atomId, arity) = FunctorTable.Lookup(memberFid);
             string name = AtomTable.GetById(atomId)?.Name ?? "";
-            int dollar = name.IndexOf('$');
+            int dollar = ModuleSeparatorIndex(name);
             if (dollar <= 0) continue;
             if (!_modules.ContainsKey(name.Substring(0, dollar))) continue;
             int bareFid = FunctorTable.Intern(
@@ -1669,6 +1674,7 @@ public sealed partial class PrologEngine
         var mutableSwitchTables = mergedSwitchTables;
         engine.SwitchTables = mutableSwitchTables;
         engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
+        engine.ResolveModuleLocalFallback = fid => ResolveDirectConsultLocal(engine, fid);
         // ADR-041 — first-arg clause selection for unindexed dynamic chains at
         // enter_dynamic (determinism must not depend on JIT hotness). Reads
         // _currentPredicatesByAddress at call time (set later in this setup).
@@ -1677,6 +1683,8 @@ public sealed partial class PrologEngine
         // ISO number_chars/number_codes fall back to the full term reader for the
         // operator/quoting cases the token parser can't cover (`'-'1` → -1).
         MetaBuiltins.WireNumberFromChars(engine);
+        MetaBuiltins.WirePortrayHook(engine, this);
+        engine.DeclaredEmptyFids = DeclaredEmptyFunctors();
 
         var interp = new BytecodeInterpreter(
             engine, queryModule.StringLiterals, queryModule.FloatLiterals,
@@ -2042,6 +2050,21 @@ public sealed partial class PrologEngine
         HashSet<int>? recordAdded = null)
         => AddBareLocalAliasesCore(map.ContainsKey, (k, v) => map[k] = v, entries, recordAdded);
 
+    /// <summary>The index of the module/name separator '$' in a mangled
+    /// functor name, or -1. Normally the FIRST '$'; for a module whose own
+    /// name starts with '$' ("$prelude") the first '$' is the module's, and
+    /// only helper-shaped locals ('$'-leading bare name — the '$$' seam) are
+    /// recognised: an inline-catch '$catchrec_N' recovery term carries the
+    /// bare name and must resolve, while other '$'-module locals stay
+    /// unaliased.</summary>
+    private static int ModuleSeparatorIndex(string mangledName)
+    {
+        int dollar = mangledName.IndexOf('$');
+        if (dollar == 0)
+            dollar = mangledName.IndexOf("$$", 1, StringComparison.Ordinal);
+        return dollar;
+    }
+
     private void AddBareLocalAliasesCore(
         Func<int, bool> containsKey, Action<int, int> add,
         IReadOnlyDictionary<int, int> entries, HashSet<int>? recordAdded)
@@ -2050,7 +2073,7 @@ public sealed partial class PrologEngine
         {
             var (atomId, arity) = FunctorTable.Lookup(mangledFunctorId);
             string mangledName = AtomTable.GetById(atomId)?.Name ?? "";
-            int dollar = mangledName.IndexOf('$');
+            int dollar = ModuleSeparatorIndex(mangledName);
             if (dollar <= 0) continue;
             if (!_modules.ContainsKey(mangledName.Substring(0, dollar))) continue;
             int bareFunctorId = FunctorTable.Intern(

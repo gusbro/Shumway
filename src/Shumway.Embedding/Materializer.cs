@@ -108,7 +108,7 @@ public static class Materializer
                 return Cell.Ref(engine.MakeFloat(f.Value));
 
             case StringTerm s:
-                return Cell.Ref(engine.MakePstr(s.Content));
+                return Cell.Ref(engine.MakePstr(s.Content, s.Kind));
 
             case VarTerm v:
                 if (v.Name == "_" || !varMap.TryGetValue(v.Name, out int existingIdx))

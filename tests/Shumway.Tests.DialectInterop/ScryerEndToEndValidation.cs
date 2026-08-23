@@ -52,7 +52,10 @@ public sealed class ScryerEndToEndValidation
         // Round-2: served by the Scryer shim's '$...' native emulations /
         // marker overrides (format → pack shim; time → native time/1+sleep/1):
         ("arithmetic",  "lcm(4, 6, L), L == 12, msb(8, M), M == 3."),
-        ("charsio",     "char_type(a, alpha), char_type('A', lower(LS)), atom_chars(a, LS)."),
+        ("charsio",     "char_type(a, alpha), char_type('A', lower(LS)), atom_chars(a, LS), "
+                        + "atom_chars('f(x,y).', RC), read_from_chars(RC, T), T == f(x, y), "
+                        + "write_term_to_chars(f('A b'), [quoted(true)], WC), "
+                        + "atom_chars(WA, WC), WA == 'f(\\'A b\\')'."),
         ("format",      "format(\"~w-~w~n\", [a, b])."),
         ("files",       "atom_chars('C:/Scryer/lib/lists.pl', FC), file_exists(FC)."),
         ("os",          "atom_chars('PATH', PC), getenv(PC, V), length(V, N), N > 0."),

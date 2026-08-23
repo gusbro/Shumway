@@ -23,14 +23,14 @@ public static class AtomListBuiltins
         Cell listCell = Resolve(engine, engine.GetRegister(0));
         Cell nCell = Resolve(engine, engine.GetRegister(1));
 
-        if (listCell.Tag != Tag.Ref)
+        if (listCell.Tag is not (Tag.Ref or Tag.AttVar))
         {
             int count = 0;
-            Cell cursor = listCell;
-            while (cursor.Tag == Tag.Lis)
+            Cell cursor = engine.NormalizeListCell(listCell);
+            while (ListCursor.TryUncons(engine, cursor, out _, out Cell lenTail))
             {
                 count++;
-                cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+                cursor = ListCursor.Resolve(engine, lenTail);
             }
             if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
                 return false;   // partial / improper list
@@ -47,7 +47,7 @@ public static class AtomListBuiltins
 
         // ISO precedence: both var → instantiation_error; N at the wrong
         // type → type_error(integer, _).
-        if (listCell.Tag == Tag.Ref && nCell.Tag == Tag.Ref)
+        if (listCell.Tag is Tag.Ref or Tag.AttVar && nCell.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
         throw new PrologRuntimeException("type_error", "integer");
     }
@@ -89,13 +89,13 @@ public static class AtomListBuiltins
         // the tail), reserve the result cells in one allocation, then walk
         // again filling — no intermediate buffer.
         int count = 0;
-        Cell cursor = Resolve(engine, engine.GetRegister(0));
-        while (cursor.Tag == Tag.Lis)
+        Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(0));
+        while (ListCursor.TryUncons(engine, cursor, out _, out Cell countTail))
         {
             count++;
-            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+            cursor = ListCursor.Resolve(engine, countTail);
         }
-        if (cursor.Tag == Tag.Ref)
+        if (cursor.Tag is Tag.Ref or Tag.AttVar)
             return AppendSplit(engine, engine.BuiltinReturnPc);
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
             return false;   // improper L1
@@ -110,14 +110,14 @@ public static class AtomListBuiltins
         // head cell, start + 2i + 1; the cell after the head — the next
         // pair's LIS slot, or the final extra slot — is the tail.)
         int start = engine.AllocateHeap(2 * count + 1);
-        cursor = Resolve(engine, engine.GetRegister(0));
+        cursor = ListCursor.Resolve(engine, engine.GetRegister(0));
         for (int i = 0; i < count; i++)
         {
-            int srcHeadIdx = cursor.AsHeapIndex;
+            ListCursor.TryUncons(engine, cursor, out Cell head, out Cell tail);
             int lisIdx = start + 2 * i;
             engine.SetHeap(lisIdx, Cell.Lis(lisIdx + 1));
-            engine.SetHeap(lisIdx + 1, engine.GetHeap(srcHeadIdx));
-            cursor = Resolve(engine, engine.GetHeap(srcHeadIdx + 1));
+            engine.SetHeap(lisIdx + 1, head);
+            cursor = ListCursor.Resolve(engine, tail);
         }
         engine.SetHeap(start + 2 * count, l2);
 
@@ -132,14 +132,13 @@ public static class AtomListBuiltins
     {
         // L3 must be ground enough to walk — collect its elements.
         var elems = new List<Cell>();
-        Cell cursor = Resolve(engine, engine.GetRegister(2));
-        while (cursor.Tag == Tag.Lis)
+        Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(2));
+        while (ListCursor.TryUncons(engine, cursor, out Cell el, out Cell elTail))
         {
-            int headIdx = cursor.AsHeapIndex;
-            elems.Add(engine.GetHeap(headIdx));
-            cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
+            elems.Add(el);
+            cursor = ListCursor.Resolve(engine, elTail);
         }
-        if (cursor.Tag == Tag.Ref)
+        if (cursor.Tag is Tag.Ref or Tag.AttVar)
             // L3 is a partial list while L1 is open too — nothing closed to
             // drive the split off. Do NOT raise instantiation_error: the PURE
             // append/3 enumerates solutions by unification, and the classic
@@ -163,11 +162,11 @@ public static class AtomListBuiltins
         // without a choice point — the cursor would leave a dead CP after the
         // match while the remaining splits can only fail.
         int m = 0;
-        Cell c2 = Resolve(engine, engine.GetRegister(1));
-        while (c2.Tag == Tag.Lis)
+        Cell c2 = ListCursor.Resolve(engine, engine.GetRegister(1));
+        while (ListCursor.TryUncons(engine, c2, out _, out Cell c2Tail))
         {
             m++;
-            c2 = Resolve(engine, engine.GetHeap(c2.AsHeapIndex + 1));
+            c2 = ListCursor.Resolve(engine, c2Tail);
         }
         if (c2.Tag == Tag.Atom && c2.AsAtomId == AtomTable.EmptyListId)
         {
@@ -337,11 +336,18 @@ public static class AtomListBuiltins
         if (atomCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+            // With BOTH arguments bound the list is still type-checked
+            // (§8.16.5.3): atom_codes(abc, [a,b,c]) is
+            // type_error(integer, a), not a silent failure.
+            // Only a PROPER list is validated-and-compared: a partial
+            // one (atom_codes(abc, [0'a|T])) must still unify.
+            if (ListCursor.IsProperListCell(engine, codesCell))
+                return ReadCodesString(engine, codesCell) == name;
             int listIdx = BuildIntCodesList(engine, name);
             return engine.UnifyRegisterWithHeapAt(1, listIdx);
         }
 
-        if (atomCell.Tag == Tag.Ref)
+        if (atomCell.Tag is Tag.Ref or Tag.AttVar)
         {
             string name = ReadCodesString(engine, codesCell);
             int atomId = AtomTable.Intern(name, permanent: false).Id;
@@ -352,63 +358,53 @@ public static class AtomListBuiltins
         // number/string to its text and yields its codes.
         if (SwiLenient.TryCoerce(engine, atomCell, out string coerced))
             return engine.UnifyRegisterWithHeapAt(1, BuildIntCodesList(engine, coerced));
-        throw new PrologRuntimeException("type_error", "atom");
+        throw new PrologRuntimeException("type_error", "atom", engine, atomCell);
     }
 
     private static int BuildIntCodesList(Activation engine, string s)
-    {
-        if (s.Length == 0)
-        {
-            int nilSlot = engine.AllocateHeap(1);
-            engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
-            return nilSlot;
-        }
-
-        int start = engine.AllocateHeap(2 * s.Length + 1);
-        for (int i = 0; i < s.Length; i++)
-        {
-            int lisIdx = start + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            engine.SetHeap(headIdx, Cell.Int(s[i]));
-        }
-        engine.SetHeap(start + 2 * s.Length, Cell.Atom(AtomTable.EmptyListId));
-        return start;
-    }
+        => engine.MakeTextList(s, TextKind.Codes);
 
     private static string ReadCodesString(Activation engine, Cell codesCell)
     {
         var sb = new StringBuilder();
-        Cell cursor = Resolve(engine, codesCell);
-        if (cursor.Tag == Tag.Ref)
+        Cell listStart = Resolve(engine, codesCell);
+        Cell cursor = listStart;
+        if (cursor.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
+        // A bound non-list is type_error(list, L) before any element.
+        if (cursor.Tag is not (Tag.Lis or Tag.Pstr)
+            && !(cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId))
+            throw new PrologRuntimeException("type_error", "list", engine, listStart);
         while (true)
         {
-            // A PSTR is a code list; consume its text and continue at its
-            // tail.
-            if (cursor.Tag == Tag.Pstr)
+            // A packed run of CODES is consumed in bulk; a chars run falls
+            // through to the element loop and raises the ISO element error
+            // from its own head's tag (ADR-047).
+            if (cursor.Tag == Tag.Pstr && cursor.AsPstrKind == TextKind.Codes
+                && cursor.AsPstrLength > 0)
             {
                 sb.Append(engine.ReadPstrChain(cursor, out cursor));
                 continue;
             }
-            if (cursor.Tag != Tag.Lis) break;
-            Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
-            if (head.Tag == Tag.Ref)
+            if (!ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell rTail)) break;
+            Cell head = Resolve(engine, rawHead);
+            if (head.Tag is Tag.Ref or Tag.AttVar)
                 throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Int)
-                throw new PrologRuntimeException("type_error", "character_code");
+                throw new PrologRuntimeException(
+                    "type_error", "integer", engine, head);
             // BMP-only, same contract as char_code/2: silently casting would
             // BUILD A DIFFERENT CHARACTER (0x10400 → 0x400).
             if (head.AsInt < 0 || head.AsInt > char.MaxValue)
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
             sb.Append((char)head.AsInt);
-            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
+            cursor = ListCursor.Resolve(engine, rTail);
         }
-        if (cursor.Tag == Tag.Ref)
+        if (cursor.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            throw new PrologRuntimeException("type_error", "list");
+            throw new PrologRuntimeException("type_error", "list", engine, listStart);
         return sb.ToString();
     }
 
@@ -450,14 +446,20 @@ public static class AtomListBuiltins
         }
 
         Cell cCell = Resolve(engine, engine.GetRegister(2));
+        // §8.16.2.3: a BOUND non-atom in A or B is type_error(atom, X)
+        // with that argument as culprit, before the C-driven split.
+        foreach (Cell abc in stackalloc Cell[] { aCell, bCell })
+            if (abc.Tag is not (Tag.Ref or Tag.AttVar) && abc.Tag != Tag.Atom
+                && !SwiLenient.IsBoundAtomic(abc))
+                throw new PrologRuntimeException("type_error", "atom", engine, abc);
         if (cCell.Tag != Tag.Atom)
         {
             // ISO §8.16.2: if C is var, neither direction can drive
             // synthesis unless BOTH A and B are atoms. If C is var and
             // either A or B is var, raise instantiation_error. If C
             // is bound to a non-atom, raise type_error(atom, C).
-            if (cCell.Tag == Tag.Ref
-                && (aCell.Tag == Tag.Ref || bCell.Tag == Tag.Ref))
+            if (cCell.Tag is Tag.Ref or Tag.AttVar
+                && (aCell.Tag is Tag.Ref or Tag.AttVar || bCell.Tag is Tag.Ref or Tag.AttVar))
             {
                 Shumway.Core.Diagnostics.ChoicePointTrace.DumpAtSite(
                     engine, "atom_concat/3 instantiation_error");
@@ -465,7 +467,13 @@ public static class AtomListBuiltins
             }
             Shumway.Core.Diagnostics.ChoicePointTrace.DumpAtSite(
                 engine, "atom_concat/3 type_error(atom)");
-            throw new PrologRuntimeException("type_error", "atom");
+            // The culprit is the first argument that is bound but not an
+            // atom — A, then B, then C.
+            Cell culprit =
+                aCell.Tag is not (Tag.Ref or Tag.AttVar) && aCell.Tag != Tag.Atom ? aCell
+                : bCell.Tag is not (Tag.Ref or Tag.AttVar) && bCell.Tag != Tag.Atom ? bCell
+                : cCell;
+            throw new PrologRuntimeException("type_error", "atom", engine, culprit);
         }
 
         string cName = AtomTable.GetById(cCell.AsAtomId)?.Name ?? "";
@@ -475,7 +483,7 @@ public static class AtomListBuiltins
         // this the cursor walked every split unifying against the bound
         // argument and left a dead CP after the match — phantom
         // nondeterminism in callers that never cut (Logtalk mime_types/os).
-        if (aCell.Tag != Tag.Ref)
+        if (aCell.Tag is not (Tag.Ref or Tag.AttVar))
         {
             if (aCell.Tag != Tag.Atom) return false;
             string aName = AtomTable.GetById(aCell.AsAtomId)?.Name ?? "";
@@ -483,7 +491,7 @@ public static class AtomListBuiltins
             int bId = AtomTable.Intern(cName.Substring(aName.Length), permanent: false).Id;
             return engine.UnifyRegisterWithCell(1, Cell.Atom(bId));
         }
-        if (bCell.Tag != Tag.Ref)
+        if (bCell.Tag is not (Tag.Ref or Tag.AttVar))
         {
             if (bCell.Tag != Tag.Atom) return false;
             string bName = AtomTable.GetById(bCell.AsAtomId)?.Name ?? "";
@@ -491,6 +499,21 @@ public static class AtomListBuiltins
             int aId = AtomTable.Intern(
                 cName.Substring(0, cName.Length - bName.Length), permanent: false).Id;
             return engine.UnifyRegisterWithCell(0, Cell.Atom(aId));
+        }
+
+        // Same mode analysis one step further: A and B ALIASED (the same
+        // unbound variable, `atom_concat(X, X, aaaa)`) pins the split just as
+        // firmly as a bound argument does — only the even split can match, and
+        // only when the two halves are equal. One candidate, checked directly,
+        // no choice point.
+        if (aCell.Tag is Tag.Ref or Tag.AttVar && bCell.Tag is Tag.Ref or Tag.AttVar
+            && aCell.AsHeapIndex == bCell.AsHeapIndex)
+        {
+            if ((cName.Length & 1) != 0) return false;
+            int half = cName.Length / 2;
+            if (string.CompareOrdinal(cName, 0, cName, half, half) != 0) return false;
+            int halfId = AtomTable.Intern(cName[..half], permanent: false).Id;
+            return engine.UnifyRegisterWithCell(0, Cell.Atom(halfId));
         }
 
         int returnPc = engine.BuiltinReturnPc;
@@ -544,7 +567,7 @@ public static class AtomListBuiltins
 
     private static Cell Resolve(Activation engine, Cell c)
     {
-        if (c.Tag != Tag.Ref) return c;
+        if (c.Tag is not (Tag.Ref or Tag.AttVar)) return c;
         int addr = engine.Deref(c.AsHeapIndex);
         return engine.GetHeap(addr);
     }

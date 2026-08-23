@@ -171,7 +171,7 @@ public class TypeAndIOBuiltinsTests
         engine.Out = sw;
 
         Assert.True(engine.Query("nl.").Success);
-        Assert.Equal(Environment.NewLine, sw.ToString());
+        Assert.Equal("\n", sw.ToString());
     }
 
     [Fact]
@@ -182,7 +182,7 @@ public class TypeAndIOBuiltinsTests
         engine.Out = sw;
 
         Assert.True(engine.Query("writeln(hello).").Success);
-        Assert.Equal("hello" + Environment.NewLine, sw.ToString());
+        Assert.Equal("hello\n", sw.ToString());
     }
 
     [Fact]
@@ -207,6 +207,7 @@ public class TypeAndIOBuiltinsTests
 
         engine.ConsultString("show_inc(X) :- N is X + 1, write(N), nl.");
         Assert.True(engine.Query("show_inc(41).").Success);
-        Assert.Equal("42" + Environment.NewLine, sw.ToString());
+        // nl/0 writes LF on every platform (ADR-045), not the host CRLF.
+        Assert.Equal("42\n", sw.ToString());
     }
 }

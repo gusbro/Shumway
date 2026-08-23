@@ -25,14 +25,13 @@ public class Chunk144Tests
     [Fact]
     public void TypeError_Evaluable_BindsValueSlot()
     {
-        // `X is foo` — foo is the offending non-evaluable atom.
-        // ArithmeticEvaluator.EvaluateAtomConstant now passes the cell
-        // through the value-carrying ctor; the catcher binds V to it.
+        // `X is foo` — an unknown evaluable reports the procedure
+        // INDICATOR foo/0 in the value slot (ISO §9), not the bare atom;
+        // the catcher binds V to the `/`-compound.
         var e = new PrologEngine();
         var sol = e.Query(
-            "catch(_X is foo, error(type_error(evaluable, V), _), true).");
+            "catch(_X is foo, error(type_error(evaluable, V), _), true), V == foo/0.");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("foo"), sol["V"]);
     }
 
     [Fact]
@@ -54,16 +53,15 @@ public class Chunk144Tests
     public void TypeError_NoValueAtThrowSite_StillGetsAnonVar()
     {
         // The PrologRuntimeException(string, string) constructor — the
-        // old shape used by sites that don't have a Cell to capture —
-        // still produces an anonymous-var value slot. Backwards
-        // compatible.
+        // shape used by throw sites with no Cell to capture — still
+        // produces an anonymous-var value slot. (rational/1 on a
+        // non-rational is one such site; succ/2 now DOES report its
+        // culprit, so it no longer exercises this path.)
         var e = new PrologEngine();
-        var sol = e.Query(
-            "catch(succ(foo, _), error(type_error(integer, V), _), true).");
-        Assert.True(sol.Success);
-        // V should be unbound (a fresh _G var) — pin by unifying with
-        // a fresh marker; that succeeds because V is var.
         Assert.True(e.Query(
-            "catch(succ(foo, _), error(type_error(integer, V), _), V = anything).").Success);
+            "catch(_ is numerator(1.5), error(type_error(_, V), _), var(V)).").Success);
+        // …while a site that DOES capture reports the offending value.
+        Assert.True(e.Query(
+            "catch(succ(foo, _), error(type_error(integer, V), _), V == foo).").Success);
     }
 }

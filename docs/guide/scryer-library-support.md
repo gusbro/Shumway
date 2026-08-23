@@ -186,6 +186,35 @@ cannot be served:
 | **bootstrap internals** | `builtins`, `loader`, `ops_and_meta_predicates` | Scryer-internal modules; load as inert data |
 | `pio` | `phrase_from_file` needs their stream layer | unverified; plain `phrase/2,3` is native here |
 
+## Scryer's own ISO-conformity suite
+
+Scryer ships an ISO-conformity test file
+(`tests-pl/iso-conformity-tests.pl`, 266 tests). Consulted directly on
+Shumway with the tree's libraries (`-L scryer:...`) and `double_quotes =
+chars`, **172 of 266 pass**; with the error-vocabulary difference factored
+out, **264 of 266**. The three deltas, none an ISO deviation on Shumway's
+side:
+
+- **93 tests assert Scryer's lexer-error vocabulary** — the culprit atoms
+  its reader puts inside `syntax_error(...)` (`incomplete_reduction`,
+  `invalid_single_quoted_character`, …). ISO makes that atom
+  implementation-defined; Shumway's is a positional message. Every one of
+  those strings is still *rejected* correctly — accepting the erroneous
+  input would fail the test either way.
+- **Float exponents** (1 test): Shumway prints `1.0e+100`, Scryer
+  `1.0e100`. Both are valid ISO float tokens (the exponent sign is
+  optional, §6.4.5) reading back to the same float; Shumway's spelling
+  matches SWI-on-Windows and GNU, and Logtalk's cbor parses the printed
+  form expecting the sign.
+- **Operator scoping** (1 test): the suite imports `library(dcgs)`, whose
+  export list declares `op(1105, xfy, '|')` — with that operator declared,
+  accepting `(a|b)` is what ISO Cor.2 requires, and Shumway does. The test
+  still expects a syntax error because Scryer's operator declarations are
+  *module-scoped* (their extension; ISO `op/3` is global, which Shumway
+  follows). With no bar operator declared, Shumway rejects `(a|b)` exactly
+  as strict ISO demands — that case is inside the Neumerkel syntax suite's
+  365/365.
+
 ## Regenerate the validation
 
 ```

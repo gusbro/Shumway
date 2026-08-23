@@ -55,12 +55,12 @@ public static class MultiSolutionHelpers
     /// ground.</summary>
     public static bool ListLength(Activation engine)
     {
-        Cell cur = Resolve(engine, engine.GetRegister(0));
+        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
         int count = 0;
-        while (cur.Tag == Tag.Lis)
+        while (ListCursor.TryUncons(engine, cur, out _, out Cell tail))
         {
             count++;
-            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            cur = ListCursor.Resolve(engine, tail);
         }
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
             return false;
@@ -186,7 +186,7 @@ public static class MultiSolutionHelpers
         string name;
         if (atomCell.Tag == Tag.Atom) name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         else if (!SwiLenient.TryCoerce(engine, atomCell, out name))
-            throw new PrologRuntimeException("type_error", "atom");
+            throw new PrologRuntimeException("type_error", "atom", engine, atomCell);
         int len = name.Length;
 
         // Mode analysis: pre-filter the candidate set by every bound argument
@@ -199,6 +199,15 @@ public static class MultiSolutionHelpers
         Cell lCell = Resolve(engine, engine.GetRegister(2));
         Cell aCell = Resolve(engine, engine.GetRegister(3));
         Cell sCell = Resolve(engine, engine.GetRegister(4));
+        // §8.16.5.3: each bound position argument must be an integer
+        // (type_error) and non-negative (domain_error); a value merely
+        // larger than the atom just has no solution.
+        CheckIndexArg(engine, bCell);
+        CheckIndexArg(engine, lCell);
+        CheckIndexArg(engine, aCell);
+        if (sCell.Tag is not (Tag.Ref or Tag.AttVar) && sCell.Tag != Tag.Atom
+            && !SwiLenient.TryCoerce(engine, sCell, out _))
+            throw new PrologRuntimeException("type_error", "atom", engine, sCell);
         int bFix = BoundIndex(bCell, len), lFix = BoundIndex(lCell, len), aFix = BoundIndex(aCell, len);
         if (bFix == -2 || lFix == -2 || aFix == -2) return false;
 
@@ -284,6 +293,19 @@ public static class MultiSolutionHelpers
     /// variable, −2 when no decomposition can satisfy it (non-integer or out
     /// of 0..len — the caller fails, matching the unify-per-candidate
     /// behaviour it replaces).</summary>
+    /// <summary>sub_atom/5's Before/Length/After arguments: a bound
+    /// non-integer is type_error(integer, C); a negative integer is
+    /// domain_error(not_less_than_zero, C).</summary>
+    private static void CheckIndexArg(Activation engine, Cell c)
+    {
+        if (c.Tag is Tag.Ref or Tag.AttVar) return;
+        if (c.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer", engine, c);
+        if (c.AsInt < 0)
+            throw new PrologRuntimeException(
+                "domain_error", "not_less_than_zero", engine, c);
+    }
+
     private static int BoundIndex(Cell c, int len)
     {
         if (c.Tag == Tag.Ref) return -1;

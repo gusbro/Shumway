@@ -199,7 +199,6 @@ public enum Opcode : byte
     // PSTR
     GetPstr = 0x50,
     PutPstr = 0x51,
-    UnifyPstrHead = 0x52,
 
     // ADR-018 — arithmetic instruction set. `X is Expr` and the six
     // comparisons compile to a postfix (RPN) sequence over a per-engine
@@ -213,11 +212,11 @@ public enum Opcode : byte
     //   AEvalUn   <op:4>               — pop a, push op(a).
     //   AEvalIs   <kind:4> <target:4>  — pop result, unify with X/Y[target].
     //   AEvalCmp  <rel:4>              — pop b, pop a, compare; fail = backtrack.
-    AEvalPush = 0x53,   // 9 bytes
-    AEvalBin = 0x54,    // 5 bytes
-    AEvalUn = 0x55,     // 5 bytes
-    AEvalIs = 0x56,     // 9 bytes
-    AEvalCmp = 0x57,    // 5 bytes
+    AEvalPush = 0x52,   // 9 bytes
+    AEvalBin = 0x53,    // 5 bytes
+    AEvalUn = 0x54,     // 5 bytes
+    AEvalIs = 0x55,     // 9 bytes
+    AEvalCmp = 0x56,    // 5 bytes
 
     //   Fused flat-arithmetic ops (ADR-018). Collapse the common single-operator
     //   `T is A op B` and `A cmp B` over simple leaf operands into one dispatch
@@ -229,8 +228,8 @@ public enum Opcode : byte
     //           — T is A op B; tKind ∈ {3 unify-reg,4 unify-Y,5 set-reg,6 set-Y}.
     //   AIntCmp <rel:4> <aKind:4><aVal:4> <bKind:4><bVal:4>
     //           — A cmp B; fail = backtrack.
-    AIntBin = 0x58,     // 17 bytes (compact encoding)
-    AIntCmp = 0x59,     // 13 bytes (compact encoding)
+    AIntBin = 0x57,     // 17 bytes (compact encoding)
+    AIntCmp = 0x58,     // 13 bytes (compact encoding)
 
     // ADR-025 — unconditional intra-predicate branch: Pc = <target>. Emitted by
     // the inline if-then-else / disjunction lowering (jump over the else branch
@@ -238,7 +237,7 @@ public enum Opcode : byte
     // linker's dispatch-site shift makes it program-absolute like a
     // try_me_else target.
     //   Jump <target:int32>
-    Jump = 0x5A,        // 5 bytes
+    Jump = 0x59,        // 5 bytes
 
     // ADR-025 — Y[slot] := RawInt(B): capture the CURRENT choice-point top as
     // the inline-ITE commit barrier. Distinct from get_level, which captures
@@ -246,7 +245,7 @@ public enum Opcode : byte
     // over-cut a preceding generator's choice points; the helper form never
     // saw this because the helper CALL re-established B0 at its own entry).
     //   GetLevelB <slot:int32>
-    GetLevelB = 0x5B,   // 5 bytes
+    GetLevelB = 0x5A,   // 5 bytes
 
     // ADR-027 — second-level (sub-argument) indexing. Dispatch on a sub-term
     // reached by a bounded path from an argument register, instead of on the
@@ -259,15 +258,15 @@ public enum Opcode : byte
     //     1 = tail) or a struct (idx = arg position). Deref the final cell; an
     //     atom/integer keys the table, anything else (incl. a missed hop) takes
     //     the default. sub1 = -1 is the depth-1 sentinel. 17 bytes.
-    SwitchOnAtomSub = 0x5C,
-    SwitchOnIntegerSub = 0x5D,
+    SwitchOnAtomSub = 0x5B,
+    SwitchOnIntegerSub = 0x5C,
 
     // ADR-028 — structure-keyed sub-argument indexing. Same bounded 2-hop walk
     // as the atom/integer subs, but the terminal is keyed by FUNCTOR id (the
     // switch_on_structure table format): a Str terminal (a list keys as './2')
     // indexes the table, anything else / a missed hop takes the default.
     //   switch_on_structure_sub <argIdx:4> <sub0:4> <sub1:4> <tableId:4>  (17 bytes)
-    SwitchOnStructureSub = 0x5E,
+    SwitchOnStructureSub = 0x5D,
 
     // ADR-029 — clause-epilogue peephole fusion. Each fused opcode keeps the
     // SAME total byte width as the two straight-line opcodes it replaces (the
@@ -281,11 +280,11 @@ public enum Opcode : byte
     //   cut_deallocate_proceed <slot:4> (7 = cut 5 + deallocate_proceed 2) — the
     //       frame-allocated deterministic-clause epilogue `Head :- Body, !.`.
     //   cut_proceed <slot:4>           (6 = cut 5 + proceed 1) — frameless variant.
-    DeallocateExecute = 0x5F,
-    CutDeallocateProceed = 0x60,
-    CutProceed = 0x61,
+    DeallocateExecute = 0x5E,
+    CutDeallocateProceed = 0x5F,
+    CutProceed = 0x60,
 
-    Meta = 0x62,
+    Meta = 0x61,
 
     // ADR-035 — the debuggable last call. Emitted under compile_mode=debug in
     // place of `deallocate; execute <target>`, followed by the return stub
@@ -299,7 +298,7 @@ public enum Opcode : byte
     //   LCO off → Cp = the stub, jump with the frame retained  (= call)
     // Keeping the frame is what gives every predicate a real exit port and a
     // real stack frame to show variables from; see Activation.LastCallOptimisation.
-    DebugLastCall = 0x63,
+    DebugLastCall = 0x62,
 
     // ADR-035 — an ARMED breakpoint. Never emitted by the compiler: the debugger
     // patches this single byte over the opcode of the instruction it wants to stop
@@ -314,7 +313,7 @@ public enum Opcode : byte
     // instruction. The operands are untouched — Break replaces only the opcode
     // byte, so the original instruction's operands are still right where it left
     // them.
-    Break = 0x64,
+    Break = 0x63,
 
     // ADR-035 — a step's landing at a goal that compiles INLINE. A `!`, an
     // `is/2`, an `=/2` or a comparison emits no call, so it raises no port —
@@ -323,7 +322,7 @@ public enum Opcode : byte
     // the guard fails. Emitted under compile_mode=debug only, one byte in
     // front of each inline body goal; dispatch is a null check when no session
     // is attached, and release code never contains it at all.
-    DebugPort = 0x65,
+    DebugPort = 0x64,
 
     // ADR-037 — soft cut. Commits the inline ( Cond *-> Then ; Else ) once Cond
     // succeeds by NEUTRALISING only the ELSE choice point (captured into Y[slot]
@@ -332,25 +331,25 @@ public enum Opcode : byte
     // above the ELSE CP, survive — its non-determinism is preserved. Mirrors GNU
     // Prolog's soft_cut(y(0)). 5 bytes: op + slot(4). See Activation.SoftCut.
     //   soft_cut <slot:int32>
-    SoftCut = 0x66,
+    SoftCut = 0x65,
 
     // Extension escape — reserved, never dispatched.
-    ReservedExtension = 0x67,
+    ReservedExtension = 0x66,
 
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
     // block stays hole-free.
-    UnifyEq = 0x68,
-    IsOp = 0x69,
-    LessThan = 0x6A,
-    GreaterThan = 0x6B,
-    LessEq = 0x6C,
-    GreaterEq = 0x6D,
-    ArithEq = 0x6E,
-    ArithNotEq = 0x6F,
-    StructEq = 0x70,
-    StructNotEq = 0x71,
+    UnifyEq = 0x67,
+    IsOp = 0x68,
+    LessThan = 0x69,
+    GreaterThan = 0x6A,
+    LessEq = 0x6B,
+    GreaterEq = 0x6C,
+    ArithEq = 0x6D,
+    ArithNotEq = 0x6E,
+    StructEq = 0x6F,
+    StructNotEq = 0x70,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>

@@ -195,7 +195,8 @@ public sealed partial class IlPredicateCompiler
         /// a neck_cut at the callee entry commits to the call's
         /// barrier rather than the IL caller's.</para>
         /// </summary>
-        public static int Dispatch(Activation engine, int callArity, int cutBarrier)
+        public static int Dispatch(
+            Activation engine, int callArity, int cutBarrier, bool convertBody)
         {
             Cell goal = DerefCell(engine, engine.GetRegister(0));
 
@@ -204,6 +205,15 @@ public sealed partial class IlPredicateCompiler
             // updating X0; the module steers the user-address resolution below so
             // a bare goal functor resolves against that module's locals first.
             int resolutionModule = PrepareMqualGoal(engine, ref goal);
+
+            // SS7.6.2 — convert the body at the call/N boundary (and only
+            // there; '$call'/2 dispatches an already-converted body). See
+            // MetaBodyConvert; the bytecode DispatchCall is the twin.
+            if (convertBody && goal.Tag == Tag.Str)
+            {
+                bool wrapped = false;
+                goal = MetaBodyConvert.WrapVariableSubgoals(engine, goal, ref wrapped);
+            }
 
             // Save call/N's extra args before SetRegister reshuffles them.
             // Per-engine scratch: consumed into registers below,
@@ -246,6 +256,13 @@ public sealed partial class IlPredicateCompiler
             for (int i = 0; i < extraCount; i++)
                 engine.SetRegister(goalArity + i, extra[i]);
 
+            // §7.8.3 — a control construct's arguments must convert
+            // BEFORE any of it runs. Same spot as the bytecode twin:
+            // ahead of the route cache, so the cached path is covered.
+            if (totalArity == 2 && AtomTable.GetById(atomId)?.Name
+                    is "," or ";" or "->" or "*->")
+                MetaBodyConvert.CheckControlGoalFromRegisters(engine, atomId);
+
             // shared meta-call route cache (see MetaRoute.cs).
             // Same cache the bytecode interpreter's DispatchCall fills; each
             // dispatcher executes a cached kind exactly as its own slow path.
@@ -275,10 +292,11 @@ public sealed partial class IlPredicateCompiler
                     case MetaRouteKind.CallRecurse:
                         return Dispatch(engine,
                             Shumway.Builtins.BuiltinsRegistry.GetById(route.Arg).Arity,
-                            engine.B);
+                            engine.B, convertBody: true);
                     case MetaRouteKind.DollarCall:
                         return Dispatch(engine, 1,
-                            (int)DerefCell(engine, engine.GetRegister(1)).AsInt);
+                            (int)DerefCell(engine, engine.GetRegister(1)).AsInt,
+                            convertBody: false);
                     case MetaRouteKind.Builtin:
                         return InvokeBuiltinGoal(engine, route.Arg);
                     case MetaRouteKind.BarrierHelperJump:
@@ -388,14 +406,14 @@ public sealed partial class IlPredicateCompiler
                     // (a fresh call boundary).
                     if (routeCacheable)
                         cache[routeKey] = new MetaRoute(MetaRouteKind.CallRecurse, builtinId);
-                    return Dispatch(engine, builtin.Arity, engine.B);
+                    return Dispatch(engine, builtin.Arity, engine.B, convertBody: true);
                 }
                 if (builtin.IsDollarCall)
                 {
                     if (routeCacheable)
                         cache[routeKey] = new MetaRoute(MetaRouteKind.DollarCall, builtinId);
                     int innerBarrier = (int)DerefCell(engine, engine.GetRegister(1)).AsInt;
-                    return Dispatch(engine, 1, innerBarrier);
+                    return Dispatch(engine, 1, innerBarrier, convertBody: false);
                 }
                 if (routeCacheable)
                     cache[routeKey] = new MetaRoute(MetaRouteKind.Builtin, builtinId);
@@ -416,6 +434,12 @@ public sealed partial class IlPredicateCompiler
                 int late = engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
                 if (late < 0)
                 {
+                    // The consult-direct fallback: a directly consulted
+                    // module's local. Returned UNCACHED — an assertz later in
+                    // the query may create the bare dynamic, which must win.
+                    int consultLocal =
+                        engine.ResolveModuleLocalFallback?.Invoke(functorId) ?? -1;
+                    if (consultLocal >= 0) return consultLocal;
                     // honour the `unknown` flag (throws on error).
                     if (UnknownProcedure.Fails(engine, functorId))
                         return SyncFail;
@@ -458,11 +482,19 @@ public sealed partial class IlPredicateCompiler
                 int fidx = goal.AsHeapIndex;
                 int fid = engine.GetHeap(fidx).AsFunctorId;
                 // Both $mqual(Module, Goal) and the ISO Module:Goal qualifier share
-                // the (Module, Goal) layout. `M:G` with a non-atom module is not a
-                // valid qualification — leave it for the checks below.
+                // the (Module, Goal) layout. A `M:G` with a bad module slot is
+                // the ISO error HERE — falling through used to dispatch ':'/2 as
+                // a predicate, whose prelude clause is call(M:G): an infinite
+                // loop, not an error.
                 if (fid == MqualFid) { }
-                else if (fid == ColonFid
-                         && DerefCell(engine, engine.GetHeap(fidx + 1)).Tag == Tag.Atom) { }
+                else if (fid == ColonFid)
+                {
+                    Cell qc = DerefCell(engine, engine.GetHeap(fidx + 1));
+                    if (qc.Tag == Tag.Ref || qc.Tag == Tag.AttVar)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (qc.Tag != Tag.Atom)
+                        throw new PrologRuntimeException("type_error", "atom", engine, qc);
+                }
                 else break;
                 Cell mCell = DerefCell(engine, engine.GetHeap(fidx + 1));
                 if (mCell.Tag == Tag.Atom) module = mCell.AsAtomId;

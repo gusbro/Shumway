@@ -318,6 +318,7 @@ public sealed partial class Activation
             int h = AllocateHeap(2);
             _heap[h] = Cell.Str(h + 1);
             _heap[h + 1] = Cell.Functor(functorId);
+            QueueAttrWakeups(finalAddr, h);
             BindAttVarToValue(finalAddr, h, _heap[h]);
             _writeMode = true;
             _unifyPointer = h + 2;
@@ -796,6 +797,7 @@ public sealed partial class Activation
             // while any attvar is live), so the extra cell is immaterial.
             int h = AllocateHeap(1);
             _heap[h] = Cell.Lis(h + 1);
+            QueueAttrWakeups(finalAddr, h);
             BindAttVarToValue(finalAddr, h, _heap[h]);
             _writeMode = true;
             _unifyPointer = h + 1;
@@ -820,31 +822,54 @@ public sealed partial class Activation
         }
         if (finalCell.Tag == Tag.Pstr && finalCell.AsPstrLength > 0)
         {
-            // A partial string IS the code list it represents: lazily uncons
-            // the first [Code|Tail] pair for the following unify-run
-            // (mirrors UnifyPstrLis — heads are UTF-16 code units). Without
-            // this, a callee head-matching [H|T] failed on a PSTR argument
-            // even though inline =/2 unified it fine.
-            int pair = AllocateHeap(2);
-            _heap[pair] = Cell.Int(GetPstrCodeUnit(finalCell, 0));
-            if (finalCell.AsPstrLength == 1)
-            {
-                _heap[pair + 1] = Cell.Ref(ComputePstrTailIndex(finalCell));
-            }
-            else
-            {
-                int absoluteStart = finalCell.AsPstrOffset + 1;
-                _heap[pair + 1] = Cell.Pstr(
-                    finalCell.AsPstrLength - 1,
-                    finalCell.AsPstrBufferIndex
-                        + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
-                    absoluteStart % Cell.PstrCodeUnitsPerBuffer);
-            }
             _writeMode = false;
-            _unifyPointer = pair;
+            _unifyPointer = UnconsPstrToPair(finalCell);
             return true;
         }
         return false;
+    }
+
+    /// <summary>Lazily unconses a non-empty PSTR into a heap <c>[Head|Tail]</c>
+    /// pair and returns the pair's index. A partial string IS the list it
+    /// represents, so both list cursors — <see cref="GetListSlow"/> (a callee
+    /// head matching <c>[H|T]</c>) and <see cref="UnifyList"/> (an inline list
+    /// pattern, which compiles to a <c>unify_list</c> run) — need it. They had
+    /// drifted apart: only the first one handled PSTR, so `X = "abc"` unified
+    /// against a bound `Y = [97,98,99]` but not against the literal
+    /// <c>[97,98,99]</c> written inline.</summary>
+    /// <summary>A <see cref="Tag.Lis"/> cell denoting the same list as
+    /// <paramref name="c"/>, materialising the two-cell pair for a packed list.
+    /// Term inspection (<c>functor/3</c>, <c>arg/3</c>, <c>=..</c>) reaches for
+    /// this so it can treat every list alike: those predicates read a
+    /// compound's parts out of consecutive heap slots, and a packed list's head
+    /// and tail are computed, not stored. Costs two cells and copies no
+    /// content — the pair's tail is the original slice. Anything that is not a
+    /// non-empty packed list comes back unchanged.</summary>
+    public Cell MaterializeListCell(Cell c)
+    {
+        if (c.Tag != Tag.Pstr) return c;
+        Cell n = NormalizeEmptyPstr(c);
+        return n.Tag == Tag.Pstr ? Cell.Lis(UnconsPstrToPair(n)) : n;
+    }
+
+    private int UnconsPstrToPair(Cell pstr)
+    {
+        int pair = AllocateHeap(2);
+        _heap[pair] = PstrHeadCell(pstr.AsPstrKind, GetPstrCodeUnit(pstr, 0));
+        if (pstr.AsPstrLength == 1)
+        {
+            _heap[pair + 1] = Cell.Ref(ComputePstrTailIndex(pstr));
+        }
+        else
+        {
+            int absoluteStart = pstr.AsPstrOffset + 1;
+            _heap[pair + 1] = Cell.Pstr(
+                pstr.AsPstrLength - 1,
+                pstr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
+                absoluteStart % Cell.PstrCodeUnitsPerBuffer,
+                pstr.AsPstrKind);
+        }
+        return pair;
     }
 
     /// <summary>ADR-019 <c>unify_structure</c>: build (write) or match (read) a
@@ -892,6 +917,7 @@ public sealed partial class Activation
             int h = AllocateHeap(2);
             _heap[h] = Cell.Str(h + 1);
             _heap[h + 1] = Cell.Functor(functorId);
+            QueueAttrWakeups(addr, h);
             BindAttVarToValue(addr, h, _heap[h]);
             _writeMode = true;
             _unifyPointer = h + 2;
@@ -948,6 +974,7 @@ public sealed partial class Activation
         {
             int h = AllocateHeap(1);
             _heap[h] = Cell.Lis(h + 1);
+            QueueAttrWakeups(addr, h);
             BindAttVarToValue(addr, h, _heap[h]);
             _writeMode = true;
             _unifyPointer = h + 1;
@@ -964,6 +991,11 @@ public sealed partial class Activation
         if (cell.Tag == Tag.Lis)
         {
             _unifyPointer = cell.AsHeapIndex;    // stays read mode
+            return true;
+        }
+        if (cell.Tag == Tag.Pstr && cell.AsPstrLength > 0)
+        {
+            _unifyPointer = UnconsPstrToPair(cell);   // stays read mode
             return true;
         }
         return false;

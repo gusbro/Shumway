@@ -24,10 +24,13 @@ public class Chunk58Tests
     // ============================================================================
 
     [Fact]
-    public void DoubleQuotes_DefaultsToString()
+    public void DoubleQuotes_DefaultsToChars()
     {
+        // ADR-047 decision 4. Packing made the default free to choose: a
+        // literal costs n/3 cells in every mode, so it follows the ecosystem
+        // rather than the cheapest representation.
         var engine = new PrologEngine();
-        Assert.Equal(DoubleQuotesMode.String, engine.Flags.DoubleQuotes);
+        Assert.Equal(DoubleQuotesMode.Chars, engine.Flags.DoubleQuotes);
     }
 
     [Fact]

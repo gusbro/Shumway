@@ -25,6 +25,17 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class Chunk70Tests
 {
+    // A double-quoted literal reaches C# as the LIST it is (ADR-047 decision 6):
+    // the representation is not observable at the boundary, so what arrives is
+    // the same whether or not the engine stored it packed.
+    private static Term Text(string s)
+    {
+        Term t = new AtomTerm("[]");
+        for (int i = s.Length - 1; i >= 0; i--)
+            t = new CompoundTerm(".", new Term[] { new AtomTerm(s[i].ToString()), t });
+        return t;
+    }
+
     [Fact]
     public void TwoPstrs_ConcatProducesCorrectString()
     {
@@ -33,7 +44,7 @@ public class Chunk70Tests
         var engine = new PrologEngine();
         var sol = engine.Query("string_concat(\"hello \", \"world\", R).");
         Assert.True(sol.Success);
-        Assert.Equal(new StringTerm("hello world"), sol["R"]);
+        Assert.Equal(Text("hello world"), sol["R"]);
     }
 
     [Fact]
@@ -59,10 +70,10 @@ public class Chunk70Tests
         var sol = engine.Query(
             "string_concat(\"ab\", \"cd\", R), R = [H1, H2, H3, H4].");
         Assert.True(sol.Success);
-        Assert.Equal(new IntTerm('a'), sol["H1"]);
-        Assert.Equal(new IntTerm('b'), sol["H2"]);
-        Assert.Equal(new IntTerm('c'), sol["H3"]);
-        Assert.Equal(new IntTerm('d'), sol["H4"]);
+        Assert.Equal(new AtomTerm("a"), sol["H1"]);
+        Assert.Equal(new AtomTerm("b"), sol["H2"]);
+        Assert.Equal(new AtomTerm("c"), sol["H3"]);
+        Assert.Equal(new AtomTerm("d"), sol["H4"]);
     }
 
     [Fact]
@@ -83,7 +94,7 @@ public class Chunk70Tests
         var engine = new PrologEngine();
         var sol = engine.Query("string_concat(\"\", \"only\", R).");
         Assert.True(sol.Success);
-        Assert.Equal(new StringTerm("only"), sol["R"]);
+        Assert.Equal(Text("only"), sol["R"]);
     }
 
     [Fact]
@@ -92,7 +103,7 @@ public class Chunk70Tests
         var engine = new PrologEngine();
         var sol = engine.Query("string_concat(\"only\", \"\", R).");
         Assert.True(sol.Success);
-        Assert.Equal(new StringTerm("only"), sol["R"]);
+        Assert.Equal(Text("only"), sol["R"]);
     }
 
     [Fact]
@@ -107,7 +118,7 @@ public class Chunk70Tests
             "string_concat(\"foo\", \"bar\", X), " +
             "string_concat(X, \"baz\", Y).");
         Assert.True(sol.Success);
-        Assert.Equal(new StringTerm("foobarbaz"), sol["Y"]);
+        Assert.Equal(Text("foobarbaz"), sol["Y"]);
     }
 
     [Fact]
@@ -133,7 +144,7 @@ public class Chunk70Tests
         // hello is an atom (single-quoted), world is a PSTR string.
         var sol = engine.Query("string_concat(hello, \" world\", R).");
         Assert.True(sol.Success);
-        Assert.Equal(new StringTerm("hello world"), sol["R"]);
+        Assert.Equal(Text("hello world"), sol["R"]);
     }
 
     [Fact]
@@ -151,7 +162,7 @@ public class Chunk70Tests
         var sol = engine.Query(
             "build([\"alpha\", \"beta\", \"gamma\", \"delta\", \"epsilon\"], R).");
         Assert.True(sol.Success);
-        Assert.Equal(new StringTerm("alphabetagammadeltaepsilon"), sol["R"]);
+        Assert.Equal(Text("alphabetagammadeltaepsilon"), sol["R"]);
     }
 
     [Fact]
@@ -179,8 +190,8 @@ public class Chunk70Tests
             "string_concat(\"ab\", \"cd\", R), R = [H1, H2, H3, H4], " +
             "string_chars(R, [C1, C2, C3, C4]).");
         Assert.True(sol.Success);
-        Assert.Equal(new IntTerm('a'), sol["H1"]);
-        Assert.Equal(new IntTerm('d'), sol["H4"]);
+        Assert.Equal(new AtomTerm("a"), sol["H1"]);
+        Assert.Equal(new AtomTerm("d"), sol["H4"]);
         Assert.Equal(new AtomTerm("a"), sol["C1"]);
         Assert.Equal(new AtomTerm("d"), sol["C4"]);
     }

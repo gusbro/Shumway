@@ -17,10 +17,11 @@ internal static class SwiLenient
     public static bool CallerIsSwi(Activation engine)
         => engine.Host is IDialectAwareHost h && h.CallerModuleHasDialect(engine, "swi");
 
-    /// <summary>A bound, non-variable atomic term (atom / number / string).</summary>
+    /// <summary>A bound, non-variable term this can render as text: an atom, a
+    /// number, or a packed text list.</summary>
     public static bool IsBoundAtomic(Cell c) =>
         c.Tag is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Float or Tag.Rational
-            or Tag.String or Tag.Pstr;
+            or Tag.Pstr;
 
     /// <summary>Renders a bound atomic cell to its text (an atom's name, a
     /// number's canonical text, a string's content). False for a shape we cannot
@@ -36,7 +37,7 @@ internal static class SwiLenient
                 text = Number.FormatPrologFloat(
                     Cell.DecodeFloat(c, engine.GetHeap(c.FloatPairedIndex)));
                 return true;
-            case Tag.String or Tag.Pstr: text = engine.AsString(c); return true;
+            case Tag.Pstr: text = engine.ReadPstrChain(c, out _); return true;
             default: text = ""; return false;
         }
     }

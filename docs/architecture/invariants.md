@@ -42,6 +42,21 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
 - CP and environment control words are tagged `RawInt` so the conservative GC
   scan can never mistake them for heap references. (ADR-016.)
 
+## Packed text (PSTR)
+
+- **A PSTR *is* a list**, stored packed. No predicate may branch on `Tag.Pstr`
+  to produce a different answer than it would for the equivalent cons list —
+  branching for speed is expected, branching for semantics is a bug. (ADR-047.)
+- **A PSTR is a value, never mutated in place**; every content change produces a
+  new header. GC relocation and the trail both depend on this.
+- **The presentation (chars or codes) travels in the header**, not in a flag
+  read at decomposition time: `double_quotes` decides only what a literal
+  denotes when it is read.
+- **Packing happens at explicit producers only** — there is no runtime
+  recognizer that scans a list to discover it is text.
+- **The representation is not observable at the .NET boundary**: a packed list
+  and the equivalent cons list reach a C# method as the same thing.
+
 ## Atom management
 
 - **Atoms have global integer ids; atom comparison is int comparison.**

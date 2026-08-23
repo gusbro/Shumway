@@ -226,7 +226,6 @@ public static class OpcodeTable
         // PSTR
         Set(Opcode.GetPstr, 9, "get_pstr", OperandKind.LiteralId, OperandKind.Reg);
         Set(Opcode.PutPstr, 9, "put_pstr", OperandKind.LiteralId, OperandKind.Reg);
-        Set(Opcode.UnifyPstrHead, 5, "unify_pstr_head", OperandKind.Reg);
 
         // ADR-018 — arithmetic instruction set (4-byte operands).
         Set(Opcode.AEvalPush, 9, "a_eval_push", OperandKind.Count, OperandKind.IntValue);

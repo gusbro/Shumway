@@ -33,17 +33,13 @@ public static partial class MetaBuiltins
         var seen = new HashSet<string>();
         CollectNamedVarsFromTerm(parsed, names, seen);
 
-        Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
-        if (!engine.UnifyRegisterWithCell(1, parsedCell)) return false;
-
-        // The Materializer's internal varMap is private; re-walk the term to
-        // find each variable's heap address by re-materialising with a
-        // shared map ourselves. Simpler: read each var's binding back via
-        // re-parsing — but parsed already has the names. Re-materialise the
-        // bindings list using fresh vars that match by name into parsed.
-        // We do this by building '=(Name, Var)' terms whose Var slots
-        // share names with the parsed term — Materializer will then
-        // resolve them through its varMap and produce the same heap cells.
+        // Bindings vars must BE the term's vars (SWI contract — and what
+        // singleton computation and read_term_from_chars build on). Build
+        // '=(Name, Var)' pairs whose Var slots share names with the parsed
+        // term, then materialise term and pairs TOGETHER so the
+        // Materializer's varMap resolves each name to one shared heap cell.
+        // (Materialising the term separately first handed register 1 a copy
+        // DETACHED from the bindings — the trap this comment guards.)
         var pairs = new List<Term>(names.Count);
         foreach (string name in names)
         {
@@ -53,9 +49,6 @@ public static partial class MetaBuiltins
                 new VarTerm(name),
             }));
         }
-        // To force shared identity between vars in pairs and vars in parsed,
-        // construct a top-level wrapper term containing both, materialise
-        // together, then extract the bindings half.
         Term wrapper = new CompoundTerm("$pair", new Term[]
         {
             parsed,
@@ -64,8 +57,8 @@ public static partial class MetaBuiltins
         Cell wrapCell = Materializer.MaterializeAsCell(engine, wrapper);
         // wrapCell is Cell.Ref to STR for $pair/2. Args at strBase+2 and +3.
         int wrapBase = wrapCell.AsHeapIndex;
-        int bindingsAddr = wrapBase + 3;
-        return engine.UnifyRegisterWithHeapAt(2, bindingsAddr);
+        if (!engine.UnifyRegisterWithHeapAt(1, wrapBase + 2)) return false;
+        return engine.UnifyRegisterWithHeapAt(2, wrapBase + 3);
     }
 
     private static void CollectNamedVarsFromTerm(Term t, List<string> order, HashSet<string> seen)
@@ -106,18 +99,39 @@ public static partial class MetaBuiltins
         Cell valueCell = ResolveLocal(engine, engine.GetRegister(1));
         if (flagCell.Tag == Tag.Ref || valueCell.Tag == Tag.Ref)
             throw new ShumwayPrologException(IsoError.InstantiationError());
+        Term flagTerm = MaterializeRegister(engine, 0);
+        Term valueTerm = MaterializeRegister(engine, 1);
+        // §8.17.1.3: the flag-value domain error's culprit is the PAIR
+        // Flag+Value, not the value alone.
+        Term FlagValuePair() =>
+            new CompoundTerm("+", new[] { flagTerm, valueTerm });
         if (flagCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(
-                IsoError.TypeError("atom", new VarTerm("_")));
+            throw new ShumwayPrologException(IsoError.TypeError("atom", flagTerm));
 
         string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
+
+        // A flag that exists but is not user-settable raises
+        // permission_error(modify, flag, F) (§8.17.1.3 c) — checked
+        // BEFORE the value's type, since the flag itself is the fault.
+        switch (flagName)
+        {
+            case "bounded":
+            case "max_integer":
+            case "min_integer":
+            case "integer_rounding_function":
+            case "max_arity":
+            case "dialect":
+            case "argv":
+                throw new ShumwayPrologException(IsoError.PermissionError(
+                    "modify", "flag", new AtomTerm(flagName)));
+        }
 
         // Checked before the atom rule below, which every other flag follows.
         if (flagName == "answer_max_depth")
         {
             if (valueCell.Tag != Tag.Int)
                 throw new ShumwayPrologException(
-                    IsoError.TypeError("integer", new VarTerm("_")));
+                    IsoError.TypeError("integer", valueTerm));
             if (valueCell.AsInt < 0)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("not_less_than_zero", new IntTerm(valueCell.AsInt)));
@@ -127,7 +141,7 @@ public static partial class MetaBuiltins
 
         if (valueCell.Tag != Tag.Atom)
             throw new ShumwayPrologException(
-                IsoError.TypeError("atom", new VarTerm("_")));
+                IsoError.TypeError("atom", valueTerm));
 
         string valueName = AtomTable.GetById(valueCell.AsAtomId)?.Name ?? "";
 
@@ -140,7 +154,7 @@ public static partial class MetaBuiltins
                 "atom"   => Shumway.Compiler.Parsing.DoubleQuotesMode.Atom,
                 "string" => Shumway.Compiler.Parsing.DoubleQuotesMode.String,
                 _ => throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName))),
+                    IsoError.DomainError("flag_value", FlagValuePair())),
             };
             return true;
         }
@@ -153,7 +167,7 @@ public static partial class MetaBuiltins
             catch (System.ArgumentException)
             {
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             }
             return true;
         }
@@ -161,7 +175,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "error" && valueName != "fail" && valueName != "warning")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.Unknown = valueName;
             // take effect mid-query: dispatch reads the
             // live engine's OnUnknown, not the host flags.
@@ -173,6 +187,14 @@ public static partial class MetaBuiltins
             };
             return true;
         }
+        if (flagName == "discontiguous_check")
+        {
+            if (valueName != "error" && valueName != "warning")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", FlagValuePair()));
+            host.Flags.DiscontiguousCheck = valueName;
+            return true;
+        }
         if (flagName == "arity_compat")
         {
             // Arity/Prolog32 compatibility mode. The parse-time
@@ -181,15 +203,28 @@ public static partial class MetaBuiltins
             // handles a mid-file flip.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.ArityCompat = valueName == "true";
+            if (valueName == "true")
+            {
+                // Arity call semantics: undefined predicates FAIL. An
+                // explicit set_prolog_flag(unknown, _) afterwards overrides.
+                host.Flags.Unknown = "fail";
+                engine.OnUnknown = Shumway.Core.UnknownAction.Fail;
+                // Arity's double-quoted literals are CODE lists. The engine
+                // default went to chars (ADR-047 decision 4), so the dialect
+                // has to say so — and its DCGs pack just the same, since both
+                // presentations are packed.
+                host.Flags.DoubleQuotes =
+                    Shumway.Compiler.Parsing.DoubleQuotesMode.Codes;
+            }
             return true;
         }
         if (flagName == "occurs_check")
         {
             if (valueName != "false" && valueName != "true" && valueName != "error")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.OccursCheck = valueName;
             return true;
         }
@@ -197,7 +232,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.ImplicitDynamic = valueName == "true";
             return true;
         }
@@ -208,7 +243,7 @@ public static partial class MetaBuiltins
             // within one query.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.PreferRationals = engine.PreferRationals = valueName == "true";
             return true;
         }
@@ -216,7 +251,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "debug" && valueName != "release")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.EmitDebugInfo = host.Flags.DebugCodegen = valueName == "debug";
             return true;
         }
@@ -228,7 +263,7 @@ public static partial class MetaBuiltins
             // the Immediate window mid-session).
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.DebugLco = valueName == "on";
             engine.LastCallOptimisation = host.Flags.DebugLco;
             return true;
@@ -239,7 +274,7 @@ public static partial class MetaBuiltins
             // (the table) is applied.
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.CharConversionEnabled = valueName == "on";
             return true;
         }
@@ -249,26 +284,9 @@ public static partial class MetaBuiltins
             // the flag itself is required; accepted and stored.
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.Debug = valueName == "on";
             return true;
-        }
-
-        // a flag that exists but is not user-
-        // settable raises permission_error(modify, flag, F) (ISO
-        // §8.17.1.3 c); only a flag that does not exist at all raises
-        // domain_error(prolog_flag, F).
-        switch (flagName)
-        {
-            case "bounded":
-            case "max_integer":
-            case "min_integer":
-            case "integer_rounding_function":
-            case "max_arity":
-            case "dialect":
-            case "argv":
-                throw new ShumwayPrologException(IsoError.PermissionError(
-                    "modify", "flag", new AtomTerm(flagName)));
         }
 
         throw new ShumwayPrologException(
@@ -311,8 +329,8 @@ public static partial class MetaBuiltins
                 (e, i) => PrologFlagUnify(e, host, i));
         }
         if (flagCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(
-                IsoError.TypeError("atom", new VarTerm("_")));
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error", "atom", engine, flagCell);
         string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
 
         switch (flagName)
@@ -373,6 +391,11 @@ public static partial class MetaBuiltins
             case "bounded":
                 return UnifyAtom(engine, 1, "false");
 
+            // The engine HAS tabling (semi-naive, phase 7); Trealla programs
+            // probe the flag before using `:- table` (their dcg_tabling).
+            case "tabling":
+                return UnifyAtom(engine, 1, "true");
+
             case "integer_rounding_function":
                 return UnifyAtom(engine, 1, "toward_zero");
 
@@ -391,6 +414,9 @@ public static partial class MetaBuiltins
             case "answer_max_depth":
                 return engine.UnifyRegisterWithCell(1, Cell.Int(host.Flags.AnswerMaxDepth));
 
+            case "discontiguous_check":
+                return UnifyAtom(engine, 1, host.Flags.DiscontiguousCheck);
+
             case "arity_compat":
                 return UnifyAtom(engine, 1, host.Flags.ArityCompat ? "true" : "false");
 
@@ -406,6 +432,18 @@ public static partial class MetaBuiltins
             case "debug":
                 return UnifyAtom(engine, 1, host.Flags.Debug ? "on" : "off");
 
+            case "min_integer":
+                // ISO only requires these when `bounded` is true, and Shumway
+                // is unbounded — but SWI reports them anyway and portable code
+                // probes them (lgtunit's quick-check generator does). The
+                // answer is the INLINE fixnum range (ADR-002's 60-bit
+                // payload) — anything past it is a BigInt, which is exactly
+                // what "unbounded" means here.
+                return engine.UnifyRegisterWithCell(1, Cell.Int(Cell.MinInt60));
+
+            case "max_integer":
+                return engine.UnifyRegisterWithCell(1, Cell.Int(Cell.MaxInt60));
+
             case "max_arity":
                 // ISO requires this be either an integer or
                 // unbounded. Shumway's WAM register layout limits
@@ -414,7 +452,10 @@ public static partial class MetaBuiltins
                 return engine.UnifyRegisterWithCell(1, Cell.Int(255));
 
             default:
-                return false;
+                // §8.17.2.3: an atom that names no flag is a domain error,
+                // not a quiet failure.
+                throw new Shumway.Core.PrologRuntimeException(
+                    "domain_error", "prolog_flag", engine, flagCell);
         }
     }
 
@@ -423,11 +464,13 @@ public static partial class MetaBuiltins
     /// the value is produced by the same bound-name switch.</summary>
     private static readonly string[] EnumerableFlags =
     {
-        "bounded", "max_arity", "integer_rounding_function",
+        "bounded", "max_arity", "min_integer", "max_integer",
+        "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
         "debug", "dialect", "library_dialect", "version_data", "argv", "pid",
         "implicit_dynamic", "arity_compat",
         "compile_mode", "debug_lco", "prefer_rationals", "answer_max_depth",
+        "tabling",
     };
 
     private static bool PrologFlagUnify(Activation engine, PrologEngine host, int idx)
@@ -472,6 +515,85 @@ public static partial class MetaBuiltins
     /// </list>
     /// An unrecognised key unifies with <c>[0, 0]</c> (lenient, so a program
     /// probing several keys keeps working).</summary>
+    /// <summary><c>'$heap_live'(-Live, -Total, -AttrRecords)</c> — runs the mark
+    /// phase and reports how many heap cells are reachable plus how many
+    /// attribute records the table holds, without moving anything. Answers "how
+    /// much would a collector recover here, and how much of the table is
+    /// bookkeeping".</summary>
+    public static bool HeapLive(Activation engine)
+    {
+        var (live, total) = engine.HeapLiveProbe();
+        return engine.UnifyRegisterWithCell(0, Cell.Int(live))
+            && engine.UnifyRegisterWithCell(1, Cell.Int(total))
+            && engine.UnifyRegisterWithCell(2, Cell.Int(engine.AttrRecordCount));
+    }
+
+    /// <summary><c>term_cells(@Term, -Cells)</c> — the number of heap cells the
+    /// term occupies, counting shared substructure once.
+    ///
+    /// <para>ADR-047: making a packed list indistinguishable from the cons list
+    /// it denotes leaves someone debugging a memory problem with no way to ask
+    /// what their text is costing. This answers the question they actually
+    /// have. It reports a RESOURCE, so unlike a boolean "is it packed?" there
+    /// is nothing here for a program to branch on — which is what keeps the
+    /// representation unobservable while still being measurable.</para></summary>
+    public static bool TermCells(Activation engine)
+    {
+        var seen = new HashSet<int>();
+        var work = new List<Cell> { engine.GetRegister(0) };
+        while (work.Count > 0)
+        {
+            Cell c = work[^1];
+            work.RemoveAt(work.Count - 1);
+            switch (c.Tag)
+            {
+                case Tag.Ref:
+                {
+                    int addr = engine.Deref(c.AsHeapIndex);
+                    if (!seen.Add(addr)) break;
+                    Cell target = engine.GetHeap(addr);
+                    // An unbound variable IS its cell; anything else continues.
+                    if (target.Tag != Tag.Ref || target.AsHeapIndex != addr)
+                        work.Add(target);
+                    break;
+                }
+                case Tag.AttVar:
+                    seen.Add(c.AsHeapIndex);
+                    break;
+                case Tag.Float:
+                    seen.Add(c.FloatPairedIndex);
+                    break;
+                case Tag.Str:
+                {
+                    int f = c.AsHeapIndex;
+                    if (!seen.Add(f)) break;
+                    var (_, arity) = FunctorTable.Lookup(engine.GetHeap(f).AsFunctorId);
+                    for (int i = 1; i <= arity; i++)
+                        if (seen.Add(f + i)) work.Add(engine.GetHeap(f + i));
+                    break;
+                }
+                case Tag.Lis:
+                {
+                    int h = c.AsHeapIndex;
+                    if (seen.Add(h)) work.Add(engine.GetHeap(h));
+                    if (seen.Add(h + 1)) work.Add(engine.GetHeap(h + 1));
+                    break;
+                }
+                case Tag.Pstr:
+                {
+                    // Header, buffer run and tail. A slice shares the buffer of
+                    // the list it came from, and the set counts each address
+                    // once, so two slices of one string do not double-count.
+                    int tail = engine.GetPstrTailIndexOf(c);
+                    for (int i = c.AsPstrBufferIndex; i <= tail; i++) seen.Add(i);
+                    work.Add(engine.GetHeap(tail));
+                    break;
+                }
+            }
+        }
+        return engine.UnifyRegisterWithCell(1, Cell.Int(seen.Count));
+    }
+
     public static bool Statistics2(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -532,6 +654,16 @@ public static partial class MetaBuiltins
               .Append(Count(engine.HeapCapacity)).Append(" (")
               .Append(Count((long)engine.HeapCapacity * 8 / 1024)).Append(" KB)\n");
         // ADR-004 — two trails, reported as the two they are.
+        // How much of that heap is packed text. Reported as a resource, like
+        // every other line here — it is the answer to "is my text costing what
+        // I think", which ADR-047 deliberately gives no boolean for.
+        int packed = 0;
+        for (int i = 0; i < engine.HeapTop; i++)
+            if (engine.GetHeap(i).Tag == Tag.PstrBuffer) packed++;
+        report.Append("Packed:    ").Append(Count(packed))
+              .Append(" cells of packed text (")
+              .Append(Count((long)packed * Cell.PstrCodeUnitsPerBuffer))
+              .Append(" characters)\n");
         report.Append("Trail:     ").Append(Count(engine.BindingTrailTop))
               .Append(" bindings, ").Append(Count(engine.ExtraTrailTop)).Append(" other\n");
         report.Append("Stack:     ").Append(Count(engine.StackTop)).Append(" words in use of ")
@@ -785,20 +917,93 @@ public static partial class MetaBuiltins
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "op/3 requires the engine to be hosted by a PrologEngine.");
+        return OpCore(engine, host, regBase: 0, host.Operators);
+    }
 
-        Cell precCell = ResolveLocal(engine, engine.GetRegister(0));
-        Cell typeCell = ResolveLocal(engine, engine.GetRegister(1));
-        Cell nameCell = ResolveLocal(engine, engine.GetRegister(2));
+    /// <summary>ADR-046 — <c>'$op_ctx'(Module, P, T, N)</c>: the compile-time
+    /// rewrite of an <c>op/3</c> goal inside module code. Defines in the
+    /// module's operator layer (a qualified name still redirects).</summary>
+    public static bool OpCtx(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$op_ctx'/4 requires the engine to be hosted by a PrologEngine.");
+        Cell modCell = ResolveLocal(engine, engine.GetRegister(0));
+        string mod = modCell.Tag == Tag.Atom
+            ? AtomTable.GetById(modCell.AsAtomId)?.Name ?? PrologEngine.DefaultModuleName
+            : PrologEngine.DefaultModuleName;
+        return OpCore(engine, host, regBase: 1, host.ModuleOperatorLayer(mod));
+    }
+
+    /// <summary>ADR-046 — <c>'$current_op_ctx'(Module, P, T, N)</c>: the
+    /// compile-time rewrite of <c>current_op/3</c> inside module code —
+    /// enumerates the module's EFFECTIVE view (its layer over user).</summary>
+    public static bool CurrentOpCtx(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$current_op_ctx'/4 requires the engine to be hosted by a PrologEngine.");
+        Cell modCell = ResolveLocal(engine, engine.GetRegister(0));
+        string mod = modCell.Tag == Tag.Atom
+            ? AtomTable.GetById(modCell.AsAtomId)?.Name ?? PrologEngine.DefaultModuleName
+            : PrologEngine.DefaultModuleName;
+        ValidateCurrentOpArgs(engine, regBase: 1);
+        var ops = FilterOpsByBoundArgs(
+            engine, host.ModuleOperatorLayer(mod).Enumerate().ToArray(), regBase: 1);
+        int rp = engine.BuiltinReturnPc;
+        return IndexEnumCursor.Start(engine, ops.Length, 4, rp,
+            (e, i) => CurrentOpUnify(e, ops, i, regBase: 1));
+    }
+
+    private static bool OpCore(
+        Activation engine, PrologEngine host, int regBase,
+        Shumway.Compiler.Parsing.OperatorTable target)
+    {
+        Cell precCell = ResolveLocal(engine, engine.GetRegister(regBase));
+        Cell typeCell = ResolveLocal(engine, engine.GetRegister(regBase + 1));
+        Cell nameCell = ResolveLocal(engine, engine.GetRegister(regBase + 2));
+        // §8.14.3.3: every argument must be instantiated, checked before
+        // any type rule; each type error carries the offending value.
+        if (precCell.Tag is Tag.Ref or Tag.AttVar
+            || typeCell.Tag is Tag.Ref or Tag.AttVar
+            || nameCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        Term precTerm = MaterializeRegister(engine, regBase);
+        Term typeTerm = MaterializeRegister(engine, regBase + 1);
+        Term nameTerm = MaterializeRegister(engine, regBase + 2);
+
+        // ADR-046 — `op(P, T, user:N)` targets the user (global) table from
+        // anywhere; `op(P, T, m:N)` targets module m's layer.
+        if (nameCell.Tag == Tag.Str)
+        {
+            Cell f = engine.GetHeap(nameCell.AsHeapIndex);
+            if (f.Tag == Tag.Functor)
+            {
+                var (qAtomId, qAr) = FunctorTable.Lookup(f.AsFunctorId);
+                if (qAr == 2 && AtomTable.GetById(qAtomId)?.Name == ":")
+                {
+                    Cell qual = ResolveLocal(engine,
+                        engine.GetHeap(nameCell.AsHeapIndex + 1));
+                    if (qual.Tag == Tag.Atom)
+                    {
+                        string qname = AtomTable.GetById(qual.AsAtomId)?.Name ?? "";
+                        target = host.ModuleOperatorLayer(qname);
+                        nameCell = ResolveLocal(engine,
+                            engine.GetHeap(nameCell.AsHeapIndex + 2));
+                    }
+                }
+            }
+        }
 
         if (precCell.Tag != Tag.Int)
-            throw new ShumwayPrologException(IsoError.TypeError("integer", new VarTerm("_")));
+            throw new ShumwayPrologException(IsoError.TypeError("integer", precTerm));
         int precedence = (int)precCell.AsInt;
         if (precedence < 0 || precedence > 1200)
             throw new ShumwayPrologException(
                 IsoError.DomainError("operator_priority", new IntTerm(precedence)));
 
         if (typeCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
+            throw new ShumwayPrologException(IsoError.TypeError("atom", typeTerm));
         string typeName = AtomTable.GetById(typeCell.AsAtomId)?.Name ?? "";
         Shumway.Compiler.Parsing.OperatorType opType = typeName switch
         {
@@ -818,26 +1023,40 @@ public static partial class MetaBuiltins
         if (nameCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "";
-            ValidateOpDefine(host, name, precedence, opType);
-            host.DefineOperator(name, precedence, opType);
+            ValidateOpDefine(target, name, precedence, opType);
+            target.Define(name, precedence, opType);
             return true;
         }
-        if (nameCell.Tag == Tag.Lis)
+        if (Activation.IsListLike(nameCell))
         {
+            // Validate the WHOLE list before defining anything: a partial list
+            // or a bad element must leave the operator table untouched.
+            var names = new List<string>();
             Cell cur = nameCell;
-            while (cur.Tag == Tag.Lis)
+            while (engine.TryUnconsListLike(cur, out Cell rawHead, out Cell opTail))
             {
-                Cell head = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex));
+                Cell head = ResolveLocal(engine, rawHead);
+                if (head.Tag is Tag.Ref or Tag.AttVar)
+                    throw new ShumwayPrologException(IsoError.InstantiationError());
                 if (head.Tag != Tag.Atom)
-                    throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
-                string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
-                ValidateOpDefine(host, name, precedence, opType);
-                host.DefineOperator(name, precedence, opType);
-                cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+                    throw new ShumwayPrologException(IsoError.TypeError("atom",
+                        engine.MaterializeCellToTerm is { } hm && hm(head) is Term ht
+                            ? ht : new VarTerm("_")));
+                names.Add(AtomTable.GetById(head.AsAtomId)?.Name ?? "");
+                cur = engine.NormalizeListCell(ResolveLocal(engine, opTail));
             }
+            if (cur.Tag is Tag.Ref or Tag.AttVar)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
+            if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
+                throw new ShumwayPrologException(IsoError.TypeError("list", nameTerm));
+            foreach (string name in names)
+                ValidateOpDefine(target, name, precedence, opType);
+            foreach (string name in names)
+                target.Define(name, precedence, opType);
             return true;
         }
-        throw new ShumwayPrologException(IsoError.TypeError("atom_or_list", new VarTerm("_")));
+        // A non-atom, non-list third argument: ISO calls it type_error(list, N).
+        throw new ShumwayPrologException(IsoError.TypeError("list", nameTerm));
     }
 
     /// <summary>ISO §8.14.3.3 (+ Cor.2) op/3 permission rules: <c>','</c> is
@@ -845,7 +1064,7 @@ public static partial class MetaBuiltins
     /// removed); <c>'[]'</c>/<c>'{}'</c> can never be operators; and no atom
     /// may be both an infix and a postfix operator.</summary>
     private static void ValidateOpDefine(
-        PrologEngine host, string name, int precedence,
+        Shumway.Compiler.Parsing.OperatorTable table, string name, int precedence,
         Shumway.Compiler.Parsing.OperatorType opType)
     {
         bool isInfix = opType is Shumway.Compiler.Parsing.OperatorType.Xfx
@@ -863,11 +1082,11 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(
                 IsoError.PermissionError("create", "operator", new AtomTerm(name)));
         if (precedence != 0 && isInfix
-            && host.Operators.TryGetPostfix(name, out _, out _))
+            && table.TryGetPostfix(name, out _, out _))
             throw new ShumwayPrologException(
                 IsoError.PermissionError("create", "operator", new AtomTerm(name)));
         if (precedence != 0 && isPostfix
-            && host.Operators.TryGetInfix(name, out _, out _))
+            && table.TryGetInfix(name, out _, out _))
             throw new ShumwayPrologException(
                 IsoError.PermissionError("create", "operator", new AtomTerm(name)));
     }
@@ -883,18 +1102,95 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "current_op/3 requires the engine to be hosted by a PrologEngine.");
 
+        ValidateCurrentOpArgs(engine, regBase: 0);
         // Snapshot the current operator set so backtracking iteration
         // sees a stable view even if op/3 mutates the table mid-enum.
-        var ops = host.EnumerateOperators().ToArray();
+        var ops = FilterOpsByBoundArgs(engine, host.EnumerateOperators().ToArray(), regBase: 0);
         int returnPc = engine.BuiltinReturnPc;
         return IndexEnumCursor.Start(engine, ops.Length, 3, returnPc,  // arity 3 (current_op/3)
             (e, i) => CurrentOpUnify(e, ops, i));
     }
 
+    /// <summary>§8.14.4.3: a BOUND argument of current_op/3 is checked —
+    /// the priority must be an integer in 0..1200, the specifier one of
+    /// the seven operator types, and the name an atom.</summary>
+    private static void ValidateCurrentOpArgs(Activation engine, int regBase)
+    {
+        Cell p = ResolveLocal(engine, engine.GetRegister(regBase));
+        if (p.Tag is not (Tag.Ref or Tag.AttVar))
+        {
+            if (p.Tag != Tag.Int)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("integer", MaterializeRegister(engine, regBase)));
+            if (p.AsInt < 0 || p.AsInt > 1200)
+                throw new ShumwayPrologException(IsoError.DomainError(
+                    "operator_priority", MaterializeRegister(engine, regBase)));
+        }
+        Cell t = ResolveLocal(engine, engine.GetRegister(regBase + 1));
+        if (t.Tag is not (Tag.Ref or Tag.AttVar))
+        {
+            if (t.Tag != Tag.Atom)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("atom", MaterializeRegister(engine, regBase + 1)));
+            string tn = AtomTable.GetById(t.AsAtomId)?.Name ?? "";
+            if (tn is not ("fx" or "fy" or "xf" or "yf" or "xfx" or "xfy" or "yfx"))
+                throw new ShumwayPrologException(IsoError.DomainError(
+                    "operator_specifier", MaterializeRegister(engine, regBase + 1)));
+        }
+        Cell n = ResolveLocal(engine, engine.GetRegister(regBase + 2));
+        if (n.Tag is not (Tag.Ref or Tag.AttVar) && n.Tag != Tag.Atom)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("atom", MaterializeRegister(engine, regBase + 2)));
+    }
+
+    /// <summary>Narrows the operator snapshot to the entries a BOUND argument
+    /// can still match, so the cursor enumerates SOLUTIONS rather than table
+    /// positions — `current_op(P, T, xor)` is then deterministic instead of
+    /// leaving a choice point over the rest of the table. Same principle
+    /// stream_property/2 and atom_concat/3's mode analysis already follow.
+    /// </summary>
+    private static (int Precedence, Shumway.Compiler.Parsing.OperatorType Type, string Name)[]
+        FilterOpsByBoundArgs(
+            Activation engine,
+            (int Precedence, Shumway.Compiler.Parsing.OperatorType Type, string Name)[] ops,
+            int regBase)
+    {
+        Cell p = ResolveLocal(engine, engine.GetRegister(regBase));
+        Cell t = ResolveLocal(engine, engine.GetRegister(regBase + 1));
+        Cell n = ResolveLocal(engine, engine.GetRegister(regBase + 2));
+        long? wantPrec = p.Tag == Tag.Int ? p.AsInt : null;
+        string? wantType = t.Tag == Tag.Atom ? AtomTable.GetById(t.AsAtomId)?.Name : null;
+        string? wantName = n.Tag == Tag.Atom ? AtomTable.GetById(n.AsAtomId)?.Name : null;
+        if (wantPrec is null && wantType is null && wantName is null) return ops;
+
+        var kept = new List<(int, Shumway.Compiler.Parsing.OperatorType, string)>(ops.Length);
+        foreach (var op in ops)
+        {
+            if (wantPrec is { } wp && op.Precedence != wp) continue;
+            if (wantName is { } wn && !string.Equals(op.Name, wn, StringComparison.Ordinal))
+                continue;
+            if (wantType is { } wt && OperatorTypeName(op.Type) != wt) continue;
+            kept.Add(op);
+        }
+        return kept.ToArray();
+    }
+
+    private static string OperatorTypeName(Shumway.Compiler.Parsing.OperatorType type) => type switch
+    {
+        Shumway.Compiler.Parsing.OperatorType.Fx => "fx",
+        Shumway.Compiler.Parsing.OperatorType.Fy => "fy",
+        Shumway.Compiler.Parsing.OperatorType.Xf => "xf",
+        Shumway.Compiler.Parsing.OperatorType.Yf => "yf",
+        Shumway.Compiler.Parsing.OperatorType.Xfx => "xfx",
+        Shumway.Compiler.Parsing.OperatorType.Xfy => "xfy",
+        Shumway.Compiler.Parsing.OperatorType.Yfx => "yfx",
+        _ => "?",
+    };
+
     private static bool CurrentOpUnify(
         Activation engine,
         (int Precedence, Shumway.Compiler.Parsing.OperatorType Type, string Name)[] ops,
-        int idx)
+        int idx, int regBase = 0)
     {
         var (prec, type, name) = ops[idx];
         string typeName = type switch
@@ -909,10 +1205,10 @@ public static partial class MetaBuiltins
             _ => "?",
         };
 
-        if (!engine.UnifyRegisterWithCell(0, Cell.Int(prec))) return false;
-        if (!engine.UnifyRegisterWithCell(1,
+        if (!engine.UnifyRegisterWithCell(regBase, Cell.Int(prec))) return false;
+        if (!engine.UnifyRegisterWithCell(regBase + 1,
                 Cell.Atom(AtomTable.Intern(typeName, permanent: true).Id))) return false;
-        if (!engine.UnifyRegisterWithCell(2,
+        if (!engine.UnifyRegisterWithCell(regBase + 2,
                 Cell.Atom(AtomTable.Intern(name, permanent: true).Id))) return false;
         return true;
     }
@@ -984,12 +1280,39 @@ public static partial class MetaBuiltins
     /// <c>Term</c>. The full ISO <c>read_term/2</c> reads from an
     /// arbitrary stream — this handles only the in-memory atom case,
     /// which is the use the embedding API actually needs.</summary>
+    /// <summary>The text of an atom OR a chars/codes list (packed or cons —
+    /// TryUnconsListLike is the one sanctioned walker), for the read-from-text
+    /// builtins. Null when the cell is neither.</summary>
+    private static string? TextArgToString(Activation engine, Cell cell)
+    {
+        if (cell.Tag == Tag.Atom)
+        {
+            string? name = AtomTable.GetById(cell.AsAtomId)?.Name;
+            if (name == "[]") return "";
+            return name ?? "";
+        }
+        Cell cur = engine.NormalizeListCell(cell);
+        if (!Activation.IsListLike(cur)) return null;
+        var sb = new System.Text.StringBuilder();
+        while (engine.TryUnconsListLike(cur, out Cell rawHead, out Cell tail))
+        {
+            Cell head = ResolveLocal(engine, rawHead);
+            if (head.Tag == Tag.Atom
+                && AtomTable.GetById(head.AsAtomId)?.Name is { Length: 1 } ch)
+                sb.Append(ch);
+            else if (head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= char.MaxValue)
+                sb.Append((char)head.AsInt);
+            else return null;
+            cur = engine.NormalizeListCell(ResolveLocal(engine, tail));
+        }
+        return sb.ToString();
+    }
+
     public static bool ReadTermFromAtom(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
-        if (atomCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
-        string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+        string source = TextArgToString(engine, atomCell)
+            ?? throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
             // Space before the dot: a source ending in a graphic-char atom
             // (`*`, `*/`, `.+`) would otherwise fuse the terminator into the
@@ -1002,22 +1325,55 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>read_term_from_atom(+Atom, -Term, +Options)</c> —
-    /// SWI / GProlog compat. The options list is accepted but
-    /// currently ignored (no read-time options affect the parser
-    /// yet).</summary>
+    /// SWI / GProlog compat. Honours <c>double_quotes(Mode)</c> (the flag
+    /// scoped to this one parse — Trealla's JSON-ish idiom reads embedded
+    /// text with <c>double_quotes(atom)</c>); other options are accepted
+    /// and ignored.</summary>
     public static bool ReadTermFromAtom3(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
-        if (atomCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
-        string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+        string source = TextArgToString(engine, atomCell)
+            ?? throw new PrologRuntimeException("type_error", "atom");
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
             // Space before the dot: a source ending in a graphic-char atom
             // (`*`, `*/`, `.+`) would otherwise fuse the terminator into the
             // atom (`*.` lexes as one atom, not `*` + end), so the clause reads
             // with no terminator dot. The space keeps the dot a real end token.
             source += " .";
-        Term parsed = ParseClauseText(engine, source);
+
+        Shumway.Compiler.Parsing.DoubleQuotesMode? dqOverride = null;
+        Cell cursor = ResolveLocal(engine, engine.GetRegister(2));
+        while (cursor.Tag == Tag.Lis)
+        {
+            int pair = cursor.AsHeapIndex;
+            Cell head = ResolveLocal(engine, engine.GetHeap(pair));
+            if (head.Tag == Tag.Str)
+            {
+                var (aid, ar) = FunctorTable.Lookup(engine.GetHeap(head.AsHeapIndex).AsFunctorId);
+                if (ar == 1 && AtomTable.GetById(aid)?.Name == "double_quotes")
+                {
+                    Cell v = ResolveLocal(engine, engine.GetHeap(head.AsHeapIndex + 1));
+                    dqOverride = v.Tag == Tag.Atom
+                        ? AtomTable.GetById(v.AsAtomId)?.Name switch
+                          {
+                              "codes" => Shumway.Compiler.Parsing.DoubleQuotesMode.Codes,
+                              "chars" => Shumway.Compiler.Parsing.DoubleQuotesMode.Chars,
+                              "atom" => Shumway.Compiler.Parsing.DoubleQuotesMode.Atom,
+                              "string" => Shumway.Compiler.Parsing.DoubleQuotesMode.String,
+                              _ => null,
+                          }
+                        : null;
+                }
+            }
+            cursor = ResolveLocal(engine, engine.GetHeap(pair + 1));
+        }
+
+        var flags = LiveFlags(engine);
+        var savedDq = flags.DoubleQuotes;
+        if (dqOverride is { } mode) flags.DoubleQuotes = mode;
+        Term parsed;
+        try { parsed = ParseClauseText(engine, source); }
+        finally { flags.DoubleQuotes = savedDq; }
         Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
         return engine.UnifyRegisterWithCell(1, parsedCell);
     }
@@ -1046,7 +1402,7 @@ public static partial class MetaBuiltins
             string s = Shumway.Builtins.Number.FormatPrologFloat(v);
             return UnifyCodesList(engine, regOut: 1, s);
         }
-        if (firstCell.Tag == Tag.Ref)
+        if (firstCell.Tag is Tag.Ref or Tag.AttVar)
         {
             // Read the codes list and decide: numeric → number, else atom.
             string s = ReadCodesAsString(engine, engine.GetRegister(1));
@@ -1063,31 +1419,16 @@ public static partial class MetaBuiltins
     }
 
     private static bool UnifyCodesList(Activation engine, int regOut, string text)
-    {
-        if (text.Length == 0)
-        {
-            return engine.UnifyRegisterWithCell(regOut,
-                Cell.Atom(AtomTable.EmptyListId));
-        }
-        int baseIdx = engine.AllocateHeap(2 * text.Length + 1);
-        for (int i = 0; i < text.Length; i++)
-        {
-            int lisIdx = baseIdx + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            engine.SetHeap(headIdx, Cell.Int(text[i]));
-        }
-        engine.SetHeap(baseIdx + 2 * text.Length, Cell.Atom(AtomTable.EmptyListId));
-        return engine.UnifyRegisterWithHeapAt(regOut, baseIdx);
-    }
+        => engine.UnifyRegisterWithHeapAt(regOut,
+            engine.MakeTextList(text, TextKind.Codes));
 
     private static string ReadCodesAsString(Activation engine, Cell codesCell)
     {
         var sb = new System.Text.StringBuilder();
-        Cell cur = ResolveLocal(engine, codesCell);
-        while (cur.Tag == Tag.Lis)
+        Cell cur = engine.NormalizeListCell(ResolveLocal(engine, codesCell));
+        while (engine.TryUnconsListLike(cur, out Cell rawHead, out Cell cTail))
         {
-            Cell head = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex));
+            Cell head = ResolveLocal(engine, rawHead);
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException("type_error", "character_code");
             // BMP-only, as char_code/2 (truncating builds another char).
@@ -1095,7 +1436,7 @@ public static partial class MetaBuiltins
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
             sb.Append((char)head.AsInt);
-            cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            cur = engine.NormalizeListCell(ResolveLocal(engine, cTail));
         }
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
             throw new PrologRuntimeException("type_error", "list");

@@ -496,7 +496,7 @@ public sealed partial class BytecodeInterpreter
         return false;
     }
 
-    private string ResolveLiteral(int literalId)
+    private TextLiteral ResolveLiteral(int literalId)
     {
         if (literalId < 0 || literalId >= _stringLiterals.Count)
             throw new InvalidOperationException(

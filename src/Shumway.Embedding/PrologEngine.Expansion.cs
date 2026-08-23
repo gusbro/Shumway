@@ -571,7 +571,15 @@ public sealed partial class PrologEngine
             if (next is null || next.Equals(g)) break;
             g = next;
         }
-        return ReferenceEquals(g, goal) ? goal : g;
+        if (ReferenceEquals(g, goal)) return goal;
+        // The replacement may itself be a CONTROL construct whose subgoals
+        // still need expanding — clpz's own goal_expansion rewrites
+        // get_attr/3 into (var(V), get_atts(V, Access)), and that get_atts
+        // needs the atts hook that bakes the calling module in. Without the
+        // re-walk it resolved to the user-module fallback and read nothing.
+        if (g is CompoundTerm gc && IsGoalControl(gc.Functor, gc.Args.Length))
+            return ExpandGoalTree(g);
+        return g;
     }
 
     // The control constructs whose arguments are themselves goals (walked, not

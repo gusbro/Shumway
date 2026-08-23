@@ -53,6 +53,37 @@ public sealed class StreamHandle
     /// alias atom anywhere a stream is required.</summary>
     public string? Alias { get; internal set; }
 
+    /// <summary>The <c>eof_action</c> stream option: <c>eof_code</c>
+    /// (default — reads at/past eof keep yielding <c>end_of_file</c>),
+    /// <c>error</c> (a read PAST eof raises
+    /// <c>permission_error(input, past_end_of_stream, S)</c>), or
+    /// <c>reset</c>.</summary>
+    public string EofAction { get; set; } = "eof_code";
+
+    /// <summary>True once a read consumed the end of the stream — the
+    /// position is past-end-of-stream (<c>end_of_stream(past)</c>).
+    /// Peeks never set this.</summary>
+    public bool PastEof { get; set; }
+
+    /// <summary><c>reposition(false)</c> was passed to open/4: the stream
+    /// refuses set_stream_position/2 even when the underlying stream could
+    /// seek. Defaults to true — a seekable file is repositionable.</summary>
+    public bool Repositionable { get; set; } = true;
+
+    // ----- lazy text windows (ADR-047 phrase_from_stream) -----
+    //
+    // Reading is a side effect and backtracking cannot undo it, so a lazy
+    // window has to be IDEMPOTENT: waking the same cell twice — which happens
+    // whenever a grammar tries one clause, fails, and tries the next — must
+    // hand back the same characters, not the ones after them. One window is
+    // cached at a time, keyed by its character offset, which is all a re-run
+    // ever asks for and keeps the memory bounded.
+    public long LazyWindowOffset { get; set; } = -1;
+    public string? LazyWindow { get; set; }
+    /// <summary>Characters consumed from this stream by the lazy reader — the
+    /// offset the next unread window starts at.</summary>
+    public long LazyRead { get; set; }
+
     /// <summary>True once <c>close/1</c> has run; the handle stays
     /// in the registry briefly so an inadvertent second-close can
     /// report <c>existence_error</c> rather than crashing.</summary>
@@ -159,8 +190,18 @@ public sealed class PositionTrackingReader : TextReader
     {
         int c = Inner.Read();
         if (c < 0) return -1;
-        if (c == '\r' && Inner.Peek() == '\n') { Inner.Read(); c = '\n'; }
+        if (c == '\r' && PeekAfterCr() == '\n') { Inner.Read(); c = '\n'; }
         return _buffered = c;
+    }
+
+    /// <summary>The LF look-ahead behind a CR. An ill-formed sequence there
+    /// (strict UTF-8 reader) must not lose the CR already in hand: answer
+    /// "not an LF" and let the error surface on the NEXT read, which is the
+    /// one positioned at the offending bytes.</summary>
+    private int PeekAfterCr()
+    {
+        try { return Inner.Peek(); }
+        catch (PrologRuntimeException) { return -1; }
     }
 
     public override int Peek()
@@ -185,7 +226,7 @@ public sealed class PositionTrackingReader : TextReader
         else
         {
             c = Inner.Read();
-            if (c == '\r' && TranslatesNewlines && Inner.Peek() == '\n')
+            if (c == '\r' && TranslatesNewlines && PeekAfterCr() == '\n')
             {
                 Inner.Read();
                 c = '\n';
