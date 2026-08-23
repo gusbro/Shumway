@@ -37,4 +37,21 @@ public class AttvarBindingBuiltinsTests
         Assert.True(e.Query(
             "freeze(V, V == a), atom_chars(V, [a]), V == a.").Success);
     }
+
+    [Fact]
+    public void ResidueVarsSeeAVariableReconstrainedAfterBacktracking()
+    {
+        // The attribute table keeps ORPHAN rows for homes whose promotion was
+        // backtracked; the call_residue_vars entry snapshot must skip them, or
+        // a second findall iteration over goals sharing subterms reports [].
+        var e = new PrologEngine();
+        e.ConsultString(":- use_module(library(coroutining)).");
+        Assert.True(e.Query("""
+            EDif = dif(X, Y), SB = (Y = [] * []), SA = (X = [] * _C),
+            G1 = (EDif, SB, SA), G2 = (SB, SA, EDif),
+            findall(R, (member(G, [G1, G2]),
+                        call_residue_vars(G, Vs), length(Vs, R)), Rs),
+            Rs == [1, 1].
+            """).Success);
+    }
 }

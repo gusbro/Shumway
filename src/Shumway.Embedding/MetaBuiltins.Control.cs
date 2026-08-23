@@ -1676,8 +1676,17 @@ public static partial class MetaBuiltins
     /// would have to relocate.</para></summary>
     public static bool AttvSnapshot(Activation engine)
     {
+        // Only LIVE attributed variables enter the snapshot. The table
+        // keeps ORPHAN rows for homes whose promotion was backtracked
+        // (PutAttr overwrites them on re-promotion); snapshotting an
+        // orphan made a variable RE-constrained inside the goal read as
+        // "already constrained before it" — a second findall iteration
+        // over goals sharing subterms reported its residue vars as [].
+        var live = new System.Collections.Generic.HashSet<int>();
+        foreach (int addr in engine.AttrTableKeysSnapshot())
+            if (engine.IsAttVarAt(addr)) live.Add(addr);
         return engine.UnifyRegisterWithCell(0,
-            engine.MakeForeign(new AttrSnapshot(engine.AttrTableKeysSnapshot())));
+            engine.MakeForeign(new AttrSnapshot(live)));
     }
 
     /// <summary><c>'$attv_new_since'(+S, -Vars)</c> — Vars is the list of
