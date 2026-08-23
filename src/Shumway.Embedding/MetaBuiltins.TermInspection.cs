@@ -431,9 +431,12 @@ public static partial class MetaBuiltins
                 throw new ShumwayPrologException(
                     IsoError.DomainError("non_empty_list", listTerm));
 
-            // Fetch the functor cell (the first element).
-            int headIdx = listC.AsHeapIndex;
-            Cell first = ResolveLocal(engine, engine.GetHeap(headIdx));
+            // Fetch the functor cell (the first element) — through the
+            // list-like cursor: a packed list IS a list (ADR-047), and
+            // reading AsHeapIndex as a cons head slot misreads a PSTR.
+            engine.TryUnconsListLike(engine.NormalizeListCell(listC),
+                out Cell firstRaw, out Cell restAfterFirst);
+            Cell first = ResolveLocal(engine, firstRaw);
             Term firstTerm = engine.MaterializeCellToTerm is { } fmat
                 && fmat(first) is Term ft ? ft : new VarTerm("_");
             if (first.Tag is Tag.Ref or Tag.AttVar)
@@ -458,12 +461,12 @@ public static partial class MetaBuiltins
             engine.SetHeap(strBase, Cell.Str(strBase + 1));
             engine.SetHeap(strBase + 1, Cell.Functor(functorId));
             // Skip the first element (functor name) and copy the rest.
-            cur = ResolveLocal(engine, engine.GetHeap(headIdx + 1));
+            cur = engine.NormalizeListCell(ResolveLocal(engine, restAfterFirst));
             for (int i = 0; i < arity; i++)
             {
-                int curHead = cur.AsHeapIndex;
-                engine.SetHeap(strBase + 2 + i, engine.GetHeap(curHead));
-                cur = ResolveLocal(engine, engine.GetHeap(curHead + 1));
+                engine.TryUnconsListLike(cur, out Cell argCell, out Cell argTail);
+                engine.SetHeap(strBase + 2 + i, argCell);
+                cur = engine.NormalizeListCell(ResolveLocal(engine, argTail));
             }
             return engine.UnifyRegisterWithCell(0, Cell.Ref(strBase));
         }

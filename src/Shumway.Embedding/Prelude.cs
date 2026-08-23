@@ -1401,7 +1401,19 @@ internal static class Prelude
         %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []) — succeeds when the DCG Body derives List.
         phrase(Body, List) :- phrase(Body, List, []).
         %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime.
-        phrase(Body, S0, S) :- '$phrase'(Body, S0, S).
+        % SS7.6.2 for DCG bodies: a number anywhere in the control
+        % skeleton makes the WHOLE body non-translatable, checked BEFORE
+        % anything runs — phrase(({fail}, 1), _) raises, fail never runs.
+        phrase(Body, S0, S) :- '$dcg_body_check'(Body), '$phrase'(Body, S0, S).
+
+        '$dcg_body_check'(B) :- var(B), !.
+        '$dcg_body_check'((A, B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
+        '$dcg_body_check'((A ; B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
+        '$dcg_body_check'((A -> B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
+        '$dcg_body_check'('|'(A, B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
+        '$dcg_body_check'(N) :-
+            number(N), !, throw(error(type_error(callable, N), phrase/3)).
+        '$dcg_body_check'(_).
 
         '$phrase'(V, _, _) :- var(V), !, throw(error(instantiation_error, phrase/3)).
         '$phrase'([], S0, S) :- !, S0 = S.

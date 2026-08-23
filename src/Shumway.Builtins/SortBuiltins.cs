@@ -96,16 +96,17 @@ public static class SortBuiltins
 
     private static void CheckSortListArgument(Activation engine, Cell listStart)
     {
-        Cell cur = listStart;
+        // Through the list-like cursor: a packed list IS a list (ADR-047).
+        Cell cur = engine.NormalizeListCell(listStart);
         while (true)
         {
             if (cur.Tag is Tag.Ref or Tag.AttVar)
                 throw new PrologRuntimeException("instantiation_error");
             if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) return;
-            if (cur.Tag != Tag.Lis)
+            if (!engine.TryUnconsListLike(cur, out _, out Cell tail))
                 throw new PrologRuntimeException(
                     "type_error", "list", engine, listStart);
-            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            cur = engine.NormalizeListCell(Resolve(engine, tail));
         }
     }
 
@@ -139,11 +140,11 @@ public static class SortBuiltins
         Cell cursor = listStart;
         CheckSortListArgument(engine, listStart);
         CheckPartialListArgument(engine, Resolve(engine, engine.GetRegister(1)));
-        while (cursor.Tag == Tag.Lis)
+        cursor = engine.NormalizeListCell(cursor);
+        while (engine.TryUnconsListLike(cursor, out Cell head, out Cell tail))
         {
-            int headIdx = cursor.AsHeapIndex;
-            elements.Add(Resolve(engine, engine.GetHeap(headIdx)));
-            cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
+            elements.Add(Resolve(engine, head));
+            cursor = engine.NormalizeListCell(Resolve(engine, tail));
         }
 
         elements.Sort((a, b) => StandardOrderComparator.Compare(engine, a, b));

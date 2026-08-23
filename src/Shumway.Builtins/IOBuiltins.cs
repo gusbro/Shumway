@@ -233,6 +233,10 @@ public static class IOBuiltins
             case "ignore_ops": options.IgnoreOps = RequireBool(engine, valCell, optCell); break;
             case "numbervars": options.Numbervars = RequireBool(engine, valCell, optCell); break;
             case "portray_text": options.PortrayText = RequireBool(engine, valCell, optCell); break;
+            // Scryer/Trealla spelling of the same rendering choice: a
+            // char/code list prints as "..." — decided by CONTENT
+            // (ADR-047 decision 7), never by representation.
+            case "double_quotes": options.PortrayText = RequireBool(engine, valCell, optCell); break;
             case "max_depth":
                 if (valCell.Tag is Tag.Ref or Tag.AttVar)
                     throw new PrologRuntimeException("instantiation_error");
