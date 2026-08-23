@@ -149,7 +149,14 @@ public static class MetaTransform
         // done HERE so the culprit is the construct as WRITTEN, before cut
         // barriers and catch markers are spliced in.
         if (IsControlConstruct(goal) && HasNumberInGoalPosition(goal))
-            return WithPosition(BodyConversionThrow(goal), goal.Position);
+        {
+            // For \+/not the CONVERSION applies to the argument, so the
+            // culprit is the inner construct — \+ (true;1) raises
+            // type_error(callable, (true;1)), the ISO (and Scryer) shape.
+            Term culprit = goal is CompoundTerm { Functor: "\\+" or "not", Args.Length: 1 } neg
+                ? neg.Args[0] : goal;
+            return WithPosition(BodyConversionThrow(culprit), goal.Position);
+        }
 
         // Conjunction: recurse into both halves.
         if (goal is CompoundTerm { Functor: "," } conj && conj.Args.Length == 2)

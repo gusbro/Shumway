@@ -47,8 +47,13 @@ public static class MetaBodyConvert
         engine.SetHeap(strBase, Cell.Functor(fid));
         engine.SetHeap(strBase + 1, a);
         engine.SetHeap(strBase + 2, b);
-        throw new PrologRuntimeException(
+        var ball = new PrologRuntimeException(
             "type_error", "callable", engine, Cell.Str(strBase));
+        // The conversion is call/N's: the ball's context reads call/1
+        // (the shape Trealla and Scryer print), unless an inner throw
+        // already owns the identity.
+        ball.StampBuiltin("call", 1);
+        throw ball;
     }
 
     private static Cell StripQual(Activation engine, Cell c)

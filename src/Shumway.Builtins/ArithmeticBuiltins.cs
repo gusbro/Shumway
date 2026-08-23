@@ -170,10 +170,14 @@ public static class ArithmeticBuiltins
                 throw new PrologRuntimeException("type_error", "integer", engine, c);
         if (x.Tag is not (Tag.Ref or Tag.AttVar) && x.Tag is not (Tag.Int or Tag.BigInt))
             throw new PrologRuntimeException("type_error", "integer", engine, x);
-        if (lo.Tag != Tag.Int || hi.Tag != Tag.Int)
+        if (lo.Tag is not (Tag.Int or Tag.BigInt) || hi.Tag is not (Tag.Int or Tag.BigInt))
             throw new PrologRuntimeException(
                 "instantiation_error",
                 "between/3 requires Low and High to be ground integers");
+        // A BIGINT bound (either side) takes the BigInteger path — the
+        // common all-fixnum call stays on the long fast path below.
+        if (lo.Tag == Tag.BigInt || hi.Tag == Tag.BigInt)
+            return BetweenBig(engine, lo, hi, x);
         long loVal = lo.AsInt;
         long hiVal = hi.AsInt;
         if (loVal > hiVal) return false;
@@ -205,6 +209,65 @@ public static class ArithmeticBuiltins
             return engine.UnifyRegisterWithCell(2, Cell.Int(loVal));
         }
         return false;
+    }
+
+    /// <summary>between/3 with a BigInteger bound on either side
+    /// (Trealla issue #1105 — bigint ranges must work, not throw). Values
+    /// inside long range still emit fixnum cells, so an enumeration that
+    /// crosses back under 2^63 stays representation-consistent.</summary>
+    private static bool BetweenBig(Activation engine, Cell lo, Cell hi, Cell x)
+    {
+        System.Numerics.BigInteger loB = lo.Tag == Tag.Int ? lo.AsInt : engine.AsBigInt(lo);
+        System.Numerics.BigInteger hiB = hi.Tag == Tag.Int ? hi.AsInt : engine.AsBigInt(hi);
+        if (loB > hiB) return false;
+
+        if (x.Tag is Tag.Int or Tag.BigInt)
+        {
+            System.Numerics.BigInteger xB = x.Tag == Tag.Int ? x.AsInt : engine.AsBigInt(x);
+            return xB >= loB && xB <= hiB;
+        }
+        if (x.Tag is Tag.Ref or Tag.AttVar)
+        {
+            if (loB < hiB)
+            {
+                var cursor = new BetweenBigCursor(loB, hiB, engine.BuiltinReturnPc);
+                engine.PushBuiltinChoicePoint(cursor.Resume, arity: 3);
+            }
+            return engine.UnifyRegisterWithCell(2, BigOrIntCell(engine, loB));
+        }
+        return false;
+    }
+
+    private static Cell BigOrIntCell(Activation engine, System.Numerics.BigInteger v)
+        => v >= Cell.MinInt60 && v <= Cell.MaxInt60   // the INLINE range (ADR-002), not long's
+            ? Cell.Int((long)v) : engine.MakeBigInt(v);
+
+    private sealed class BetweenBigCursor
+    {
+        private System.Numerics.BigInteger _current;
+        private readonly System.Numerics.BigInteger _hi;
+        private readonly int _returnPc;
+        public readonly Func<Activation, int, bool> Resume;
+
+        public BetweenBigCursor(System.Numerics.BigInteger lo,
+            System.Numerics.BigInteger hi, int returnPc)
+        {
+            _current = lo;
+            _hi = hi;
+            _returnPc = returnPc;
+            Resume = Step;
+        }
+
+        private bool Step(Activation engine, int _)
+        {
+            _current += 1;   // this backtrack yields the next value
+            if (_current < _hi)
+                engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            if (!engine.UnifyRegisterWithCell(2, BigOrIntCell(engine, _current)))
+                return false;
+            engine.ResumeAtReturnPc(_returnPc);
+            return true;
+        }
     }
 
     /// <summary>Resume state for a non-deterministic <c>between/3</c>
