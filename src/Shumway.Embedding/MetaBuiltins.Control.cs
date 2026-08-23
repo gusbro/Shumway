@@ -257,6 +257,33 @@ public static partial class MetaBuiltins
     /// <c>type_error(atom, _)</c> for a non-atom, and
     /// <c>existence_error(source_sink, _)</c> when the path doesn't
     /// exist.</summary>
+    /// <summary><c>'$load_text'(+TextAtom, +Options)</c> — the native core of
+    /// the prelude's <c>load_text/2</c> (Trealla): consults the atom's text as
+    /// Prolog source in the live engine. The module(M) option (a default
+    /// module for module-less text) is not honoured — the text's own
+    /// <c>:- module</c> directive decides, which is what Trealla programs
+    /// pass anyway.</summary>
+    public static bool LoadTextCore(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "load_text/2 requires the engine to be hosted by a PrologEngine.");
+        Cell cell = MaterializeRegisterAsCell(engine, 0);
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (cell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException("type_error(atom, _)");
+        string source = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        // Trealla semantics: load_text does NOT auto-import a loaded module's
+        // exports (ops included) into user — unlike a direct consult. Loading
+        // at depth > 0 keeps the SWI-style auto-import off (the same way a
+        // use_module dependency loads).
+        host._useModuleLoadDepth++;
+        try { host.ConsultString(source); }
+        finally { host._useModuleLoadDepth--; }
+        return true;
+    }
+
     public static bool Consult(Activation engine)
     {
         if (engine.Host is not PrologEngine host)

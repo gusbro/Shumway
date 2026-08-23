@@ -1274,12 +1274,39 @@ public static partial class MetaBuiltins
     /// <c>Term</c>. The full ISO <c>read_term/2</c> reads from an
     /// arbitrary stream — this handles only the in-memory atom case,
     /// which is the use the embedding API actually needs.</summary>
+    /// <summary>The text of an atom OR a chars/codes list (packed or cons —
+    /// TryUnconsListLike is the one sanctioned walker), for the read-from-text
+    /// builtins. Null when the cell is neither.</summary>
+    private static string? TextArgToString(Activation engine, Cell cell)
+    {
+        if (cell.Tag == Tag.Atom)
+        {
+            string? name = AtomTable.GetById(cell.AsAtomId)?.Name;
+            if (name == "[]") return "";
+            return name ?? "";
+        }
+        Cell cur = engine.NormalizeListCell(cell);
+        if (!Activation.IsListLike(cur)) return null;
+        var sb = new System.Text.StringBuilder();
+        while (engine.TryUnconsListLike(cur, out Cell rawHead, out Cell tail))
+        {
+            Cell head = ResolveLocal(engine, rawHead);
+            if (head.Tag == Tag.Atom
+                && AtomTable.GetById(head.AsAtomId)?.Name is { Length: 1 } ch)
+                sb.Append(ch);
+            else if (head.Tag == Tag.Int && head.AsInt >= 0 && head.AsInt <= char.MaxValue)
+                sb.Append((char)head.AsInt);
+            else return null;
+            cur = engine.NormalizeListCell(ResolveLocal(engine, tail));
+        }
+        return sb.ToString();
+    }
+
     public static bool ReadTermFromAtom(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
-        if (atomCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
-        string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+        string source = TextArgToString(engine, atomCell)
+            ?? throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
             // Space before the dot: a source ending in a graphic-char atom
             // (`*`, `*/`, `.+`) would otherwise fuse the terminator into the
@@ -1299,9 +1326,8 @@ public static partial class MetaBuiltins
     public static bool ReadTermFromAtom3(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
-        if (atomCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
-        string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+        string source = TextArgToString(engine, atomCell)
+            ?? throw new PrologRuntimeException("type_error", "atom");
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
             // Space before the dot: a source ending in a graphic-char atom
             // (`*`, `*/`, `.+`) would otherwise fuse the terminator into the

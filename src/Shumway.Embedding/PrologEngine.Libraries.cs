@@ -103,6 +103,12 @@ public sealed partial class PrologEngine
         string full;
         try { full = System.IO.Path.GetFullPath(path); } catch { full = path; }
         (_libraryDirDialect ??= new(System.StringComparer.OrdinalIgnoreCase))[full] = dialect;
+        // Trealla surfaces BUILTIN-level names (limit/2, load_text/2) that its
+        // programs use without importing anything, so mounting a trealla tree
+        // loads the (tiny) shim eagerly — the lazy WithDialect trigger only
+        // fires when a library file actually loads. The scryer/swi shims stay
+        // lazy: their names all arrive via imports.
+        if (dialect == TreallaShim.LibraryName) EnsureTreallaShim();
     }
 
     // The dialect a resolved library path belongs to (its directory's tag), or
@@ -384,8 +390,10 @@ public sealed partial class PrologEngine
 
     /// <summary>Ensures Shumway's native equivalent of an overridden library is
     /// loaded (called when the SWI file is discarded), so the predicates the
-    /// program expects are present.</summary>
-    private void LoadNativeOverride(string name)
+    /// program expects are present. Returns the name of an export-qualified
+    /// module when the native equivalent carries importer-facing wrappers
+    /// (atts; trealla's freeze), else null (bare-global surface).</summary>
+    private string? LoadNativeOverride(string name)
     {
         switch (name)
         {
@@ -399,10 +407,26 @@ public sealed partial class PrologEngine
             case "iso_ext": break;                       // native setup_call_cleanup & co
             case "charsio": break;                       // builtin charsio surface
             case "error": break;                         // native must_be/can_be
-            case "freeze": UseCoroutining(); break;
+            case "freeze":
+                UseCoroutining();
+                // Trealla's frozen/2 answers 'freeze:freeze(Var, Goal)' — a
+                // re-establishing, module-qualified goal — where the engine's
+                // (SICStus-style) frozen/2 answers the bare goal. Their
+                // programs pattern-match that shape, so a trealla-dialect
+                // resolution of library(freeze) serves a wrapper module whose
+                // frozen/2 speaks their format; freeze/2 itself stays the
+                // native bare-global (not exported — no delegation loop).
+                if (_activeLibraryDialect == "trealla")
+                {
+                    if (_loadedCompatLibraries.Add("trealla_freeze"))
+                        ConsultStringInner(TreallaFreezeShim, recordInHistory: false);
+                    return "trealla_freeze";
+                }
+                break;
             case "dif": UseCoroutining(); break;
             case "time": break;                          // native time/1 + sleep/1 serve
         }
+        return null;
     }
 
     private bool _treallaShimLoaded;
@@ -451,6 +475,18 @@ public sealed partial class PrologEngine
         _scryerShimLoaded = true;
         ConsultStringInner(ScryerShim.Source, recordInHistory: false);
     }
+
+    // The trealla-dialect frozen/2 wrapper (see LoadNativeOverride "freeze").
+    // Reads the native coroutining attribute directly; the freeze: module
+    // prefix in the answer is DATA (their format), never called here.
+    private const string TreallaFreezeShim = """
+        :- module(trealla_freeze, [frozen/2]).
+        frozen(X, G) :-
+            (   var(X), get_attr(X, coroutining, frozen(G0)) ->
+                G = freeze:freeze(X, G0)
+            ;   G = true
+            ).
+        """;
 
     internal bool UseCompatLibrary(string name)
     {
@@ -713,15 +749,21 @@ public sealed partial class PrologEngine
                         // here; discard the load and use Shumway's native equivalent
                         // (use_module becomes a no-op). A non-candidate, or a
                         // same-named file without the marker, loads normally.
-                        if (ShouldUseNativeOverride(libName, libPath))
-                        {
-                            LoadNativeOverride(libName);
-                            return libName == "atts" ? "atts" : null;
-                        }
                         // ADR-040 D5.2 — a dir tagged with a dialect loads its
                         // libraries in that dialect (name resolution +
-                        // double_quotes) for the whole subtree.
+                        // double_quotes) for the whole subtree. Computed BEFORE
+                        // the override check: a native override can be
+                        // dialect-sensitive (trealla's freeze wrapper), so it
+                        // must run inside the same dialect scope the file
+                        // itself would have loaded under.
                         string? dirDialect = DialectForResolvedPath(libPath);
+                        if (ShouldUseNativeOverride(libName, libPath))
+                        {
+                            string? overrideModule = dirDialect is not null
+                                ? WithDialect(dirDialect, () => LoadNativeOverride(libName))
+                                : LoadNativeOverride(libName);
+                            return libName == "atts" ? "atts" : overrideModule;
+                        }
                         return dirDialect is not null
                             ? WithDialect(dirDialect, () => LoadResolvedLibrary(libName, libPath))
                             : LoadResolvedLibrary(libName, libPath);

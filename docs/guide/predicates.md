@@ -15,7 +15,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `=(?Term1, ?Term2)` | Unifies the two terms. |
 | `==(@Term1, @Term2)` | Succeeds if the two terms are structurally identical. |
-| `\=(?Term1, ?Term2)` | Succeeds if the two terms do not unify. |
+| `\=(?Term1, ?Term2)` | Succeeds if the two terms do not unify. Attributed-variable hooks run: freeze fires during the trial, dif can veto it. |
 | `\==(@Term1, @Term2)` | Succeeds if the two terms are not structurally identical. |
 | `unify_with_occurs_check(?Term1, ?Term2)` | Like =/2 but fails rather than building a cyclic term (ISO §8.2.2). |
 
@@ -132,6 +132,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `call_cleanup(:Goal, :Cleanup)` | setup_call_cleanup/3 with no setup: Cleanup runs exactly once when Goal completes. |
 | `call_det(:Goal, -Deterministic)` | Calls Goal once and unifies Deterministic with true if Goal succeeded without leaving a choice point, false otherwise. |
 | `call_nth(:Goal, ?N)` | True when Goal has an Nth solution: with N bound, commits to that solution; with N unbound, enumerates solutions numbering each. |
+| `call_with_limit(+N, :Goal)` | Solutions of Goal, at most the first N. Fails when N < 1. |
 | `catch(:Goal, ?Catcher, :Recovery)` | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
 | `compile_all` | Eagerly compiles every compilable static predicate to Tier-1 IL now, instead of waiting for each to promote lazily on use. For a program that will do enough queries to want the whole set hot up front (a server warming up). No-op when Tier-1 is disabled or under Native AOT. Always succeeds. |
 | `compile_all(-Count)` | As compile_all/0, unifying Count with the number of predicates newly compiled to Tier-1 IL by this call. |
@@ -144,8 +145,9 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
 | `if(:Condition, :Then, :Else)` | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded. |
+| `ifthen(:Condition, :Then)` | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails — unlike (Condition -> Then), which fails. |
+| `ifthenelse(:Condition, :Then, :Else)` | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
-| `limit(+N, :Goal)` | Solutions of Goal, at most the first N (SWI solution_sequences / Trealla form). Fails when N < 1. |
 | `notrace` | Turns the four-port tracer off. |
 | `offset(+N, :Goal)` | Solutions of Goal after skipping the first N. |
 | `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |
@@ -184,6 +186,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `compact_dynamic_buffer` | Invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
 | `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Validates Name/Arity names a dynamic predicate, then triggers the same full rebuild as the 0-arg form. The single buffer holds every dynamic predicate's bytecode interleaved, so independent per-predicate reclamation isn't currently feasible without partial-relink support — the API surface is per-predicate for forward compatibility. |
 | `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl (SWI-style). |
+| `consult_text(+Text)` | Consults Text (an atom or a chars/codes list) as Prolog source — the in-language form of the embedding API's ConsultString. A module loaded this way keeps its exports scoped (no auto-import into user). |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own. |
 | `ensure_loaded(+File)` | Loads File unless it is already loaded, in which case it does nothing (ISO 7.4.2.8). Lets several files each name their own dependencies without any of them being loaded twice. A File that CHANGED on disk since it was loaded is reloaded. Argument and errors are as consult/1. |
 | `erase(+Ref)` | Removes the recorded entry with reference Ref. Fails on an unknown / already-erased reference. |
@@ -230,7 +233,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `append(?List1, ?List2, ?List)` | Concatenates List1 and List2 into List; backtracks over splits of List. |
 | `delete(+List, +Elem, -Rest)` | Rest is List with every element that unifies with Elem removed. |
 | `exclude(:Goal, +List, -Excluded)` | Excluded holds the elements of List for which Goal fails. |
-| `flatten(+Nested, -Flat)` | Flattens nested lists into a single list (SWI/Trealla library form); a non-list element (or variable) becomes an element of Flat. |
+| `flatten(+Nested, -Flat)` | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat. |
 | `foldl(:Goal, ?List, +V0, -V)` | Folds Goal over a list, threading an accumulator from V0 to V. |
 | `foldl(:Goal, ?List1, ?List2, +V0, -V)` | Folds Goal over two lists, threading an accumulator from V0 to V. |
 | `include(:Goal, +List, -Included)` | Included holds the elements of List for which Goal succeeds. |
@@ -393,7 +396,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `read(+Stream, -Term)` | Reads one term from a stream (ISO §8.14.2). |
 | `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `read_term(+Stream, -Term, +Options)` | Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options. |
-| `read_term_from_chars(+Chars, -Term, +Options)` | Reads a term from a character list (Trealla arity/order). |
+| `read_term_from_chars(+Chars, -Term, +Options)` | Reads a term from a character list, honouring read_term/2 options. |
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `rename(+From, +To)` | Renames / moves a file from From to To. Raises existence_error if From doesn't exist or permission_error if To already exists. |
 | `rmdir(+Path)` | Removes the directory Path. Fails when the directory is non-empty; raises existence_error if it doesn't exist. |
@@ -422,7 +425,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `write_canonical(+Stream, +Term)` | Writes a term in canonical form to a stream (ISO §8.14.6). |
 | `write_term(+Term, +Options)` | Writes a term honouring the given list of write options. |
 | `write_term(+Stream, +Term, +Options)` | Writes a term to a stream honouring options (ISO §8.14.3). |
-| `write_term_to_chars(+Term, +Options, -Chars)` | Writes a term to a character list with write_term/2's options (Trealla arity/order). |
+| `write_term_to_chars(+Term, +Options, -Chars)` | Writes a term to a character list with write_term/2's options. |
 | `writeln(+Term)` | Writes a term followed by a newline. |
 | `writeq(+Term)` | Writes a term in quoted (parseable) form (ISO §8.14.5). |
 | `writeq(+Stream, +Term)` | Writes a term in quoted (parseable) form to a stream (ISO §8.14.5). |

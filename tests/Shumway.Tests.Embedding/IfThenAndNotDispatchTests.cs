@@ -52,14 +52,16 @@ public class IfThenAndNotDispatchTests
     [Fact]
     public void IfThenWithMetaVariables_BlintPattern()
     {
-        // The Blint.pl shape: ifthen(X, Y) :- X -> !, Y.
+        // The historic Blint.pl wrapper shape (X -> !, Y) — Blint itself now
+        // uses the prelude's ifthen/2, so the shape is tested under a
+        // neutral name (a colliding user public would be a uniqueness error).
         var e = new PrologEngine();
         e.ConsultString("""
-            :- public ifthen/2.
-            ifthen(X, Y) :- X -> !, Y.
-            ifthen(_, _) :- !.
+            :- public wrapif/2.
+            wrapif(X, Y) :- X -> !, Y.
+            wrapif(_, _) :- !.
             """);
-        var sol = e.Query("ifthen(true, X = ok).");
+        var sol = e.Query("wrapif(true, X = ok).");
         Assert.True(sol.Success);
     }
 
@@ -94,7 +96,7 @@ public class IfThenAndNotDispatchTests
     [Fact]
     public void NotMetaCall_ViaConstructedGoal_BlintPattern()
     {
-        // Approximates Blint.pl's ifthen(not(show_in_console), ...).
+        // Approximates Blint.pl's ifthen(not(show_in_console), ...) shape.
         // The variable carries `not(G)` to call/1 inside a body.
         var e = new PrologEngine();
         e.ConsultString("""

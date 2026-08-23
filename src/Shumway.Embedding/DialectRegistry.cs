@@ -43,6 +43,11 @@ internal static class DialectRegistry
             "apply" or "apply_macros" or "lists" or "pairs" or "ordsets"
                 or "error" or "debug" or "aggregate" or "assoc"
                 or "yall" => (true, ""),
+            // Import-scoped, like SWI itself: limit/2 maps onto the engine's
+            // call_with_limit/2; offset/2 re-exports the bare prelude public.
+            "solution_sequences" => (true,
+                ":- module(solution_sequences, [limit/2, offset/2]).\n"
+                + "limit(N, Goal) :- call_with_limit(N, Goal).\n"),
             _ => (false, ""),
         });
 
@@ -56,11 +61,13 @@ internal static class DialectRegistry
         "trealla", DoubleQuotesMode.Chars,
         name => name switch
         {
-            // NOT "dcgs": Trealla's dcgs has seq//1 & co beyond the
-            // prelude's phrase/2,3 — falling through here lets the scryer
-            // pack's real Dcgs shim serve them (clpz's reification DCGs
-            // call seq//1 at runtime).
-            "lists" or "format" or "charsio" or "error"
+            // NOT "dcgs" and NOT "format": Trealla's dcgs has seq//1 & co
+            // and its format IS the format_//2 non-terminal — beyond the
+            // prelude's phrase/2,3 and format/2,3. Falling through lets the
+            // scryer pack's real shims serve them (a no-op here also STARVES
+            // the format native-override, which re-resolves "format" under
+            // this dialect scope).
+            "lists" or "charsio" or "error"
                 or "pairs" or "ordsets" or "debug" or "gensym"
                 or "iso_ext" or "terms" => (true, ""),
             "freeze" or "when" => (true, ":- use_module(library(coroutining)).\n"),

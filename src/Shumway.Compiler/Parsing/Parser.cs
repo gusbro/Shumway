@@ -296,11 +296,15 @@ public sealed class Parser
         // atom is the left operand of `/` and the right is a non-negative
         // integer. Every Prolog accepts that, so it is exempt.
         bool isIndicator = name == "/" && right is IntTerm ri && ri.Value >= 0;
-        if (leftBareOp && !isIndicator && !_flags.LenientBareOperatorOperands)
+        // Arity sources use quoted operator atoms as plain operands
+        // (Blint's `Char = '/'`) — arity_compat rides the same leniency the
+        // dialect scopes get; the bare ISO default stays strict.
+        bool lenientOperand = _flags.LenientBareOperatorOperands || _flags.ArityCompat;
+        if (leftBareOp && !isIndicator && !lenientOperand)
             throw new ParseException(
                 $"Operator atom cannot be the left operand of '{name}' "
                 + "without parentheses.", pos);
-        if (rightBareOp && !_flags.LenientBareOperatorOperands)
+        if (rightBareOp && !lenientOperand)
             throw new ParseException(
                 $"Operator atom cannot be the right operand of '{name}' "
                 + "without parentheses.", pos);
@@ -319,7 +323,7 @@ public sealed class Parser
         int leftMax = opType == OperatorType.Yf ? opPrec : opPrec - 1;
         if (builtPrec > leftMax) return false;
 
-        if (leftBareOp && !_flags.LenientBareOperatorOperands)
+        if (leftBareOp && !_flags.LenientBareOperatorOperands && !_flags.ArityCompat)
             throw new ParseException(
                 $"Operator atom cannot be the operand of postfix '{name}' "
                 + "without parentheses.", PeekToken().Position);

@@ -36,5 +36,12 @@ internal static class TreallaShim
         % `:- help(Signature, Meta)` documentation directives, all over their
         % sources: accepted, ignored.
         help(_, _).
+
+        % Trealla builtin names over the engine's own (ADR-040: the shim IS
+        % the mapping — the engine surface does not occupy dialect names).
+        :- public limit/2.
+        limit(N, Goal) :- call_with_limit(N, Goal).
+        :- public load_text/2.
+        load_text(Text, _Options) :- consult_text(Text).
         """;
 }

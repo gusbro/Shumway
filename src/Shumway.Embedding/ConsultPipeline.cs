@@ -298,6 +298,11 @@ internal sealed class ConsultPipeline
     // is order-guarded, so it fires only for clauses after its definition. The hook
     // compiles ONCE (first QueryAll) and is dispatched per clause — no per-clause
     // recompile. Only rebuilds + invalidates when something actually expanded.
+    // Clauses this consult routed into the dynamic store, for the re-expansion
+    // pass: (functor, index in its store slot, position in the kept-clause
+    // numbering the '$te_after' hook guards use). Null when none.
+    private List<(int Fid, int SlotIdx, int Pos)>? _dynRoutedThisConsult;
+
     private void ReExpandInFileHooks(ModuleManifest manifest, int baseOffset, int count,
         HashSet<int>? pendingDiscontiguous, int firstHookIndex, bool inFileGoalHooks)
     {
@@ -395,6 +400,34 @@ internal sealed class ConsultPipeline
             }
         }
         finally { E._consultExpandPos = -1; }
+
+        // Dynamic-routed clauses see the in-file goal_expansion hooks too — the
+        // same load-time semantics their static neighbours get (SWI/Trealla
+        // store the EXPANDED body; the split routing must not change that).
+        // goal_expansion only: it is shape-preserving, so the store slot is
+        // replaced in place. (term_expansion on a dynamic-predicate clause can
+        // fan out to several clauses and is not re-applied here.)
+        if (hasGoalExp && _dynRoutedThisConsult is { } dynRouted)
+        {
+            try
+            {
+                foreach (var (fid, slotIdx, pos) in dynRouted)
+                {
+                    if (pos <= firstHookIndex) continue;
+                    var slot = E._dynStore.Slot(fid);
+                    if (slotIdx >= slot.Count) continue;
+                    E._consultExpandPos = pos;
+                    Clause ge = E.ExpandClauseGoals(slot[slotIdx]);
+                    if (ReferenceEquals(ge, slot[slotIdx])) continue;
+                    // A hook can leave a non-goal (a number, a naked var) in a
+                    // control position — the stored form stays converted.
+                    slot[slotIdx] = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(ge);
+                    E.InvalidateDynamicCache(fid);
+                }
+            }
+            finally { E._consultExpandPos = -1; }
+        }
+        _dynRoutedThisConsult = null;
 
         // Contiguity was deferred (unexpanded grammar clauses shared one head);
         // check it now on the expanded clauses.
@@ -1465,9 +1498,22 @@ internal sealed class ConsultPipeline
             }
 
             var keptClauses = new List<Clause>(clauses.Count);
+            _dynRoutedThisConsult = null;
             foreach (var c0 in clauses)
             {
                 var c = c0;
+                // A DCG rule's REAL head is the translated one (f//2 -> f/4):
+                // route by it, or a grammar rule for a dynamic predicate
+                // compiles into an invisible static twin. The translation is
+                // used only when it routes dynamic — the static path keeps the
+                // original rule for the compiler's own (flag-aware) transform.
+                if (c.Kind == ClauseKind.DcgRule)
+                {
+                    var dcgT = Shumway.Compiler.Parsing.DcgTransform.Apply(
+                        new[] { c }, failFast: !E._flags.DebugCodegen);
+                    if (dcgT.Count == 1 && dcgT[0].Kind != ClauseKind.DcgRule)
+                        c = dcgT[0];
+                }
                 if (PrologEngine.TryExtractHead(c, out string n, out int a))
                 {
                     int fid = FunctorTable.Intern(
@@ -1481,7 +1527,15 @@ internal sealed class ConsultPipeline
                         // predicate enters the database in its CONVERTED form,
                         // exactly as an assertz'd one does.
                         c = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(c);
-                        E._dynStore.Slot(fid).Add(c);
+                        var dynSlot = E._dynStore.Slot(fid);
+                        dynSlot.Add(c);
+                        // In-file goal_expansion applies to this clause too —
+                        // recorded for the post-commit re-expansion pass, with
+                        // the position hooks are numbered against (the count of
+                        // KEPT clauses before it, since guard indices are
+                        // assigned over the final kept list).
+                        (_dynRoutedThisConsult ??= new()).Add(
+                            (fid, dynSlot.Count - 1, keptClauses.Count));
                         // ADR-023 — a CONSULT-borne clause is a mutation of the
                         // dynamic predicate exactly like a runtime assertz, and
                         // must invalidate the same things: the promoted IL
@@ -1553,7 +1607,7 @@ internal sealed class ConsultPipeline
                         continue;
                     }
                 }
-                keptClauses.Add(c);
+                keptClauses.Add(c0);
             }
             clauses = keptClauses;
         }

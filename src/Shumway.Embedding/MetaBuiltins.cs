@@ -497,6 +497,10 @@ public static partial class MetaBuiltins
             + "through LoadBundle, everything else is read as Prolog source. An "
             + "extensionless File that does not exist is retried as File.pl "
             + "(SWI-style).");
+        BuiltinsRegistry.Register("$load_text", 2, LoadTextCore,
+            Database, "'$load_text'(+TextAtom, +Options)",
+            "Native core of load_text/2 (Trealla): consults TextAtom's characters "
+            + "as Prolog source. Options are accepted and currently ignored.");
         BuiltinsRegistry.Register("ensure_loaded", 1, EnsureLoaded,
             Database, "ensure_loaded(+File)",
             "Loads File unless it is already loaded, in which case it does "

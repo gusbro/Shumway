@@ -40,6 +40,8 @@ internal static class Prelude
         :- public aggregate_all/3.
         :- public forall/2.
         :- public if/3.
+        :- public ifthen/2.
+        :- public ifthenelse/3.
         :- public evaluable_property/2.
         :- public clause/3.
         :- public call_nth/2.
@@ -112,6 +114,8 @@ internal static class Prelude
         :- meta_predicate(setup_call_cleanup(0, 0, 0)).
         :- meta_predicate(call_cleanup(0, 0)).
         :- meta_predicate(if(0, 0, 0)).
+        :- meta_predicate(ifthen(0, 0)).
+        :- meta_predicate(ifthenelse(0, 0, 0)).
         :- meta_predicate(apply(1, *)).
         % Control constructs: callable, and their arguments are goals.
         % (','/2 and friends are seeded in C# — PrologEngine's
@@ -122,7 +126,7 @@ internal static class Prelude
         :- public chdir/1.
         :- public append/2.
         :- public flatten/2.
-        :- public limit/2.
+        :- public call_with_limit/2.
         :- public offset/2.
         :- public copy_term_nat/2.
         :- public variant/2.
@@ -261,6 +265,12 @@ internal static class Prelude
 
         %! if(:Condition, :Then, :Else) | Control | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
         if(C, T, E) :- ( C *-> T ; E ).
+
+        %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails — unlike (Condition -> Then), which fails.
+        ifthen(P, Q) :- ( P -> Q ; true ).
+
+        %! ifthenelse(:Condition, :Then, :Else) | Control | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails.
+        ifthenelse(P, Q, R) :- ( P -> Q ; R ).
 
         %! call_nth(:Goal, ?N) | Control | True when Goal has an Nth solution: with N bound, commits to that solution; with N unbound, enumerates solutions numbering each.
         call_nth(Goal, N) :-
@@ -531,6 +541,14 @@ internal static class Prelude
         '$length_walk'(L, Orig, N, Acc) :-
             (   var(L) ->
                 (   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
+                    % Length identical to the open tail (length(L,L),
+                    % length([a|X],X)): every enumeration candidate binds the
+                    % tail to a k-skeleton and then fails unifying that LIST
+                    % with the integer k as output — false is the limit the
+                    % enumeration never reaches. (SWI fails too; Scryer and
+                    % Trealla throw resource_error(finite_memory) instead —
+                    % accepted divergence, their test1095.)
+                ;   L == N -> fail
                 ;   var(N) -> '$length_enum'(L, N, Acc)
                 ;   throw(error(type_error(integer, N), length/2))
                 )
@@ -853,6 +871,20 @@ internal static class Prelude
             N == M, A1 == B1.
         %! \=@=(@Term1, @Term2) | Term ordering | Term1 and Term2 are NOT variants.
         A \=@= B :- \+ (A =@= B).
+
+        % ===== \= over the three-state trial core =====
+        :- public (\=)/2.
+        %! \=(?Term1, ?Term2) | Unification & comparison | Succeeds if the two terms do not unify. Attributed-variable hooks run: freeze fires during the trial, dif can veto it.
+        % The native core only TRIAL-unifies (rollback, hooks never run). When
+        % the trial bound an attvar the verdict is unreliable — a hook could
+        % veto the unification (dif) or must observably fire (freeze) — so the
+        % m verdict re-decides through a real negated unification.
+        X \= Y :-
+            '$not_unifiable3'(X, Y, R),
+            (   R == t -> true
+            ;   R == m -> \+ X = Y
+            ;   fail
+            ).
 
         % ===== single-threaded mutex + message queues (SWI compat) =====
         % Shumway is single-threaded, so a mutex is a no-op and with_mutex/2 just
@@ -1309,17 +1341,19 @@ internal static class Prelude
         append([], []).
         append([L|Ls], As) :- append(L, Ws, As), append(Ls, Ws).
 
-        %! flatten(+Nested, -Flat) | Lists | Flattens nested lists into a single list (SWI/Trealla library form); a non-list element (or variable) becomes an element of Flat.
+        %! flatten(+Nested, -Flat) | Lists | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat.
         flatten(Nested, Flat) :- '$flatten'(Nested, [], Flat0), !, Flat = Flat0.
         '$flatten'(V, T, [V|T]) :- var(V), !.
         '$flatten'([], T, T) :- !.
         '$flatten'([H|R], T, F) :- !, '$flatten'(R, T, F1), '$flatten'(H, F1, F).
         '$flatten'(X, T, [X|T]).
 
-        %! limit(+N, :Goal) | Control | Solutions of Goal, at most the first N (SWI solution_sequences / Trealla form). Fails when N < 1.
-        limit(N, Goal) :-
+        %! call_with_limit(+N, :Goal) | Control | Solutions of Goal, at most the first N. Fails when N < 1.
+        % Dialect shims map their names onto this (SWI solution_sequences'
+        % and Trealla's limit/2).
+        call_with_limit(N, Goal) :-
             ( integer(N) -> true
-            ; throw(error(type_error(integer, N), limit/2)) ),
+            ; throw(error(type_error(integer, N), call_with_limit/2)) ),
             N >= 1,
             call_nth(Goal, Nth),
             ( Nth =:= N -> ! ; true ).
@@ -1368,13 +1402,37 @@ internal static class Prelude
         copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).
 
         %! bb_put(+Key, +Value) | Global variables | Blackboard store (SICStus/Trealla): non-backtrackable global assignment.
-        bb_put(Key, Value) :- nb_setval(Key, Value).
+        % Attributed variables survive the blackboard (the SICStus/Trealla
+        % contract): a value carrying attvars is stored RESIDUALIZED — the
+        % attribute-free copy plus its copy_term/3 projection goals — and
+        % every bb_get re-copies and re-runs the goals, so each read is an
+        % independent fresh constraint set and the original variables are
+        % untouched. A plain value skips the walk entirely and is stored raw
+        % ('$bb_attr'/2 as user data would be misread — accepted edge).
+        bb_put(Key, Value) :- '$bb_wrap'(Value, W), nb_setval(Key, W).
+
+        '$bb_wrap'(Value, W) :-
+            (   term_attvars(Value, [_|_]) ->
+                copy_term(Value, Copy, Gs),
+                W = '$bb_attr'(Copy, Gs)
+            ;   W = Value
+            ).
 
         %! bb_get(+Key, -Value) | Global variables | Reads a blackboard entry; FAILS when Key is unset (unlike nb_getval/2, which throws).
         bb_get(Key, Value) :-
             catch(nb_getval(Key, V0), _, fail),
             V0 \== '$bb_absent',
-            Value = V0.
+            '$bb_unwrap'(V0, Value).
+
+        '$bb_unwrap'(V0, Value) :-
+            (   nonvar(V0), V0 = '$bb_attr'(Copy, Gs) ->
+                copy_term(Copy-Gs, Value-Gs1),
+                '$bb_recall'(Gs1)
+            ;   Value = V0
+            ).
+
+        '$bb_recall'([]).
+        '$bb_recall'([G|Gs]) :- call(G), '$bb_recall'(Gs).
 
         %! bb_update(+Key, ?Old, +New) | Global variables | Unifies Old with the current value and replaces it with New; fails (leaving the entry unchanged) when Old does not match.
         bb_update(Key, Old, New) :- bb_get(Key, Old), bb_put(Key, New).
@@ -1383,14 +1441,24 @@ internal static class Prelude
         bb_delete(Key, Value) :- bb_get(Key, Value), nb_setval(Key, '$bb_absent').
 
         %! bb_b_put(+Key, +Value) | Global variables | Backtrackable blackboard assignment: the previous value is restored on backtracking.
-        bb_b_put(Key, Value) :- b_setval(Key, Value).
+        bb_b_put(Key, Value) :- '$bb_wrap'(Value, W), b_setval(Key, W).
 
-        %! read_term_from_chars(+Chars, -Term, +Options) | Input / output | Reads a term from a character list (Trealla arity/order).
+        %! consult_text(+Text) | Database | Consults Text (an atom or a chars/codes list) as Prolog source — the in-language form of the embedding API's ConsultString. A module loaded this way keeps its exports scoped (no auto-import into user).
+        :- public consult_text/1.
+        consult_text(Text) :-
+            (   var(Text) -> throw(error(instantiation_error, consult_text/1))
+            ;   atom(Text) -> A = Text
+            ;   Text = [C|_], integer(C) -> atom_codes(A, Text)
+            ;   atom_chars(A, Text)
+            ),
+            '$load_text'(A, []).
+
+        %! read_term_from_chars(+Chars, -Term, +Options) | Input / output | Reads a term from a character list, honouring read_term/2 options.
         read_term_from_chars(Chars, Term, Options) :-
             atom_chars(Atom, Chars),
             read_term_from_atom(Atom, Term, Options).
 
-        %! write_term_to_chars(+Term, +Options, -Chars) | Input / output | Writes a term to a character list with write_term/2's options (Trealla arity/order).
+        %! write_term_to_chars(+Term, +Options, -Chars) | Input / output | Writes a term to a character list with write_term/2's options.
         write_term_to_chars(Term, Options, Chars) :-
             with_output_to(atom(Atom), write_term(Term, Options)),
             atom_chars(Atom, Chars).

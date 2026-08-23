@@ -71,6 +71,10 @@ public static class AstTermRenderer
             case BigIntTerm b: return b.Value.ToString(CultureInfo.InvariantCulture);
             case CompoundTerm { Functor: ".", Args.Length: 2 } list:
                 return RenderList(list, ops, quoted);
+            // '{}'(X) reads back as {X} — the canonical form would re-parse
+            // but is not what writeq/portray_clause emit.
+            case CompoundTerm { Functor: "{}", Args.Length: 1 } curly:
+                return "{" + Render(curly.Args[0], 1200, ops, quoted) + "}";
             case CompoundTerm c:
                 return RenderCompound(c, maxPrec, ops, quoted);
             default:

@@ -27,8 +27,13 @@ public static class StandardBuiltins
         const string Cmp = "Unification & comparison";
         BuiltinsRegistry.Register("=",   2, UnifyBuiltins.Unify,
             Cmp, "=(?Term1, ?Term2)", "Unifies the two terms.");
-        BuiltinsRegistry.Register("\\=", 2, UnifyBuiltins.NotUnifiable,
-            Cmp, "\\=(?Term1, ?Term2)", "Succeeds if the two terms do not unify.");
+        // \=/2 itself is a prelude wrapper over this three-state core: the
+        // trial-only builtin cannot run attvar hooks (freeze must fire, dif
+        // may veto), so an attvar-touching trial defers to \+ X = Y there.
+        BuiltinsRegistry.Register("$not_unifiable3", 3, UnifyBuiltins.NotUnifiable3,
+            Cmp, "'$not_unifiable3'(?Term1, ?Term2, -Verdict)",
+            "Trial-unification verdict behind \\=/2: t (cannot unify), f (unifies), "
+            + "m (bound an attributed variable - the wrapper must re-decide with hooks).");
         BuiltinsRegistry.Register("==",  2, UnifyBuiltins.StructurallyEqual,
             Cmp, "==(@Term1, @Term2)", "Succeeds if the two terms are structurally identical.");
         BuiltinsRegistry.Register("\\==",2, UnifyBuiltins.StructurallyNotEqual,

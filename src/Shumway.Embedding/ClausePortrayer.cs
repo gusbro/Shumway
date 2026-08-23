@@ -329,6 +329,10 @@ public static class ClausePortrayer
     }
 
     private static bool IsSyntheticName(string name)
-        => name.Length >= 2 && name[0] == '_'
-            && (name[1] == 'G' || name[1] == 'C');
+        => (name.Length >= 2 && name[0] == '_'
+            && (name[1] == 'G' || name[1] == 'C'))
+            // Transform-made vars ('$S0'/'$O1' from DcgTransform): source
+            // syntax cannot name a variable with '$', so these are always
+            // synthetic and must not leak into listing output.
+            || (name.Length >= 1 && name[0] == '$');
 }

@@ -50,6 +50,35 @@ public class GlobalVarTrailTests
         => Assert.True(Holds("\\+ '$fetch_global_var'(never_set_key_xyz, _)."));
 
     [Fact]
+    public void Blackboard_PreservesAttributedVariables()
+    {
+        // The SICStus/Trealla contract: a value carrying attvars is stored
+        // residualized (copy_term/3) and every bb_get re-runs the projection
+        // goals on a fresh copy — constraints survive, reads are independent,
+        // and the original variable is untouched.
+        var e = new PrologEngine();
+        e.Query("use_module(library(coroutining)).");
+        // frozen goal survives and fires when the RETRIEVED COPY is bound
+        // (observed by side effect: residualization copies the goal's outer
+        // variables too, so a binding would land on the copy)
+        Assert.True(e.Query(
+            "freeze(V, nb_setval(bbfired, yes)), bb_put(bbk1, V), "
+            + "bb_get(bbk1, W), W = 1, nb_getval(bbfired, yes), var(V).").Success);
+        // sharing inside a compound is preserved across the round-trip
+        Assert.True(e.Query(
+            "freeze(B, true), bb_put(bbk2, f(B, g(B))), "
+            + "bb_get(bbk2, f(P, g(Q))), P == Q.").Success);
+        // dif survives; each bb_get is an independent copy
+        Assert.True(e.Query(
+            "dif(C, b), bb_put(bbk3, C), "
+            + "bb_get(bbk3, Z1), \\+ Z1 = b, "
+            + "bb_get(bbk3, Z2), Z2 = c.").Success);
+        // plain values keep the raw path
+        Assert.True(e.Query(
+            "bb_put(bbk4, hello(world)), bb_get(bbk4, hello(world)).").Success);
+    }
+
+    [Fact]
     public void BbGet_FailsCleanlyForUnsetKey()
         // bb_get's body is an inline catch in the BAKED prelude: its recovery
         // is the bare '$catchrec_N' the catch frame stores, compiled as

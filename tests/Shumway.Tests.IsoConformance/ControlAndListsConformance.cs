@@ -119,6 +119,23 @@ public class ControlAndListsConformance
     }
 
     [Fact]
+    public void Length_TailIdenticalToLength_Fails()
+    {
+        // length(L, L): any candidate binds the open tail to a k-skeleton and
+        // then fails unifying that LIST with the integer k — false is the
+        // limit the plain enumeration loops toward. SWI fails too; Scryer and
+        // Trealla throw resource_error(finite_memory) (accepted divergence).
+        var engine = new PrologEngine();
+        Assert.False(engine.Query("length(L, L).").Success);
+        Assert.False(engine.Query("L = [a|X], length(L, X).").Success);
+        // The identity check must not disturb the neighbours: a var LENGTH
+        // that is an ELEMENT is fine, and a nonvar non-integer still errors.
+        Assert.True(engine.Query("length([N|T], N), N == 1, T == [].").Success);
+        Assert.True(engine.Query(
+            "catch(length([a|_], [a|_]), error(type_error(integer, _), _), true).").Success);
+    }
+
+    [Fact]
     public void Reverse_ReversesList()
     {
         var engine = new PrologEngine();

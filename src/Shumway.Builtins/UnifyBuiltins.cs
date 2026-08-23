@@ -22,12 +22,14 @@ public static class UnifyBuiltins
     public static bool UnifyWithOccursCheck(Activation engine) =>
         engine.UnifyRegistersWithOccursCheck(0, 1);
 
-    /// <summary><c>\=(X, Y)</c> — succeeds iff X and Y CANNOT be unified.
-    /// Performs a trial unification, then unwinds any bindings the trial made
-    /// before reporting the result. The heap-top is restored so any
-    /// freshly-allocated heap cells from the trial are released.
-    /// </summary>
-    public static bool NotUnifiable(Activation engine)
+    /// <summary><c>'$not_unifiable3'(X, Y, -R)</c> — the native core of
+    /// <c>\=/2</c> (a prelude wrapper). Performs a trial unification, unwinds
+    /// any bindings the trial made, and reports three-state: <c>t</c> (cannot
+    /// unify), <c>f</c> (unifies), or <c>m</c> — the trial bound an attributed
+    /// variable, so the verdict is unreliable without running its hooks
+    /// (freeze must fire, dif may veto): the wrapper re-decides via
+    /// <c>\+ X = Y</c> in the live engine.</summary>
+    public static bool NotUnifiable3(Activation engine)
     {
         int savedHeapTop = engine.HeapTop;
         int savedBindingTrail = engine.BindingTrailTop;
@@ -41,19 +43,21 @@ public static class UnifyBuiltins
         engine.SetHb(engine.HeapTop);
 
         bool unified = engine.UnifyRegisters(0, 1);
+        bool wokeAttvars = engine.PendingWakeupCount != savedWakeups;
 
         // Unwind any bindings (whether the unify succeeded or partially
         // failed). Restore the heap top so trial-allocated cells are released,
-        // and put Hb back to its original value. Wakeups the trial queued by
-        // binding an attributed variable are discarded with the bindings —
-        // running them would fire verify_attributes/4 for a binding that no
-        // longer exists.
+        // and put Hb back to its original value. Wakeups the trial queued are
+        // discarded WITH the bindings — the wrapper's meta path re-runs the
+        // unification for real when they matter.
         engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
         engine.SetHeapTop(savedHeapTop);
         engine.SetHb(savedHb);
         engine.TruncatePendingWakeups(savedWakeups);
 
-        return !unified;
+        string verdict = wokeAttvars ? "m" : unified ? "f" : "t";
+        return engine.UnifyRegisterWithCell(
+            2, Cell.Atom(AtomTable.Intern(verdict, permanent: true).Id));
     }
 
     /// <summary><c>==(X, Y)</c> — structural identity, no unification.</summary>
