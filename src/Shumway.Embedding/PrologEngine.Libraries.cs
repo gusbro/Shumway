@@ -218,8 +218,28 @@ public sealed partial class PrologEngine
         // predicate or DCG-nonterminal head. Save prior definitions so nested
         // swi loads restore correctly and a user-defined `as` op survives.
         bool swiOps = dialect == SwiShim.LibraryName;
+        bool treallaOps = dialect == TreallaShim.LibraryName;
         bool hadAs = Operators.TryGetInfix("as", out int asPrec, out var asType);
         bool hadTl = Operators.TryGetPrefix("thread_local", out int tlPrec, out var tlType);
+        // Trealla-only OPERATORS, scoped like SWI's: the ? / ++ / -- / @
+        // mode-annotation prefixes its `:- help(f(?term, ...), ...)` doc
+        // directives use on every library predicate.
+        bool hadQm = Operators.TryGetPrefix("?", out int qmPrec, out var qmType);
+        bool hadPp = Operators.TryGetPrefix("++", out int ppPrec, out var ppType);
+        bool hadMm = Operators.TryGetPrefix("--", out int mmPrec, out var mmType);
+        bool hadAt = Operators.TryGetPrefix("@", out int atPrec, out var atType);
+        bool hadPc = Operators.TryGetPrefix(":", out int pcPrec, out var pcType);
+        if (treallaOps)
+        {
+            Operators.Define("?", 500, Shumway.Compiler.Parsing.OperatorType.Fx);
+            Operators.Define("++", 100, Shumway.Compiler.Parsing.OperatorType.Fy);
+            Operators.Define("--", 100, Shumway.Compiler.Parsing.OperatorType.Fy);
+            Operators.Define("@", 100, Shumway.Compiler.Parsing.OperatorType.Fy);
+            // PREFIX `:` for their `:callable` mode annotations — a
+            // separate entry from the INFIX `:` module qualifier at 200,
+            // which stays untouched (the module-arc invariant).
+            Operators.Define(":", 200, Shumway.Compiler.Parsing.OperatorType.Fy);
+        }
         if (dialect == SwiShim.LibraryName)
         {
             Flags.DigitSeparators = true;
@@ -236,6 +256,8 @@ public sealed partial class PrologEngine
         if (dialect == SwiShim.LibraryName) EnsureSwiShim();
         // The scryer analogue: emulations of the Rust-VM '$...' natives.
         if (dialect == "scryer") EnsureScryerShim();
+        // The trealla analogue (its libraries are pure Prolog; the shim is tiny).
+        if (dialect == TreallaShim.LibraryName) EnsureTreallaShim();
         try { return body(); }
         finally
         {
@@ -246,6 +268,19 @@ public sealed partial class PrologEngine
             Flags.LenientQuoteCharLiteral = savedLenientQuote;
             Flags.LenientArgumentPriority = savedLenientArgs;
             Flags.LenientEscapes = savedLenientEsc;
+            if (treallaOps)
+            {
+                Operators.Define("?", hadQm ? qmPrec : 0,
+                    hadQm ? qmType : Shumway.Compiler.Parsing.OperatorType.Fx);
+                Operators.Define("++", hadPp ? ppPrec : 0,
+                    hadPp ? ppType : Shumway.Compiler.Parsing.OperatorType.Fy);
+                Operators.Define("--", hadMm ? mmPrec : 0,
+                    hadMm ? mmType : Shumway.Compiler.Parsing.OperatorType.Fy);
+                Operators.Define("@", hadAt ? atPrec : 0,
+                    hadAt ? atType : Shumway.Compiler.Parsing.OperatorType.Fy);
+                Operators.Define(":", hadPc ? pcPrec : 0,
+                    hadPc ? pcType : Shumway.Compiler.Parsing.OperatorType.Fy);
+            }
             if (swiOps)
             {
                 Operators.Define("as", hadAs ? asPrec : 0,
@@ -264,13 +299,13 @@ public sealed partial class PrologEngine
     // native equivalent is used (use_module is a no-op); a user's own same-named
     // library WITHOUT the marker loads normally. Value = a distinctive substring
     // (a call to the unsupported system predicate) sought in a first-pass read.
-    private static readonly Dictionary<string, string> NativeOverrideMarkers =
+    private static readonly Dictionary<string, string[]> NativeOverrideMarkers =
         new(StringComparer.Ordinal)
         {
             // library(when): SWI's when.pl dispatches conditions through
             // '$eval_when_condition'/2, a kernel helper we lack; Shumway ships its
             // own coroutining when/2.
-            ["when"] = "$eval_when_condition",
+            ["when"] = new[] { "$eval_when_condition" },
             // library(arithmetic): user-defined evaluable functions ride SWI's
             // GLOBAL goal_expansion + module introspection (import_module,
             // imported_from). On Shumway that hook mis-expands every later
@@ -278,25 +313,45 @@ public sealed partial class PrologEngine
             // (user evaluables) is unsupported. The shim stubs
             // arithmetic_function/1 (accepted, unregistered) and
             // arithmetic_expression_value/2 (builtin evaluation).
-            ["arithmetic"] = "math_goal_expansion",
+            ["arithmetic"] = new[] { "math_goal_expansion" },
             // library(listing): Shumway ships listing/0,1 + portray_clause/1,2
             // natively; SWI's listing.pl needs dicts (`_{}`) + settings and
             // would shadow ours. do_portray_clause is its internal renderer.
-            ["listing"] = "do_portray_clause",
+            ["listing"] = new[] { "do_portray_clause" },
             // library(prolog_stack): prints the SWI VM backtrace via
             // prolog_frame_attribute — no such VM here; the shim's backtrace/1
             // no-op is the equivalent surface (debug.pl autoloads only that).
-            ["prolog_stack"] = "prolog_frame_attribute",
+            ["prolog_stack"] = new[] { "prolog_frame_attribute" },
             // SCRYER library(format): its rendering core (format_args_cells)
             // reaches builtins:parse_write_options via charsio — bootstrap
             // internals we don't provide. The scryer pack's own Format shim
             // (the one every engine WITHOUT a Scryer tree already uses) is the
             // equivalent surface.
-            ["format"] = "format_args_cells",
+            ["format"] = new[] { "format_args_cells", "library(pio)" },
+            // TREALLA library(builtins): its auto-load base wraps dozens of C
+            // natives ($load_ops, $bb_*, ...); the engine IS that layer.
+            ["builtins"] = new[] { "$load_ops" },
+            // TREALLA library(atts): get_atts/put_atts are C builtins there;
+            // Shumway ships its own atts (CompatLibraries) over the native
+            // attribute-list primitives.
+            ["atts"] = new[] { "user:goal_expansion(get_atts" },
+            // TREALLA library(iso_ext): rides $register_cleanup/$call_cleanup/
+            // $countall C natives; setup_call_cleanup & co are native here.
+            ["iso_ext"] = new[] { "$register_cleanup" },
+            // TREALLA library(charsio): rides $char_type/$get_chars natives;
+            // the engine's charsio surface is builtin.
+            ["charsio"] = new[] { "$char_type" },
+            // TREALLA library(error): rides $first_non_octet; must_be/can_be
+            // are native + prelude.
+            ["error"] = new[] { "$first_non_octet" },
+            // TREALLA library(clpz): loads, but its propagation engine is not
+            // yet certified on Shumway (its own campaign, like Scryer's clpz
+            // was); native clpfd speaks the same in/ins/#=/label vocabulary.
+            ["clpz"] = new[] { "clpz_current_propagator" },
             // SCRYER library(time): wraps the '$cpu_now' native. Shumway's
             // native time/1 and sleep/1 are already bare-global; the file's
             // versions would shadow them with broken ones.
-            ["time"] = "$cpu_now",
+            ["time"] = new[] { "$cpu_now" },
         };
 
     /// <summary>True when <paramref name="name"/> is a native-override CANDIDATE
@@ -306,8 +361,14 @@ public sealed partial class PrologEngine
     /// short-circuits without touching the file.</summary>
     private bool ShouldUseNativeOverride(string name, string path)
     {
-        if (!NativeOverrideMarkers.TryGetValue(name, out string? marker)) return false;
-        try { return System.IO.File.ReadAllText(path).Contains(marker, StringComparison.Ordinal); }
+        if (!NativeOverrideMarkers.TryGetValue(name, out string[]? markers)) return false;
+        try
+        {
+            string text = System.IO.File.ReadAllText(path);
+            foreach (string marker in markers)
+                if (text.Contains(marker, StringComparison.Ordinal)) return true;
+            return false;
+        }
         catch { return false; }   // unreadable → fall through and load it
     }
 
@@ -323,8 +384,28 @@ public sealed partial class PrologEngine
             case "listing": break;                       // native listing/portray_clause builtins
             case "prolog_stack": EnsureSwiShim(); break; // shim backtrace/1 no-op
             case "format": UseCompatLibrary("format"); break;   // scryer pack Format shim
+            case "builtins": break;                      // the engine IS the builtins layer
+            case "atts": UseCompatLibrary("atts"); break;
+            case "iso_ext": break;                       // native setup_call_cleanup & co
+            case "charsio": break;                       // builtin charsio surface
+            case "error": break;                         // native must_be/can_be
+            case "clpz": UseClpfd(); break;              // until their clpz certifies
             case "time": break;                          // native time/1 + sleep/1 serve
         }
+    }
+
+    private bool _treallaShimLoaded;
+
+    /// <summary>Consults the Trealla compat shim once — triggered when a
+    /// trealla-dialect library loads (<see cref="WithDialect"/>).</summary>
+    internal void EnsureTreallaShim()
+    {
+        if (_treallaShimLoaded) return;
+        _treallaShimLoaded = true;
+        var savedDq = Flags.DoubleQuotes;
+        Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(TreallaShim.LibraryName);
+        try { ConsultStringInner(TreallaShim.Source, recordInHistory: false); }
+        finally { Flags.DoubleQuotes = savedDq; }
     }
 
     private bool _swiShimLoaded;

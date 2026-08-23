@@ -193,7 +193,8 @@ internal static class CompatLibraries
 
     // library(format) — the DCG-format non-terminal format_//2. Supports the
     // directives real programs use: ~s (char/code list, spliced verbatim),
-    // ~d (integer), ~a (atom), ~n (newline), ~~ (literal tilde); any other
+    // ~d (integer), ~a (atom), ~w / ~q (write / writeq via
+    // write_term_to_chars), ~n (newline), ~~ (literal tilde); any other
     // character is emitted literally. Self-contained (does not depend on
     // library(dcgs) load order).
     private const string Format = """
@@ -204,6 +205,10 @@ internal static class CompatLibraries
             { number_chars(A, Cs) }, '$fmt_seq'(Cs), format_(Fs, As).
         format_(['~', 'a' | Fs], [A | As]) --> !,
             { atom_chars(A, Cs) }, '$fmt_seq'(Cs), format_(Fs, As).
+        format_(['~', 'w' | Fs], [A | As]) --> !,
+            { write_term_to_chars(A, [], Cs) }, '$fmt_seq'(Cs), format_(Fs, As).
+        format_(['~', 'q' | Fs], [A | As]) --> !,
+            { write_term_to_chars(A, [quoted(true)], Cs) }, '$fmt_seq'(Cs), format_(Fs, As).
         format_(['~', 'n' | Fs], As) --> !, ['\n'], format_(Fs, As).
         format_(['~', '~' | Fs], As) --> !, ['~'], format_(Fs, As).
         format_([C | Fs], As) --> [C], format_(Fs, As).
