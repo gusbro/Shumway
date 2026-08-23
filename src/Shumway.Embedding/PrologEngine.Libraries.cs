@@ -721,7 +721,7 @@ public sealed partial class PrologEngine
                         if (ShouldUseNativeOverride(libName, libPath))
                         {
                             LoadNativeOverride(libName);
-                            return null;
+                            return libName == "atts" ? "atts" : null;
                         }
                         // ADR-040 D5.2 — a dir tagged with a dialect loads its
                         // libraries in that dialect (name resolution +
@@ -731,8 +731,13 @@ public sealed partial class PrologEngine
                             ? WithDialect(dirDialect, () => LoadResolvedLibrary(libName, libPath))
                             : LoadResolvedLibrary(libName, libPath);
                     }
-                    // (3) built-in Scryer/Trealla compatibility table.
-                    if (UseCompatLibrary(libName)) return null;
+                    // (3) built-in Scryer/Trealla compatibility table. Most
+                    // entries are bare-global (nothing to import); atts is a
+                    // REAL module with exports (the hProlog-compat wrappers
+                    // shadow the raw builtins for importers only), so its
+                    // name flows back for RecordImports.
+                    if (UseCompatLibrary(libName))
+                        return libName == "atts" ? "atts" : null;
                     // (4) genuinely unknown.
                     if (throwOnUnresolved)
                         throw new Shumway.Core.PrologRuntimeException(

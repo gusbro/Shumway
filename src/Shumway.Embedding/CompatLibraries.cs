@@ -87,11 +87,15 @@ internal static class CompatLibraries
     // verify_attributes/3 hook; the engine's per-module dispatch (ADR-040)
     // finds it without registration.
     private const string Atts = """
-        :- module(atts).
-        :- public put_atts/2.
-        :- public get_atts/2.
-        :- public '$atts_put'/3.
-        :- public '$atts_get'/3.
+        % get_attr/put_attr/del_attr are EXPORT-QUALIFIED (ADR-038): an
+        % importer of library(atts) sees these hProlog-COMPAT wrappers —
+        % get_attr(V, M, Val) is get_atts(V, Access) with Access =.. [M, Val],
+        % the bridge Triska's solvers rely on (clpz's fd_get stores via
+        % put_atts and reads via get_attr expecting the SAME value) — while
+        % everyone else keeps the engine's raw-value builtins.
+        :- module(atts, [get_attr/3, put_attr/3, del_attr/2,
+                         put_atts/2, get_atts/2,
+                         '$atts_put'/3, '$atts_get'/3]).
         :- multifile goal_expansion/2.
         :- multifile term_expansion/2.
 
@@ -116,6 +120,21 @@ internal static class CompatLibraries
 
         %! get_atts(-Var, ?AccessSpec) | Attributed variables | SICStus atts: queries attributes of Var — +Attr (or bare Attr) unifies with the attribute, -Attr succeeds iff absent, an unbound AccessSpec returns the full list.
         get_atts(V, Spec) :- '$atts_get'(V, user, Spec).
+
+        get_attr(V, M, Value) :-
+            var(V), atom(M),
+            Access =.. [M, Value],
+            '$atts_get'(V, M, +Access).
+        put_attr(V, M, Value) :-
+            atom(M),
+            Access =.. [M, Value],
+            '$atts_put'(V, M, +Access).
+        del_attr(V, M) :-
+            ( var(V), atom(M) ->
+                Access =.. [M, _],
+                '$atts_put'(V, M, -Access)
+            ; true
+            ).
 
         '$atts_put'(_, _, Spec) :-
             var(Spec), !, throw(error(instantiation_error, put_atts/2)).
