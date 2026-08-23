@@ -1281,9 +1281,10 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>read_term_from_atom(+Atom, -Term, +Options)</c> —
-    /// SWI / GProlog compat. The options list is accepted but
-    /// currently ignored (no read-time options affect the parser
-    /// yet).</summary>
+    /// SWI / GProlog compat. Honours <c>double_quotes(Mode)</c> (the flag
+    /// scoped to this one parse — Trealla's JSON-ish idiom reads embedded
+    /// text with <c>double_quotes(atom)</c>); other options are accepted
+    /// and ignored.</summary>
     public static bool ReadTermFromAtom3(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
@@ -1296,7 +1297,40 @@ public static partial class MetaBuiltins
             // atom (`*.` lexes as one atom, not `*` + end), so the clause reads
             // with no terminator dot. The space keeps the dot a real end token.
             source += " .";
-        Term parsed = ParseClauseText(engine, source);
+
+        Shumway.Compiler.Parsing.DoubleQuotesMode? dqOverride = null;
+        Cell cursor = ResolveLocal(engine, engine.GetRegister(2));
+        while (cursor.Tag == Tag.Lis)
+        {
+            int pair = cursor.AsHeapIndex;
+            Cell head = ResolveLocal(engine, engine.GetHeap(pair));
+            if (head.Tag == Tag.Str)
+            {
+                var (aid, ar) = FunctorTable.Lookup(engine.GetHeap(head.AsHeapIndex).AsFunctorId);
+                if (ar == 1 && AtomTable.GetById(aid)?.Name == "double_quotes")
+                {
+                    Cell v = ResolveLocal(engine, engine.GetHeap(head.AsHeapIndex + 1));
+                    dqOverride = v.Tag == Tag.Atom
+                        ? AtomTable.GetById(v.AsAtomId)?.Name switch
+                          {
+                              "codes" => Shumway.Compiler.Parsing.DoubleQuotesMode.Codes,
+                              "chars" => Shumway.Compiler.Parsing.DoubleQuotesMode.Chars,
+                              "atom" => Shumway.Compiler.Parsing.DoubleQuotesMode.Atom,
+                              "string" => Shumway.Compiler.Parsing.DoubleQuotesMode.String,
+                              _ => null,
+                          }
+                        : null;
+                }
+            }
+            cursor = ResolveLocal(engine, engine.GetHeap(pair + 1));
+        }
+
+        var flags = LiveFlags(engine);
+        var savedDq = flags.DoubleQuotes;
+        if (dqOverride is { } mode) flags.DoubleQuotes = mode;
+        Term parsed;
+        try { parsed = ParseClauseText(engine, source); }
+        finally { flags.DoubleQuotes = savedDq; }
         Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
         return engine.UnifyRegisterWithCell(1, parsedCell);
     }

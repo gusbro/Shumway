@@ -107,11 +107,13 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `string_termq(?Atom, ?Term)` | writeq-style variant of string_term/2: atoms / functors are quoted when needed so the rendered atom re-parses to the same term. Equivalent to term_to_atom/2. |
 | `subsumes_term(@General, @Specific)` | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term. |
 | `term_attvars(+Term, -Vars)` | Unifies Vars with the attributed variables reachable from Term. |
+| `term_singletons(@Term, -Singletons)` | Unifies Singletons with the variables occurring exactly once in Term, in order of first appearance. |
 | `term_string(?Term, ?String)` | Converts between a term and its textual string representation (SWI). |
 | `term_string(?Term, ?String, +Options)` | As term_string/2 with an (accepted, ignored) SWI option list. |
 | `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
 | `term_variables(+Term, -Variables)` | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5). |
 | `unifiable(@X, @Y, -Unifier)` | If X and Y unify, Unifier is the list of V=Value bindings that make them equal; else fails. |
+| `variant(@Term1, @Term2)` | True when the terms are structural variants: equal up to a consistent renaming of variables (mutual subsumption). |
 
 ## Control
 

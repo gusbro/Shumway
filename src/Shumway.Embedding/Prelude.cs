@@ -125,6 +125,8 @@ internal static class Prelude
         :- public limit/2.
         :- public offset/2.
         :- public copy_term_nat/2.
+        :- public variant/2.
+        :- public term_singletons/2.
         :- public bb_put/2.
         :- public bb_get/2.
         :- public bb_update/3.
@@ -1328,6 +1330,39 @@ internal static class Prelude
             ; throw(error(type_error(integer, N), offset/2)) ),
             call_nth(Goal, Nth),
             Nth > N.
+
+        %! variant(@Term1, @Term2) | Term inspection & construction | True when the terms are structural variants: equal up to a consistent renaming of variables (mutual subsumption).
+        variant(A, B) :- subsumes_term(A, B), subsumes_term(B, A).
+
+        %! term_singletons(@Term, -Singletons) | Term inspection & construction | Unifies Singletons with the variables occurring exactly once in Term, in order of first appearance.
+        term_singletons(T, Singles) :-
+            '$tsing_occurrences'(T, [], RevOcc),
+            '$tsing_keep_single'(RevOcc, RevOcc, [], Singles).
+        '$tsing_occurrences'(T, Acc0, Acc) :-
+            (   var(T) -> Acc = [T|Acc0]
+            ;   '$tsing_args'(T, 1, Acc0, Acc)
+            ).
+        '$tsing_args'(T, I, Acc0, Acc) :-
+            functor(T, _, N),
+            (   I > N -> Acc = Acc0
+            ;   arg(I, T, A),
+                '$tsing_occurrences'(A, Acc0, Acc1),
+                I1 is I + 1,
+                '$tsing_args'(T, I1, Acc1, Acc)
+            ).
+        % Occurrences arrive newest-first; keeping while walking that order
+        % and prepending restores first-appearance order in one pass.
+        '$tsing_keep_single'([], _, Singles, Singles).
+        '$tsing_keep_single'([V|Vs], All, Acc, Singles) :-
+            (   '$tsing_count'(All, V, 0, 1) ->
+                '$tsing_keep_single'(Vs, All, [V|Acc], Singles)
+            ;   '$tsing_keep_single'(Vs, All, Acc, Singles)
+            ).
+        '$tsing_count'([], _, N, N).
+        '$tsing_count'([X|Xs], V, N0, N) :-
+            (   X == V -> N1 is N0 + 1 ; N1 = N0 ),
+            N1 =< 1,
+            '$tsing_count'(Xs, V, N1, N).
 
         %! copy_term_nat(?Term, -Copy) | Term inspection & construction | copy_term/2 ignoring attributes (SWI/Trealla).
         copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).
