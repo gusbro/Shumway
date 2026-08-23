@@ -1502,6 +1502,10 @@ public sealed partial class PrologEngine
     {
         switch (flagName)
         {
+            case "discontiguous_check":
+                if (valueName is "error" or "warning")
+                    _flags.DiscontiguousCheck = valueName;
+                break;
             case "implicit_dynamic":
                 if (valueName == "true") _flags.ImplicitDynamic = true;
                 else if (valueName == "false") _flags.ImplicitDynamic = false;

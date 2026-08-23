@@ -68,6 +68,13 @@ public sealed class PrologFlags
     /// all read it. The separator must sit strictly between digits.</summary>
     public bool DigitSeparators { get; set; } = true;
 
+    /// <summary>What a same-file predicate whose clauses are NOT adjacent
+    /// (and not declared <c>:- discontiguous</c>) does at load time:
+    /// <c>"error"</c> (the default — the split is almost always a bug) or
+    /// <c>"warning"</c> (report and accept, the SWI/Trealla field behavior;
+    /// the dialect load scopes set this so third-party trees load).</summary>
+    public string DiscontiguousCheck { get; set; } = "error";
+
     /// <summary>SWI-lenient §6.3.1.3: allow a bare operator atom whose priority
     /// exceeds the operand position's maximum (<c>:- dynamic foo/2 as
     /// volatile.</c> — <c>volatile</c> is an fx 1150 operator sitting in

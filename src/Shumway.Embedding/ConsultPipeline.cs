@@ -2002,9 +2002,10 @@ internal sealed class ConsultPipeline
     /// declaration is the explicit opt-in that turns the diagnostic
     /// off for predicates that legitimately need scattered
     /// definitions.</summary>
-    private static void ValidateContiguity(
+    private void ValidateContiguity(
         IReadOnlyList<Clause> clauses, HashSet<int>? discontiguous)
     {
+        bool warnOnly = E.Flags.DiscontiguousCheck == "warning";
         // A module-qualified head (`prolog:message(X) --> …`) is a multifile
         // contribution to ANOTHER module's predicate — inherently scattered
         // among a file's own clauses (SWI hook idiom). All of them share the
@@ -2039,11 +2040,19 @@ internal sealed class ConsultPipeline
             {
                 var (atomId, arity) = FunctorTable.Lookup(fid);
                 string functorName = AtomTable.GetById(atomId)?.Name ?? "?";
-                throw new InvalidOperationException(
+                string message =
                     $"Clauses for {functorName}/{arity} are not contiguous. "
                     + $"Either reorder them so they appear together, or add "
                     + $":- discontiguous {functorName}/{arity}. at the top of "
-                    + "the source.");
+                    + "the source.";
+                if (warnOnly)
+                {
+                    // discontiguous_check=warning: the SWI/Trealla field
+                    // behavior — report, accept, keep checking.
+                    E.Warn("Warning: " + message);
+                    continue;
+                }
+                throw new InvalidOperationException(message);
             }
         }
     }

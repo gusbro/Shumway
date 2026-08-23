@@ -213,6 +213,7 @@ public sealed partial class PrologEngine
         bool savedLenientQuote = Flags.LenientQuoteCharLiteral;
         bool savedLenientArgs = Flags.LenientArgumentPriority;
         bool savedLenientEsc = Flags.LenientEscapes;
+        string savedDisc = Flags.DiscontiguousCheck;
         // SWI-only OPERATORS, scoped like the flags: `as` (dynamic/table
         // decorations) would otherwise break user programs that use `as` as a
         // predicate or DCG-nonterminal head. Save prior definitions so nested
@@ -229,6 +230,10 @@ public sealed partial class PrologEngine
         bool hadMm = Operators.TryGetPrefix("--", out int mmPrec, out var mmType);
         bool hadAt = Operators.TryGetPrefix("@", out int atPrec, out var atType);
         bool hadPc = Operators.TryGetPrefix(":", out int pcPrec, out var pcType);
+        // ANY dialect-tagged tree load accepts scattered clauses with a
+        // warning — third-party sources use the literate style; the strict
+        // default stays for native consults.
+        if (dialect is not null) Flags.DiscontiguousCheck = "warning";
         if (treallaOps)
         {
             Operators.Define("?", 500, Shumway.Compiler.Parsing.OperatorType.Fx);
@@ -268,6 +273,7 @@ public sealed partial class PrologEngine
             Flags.LenientQuoteCharLiteral = savedLenientQuote;
             Flags.LenientArgumentPriority = savedLenientArgs;
             Flags.LenientEscapes = savedLenientEsc;
+            Flags.DiscontiguousCheck = savedDisc;
             if (treallaOps)
             {
                 Operators.Define("?", hadQm ? qmPrec : 0,

@@ -187,6 +187,14 @@ public static partial class MetaBuiltins
             };
             return true;
         }
+        if (flagName == "discontiguous_check")
+        {
+            if (valueName != "error" && valueName != "warning")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", FlagValuePair()));
+            host.Flags.DiscontiguousCheck = valueName;
+            return true;
+        }
         if (flagName == "arity_compat")
         {
             // Arity/Prolog32 compatibility mode. The parse-time
@@ -400,6 +408,9 @@ public static partial class MetaBuiltins
 
             case "answer_max_depth":
                 return engine.UnifyRegisterWithCell(1, Cell.Int(host.Flags.AnswerMaxDepth));
+
+            case "discontiguous_check":
+                return UnifyAtom(engine, 1, host.Flags.DiscontiguousCheck);
 
             case "arity_compat":
                 return UnifyAtom(engine, 1, host.Flags.ArityCompat ? "true" : "false");
