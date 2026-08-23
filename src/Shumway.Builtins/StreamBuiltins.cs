@@ -175,8 +175,9 @@ public static class StreamBuiltins
         // auto-detection (its lead 0xFF/0xFE bytes would read as ill-formed).
         if (encoding is null || encoding is System.Text.UTF8Encoding)
         {
-            Span<byte> bom = stackalloc byte[2];
-            int got = fs.Read(bom);
+            // byte[] + offset overload: net48 has no Stream.Read(Span).
+            byte[] bom = new byte[2];
+            int got = fs.Read(bom, 0, 2);
             fs.Position = 0;
             bool utf16 = got == 2
                 && ((bom[0] == 0xFF && bom[1] == 0xFE)
