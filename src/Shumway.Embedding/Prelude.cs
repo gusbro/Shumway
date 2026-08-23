@@ -127,7 +127,7 @@ internal static class Prelude
         :- public append/2.
         :- public flatten/2.
         :- public call_with_limit/2.
-        :- public offset/2.
+        :- public call_with_offset/2.
         :- public copy_term_nat/2.
         :- public variant/2.
         :- public term_singletons/2.
@@ -138,8 +138,8 @@ internal static class Prelude
         :- public bb_b_put/2.
         :- public read_term_from_chars/3.
         :- public write_term_to_chars/3.
-        :- meta_predicate(limit(*, 0)).
-        :- meta_predicate(offset(*, 0)).
+        :- meta_predicate(call_with_limit(*, 0)).
+        :- meta_predicate(call_with_offset(*, 0)).
         :- public ':'/2.
         :- public phrase/2.
         :- public phrase/3.
@@ -872,6 +872,20 @@ internal static class Prelude
         %! \=@=(@Term1, @Term2) | Term ordering | Term1 and Term2 are NOT variants.
         A \=@= B :- \+ (A =@= B).
 
+        % ===== SSU (Head => Body) runtime support =====
+        % SsuTransform lowers each rule to '$ssu_match' + neck cut and adds a
+        % per-predicate no-match trailer. subsumes_term IS the single-
+        % sidedness: only the pattern's variables may bind; the unification
+        % then binds them for the guard/body. SWI is the reference engine.
+        :- public '$ssu_match'/2.
+        '$ssu_match'(Pattern, Goal) :-
+            subsumes_term(Pattern, Goal),
+            Pattern = Goal.
+        :- public '$ssu_no_match'/1.
+        '$ssu_no_match'(Goal) :-
+            functor(Goal, N, A),
+            throw(error(existence_error(matching_rule, Goal), N/A)).
+
         % ===== \= over the three-state trial core =====
         :- public (\=)/2.
         %! \=(?Term1, ?Term2) | Unification & comparison | Succeeds if the two terms do not unify. Attributed-variable hooks run: freeze fires during the trial, dif can veto it.
@@ -1358,10 +1372,12 @@ internal static class Prelude
             call_nth(Goal, Nth),
             ( Nth =:= N -> ! ; true ).
 
-        %! offset(+N, :Goal) | Control | Solutions of Goal after skipping the first N.
-        offset(N, Goal) :-
+        %! call_with_offset(+N, :Goal) | Control | Solutions of Goal after skipping the first N.
+        % Dialect shims map their names onto this (SWI solution_sequences'
+        % and Trealla's offset/2).
+        call_with_offset(N, Goal) :-
             ( integer(N) -> true
-            ; throw(error(type_error(integer, N), offset/2)) ),
+            ; throw(error(type_error(integer, N), call_with_offset/2)) ),
             call_nth(Goal, Nth),
             Nth > N.
 

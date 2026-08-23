@@ -43,11 +43,12 @@ internal static class DialectRegistry
             "apply" or "apply_macros" or "lists" or "pairs" or "ordsets"
                 or "error" or "debug" or "aggregate" or "assoc"
                 or "yall" => (true, ""),
-            // Import-scoped, like SWI itself: limit/2 maps onto the engine's
-            // call_with_limit/2; offset/2 re-exports the bare prelude public.
+            // Import-scoped, like SWI itself: both map onto the engine's
+            // call_with_limit/2 / call_with_offset/2.
             "solution_sequences" => (true,
                 ":- module(solution_sequences, [limit/2, offset/2]).\n"
-                + "limit(N, Goal) :- call_with_limit(N, Goal).\n"),
+                + "limit(N, Goal) :- call_with_limit(N, Goal).\n"
+                + "offset(N, Goal) :- call_with_offset(N, Goal).\n"),
             _ => (false, ""),
         });
 

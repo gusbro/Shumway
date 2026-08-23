@@ -133,6 +133,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `call_det(:Goal, -Deterministic)` | Calls Goal once and unifies Deterministic with true if Goal succeeded without leaving a choice point, false otherwise. |
 | `call_nth(:Goal, ?N)` | True when Goal has an Nth solution: with N bound, commits to that solution; with N unbound, enumerates solutions numbering each. |
 | `call_with_limit(+N, :Goal)` | Solutions of Goal, at most the first N. Fails when N < 1. |
+| `call_with_offset(+N, :Goal)` | Solutions of Goal after skipping the first N. |
 | `catch(:Goal, ?Catcher, :Recovery)` | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
 | `compile_all` | Eagerly compiles every compilable static predicate to Tier-1 IL now, instead of waiting for each to promote lazily on use. For a program that will do enough queries to want the whole set hot up front (a server warming up). No-op when Tier-1 is disabled or under Native AOT. Always succeeds. |
 | `compile_all(-Count)` | As compile_all/0, unifying Count with the number of predicates newly compiled to Tier-1 IL by this call. |
@@ -149,7 +150,6 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `ifthenelse(:Condition, :Then, :Else)` | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
 | `notrace` | Turns the four-port tracer off. |
-| `offset(+N, :Goal)` | Solutions of Goal after skipping the first N. |
 | `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |
 | `repeat` | Succeeds, and succeeds again on every backtrack — an unbounded choice point. |
 | `setup_call_cleanup(:Setup, :Goal, :Cleanup)` | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. |

@@ -41,6 +41,8 @@ internal static class TreallaShim
         % the mapping — the engine surface does not occupy dialect names).
         :- public limit/2.
         limit(N, Goal) :- call_with_limit(N, Goal).
+        :- public offset/2.
+        offset(N, Goal) :- call_with_offset(N, Goal).
         :- public load_text/2.
         load_text(Text, _Options) :- consult_text(Text).
         :- public srandom/1.
