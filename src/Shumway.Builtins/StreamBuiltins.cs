@@ -163,9 +163,26 @@ public static class StreamBuiltins
             : new StreamWriter(fs, encoding) { NewLine = "\n" };
     }
 
-    private static StreamReader SharedReader(string path, System.Text.Encoding? encoding)
+    private static TextReader SharedReader(string path, System.Text.Encoding? encoding)
     {
         var fs = SharedFileStream(path, FileMode.Open, FileAccess.Read);
+        // Explicit single-byte encodings keep the .NET reader (Latin-1 can
+        // never be ill-formed; ascii keeps its historical replacement
+        // behaviour). The DEFAULT and explicit utf8 go through the strict
+        // reader so an ill-formed sequence raises
+        // representation_error(character) instead of decoding to U+FFFD —
+        // except a UTF-16 BOM'd file, which keeps StreamReader's
+        // auto-detection (its lead 0xFF/0xFE bytes would read as ill-formed).
+        if (encoding is null || encoding is System.Text.UTF8Encoding)
+        {
+            Span<byte> bom = stackalloc byte[2];
+            int got = fs.Read(bom);
+            fs.Position = 0;
+            bool utf16 = got == 2
+                && ((bom[0] == 0xFF && bom[1] == 0xFE)
+                    || (bom[0] == 0xFE && bom[1] == 0xFF));
+            if (!utf16) return new Shumway.Core.Utf8TextReader(fs);
+        }
         return encoding is null ? new StreamReader(fs) : new StreamReader(fs, encoding);
     }
 

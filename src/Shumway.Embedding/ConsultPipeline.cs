@@ -698,8 +698,14 @@ internal sealed class ConsultPipeline
     private static List<Clause>? s_preludeClauses;
 
     internal void ConsultStringInner(string source, bool recordInHistory,
-        string? moduleNameFallback = null, bool reconsult = false)
+        string? moduleNameFallback = null, bool reconsult = false,
+        bool librarySource = false)
     {
+        // A dialect shim / compat library consult: its predicates are library
+        // surface, not the user's program — record their functors like the
+        // prelude's so listing/0 and predicate_property/2 classify them
+        // built_in instead of listing them among the program's own.
+        if (librarySource) _pendingLibrarySource = true;
         // ADR-036 — serialized against AddBreakpoint (same gate as query setup): a
         // debug session's idle watcher arms breakpoints from ITS OWN thread, and an
         // arm's EnsureCodeLinked racing this method's cache invalidation tears the
@@ -737,6 +743,10 @@ internal sealed class ConsultPipeline
         }
     }
 
+    // Set (and consumed) by ConsultStringInner for shim/compat sources —
+    // single-threaded under DebugArmGate, cleared when the consult completes.
+    private bool _pendingLibrarySource;
+
     private void ConsultStringLocked(string source, bool recordInHistory,
         string? moduleNameFallback, bool reconsult)
     {
@@ -769,13 +779,15 @@ internal sealed class ConsultPipeline
         // from; the FileId travels with the position because compilation happens
         // at query setup, long after this read.
         bool preludeSource = ReferenceEquals(source, Prelude.Source);
+        bool librarySource = _pendingLibrarySource;
+        _pendingLibrarySource = false;
         ClauseReader? liveReader = null;
         IEnumerable<Clause> rawClauses;
         if (preludeSource && s_preludeClauses is { } cached)
         {
             rawClauses = cached;
         }
-        else if (preludeSource || HasIncludeDirective(source))
+        else if (preludeSource || librarySource || HasIncludeDirective(source))
         {
             var list = new ClauseReader(
                 new Lexer(source, E._flags.CharConversionEnabled ? E._flags.CharConversion : null)
@@ -804,7 +816,7 @@ internal sealed class ConsultPipeline
         // Record the prelude's predicates so predicate_property/2 reports them as
         // built_in (they are library predicates in Prolog, not user-defined). Only
         // the prelude reaches here as a materialised list; a directive has no head.
-        if (preludeSource)
+        if (preludeSource || librarySource)
             foreach (var c in (List<Clause>)rawClauses)
                 if (c.Kind != ClauseKind.Directive)
                     E._preludeFunctors.Add(HeadFunctorIdOf(c));

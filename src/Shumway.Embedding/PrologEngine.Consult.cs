@@ -30,8 +30,9 @@ public sealed partial class PrologEngine
     public void ReconsultString(string source) => Consults.ReconsultString(source);
 
     internal void ConsultStringInner(string source, bool recordInHistory,
-        string? moduleNameFallback = null)
-        => Consults.ConsultStringInner(source, recordInHistory, moduleNameFallback);
+        string? moduleNameFallback = null, bool librarySource = false)
+        => Consults.ConsultStringInner(source, recordInHistory, moduleNameFallback,
+            librarySource: librarySource);
 
     internal void MarkModuleNonDebuggable(string moduleName)
         => Consults.MarkModuleNonDebuggable(moduleName);

@@ -827,11 +827,18 @@ public sealed partial class PrologEngine
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
-                    if (seen.Add(fid)) yield return (fid, false);
+                    // A dialect shim consults into `user`, so the module
+                    // filter above cannot catch its predicates — the
+                    // functor-level prelude set (librarySource consults)
+                    // does. They are library surface, not the program's.
+                    if (seen.Add(fid) && !_preludeFunctors.Contains(fid))
+                        yield return (fid, false);
                 }
         }
         foreach (var (fid, clauses) in _dynStore.Slots)
-            if (clauses.Count > 0 && seen.Add(fid)) yield return (fid, true);
+            if (clauses.Count > 0 && seen.Add(fid)
+                && !_preludeFunctors.Contains(fid))
+                yield return (fid, true);
         // source-stripped bundles populate
         // _precompiledStaticPredicates without ever touching
         // manifest.Clauses. Surface those so listing/0 enumerates

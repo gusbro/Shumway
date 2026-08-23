@@ -337,6 +337,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `current_output(-Stream)` | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
 | `current_stream(?Filename, ?Mode, ?Stream)` | Enumerates open streams (ISO §8.11.8.1). |
 | `delete(+File)` | Deletes the file File. Raises existence_error if absent, permission_error if locked / read-only. |
+| `delete_file(+File)` | Deletes the file File; the widely-shared name for delete/1. Raises existence_error if absent, permission_error if locked / read-only. |
 | `directory(+Path, -Name, -Mode, -Time, -Date, -Size)` | Backtracks over the entries in Path, binding Name (atom), Mode (Arity-style bitfield: 1=read-only, 2=hidden, 4=system, 16=directory, 32=archive), Time (HH:MM:SS atom), Date (YYYY-MM-DD atom) and Size (bytes; 0 for directories). |
 | `directory_files(+Directory, -Files)` | Unifies Files with the list of entry names (atoms) in Directory, including '.' and '..' — SWI-compatible. |
 | `display(+Term)` | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted. |

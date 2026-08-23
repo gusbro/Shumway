@@ -64,6 +64,12 @@ public static class ArithmeticEvaluator
             // SWI's random_float: a float in [0.0, 1.0). Host-dependent.
             case "random_float" when engine.Host is IRandomHost rh:
                 return new Number(rh.Random.NextDouble());
+            // Trealla's rand: a non-negative random integer, drawn from the
+            // seedable engine generator (srandom/1 reproduces the sequence).
+            // Engine-level knowingly (evaluables cannot live in a dialect
+            // shim) — the same exception random_float already makes.
+            case "rand" when engine.Host is IRandomHost rh2:
+                return new Number(rh2.Random.Next());
         }
         // ISO §7.1.2 / §7.8.7: any other atom in arithmetic position raises
         // type_error(evaluable, Name/0) — the culprit is the INDICATOR

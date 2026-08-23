@@ -43,5 +43,7 @@ internal static class TreallaShim
         limit(N, Goal) :- call_with_limit(N, Goal).
         :- public load_text/2.
         load_text(Text, _Options) :- consult_text(Text).
+        :- public srandom/1.
+        srandom(Seed) :- set_seed(Seed).
         """;
 }

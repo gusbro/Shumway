@@ -190,8 +190,18 @@ public sealed class PositionTrackingReader : TextReader
     {
         int c = Inner.Read();
         if (c < 0) return -1;
-        if (c == '\r' && Inner.Peek() == '\n') { Inner.Read(); c = '\n'; }
+        if (c == '\r' && PeekAfterCr() == '\n') { Inner.Read(); c = '\n'; }
         return _buffered = c;
+    }
+
+    /// <summary>The LF look-ahead behind a CR. An ill-formed sequence there
+    /// (strict UTF-8 reader) must not lose the CR already in hand: answer
+    /// "not an LF" and let the error surface on the NEXT read, which is the
+    /// one positioned at the offending bytes.</summary>
+    private int PeekAfterCr()
+    {
+        try { return Inner.Peek(); }
+        catch (PrologRuntimeException) { return -1; }
     }
 
     public override int Peek()
@@ -216,7 +226,7 @@ public sealed class PositionTrackingReader : TextReader
         else
         {
             c = Inner.Read();
-            if (c == '\r' && TranslatesNewlines && Inner.Peek() == '\n')
+            if (c == '\r' && TranslatesNewlines && PeekAfterCr() == '\n')
             {
                 Inner.Read();
                 c = '\n';

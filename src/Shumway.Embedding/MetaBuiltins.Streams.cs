@@ -211,7 +211,8 @@ public static partial class MetaBuiltins
             if (h.BinaryStream is System.IO.Stream bs)
                 return bs.CanSeek ? bs.Position : null;
             if (h.Reader is Shumway.Core.PositionTrackingReader ptr)
-                return ptr.Inner is System.IO.StreamReader sr && sr.BaseStream.CanSeek
+                return (ptr.Inner is System.IO.StreamReader sr && sr.BaseStream.CanSeek)
+                    || (ptr.Inner is Shumway.Core.Utf8TextReader ur && ur.BaseStream.CanSeek)
                     ? ptr.CharsConsumed
                     : null;
             if (h.Writer is System.IO.StreamWriter sw)
@@ -254,16 +255,27 @@ public static partial class MetaBuiltins
                 Shumway.Builtins.StreamBuiltins.MakeStreamTerm(engine, h));
 
         // Text read stream — reposition through the char-count tracker.
-        if (h.Reader is Shumway.Core.PositionTrackingReader ptr
-            && ptr.Inner is System.IO.StreamReader sr
-            && sr.BaseStream.CanSeek)
+        if (h.Reader is Shumway.Core.PositionTrackingReader ptr)
         {
-            sr.BaseStream.Position = 0;
-            sr.DiscardBufferedData();
-            ptr.ResetCount();
-            for (long i = 0; i < target; i++)
-                if (ptr.Read() < 0) break;   // EOF before target — clamp
-            return true;
+            bool rewound = false;
+            if (ptr.Inner is System.IO.StreamReader sr && sr.BaseStream.CanSeek)
+            {
+                sr.BaseStream.Position = 0;
+                sr.DiscardBufferedData();
+                rewound = true;
+            }
+            else if (ptr.Inner is Shumway.Core.Utf8TextReader ur && ur.BaseStream.CanSeek)
+            {
+                ur.Rewind();
+                rewound = true;
+            }
+            if (rewound)
+            {
+                ptr.ResetCount();
+                for (long i = 0; i < target; i++)
+                    if (ptr.Read() < 0) break;   // EOF before target — clamp
+                return true;
+            }
         }
 
         System.IO.Stream? baseStream = h.BinaryStream

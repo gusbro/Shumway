@@ -983,8 +983,10 @@ public sealed partial class BytecodeInterpreter
         // live any more; put the caller's environment back.
         _engine.SetE(savedE);
         // A catch/3 the goal opened never ran its '$catch_end' (that only
-        // fires on success), so drop the frames it left.
-        _engine.TruncateCatchFrames(entryCatchFrames);
+        // fires on success): deactivate the frames it left — trailed, never
+        // removed, or the outer unwind's replay of their still-live trail
+        // records underflows the frame stack.
+        _engine.DeactivateCatchFramesAbove(entryCatchFrames);
         return false;
     }
 

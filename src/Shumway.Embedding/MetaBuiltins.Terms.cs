@@ -391,6 +391,11 @@ public static partial class MetaBuiltins
             case "bounded":
                 return UnifyAtom(engine, 1, "false");
 
+            // The engine HAS tabling (semi-naive, phase 7); Trealla programs
+            // probe the flag before using `:- table` (their dcg_tabling).
+            case "tabling":
+                return UnifyAtom(engine, 1, "true");
+
             case "integer_rounding_function":
                 return UnifyAtom(engine, 1, "toward_zero");
 
@@ -465,6 +470,7 @@ public static partial class MetaBuiltins
         "debug", "dialect", "library_dialect", "version_data", "argv", "pid",
         "implicit_dynamic", "arity_compat",
         "compile_mode", "debug_lco", "prefer_rationals", "answer_max_depth",
+        "tabling",
     };
 
     private static bool PrologFlagUnify(Activation engine, PrologEngine host, int idx)

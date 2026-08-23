@@ -715,6 +715,11 @@ public static partial class MetaBuiltins
             Io, "delete(+File)",
             "Deletes the file File. Raises existence_error if absent, "
             + "permission_error if locked / read-only.");
+        BuiltinsRegistry.Register("delete_file", 1, Delete1,
+            Io, "delete_file(+File)",
+            "Deletes the file File; the widely-shared name for delete/1. "
+            + "Raises existence_error if absent, permission_error if "
+            + "locked / read-only.");
         BuiltinsRegistry.Register("rename", 2, Rename2,
             Io, "rename(+From, +To)",
             "Renames / moves a file from From to To. Raises existence_error "

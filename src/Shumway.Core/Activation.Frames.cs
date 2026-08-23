@@ -281,13 +281,37 @@ public sealed partial class Activation
     /// <summary>Number of catch frames on the stack (active or not).</summary>
     public int CatchFrameCount => _catchFrames.Count;
 
-    /// <summary>Drops catch frames above <paramref name="count"/>. A nested
-    /// in-engine goal that FAILS never reaches its '$catch_end', so any
-    /// frame it opened would outlive it and mis-route a later ball; the
-    /// nested driver truncates on the failure path.</summary>
-    public void TruncateCatchFrames(int count)
+    internal static readonly bool CatchDiag =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_CATCH_DIAG") == "1";
+
+    /// <summary>The nested-driver FAILURE path: a still-active frame the
+    /// failed goal opened (its '$catch_end' only fires on success) must stop
+    /// catching — a later ball must not route into the dead goal. It cannot
+    /// be REMOVED, though: the goal's push/deactivate records are still on
+    /// the extra trail (the driver does not rewind it on failure), and the
+    /// outer unwind replays them against this stack — a physically shorter
+    /// stack then underflows the replay (their clpb's hook-failure inside
+    /// \+ was the finder). Deactivate trailed instead; each frame dies when
+    /// its own push entry unwinds.</summary>
+    public void DeactivateCatchFramesAbove(int count)
     {
-        while (_catchFrames.Count > count) _catchFrames.RemoveAt(_catchFrames.Count - 1);
+        for (int i = _catchFrames.Count - 1; i >= count; i--)
+        {
+            if (!_catchFrames[i].Active) continue;
+            CatchFrame f = _catchFrames[i];
+            f.Active = false;
+            _catchFrames[i] = f;
+            if (CatchDiag)
+                System.Console.Error.WriteLine($"[catch] deact-above idx={i} xTop={_extraTrailTop}");
+            EnsureExtraTrailCapacity(1);
+            _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
+            {
+                Type = TrailType.CatchFrame,
+                HeapIdx = i,
+                OldValue = new Cell(CatchTrailDeactivate),
+                BindingTrailMarker = _bindingTrailTop,
+            };
+        }
     }
 
     /// <summary>Reads the catch frame at <paramref name="index"/>.</summary>
@@ -324,6 +348,8 @@ public sealed partial class Activation
             RecoveryE = (int)_stack[_e + EnvCeOffset].Data,
             RecoveryCp = (int)_stack[_e + EnvCpOffset].Data,
         });
+        if (CatchDiag)
+            System.Console.Error.WriteLine($"[catch] push idx={index} xTop={_extraTrailTop}");
         EnsureExtraTrailCapacity(1);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
         {
@@ -352,6 +378,8 @@ public sealed partial class Activation
             CatchFrame f = _catchFrames[i];
             f.Active = false;
             _catchFrames[i] = f;
+            if (CatchDiag)
+                System.Console.Error.WriteLine($"[catch] deact idx={i} xTop={_extraTrailTop}");
             EnsureExtraTrailCapacity(1);
             _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
             {
@@ -393,6 +421,8 @@ public sealed partial class Activation
 
     public void UnwindToCatchFrame(int index)
     {
+        if (CatchDiag)
+            System.Console.Error.WriteLine($"[catch] unwindTo idx={index} count={_catchFrames.Count} xTop={_extraTrailTop}");
         CatchFrame f = _catchFrames[index];
         // setup_call_cleanup/3: an exception unwinding to this frame discards
         // every choice-point scope above it — fire the cleanup of any registered

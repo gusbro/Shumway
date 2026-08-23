@@ -820,10 +820,14 @@ public sealed partial class Activation
                 // backtracking into a guarded goal restores its catcher.
                 if (entry.OldValue.Data == CatchTrailPush)
                 {
+                    if (CatchDiag)
+                        System.Console.Error.WriteLine($"[catch] undo-push recIdx={entry.HeapIdx} count={_catchFrames.Count}");
                     _catchFrames.RemoveAt(_catchFrames.Count - 1);
                 }
                 else
                 {
+                    if (CatchDiag)
+                        System.Console.Error.WriteLine($"[catch] undo-deact idx={entry.HeapIdx} count={_catchFrames.Count}");
                     CatchFrame f = _catchFrames[entry.HeapIdx];
                     f.Active = true;
                     _catchFrames[entry.HeapIdx] = f;
@@ -1244,9 +1248,11 @@ public sealed partial class Activation
 
     // The compound walk threads an active-pair set so unifying two CYCLIC
     // terms (X = f(X), Y = f(Y), unify_with_occurs_check(X, Y)) terminates:
-    // re-entering a pair already on the walk's path means the unification
-    // could only succeed by building an infinite tree, which sound
-    // unification must reject — so it FAILS (SWI behaves the same).
+    // re-entering a pair already on the walk's path SUCCEEDS — the pair is
+    // the one being unified above us, and assuming it equal is the rational-
+    // tree fixpoint (this engine's terms ARE rational trees; Trealla agrees).
+    // The occurs CHECK itself guards only the creation of NEW cycles: a
+    // variable binding to a term it occurs in (OccursIn, on the Ref paths).
     private bool UnifyStrWithOccursCheck(int fA, int fB, HashSet<long>? activePairs = null)
     {
         int functorIdA = _heap[fA].AsFunctorId;
@@ -1254,7 +1260,7 @@ public sealed partial class Activation
         if (functorIdA != functorIdB) return false;
         long pairKey = ((long)fA << 32) | (uint)fB;
         activePairs ??= new HashSet<long>();
-        if (!activePairs.Add(pairKey)) return false;   // cyclic pair → fail
+        if (!activePairs.Add(pairKey)) return true;   // cyclic pair → coinductive success
         var (_, arity) = FunctorTable.Lookup(functorIdA);
         bool ok = true;
         for (int i = 1; i <= arity && ok; i++)
@@ -1267,7 +1273,7 @@ public sealed partial class Activation
     {
         long pairKey = ((long)hA << 32) | (uint)hB;
         activePairs ??= new HashSet<long>();
-        if (!activePairs.Add(pairKey)) return false;   // cyclic pair → fail
+        if (!activePairs.Add(pairKey)) return true;   // cyclic pair → coinductive success
         bool ok = UnifyWithOccursCheck(hA, hB, activePairs)
                && UnifyWithOccursCheck(hA + 1, hB + 1, activePairs);
         activePairs.Remove(pairKey);
@@ -1276,25 +1282,21 @@ public sealed partial class Activation
 
     /// <summary>True iff the variable cell at <paramref name="targetAddr"/>
     /// is structurally reachable from the (dereferenced) value at
-    /// <paramref name="sourceAddr"/> — OR that value is CYCLIC. Both mean
-    /// the bind must be rejected: sound unification only ever produces
-    /// finite trees, so binding a variable to an already-cyclic term fails
-    /// (SWI behaves the same; a naive walk would loop forever). Walks the
-    /// source iteratively over an explicit stack (no C# recursion), with an
-    /// on-path set for cycle detection (a negative stack entry is the exit
-    /// marker that leaves the path) and a done set so shared (DAG) subterms
-    /// are checked once, not re-flagged as cycles.</summary>
+    /// <paramref name="sourceAddr"/>. An already-CYCLIC source is NOT an
+    /// occurrence: this engine's terms are rational trees, so binding a
+    /// fresh variable to an existing cyclic term is sound (Trealla agrees) —
+    /// the check only bars the variable from appearing inside the value.
+    /// Walks the source iteratively over an explicit stack (no C#
+    /// recursion) with a done set, so shared subterms are checked once and
+    /// a cyclic source terminates instead of looping.</summary>
     private bool OccursIn(int targetAddr, int sourceAddr)
     {
         var stack = new Stack<int>();
-        var onPath = new HashSet<int>();
         HashSet<int>? done = null;
         stack.Push(sourceAddr);
         while (stack.Count > 0)
         {
-            int raw = stack.Pop();
-            if (raw < 0) { onPath.Remove(~raw); continue; }   // exit marker
-            int addr = Deref(raw);
+            int addr = Deref(stack.Pop());
             if (addr == targetAddr) return true;
             Cell c = _heap[addr];
             switch (c.Tag)
@@ -1302,10 +1304,7 @@ public sealed partial class Activation
                 case Tag.Str:
                 {
                     int fIdx = c.AsHeapIndex;
-                    if (onPath.Contains(fIdx)) return true;   // cyclic source
                     if (!(done ??= new HashSet<int>()).Add(fIdx)) break;
-                    onPath.Add(fIdx);
-                    stack.Push(~fIdx);
                     int functorId = _heap[fIdx].AsFunctorId;
                     var (_, arity) = FunctorTable.Lookup(functorId);
                     for (int i = 1; i <= arity; i++) stack.Push(fIdx + i);
@@ -1314,10 +1313,7 @@ public sealed partial class Activation
                 case Tag.Lis:
                 {
                     int hIdx = c.AsHeapIndex;
-                    if (onPath.Contains(hIdx)) return true;   // cyclic source
                     if (!(done ??= new HashSet<int>()).Add(hIdx)) break;
-                    onPath.Add(hIdx);
-                    stack.Push(~hIdx);
                     stack.Push(hIdx);
                     stack.Push(hIdx + 1);
                     break;
@@ -1326,10 +1322,7 @@ public sealed partial class Activation
                 {
                     // PSTR characters are immediate ints — only the
                     // logical tail can carry a variable.
-                    if (onPath.Contains(addr)) return true;   // cyclic source
                     if (!(done ??= new HashSet<int>()).Add(addr)) break;
-                    onPath.Add(addr);
-                    stack.Push(~addr);
                     int tailIdx = ComputePstrTailIndex(c);
                     stack.Push(tailIdx);
                     break;

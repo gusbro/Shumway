@@ -419,7 +419,7 @@ public sealed partial class PrologEngine
                 if (_activeLibraryDialect == "trealla")
                 {
                     if (_loadedCompatLibraries.Add("trealla_freeze"))
-                        ConsultStringInner(TreallaFreezeShim, recordInHistory: false);
+                        ConsultStringInner(TreallaFreezeShim, recordInHistory: false, librarySource: true);
                     return "trealla_freeze";
                 }
                 break;
@@ -439,7 +439,7 @@ public sealed partial class PrologEngine
         _treallaShimLoaded = true;
         var savedDq = Flags.DoubleQuotes;
         Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(TreallaShim.LibraryName);
-        try { ConsultStringInner(TreallaShim.Source, recordInHistory: false); }
+        try { ConsultStringInner(TreallaShim.Source, recordInHistory: false, librarySource: true); }
         finally { Flags.DoubleQuotes = savedDq; }
     }
 
@@ -454,7 +454,7 @@ public sealed partial class PrologEngine
         _swiShimLoaded = true;
         var savedDq = Flags.DoubleQuotes;
         Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(SwiShim.LibraryName);
-        try { ConsultStringInner(SwiShim.Source, recordInHistory: false); }
+        try { ConsultStringInner(SwiShim.Source, recordInHistory: false, librarySource: true); }
         finally { Flags.DoubleQuotes = savedDq; }
     }
 
@@ -473,7 +473,7 @@ public sealed partial class PrologEngine
     {
         if (_scryerShimLoaded) return;
         _scryerShimLoaded = true;
-        ConsultStringInner(ScryerShim.Source, recordInHistory: false);
+        ConsultStringInner(ScryerShim.Source, recordInHistory: false, librarySource: true);
     }
 
     // The trealla-dialect frozen/2 wrapper (see LoadNativeOverride "freeze").
@@ -508,7 +508,7 @@ public sealed partial class PrologEngine
             // dialects' libraries parse correctly in the same engine.
             var savedDq = Flags.DoubleQuotes;
             Flags.DoubleQuotes = doubleQuotes;
-            try { ConsultStringInner(source, recordInHistory: false); }
+            try { ConsultStringInner(source, recordInHistory: false, librarySource: true); }
             finally { Flags.DoubleQuotes = savedDq; }
         }
         return true;

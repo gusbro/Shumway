@@ -55,27 +55,42 @@ public static class ClausePortrayer
             Term body = rule.Args[1];
             if (body is AtomTerm at && at.Name == "true")
             {
-                output.WriteLine(AstTermRenderer.RenderQuoted(head) + ".");
+                output.WriteLine(Terminated(AstTermRenderer.RenderQuoted(head)));
                 return;
             }
             output.WriteLine(AstTermRenderer.RenderQuoted(head) + " :-");
-            PrintBody(output, body, indent: 4);
-            output.WriteLine(".");
+            WriteBodyTerminated(output, body);
             return;
         }
         if (t is CompoundTerm dcg && dcg.Functor == "-->" && dcg.Args.Length == 2)
         {
             output.WriteLine(AstTermRenderer.RenderQuoted(dcg.Args[0]) + " -->");
-            PrintBody(output, dcg.Args[1], indent: 4);
-            output.WriteLine(".");
+            WriteBodyTerminated(output, dcg.Args[1]);
             return;
         }
         if (t is CompoundTerm dir && dir.Functor == ":-" && dir.Args.Length == 1)
         {
-            output.WriteLine(":- " + AstTermRenderer.RenderQuoted(dir.Args[0], 1199) + ".");
+            output.WriteLine(Terminated(
+                ":- " + AstTermRenderer.RenderQuoted(dir.Args[0], 1199)));
             return;
         }
-        output.WriteLine(AstTermRenderer.RenderQuoted(t) + ".");
+        output.WriteLine(Terminated(AstTermRenderer.RenderQuoted(t)));
+    }
+
+    /// <summary>Appends the terminating period, with a separating space when
+    /// the text ends in a graphic char — `.. = ..` must print as
+    /// `.. = .. .`; a bare `.` would fuse into the atom and not re-read.</summary>
+    private static string Terminated(string s)
+        => s.Length > 0 && AstTermRenderer.IsGraphicChar(s[^1]) ? s + " ." : s + ".";
+
+    private static void WriteBodyTerminated(TextWriter output, Term body)
+    {
+        var bw = new StringWriter();
+        PrintBody(bw, body, indent: 4);
+        string text = bw.ToString();
+        output.Write(text);
+        output.WriteLine(
+            text.Length > 0 && AstTermRenderer.IsGraphicChar(text[^1]) ? " ." : ".");
     }
 
     /// <summary>Prints the body of a rule. The top-level
