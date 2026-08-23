@@ -1325,7 +1325,7 @@ public static partial class MetaBuiltins
             string s = Shumway.Builtins.Number.FormatPrologFloat(v);
             return UnifyCodesList(engine, regOut: 1, s);
         }
-        if (firstCell.Tag == Tag.Ref)
+        if (firstCell.Tag is Tag.Ref or Tag.AttVar)
         {
             // Read the codes list and decide: numeric → number, else atom.
             string s = ReadCodesAsString(engine, engine.GetRegister(1));

@@ -23,7 +23,7 @@ public static class AtomListBuiltins
         Cell listCell = Resolve(engine, engine.GetRegister(0));
         Cell nCell = Resolve(engine, engine.GetRegister(1));
 
-        if (listCell.Tag != Tag.Ref)
+        if (listCell.Tag is not (Tag.Ref or Tag.AttVar))
         {
             int count = 0;
             Cell cursor = engine.NormalizeListCell(listCell);
@@ -47,7 +47,7 @@ public static class AtomListBuiltins
 
         // ISO precedence: both var → instantiation_error; N at the wrong
         // type → type_error(integer, _).
-        if (listCell.Tag == Tag.Ref && nCell.Tag == Tag.Ref)
+        if (listCell.Tag is Tag.Ref or Tag.AttVar && nCell.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
         throw new PrologRuntimeException("type_error", "integer");
     }
@@ -95,7 +95,7 @@ public static class AtomListBuiltins
             count++;
             cursor = ListCursor.Resolve(engine, countTail);
         }
-        if (cursor.Tag == Tag.Ref)
+        if (cursor.Tag is Tag.Ref or Tag.AttVar)
             return AppendSplit(engine, engine.BuiltinReturnPc);
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
             return false;   // improper L1
@@ -138,7 +138,7 @@ public static class AtomListBuiltins
             elems.Add(el);
             cursor = ListCursor.Resolve(engine, elTail);
         }
-        if (cursor.Tag == Tag.Ref)
+        if (cursor.Tag is Tag.Ref or Tag.AttVar)
             // L3 is a partial list while L1 is open too — nothing closed to
             // drive the split off. Do NOT raise instantiation_error: the PURE
             // append/3 enumerates solutions by unification, and the classic
@@ -347,7 +347,7 @@ public static class AtomListBuiltins
             return engine.UnifyRegisterWithHeapAt(1, listIdx);
         }
 
-        if (atomCell.Tag == Tag.Ref)
+        if (atomCell.Tag is Tag.Ref or Tag.AttVar)
         {
             string name = ReadCodesString(engine, codesCell);
             int atomId = AtomTable.Intern(name, permanent: false).Id;
@@ -388,7 +388,7 @@ public static class AtomListBuiltins
             }
             if (!ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell rTail)) break;
             Cell head = Resolve(engine, rawHead);
-            if (head.Tag == Tag.Ref)
+            if (head.Tag is Tag.Ref or Tag.AttVar)
                 throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException(
@@ -401,7 +401,7 @@ public static class AtomListBuiltins
             sb.Append((char)head.AsInt);
             cursor = ListCursor.Resolve(engine, rTail);
         }
-        if (cursor.Tag == Tag.Ref)
+        if (cursor.Tag is Tag.Ref or Tag.AttVar)
             throw new PrologRuntimeException("instantiation_error");
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
             throw new PrologRuntimeException("type_error", "list", engine, listStart);
@@ -458,8 +458,8 @@ public static class AtomListBuiltins
             // synthesis unless BOTH A and B are atoms. If C is var and
             // either A or B is var, raise instantiation_error. If C
             // is bound to a non-atom, raise type_error(atom, C).
-            if (cCell.Tag == Tag.Ref
-                && (aCell.Tag == Tag.Ref || bCell.Tag == Tag.Ref))
+            if (cCell.Tag is Tag.Ref or Tag.AttVar
+                && (aCell.Tag is Tag.Ref or Tag.AttVar || bCell.Tag is Tag.Ref or Tag.AttVar))
             {
                 Shumway.Core.Diagnostics.ChoicePointTrace.DumpAtSite(
                     engine, "atom_concat/3 instantiation_error");
@@ -483,7 +483,7 @@ public static class AtomListBuiltins
         // this the cursor walked every split unifying against the bound
         // argument and left a dead CP after the match — phantom
         // nondeterminism in callers that never cut (Logtalk mime_types/os).
-        if (aCell.Tag != Tag.Ref)
+        if (aCell.Tag is not (Tag.Ref or Tag.AttVar))
         {
             if (aCell.Tag != Tag.Atom) return false;
             string aName = AtomTable.GetById(aCell.AsAtomId)?.Name ?? "";
@@ -491,7 +491,7 @@ public static class AtomListBuiltins
             int bId = AtomTable.Intern(cName.Substring(aName.Length), permanent: false).Id;
             return engine.UnifyRegisterWithCell(1, Cell.Atom(bId));
         }
-        if (bCell.Tag != Tag.Ref)
+        if (bCell.Tag is not (Tag.Ref or Tag.AttVar))
         {
             if (bCell.Tag != Tag.Atom) return false;
             string bName = AtomTable.GetById(bCell.AsAtomId)?.Name ?? "";
@@ -506,7 +506,7 @@ public static class AtomListBuiltins
         // firmly as a bound argument does — only the even split can match, and
         // only when the two halves are equal. One candidate, checked directly,
         // no choice point.
-        if (aCell.Tag == Tag.Ref && bCell.Tag == Tag.Ref
+        if (aCell.Tag is Tag.Ref or Tag.AttVar && bCell.Tag is Tag.Ref or Tag.AttVar
             && aCell.AsHeapIndex == bCell.AsHeapIndex)
         {
             if ((cName.Length & 1) != 0) return false;
@@ -567,7 +567,7 @@ public static class AtomListBuiltins
 
     private static Cell Resolve(Activation engine, Cell c)
     {
-        if (c.Tag != Tag.Ref) return c;
+        if (c.Tag is not (Tag.Ref or Tag.AttVar)) return c;
         int addr = engine.Deref(c.AsHeapIndex);
         return engine.GetHeap(addr);
     }
