@@ -27,7 +27,7 @@ public static class TermRenderer
         // Entry funnel — reset the cycle-safety state (the Default options
         // instance is shared across calls).
         options.OnPath?.Clear();
-        options.CycleUnrollBudget = 1;
+        options.UnrolledOnce?.Clear();
         Render(engine, cell, output, options, maxPriority: 1200);
     }
 
@@ -99,9 +99,9 @@ public static class TermRenderer
                 // rational tree — and it decides HOW MUCH of the cycle shows
                 // (max_depth(3) on X=f(X) is f(f(f(...)))), so the cycle
                 // gate must not cut first.
-                bool strAdded = false;
+                bool strAdded = false, strUnrolling = false;
                 if (options.MaxDepth == 0
-                    && !EnterCycleNode(options, cell.AsHeapIndex, out strAdded))
+                    && !EnterCycleNode(options, cell.AsHeapIndex, out strAdded, out strUnrolling))
                 {
                     output.Write("...");
                     break;
@@ -122,7 +122,11 @@ public static class TermRenderer
                     }
                     RenderCompound(engine, cell, output, options, maxPriority);
                 }
-                finally { if (strAdded) options.OnPath!.Remove(cell.AsHeapIndex); }
+                finally
+                {
+                    if (strAdded) options.OnPath!.Remove(cell.AsHeapIndex);
+                    if (strUnrolling) options.UnrolledOnce!.Remove(cell.AsHeapIndex);
+                }
                 break;
             }
             // A packed list is the list it denotes, so it renders through the
@@ -133,9 +137,9 @@ public static class TermRenderer
             case Tag.Lis:
             case Tag.Pstr:
             {
-                bool lisAdded = false;
+                bool lisAdded = false, lisUnrolling = false;
                 if (options.MaxDepth == 0 && cell.Tag == Tag.Lis
-                    && !EnterCycleNode(options, cell.AsHeapIndex, out lisAdded))
+                    && !EnterCycleNode(options, cell.AsHeapIndex, out lisAdded, out lisUnrolling))
                 {
                     output.Write("...");
                     break;
@@ -156,7 +160,11 @@ public static class TermRenderer
                     }
                     RenderList(engine, cell, output, options);
                 }
-                finally { if (lisAdded) options.OnPath!.Remove(cell.AsHeapIndex); }
+                finally
+                {
+                    if (lisAdded) options.OnPath!.Remove(cell.AsHeapIndex);
+                    if (lisUnrolling) options.UnrolledOnce!.Remove(cell.AsHeapIndex);
+                }
                 break;
             }
             default:
@@ -167,19 +175,31 @@ public static class TermRenderer
         }
     }
 
-    /// <summary>Cycle gate: true = proceed (and <paramref name="added"/>
-    /// says whether this frame owns the path entry and must remove it on the
-    /// way out); false = back-edge with the unroll budget spent — the caller
-    /// renders <c>...</c> instead.</summary>
-    private static bool EnterCycleNode(TermRenderOptions options, int nodeAddr, out bool added)
+    /// <summary>Cycle gate for a compound reached in ARGUMENT position:
+    /// true = proceed; <paramref name="added"/> / <paramref name="unrolling"/>
+    /// say what this frame owns (path entry / the cell's one permitted
+    /// unroll) and must remove on the way out. False = on the path and
+    /// already unrolled — the caller renders <c>...</c>.</summary>
+    private static bool EnterCycleNode(
+        TermRenderOptions options, int nodeAddr, out bool added, out bool unrolling)
     {
+        unrolling = false;
         var path = options.OnPath ??= new System.Collections.Generic.HashSet<int>();
         added = path.Add(nodeAddr);
         if (added) return true;
-        if (options.CycleUnrollBudget <= 0) return false;
-        options.CycleUnrollBudget--;
-        return true;
+        var unrolled = options.UnrolledOnce ??= new System.Collections.Generic.HashSet<int>();
+        unrolling = unrolled.Add(nodeAddr);
+        return unrolling;
     }
+
+    /// <summary>Is this (resolved) cell a compound whose node is currently
+    /// on the render path? List elements, spine cells and tails elide
+    /// immediately when it is (the Trealla-printer policy) — only struct
+    /// arguments unroll, once per cell.</summary>
+    private static bool IsOnPath(TermRenderOptions options, Cell cell)
+        => options.OnPath is { } path
+            && cell.Tag is Tag.Str or Tag.Lis
+            && path.Contains(cell.AsHeapIndex);
 
     private static int Resolve(Activation engine, ref Cell cell)
     {
@@ -477,18 +497,19 @@ public static class TermRenderer
         {
             Resolve(engine, ref cursor);
             // Spine back-edge (a cyclic cons chain): the entry cons was
-            // gated by the caller; every FURTHER cons joins the path here
-            // so `L = [a|L]` terminates as `[a,a|...]`.
+            // gated by the caller; every FURTHER cons joins the path here,
+            // and a revisit elides IMMEDIATELY (the tail-position policy) —
+            // `L = [a|L]` is `[a|...]`.
             if (!first && options.MaxDepth == 0 && cursor.Tag == Tag.Lis)
             {
-                if (!EnterCycleNode(options, cursor.AsHeapIndex, out bool consAdded))
+                var spinePath = options.OnPath ??= new System.Collections.Generic.HashSet<int>();
+                if (!spinePath.Add(cursor.AsHeapIndex))
                 {
                     output.Write("|...]");
                     RemoveSpine(options, spine);
                     return;
                 }
-                if (consAdded)
-                    (spine ??= new System.Collections.Generic.List<int>()).Add(cursor.AsHeapIndex);
+                (spine ??= new System.Collections.Generic.List<int>()).Add(cursor.AsHeapIndex);
             }
             if (!engine.TryUnconsListLike(cursor, out Cell head, out Cell tail)) break;
             if (!first)
@@ -508,7 +529,14 @@ public static class TermRenderer
             // Plain Render, NOT RenderOperand: an ATOM that is an operator is
             // a legal argument bare (ISO §6.3.3 — `[:-,-]`, not `[(:-),(-)]`);
             // the operand-position parens are only for operator operands.
-            Render(engine, head, output, options, 999);
+            // A revisited ELEMENT elides immediately (never unrolls) —
+            // L = [L, a | b] prints [...,a|b].
+            Cell headResolved = head;
+            Resolve(engine, ref headResolved);
+            if (options.MaxDepth == 0 && IsOnPath(options, headResolved))
+                output.Write("...");
+            else
+                Render(engine, head, output, options, 999);
             cursor = tail;
             first = false;
         }
@@ -521,7 +549,12 @@ public static class TermRenderer
         else
         {
             output.Write('|');   // ISO: compact improper-list tail
-            Render(engine, cursor, output, options, 999);   // arg-priority tail
+            // A revisited TAIL elides immediately — [1|f([1|...])] ends at
+            // the second f, not with another unroll.
+            if (options.MaxDepth == 0 && IsOnPath(options, cursor))
+                output.Write("...");
+            else
+                Render(engine, cursor, output, options, 999);   // arg-priority tail
         }
         output.Write(']');
         RemoveSpine(options, spine);

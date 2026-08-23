@@ -44,12 +44,15 @@ public sealed class TermRenderOptions
 
     /// <summary>Cycle safety for the writer (rational trees): the heap
     /// addresses of the compound nodes currently being rendered — the path
-    /// from the root. A revisit is a back-edge; the first is followed (one
-    /// unroll, matching how much of the cycle other systems show) and any
-    /// further one renders <c>...</c>. Reset by the entry wrapper; lazy, so
-    /// an acyclic term allocates nothing.</summary>
+    /// from the root. What a back-edge renders depends on POSITION, the
+    /// policy Trealla's printer follows: a revisited list TAIL elides to
+    /// <c>|...]</c> and a revisited list ELEMENT to <c>...</c>, both
+    /// immediately; a revisited STRUCT ARGUMENT is unrolled once per cell
+    /// (<see cref="UnrolledOnce"/>) so <c>L=[1|F], F=f(L)</c> shows
+    /// <c>[1|f([1|...])]</c>. Reset by the entry wrapper; lazy, so an
+    /// acyclic term allocates nothing.</summary>
     internal System.Collections.Generic.HashSet<int>? OnPath;
-    internal int CycleUnrollBudget = 1;
+    internal System.Collections.Generic.HashSet<int>? UnrolledOnce;
 
     /// <summary><c>portrayed(true)</c>: called for every subterm before
     /// default rendering; returning true means the hook produced the

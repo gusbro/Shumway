@@ -125,4 +125,19 @@ public class Phase33I9CyclicCompareTests
         // A cyclic pair that must FAIL still fails (no false positives).
         Assert.False(e.Query("X=f(X), Y=g(Y), X=Y.").Success);
     }
+
+    [Fact]
+    public void CyclicWritesFollowThePositionPolicy()
+    {
+        // Position-based cycle elision (the Trealla-printer policy): a
+        // revisited list TAIL or ELEMENT elides immediately; a revisited
+        // STRUCT ARGUMENT unrolls once per cell.
+        var e = new PrologEngine();
+        Assert.True(e.Query("""
+            L1 = [a|L1], with_output_to(atom(A1), write(L1)), A1 == '[a|...]',
+            L2 = [123|F], F = f(L2), with_output_to(atom(A2), write(L2)), A2 == '[123|f([123|...])]',
+            Y = x(L3), L3 = [h|Y], with_output_to(atom(A3), write(Y)), A3 == 'x([h|...])',
+            X = f(X), with_output_to(atom(A4), write(X)), A4 == 'f(f(...))'.
+            """).Success);
+    }
 }
