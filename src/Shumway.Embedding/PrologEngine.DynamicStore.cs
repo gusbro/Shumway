@@ -1882,11 +1882,17 @@ public sealed partial class PrologEngine
             _runtimeAssertHelperPreds[p.FunctorId] = p;
             var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(p.FunctorId);
             string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
-            int dollar = name?.IndexOf('$') ?? -1;
-            if (name is not null && dollar > 0 && _modules.ContainsKey(name[..dollar]))
+            // The mangled form is '<module>$' + the helper's own '$'-leading
+            // name, so the split is the DOUBLE dollar — found from the END.
+            // Splitting at the first '$' misses every module whose own name
+            // starts with '$' ('$prelude'): its inline-catch recovery terms
+            // then have no bare alias and recovery setup has no address.
+            int cut = name?.LastIndexOf('$') ?? -1;
+            if (name is not null && cut > 0 && name[cut - 1] == '$'
+                && _modules.ContainsKey(name[..(cut - 1)]))
             {
                 int bareFid = FunctorTable.Intern(
-                    AtomTable.Intern(name[(dollar + 1)..], permanent: true).Id, arity);
+                    AtomTable.Intern(name[cut..], permanent: true).Id, arity);
                 _runtimeAssertHelperPreds.TryAdd(bareFid, p);
             }
         }

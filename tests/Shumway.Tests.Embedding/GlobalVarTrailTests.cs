@@ -50,6 +50,17 @@ public class GlobalVarTrailTests
         => Assert.True(Holds("\\+ '$fetch_global_var'(never_set_key_xyz, _)."));
 
     [Fact]
+    public void BbGet_FailsCleanlyForUnsetKey()
+        // bb_get's body is an inline catch in the BAKED prelude: its recovery
+        // is the bare '$catchrec_N' the catch frame stores, compiled as
+        // '$prelude$$catchrec_N'. The bare alias must come from the '$$' seam --
+        // splitting the mangled name at the FIRST '$' sees no module and drops
+        // the alias, so the recovery dispatch had no address and this query
+        // crashed the engine instead of failing (their clpz's bb_get-based
+        // global state was the finder).
+        => Assert.True(Holds("\\+ bb_get(never_set_key_bbq, _)."));
+
+    [Fact]
     public void ScryerBacktrackablePrimitive_Restores()
         => Assert.True(Holds(
             "'$store_global_var'(bk, a), "

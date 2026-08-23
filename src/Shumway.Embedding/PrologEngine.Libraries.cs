@@ -350,10 +350,6 @@ public sealed partial class PrologEngine
             // TREALLA library(error): rides $first_non_octet; must_be/can_be
             // are native + prelude.
             ["error"] = new[] { "$first_non_octet" },
-            // TREALLA library(clpz): loads, but its propagation engine is not
-            // yet certified on Shumway (its own campaign, like Scryer's clpz
-            // was); native clpfd speaks the same in/ins/#=/label vocabulary.
-            ["clpz"] = new[] { "clpz_current_propagator" },
             // ANY tree's atts-based freeze/when/dif (Trealla's and Scryer's
             // are both Triska's code): the engine's native coroutining is
             // the certified implementation of all three, and the atts-based
@@ -403,7 +399,6 @@ public sealed partial class PrologEngine
             case "iso_ext": break;                       // native setup_call_cleanup & co
             case "charsio": break;                       // builtin charsio surface
             case "error": break;                         // native must_be/can_be
-            case "clpz": UseClpfd(); break;              // until their clpz certifies
             case "freeze": UseCoroutining(); break;
             case "dif": UseCoroutining(); break;
             case "time": break;                          // native time/1 + sleep/1 serve

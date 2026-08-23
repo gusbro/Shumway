@@ -56,7 +56,11 @@ internal static class DialectRegistry
         "trealla", DoubleQuotesMode.Chars,
         name => name switch
         {
-            "lists" or "dcgs" or "format" or "charsio" or "error"
+            // NOT "dcgs": Trealla's dcgs has seq//1 & co beyond the
+            // prelude's phrase/2,3 — falling through here lets the scryer
+            // pack's real Dcgs shim serve them (clpz's reification DCGs
+            // call seq//1 at runtime).
+            "lists" or "format" or "charsio" or "error"
                 or "pairs" or "ordsets" or "debug" or "gensym"
                 or "iso_ext" or "terms" => (true, ""),
             "freeze" or "when" => (true, ":- use_module(library(coroutining)).\n"),
