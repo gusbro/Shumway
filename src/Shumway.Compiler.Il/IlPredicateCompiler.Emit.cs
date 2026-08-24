@@ -2487,6 +2487,13 @@ public sealed partial class IlPredicateCompiler
                     EmitTagBranch(emit, tagLoc, (int)Tag.Atom, Target(node.ConstTarget));
                     EmitTagBranch(emit, tagLoc, (int)Tag.Int, Target(node.ConstTarget));
                     EmitTagBranch(emit, tagLoc, (int)Tag.Float, Target(node.ConstTarget));
+                    // ADR-048: a NON-EMPTY packed list is a cons and takes the
+                    // list bucket; the length guard keeps empty PSTR (= [])
+                    // on the sound var chain, where the const bucket's []
+                    // clauses are still reachable.
+                    emit.LoadLocal(cellLoc);
+                    emit.Call(IlIsNonEmptyPstrMethod);
+                    emit.BranchIfTrue(Target(node.ListTarget));
                     emit.Branch(Target(node.VarTarget));   // Ref / anything else
                     break;
 

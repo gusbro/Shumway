@@ -521,6 +521,7 @@ public static class IlIndexedDispatch
             Tag.Ref => varAddr,
             Tag.Atom or Tag.Int or Tag.Float => constAddr,
             Tag.Lis => listAddr,
+            Tag.Pstr when a.AsPstrLength > 0 => listAddr,
             Tag.Str => structAddr,
             _ => varAddr,
         };
@@ -585,7 +586,7 @@ public static class IlIndexedDispatch
         {
             if (sub.Tag == Tag.Str)
                 return table.Lookup(engine.GetHeap(sub.AsHeapIndex).AsFunctorId);
-            if (sub.Tag == Tag.Lis)
+            if (sub.Tag == Tag.Lis || (sub.Tag == Tag.Pstr && sub.AsPstrLength > 0))
                 return table.Lookup(AtomTable.ConsFunctorId);
         }
         return table.DefaultAddress;
@@ -613,6 +614,12 @@ public static class IlIndexedDispatch
     public static Cell WalkSubOrMiss(Activation engine, Cell cell, int sub0, int sub1)
         => TrySubCell(engine, cell, sub0, sub1, out Cell r) ? r : Cell.Ref(0);
 
+    /// <summary>True for a non-empty packed list — the emitted term-switch
+    /// routes such an argument to its list bucket (a packed list IS a cons,
+    /// ADR-047/048). Public because persisted-bundle IL calls it.</summary>
+    public static bool IsNonEmptyPstr(Cell cell)
+        => cell.Tag == Tag.Pstr && cell.AsPstrLength > 0;
+
     private static bool TryHop(Activation engine, Cell cell, int idx, out Cell next)
     {
         next = default;
@@ -620,6 +627,14 @@ public static class IlIndexedDispatch
         {
             if ((uint)idx > 1u) return false;
             next = Deref(engine, engine.GetHeap(cell.AsHeapIndex + idx));
+            return true;
+        }
+        if (cell.Tag == Tag.Pstr && cell.AsPstrLength > 0)
+        {
+            if ((uint)idx > 1u) return false;
+            next = idx == 0
+                ? engine.PstrHeadElementCell(cell)
+                : engine.PstrTailCellValue(cell);
             return true;
         }
         if (cell.Tag == Tag.Str)

@@ -488,6 +488,33 @@ public sealed partial class Activation
         return u0;
     }
 
+    /// <summary>The first element of a non-empty packed list as a CELL VALUE
+    /// — no heap allocation, so clause-selection dispatch can key on it. A
+    /// chars head may intern a one-character atom on a cache miss (managed
+    /// allocation only, deterministic).</summary>
+    public Cell PstrHeadElementCell(Cell header)
+        => PstrHeadCell(header.AsPstrKind, PstrHeadCodePoint(header, out _));
+
+    /// <summary>The tail of a non-empty packed list as a CELL VALUE: the
+    /// stored tail (deref'd) when one element remains, else a virtual slice
+    /// header. Never writes the heap — dispatch-safe.</summary>
+    public Cell PstrTailCellValue(Cell header)
+    {
+        PstrHeadCodePoint(header, out int span);
+        if (header.AsPstrLength == span)
+        {
+            int t = Deref(ComputePstrTailIndex(header));
+            Cell tail = _heap[t];
+            return tail.Tag is Tag.Ref or Tag.AttVar ? Cell.Ref(t) : tail;
+        }
+        int absoluteStart = header.AsPstrOffset + span;
+        return Cell.Pstr(
+            header.AsPstrLength - span,
+            header.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
+            absoluteStart % Cell.PstrCodeUnitsPerBuffer,
+            header.AsPstrKind, header.AsPstrIsAstral);
+    }
+
     private int GetPstrCodeUnit(Cell header, int i)
     {
         int absolute = header.AsPstrOffset + i;

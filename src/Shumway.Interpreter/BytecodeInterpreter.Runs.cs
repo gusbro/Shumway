@@ -493,6 +493,16 @@ public sealed partial class BytecodeInterpreter
             next = DerefCell(_engine.GetHeap(structIdx + 1 + idx));
             return true;
         }
+        // A non-empty packed list is a cons: head/tail are computed cell
+        // VALUES (no heap write) so the sub-path can key through it.
+        if (cell.Tag == Tag.Pstr && cell.AsPstrLength > 0)
+        {
+            if ((uint)idx > 1u) return false;
+            next = idx == 0
+                ? _engine.PstrHeadElementCell(cell)
+                : _engine.PstrTailCellValue(cell);
+            return true;
+        }
         return false;
     }
 

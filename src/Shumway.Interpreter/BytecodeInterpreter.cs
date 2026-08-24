@@ -1323,10 +1323,14 @@ public sealed partial class BytecodeInterpreter
                         Tag.Ref => varAddr,
                         Tag.Atom or Tag.Int or Tag.Float => constAddr,
                         Tag.Lis => listAddr,
+                        // A non-empty packed list IS a cons (ADR-047/048);
+                        // routing it to the var chain instead cost the list
+                        // bucket's determinism (nmea/jwt "succeeded
+                        // non-deterministically"). Empty PSTR = [] lives in
+                        // the const bucket, so it takes the sound var chain.
+                        Tag.Pstr when a1.AsPstrLength > 0 => listAddr,
                         Tag.Str => structAddr,
-                        // PSTR, BigInt, Rational, Foreign, String — fall back to
-                        // the var-arg chain. These rarely appear as a clause-head
-                        // first argument anyway.
+                        // BigInt, Rational, Foreign — the var-arg chain.
                         _ => varAddr,
                     };
                     _engine.SetPc(target);
@@ -1408,6 +1412,7 @@ public sealed partial class BytecodeInterpreter
                         Tag.Ref => varAddr,
                         Tag.Atom or Tag.Int or Tag.Float => constAddr,
                         Tag.Lis => listAddr,
+                        Tag.Pstr when ak.AsPstrLength > 0 => listAddr,
                         Tag.Str => structAddr,
                         _ => varAddr,
                     };
@@ -1521,7 +1526,8 @@ public sealed partial class BytecodeInterpreter
                         // the pre-registered cons functor.
                         if (sub.Tag == Tag.Str)
                             target = table.Lookup(_engine.GetHeap(sub.AsHeapIndex).AsFunctorId);
-                        else if (sub.Tag == Tag.Lis)
+                        else if (sub.Tag == Tag.Lis
+                            || (sub.Tag == Tag.Pstr && sub.AsPstrLength > 0))
                             target = table.Lookup(AtomTable.ConsFunctorId);
                     }
                     _engine.SetPc(target);

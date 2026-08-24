@@ -345,6 +345,9 @@ public sealed partial class IlPredicateCompiler
     // ADR-027 — inline sub-argument walk for the compiled index resolver.
     private static readonly MethodInfo IlWalkSubOrMissMethod =
         typeof(IlIndexedDispatch).GetMethod(nameof(IlIndexedDispatch.WalkSubOrMiss))!;
+    // ADR-048 — a non-empty packed list routes to the term-switch list bucket.
+    private static readonly MethodInfo IlIsNonEmptyPstrMethod =
+        typeof(IlIndexedDispatch).GetMethod(nameof(IlIndexedDispatch.IsNonEmptyPstr))!;
     // setter for engine.BuiltinReturnPc. The IL emit pre-sets
     // this to a resume marker before invoking a backtrackable builtin, so
     // the builtin's CP resume re-enters the IL caller correctly.
