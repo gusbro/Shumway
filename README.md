@@ -11,7 +11,7 @@ including attributed variables, coroutining, CLP(FD), CLP(R), tabling with
 well-founded negation, rationals, and Arity Prolog/32 compatibility. It also
 ships with multi-dialect shims allowing you to import libraries from other
 Prolog engines (e.g. Scryer's CLP(Z), reif, dcgs, csv; SWI's rbtrees, heaps,
-yall, record).
+yall, record; Trealla's CLP(B), json, abnf, uuid).
 
 The engine provides a two-tier execution system. On tier-0, programs are
 compiled to WAM bytecode and executed by the integrated WAM VM. On tier-1, WAM
@@ -38,7 +38,7 @@ unifications performed in between.
 The whole engine can be compiled to WebAssembly and run on any modern browser.
 WebShumway provides a Prolog top level, an editor, and workspaces. It lets
 you import libraries from a local folder or straight from a GitHub URL,
-including libraries written for Scryer and SWI.
+including libraries written for Scryer, SWI and Trealla.
 
 Shumway's web engine also supports debug mode with an embedded web debugger
 featuring the same set of debugging capabilities provided in VS Code / VS.
@@ -71,15 +71,20 @@ multi-target build. The test gate currently runs on Windows.
   libraries), `shumway-lib` (archives), and the `shumway` REPL.
 - **Link-time optimization**: Shumway's JIT promotes hot predicates knowing only what it can see. The linker knows the whole program, so bundles get cross-module unfolding, cross-module cut elision, and larger [deterministic regions](docs/design/il-region-compilation.md). So a linked bundle isn't just precompiled, it's compiled better.
 - **Builtin predicates**: check the [current list](docs/guide/predicates.md).
-- **Support for third-party libraries**: SWI-Prolog and Scryer Prolog libraries
+- **Support for third-party libraries**:
+  [SWI-Prolog](docs/guide/swi-library-support.md),
+  [Scryer Prolog](docs/guide/scryer-library-support.md) and
+  [Trealla Prolog](docs/guide/trealla-library-support.md) libraries
   load under per-subtree dialects, [Logtalk](docs/guide/logtalk.md) (3.101.0) runs as a
   first-class backend.
-- **Source-level debugging** in [Visual Studio and VS Code](docs/guide/debugger.md): breakpoints
+- **Runs in a browser**: the same engine on WebAssembly, as a static site with
+  no backend ([WebShumway](docs/guide/webshumway.md)).
+- **Source-level debugging** in [Visual Studio and VS Code](docs/guide/debugger.md),
+  with the same capabilities in [WebShumway](docs/guide/webshumway.md)'s embedded
+  debugger: breakpoints
   (conditional, logpoints), port-based stepping, the real Prolog call stack
   with per-frame variables and residual constraints, goal evaluation at a
   stop, Set Next Statement.
-- **Runs in a browser**: the same engine on WebAssembly, as a static site with
-  no backend ([WebShumway](docs/guide/webshumway.md)).
 - **A .NET embedding API**: `PrologEngine`, typed term conversion
   (`ToTerm<T>`/`FromTerm<T>`, source-generated mappers), foreign predicates via
   `[PrologPredicate]`, async queries, engine pooling.
@@ -92,9 +97,7 @@ multi-target build. The test gate currently runs on Windows.
 
 Nothing to install: [try it in the browser](https://gusbro.github.io/Shumway/).
 
-There are no published packages yet — NuGet publication comes with the first
-tagged release. Until then it is the browser build above, or building from
-source:
+To run it locally, build from source:
 
 ```
 dotnet build

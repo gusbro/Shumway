@@ -47,5 +47,54 @@ internal static class TreallaShim
         load_text(Text, _Options) :- consult_text(Text).
         :- public srandom/1.
         srandom(Seed) :- set_seed(Seed).
+
+        % Trealla's 4-arg must_be BIF — must_be(Value, Type, Context, _),
+        % VALUE FIRST (the reverse of the common must_be/2). Their library
+        % sources (arithmetic, builtins' predicate_property) validate
+        % through it; errors ride the engine's must_be/2 for identical
+        % error terms.
+        :- public must_be/4.
+        must_be(Value, Type, _Context, _) :- must_be(Type, Value).
+
+        % crypto_n_random_bytes(+N, -Bytes) — their crypto BIF, the entropy
+        % source uuid's uuidv4/1 rides. Not cryptographically strong here
+        % (random_between over the engine PRNG); uuids are well-formed and
+        % unique-enough for the library's uses.
+        :- public crypto_n_random_bytes/2.
+        crypto_n_random_bytes(N, Bytes) :-
+            must_be(integer, N),
+            length(Bytes, N),
+            crypto_fill_bytes(Bytes).
+        crypto_fill_bytes([]).
+        crypto_fill_bytes([B|Bs]) :-
+            random_between(0, 255, B),
+            crypto_fill_bytes(Bs).
+
+        % hex_bytes(?HexChars, ?Bytes) — their crypto library's hex codec
+        % (uuid_string rides it). Lowercase hex chars, two per byte.
+        :- public hex_bytes/2.
+        hex_bytes(Hex, Bytes) :-
+            (   var(Hex) ->
+                bytes_hex_chars(Bytes, Hex)
+            ;   hex_chars_bytes(Hex, Bytes)
+            ).
+        bytes_hex_chars([], []).
+        bytes_hex_chars([B|Bs], [H, L|Hs]) :-
+            Hi is B >> 4, Lo is B /\ 15,
+            hex_digit_char(Hi, H), hex_digit_char(Lo, L),
+            bytes_hex_chars(Bs, Hs).
+        hex_chars_bytes([], []).
+        hex_chars_bytes([H, L|Hs], [B|Bs]) :-
+            hex_digit_char(Hi, H), hex_digit_char(Lo, L),
+            B is Hi << 4 \/ Lo,
+            hex_chars_bytes(Hs, Bs).
+        hex_digit_char(0, '0'). hex_digit_char(1, '1').
+        hex_digit_char(2, '2'). hex_digit_char(3, '3').
+        hex_digit_char(4, '4'). hex_digit_char(5, '5').
+        hex_digit_char(6, '6'). hex_digit_char(7, '7').
+        hex_digit_char(8, '8'). hex_digit_char(9, '9').
+        hex_digit_char(10, a). hex_digit_char(11, b).
+        hex_digit_char(12, c). hex_digit_char(13, d).
+        hex_digit_char(14, e). hex_digit_char(15, f).
         """;
 }

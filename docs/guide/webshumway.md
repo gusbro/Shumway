@@ -79,13 +79,13 @@ Two ways in:
 
 - **Import folder…** — a folder from your computer.
 - **Import from URL…** — a GitHub directory address, the one you get by
-  navigating there and copying the bar. Scryer's and SWI's are offered, so
-  borrowing a library does not mean installing a Prolog system.
+  navigating there and copying the bar. Scryer's, SWI's and Trealla's are
+  offered, so borrowing a library does not mean installing a Prolog system.
 
 What you import is a **collection**, not a library. Scryer's `lib/` is one
 folder and about sixty libraries: every `x.pl` in it is `library(x)`.
 
-A collection carries a **dialect** (`scryer`, `swi`, or none). A library
+A collection carries a **dialect** (`scryer`, `swi`, `trealla`, or none). A library
 resolved from a collection tagged `scryer` loads under Scryer's name resolution
 and `double_quotes`, which is what lets both systems' versions of the same
 library sit in one engine — see [ADR-040](../architecture/adr/040-multi-dialect-shims.md).
@@ -134,6 +134,22 @@ bundle wins over the source beside it. Editing a source therefore does nothing
 until **rebuild** — and that is visible in the layout rather than imposed by a
 read-only flag somebody has to police. A library that will not compile still
 works; it just loads slowly.
+
+---
+
+## Debugging
+
+The **Debug** toggle in the toolbar turns the page into the same source-level
+debugger the [VS / VS Code frontends](debugger.md) drive, over the same engine
+debug core: breakpoints in the editor gutter (conditional ones and logpoints
+included), port-based stepping while a query is stopped, the real Prolog call
+stack with per-frame variables and residual constraints, goal evaluation at a
+stop, and Set Next Statement. The views live in dockable panes on either side
+of the page, and `debugger_break/0` works here as it does everywhere else —
+with no debugger attached it succeeds and does nothing.
+
+The in-page guide (the `?` icon, *About WebShumway*) documents the
+debugger's controls and keyboard shortcuts in full.
 
 ---
 

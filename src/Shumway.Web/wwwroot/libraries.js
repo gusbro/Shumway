@@ -24,7 +24,7 @@ export const read = (name, file) => engine.LibraryRead(name, file);
 export const write = (name, file, content) => engine.LibraryWrite(name, file, content);
 
 /** Which dialects a library can be tagged with. Plain means none. */
-export const DIALECTS = ['', 'scryer', 'swi'];
+export const DIALECTS = ['', 'scryer', 'swi', 'trealla'];
 
 // --- importing a folder ---------------------------------------------------
 
@@ -100,6 +100,12 @@ export const SUGGESTED = [
     url: 'https://github.com/SWI-Prolog/swipl-devel/tree/master/library',
     dialect: 'swi',
     name: 'swi',
+  },
+  {
+    label: 'Trealla Prolog — library (about 40 files)',
+    url: 'https://github.com/trealla-prolog/trealla/tree/main/library',
+    dialect: 'trealla',
+    name: 'trealla',
   },
 ];
 
