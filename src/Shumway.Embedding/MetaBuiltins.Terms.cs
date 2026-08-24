@@ -528,6 +528,23 @@ public static partial class MetaBuiltins
             && engine.UnifyRegisterWithCell(2, Cell.Int(engine.AttrRecordCount));
     }
 
+    /// <summary><c>'$heap_root_diag'</c> — the stack-roots GC arc's
+    /// diagnostic: attributes retained heap cells to the individual roots
+    /// (registers, stack slots classified by frame/CP) that keep them alive,
+    /// printing the top offenders to stderr. Moves nothing.</summary>
+    public static bool HeapRootDiag(Activation engine)
+    {
+        engine.HeapRootAttributionProbe();
+        return true;
+    }
+
+    /// <summary><c>'$stack_top'(-Top)</c> — the control stack's current top
+    /// slot index. Diagnostic: bounded-memory pins assert a deterministic
+    /// LCO loop keeps it flat (dead choice points under reused frames used
+    /// to leak ~15 slots per iteration).</summary>
+    public static bool StackTopDiag(Activation engine)
+        => engine.UnifyRegisterWithCell(0, Cell.Int(engine.StackTop));
+
     /// <summary><c>term_cells(@Term, -Cells)</c> — the number of heap cells the
     /// term occupies, counting shared substructure once.
     ///

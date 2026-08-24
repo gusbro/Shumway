@@ -16,7 +16,7 @@ yall, record).
 The engine provides a two-tier execution system. On tier-0, programs are
 compiled to WAM bytecode and executed by the integrated WAM VM. On tier-1, WAM
 procedures are compiled to .NET IL chunks, which are themselves promoted to
-native code by the .NET JIT compiler. Shumway's JIT compiler promotes tier-0
+native code by the .NET JIT compiler. Shumway's own JIT promotes tier-0
 code to tier-1 when it detects a hot path.
 Shumway is single-threaded but supports multiple engines in one process.
 
@@ -24,15 +24,15 @@ Shumway supports a flexible module system for large applications: a standalone
 compiler produces Prolog object modules, a librarian and linker take those
 modules and produce bundles, .NET libraries and executables.
 
-The linker applies Link Time Optimization (LTO) techniques to improve
-performance on produced .NET libraries and executables.
+The linker applies Link Time Optimization (LTO) techniques to improve the
+performance of the produced .NET libraries and executables.
 
 Shumway provides source-level debuggers for Visual Studio and Visual Studio Code
 allowing you to set (conditional) breakpoints, execute step-by-step, inspect the
 call stack showing each frame's local variables and attributed-variable
 residues. Debugging sessions run in a special tier-0 mode which turns off some
 optimizations allowing you to fully inspect the program's state. It lets you
-"rewind" the execution to any prior location of the call stack, undoing all
+"rewind" the execution to any prior location in the call stack, undoing all
 unifications performed in between.
 
 The whole engine can be compiled to WebAssembly and run on any modern browser.
@@ -55,6 +55,14 @@ multi-target build. The test gate currently runs on Windows.
 - **Prolog extensions** including attributed variables, coroutining (`dif/2`,
   `freeze/2`, `when/2`), tabling with well-founded negation, CLP(FD) and CLP(R),
   rationals, module system, partial strings, and exceptions with full error terms.
+- **Two garbage collectors**: a sliding mark-compact heap GC
+  ([ADR-016](docs/architecture/adr/016-heap-garbage-collection.md)) which runs
+  automatically at safe points (with attributed variables and their
+  trails live) and allows long deterministic runs to stay within a
+  reasonable memory cap (e.g. a lazy DCG which parses a 4 MB file holds
+  a live set of about 1,000 cells), and an atom GC over the three-tier atom table
+  ([ADR-003](docs/architecture/adr/003-atom-three-tier-system.md)) which
+  reclaims transient atoms and keeps atoms held by foreign C# interop safely retained.
 - **Performance measurement**: ~2× faster than Scryer on typical CLP(Z) models, running Scryer's own clpz library; see
   [the benchmarks](docs/benchmarks/cross-engine-comparison.md).
 - **A full toolchain**: `shumway-compile` (`.pl` → `.shmo`), `shumway-link`
