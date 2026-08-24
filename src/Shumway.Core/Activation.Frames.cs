@@ -530,8 +530,32 @@ public sealed partial class Activation
         // When a CP is at or above oldE (the clause body left an open choice
         // point) the frame must stay — a backtrack could reactivate it — so the
         // reclamation degrades to the original no-op. Only ever lowers _stackTop.
+        //
+        // The floor is NOT oldE: a cut-discarded choice point may sit DEAD
+        // directly below the frame (try_me_else pushed per call, killed by the
+        // clause's cut), and stopping at oldE leaks its slots FOREVER on LCO
+        // loops — a lazy DCG grew ~15 dead slots per parsed line. Everything
+        // live on the control stack is reachable from the E-chain or the
+        // B-chain, and both grow upward (a CP's saved CE frame predates the
+        // CP; a frame's CE parent predates it), so the true top of live stack
+        // is max(E's frame end, B's frame end) — reclaim down to it.
         if (_b < oldE && _stackTop > oldE)
-            _stackTop = oldE;
+        {
+            int eTop = 0;
+            if (_e >= 0)
+            {
+                int n = (int)_stack[_e + EnvNOffset].Data;
+                eTop = _e + EnvSize(n < 0 ? 0 : n);
+            }
+            int bTop = 0;
+            if (_b >= 0)
+            {
+                int ar = (int)_stack[_b + CpArityOffset].Data;
+                bTop = _b + CpSize(ar);
+            }
+            int live = eTop > bTop ? eTop : bTop;
+            _stackTop = live < oldE ? live : oldE;
+        }
     }
 
     /// <summary>Reads the <c>Y(k+1)</c> slot of the current environment frame.</summary>
@@ -1110,6 +1134,19 @@ public sealed partial class Activation
             else if (_attrTable.Count > 0 && entry.Type == TrailType.ValueChange)
             {
                 DropDeadAttrRecord(entry.HeapIdx);
+            }
+            else if (entry.Type == TrailType.AttrModify)
+            {
+                // The dropped entry was the ONLY reference into its side-log
+                // record; without this the record is orphaned — positional
+                // unwind truncation never reaches it in cut-only (CP-free)
+                // runs, and the GC roots its Home/OldValue forever. A lazy
+                // phrase_from_file retained its ENTIRE consumed input through
+                // exactly these orphans (one per chunk, via the frozen tail's
+                // old attribute). Dead records are skipped by mark/relocate
+                // and physically reclaimed when an unwind truncates past them.
+                if ((uint)entry.HeapIdx < (uint)_attrTrailLog.Count)
+                    _attrTrailLog[entry.HeapIdx] = (int.MinValue, 0, 0);
             }
             extraRead++;
         }

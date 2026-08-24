@@ -17,6 +17,9 @@ public sealed partial class Activation
 {
     // Scratch buffers reused across collections to avoid per-GC churn.
     private bool[]? _gcMarked;
+    // Cells newly marked since the current mark began — the root-attribution
+    // probe reads deltas of this to charge retained cells to specific roots.
+    private int _gcMarkCount;
     private int[]? _gcForward;
     private int[]? _gcWork;
     // mark-phase state for the de-closured GcMarkCell /
@@ -422,6 +425,7 @@ public sealed partial class Activation
         }
         foreach (var (home, _, oldValue) in _attrTrailLog)
         {
+            if (home == int.MinValue) continue;   // dead record (cut-dropped entry)
             if ((uint)home < (uint)oldTop) GcMarkCell(home);
             if ((uint)oldValue < (uint)oldTop) GcMarkCell(oldValue);
         }
@@ -509,6 +513,175 @@ public sealed partial class Activation
         return (live, oldTop);
     }
 
+    /// <summary>DIAGNOSTIC (the stack-roots GC arc): attributes retained heap
+    /// cells to individual roots. Marks from every root EXCEPT the register
+    /// bank and the control stack first (the baseline), then feeds registers
+    /// and stack slots one at a time, charging each the cells only IT newly
+    /// reaches (order-dependent: an earlier slot absorbs shared structure —
+    /// good enough to name the offenders). Stack slots are classified by
+    /// walking the live frame/CP chains: Y-slot i of the frame at base b
+    /// (with its recorded live count), CP argument, control word, or
+    /// unattributed. Prints the top offenders to stderr; moves nothing.</summary>
+    public void HeapRootAttributionProbe(int top = 25)
+    {
+        int oldTop = _heapTop;
+        if (oldTop == 0) return;
+        bool[] marked = _gcMarked is { } m && m.Length >= oldTop ? m : (_gcMarked = new bool[oldTop]);
+        System.Array.Clear(marked, 0, oldTop);
+        if (_gcWork is null || _gcWork.Length < 1024) _gcWork = new int[1024];
+        _gcWorkTop = 0;
+        _gcOldTop = oldTop;
+        _gcMarkCount = 0;
+
+        void Drain()
+        {
+            while (_gcWorkTop > 0)
+                GcMarkReferents(_heap[_gcWork[--_gcWorkTop]]);
+        }
+
+        // Baseline: everything EXCEPT registers + control stack, each
+        // category charged separately.
+        int c0 = _gcMarkCount;
+        for (int k = 0; k < _bindingTrailTop; k++) GcMarkCell(_bindingTrail[k]);
+        Drain();
+        int cBind = _gcMarkCount - c0; c0 = _gcMarkCount;
+        for (int k = 0; k < _extraTrailTop; k++)
+        {
+            var e = _extraTrail[k];
+            if (e.Type == TrailType.ValueChange)
+            {
+                GcMarkCell(e.HeapIdx);
+                GcMarkReferents(e.OldValue);
+            }
+        }
+        Drain();
+        int cExtra = _gcMarkCount - c0; c0 = _gcMarkCount;
+        for (int i = 0; i < _catchFrames.Count; i++)
+        {
+            GcMarkCell(_catchFrames[i].CatcherHeapIdx);
+            GcMarkCell(_catchFrames[i].RecoveryHeapIdx);
+        }
+        Drain();
+        int cCatch = _gcMarkCount - c0; c0 = _gcMarkCount;
+        int h0 = _gcMarkCount;
+        foreach (var kv in _attrTable)
+        {
+            if ((uint)kv.Key < (uint)oldTop) GcMarkCell(kv.Key);
+            foreach (var (_, attrValueIdx) in kv.Value)
+                if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
+        }
+        Drain();
+        int hTable = _gcMarkCount - h0; h0 = _gcMarkCount;
+        foreach (var (home, _, oldValue) in _attrTrailLog)
+        {
+            if (home == int.MinValue) continue;   // dead record
+            if ((uint)home < (uint)oldTop) GcMarkCell(home);
+            if ((uint)oldValue < (uint)oldTop) GcMarkCell(oldValue);
+        }
+        Drain();
+        int hLog = _gcMarkCount - h0; h0 = _gcMarkCount;
+        foreach (var (_, attrValueIdx, otherIdx) in _pendingWakeups)
+        {
+            if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
+            if ((uint)otherIdx < (uint)oldTop) GcMarkCell(otherIdx);
+        }
+        Drain();
+        int hWake = _gcMarkCount - h0; h0 = _gcMarkCount;
+        MarkCleanupRoots();
+        Drain();
+        int hClean = _gcMarkCount - h0;
+        int cHolders = _gcMarkCount - c0; c0 = _gcMarkCount;
+        System.Console.Error.WriteLine(
+            $"[gc-roots] holders breakdown: attrTable={hTable} (n={_attrTable.Count})"
+            + $" attrTrailLog={hLog} (n={_attrTrailLog.Count}) wakeups={hWake} (n={_pendingWakeups.Count})"
+            + $" cleanups={hClean}");
+        MarkExternalTrailRoots(GcMarkReferents);
+        Drain();
+        int cExtTrail = _gcMarkCount - c0; c0 = _gcMarkCount;
+        OnGcMark?.Invoke(GcMarkCell, GcMarkReferents);
+        Drain();
+        int cHook = _gcMarkCount - c0;
+        int baseline = _gcMarkCount;
+        System.Console.Error.WriteLine(
+            $"[gc-roots] baseline breakdown: bindingTrail={cBind} (entries={_bindingTrailTop})"
+            + $" extraTrail={cExtra} (entries={_extraTrailTop}) catchFrames={cCatch} (n={_catchFrames.Count})"
+            + $" externalHolders={cHolders} externalTrail={cExtTrail} markHook={cHook}");
+
+        var offenders = new List<(string Kind, int Index, Cell Cell, int Retained)>();
+        for (int i = 0; i < _registers.Length; i++)
+        {
+            int before = _gcMarkCount;
+            GcMarkReferents(_registers[i]);
+            Drain();
+            if (_gcMarkCount > before)
+                offenders.Add(("X", i, _registers[i], _gcMarkCount - before));
+        }
+        for (int i = 0; i < _stackTop; i++)
+        {
+            int before = _gcMarkCount;
+            GcMarkReferents(_stack[i]);
+            Drain();
+            if (_gcMarkCount > before)
+                offenders.Add(("stack", i, _stack[i], _gcMarkCount - before));
+        }
+
+        // Frame/CP attribution maps for the stack offenders.
+        var frameOfSlot = new Dictionary<int, string>();
+        void MapFrame(int e)
+        {
+            while (e >= 0 && e + EnvY1Offset <= _stackTop)
+            {
+                int n = (int)_stack[e + EnvNOffset].Data;
+                frameOfSlot.TryAdd(e + EnvCeOffset, $"frame@{e}.CE");
+                frameOfSlot.TryAdd(e + EnvCpOffset, $"frame@{e}.CP");
+                frameOfSlot.TryAdd(e + EnvNOffset, $"frame@{e}.N");
+                int maxY = _stackTop - e - EnvY1Offset;
+                for (int y = 0; y < System.Math.Min(n < 0 ? 0 : n, maxY); y++)
+                    frameOfSlot.TryAdd(e + EnvY1Offset + y, $"frame@{e}.Y{y}(live,N={n})");
+                int parent = (int)_stack[e + EnvCeOffset].Data;
+                if (parent == e) break;
+                e = parent;
+            }
+        }
+        int chainLen = 0, lowestE = _e;
+        for (int e2 = _e; e2 >= 0 && e2 + EnvY1Offset <= _stackTop && chainLen < 1_000_000; )
+        {
+            chainLen++; lowestE = e2;
+            int p2 = (int)_stack[e2 + EnvCeOffset].Data;
+            if (p2 == e2) break;
+            e2 = p2;
+        }
+        System.Console.Error.WriteLine(
+            $"[gc-roots] E-chain: frames={chainLen} lowest={lowestE}");
+        MapFrame(_e);
+        int b = _b, guard = 0;
+        while (b >= 0 && b < _stackTop && guard++ < 100000)
+        {
+            int ar = (int)_stack[b + CpArityOffset].Data;
+            if (ar < 0 || ar > 4096 || b + CpSize(ar) > _stackTop) break;
+            for (int i = 0; i < ar; i++)
+                frameOfSlot.TryAdd(b + CpArg1Offset + i, $"cp@{b}.A{i}");
+            MapFrame((int)_stack[b + CpCeOffset(ar)].Data);
+            int pv = (int)_stack[b + CpBOffset(ar)].Data;
+            if (pv == b) break;
+            b = pv;
+        }
+
+        offenders.Sort((x, y) => y.Retained.CompareTo(x.Retained));
+        System.Console.Error.WriteLine(
+            $"[gc-roots] heapTop={oldTop} baseline(non-stack)={baseline} "
+            + $"total-live={_gcMarkCount} stackTop={_stackTop} E={_e} B={_b}");
+        int shown = 0;
+        foreach (var (kind, idx, cell, retained) in offenders)
+        {
+            if (shown++ >= top) break;
+            string attr = kind == "stack" && frameOfSlot.TryGetValue(idx, out string? f)
+                ? f : (kind == "stack" ? "UNATTRIBUTED" : "");
+            System.Console.Error.WriteLine(
+                $"[gc-roots]   {kind}[{idx}] {cell.Tag}->{(cell.Tag is Tag.Ref or Tag.Str or Tag.Lis or Tag.AttVar or Tag.Pstr ? cell.AsHeapIndex : 0)} retains={retained} {attr}");
+        }
+    }
+
     /// <summary>Returns <paramref name="c"/> with its heap-index payload
     /// (if any) mapped through <paramref name="forward"/>. Atomic cells
     /// are returned unchanged.</summary>
@@ -553,6 +726,7 @@ public sealed partial class Activation
         bool[] marked = _gcMarked!;
         if ((uint)addr >= (uint)_gcOldTop || marked[addr]) return;
         marked[addr] = true;
+        _gcMarkCount++;
         int[] work = _gcWork!;
         if (_gcWorkTop == work.Length)
         {
