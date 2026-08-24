@@ -57,7 +57,7 @@ public static partial class MetaBuiltins
     private static readonly HashSet<string> KnownStreamProperties = new()
     {
         "file_name", "mode", "alias", "input", "output", "end_of_stream",
-        "position", "type", "reposition", "eof_action",
+        "position", "type", "reposition", "eof_action", "encoding", "bom",
     };
 
     public static bool StreamProperty(Activation engine)
@@ -110,6 +110,11 @@ public static partial class MetaBuiltins
                 pairs.Add((h, new CompoundTerm("mode", new Term[] { new AtomTerm(h.Mode) })));
             if (Want("alias") && h.Alias is string al)
                 pairs.Add((h, new CompoundTerm("alias", new Term[] { new AtomTerm(al) })));
+            if (Want("encoding") && h.EncodingName is string en)
+                pairs.Add((h, new CompoundTerm("encoding", new Term[] { new AtomTerm(en) })));
+            if (Want("bom") && h.HadBom is bool hb)
+                pairs.Add((h, new CompoundTerm("bom",
+                    new Term[] { new AtomTerm(hb ? "true" : "false") })));
             if (h.IsReader ? Want("input") : Want("output"))
                 pairs.Add((h, h.IsReader ? (Term)new AtomTerm("input") : new AtomTerm("output")));
             if (h.IsReader && Want("end_of_stream"))

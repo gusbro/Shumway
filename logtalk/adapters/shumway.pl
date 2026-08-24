@@ -106,7 +106,13 @@
 %   ADR-038 provides (no current_module/1 reflection, M:G only shimmed).
 % - coinduction: needs verified rational-tree unification end to end;
 %   revisit deliberately, not as a flag flip.
-'$lgt_prolog_feature'(encoding_directive, unsupported).
+'$lgt_prolog_feature'(encoding_directive, full).
+
+% SWI-style fixed-width unicode escapes (\uXXXX / \UXXXXXXXX) in quoted
+% text, engine-wide for the Logtalk session — matching the reference
+% backend the swi dialect announces. Strict ISO reads stay the default
+% outside Logtalk.
+:- set_prolog_flag(lenient_escapes, true).
 '$lgt_prolog_feature'(sockets, unsupported).
 '$lgt_prolog_feature'(tabling, supported).
 '$lgt_prolog_feature'(engines, unsupported).
@@ -299,7 +305,37 @@
 '$shumway_provided_library'(library(atts)).
 '$shumway_provided_library'(library(time)).     % call_with_time_limit/2, below
 '$lgt_prolog_goal_expansion'(_, _) :- fail.
-'$lgt_logtalk_prolog_encoding'(_, _, _) :- fail.
+% Logtalk <-> engine encoding names (ADR-048 encoding/1 support). The
+% stream argument disambiguates the endianness-agnostic spellings by the
+% encoding the already-open stream detected (BOM); our stream_property/2
+% reports the engine names.
+'$lgt_logtalk_prolog_encoding'('US-ASCII', ascii, _).
+'$lgt_logtalk_prolog_encoding'('ISO-8859-1', iso_latin_1, _).
+'$lgt_logtalk_prolog_encoding'('UTF-8', utf8, _).
+'$lgt_logtalk_prolog_encoding'('UCS-2', Encoding, Stream) :-  % BOM mandatory
+	(	stream_property(Stream, encoding(utf16le)) ->
+		Encoding = utf16le
+	;	stream_property(Stream, encoding(utf16be)) ->
+		Encoding = utf16be
+	).
+'$lgt_logtalk_prolog_encoding'('UCS-2BE', utf16be, _).
+'$lgt_logtalk_prolog_encoding'('UCS-2LE', utf16le, _).
+'$lgt_logtalk_prolog_encoding'('UTF-16', Encoding, Stream) :-  % BOM expected
+	(	stream_property(Stream, encoding(utf16le)) ->
+		Encoding = utf16le
+	;	stream_property(Stream, encoding(utf16be)) ->
+		Encoding = utf16be
+	).
+'$lgt_logtalk_prolog_encoding'('UTF-16BE', utf16be, _).
+'$lgt_logtalk_prolog_encoding'('UTF-16LE', utf16le, _).
+'$lgt_logtalk_prolog_encoding'('UTF-32', Encoding, Stream) :-  % BOM expected
+	(	stream_property(Stream, encoding(utf32le)) ->
+		Encoding = utf32le
+	;	stream_property(Stream, encoding(utf32be)) ->
+		Encoding = utf32be
+	).
+'$lgt_logtalk_prolog_encoding'('UTF-32BE', utf32be, _).
+'$lgt_logtalk_prolog_encoding'('UTF-32LE', utf32le, _).
 '$lgt_string'(_) :- fail.
 '$lgt_string_codes'(_, _) :- fail.
 

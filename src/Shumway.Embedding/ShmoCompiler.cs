@@ -70,6 +70,10 @@ public static class ShmoCompiler
     public static readonly HashSet<string> SilentlyIgnoredDirectives = new()
     {
         "extrn",
+        // encoding/1 is ACTED ON before the text reaches the parser
+        // (TextFile.DecodeSource re-decodes the file); by the time the
+        // directive is seen here its work is done.
+        "encoding",
         // SWI/SICStus declaration directives with no Shumway meaning — no-op'd so
         // a library that declares them loads (ADR-040 SWI triage). Semantics we do
         // not (yet) act on: predicate_options (option documentation),

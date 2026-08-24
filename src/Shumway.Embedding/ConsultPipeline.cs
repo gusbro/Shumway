@@ -117,7 +117,9 @@ internal sealed class ConsultPipeline
             Debugging.ShumwayDebugHelper.NoteSourceFile(path);
         try
         {
-            ConsultStringInner(Shumway.Core.TextFile.ReadAllText(path), recordInHistory: true,
+            ConsultStringInner(
+                Shumway.Core.TextFile.ReadAllText(path, E._flags.DefaultTextEncoding),
+                recordInHistory: true,
                                reconsult: reconsult);
         }
         finally

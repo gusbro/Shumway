@@ -53,6 +53,16 @@ public sealed class StreamHandle
     /// alias atom anywhere a stream is required.</summary>
     public string? Alias { get; internal set; }
 
+    /// <summary>Engine encoding name of a TEXT stream (utf8, iso_latin_1,
+    /// ascii, utf16le/be, utf32le/be) — what stream_property/2 reports.
+    /// Null on binary streams.</summary>
+    public string? EncodingName { get; set; }
+
+    /// <summary>Whether the stream began with a byte order mark (read side:
+    /// detected; write side: written). Null when unknown / not applicable
+    /// (console streams, binary).</summary>
+    public bool? HadBom { get; set; }
+
     /// <summary>The <c>eof_action</c> stream option: <c>eof_code</c>
     /// (default — reads at/past eof keep yielding <c>end_of_file</c>),
     /// <c>error</c> (a read PAST eof raises

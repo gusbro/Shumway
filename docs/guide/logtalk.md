@@ -89,8 +89,15 @@ Shumway; only that one selector borrows SWI's name.
 - **The `tests/prolog` ISO conformity battery** (192 testers, ~3,400
   counted tests): **3,219 passed / 70 failed** after the 2026-08 campaign
   (baseline before it: 2,096 / 933; 2,796 / 499 at the end of round two).
-  Every tester now reports a summary except the five `unicode/` ones,
-  which gate on the `encoding/1` directive Shumway does not implement.
+  The five `unicode/` testers, formerly gated on the `encoding/1`
+  directive, now run: `directives/encoding_1` 3/3, `escape_sequences`
+  12/12, `case_variables` 12/12, `builtins` 131/6, `encodings` 41/8 with
+  no skips — above the SWI oracle on every tester (SWI: 2/1, 11/1, 12/12,
+  127/10, 25/5 with 19 skips). Every remaining failure is one accepted
+  divergence: those tests expect `stream_property/2` /
+  `current_prolog_flag(encoding, _)` to answer in Logtalk's charset
+  spellings (`'UTF-8'`); Shumway reports its own encoding names (`utf8`),
+  exactly as SWI does — which fails the same tests.
   Of what remains, 25 failures are the `portray/1` hook (see the engine
   note below), 6 are the accepted float-conversion divergence, and the
   rest are single-tester items tracked in the repository history.

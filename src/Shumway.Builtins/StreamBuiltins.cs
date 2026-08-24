@@ -154,37 +154,57 @@ public static class StreamBuiltins
         => new(path, fm, fa, FileShare.ReadWrite);
 
     private static StreamWriter SharedWriter(
-        string path, bool append, System.Text.Encoding? encoding)
+        string path, bool append, string encodingName, bool writeBom)
     {
         var fs = SharedFileStream(
             path, append ? FileMode.Append : FileMode.Create, FileAccess.Write);
-        return encoding is null
-            ? new StreamWriter(fs) { NewLine = "\n" }
-            : new StreamWriter(fs, encoding) { NewLine = "\n" };
+        System.Text.Encoding enc = TextEncodings.ByName(encodingName)!;
+        var w = new StreamWriter(fs, enc) { NewLine = "\n" };
+        // Our encoding instances never carry a preamble — an explicit
+        // bom(true) writes the mark by hand, in the stream's encoding.
+        if (writeBom && !append && fs.Position == 0)
+            w.Write('\uFEFF');
+        return w;
     }
 
-    private static TextReader SharedReader(string path, System.Text.Encoding? encoding)
+    /// <summary>Opens a TEXT read stream: BOM detection (default ON, and a
+    /// found BOM takes precedence over the encoding option), else the
+    /// requested encoding, else strict UTF-8 — an ill-formed sequence there
+    /// raises representation_error(character) instead of decoding to
+    /// U+FFFD. bom(false) delivers a leading U+FEFF as data.</summary>
+    private static StreamHandle OpenTextReader(
+        int id, string path, string? alias, string? encodingName, bool? bomOpt,
+        string defaultEncoding = "utf8")
     {
         var fs = SharedFileStream(path, FileMode.Open, FileAccess.Read);
-        // Explicit single-byte encodings keep the .NET reader (Latin-1 can
-        // never be ill-formed; ascii keeps its historical replacement
-        // behaviour). The DEFAULT and explicit utf8 go through the strict
-        // reader so an ill-formed sequence raises
-        // representation_error(character) instead of decoding to U+FFFD —
-        // except a UTF-16 BOM'd file, which keeps StreamReader's
-        // auto-detection (its lead 0xFF/0xFE bytes would read as ill-formed).
-        if (encoding is null || encoding is System.Text.UTF8Encoding)
+        string effective = encodingName ?? defaultEncoding;
+        bool hadBom = false;
+        if (bomOpt != false)
         {
             // byte[] + offset overload: net48 has no Stream.Read(Span).
-            byte[] bom = new byte[2];
-            int got = fs.Read(bom, 0, 2);
-            fs.Position = 0;
-            bool utf16 = got == 2
-                && ((bom[0] == 0xFF && bom[1] == 0xFE)
-                    || (bom[0] == 0xFE && bom[1] == 0xFF));
-            if (!utf16) return new Shumway.Core.Utf8TextReader(fs);
+            byte[] head = new byte[4];
+            int got = fs.Read(head, 0, 4);
+            var (bomName, bomLen) = TextEncodings.SniffBom(head, got);
+            if (bomName is not null)
+            {
+                effective = bomName;
+                hadBom = true;
+                fs.Position = bomLen;
+            }
+            else
+            {
+                fs.Position = 0;
+            }
         }
-        return encoding is null ? new StreamReader(fs) : new StreamReader(fs, encoding);
+        TextReader reader = effective == "utf8"
+            ? new Shumway.Core.Utf8TextReader(fs)
+            : new StreamReader(fs, TextEncodings.ByName(effective)!,
+                detectEncodingFromByteOrderMarks: false);
+        return new StreamHandle(id, reader, "read", path, alias)
+        {
+            EncodingName = effective,
+            HadBom = hadBom,
+        };
     }
 
     private static StreamHandle ResolveWriter(Activation engine, Cell cell)
@@ -229,9 +249,17 @@ public static class StreamBuiltins
                 ? NullDeviceHandle(id, mode, path, alias: null)
                 : mode switch
             {
-                "write"  => new StreamHandle(id, SharedWriter(path, false, null), "write", path),
-                "append" => new StreamHandle(id, SharedWriter(path, true, null), "append", path),
-                "read"   => new StreamHandle(id, SharedReader(path, null), "read", path),
+                "write"  => new StreamHandle(id,
+                    SharedWriter(path, false, registry.DefaultEncodingName,
+                        writeBom: false), "write", path)
+                    { EncodingName = registry.DefaultEncodingName, HadBom = false },
+                "append" => new StreamHandle(id,
+                    SharedWriter(path, true, registry.DefaultEncodingName,
+                        writeBom: false), "append", path)
+                    { EncodingName = registry.DefaultEncodingName, HadBom = false },
+                "read"   => OpenTextReader(id, path, alias: null,
+                    encodingName: null, bomOpt: null,
+                    registry.DefaultEncodingName),
                 _ => throw new PrologRuntimeException("domain_error",
                     "stream_mode (Phase 1 supports write / append / read)"),
             };
@@ -327,7 +355,8 @@ public static class StreamBuiltins
         string eofAction = "eof_code";
         bool repositionable = true;
         bool binary = false;
-        System.Text.Encoding? encoding = null;
+        string? encodingName = null;
+        bool? bomOpt = null;
         Cell cur = optsCell;
         while (cur.Tag == Tag.Lis)
         {
@@ -375,8 +404,8 @@ public static class StreamBuiltins
                             "domain_error", "stream_option", engine, head);
                     break;
                 case "encoding":
-                    // SWI-style: encoding(utf8 | iso_latin_1 | ascii). The
-                    // default StreamReader/Writer is UTF-8; iso_latin_1 maps
+                    // encoding(utf8 | iso_latin_1 | ascii | utf16le | utf16be
+                    // | utf32le | utf32be); default UTF-8. iso_latin_1 maps
                     // bytes 0x80–0xFF to the SAME code points (Latin-1 is the
                     // first 256 of Unicode), so reading a Latin-1 file with
                     // it is byte-value-faithful — a UTF-8 read turns each
@@ -387,14 +416,26 @@ public static class StreamBuiltins
                         throw new PrologRuntimeException(
                             "domain_error", "stream_option", engine, head);
                     string encName = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
-                    encoding = encName switch
-                    {
-                        "utf8" => new System.Text.UTF8Encoding(false),
-                        "iso_latin_1" => System.Text.Encoding.Latin1,
-                        "ascii" => System.Text.Encoding.ASCII,
-                        _ => throw new PrologRuntimeException(
-                            "domain_error", "stream_option", engine, head),
-                    };
+                    // The charset spellings ('UTF-8', 'UTF-16LE', ...) are
+                    // accepted as aliases — lgtunit passes them verbatim,
+                    // and SWI's open/4 takes both. stream_property/2 always
+                    // reports the engine name.
+                    encodingName = TextEncodings.DirectiveNameToEngineName(encName)
+                        ?? throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
+                    break;
+                case "bom":
+                    // bom(false) on read disables BOM detection (a leading
+                    // U+FEFF is then DATA); bom(true) on write emits one.
+                    // Read-side default is detection ON.
+                    if (argCell.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (argCell.Tag != Tag.Atom
+                        || AtomTable.GetById(argCell.AsAtomId)?.Name
+                            is not ("true" or "false"))
+                        throw new PrologRuntimeException(
+                            "domain_error", "stream_option", engine, head);
+                    bomOpt = AtomTable.GetById(argCell.AsAtomId)?.Name == "true";
                     break;
                 case "eof_action":
                     if (argCell.Tag == Tag.Ref)
@@ -477,20 +518,20 @@ public static class StreamBuiltins
                 handle = new StreamHandle(id, SharedFileStream(path, fm, fa),
                     mode, path, alias);
             }
+            else if (mode == "read")
+            {
+                handle = OpenTextReader(id, path, alias, encodingName, bomOpt,
+                    registry.DefaultEncodingName);
+            }
             else
             {
-                // With no encoding option, keep the platform defaults
-                // (StreamReader's UTF-8 with BOM detection).
-                handle = mode switch
+                string effEnc = encodingName ?? registry.DefaultEncodingName;
+                handle = new StreamHandle(id,
+                    SharedWriter(path, mode == "append", effEnc, bomOpt == true),
+                    mode, path, alias)
                 {
-                    "write"  => new StreamHandle(id,
-                        SharedWriter(path, false, encoding), "write", path, alias),
-                    "append" => new StreamHandle(id,
-                        SharedWriter(path, true, encoding), "append", path, alias),
-                    "read"   => new StreamHandle(id,
-                        SharedReader(path, encoding), "read", path, alias),
-                    _ => throw new PrologRuntimeException(
-                        "domain_error", "io_mode", engine, modeCell),
+                    EncodingName = effEnc,
+                    HadBom = bomOpt == true,
                 };
             }
         }

@@ -187,6 +187,31 @@ public static partial class MetaBuiltins
             };
             return true;
         }
+        if (flagName == "encoding")
+        {
+            // Default text encoding for source reads and new streams. The
+            // charset alias spellings normalize to the engine name, which
+            // is what current_prolog_flag/2 reports.
+            string? norm = Shumway.Core.TextEncodings.DirectiveNameToEngineName(valueName);
+            if (norm is null)
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", FlagValuePair()));
+            host.Flags.DefaultTextEncoding = norm;
+            if (engine.Streams is { } reg) reg.DefaultEncodingName = norm;
+            return true;
+        }
+        if (flagName == "lenient_escapes")
+        {
+            // Non-ISO escape sequences (SWI's fixed-width unicode escapes
+            // and friends) in ALL subsequent reads. Strict ISO rejects them
+            // (the conformance suite checks), so this is opt-in — the
+            // Logtalk adapter sets it, matching the reference backend.
+            if (valueName != "true" && valueName != "false")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", FlagValuePair()));
+            host.Flags.LenientEscapes = valueName == "true";
+            return true;
+        }
         if (flagName == "discontiguous_check")
         {
             if (valueName != "error" && valueName != "warning")
@@ -417,6 +442,13 @@ public static partial class MetaBuiltins
             case "discontiguous_check":
                 return UnifyAtom(engine, 1, host.Flags.DiscontiguousCheck);
 
+            case "lenient_escapes":
+                return UnifyAtom(engine, 1,
+                    host.Flags.LenientEscapes ? "true" : "false");
+
+            case "encoding":
+                return UnifyAtom(engine, 1, host.Flags.DefaultTextEncoding);
+
             case "arity_compat":
                 return UnifyAtom(engine, 1, host.Flags.ArityCompat ? "true" : "false");
 
@@ -468,7 +500,7 @@ public static partial class MetaBuiltins
         "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
         "debug", "dialect", "library_dialect", "version_data", "argv", "pid",
-        "implicit_dynamic", "arity_compat",
+        "implicit_dynamic", "arity_compat", "lenient_escapes", "encoding",
         "compile_mode", "debug_lco", "prefer_rationals", "answer_max_depth",
         "tabling",
     };
