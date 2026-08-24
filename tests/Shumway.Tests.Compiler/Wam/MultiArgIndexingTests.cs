@@ -172,4 +172,24 @@ public class MultiArgIndexingTests
         }
         return -1;
     }
+    [Fact]
+    public void SsuRules_IndexOnTheMatchPattern()
+    {
+        // An SSU rule's lowered head is all vars — the index keys come from
+        // the '$ssu_match' pattern (skipping a clause the call argument
+        // cannot unify with is exactly what the match would do). Without the
+        // pattern-aware classification these rules compile to a plain
+        // try_me_else chain.
+        var clauses = new ClauseReader(
+            "classify(0, R) => R = zero.\n" +
+            "classify(1, R) => R = one.\n" +
+            "classify(2, R) => R = two.\n").ReadAll().ToList();
+        var lowered = SsuTransform.Apply(clauses).ToList();
+        var pred = new PredicateCompiler().Compile(lowered);
+        Assert.True(ContainsOpcode(pred.Bytecode, Opcode.SwitchOnTerm),
+            "SSU rules should first-arg-index on their match patterns.");
+        Assert.True(ContainsOpcode(pred.Bytecode, Opcode.SwitchOnInteger),
+            "the integer pattern keys should get an integer switch.");
+    }
+
 }

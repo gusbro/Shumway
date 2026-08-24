@@ -505,7 +505,37 @@ public sealed class PredicateCompiler
         if (headTerm is not CompoundTerm compound || argIdx >= compound.Args.Length)
             return new ArgInfo(ArgKind.Var, 0);
 
-        return compound.Args[argIdx] switch
+        // An SSU rule lowers to an all-'$SSU'-vars head with the real pattern
+        // as '$ssu_match'(Pattern, HeadCopy), first goal of the body — which
+        // would leave every SSU predicate unindexed. Classify from the
+        // PATTERN's arg instead: index dispatch only SKIPS clauses the call
+        // argument cannot unify with, and for those '$ssu_match' would refuse
+        // just the same (subsumption starts with unification), so selection
+        // semantics are identical — a var call argument still lands in the
+        // var bucket, reaches every rule, and falls to the no-match trailer.
+        if (compound.Args[argIdx] is VarTerm hv
+            && hv.Name.StartsWith("$SSU", StringComparison.Ordinal)
+            && SsuPatternOf(clause) is CompoundTerm pat
+            && argIdx < pat.Args.Length)
+            return ClassifyTerm(pat.Args[argIdx]);
+
+        return ClassifyTerm(compound.Args[argIdx]);
+    }
+
+    /// <summary>The '$ssu_match' pattern of a lowered SSU rule, or null.</summary>
+    private static CompoundTerm? SsuPatternOf(Clause clause)
+    {
+        if (clause.Kind != ClauseKind.Rule
+            || clause.Term is not CompoundTerm { Functor: ":-", Args: [_, var body] })
+            return null;
+        Term first = body is CompoundTerm { Functor: ",", Args: [var f, _] } ? f : body;
+        return first is CompoundTerm { Functor: "$ssu_match", Args: [CompoundTerm p, _] }
+            ? p : null;
+    }
+
+    private static ArgInfo ClassifyTerm(Term arg)
+    {
+        return arg switch
         {
             VarTerm => new ArgInfo(ArgKind.Var, 0),
             AtomTerm a => new ArgInfo(
