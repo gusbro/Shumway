@@ -444,7 +444,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `op(+Priority, +Type, +Name)` | Declares an operator of the given priority and type. |
 | `predicate_property(+Head, ?Property)` | Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate. |
 | `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
-| `statistics` | Writes a report of runtime, walltime and heap/trail/stack use to the current output. |
+| `statistics` | Writes a report of runtime, walltime, heap/trail/stack use, heap-GC collections with cells reclaimed, and atom-table occupancy with atom-GC sweeps, to the current output. |
 | `statistics(?Key, ?Value)` | Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds. |
 | `term_cells(@Term, -Cells)` | Heap cells the term occupies, shared substructure counted once. A diagnostic: it reports what a term costs, not how it is stored. |
 

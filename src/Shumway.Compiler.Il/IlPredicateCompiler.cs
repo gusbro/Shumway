@@ -395,6 +395,9 @@ public sealed partial class IlPredicateCompiler
     // dispatch loop that would otherwise run it).
     private static readonly MethodInfo EngineMaybeCollectHeapMethod =
         typeof(Activation).GetMethod(nameof(Activation.MaybeCollectHeap), Type.EmptyTypes)!;
+    // ADR-016 — the call-boundary form: the callee functor bounds the live registers.
+    private static readonly MethodInfo EngineMaybeCollectHeapAtCallMethod =
+        typeof(Activation).GetMethod(nameof(Activation.MaybeCollectHeapAtCall))!;
     private static readonly MethodInfo EngineCurrentFunctorAddressesGetter =
         typeof(Activation).GetProperty(nameof(Activation.CurrentFunctorAddresses))!.GetGetMethod()!;
     private static readonly MethodInfo IlExecuteHelperResolveMethod =

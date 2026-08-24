@@ -430,7 +430,10 @@ public static partial class MetaBuiltins
     /// bails) or when there is nothing to reclaim.</summary>
     public static bool GarbageCollect(Activation engine)
     {
-        engine.CollectHeap();
+        // Arity 0: no X register is live, so none of the bank's stale
+        // leftovers can root garbage — the explicit collection the user
+        // asked for reclaims everything genuinely dead.
+        engine.CollectHeapBounded(0);
         return true;
     }
 

@@ -393,7 +393,9 @@ public static partial class MetaBuiltins
             Reflect, "current_prolog_flag(?Flag, ?Value)", "Reads the value of a Prolog flag.");
         BuiltinsRegistry.Register("statistics", 0, Statistics0,
             Reflect, "statistics",
-            "Writes a report of runtime, walltime and heap/trail/stack use to the current output.");
+            "Writes a report of runtime, walltime, heap/trail/stack use, heap-GC "
+            + "collections with cells reclaimed, and atom-table occupancy with atom-GC "
+            + "sweeps, to the current output.");
         BuiltinsRegistry.Register("$heap_live", 3, HeapLive);
         BuiltinsRegistry.Register("$heap_root_diag", 0, HeapRootDiag);
         BuiltinsRegistry.Register("$stack_top", 1, StackTopDiag);

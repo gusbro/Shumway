@@ -485,8 +485,9 @@ public sealed partial class BytecodeInterpreter
             if (Activation.IsResumeMarker(pc))
             {
                 // ADR-016 safe point: an IL non-tail callee has Proceeded
-                // back to its caller; caller state lives in the engine.
-                _engine.MaybeCollectHeap();
+                // back to its caller; caller state lives in the engine — and
+                // no X register is live (the caller reloads from Y slots).
+                _engine.MaybeCollectHeapAtReturn();
                 var (functorId, cursor) = Activation.DecodeResumeMarker(pc);
                 // Direct index into the link-time IlByFunctorId array — the same
                 // O(1) array access CallIl (bytecode→IL) uses, instead of the
@@ -795,8 +796,9 @@ public sealed partial class BytecodeInterpreter
                     _engine.SetCp(pc + 9);  // CallIl is 9 bytes, same as Call
                     _engine.SetB0(_engine.B);
                     // ADR-016 safe point — heap GC needs every goal
-                    // boundary regardless of dispatch tier.
-                    _engine.MaybeCollectHeap();
+                    // boundary regardless of dispatch tier. The callee's
+                    // functor bounds the live registers.
+                    _engine.MaybeCollectHeapAtCall(functorId);
                     var table = IlByFunctorId;
                     var ilFn = table is not null && (uint)functorId < (uint)table.Length
                         ? table[functorId] : null;
@@ -893,7 +895,7 @@ public sealed partial class BytecodeInterpreter
                     _engine.Debug?.OnCallFunctor(_engine, functorId, true);   // ADR-035
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     _engine.SetB0(_engine.B);  // tail call still enters a new procedure
-                    _engine.MaybeCollectHeap();
+                    _engine.MaybeCollectHeapAtCall(functorId);
                     var table = IlByFunctorId;
                     var ilFn = table is not null && (uint)functorId < (uint)table.Length
                         ? table[functorId] : null;
@@ -2644,8 +2646,10 @@ public sealed partial class BytecodeInterpreter
             // references are in the engine (registers / Y slots / CPs /
             // trails) for both tiers, so a watermark-triggered collection
             // here is sound. Covers Tier-0 dispatch, Tier-1 entry, and
-            // Tier-1 tail-call chains (which loop in this method).
-            _engine.MaybeCollectHeap();
+            // Tier-1 tail-call chains (which loop in this method). A marker
+            // target names the callee, bounding the live registers; a raw
+            // address keeps the conservative full-bank scan.
+            _engine.MaybeCollectHeapAtDispatch(target);
             var ilFn = Tier1Dispatcher?.OnDispatch(target);
             if (ilFn is null)
             {

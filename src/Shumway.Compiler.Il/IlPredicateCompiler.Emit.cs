@@ -1620,13 +1620,15 @@ public sealed partial class IlPredicateCompiler
                 // marker path does.
                 if (selfTailLabel is not null && siteFunctorId == selfFunctorId)
                 {
-                    // engine.SetB0(engine.B); engine.MaybeCollectHeap();
+                    // engine.SetB0(engine.B);
+                    // engine.MaybeCollectHeapAtCall(selfFunctorId);
                     emit.LoadArgument(0);
                     emit.LoadArgument(0);
                     emit.Call(EngineBGetter);
                     emit.Call(EngineSetB0Method);
                     emit.LoadArgument(0);
-                    emit.Call(EngineMaybeCollectHeapMethod);
+                    emit.LoadConstant(selfFunctorId);
+                    emit.Call(EngineMaybeCollectHeapAtCallMethod);
                     // A chain predicate's cursor-0 entry re-reads the incoming
                     // cursor (arg 1) to pick clause 0; a fresh self-call must
                     // restart from clause 0, so reset it. Harmless for the

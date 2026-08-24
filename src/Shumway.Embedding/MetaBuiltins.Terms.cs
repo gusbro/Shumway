@@ -702,6 +702,11 @@ public static partial class MetaBuiltins
         report.Append("Heap:      ").Append(Count(engine.HeapTop)).Append(" cells in use of ")
               .Append(Count(engine.HeapCapacity)).Append(" (")
               .Append(Count((long)engine.HeapCapacity * 8 / 1024)).Append(" KB)\n");
+        // ADR-016 — this query's collections; the reclaim total is what the
+        // bounded-memory machinery actually gave back.
+        report.Append("Heap GC:   ").Append(Count(engine.HeapGcCount))
+              .Append(engine.HeapGcCount == 1 ? " collection, " : " collections, ")
+              .Append(Count(engine.HeapGcReclaimedCells)).Append(" cells reclaimed\n");
         // ADR-004 — two trails, reported as the two they are.
         // How much of that heap is packed text. Reported as a resource, like
         // every other line here — it is the answer to "is my text costing what
@@ -717,8 +722,16 @@ public static partial class MetaBuiltins
               .Append(" bindings, ").Append(Count(engine.ExtraTrailTop)).Append(" other\n");
         report.Append("Stack:     ").Append(Count(engine.StackTop)).Append(" words in use of ")
               .Append(Count(engine.StackCapacity)).Append('\n');
+        // ADR-003 — the atom table is process-wide, and so are its GC numbers.
+        report.Append("Atoms:     ").Append(Count(AtomTable.TransientCount))
+              .Append(" transient + ").Append(Count(AtomTable.PermanentCount))
+              .Append(" permanent (").Append(Count(AtomTable.SweepCount))
+              .Append(AtomTable.SweepCount == 1 ? " sweep, " : " sweeps, ")
+              .Append(Count(AtomTable.SweptAtoms)).Append(" atoms reclaimed)\n");
 
-        host.Out.Write(report.ToString());
+        // The CURRENT output, so with_output_to/2 and set_output/1 capture
+        // the report — which is also what the doc line always promised.
+        engine.Out.Write(report.ToString());
         return true;
 
         static string Seconds(long ms) => (ms / 1000.0).ToString("0.000",
