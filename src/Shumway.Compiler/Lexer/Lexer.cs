@@ -907,6 +907,15 @@ public sealed class Lexer
                 // doubled-quote escape ('') above applies in both modes.
                 Advance();
                 int e = ReadEscapeSequence(pos);
+                // BMP guard: appending (char)e would TRUNCATE a code point
+                // above 0xFFFF to 16 bits, silently manufacturing a different
+                // character ('600' became U+F600) — same lie the
+                // character-code builders guard against.
+                if (e != EscapeContinuation && e > 0xFFFF)
+                    throw new LexerException(
+                        $"Character escape 0x{e:X} is above the BMP at {pos} — "
+                        + "code points above 0xFFFF are not supported in quoted text.",
+                        pos);
                 if (e != EscapeContinuation) sb.Append((char)e);
             }
             else if ((c < ' ' || c == '\x7f') && !ArityCompat)
@@ -993,6 +1002,15 @@ public sealed class Lexer
             {
                 Advance();
                 int e = ReadEscapeSequence(pos);
+                // BMP guard: appending (char)e would TRUNCATE a code point
+                // above 0xFFFF to 16 bits, silently manufacturing a different
+                // character ('600' became U+F600) — same lie the
+                // character-code builders guard against.
+                if (e != EscapeContinuation && e > 0xFFFF)
+                    throw new LexerException(
+                        $"Character escape 0x{e:X} is above the BMP at {pos} — "
+                        + "code points above 0xFFFF are not supported in quoted text.",
+                        pos);
                 if (e != EscapeContinuation) sb.Append((char)e);
             }
             else if ((c < ' ' || c == '\x7f') && !ArityCompat)

@@ -23,6 +23,7 @@ engine either answers in UTF-16 units or refuses:
 | `sub_atom/5` | offsets and slices in units; the 1-char prefix is half a surrogate | code-point offsets |
 | `get_char/2` | **two** reads, each half a surrogate | one read |
 | builders from codes > 0xFFFF | `representation_error` (deliberate guard, 2026-08 — before that they truncated *silently* to a different character) | build the character |
+| lexer escape `600\` in quoted text | lexical error (guarded on this branch — it silently truncated to U+F600 until then; `0'600\` correctly stays the *integer* 128512) | build the character |
 
 The guard work of 2026-08 turned every silent lie on the *construction*
 side into a loud error, and `BmpCharacterCodeTests` pins that. The
@@ -54,6 +55,22 @@ its test generator branches only on unsupported-vs-anything, and declaring
 `bmp` opts into `unicode_full` charsets that generate astrals (measured:
 `bmp` → arbitrary 40/43). Only JIProlog and Tau declare `bmp`; it is a path
 nobody walks.
+
+**How an astral-bearing atom is born — the single choke point.** Every
+atom in the system is created by `AtomTable.Intern(string)`; `new Atom(`
+does not exist outside `AtomTable.cs`. However many user-facing doors
+there are (quoted literals, `read`, `atom_concat` construction,
+case mapping, the embedding API handing a .NET string,
+`with_output_to(atom)`), they are corridors into that one hall — so the
+per-atom flag is computable in exactly one place, folded into the scan
+Intern already performs to hash the name (one surrogate-range check per
+unit; marginal cost ≈ zero). The same scan can classify three states —
+BMP-clean / astral-bearing / *malformed* (lone surrogates, which
+`atom_chars`-style decomposition can produce today) — enabling a policy
+decision on malformed atoms at no extra cost. PSTRs do not pass through
+Intern, but their producers are equally funnelled (ADR-047 unified them
+under `MakeTextList` + the literal pool + stream readers) and the packed
+header has a stealable bit (length spends 27; 26 still covers 67M chars).
 
 ## 2. Why it would matter (and how much)
 

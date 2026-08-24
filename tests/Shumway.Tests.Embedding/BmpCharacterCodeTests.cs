@@ -49,4 +49,31 @@ public sealed class BmpCharacterCodeTests
         Assert.Equal(0x4E2DL, ((IntTerm)sol["Y"]!).Value);
         Assert.Equal(1L, ((IntTerm)sol["L"]!).Value);
     }
+    [Fact]
+    public void LexerHexEscape_AstralCodePoint_RaisesRatherThanTruncating()
+    {
+        // '\x1F600\' used to append (char)0x1F600 — truncated to 16
+        // bits, silently manufacturing U+F600 (a private-use character).
+        // Same guard family as the builders above, at the lexer.
+        var e = new PrologEngine();
+        var ex = Assert.ThrowsAny<Exception>(
+            () => e.Query("X = 'a\\x1F600\\b'."));
+        Assert.Contains("above the BMP", ex.Message);
+        var ex2 = Assert.ThrowsAny<Exception>(
+            () => e.ConsultString("p(\"a\\x10400\\b\")."));
+        Assert.Contains("above the BMP", ex2.Message);
+    }
+
+    [Fact]
+    public void LexerEscapes_BmpAndCharCodeLiteral_StillWork()
+    {
+        var e = new PrologEngine();
+        // A BMP escape still builds the character...
+        Assert.True(e.Query(
+            "X = '\\x1b\\', char_code(X, 27).").Success);
+        // ...and 0'\x…\ denotes an INTEGER code, where an astral
+        // value is a perfectly good integer — no atom is built.
+        Assert.True(e.Query("X is 0'\\x1F600\\, X =:= 128512.").Success);
+    }
+
 }
