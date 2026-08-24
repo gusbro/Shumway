@@ -122,7 +122,7 @@ public readonly struct Cell : IEquatable<Cell>
     public static Cell Foreign(int tableId)
         => new(((long)Tag.Foreign << TagShift) | (uint)tableId);
 
-    /// <summary>An attributed variable: tag 0xA, payload =
+    /// <summary>An attributed variable: payload =
     /// the heap index of the variable's own home cell — exactly like a
     /// self-referencing <see cref="Ref"/>, but tagged ATTVAR so
     /// <see cref="Deref"/> stops at it instead of following it. The

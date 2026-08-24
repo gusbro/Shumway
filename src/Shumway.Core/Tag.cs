@@ -14,14 +14,10 @@ public enum Tag : byte
     Int = 0x5,
     Float = 0x6,
     BigInt = 0x7,
-    // 0x8 free — was String, an opaque non-list string type.
-    // Removed by ADR-047: text as a value is an atom, text as a sequence is a
-    // list. 0x8 and 0xF are the last two slots in a 4-bit tag space, so
-    // claiming either is a major decision (decision-policy.md).
-    Foreign = 0x9,
-    AttVar = 0xA,
-    Pstr = 0xB,
-    PstrBuffer = 0xC,
+    Foreign = 0x8,
+    AttVar = 0x9,
+    Pstr = 0xA,
+    PstrBuffer = 0xB,
 
     /// <summary>A raw machine word stored on the stack — an environment /
     /// choice-point control slot (CE, CP, B, BP, trail tops, HeapTop, Hb,
@@ -32,12 +28,17 @@ public enum Tag : byte
     /// <c>(int)Data</c> cast (the tag lives above bit 31, so the cast is
     /// unaffected), and the one 60-bit slot (ViewGen) reads via
     /// <see cref="Cell.Payload"/>.</summary>
-    RawInt = 0xD,
+    RawInt = 0xC,
 
     /// <summary>An exact rational <c>Num/Den</c> (ADR-039). Like
     /// <see cref="BigInt"/>, the payload is an id into a per-activation side
     /// table (<c>_rationalTable</c>); the value never lives in the cell. Every
     /// rational cell is a genuine fraction (denominator &gt; 1) — an integral
     /// value collapses to <see cref="Int"/> / <see cref="BigInt"/>.</summary>
-    Rational = 0xE,
+    Rational = 0xD,
+
+    // 0xE and 0xF are the two free slots. The tag space is 4 bits and cannot
+    // grow without changing the cell layout, so a NEW tag is a major decision
+    // (decision-policy.md). Values are contiguous by construction (compacted
+    // pre-v1 when ADR-047 removed the string tag) — keep them that way.
 }

@@ -2,7 +2,9 @@
 
 ## Status
 
-Shipped ([Phase 20](../../history/phase-20-closure.md)).
+Shipped ([Phase 20](../../history/phase-20-closure.md)). Tag values cited
+below are as of this decision; the tag space was compacted pre-v1
+(ADR-002) — `Tag.RawInt` is now 0xC.
 
 Adding a heap GC
 is a "major decision" under [the decision policy](../decision-policy.md) (comparable to the atom-GC

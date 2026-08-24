@@ -39,14 +39,13 @@ public enum Tag : byte
     Int     = 0x5,
     Float   = 0x6,
     BigInt  = 0x7,
-    // 0x8 free (was String; removed by ADR-047)
-    Foreign = 0x9,
-    AttVar  = 0xA,   // attributed variable (Phase 4; CLP(FD)/CLP(R) build on it)
-    Pstr    = 0xB,   // packed list header (ADR-047)
-    PstrBuffer = 0xC, // PSTR buffer cell: 3 UTF-16 code units
-    RawInt  = 0xD,   // non-heap-ref control word (env/CP fields) — ADR-016 heap-GC scan
-    Rational = 0xE,  // rational table id (ADR-039)
-    // 0xF free
+    Foreign = 0x8,
+    AttVar  = 0x9,   // attributed variable (Phase 4; CLP(FD)/CLP(R) build on it)
+    Pstr    = 0xA,   // packed list header (ADR-047)
+    PstrBuffer = 0xB, // PSTR buffer cell: 3 UTF-16 code units
+    RawInt  = 0xC,   // non-heap-ref control word (env/CP fields) — ADR-016 heap-GC scan
+    Rational = 0xD,  // rational table id (ADR-039)
+    // 0xE, 0xF free
 }
 ```
 
@@ -332,18 +331,10 @@ public BigInteger AsBigInt(Cell c)
 
 The BigInt table grows during a query. It is **not** trail-reversed (truncating it would be expensive). At end-of-query, the table is cleared.
 
-### 0x8 — free
-
-Freed by ADR-047: there is no opaque string type. Text as a value is an atom;
-text as a sequence is a list, packed or not.
-
-The tag space is 4 bits and cannot grow, so 0x8 and 0xF are the last two slots.
-Claiming either is a major decision (`decision-policy.md`).
-
-### FOREIGN (0x9) — Reference to .NET object
+### FOREIGN (0x8) — Reference to .NET object
 
 ```
-Bits 63..60: 0x9
+Bits 63..60: 0x8
 Bits 59..32: 0 (reserved)
 Bits 31..0:  id in the engine's foreign object table
 ```
@@ -366,22 +357,24 @@ public Cell MakeForeign(object obj)
 - The table is cleared at engine reset/disposal.
 - Backtracking does not unwind foreign object additions (similar to the BigInt and Rational tables).
 
-### ATTVAR (0xA) — Attributed variable
+### ATTVAR (0x9) — Attributed variable
 
 Implemented in Phase 4. The payload is a heap index to the variable's own home
 cell (a self-referencing variable, like REF); its attributes live in a
 per-activation side table. Backs `attvar/1`, `put_attr`/`get_attr`, the
 `attr_unify_hook` / `verify_attributes/4` wakeup, and CLP(FD)/CLP(R).
 
-### PSTR (0xB) — Packed list header
+### PSTR (0xA) — Packed list header
 
 A **list**, stored packed — not a string type (ADR-047). Described in full in
 `pstr-design.md`; the summary:
 
 ```
-Bits 63..60: 0xB (PSTR header)
+Bits 63..60: 0xA (PSTR header)
 Bit  59:     presentation — 1 = chars, 0 = codes
-Bits 58..32: length in UTF-16 code units (27 bits)
+Bit  58:     astral — set when the packed units may contain a surrogate
+             (ADR-048; BMP-flagged text keeps the unit-based fast paths)
+Bits 57..32: length in UTF-16 code units (26 bits)
 Bits 31..2:  heap index of the first buffer cell (30 bits)
 Bits 1..0:   offset within that buffer cell (0..2, 2 bits)
 ```
@@ -572,7 +565,7 @@ These invariants are not checked at runtime in the hot path. Debug-build asserti
 
 The following bit patterns are reserved and should never appear in valid cells:
 
-- Tags 0x8 and 0xF (no semantics defined). Tags 0xC (`PstrBuffer`), 0xD (`RawInt`) and 0xE (`Rational`) are in use.
+- Tags 0xE and 0xF (no semantics defined — the two free slots; the space was compacted pre-v1 when ADR-047 removed the string tag).
 - The all-zero cell (`0x0000_0000_0000_0000`) is technically a valid REF cell pointing to heap[0], but in practice, the cell at heap[0] is either an unbound REF to itself or part of an allocated structure. Code should be careful when interpreting zero-initialized memory as cells.
 
 ## See also

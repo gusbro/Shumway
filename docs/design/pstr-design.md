@@ -23,12 +23,13 @@ performs a megabyte of O(1) steps and allocates zero cells for the walk.
 
 ## Layout
 
-### Header cell — `Tag.Pstr` (0xB)
+### Header cell — `Tag.Pstr` (0xA)
 
 ```
-bits 63..60 : 0xB
+bits 63..60 : 0xA
 bit  59     : presentation   1 = chars, 0 = codes
-bits 58..32 : length in UTF-16 code units (27 bits, ~268 M)
+bit  58     : astral         set when the units may contain a surrogate (ADR-048)
+bits 57..32 : length in UTF-16 code units (26 bits, ~67 M)
 bits 31..2  : heap index of the first buffer cell (30 bits)
 bits  1..0  : offset within that first buffer cell (0..2)
 ```
@@ -36,19 +37,21 @@ bits  1..0  : offset within that first buffer cell (0..2)
 - **Length is in code units, not codepoints.** That is what makes the tail
   position O(1): `tailIndex = bufferIdx + ⌈(length + offset) / 3⌉`. The
   codepoint count needs a walk to find surrogate pairs, and is only paid where
-  it is asked for.
+  it is asked for — and only by astral-flagged text: a clear astral bit
+  certifies units ≡ characters, so BMP text keeps every unit-based fast path
+  (ADR-048; producers compute the bit while packing, slices inherit it).
 - **Offset** lets a PSTR start mid-cell, which is what makes unconsing free.
-- **The presentation bit is at 59, not at 32.** Only the mask in
-  `AsPstrLength` changes; `AsPstrBufferIndex` and `AsPstrOffset` keep the bit
-  positions they have always had, and with them `GetPstrCodeUnitAt`,
+- **The presentation and astral bits sit at 59/58, not at 32.** Only the mask
+  in `AsPstrLength` changes; `AsPstrBufferIndex` and `AsPstrOffset` keep the
+  bit positions they have always had, and with them `GetPstrCodeUnitAt`,
   `ComputePstrTailIndex`, and every line of the GC that marks or relocates a
   PSTR. See "Interaction with the heap GC" below for why that is worth
   designing around.
 
-### Buffer cells — `Tag.PstrBuffer` (0xC)
+### Buffer cells — `Tag.PstrBuffer` (0xB)
 
 ```
-bits 63..60 : 0xC
+bits 63..60 : 0xB
 bits 59..48 : reserved, zero
 bits 47..32 : code unit 0
 bits 31..16 : code unit 1
