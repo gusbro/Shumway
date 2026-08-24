@@ -1,8 +1,11 @@
 # Unicode `full` (astral planes) — viability study
 
-Status: **implemented** (branch `astral-unicode`, 2026-08-24). The study
-below (§1–§6) is preserved as written; §7 records the arc's A/B measurement,
-which is the input to the v1-inclusion decision.
+Status: **implemented and in v1.0.0** (branch `astral-unicode`,
+2026-08-24; canonical record: ADR-048). The study below (§1–§6) is
+preserved as written — its §6 recommendation ("B for v1, A after") was
+superseded by the decision to implement A immediately and let the §7
+measurement gate inclusion; the measurement came back at zero cost, so A
+shipped in v1.
 
 ---
 
@@ -169,7 +172,7 @@ defect. Running it as the first post-1.0 arc keeps v1 on schedule and
 gives the A/B gate room to breathe. C is small enough to slip into any
 round if BMP identifiers are wanted sooner.
 
-## 7. Measured cost (the S7 gate)
+## 7. Measured cost (the measurement that gated v1 inclusion)
 
 Design as implemented: option A — the per-atom `TextShape` flag computed at
 intern, plus a per-PSTR astral bit (payload bit 58, length narrowed 27 → 26

@@ -2,11 +2,14 @@
 
 ## Status
 
-Accepted and implemented (2026-08, branch `astral-unicode`). This is the
-astral-plane arc that ADR-047 explicitly deferred. Whether it ships inside
-v1.0.0 is a release decision informed by the measurement in
-[`docs/design/unicode-full-viability.md`](../../design/unicode-full-viability.md) §7
-(zero measurable cost); the semantics themselves are settled here.
+Accepted, implemented, and **in v1.0.0** (2026-08, branch
+`astral-unicode`). This is the astral-plane arc that ADR-047 explicitly
+deferred. The inclusion decision was gated on the arc's A/B measurement —
+[`docs/design/unicode-full-viability.md`](../../design/unicode-full-viability.md) §7:
+allocation byte-identical, wall clock inside noise — so it ships with the
+release rather than after it: the semantics are a breaking change
+(character counts, offsets, the standard order), and a breaking change
+belongs before 1.0, not behind it.
 
 ## Context
 
@@ -90,6 +93,14 @@ never an occasion to throw from a walker.
 - `Cell.Pstr` requires the astral argument (no default): a slice must state
   what it inherits, a producer what it built — "forgot" is not
   representable.
-- `unicode/*` sections of Logtalk's backend battery remain gated on
-  `encoding_directive` (reading source files under `:- encoding/1`), which
-  stays `unsupported` — a separate feature, deliberately out of this arc.
+- The follow-up round delivered `:- encoding/1` itself: consult decodes
+  a source file per its BOM and a leading encoding directive (found
+  TOLERANTLY — the file need not be readable under the default encoding
+  for its directive to be honoured, decode attempts replace rather than
+  throw), `open/4` gained utf16le/utf16be/utf32le/utf32be, `bom(Bool)`
+  and default-ON BOM detection (a BOM outranks the encoding option),
+  `stream_property/2` reports `encoding/1` + `bom/1`, and the `encoding`
+  flag sets the session default. The adapter declares
+  `encoding_directive, full`; the non-ISO fixed-width `\u` escapes stay
+  behind the opt-in `lenient_escapes` flag the adapter sets, so strict
+  ISO reads are unchanged outside Logtalk.
