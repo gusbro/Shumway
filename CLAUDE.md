@@ -247,13 +247,9 @@ entries here, grow the closure docs.
 | 37 | Documentation truth (guide/history split, invariants.md, ADR audit), MIT licensing + adapter rewrite, `--consult` incremental toolchain, bundle helper-id collision fixes, `SolveOnce` + first interop benchmark vs GNU (zero-copy wins 3–180×) | [doc](docs/history/phase-37-closure.md) |
 | 38 | WebShumway (ADR-042): the full engine on browser-wasm as a static site — Tier-0 via `RuntimeCaps`, threads + COOP/COEP, MEMFS↔OPFS, `Shumway.TopLevel` extraction, libraries as dialect-tagged collections | [doc](docs/history/phase-38-closure.md) |
 | 39 | ADR-043 .NET Framework 4.8 opt-in multi-target (net48 + 32-bit, Tier-1 unchanged, persisted IL native on Framework), 3-lane CI, debugger VSIX 0.30 round | [doc](docs/history/phase-39-closure.md) |
+| 40 | Version 1.0 + the ecosystem campaigns: ADR-044/045 host-boundary conventions, ADR-046 module-scoped ops, ADR-047 packed-string-is-a-list (default `chars`, lazy `phrase_from_file`), full Neumerkel suites (365/365), Logtalk libraries 100% + ISO battery 3,219/70, Trealla corpus + Triska clpz/clpb certified from their tree, SSU aligned with SWI, WebShumway debug mode, bounded memory (dead-CP reclamation + attr-log hygiene, ~14% faster) | [doc](docs/history/phase-40-closure.md) |
 
-Work after phase 39 (uncommitted-phase era, on `web-debug`): version 1.0.0 +
-generator stamps, ADR-044 canonical paths, ADR-045 text-mode newlines,
-`'$stream'(Id)` stream terms, `ensure_loaded/1`, `time_out/3`, and the Logtalk
-swi-dialect campaign (100% of the structurally supported library set; engine
-gains: `predicate_property/2` meta templates, `unicode_property/2`, shell
-de-dup, BMP truncation fix). See git log and the guide docs.
+
 ---
 
 ## Communication and Iteration
