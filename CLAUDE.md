@@ -314,6 +314,7 @@ When proposing changes:
 | Text-mode CR-LF → `\n` translation | ADR-045 |
 | Module-scoped operator tables | ADR-046 |
 | A packed string is a list | ADR-047 |
+| A Prolog character is a code point | ADR-048 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

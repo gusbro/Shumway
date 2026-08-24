@@ -1,7 +1,8 @@
 # Unicode `full` (astral planes) — viability study
 
-Status: **study only** (branch `astral-unicode`, 2026-08-24). No code. The
-outcome decides whether the arc runs, and whether before or after v1.0.0.
+Status: **implemented** (branch `astral-unicode`, 2026-08-24). The study
+below (§1–§6) is preserved as written; §7 records the arc's A/B measurement,
+which is the input to the v1-inclusion decision.
 
 ---
 
@@ -167,3 +168,29 @@ release, and its yield is conformance breadth rather than a blocking
 defect. Running it as the first post-1.0 arc keeps v1 on schedule and
 gives the A/B gate room to breathe. C is small enough to slip into any
 round if BMP identifiers are wanted sooner.
+
+## 7. Measured cost (the S7 gate)
+
+Design as implemented: option A — the per-atom `TextShape` flag computed at
+intern, plus a per-PSTR astral bit (payload bit 58, length narrowed 27 → 26
+bits) computed at pack time and inherited by slices. BMP text takes the
+exact pre-arc code paths; only astral-bearing text walks by code points.
+
+**Deterministic allocation** (`--alloc`, Van Roy suite, Tier-0): the full
+10-benchmark table is **byte-identical** between `main` (debc98c7) and the
+arc head — zero extra cells on BMP paths.
+
+**Wall-clock** (Release, ABBA process interleave, in-process `walltime`
+after 6–8 warmup rounds, medians):
+
+| workload (BMP text, hot path touched) | base | astral | delta |
+|---|---|---|---|
+| DCG uncons over a 100k-char packed string ×3 | 94.5 ms | 91.0 ms | −3.7% |
+| `sub_atom/5` + `atom_length/2` ×20k on a 100k-char atom | 35.0 ms | 34.5 ms | −1.4% |
+| `msort/2` of 30k atoms (n=30 samples/side) | 71.0 ms | 69.0 ms | −2.8% |
+
+All three deltas are inside the run-to-run noise band (~±10%); an early
+12-sample read of `msort` showed +25%, which vanished at n=30 — the
+fixed-order trap the ABBA discipline exists for. **Conclusion: the flag
+design delivers code-point semantics at no measurable cost to BMP
+workloads.**

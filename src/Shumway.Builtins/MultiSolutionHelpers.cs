@@ -99,8 +99,14 @@ public static class MultiSolutionHelpers
             throw new PrologRuntimeException("instantiation_error");
         if (atomCell.Tag != Tag.Atom)
             throw new PrologRuntimeException("type_error", "atom");
-        string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
-        int len = name.Length;
+        Atom? atomObj = AtomTable.GetById(atomCell.AsAtomId);
+        string name = atomObj?.Name ?? "";
+        // Offsets and lengths are CODE POINTS. For the (rare) non-BMP atom,
+        // precompute each code point's starting unit index once so every
+        // decomposition still slices in O(1).
+        int[]? cpBounds = atomObj is { IsAllBmp: false }
+            ? Utf16Text.CpBounds(name) : null;
+        int len = cpBounds is null ? name.Length : cpBounds.Length - 1;
 
         // Build the list bottom-up so we can encode it without back-patching.
         // The decompositions: for each before ∈ [0..len], for each length ∈ [0..len-before],
@@ -129,7 +135,10 @@ public static class MultiSolutionHelpers
             for (int length = len - before; length >= 0; length--)
             {
                 int after = len - before - length;
-                string sub = name.Substring(before, length);
+                string sub = cpBounds is null
+                    ? name.Substring(before, length)
+                    : name.Substring(cpBounds[before],
+                        cpBounds[before + length] - cpBounds[before]);
                 int subAtomId = AtomTable.Intern(sub, permanent: false).Id;
 
                 // Build [Before, Length, After, Sub] as a cons chain.
@@ -187,7 +196,17 @@ public static class MultiSolutionHelpers
         if (atomCell.Tag == Tag.Atom) name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         else if (!SwiLenient.TryCoerce(engine, atomCell, out name))
             throw new PrologRuntimeException("type_error", "atom", engine, atomCell);
-        int len = name.Length;
+        // Offsets/lengths are CODE POINTS. BMP atoms (the per-atom shape,
+        // computed at intern) keep the exact unit-based code below; a
+        // non-BMP one gets a boundary table so slices stay O(1).
+        int[]? cpb = null;
+        {
+            TextShape shape = atomCell.Tag == Tag.Atom
+                ? AtomTable.GetById(atomCell.AsAtomId)?.Shape ?? TextShape.Bmp
+                : Utf16Text.Classify(name);
+            if (shape != TextShape.Bmp) cpb = Utf16Text.CpBounds(name);
+        }
+        int len = cpb is null ? name.Length : cpb.Length - 1;
 
         // Mode analysis: pre-filter the candidate set by every bound argument
         // so (in the common modes) a candidate is enumerated ONLY if it will
@@ -217,7 +236,10 @@ public static class MultiSolutionHelpers
             if (!e.UnifyRegisterWithCell(1, Cell.Int(b))) return false;
             if (!e.UnifyRegisterWithCell(2, Cell.Int(l))) return false;
             if (!e.UnifyRegisterWithCell(3, Cell.Int(len - b - l))) return false;
-            int subAtomId = AtomTable.Intern(name.Substring(b, l), permanent: false).Id;
+            int u0 = cpb is null ? b : cpb[b];
+            int u1 = cpb is null ? b + l : cpb[b + l];
+            int subAtomId = AtomTable.Intern(
+                name.Substring(u0, u1 - u0), permanent: false).Id;
             return e.UnifyRegisterWithCell(4, Cell.Atom(subAtomId));
         }
 
@@ -225,23 +247,34 @@ public static class MultiSolutionHelpers
         if (sCell.Tag == Tag.Atom)
         {
             string sub = AtomTable.GetById(sCell.AsAtomId)?.Name ?? "";
-            int ls = sub.Length;
+            int lsUnits = sub.Length;
+            int ls = cpb is null ? lsUnits : Utf16Text.CodePointLength(sub);
             if (lFix >= 0 && lFix != ls) return false;
+            // An occurrence must start AND end on a code-point boundary —
+            // matching sub's units at cp position b spans exactly ls code
+            // points iff the end lands on cpb[b + ls].
+            bool OccursAt(int b)
+            {
+                int u0 = cpb is null ? b : cpb[b];
+                if (u0 + lsUnits > name.Length) return false;
+                if (cpb is not null && (b + ls > len || cpb[b + ls] != u0 + lsUnits))
+                    return false;
+                return string.CompareOrdinal(name, u0, sub, 0, lsUnits) == 0;
+            }
             var occ = new List<int>();
             if (bFix >= 0)
             {
-                if (bFix + ls <= len && string.CompareOrdinal(name, bFix, sub, 0, ls) == 0)
-                    occ.Add(bFix);
+                if (bFix + ls <= len && OccursAt(bFix)) occ.Add(bFix);
             }
             else if (aFix >= 0)
             {
                 int b = len - aFix - ls;
-                if (b >= 0 && string.CompareOrdinal(name, b, sub, 0, ls) == 0) occ.Add(b);
+                if (b >= 0 && OccursAt(b)) occ.Add(b);
             }
             else
             {
                 for (int b = 0; b + ls <= len; b++)
-                    if (string.CompareOrdinal(name, b, sub, 0, ls) == 0) occ.Add(b);
+                    if (OccursAt(b)) occ.Add(b);
             }
             return IndexEnumCursor.Start(engine, occ.Count, arity: 5, returnPc,
                 (e, i) => TryUnify(e, occ[i], ls));

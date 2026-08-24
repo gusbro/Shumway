@@ -10,7 +10,7 @@ public class PstrTests
     [Fact]
     public void Pstr_FactoryEncodesAllThreeFields()
     {
-        var cell = Cell.Pstr(length: 7, bufferIdx: 42, offset: 2, TextKind.Codes);
+        var cell = Cell.Pstr(length: 7, bufferIdx: 42, offset: 2, TextKind.Codes, astral: false);
         Assert.Equal(Tag.Pstr, cell.Tag);
         Assert.Equal(7, cell.AsPstrLength);
         Assert.Equal(42, cell.AsPstrBufferIndex);
@@ -24,7 +24,7 @@ public class PstrTests
     [InlineData(Cell.MaxPstrLength, Cell.MaxPstrBufferIndex, 2)]
     public void Pstr_RoundTrip(int length, int bufferIdx, int offset)
     {
-        var cell = Cell.Pstr(length, bufferIdx, offset, TextKind.Codes);
+        var cell = Cell.Pstr(length, bufferIdx, offset, TextKind.Codes, astral: false);
         Assert.Equal(length, cell.AsPstrLength);
         Assert.Equal(bufferIdx, cell.AsPstrBufferIndex);
         Assert.Equal(offset, cell.AsPstrOffset);
@@ -33,15 +33,15 @@ public class PstrTests
     [Fact]
     public void Pstr_OutOfRangeLength_Throws()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => Cell.Pstr(-1, 0, 0, TextKind.Codes));
-        Assert.Throws<ArgumentOutOfRangeException>(() => Cell.Pstr(Cell.MaxPstrLength + 1, 0, 0, TextKind.Codes));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Cell.Pstr(-1, 0, 0, TextKind.Codes, astral: false));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Cell.Pstr(Cell.MaxPstrLength + 1, 0, 0, TextKind.Codes, astral: false));
     }
 
     [Fact]
     public void Pstr_OutOfRangeBufferIdx_Throws()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => Cell.Pstr(0, -1, 0, TextKind.Codes));
-        Assert.Throws<ArgumentOutOfRangeException>(() => Cell.Pstr(0, Cell.MaxPstrBufferIndex + 1, 0, TextKind.Codes));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Cell.Pstr(0, -1, 0, TextKind.Codes, astral: false));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Cell.Pstr(0, Cell.MaxPstrBufferIndex + 1, 0, TextKind.Codes, astral: false));
     }
 
     [Theory]
@@ -50,7 +50,7 @@ public class PstrTests
     [InlineData(4)]
     public void Pstr_OutOfRangeOffset_Throws(int offset)
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => Cell.Pstr(0, 0, offset, TextKind.Codes));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Cell.Pstr(0, 0, offset, TextKind.Codes, astral: false));
     }
 
     // ---------- Cell.PstrBuffer ----------
@@ -387,7 +387,7 @@ public class PstrTests
         engine.SetHeap(tailSlot, Cell.Atom(AtomTable.EmptyListId));
 
         int hdrSlot = engine.AllocateHeap(1);
-        engine.SetHeap(hdrSlot, Cell.Pstr(length: 4, bufferIdx: bufStart, offset: 1, TextKind.Codes));
+        engine.SetHeap(hdrSlot, Cell.Pstr(length: 4, bufferIdx: bufStart, offset: 1, TextKind.Codes, astral: false));
 
         Assert.Equal(tailSlot, engine.GetPstrTailIndex(hdrSlot));
         Assert.Equal("abcd", engine.AsPstrString(hdrSlot));
@@ -400,11 +400,13 @@ public class PstrTests
     [InlineData(TextKind.Chars)]
     public void Pstr_KindRoundTripsAtEveryFieldExtreme(TextKind kind)
     {
-        var cell = Cell.Pstr(Cell.MaxPstrLength, Cell.MaxPstrBufferIndex, 2, kind);
+        var cell = Cell.Pstr(Cell.MaxPstrLength, Cell.MaxPstrBufferIndex, 2, kind,
+            astral: true);
         Assert.Equal(kind, cell.AsPstrKind);
         Assert.Equal(Cell.MaxPstrLength, cell.AsPstrLength);
         Assert.Equal(Cell.MaxPstrBufferIndex, cell.AsPstrBufferIndex);
         Assert.Equal(2, cell.AsPstrOffset);
+        Assert.True(cell.AsPstrIsAstral);
     }
 
     [Fact]
@@ -413,8 +415,8 @@ public class PstrTests
         // The bit sits above the length, so the two cells must read identically
         // in every other field — this is what keeps the GC's header rebuild
         // unchanged.
-        var codes = Cell.Pstr(Cell.MaxPstrLength, Cell.MaxPstrBufferIndex, 2, TextKind.Codes);
-        var chars = Cell.Pstr(Cell.MaxPstrLength, Cell.MaxPstrBufferIndex, 2, TextKind.Chars);
+        var codes = Cell.Pstr(Cell.MaxPstrLength, Cell.MaxPstrBufferIndex, 2, TextKind.Codes, astral: false);
+        var chars = Cell.Pstr(Cell.MaxPstrLength, Cell.MaxPstrBufferIndex, 2, TextKind.Chars, astral: false);
         Assert.Equal(codes.AsPstrLength, chars.AsPstrLength);
         Assert.Equal(codes.AsPstrBufferIndex, chars.AsPstrBufferIndex);
         Assert.Equal(codes.AsPstrOffset, chars.AsPstrOffset);

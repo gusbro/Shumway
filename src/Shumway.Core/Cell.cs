@@ -183,10 +183,11 @@ public readonly struct Cell : IEquatable<Cell>
     //   bufferIdx: heap index of the first buffer cell, 0..2^30-1
     //   offset:    starting code-unit position within the first buffer cell, 0..2
     //
-    // The kind bit sits at 59 and not below the length so that bufferIdx and
-    // offset keep the bit positions they had before it existed: the GC rebuilds
-    // a relocated header (Engine.HeapGc.cs) and dropping the bit there would
-    // turn a list of chars into a list of codes mid-collection.
+    // The kind bit sits at 59 — and the astral bit at 58 — not below the
+    // length, so that bufferIdx and offset keep the bit positions they had
+    // before either existed: the GC rebuilds a relocated header
+    // (Engine.HeapGc.cs) and dropping a bit there would turn a list of chars
+    // into a list of codes (or re-split astral characters) mid-collection.
     //
     // PSTR buffer payload (60 bits): reserved(12) | cu0(16) | cu1(16) | cu2(16)
     //   Three UTF-16 code units packed per buffer cell. The reserved high 12 bits
@@ -195,8 +196,10 @@ public readonly struct Cell : IEquatable<Cell>
     /// <summary>Code units packed per PSTR buffer cell.</summary>
     public const int PstrCodeUnitsPerBuffer = 3;
 
-    /// <summary>Maximum representable PSTR length in code units.</summary>
-    public const int MaxPstrLength = (1 << 27) - 1;
+    /// <summary>Maximum representable PSTR length in code units. Bit 58 of
+    /// the payload is the astral flag, so length spends 26 bits — 67M code
+    /// units per PSTR, still far beyond any real text.</summary>
+    public const int MaxPstrLength = (1 << 26) - 1;
 
     /// <summary>Maximum representable heap index for a PSTR buffer cell.</summary>
     public const int MaxPstrBufferIndex = (1 << 30) - 1;
@@ -205,7 +208,8 @@ public readonly struct Cell : IEquatable<Cell>
     /// kind of the PSTR it came from, and a producer must state what it is
     /// building. Defaulting it would make "forgot to pass it" indistinguishable
     /// from "meant Codes".</summary>
-    public static Cell Pstr(int length, int bufferIdx, int offset, TextKind kind)
+    public static Cell Pstr(int length, int bufferIdx, int offset, TextKind kind,
+        bool astral)
     {
         if ((uint)length > (uint)MaxPstrLength)
             throw new ArgumentOutOfRangeException(nameof(length),
@@ -218,6 +222,7 @@ public readonly struct Cell : IEquatable<Cell>
                 "PSTR offset must be 0, 1, or 2.");
 
         long payload = ((long)kind << 59)
+                     | (astral ? 1L << 58 : 0)
                      | ((long)length << 32) | ((long)bufferIdx << 2) | (uint)offset;
         return new Cell(((long)Tag.Pstr << TagShift) | payload);
     }
@@ -231,7 +236,14 @@ public readonly struct Cell : IEquatable<Cell>
     }
 
     /// <summary>Length in UTF-16 code units. Only meaningful for <see cref="Tag.Pstr"/> cells.</summary>
-    public int AsPstrLength => (int)((Data >> 32) & 0x07FF_FFFFL);
+    public int AsPstrLength => (int)((Data >> 32) & 0x03FF_FFFFL);
+
+    /// <summary>True when the packed text may contain a surrogate (an astral
+    /// character or a lone half). BMP slices keep the exact one-unit-per-char
+    /// fast paths; a set bit routes uncons through the pair-joining walk. The
+    /// bit is conservative on slices — a slice of astral-flagged text stays
+    /// flagged even if its own units are all BMP.</summary>
+    public bool AsPstrIsAstral => (Data & (1L << 58)) != 0;
 
     /// <summary>Whether the packed list's elements are chars or codes (ADR-047).
     /// Only meaningful for <see cref="Tag.Pstr"/> cells.</summary>

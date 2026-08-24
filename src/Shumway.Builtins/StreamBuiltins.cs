@@ -988,13 +988,21 @@ public static class StreamBuiltins
         }
         else if (offset == h.LazyRead)
         {
-            var buf = new char[want];
+            // +1: a window must not end mid-surrogate-pair — the chars
+            // presentation would see two malformed halves across chunks.
+            var buf = new char[want + 1];
             int got = 0;
             while (got < want)
             {
                 int c = h.Reader!.Read();
                 if (c < 0) { h.PastEof = true; break; }
                 buf[got++] = (char)c;
+            }
+            if (got == want && char.IsHighSurrogate(buf[got - 1]))
+            {
+                int c = h.Reader!.Read();
+                if (c < 0) h.PastEof = true;
+                else buf[got++] = (char)c;
             }
             window = new string(buf, 0, got);
             h.LazyWindowOffset = offset;
@@ -1081,14 +1089,14 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
         CheckOutArgIsInCharacter(engine, regOut);
         CheckPastEof(engine, h);
-        int c = h.Reader!.Read();
+        int c = h.Reader!.ReadCodePoint();
         if (c < 0) h.PastEof = true;
         // Same single-char-atom cache as PeekCharInto.
         int atomId = c < 0
             ? _eofAtomId
             : AtomTable.GetSingleCharAtomId(c);
         if (atomId < 0)
-            atomId = AtomTable.Intern(((char)c).ToString(), permanent: false).Id;
+            atomId = AtomTable.Intern(Utf16Text.FromCodePoint(c), permanent: false).Id;
         return engine.UnifyRegisterWithCell(regOut, Cell.Atom(atomId));
     }
 
@@ -1100,7 +1108,7 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
         CheckOutArgIsInCharacter(engine, regOut);
         CheckPastEof(engine, h);
-        int c = h.Reader!.Peek();
+        int c = h.Reader!.PeekCodePoint();
         // Hot path: the cached single-char atom id is a pure array
         // index — saves the lock + dictionary probe + 1-char string
         // allocation that AtomTable.Intern would have done. EOF is a
@@ -1110,7 +1118,7 @@ public static class StreamBuiltins
             ? _eofAtomId
             : AtomTable.GetSingleCharAtomId(c);
         if (atomId < 0)
-            atomId = AtomTable.Intern(((char)c).ToString(), permanent: false).Id;
+            atomId = AtomTable.Intern(Utf16Text.FromCodePoint(c), permanent: false).Id;
         return engine.UnifyRegisterWithCell(regOut, Cell.Atom(atomId));
     }
 
@@ -1125,7 +1133,7 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
         CheckOutArgIsInCharacterCode(engine, regOut);
         CheckPastEof(engine, h);
-        int c = h.Reader!.Read();
+        int c = h.Reader!.ReadCodePoint();
         if (c < 0) h.PastEof = true;
         // ISO §8.12.4: EOF is the integer -1.
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
@@ -1139,7 +1147,7 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
         CheckOutArgIsInCharacterCode(engine, regOut);
         CheckPastEof(engine, h);
-        int c = h.Reader!.Peek();
+        int c = h.Reader!.PeekCodePoint();
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
     }
 
@@ -1153,9 +1161,9 @@ public static class StreamBuiltins
         if (c.Tag != Tag.Atom)
             throw new PrologRuntimeException("type_error", "character", engine, c);
         string name = AtomTable.GetById(c.AsAtomId)?.Name ?? "";
-        if (name.Length != 1)
+        if (!Utf16Text.IsOneCodePoint(name))
             throw new PrologRuntimeException("type_error", "character", engine, c);
-        h.Writer!.Write(name[0]);
+        h.Writer!.Write(name);
     }
 
     private static void WriteOneCode(Activation engine, StreamHandle h, int regCode)
@@ -1168,9 +1176,9 @@ public static class StreamBuiltins
         if (c.Tag != Tag.Int)
             throw new PrologRuntimeException("type_error", "integer", engine, c);
         long code = c.AsInt;
-        if (code < 0 || code > char.MaxValue)
+        if (!Utf16Text.IsScalarValue(code))
             throw new PrologRuntimeException("representation_error", "character_code");
-        h.Writer!.Write((char)code);
+        h.Writer!.Write(Utf16Text.FromCodePoint((int)code));
     }
 
     // ---------- current_input / current_output / set_input / set_output ----------

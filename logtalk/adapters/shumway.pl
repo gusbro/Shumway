@@ -94,14 +94,12 @@
 % - tabling: supported — the engine's `:- table` (variant tabling,
 %   well-founded negation). Logtalk forwards the directive over the compiled
 %   names; the table/1 meta-directive declaration below is the required half.
-% - unicode: unsupported is deliberate, NOT modesty backwards. The engine is
-%   BMP-clean (a code above 0xFFFF raises representation_error everywhere —
-%   silently truncating used to build a DIFFERENT character), but Logtalk's
-%   `unicode_full` charset generates astral codes whenever the flag is not
-%   `unsupported`, and its own docs say only backends declaring `full` (SWI,
-%   XVM) handle that. `bmp` was measured: arbitrary 43/43 → 40/43. Flip to
-%   `full` only with real astral atoms (surrogate-pair build/decompose,
-%   code-point atom_length) — that also un-skips a yaml test.
+% - unicode: full — the astral-unicode arc. Character-level operations
+%   answer in code points (atom_length, atom_chars/codes, char_code,
+%   sub_atom, atom_concat enumeration, get/peek/put_char, packed lists, the
+%   standard order); an astral code builds the real character. Logtalk's
+%   `unicode_full` charset generates astral codes for any flag except
+%   `unsupported`, so this claim is exactly what `arbitrary` exercises.
 % - threads/engines/sockets: genuinely absent (single-threaded activations,
 %   no socket layer).
 % - modules: Logtalk-compiling Prolog MODULE FILES as objects is more than
@@ -115,7 +113,7 @@
 '$lgt_prolog_feature'(threads, unsupported).
 '$lgt_prolog_feature'(modules, unsupported).
 '$lgt_prolog_feature'(coinduction, unsupported).
-'$lgt_prolog_feature'(unicode, unsupported).
+'$lgt_prolog_feature'(unicode, full).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

@@ -854,20 +854,21 @@ public sealed partial class Activation
 
     private int UnconsPstrToPair(Cell pstr)
     {
+        int cp = PstrHeadCodePoint(pstr, out int span);
         int pair = AllocateHeap(2);
-        _heap[pair] = PstrHeadCell(pstr.AsPstrKind, GetPstrCodeUnit(pstr, 0));
-        if (pstr.AsPstrLength == 1)
+        _heap[pair] = PstrHeadCell(pstr.AsPstrKind, cp);
+        if (pstr.AsPstrLength == span)
         {
             _heap[pair + 1] = Cell.Ref(ComputePstrTailIndex(pstr));
         }
         else
         {
-            int absoluteStart = pstr.AsPstrOffset + 1;
+            int absoluteStart = pstr.AsPstrOffset + span;
             _heap[pair + 1] = Cell.Pstr(
-                pstr.AsPstrLength - 1,
+                pstr.AsPstrLength - span,
                 pstr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
                 absoluteStart % Cell.PstrCodeUnitsPerBuffer,
-                pstr.AsPstrKind);
+                pstr.AsPstrKind, pstr.AsPstrIsAstral);
         }
         return pair;
     }

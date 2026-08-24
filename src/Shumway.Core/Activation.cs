@@ -633,8 +633,9 @@ public sealed partial class Activation
         }
         if (c.Tag == Tag.Pstr && c.AsPstrLength > 0)
         {
-            head = PstrHeadCell(c.AsPstrKind, GetPstrCodeUnit(c, 0));
-            if (c.AsPstrLength == 1)
+            int cp = PstrHeadCodePoint(c, out int span);
+            head = PstrHeadCell(c.AsPstrKind, cp);
+            if (c.AsPstrLength == span)
             {
                 tail = _heap[Deref(ComputePstrTailIndex(c))];
                 if (tail.Tag is Tag.Ref or Tag.AttVar)
@@ -642,12 +643,12 @@ public sealed partial class Activation
             }
             else
             {
-                int absoluteStart = c.AsPstrOffset + 1;
+                int absoluteStart = c.AsPstrOffset + span;
                 tail = Cell.Pstr(
-                    c.AsPstrLength - 1,
+                    c.AsPstrLength - span,
                     c.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
                     absoluteStart % Cell.PstrCodeUnitsPerBuffer,
-                    c.AsPstrKind);
+                    c.AsPstrKind, c.AsPstrIsAstral);
             }
             return true;
         }

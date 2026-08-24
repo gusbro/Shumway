@@ -393,12 +393,12 @@ public static class AtomListBuiltins
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException(
                     "type_error", "integer", engine, head);
-            // BMP-only, same contract as char_code/2: silently casting would
-            // BUILD A DIFFERENT CHARACTER (0x10400 → 0x400).
-            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+            // Any Unicode scalar value, same contract as char_code/2;
+            // an astral code appends its surrogate pair.
+            if (!Utf16Text.IsScalarValue(head.AsInt))
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
-            sb.Append((char)head.AsInt);
+            Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             cursor = ListCursor.Resolve(engine, rTail);
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
@@ -544,6 +544,13 @@ public static class AtomListBuiltins
         private bool Attempt(Activation engine, bool isResume)
         {
             int splitIdx = _splitIdx;
+            // A split point inside a surrogate pair is not a CHARACTER
+            // boundary: cutting there manufactured two lone-surrogate atoms
+            // ('😀x' used to enumerate 4 splits instead of 3).
+            while (splitIdx > 0 && splitIdx < _cName.Length
+                   && char.IsLowSurrogate(_cName[splitIdx])
+                   && char.IsHighSurrogate(_cName[splitIdx - 1]))
+                splitIdx++;
             if (splitIdx > _cName.Length) return false;
 
             if (splitIdx < _cName.Length)

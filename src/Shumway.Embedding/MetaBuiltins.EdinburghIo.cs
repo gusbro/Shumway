@@ -169,7 +169,7 @@ public static partial class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException("permission_error(input, stream)");
         // Skip codes < 32 (ASCII control / whitespace).
         int code;
-        do { code = h.Reader!.Read(); }
+        do { code = h.Reader!.ReadCodePoint(); }
         while (code >= 0 && code < 32);
         int regOut = useStreamReg ? 1 : 0;
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(code));
@@ -180,7 +180,7 @@ public static partial class MetaBuiltins
         var h = ResolveInputStream(engine, useStreamReg);
         if (!h.IsReader)
             throw new Shumway.Core.PrologRuntimeException("permission_error(input, stream)");
-        int code = h.Reader!.Read();
+        int code = h.Reader!.ReadCodePoint();
         int regOut = useStreamReg ? 1 : 0;
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(code));
     }
@@ -197,10 +197,10 @@ public static partial class MetaBuiltins
         if (c.Tag != Tag.Int)
             throw new Shumway.Core.PrologRuntimeException("type_error(integer, _)");
         long code = c.AsInt;
-        if (code < 0 || code > char.MaxValue)
+        if (!Shumway.Core.Utf16Text.IsScalarValue(code))
             throw new Shumway.Core.PrologRuntimeException(
                 "representation_error(character_code)");
-        h.Writer!.Write((char)code);
+        h.Writer!.Write(Shumway.Core.Utf16Text.FromCodePoint((int)code));
         return true;
     }
 
@@ -217,7 +217,7 @@ public static partial class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException("type_error(integer, _)");
         int target = (int)c.AsInt;
         int code;
-        do { code = h.Reader!.Read(); }
+        do { code = h.Reader!.ReadCodePoint(); }
         while (code >= 0 && code != target);
         return true;
     }

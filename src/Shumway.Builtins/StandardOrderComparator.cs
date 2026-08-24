@@ -65,7 +65,7 @@ public static class StandardOrderComparator
                 var (aName, aArity) = DescribeCompound(engine, a);
                 var (bName, bArity) = DescribeCompound(engine, b);
                 if (aArity != bArity) return aArity.CompareTo(bArity);
-                int nameCmp = string.CompareOrdinal(aName, bName);
+                int nameCmp = CompareNames(aName, bName);
                 if (nameCmp != 0) return nameCmp;
                 for (int i = 0; i < aArity; i++)
                 {
@@ -119,7 +119,7 @@ public static class StandardOrderComparator
                     var (aName, aArity) = DescribeCompound(engine, a);
                     var (bName, bArity) = DescribeCompound(engine, b);
                     if (aArity != bArity) return aArity.CompareTo(bArity);
-                    int nameCmp = string.CompareOrdinal(aName, bName);
+                    int nameCmp = CompareNames(aName, bName);
                     if (nameCmp != 0) return nameCmp;
 
                     if (++steps == CycleThreshold)
@@ -181,11 +181,27 @@ public static class StandardOrderComparator
             $"StandardOrderComparator.ToNumber: cell has tag {c.Tag}, expected Int / BigInt / Float / Rational."),
     };
 
+    /// <summary>Functor-name comparison in code-point order. Same-functor
+    /// compounds share the interned name instance, so the common case is the
+    /// reference check.</summary>
+    private static int CompareNames(string aName, string bName)
+        => ReferenceEquals(aName, bName)
+            ? 0
+            : Utf16Text.CompareCodePointOrder(aName, bName);
+
     private static int CompareAtoms(Cell a, Cell b)
     {
-        string aName = AtomTable.GetById(a.AsAtomId)?.Name ?? "";
-        string bName = AtomTable.GetById(b.AsAtomId)?.Name ?? "";
-        return string.CompareOrdinal(aName, bName);
+        Atom? aAtom = AtomTable.GetById(a.AsAtomId);
+        Atom? bAtom = AtomTable.GetById(b.AsAtomId);
+        string aName = aAtom?.Name ?? "";
+        string bName = bAtom?.Name ?? "";
+        // The standard order is by CODE POINT. Unit-wise ordinal order
+        // agrees for all-BMP names (the near-universal case, O(1) via the
+        // intern-time shape flag); a surrogate on either side takes the
+        // remapped comparison so astral atoms sort above U+E000–U+FFFF.
+        if (aAtom is { IsAllBmp: true } && bAtom is { IsAllBmp: true })
+            return string.CompareOrdinal(aName, bName);
+        return Utf16Text.CompareCodePointOrder(aName, bName);
     }
 
     /// <summary>Returns (functor name, arity, base heap index for args[0]).
