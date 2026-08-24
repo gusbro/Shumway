@@ -51,15 +51,17 @@ public class DcgStandardCompletenessTests
     public void Dcg_PipeDisjunction_ParsesEitherBranch()
     {
         var engine = new PrologEngine();
-        // Default String mode: "\n" is a DCG terminal for the code list [10].
+        // Default chars mode (ADR-047): "\n" is a DCG terminal for the
+        // CHAR list ['\n'] — the literal's own presentation, like every
+        // other terminal position.
         engine.ConsultString("""
             :- public nl_seq/2.
             nl_seq --> "\n" | "\r" | "\r\n".
             """);
-        Assert.True(engine.Query("nl_seq([10], []).").Success);       // \n
-        Assert.True(engine.Query("nl_seq([13], []).").Success);       // \r
-        Assert.True(engine.Query("nl_seq([13, 10], []).").Success);   // \r\n
-        Assert.False(engine.Query("nl_seq([32], []).").Success);      // space
+        Assert.True(engine.Query("nl_seq(['\\n'], []).").Success);
+        Assert.True(engine.Query("nl_seq(['\\r'], []).").Success);
+        Assert.True(engine.Query("nl_seq(['\\r', '\\n'], []).").Success);
+        Assert.False(engine.Query("nl_seq([' '], []).").Success);
     }
 
     // ---- runtime phrase/2,3 over a variable / control-construct body ----
@@ -134,5 +136,31 @@ public class DcgStandardCompletenessTests
             """);
         Assert.True(engine.Query("render(n(41), [42], []).").Success);
         Assert.False(engine.Query("render(n(41), [43], []).").Success);
+    }
+
+    [Fact]
+    public void NonLeadingStringTerminal_MatchesTheLiteralsOwnPresentation()
+    {
+        // Since ADR-047 a "..." literal survives as a StringTerm in every
+        // double_quotes mode, carrying its presentation kind. A NON-leading
+        // terminal (after a nonterminal — the leading one is hoisted into
+        // the head by the fail-fast lowering) must consume elements of that
+        // kind: hardcoding codes made Trealla json's `"{", ws, "}"` fail
+        // silently against chars input.
+        var engine = new PrologEngine();
+        engine.ConsultString("""
+            ws --> [].
+            brk([]) --> "[", ws, "]".
+            """);
+        Assert.True(engine.Query("phrase(brk([]), \"[]\").").Success);
+        Assert.True(engine.Query("phrase(brk([]), ['[', ']']).").Success);
+        // And under codes the same rule consumes codes.
+        var e2 = new PrologEngine();
+        e2.ConsultString("""
+            :- set_prolog_flag(double_quotes, codes).
+            ws2 --> [].
+            brk2([]) --> "[", ws2, "]".
+            """);
+        Assert.True(e2.Query("phrase(brk2([]), [0'[, 0']]).").Success);
     }
 }
