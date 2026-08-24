@@ -263,7 +263,7 @@ internal static class Prelude
         % that would hide the called goals' assert/retract).
         forall(Cond, Action) :- \+ ( call(Cond), \+ call(Action) ).
 
-        %! if(:Condition, :Then, :Else) | Control | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
+        %! if(:Condition, :Then, :Else) | Control | Soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
         if(C, T, E) :- ( C *-> T ; E ).
 
         %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails — unlike (Condition -> Then), which fails.
@@ -570,7 +570,7 @@ internal static class Prelude
         sub_atom(Atom, Before, Length, After, Sub) :-
             '$sub_atom_enum'(Atom, Before, Length, After, Sub).
 
-        %! sub_string(+String, ?Before, ?Length, ?After, ?SubString) | Atoms & strings | Backtracks over every substring decomposition of String; the parts are strings (SWI).
+        %! sub_string(+String, ?Before, ?Length, ?After, ?SubString) | Atoms & strings | Backtracks over every substring decomposition of String; the parts are strings.
         % The string counterpart of sub_atom/5: enumerate over the text (a string
         % arg is converted to an atom first) and hand each substring back as a
         % string.
@@ -1073,13 +1073,13 @@ internal static class Prelude
         pairs_keys_values([K-V|Ps], [K|Ks], [V|Vs]) :-
             pairs_keys_values(Ps, Ks, Vs).
 
-        %! map_list_to_pairs(:Key, +List, -KeyedPairs) | Lists | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key (SWI library(pairs) form).
+        %! map_list_to_pairs(:Key, +List, -KeyedPairs) | Lists | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key.
         map_list_to_pairs(_, [], []).
         map_list_to_pairs(F, [X|Xs], [K-X|Ps]) :-
             call(F, X, K),
             map_list_to_pairs(F, Xs, Ps).
 
-        %! can_be(+Type, @Term) | Type checking | Scryer library(si) form: like must_be/2 but an unbound Term (or one whose subterms are yet unbound enough) is still admissible — only a term already incompatible with Type raises.
+        %! can_be(+Type, @Term) | Type checking | Like must_be/2, but an unbound Term (or one whose subterms are yet unbound enough) is still admissible — only a term already incompatible with Type raises.
         can_be(Type, Term) :-
             ( var(Term) -> must_be_type_ok(Type)
             ; must_be(Type, Term)
@@ -1245,33 +1245,49 @@ internal static class Prelude
             min_list(Bs, B),
             sub_atom(Atom, B, _, A, Sep).
 
-        %! char_type(+Char, ?Type) | Atoms & strings | Tests or computes a character's type — alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on (ASCII range).
+        %! char_type(+Char, ?Type) | Atoms & strings | Tests or computes a character's type — alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on. Classification is full Unicode (the '$ctype' tables); digit(W) keeps its decimal ASCII weights.
         char_type(Char, Type) :- char_code(Char, Code), '$char_type'(Type, Code).
 
-        '$char_type'(alpha, Code) :- '$ascii_alpha'(Code).
-        '$char_type'(alnum, Code) :- ( '$ascii_alpha'(Code) -> true ; '$ascii_digit'(Code) ).
+        '$char_type'(alpha, Code) :-
+            ( '$ascii_alpha'(Code) -> true
+            ; Code > 127, '$ctype'(Code, Cat, _, _), '$cat_letter'(Cat) ).
+        '$char_type'(alnum, Code) :-
+            ( '$ascii_alpha'(Code) -> true ; '$ascii_digit'(Code) -> true
+            ; Code > 127, '$ctype'(Code, Cat, _, _),
+              ( '$cat_letter'(Cat) -> true ; Cat == 'Nd' ) ).
         '$char_type'(digit(W), Code) :- '$ascii_digit'(Code), W is Code - 48.
         '$char_type'(decimal_digit, Code) :- '$ascii_digit'(Code).
-        '$char_type'(space, Code) :- '$ascii_space'(Code).
+        '$char_type'(space, Code) :-
+            ( '$ascii_space'(Code) -> true ; Code =:= 0x85 -> true
+            ; Code > 127, '$ctype'(Code, Cat, _, _), '$cat_space'(Cat) ).
         '$char_type'(white, Code) :- ( Code =:= 32 -> true ; Code =:= 9 ).
         '$char_type'(end_of_line, Code) :- ( Code =:= 10 -> true ; Code =:= 13 ).
         '$char_type'(punct, Code) :-
-            Code >= 33, Code =< 126,
-            \+ '$ascii_alpha'(Code), \+ '$ascii_digit'(Code).
+            ( Code =< 126 ->
+                Code >= 33,
+                \+ '$ascii_alpha'(Code), \+ '$ascii_digit'(Code)
+            ; '$ctype'(Code, Cat, _, _), '$cat_punct'(Cat) ).
         '$char_type'(csym, Code) :-
-            ( '$ascii_alpha'(Code) -> true ; '$ascii_digit'(Code) -> true ; Code =:= 95 ).
+            ( Code =:= 95 -> true ; '$char_type'(alnum, Code) ).
         '$char_type'(csymf, Code) :-
-            ( '$ascii_alpha'(Code) -> true ; Code =:= 95 ).
+            ( Code =:= 95 -> true ; '$char_type'(alpha, Code) ).
         '$char_type'(upper(L), Code) :-
-            Code >= 65, Code =< 90, LC is Code + 32, char_code(L, LC).
+            '$ctype'(Code, 'Lu', _, LC), char_code(L, LC).
         '$char_type'(lower(U), Code) :-
-            Code >= 97, Code =< 122, UC is Code - 32, char_code(U, UC).
+            '$ctype'(Code, 'Ll', UC, _), char_code(U, UC).
         '$char_type'(to_lower(L), Code) :-
-            ( Code >= 65, Code =< 90 -> LC is Code + 32 ; LC = Code ),
-            char_code(L, LC).
+            '$ctype'(Code, _, _, LC), char_code(L, LC).
         '$char_type'(to_upper(U), Code) :-
-            ( Code >= 97, Code =< 122 -> UC is Code - 32 ; UC = Code ),
-            char_code(U, UC).
+            '$ctype'(Code, _, UC, _), char_code(U, UC).
+
+        '$cat_letter'('Lu'). '$cat_letter'('Ll'). '$cat_letter'('Lt').
+        '$cat_letter'('Lm'). '$cat_letter'('Lo').
+        '$cat_space'('Zs'). '$cat_space'('Zl'). '$cat_space'('Zp').
+        % iswpunct: the punctuation AND symbol categories.
+        '$cat_punct'('Pc'). '$cat_punct'('Pd'). '$cat_punct'('Ps').
+        '$cat_punct'('Pe'). '$cat_punct'('Pi'). '$cat_punct'('Pf').
+        '$cat_punct'('Po'). '$cat_punct'('Sm'). '$cat_punct'('Sc').
+        '$cat_punct'('Sk'). '$cat_punct'('So').
 
         '$ascii_alpha'(C) :- C >= 65, C =< 90, !.
         '$ascii_alpha'(C) :- C >= 97, C =< 122.
@@ -1290,7 +1306,7 @@ internal static class Prelude
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
         ignore(Goal) :- ( call(Goal) -> true ; true ).
 
-        %! time_out(:Goal, +MilliSeconds, -Result) | Control | Runs Goal under a time limit (SICStus-compatible). Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted.
+        %! time_out(:Goal, +MilliSeconds, -Result) | Control | Runs Goal under a time limit. Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted.
         time_out(Goal, MilliSeconds, Result) :-
             Seconds is MilliSeconds / 1000,
             '$catch_begin'(Ball, '$time_out_recover'(Ball, Result)),
@@ -1338,7 +1354,7 @@ internal static class Prelude
             call(Goal),
             '$attv_new_since'(S, Vars).
 
-        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report (SWI-style): inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers.
+        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report: inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers.
         time(Goal) :-
             '$time_start'(Mark),
             (   call(Goal) *->
@@ -1351,7 +1367,7 @@ internal static class Prelude
         chdir(Path) :- var(Path), !, working_directory(Path, Path).
         chdir(Path) :- working_directory(_, Path).
 
-        %! append(+ListOfLists, -List) | Lists | Concatenates a list of lists (SWI library form).
+        %! append(+ListOfLists, -List) | Lists | Concatenates a list of lists.
         append([], []).
         append([L|Ls], As) :- append(L, Ws, As), append(Ls, Ws).
 
@@ -1414,10 +1430,10 @@ internal static class Prelude
             N1 =< 1,
             '$tsing_count'(Xs, V, N1, N).
 
-        %! copy_term_nat(?Term, -Copy) | Term inspection & construction | copy_term/2 ignoring attributes (SWI/Trealla).
+        %! copy_term_nat(?Term, -Copy) | Term inspection & construction | copy_term/2 ignoring attributes.
         copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).
 
-        %! bb_put(+Key, +Value) | Global variables | Blackboard store (SICStus/Trealla): non-backtrackable global assignment.
+        %! bb_put(+Key, +Value) | Global variables | Blackboard store: non-backtrackable global assignment.
         % Attributed variables survive the blackboard (the SICStus/Trealla
         % contract): a value carrying attvars is stored RESIDUALIZED — the
         % attribute-free copy plus its copy_term/3 projection goals — and
@@ -1479,7 +1495,7 @@ internal static class Prelude
             with_output_to(atom(Atom), write_term(Term, Options)),
             atom_chars(Atom, Chars).
 
-        %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038 — an export-qualified module's own version of a builtin-named predicate (Scryer iso_ext's copy_term/3) must win for M:Goal.
+        %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038 — an export-qualified module's own version of a builtin-named predicate must win for M:Goal.
         ':'(Module, Goal) :- call(Module:Goal).
 
         %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []) — succeeds when the DCG Body derives List.
@@ -1566,11 +1582,11 @@ internal static class Prelude
         %! display(+Stream, +Term) | Input / output | Edinburgh display/2: writes Term to Stream ignoring operator definitions, unquoted.
         display(S, X) :- write_term(S, X, [ignore_ops(true)]).
 
-        %! recorda(+Key, +Term) | Database | SWI 2-arg form of recorda/3 (reference discarded).
+        %! recorda(+Key, +Term) | Database | 2-arg form of recorda/3 (reference discarded).
         recorda(K, V) :- recorda(K, V, _).
-        %! recordz(+Key, +Term) | Database | SWI 2-arg form of recordz/3 (reference discarded).
+        %! recordz(+Key, +Term) | Database | 2-arg form of recordz/3 (reference discarded).
         recordz(K, V) :- recordz(K, V, _).
-        %! recorded(+Key, ?Term) | Database | SWI 2-arg form of recorded/3 (reference discarded); backtracks over matches.
+        %! recorded(+Key, ?Term) | Database | 2-arg form of recorded/3 (reference discarded); backtracks over matches.
         recorded(K, V) :- recorded(K, V, _).
 
         %! apply(:Goal, +ExtraArgs) | Control | Calls Goal with the list of extra arguments appended.

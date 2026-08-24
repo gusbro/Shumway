@@ -105,6 +105,23 @@ public sealed class AstralTextTests
     }
 
     [Fact]
+    public void CharType_ClassifiesByUnicodeCategory()
+    {
+        // char_type/2 classifies over the full Unicode tables (the $ctype
+        // bridge): letters, case pairs and punctuation work for BMP and
+        // astral characters alike; digit(W) keeps decimal ASCII weights,
+        // matching SWI.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "char_type('𐐨', alpha), char_type('𐐨', csym), "
+            + "char_type('𐐀', upper('𐐨')), char_type('𐐨', lower('𐐀')), "
+            + "char_type('😀', punct), "
+            + "char_type(ñ, alpha), char_type(ñ, to_upper('Ñ')), "
+            + "char_type('٥', alnum), \\+ char_type('٥', digit(_)), "
+            + "char_type(a, alpha), char_type('A', upper(a)).").Success);
+    }
+
+    [Fact]
     public void StreamCharAndCodeIo_RoundTripsAstral()
     {
         var e = new PrologEngine();

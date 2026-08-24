@@ -55,16 +55,17 @@ multi-target build. The test gate currently runs on Windows.
 - **Prolog extensions** including attributed variables, coroutining (`dif/2`,
   `freeze/2`, `when/2`), tabling with well-founded negation, CLP(FD) and CLP(R),
   rationals, module system, partial strings, and exceptions with full error terms.
-- **Two garbage collectors**: a sliding mark-compact heap GC
-  ([ADR-016](docs/architecture/adr/016-heap-garbage-collection.md)) which runs
+- **Two garbage collectors**: a
+  [sliding mark-compact heap GC](docs/architecture/adr/016-heap-garbage-collection.md)
+  which runs
   automatically at safe points (with attributed variables and their
   trails live) and allows long deterministic runs to stay within a
   reasonable memory cap (e.g. a lazy DCG which parses a 4 MB file holds
-  a live set of about 1,000 cells), and an atom GC over the three-tier atom table
-  ([ADR-003](docs/architecture/adr/003-atom-three-tier-system.md)) which
+  a live set of about 1,000 cells), and an [atom GC](docs/architecture/adr/003-atom-three-tier-system.md) which
   reclaims transient atoms and keeps atoms held by foreign C# interop safely retained.
 - **Performance measurement**: ~2× faster than Scryer on typical CLP(Z) models, running Scryer's own clpz library; see
   [the benchmarks](docs/benchmarks/cross-engine-comparison.md).
+- **Full Unicode** support including [astral planes](docs/architecture/adr/048-code-point-text-semantics.md).
 - **A full toolchain**: `shumway-compile` (`.pl` → `.shmo`), `shumway-link`
   (`.shum` bundles, `--exe` native executables, `--dll` loadable class
   libraries), `shumway-lib` (archives), and the `shumway` REPL.

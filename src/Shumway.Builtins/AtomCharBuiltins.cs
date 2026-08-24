@@ -555,6 +555,40 @@ public static class AtomCharBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Str(idx));
     }
 
+    /// <summary><c>'$ctype'(+Code, ?Category, ?UpperCode, ?LowerCode)</c> —
+    /// the Unicode facts <c>char_type/2</c> derives its types from, in one
+    /// call: the general category (two-letter atom) and the simple case
+    /// mappings (identity when the character is caseless, or when the
+    /// mapping is not a single code point). Fails on a non-scalar
+    /// code.</summary>
+    public static bool CodeCtype(Activation engine)
+    {
+        Cell codeCell = Resolve(engine, engine.GetRegister(0));
+        if (codeCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (codeCell.Tag != Tag.Int) return false;
+        long code = codeCell.AsInt;
+        if (!Utf16Text.IsScalarValue(code)) return false;
+        string ch = Utf16Text.FromCodePoint((int)code);
+        string category = CategoryCode(CharUnicodeInfo.GetUnicodeCategory(ch, 0));
+        int up = MapCase(ch, toUpper: true);
+        int low = MapCase(ch, toUpper: false);
+        int catAtom = AtomTable.Intern(category, permanent: true).Id;
+        return engine.UnifyRegisterWithCell(1, Cell.Atom(catAtom))
+            && engine.UnifyRegisterWithCell(2, Cell.Int(up))
+            && engine.UnifyRegisterWithCell(3, Cell.Int(low));
+    }
+
+    /// <summary>Simple (single code point) case mapping via the invariant
+    /// culture; identity when caseless or when the mapping expands.</summary>
+    private static int MapCase(string ch, bool toUpper)
+    {
+        string mapped = toUpper ? ch.ToUpperInvariant() : ch.ToLowerInvariant();
+        return Utf16Text.IsOneCodePoint(mapped)
+            ? Utf16Text.SingleCodePoint(mapped)
+            : Utf16Text.SingleCodePoint(ch);
+    }
+
     /// <summary>The standard two-letter spelling of each .NET
     /// <see cref="UnicodeCategory"/> value.</summary>
     private static string CategoryCode(UnicodeCategory c) => c switch

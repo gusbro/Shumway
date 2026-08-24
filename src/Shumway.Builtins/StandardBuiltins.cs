@@ -97,7 +97,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("string", 1, TypeBuiltins.IsString,
             Types, "string(@Term)",
             "Succeeds if the argument is a non-empty proper list of characters or of codes "
-            + "(SWI compatibility; there is no string type — see ADR-047).");
+            + "(there is no string type — see ADR-047).");
         // Scryer internal fast-path predicate (library error/iso_ext/crypto/…).
         BuiltinsRegistry.Register("$is_partial_string", 1, TypeBuiltins.IsPartialString);
         BuiltinsRegistry.Register("ground",  1, TypeBuiltins.IsGround,
@@ -273,9 +273,13 @@ public static class StandardBuiltins
             Strings, "number_string(?Number, ?String)", "Converts between a number and its string representation; fails if the string is not numeric.");
         BuiltinsRegistry.Register("unicode_property", 2, AtomCharBuiltins.UnicodeProperty,
             Strings, "unicode_property(+Code, ?Property)",
-            "Unicode properties of the character with code Code (SWI library(unicode) subset). "
+            "Unicode properties of the character with code Code. "
             + "Property is category(Category) with Category the two-letter Unicode general "
             + "category ('Lu', 'Nd', 'Zs', ...), exact per the .NET Unicode tables.");
+
+        BuiltinsRegistry.Register("$ctype", 4, AtomCharBuiltins.CodeCtype,
+            Strings, "'$ctype'(+Code, ?Category, ?Upper, ?Lower)",
+            "Unicode general category and simple case mappings of a character code - the classification char_type/2 is built on.");
 
         // Multi-solution helpers called from the prelude.
         BuiltinsRegistry.Register("$list_length",              2, MultiSolutionHelpers.ListLength);
@@ -353,7 +357,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("halt", 1, ControlBuiltins.Halt1,
             Control, "halt(+Status)", "Halts the engine with the given exit code.");
         BuiltinsRegistry.Register("get_cpu_time", 1, ControlBuiltins.GetCpuTime,
-            Control, "get_cpu_time(-Time)", "Binds Time to a high-resolution monotonic process timer, in milliseconds (float; GNU-Prolog timing primitive).");
+            Control, "get_cpu_time(-Time)", "Binds Time to a high-resolution monotonic process timer, in milliseconds (float).");
         // time/1 support (the predicate itself is a prelude meta-predicate).
         BuiltinsRegistry.Register("$time_start", 1, ControlBuiltins.TimeStart);
         BuiltinsRegistry.Register("$time_report", 1, ControlBuiltins.TimeReport);

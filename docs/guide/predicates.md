@@ -30,7 +30,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `atomic_si(@Term)` | Sound atomic test (si family). |
 | `attvar(@Term)` | Succeeds if the argument is an attributed variable. |
 | `callable(@Term)` | Succeeds if the argument is an atom or a compound term. |
-| `can_be(+Type, @Term)` | Scryer library(si) form: like must_be/2 but an unbound Term (or one whose subterms are yet unbound enough) is still admissible — only a term already incompatible with Type raises. |
+| `can_be(+Type, @Term)` | Like must_be/2, but an unbound Term (or one whose subterms are yet unbound enough) is still admissible — only a term already incompatible with Type raises. |
 | `character_si(@Term)` | Sound one-char-atom test (si family). |
 | `chars_si(@Term)` | Sound list-of-characters test (si family). |
 | `compound(@Term)` | Succeeds if the argument is a compound term. |
@@ -45,7 +45,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `nonvar(@Term)` | Succeeds if the argument is not an unbound variable. |
 | `number(@Term)` | Succeeds if the argument is a number. |
 | `rational(@Term)` | Succeeds if the argument is a rational number (an integer is a rational with denominator 1). |
-| `string(@Term)` | Succeeds if the argument is a non-empty proper list of characters or of codes (SWI compatibility; there is no string type — see ADR-047). |
+| `string(@Term)` | Succeeds if the argument is a non-empty proper list of characters or of codes (there is no string type — see ADR-047). |
 | `var(@Term)` | Succeeds if the argument is an unbound variable. |
 
 ## Arithmetic
@@ -84,22 +84,22 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `?=(@X, @Y)` | Succeeds if the (in)equality of X and Y is already decided (identical, or cannot unify). |
 | `arg(+N, +Term, ?Arg)` | Unifies Arg with the Nth argument of the compound term. |
 | `atom_to_term(+Atom, -Term, -Bindings)` | Parses an atom into a term plus its variable bindings. |
-| `compound_name_arity(?Compound, ?Name, ?Arity)` | Like functor/3 but restricted to compound terms (arity >= 1) (SWI). |
+| `compound_name_arity(?Compound, ?Name, ?Arity)` | Like functor/3 but restricted to compound terms (arity >= 1). |
 | `copy_term(+Term, -Copy)` | Copies a term with fresh variables. |
 | `copy_term(+Term, -Copy, -Goals)` | Copies a term with fresh variables and collects the residual attribute goals. |
-| `copy_term_nat(?Term, -Copy)` | copy_term/2 ignoring attributes (SWI/Trealla). |
+| `copy_term_nat(?Term, -Copy)` | copy_term/2 ignoring attributes. |
 | `expand_term(+Term, -Expanded)` | If Term has the form Head --> Body, expands it via the DCG transformation Shumway applies internally on consult. Non-DCG terms pass through unchanged. |
 | `functor(?Term, ?Name, ?Arity)` | Relates a term to its functor name and arity. |
 | `get_seed(-Seed)` | Unifies Seed with a value that set_seed/1 can later use to reproduce exactly the random sequence that follows this call (the generator is reseeded as a side effect). |
 | `is_digit(+Char)` | True when Char is a one-character atom representing an ASCII digit. |
 | `name(?AtomOrNumber, ?Codes)` | Bidirectional conversion between an atom/number and its character-code list. |
 | `numbervars(+Term, +Start, -End)` | Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start. |
-| `numbervars(+Term, +Start, -End, +Options)` | As numbervars/3 with an (accepted, ignored) SWI option list. |
+| `numbervars(+Term, +Start, -End, +Options)` | As numbervars/3 with an accepted, ignored option list. |
 | `random(-X)` | Unifies X with a fresh pseudo-random float in [0.0, 1.0). |
-| `random_between(+Low, +High, -X)` | Unifies X with a fresh pseudo-random integer in [Low, High] (inclusive on both ends, matching SWI semantics). |
+| `random_between(+Low, +High, -X)` | Unifies X with a fresh pseudo-random integer in [Low, High] (inclusive on both ends). |
 | `randomize(+Seed)` | Reseeds the engine's random generator. Seed is an integer. |
 | `read_term_from_atom(+Atom, -Term)` | Parses an atom into a term. |
-| `read_term_from_atom(+Atom, -Term, +Options)` | Parses an atom into a term; Options accepted for SWI/GProlog compat (currently ignored). |
+| `read_term_from_atom(+Atom, -Term, +Options)` | Parses an atom into a term; Options are accepted and currently ignored. |
 | `set_seed(+Seed)` | Reseeds the engine's random generator; alias of randomize/1. |
 | `string_search(+SubAtom, +Atom, ?Location)` | Searches Atom for the substring SubAtom; on success unifies Location with the 0-based starting offset. Backtrackable: produces every occurrence in left-to-right order. |
 | `string_search(+Case, +SubAtom, +Atom, ?Location)` | Arity string_search/4: like string_search/3 with a leading case flag — 0 searches case-sensitively, 1 case-insensitively. |
@@ -108,8 +108,8 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `subsumes_term(@General, @Specific)` | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term. |
 | `term_attvars(+Term, -Vars)` | Unifies Vars with the attributed variables reachable from Term. |
 | `term_singletons(@Term, -Singletons)` | Unifies Singletons with the variables occurring exactly once in Term, in order of first appearance. |
-| `term_string(?Term, ?String)` | Converts between a term and its textual string representation (SWI). |
-| `term_string(?Term, ?String, +Options)` | As term_string/2 with an (accepted, ignored) SWI option list. |
+| `term_string(?Term, ?String)` | Converts between a term and its textual string representation. |
+| `term_string(?Term, ?String, +Options)` | As term_string/2 with an accepted, ignored option list. |
 | `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
 | `term_variables(+Term, -Variables)` | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5). |
 | `unifiable(@X, @Y, -Unifier)` | If X and Y unify, Unifier is the list of V=Value bindings that make them equal; else fails. |
@@ -119,7 +119,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 
 | Predicate | Description |
 | --- | --- |
-| `:(+Module, :Goal)` | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038 — an export-qualified module's own version of a builtin-named predicate (Scryer iso_ext's copy_term/3) must win for M:Goal. |
+| `:(+Module, :Goal)` | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038 — an export-qualified module's own version of a builtin-named predicate must win for M:Goal. |
 | `apply(:Goal, +ExtraArgs)` | Calls Goal with the list of extra arguments appended. |
 | `call(:Goal)` | Calls a goal. |
 | `call(:Goal, +Extra1)` | Calls a goal extended with one extra argument. |
@@ -142,10 +142,10 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `false` | Always fails — ISO synonym of fail/0. |
 | `forall(:Condition, :Action)` | Succeeds if Action holds for every solution of Condition. |
 | `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state (ADR-016). Always succeeds. |
-| `get_cpu_time(-Time)` | Binds Time to a high-resolution monotonic process timer, in milliseconds (float; GNU-Prolog timing primitive). |
+| `get_cpu_time(-Time)` | Binds Time to a high-resolution monotonic process timer, in milliseconds (float). |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
-| `if(:Condition, :Then, :Else)` | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded. |
+| `if(:Condition, :Then, :Else)` | Soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded. |
 | `ifthen(:Condition, :Then)` | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails — unlike (Condition -> Then), which fails. |
 | `ifthenelse(:Condition, :Then, :Else)` | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
@@ -154,8 +154,8 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `repeat` | Succeeds, and succeeds again on every backtrack — an unbounded choice point. |
 | `setup_call_cleanup(:Setup, :Goal, :Cleanup)` | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. |
 | `throw(+Exception)` | Throws an exception term, unwinding to the nearest catch/3. |
-| `time(:Goal)` | Calls Goal like call/1 and prints a per-answer resource report (SWI-style): inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers. |
-| `time_out(:Goal, +MilliSeconds, -Result)` | Runs Goal under a time limit (SICStus-compatible). Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
+| `time(:Goal)` | Calls Goal like call/1 and prints a per-answer resource report: inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers. |
+| `time_out(:Goal, +MilliSeconds, -Result)` | Runs Goal under a time limit. Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
 | `trace` | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. |
 | `true` | Always succeeds. |
 
@@ -176,7 +176,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `abolish(+PredicateIndicator)` | Removes every clause of the named dynamic predicate. |
 | `abolish_all_tables` | Discards every tabled answer; later queries recompute against the current program. |
 | `abolish_table(+PredicateIndicator)` | Discards the tabled answers of one predicate, given as Name/Arity. |
-| `assert(+Clause)` | Synonym for assertz/1 (historical SWI/GProlog name). |
+| `assert(+Clause)` | Historical synonym for assertz/1. |
 | `asserta(+Clause)` | Adds a clause to the front of its dynamic predicate. |
 | `asserta(+Clause, -Ref)` | Adds Clause at the front of its predicate and unifies Ref with its clause reference. |
 | `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
@@ -185,7 +185,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `clause(?Head, ?Body, ?Ref)` | clause/2 with a clause reference: fetches by Ref when bound, else enumerates Head's clauses binding Ref (de facto standard). |
 | `compact_dynamic_buffer` | Invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
 | `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Validates Name/Arity names a dynamic predicate, then triggers the same full rebuild as the 0-arg form. The single buffer holds every dynamic predicate's bytecode interleaved, so independent per-predicate reclamation isn't currently feasible without partial-relink support — the API surface is per-predicate for forward compatibility. |
-| `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl (SWI-style). |
+| `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl. |
 | `consult_text(+Text)` | Consults Text (an atom or a chars/codes list) as Prolog source — the in-language form of the embedding API's ConsultString. A module loaded this way keeps its exports scoped (no auto-import into user). |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own. |
 | `ensure_loaded(+File)` | Loads File unless it is already loaded, in which case it does nothing (ISO 7.4.2.8). Lets several files each name their own dependencies without any of them being loaded twice. A File that CHANGED on disk since it was loaded is reloaded. Argument and errors are as consult/1. |
@@ -202,14 +202,14 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `listing(+Spec)` | Lists the clauses of the user-defined predicate named by Spec (Name, Name/Arity, or Module:Spec). |
 | `nref(+Ref, -Next)` | Unifies Next with the reference of the entry immediately after Ref in its key's chain. Fails if Ref is the last entry. |
 | `pref(+Ref, -Prev)` | Unifies Prev with the reference of the entry immediately before Ref in its key's chain. Fails if Ref is the first entry. |
-| `reconsult(+File)` | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched (classical GProlog / SICStus semantics). |
+| `reconsult(+File)` | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched. |
 | `record_after(+Ref, ?Term, -NewRef)` | Inserts Term immediately after the entry with reference Ref in the same key's chain. |
 | `record_before(+Ref, ?Term, -NewRef)` | Inserts Term immediately before the entry with reference Ref in the same key's chain. |
-| `recorda(+Key, +Term)` | SWI 2-arg form of recorda/3 (reference discarded). |
+| `recorda(+Key, +Term)` | 2-arg form of recorda/3 (reference discarded). |
 | `recorda(+Key, ?Term, -Ref)` | Adds Term at the start of the chain stored under Key in the recorded database, returning a fresh reference. The recorded DB is separate from dynamic predicates: keys are arbitrary terms (not functor/arity). |
-| `recorded(+Key, ?Term)` | SWI 2-arg form of recorded/3 (reference discarded); backtracks over matches. |
+| `recorded(+Key, ?Term)` | 2-arg form of recorded/3 (reference discarded); backtracks over matches. |
 | `recorded(+Key, ?Term, -Ref)` | Enumerates on backtracking the (Term, Ref) pairs stored under Key. |
-| `recordz(+Key, +Term)` | SWI 2-arg form of recordz/3 (reference discarded). |
+| `recordz(+Key, +Term)` | 2-arg form of recordz/3 (reference discarded). |
 | `recordz(+Key, ?Term, -Ref)` | Like recorda/3 but appends Term at the end of the chain under Key. |
 | `ref(?X)` | Succeeds when X is a live recorded-database reference (an integer previously returned by recorda/3 or recordz/3 and not yet erased). |
 | `replace(+Ref, +Term)` | Replaces the term in the entry with reference Ref. The chain position and the reference itself are preserved. |
@@ -229,7 +229,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 
 | Predicate | Description |
 | --- | --- |
-| `append(+ListOfLists, -List)` | Concatenates a list of lists (SWI library form). |
+| `append(+ListOfLists, -List)` | Concatenates a list of lists. |
 | `append(?List1, ?List2, ?List)` | Concatenates List1 and List2 into List; backtracks over splits of List. |
 | `delete(+List, +Elem, -Rest)` | Rest is List with every element that unifies with Elem removed. |
 | `exclude(:Goal, +List, -Excluded)` | Excluded holds the elements of List for which Goal fails. |
@@ -242,7 +242,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `last(?List, ?Last)` | Relates a list to its last element. |
 | `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. |
 | `list_to_set(+List, -Set)` | Removes duplicates from a list, keeping the first occurrence of each. |
-| `map_list_to_pairs(:Key, +List, -KeyedPairs)` | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key (SWI library(pairs) form). |
+| `map_list_to_pairs(:Key, +List, -KeyedPairs)` | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key. |
 | `maplist(:Goal, ?List)` | Succeeds if Goal holds for every element of List. |
 | `maplist(:Goal, ?List1, ?List2)` | Succeeds if Goal holds for corresponding elements of two lists. |
 | `maplist(:Goal, ?List1, ?List2, ?List3)` | Succeeds if Goal holds for corresponding elements of three lists. |
@@ -286,7 +286,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `atomic_list_concat(+List, -Atom)` | Concatenates a list of atomic terms into a single atom. |
 | `atomic_list_concat(?List, +Separator, ?Atom)` | Joins a list of atomics with a separator, or splits an atom on the separator. |
 | `char_code(?Char, ?Code)` | Relates a one-character atom to its character code. |
-| `char_type(+Char, ?Type)` | Tests or computes a character's type — alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on (ASCII range). |
+| `char_type(+Char, ?Type)` | Tests or computes a character's type — alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on. Classification is full Unicode (the '$ctype' tables); digit(W) keeps its decimal ASCII weights. |
 | `downcase_atom(+Atom, -Lower)` | Relates an atom to its lower-cased form. |
 | `gensym(+Base, -Unique)` | Generates a fresh atom Base1, Base2, … from a per-Base counter that survives backtracking. |
 | `number_chars(?Number, ?Chars)` | Converts between a number and its list of one-character atoms. |
@@ -300,8 +300,8 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `string_concat(?String1, ?String2, ?String)` | Concatenates String1 and String2 into String. |
 | `string_length(+String, ?Length)` | Relates a string to its length in characters. |
 | `sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom)` | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom. |
-| `sub_string(+String, ?Before, ?Length, ?After, ?SubString)` | Backtracks over every substring decomposition of String; the parts are strings (SWI). |
-| `unicode_property(+Code, ?Property)` | Unicode properties of the character with code Code (SWI library(unicode) subset). Property is category(Category) with Category the two-letter Unicode general category ('Lu', 'Nd', 'Zs', ...), exact per the .NET Unicode tables. |
+| `sub_string(+String, ?Before, ?Length, ?After, ?SubString)` | Backtracks over every substring decomposition of String; the parts are strings. |
+| `unicode_property(+Code, ?Property)` | Unicode properties of the character with code Code. Property is category(Category) with Category the two-letter Unicode general category ('Lu', 'Nd', 'Zs', ...), exact per the .NET Unicode tables. |
 | `upcase_atom(+Atom, -Upper)` | Relates an atom to its upper-cased form. |
 
 ## Attributed variables
@@ -326,7 +326,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 
 | Predicate | Description |
 | --- | --- |
-| `absolute_file_name(+FileSpec, -Absolute)` | Resolves a file specification to an absolute path. The basic 2-arg form: takes an atom (a path, possibly relative) and unifies the second arg with the absolute form. The 3-arg SWI form with options (extensions, file_type, access, file_search_path) is not yet supported. |
+| `absolute_file_name(+FileSpec, -Absolute)` | Resolves a file specification to an absolute path. The basic 2-arg form: takes an atom (a path, possibly relative) and unifies the second arg with the absolute form. The 3-arg form with options (extensions, file_type, access, file_search_path) is not yet supported. |
 | `at_end_of_stream` | Succeeds if the current input stream is at end of file (ISO §8.11.9). |
 | `at_end_of_stream(+Stream)` | Succeeds if the given stream is at end of file (ISO §8.11.9). |
 | `chdir(?Path)` | Arity-Prolog 1-arg form of working_directory/2. With Path unbound, returns the current directory; with Path bound, changes to it. |
@@ -339,14 +339,14 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `delete(+File)` | Deletes the file File. Raises existence_error if absent, permission_error if locked / read-only. |
 | `delete_file(+File)` | Deletes the file File; the widely-shared name for delete/1. Raises existence_error if absent, permission_error if locked / read-only. |
 | `directory(+Path, -Name, -Mode, -Time, -Date, -Size)` | Backtracks over the entries in Path, binding Name (atom), Mode (Arity-style bitfield: 1=read-only, 2=hidden, 4=system, 16=directory, 32=archive), Time (HH:MM:SS atom), Date (YYYY-MM-DD atom) and Size (bytes; 0 for directories). |
-| `directory_files(+Directory, -Files)` | Unifies Files with the list of entry names (atoms) in Directory, including '.' and '..' — SWI-compatible. |
+| `directory_files(+Directory, -Files)` | Unifies Files with the list of entry names (atoms) in Directory, including '.' and '..'. |
 | `display(+Term)` | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted. |
 | `display(+Stream, +Term)` | Edinburgh display/2: writes Term to Stream ignoring operator definitions, unquoted. |
 | `exists_directory(+Path)` | Succeeds when Path exists and is a directory. |
 | `exists_file(+File)` | Succeeds when File exists and is a regular file. |
 | `file_modification_time(+File, -Time)` | Unifies Time with File's last-modification time as integer Unix-epoch seconds. Raises existence_error when absent. |
-| `file_name_extension(?Base, ?Ext, ?Full)` | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). SWI / SICStus compatible. |
-| `file_permission(+File, +Permission)` | Succeeds when File (a file or directory) grants Permission — read, write, execute or search (GProlog-compatible). A nonexistent path fails; unknown permissions raise domain_error(os_file_permission, _). |
+| `file_name_extension(?Base, ?Ext, ?Full)` | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). |
+| `file_permission(+File, +Permission)` | Succeeds when File (a file or directory) grants Permission — read, write, execute or search. A nonexistent path fails; unknown permissions raise domain_error(os_file_permission, _). |
 | `file_size(+File, -Bytes)` | Unifies Bytes with File's size. Raises existence_error when File doesn't exist. |
 | `flush_output` | Flushes the current output stream (ISO §8.11.7). |
 | `flush_output(+Stream)` | Flushes the given stream (ISO §8.11.7). |
@@ -364,7 +364,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `get_char(+Stream, -Char)` | Reads and consumes one character from a stream. |
 | `get_code(-Code)` | Reads one character code from the current input stream (ISO §8.12.4). |
 | `get_code(+Stream, -Code)` | Reads one character code from a stream (ISO §8.12.4). |
-| `getenv(+Name, -Value)` | Unifies Value with the environment variable Name's contents as an atom; fails (does not raise) when Name is unset — SWI-compatible, so `(getenv(X,V) ; V = Default)` works. |
+| `getenv(+Name, -Value)` | Unifies Value with the environment variable Name's contents as an atom; fails (does not raise) when Name is unset, so `(getenv(X,V) ; V = Default)` works. |
 | `http_download(+URL, +File)` | Downloads URL's raw bytes to File (HTTP/HTTPS); a network or HTTP failure raises existence_error(url, URL). |
 | `mkdir(+Path)` | Creates the directory Path (and any missing parents). Succeeds silently when the directory already exists. |
 | `nl` | Writes a newline to the current output stream. |
@@ -383,7 +383,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `portray_clause(+Stream, +Clause)` | Like portray_clause/1 but writes to the given stream. |
 | `print(+Term)` | Writes a term using print conventions. |
 | `print(+Stream, +Term)` | Writes a term to a stream using print conventions. |
-| `prolog_load_context(?Key, ?Value)` | SWI/Scryer load-context introspection (module / file / source / directory), used by term_expansion/goal_expansion hooks to read the module being loaded. Fails outside a consult. |
+| `prolog_load_context(?Key, ?Value)` | Load-context introspection (module / file / source / directory), used by term_expansion/goal_expansion hooks to read the module being loaded. Fails outside a consult. |
 | `prolog_to_os_filename(?PrologPath, ?OsPath)` | Converts between Shumway's canonical '/'-separated path form and the host's native form (ADR-044). Either argument may be the bound one; on Unix both forms are the same. |
 | `put(+Code)` | Writes the character with the given code to the current output stream. Edinburgh-style alias of put_code/1. |
 | `put(+Stream, +Code)` | Stream variant of put/1. |
@@ -439,7 +439,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `current_char_conversion(?InChar, ?OutChar)` | Enumerates the active char-conversion table (ISO §8.14.10). |
 | `current_op(?Priority, ?Type, ?Name)` | Enumerates the operator table; backtracks over every operator (ISO §8.17.3). |
 | `current_prolog_flag(?Flag, ?Value)` | Reads the value of a Prolog flag. |
-| `is_stream(@Term)` | Succeeds if Term is a stream handle or a registered stream alias (SWI). |
+| `is_stream(@Term)` | Succeeds if Term is a stream handle or a registered stream alias. |
 | `module_property(?Module, ?Property)` | Introspects a loaded module: exports(List) of Name/Arity indicators, or class(user/system/library). Enumerates modules when Module is unbound. |
 | `op(+Priority, +Type, +Name)` | Declares an operator of the given priority and type. |
 | `predicate_property(+Head, ?Property)` | Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate. |
@@ -468,7 +468,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `bb_b_put(+Key, +Value)` | Backtrackable blackboard assignment: the previous value is restored on backtracking. |
 | `bb_delete(+Key, -Value)` | Unifies Value with the current value and removes the entry. |
 | `bb_get(+Key, -Value)` | Reads a blackboard entry; FAILS when Key is unset (unlike nb_getval/2, which throws). |
-| `bb_put(+Key, +Value)` | Blackboard store (SICStus/Trealla): non-backtrackable global assignment. |
+| `bb_put(+Key, +Value)` | Blackboard store: non-backtrackable global assignment. |
 | `bb_update(+Key, ?Old, +New)` | Unifies Old with the current value and replaces it with New; fails (leaving the entry unchanged) when Old does not match. |
 | `flag(+Key, ?Old, +New)` | Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked. |
 | `get_flag(+Key, -Value)` | Reads a flag's value (0 if never set). |
