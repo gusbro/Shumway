@@ -124,8 +124,14 @@ returned session alive for as long as you want to be debuggable, and dispose it 
 There is one debugger per process, so `EnableDebugging` throws if a session is already open.
 `DebugOptions` covers the rest: `LastCallOptimisation` (default off), `WaitForAttach` (block
 until a debugger is attached and ready — for a process launched *in order* to be debugged;
-the REPL's `--debug-wait`), and `SourceFiles` (announce the files you are about to consult,
-so a breakpoint drawn before the process stops anywhere still binds).
+the REPL's `--debug-wait`), `SourceFiles` (announce the files you are about to consult,
+so a breakpoint drawn before the process stops anywhere still binds), and
+`ActivateOnAttach` — LAZY full debug (default from `SHUMWAY_DEBUG_ACTIVATION=attach`):
+the runtime machinery (ports, trail-everything, LCO off) stays off, at near-release
+Tier-0 speed, until a debugger actually attaches, and turns back off on detach. The
+trade-off is the past: what the machinery did not record before the attach — frames
+already reclaimed by LCO, bindings made before the trail started — a debugger cannot
+show, which is why the default keeps it on from startup.
 
 **Loading a `.shum` bundle.** A bundle — a `.shum` file, or one embedded in a .NET DLL — is
 debuggable too, if it was built debug and still carries its module sources. Enable debugging
@@ -459,7 +465,15 @@ it is a bug — say so.
 
 ## Known limits
 
-- **Detach is not supported.** Stop the process instead.
+- **Detach does not un-debug the process.** Detaching works — breakpoints
+  are cleared engine-side and a re-attach re-sends the full set — but the
+  code stays debug-compiled: debuggable modules keep running Tier-0. There
+  is no runtime debug-to-release switch; only re-consulting in release
+  mode, or restarting the process, gets the release compilation back. The
+  RUNTIME debug machinery (trail-everything, last-call optimisation off)
+  turns back off on detach only for a lazy session
+  (`SHUMWAY_DEBUG_ACTIVATION=attach`); a full-from-startup session keeps
+  paying it for the life of the process.
 - A breakpoint on a line with no callable goal binds to the next goal that has one; if
   there is none in the clause, it silently does not bind.
 - Locals are flat: no compound expansion in the tree. (Editing a binding works — see the

@@ -47,6 +47,7 @@ reproducing or bisecting a GC-interaction bug.
 |---|---|
 | `SHUMWAY_DAP_PORT` | Default DAP port for a `--debug` executable (loopback `127.0.0.1:N`). Overridden by an explicit `--dap-port`. |
 | `SHUMWAY_DEBUG_LCO` | `on` / `off` — force last-call optimization under the debugger (off makes tail frames visible on the stack at the cost of constant-stack tail recursion). |
+| `SHUMWAY_DEBUG_ACTIVATION` | `attach` — LAZY full debug: under `--debug` the runtime machinery (ports, trail-everything, LCO off) stays off, at near-release Tier-0 speed, until a debugger actually attaches; a detach turns it back off. Unset: the machinery is on from startup, so the whole run's history is available to a debugger whenever it attaches. |
 | `SHUMWAY_EXE`, `SHUMWAY_ARGS` | Used by the Visual Studio debugger extension to locate the `shumway` executable and its launch arguments when not set in the options page or on `PATH`. |
 
 ### Advanced performance toggles
@@ -81,7 +82,7 @@ the exact contract before relying on any of them.
 | Subsystem trace/diagnostics | `SHUMWAY_ATTR_VERIFY`, `SHUMWAY_CATCH_DIAG`, `SHUMWAY_CUTFIX_DIAG`, `SHUMWAY_DYNSEL_DIAG`, `SHUMWAY_JUMP_DIAG`, `SHUMWAY_PRUNE_DIAG`, `SHUMWAY_TE_DIAG`, `SHUMWAY_UNFOLD_DIAG`, `SHUMWAY_UNDEF_DIAG`, `SHUMWAY_STACK_DIAG`, `SHUMWAY_IL_DIAG` | Per-subsystem dumps. `SHUMWAY_UNDEF_DIAG`/`SHUMWAY_STACK_DIAG` take a functor name to narrow the trace. |
 | IL / execution trace | `SHUMWAY_IL_DUMP`, `SHUMWAY_IL_DEBUG`, `SHUMWAY_NATIVE_TRACE`, `SHUMWAY_PC_RING`, `SHUMWAY_TRAP_PC`, `SHUMWAY_Y_SURVEY` | Dump emitted IL, ring-buffer the recent program counters, trap on a PC, survey Y-slot usage. |
 | Persisted-IL dumps | `SHUMWAY_PERSIST_DUMP_FIDS`, `SHUMWAY_PERSIST_DUMP_ORDINALS`, `SHUMWAY_PERSIST_RANGE`, `SHUMWAY_PERSIST_SKIP_DUMP` | Inspect the persisted-IL patch tables of a bundle. |
-| Debug-core diagnostics | `SHUMWAY_DEBUG_DIAG`, `SHUMWAY_DEBUG_TRACE`, `SHUMWAY_DEBUG_ACTIVATION`, `SHUMWAY_DEBUG_EVAL_QUIET` | Trace the debug service / DAP plumbing. |
+| Debug-core diagnostics | `SHUMWAY_DEBUG_DIAG`, `SHUMWAY_DEBUG_TRACE`, `SHUMWAY_DEBUG_EVAL_QUIET` | Trace the debug service / DAP plumbing. |
 
 The REPL / executable-bootstrap goal variables `SHUMWAY_GOAL`, `SHUMWAY_EXE`,
 `SHUMWAY_ARGS` are consumed by generated executables and the launcher glue;
