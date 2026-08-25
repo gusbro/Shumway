@@ -97,11 +97,11 @@ multi-target build. The test gate currently runs on Windows.
 
 Nothing to install: [try it in the browser](https://gusbro.github.io/Shumway/).
 
-To run it locally, build from source:
+To run it locally, build from source (`-c Release` matters: `dotnet run`
+defaults to a Debug build, which is markedly slower):
 
 ```
-dotnet build
-dotnet run --project src/Shumway.Repl/ -- myprogram.pl
+dotnet run -c Release --project src/Shumway.Repl/ -- myprogram.pl
 ```
 
 Embedding Shumway in a .NET application:
@@ -124,7 +124,7 @@ shumway-link app.shmo --goal main --exe app.exe
 
 These tools live in `src/Shumway.Compile` and `src/Shumway.Link`: publish them to
 put them on your PATH, or run them in place with
-`dotnet run --project src/Shumway.Compile/ -- app.pl -o app.shmo`.
+`dotnet run -c Release --project src/Shumway.Compile/ -- app.pl -o app.shmo`.
 
 ## Documentation
 

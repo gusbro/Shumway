@@ -134,8 +134,9 @@ dotnet run -c Release --project tests/Shumway.Tests.Benchmarks/
 dotnet publish src/Shumway.Compile/ -c Release
 dotnet publish src/Shumway.Link/ -c Release
 
-# Run the interactive top-level (REPL); any files listed are consulted at startup
-dotnet run --project src/Shumway.Repl/ -- [file.pl ...]
+# Run the interactive top-level (REPL); any files listed are consulted at
+# startup. -c Release: dotnet run defaults to Debug, which is markedly slower.
+dotnet run -c Release --project src/Shumway.Repl/ -- [file.pl ...]
 
 # Publish the REPL as a self-contained Native AOT executable
 # (see docs/guide/native-aot.md — Windows needs the Visual C++ build tools)

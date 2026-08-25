@@ -80,6 +80,17 @@ internal static class ReplTopLevel
         Console.WriteLine(PrologEngine.VersionBanner);
         Console.WriteLine(
             $"End a query with '.'  —  'halt.' or {eofKey} exits.");
+#if DEBUG
+        // A Debug BUILD of the engine itself (unoptimised C#) is markedly
+        // slower and is NOT what Prolog-level debugging needs: that is a
+        // RELEASE build run with --debug / --debug-wait, which compiles the
+        // consulted program debuggable while the engine keeps release speed.
+        Console.WriteLine(
+            "note: this is a Debug build of Shumway itself, markedly slower than Release."
+            + "\n      To debug Prolog programs, build with -c Release and run with --debug"
+            + "\n      (or --debug-wait) instead.");
+#endif
+
 
         // Split args at "--": everything before is a file to consult,
         // everything after is exposed to the program as the argv
