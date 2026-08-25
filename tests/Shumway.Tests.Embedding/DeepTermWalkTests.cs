@@ -133,6 +133,54 @@ public class DeepTermWalkTests
     }
 
     [Fact]
+    public void WriteCanonical_OfALongList_ReadsBackEqual()
+    {
+        // write_canonical/1 renders a list in functional notation, so its own
+        // output for a long list is a nest of the same depth. If the reader
+        // cannot take that back, the engine cannot read what it just wrote.
+        var e = EngineWithList();
+        var sol = e.Query(
+            "mklist(L), with_output_to(atom(A), write_canonical(L)), "
+            + "atom_concat(A, ' .', S), atom_to_term(S, Back, _), "
+            + "( Back == L -> R = same ; R = differ ).");
+        Assert.True(sol.Success);
+        Assert.Equal("same", ((AtomTerm)sol["R"]!).Name);
+    }
+
+    [Fact]
+    public void LeftNestedOperatorChain_Materialises()
+    {
+        // `1+2+3+…` is yfx, so it parses into a LEFT spine: deep in argument
+        // one, where the list-spine shortcut does not help. It parsed fine and
+        // then died planting the AST on the heap.
+        var text = new StringBuilder("0");
+        for (int i = 1; i < Long; i++) text.Append('+').Append(i);
+        text.Append(" .");
+        var e = new PrologEngine();
+        var sol = e.Query(
+            $"atom_to_term('{text}', T, _), T = Rest + Last, Rest = _ + Prev.");
+        Assert.True(sol.Success);
+        Assert.Equal((long)Long - 1, ((IntTerm)sol["Last"]!).Value);
+        Assert.Equal((long)Long - 2, ((IntTerm)sol["Prev"]!).Value);
+    }
+
+    [Fact]
+    public void Arithmetic_OverADeepExpression()
+    {
+        // `X is E` walks the expression term. The walk recurses up to a depth
+        // budget — that is what keeps the common case in registers rather than
+        // in an array of a wide struct — and moves to an explicit stack past
+        // it, so a folded expression cannot take the process down.
+        var text = new StringBuilder("0");
+        for (int i = 1; i < Long; i++) text.Append('+').Append(i);
+        text.Append(" .");
+        var e = new PrologEngine();
+        var sol = e.Query($"atom_to_term('{text}', T, _), X is T.");
+        Assert.True(sol.Success);
+        Assert.Equal((long)Long * (Long - 1) / 2, ((IntTerm)sol["X"]!).Value);
+    }
+
+    [Fact]
     public void TermCodec_RoundTripsAClauseHoldingALongList()
     {
         // The .shmo dynamic-seed codec: encode at compile time, decode at

@@ -164,6 +164,15 @@ public sealed class Parser
     private Term ReadTermInternal(int maxPrec, out int builtPrec)
     {
         Term left = ReadPrefixOrPrimary(maxPrec, out builtPrec);
+        return ContinueTerm(left, maxPrec, ref builtPrec);
+    }
+
+    /// <summary>The operator loop, entered with <paramref name="left"/> already
+    /// read. Split out so a caller that obtained the leading primary by other
+    /// means — the iterative compound reader — can finish the expression
+    /// without re-entering the recursive path.</summary>
+    private Term ContinueTerm(Term left, int maxPrec, ref int builtPrec)
+    {
         bool leftBareOp = _bareOp;   // is `left` (still) a bare operator-atom?
 
         while (true)
@@ -523,12 +532,7 @@ public sealed class Parser
                     && IsAdjacent(tok, PeekToken()))
                 {
                     NextToken();   // consume '('
-                    var args = ReadCommaSeparatedArgs(closing: TokenKind.RParen);
-                    if (args.Count == 0)
-                        throw new ParseException(
-                            $"Compound term '{tok.Text}' requires at least one argument; "
-                            + "for the zero-arity case use the bare atom.", pos);
-                    return new CompoundTerm(tok.Text, args.ToArray()) { Position = pos };
+                    return ReadCompoundArgs(tok.Text, pos);
                 }
                 return new AtomTerm(tok.Text) { Position = pos };
 
@@ -735,6 +739,104 @@ public sealed class Parser
         _suppressBar = barIsSeparator;
         try { return ReadTermInternal(1200, out _); }
         finally { _suppressComma = savedComma; _suppressBar = savedBar; }
+    }
+
+    /// <summary>Continues an ARGUMENT expression whose leading primary is
+    /// already read, under the same priority ceiling and separator
+    /// suppression <see cref="ReadArgTerm"/> would have used.</summary>
+    private Term ContinueArgTerm(Term left, bool barIsSeparator)
+    {
+        int builtPrec = 0;
+        _bareOp = false;   // a compound is never a bare operator-atom
+        if (!_flags.LenientArgumentPriority)
+            return ContinueTerm(left, 999, ref builtPrec);
+        bool savedComma = _suppressComma, savedBar = _suppressBar;
+        _suppressComma = true;
+        _suppressBar = barIsSeparator;
+        try { return ContinueTerm(left, 1200, ref builtPrec); }
+        finally { _suppressComma = savedComma; _suppressBar = savedBar; }
+    }
+
+    /// <summary>One compound being read in functional notation: its name,
+    /// where it started, and the arguments read so far.</summary>
+    private sealed class CompoundFrame
+    {
+        public string Name = "";
+        public SourcePosition Pos;
+        public readonly List<Term> Args = new();
+    }
+
+    /// <summary>Is the lookahead an atom immediately followed by the
+    /// function-call <c>(</c>? That is exactly the test <see
+    /// cref="ReadPrimary"/> uses, and ISO §6.4.7 adjacency makes it decisive:
+    /// a prefix operator never wins against it.</summary>
+    private bool StartsAdjacentCompound()
+    {
+        Token tok = PeekToken();
+        if (tok.Kind != TokenKind.Atom) return false;
+        Token next = PeekTokenAt(1);
+        return next.Kind == TokenKind.LParen && IsAdjacent(tok, next);
+    }
+
+    /// <summary>Reads the argument list of <c>name(</c> — the opening paren
+    /// already consumed — and returns the compound.
+    ///
+    /// <para>ITERATIVE in the one shape that nests without bound: an argument
+    /// that is itself a compound in functional notation. <c>write_canonical/1</c>
+    /// renders a list as <c>'.'(H, T)</c>, so a canonical ten-thousand-element
+    /// list is a ten-thousand-deep nest — and recursing once per level meant
+    /// our own output could not be read back: the C# stack overflowed, which
+    /// kills the process rather than raising a syntax error. Descending pushes
+    /// a frame instead of a stack of parser calls, and a run of closing parens
+    /// unwinds them in a loop. Every other shape still recurses, as an
+    /// operator-precedence parser does.</para></summary>
+    private Term ReadCompoundArgs(string name, SourcePosition pos)
+    {
+        var frames = new List<CompoundFrame>(8)
+        {
+            new CompoundFrame { Name = name, Pos = pos },
+        };
+        while (true)
+        {
+            while (StartsAdjacentCompound())
+            {
+                Token head = NextToken();   // the atom
+                NextToken();                // the '('
+                frames.Add(new CompoundFrame { Name = head.Text, Pos = head.Position });
+            }
+            CompoundFrame open = frames[^1];
+            if (open.Args.Count == 0 && PeekToken().Kind == TokenKind.RParen)
+                throw new ParseException(
+                    $"Compound term '{open.Name}' requires at least one argument; "
+                    + "for the zero-arity case use the bare atom.", open.Pos);
+
+            Term arg = ReadArgTerm(barIsSeparator: false);
+
+            // Attach, then close as many frames as the closing parens ask for.
+            while (true)
+            {
+                frames[^1].Args.Add(arg);
+                if (PeekToken().Kind == TokenKind.Comma)
+                {
+                    NextToken();
+                    // Arity tolerates a dangling comma before the closing
+                    // paren; anything else starts another argument.
+                    if (!(_flags.ArityCompat && PeekToken().Kind == TokenKind.RParen))
+                        break;
+                }
+                ExpectKind(TokenKind.RParen);
+                CompoundFrame done = frames[^1];
+                frames.RemoveAt(frames.Count - 1);
+                Term compound = new CompoundTerm(done.Name, done.Args.ToArray())
+                {
+                    Position = done.Pos,
+                };
+                if (frames.Count == 0) return compound;
+                // The enclosing argument may continue past the compound:
+                // `f(g(1) + 2)`.
+                arg = ContinueArgTerm(compound, barIsSeparator: false);
+            }
+        }
     }
 
     private List<Term> ReadCommaSeparatedArgs(TokenKind closing)
