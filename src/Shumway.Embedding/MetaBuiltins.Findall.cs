@@ -83,7 +83,7 @@ public static partial class MetaBuiltins
             : pair;
         var sb = new System.Text.StringBuilder(64);
         AppendHeapWitnessKey(engine, witness,
-            new Dictionary<int, int>(), new HashSet<int>(), sb, 0);
+            new Dictionary<int, int>(), new HashSet<int>(), sb);
         Cell[]? snap = FindallSnapshot.TrySnapshotRegister(engine, 0);
         object payload = snap is not null
             ? snap
@@ -99,95 +99,117 @@ public static partial class MetaBuiltins
     /// pattern produce the same key, and any other pattern a different one.
     /// Every token is delimited, so neighbouring tokens cannot collide. A
     /// revisited struct address keys as a back-reference (rational trees
-    /// must not loop the walk).</summary>
+    /// must not loop the walk).
+    ///
+    /// <para>ITERATIVE, with an explicit work stack: a witness is user data
+    /// of any depth, and a ten-thousand-element list — perfectly ordinary —
+    /// overflows the C# stack in a recursive walk, which kills the process
+    /// instead of raising anything catchable.</para></summary>
     private static void AppendHeapWitnessKey(
-        Activation engine, Cell cell, Dictionary<int, int> varSlots,
-        HashSet<int> onPath, System.Text.StringBuilder sb, int depth)
+        Activation engine, Cell root, Dictionary<int, int> varSlots,
+        HashSet<int> onPath, System.Text.StringBuilder sb)
     {
-        if (cell.Tag == Tag.Ref)
+        // A step either KEYS a cell (close == none) or closes the compound
+        // it belongs to, lifting that address back off the cycle path.
+        const char none = '\0';
+        var work = new List<(Cell Cell, char Close, int PathAddr)>(32)
         {
-            int addr = engine.Deref(cell.AsHeapIndex);
-            Cell target = engine.GetHeap(addr);
-            if (target.Tag is Tag.Ref or Tag.AttVar)
-            {
-                if (!varSlots.TryGetValue(addr, out int slot))
-                {
-                    slot = varSlots.Count;
-                    varSlots[addr] = slot;
-                }
-                sb.Append('v').Append(slot).Append(';');
-                return;
-            }
-            cell = target;
-        }
-        switch (cell.Tag)
+            (root, none, -1),
+        };
+        while (work.Count > 0)
         {
-            case Tag.AttVar:
+            var (cell, close, pathAddr) = work[^1];
+            work.RemoveAt(work.Count - 1);
+            if (close != none)
             {
-                int home = engine.Deref(cell.AsHeapIndex);
-                if (!varSlots.TryGetValue(home, out int slot))
+                sb.Append(close);
+                if (pathAddr >= 0) onPath.Remove(pathAddr);
+                continue;
+            }
+            if (cell.Tag == Tag.Ref)
+            {
+                int addr = engine.Deref(cell.AsHeapIndex);
+                Cell target = engine.GetHeap(addr);
+                if (target.Tag is Tag.Ref or Tag.AttVar)
                 {
-                    slot = varSlots.Count;
-                    varSlots[home] = slot;
+                    if (!varSlots.TryGetValue(addr, out int refSlot))
+                    {
+                        refSlot = varSlots.Count;
+                        varSlots[addr] = refSlot;
+                    }
+                    sb.Append('v').Append(refSlot).Append(';');
+                    continue;
                 }
-                sb.Append('v').Append(slot).Append(';');
-                break;
+                cell = target;
             }
-            case Tag.Atom:
-                sb.Append('a').Append(cell.AsAtomId).Append(';');
-                break;
-            case Tag.Int:
-                sb.Append('i').Append(cell.AsInt).Append(';');
-                break;
-            case Tag.Float:
-                sb.Append('f').Append(System.BitConverter.DoubleToInt64Bits(
-                    Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))))
-                  .Append(';');
-                break;
-            case Tag.BigInt:
-                sb.Append('B').Append(engine.AsBigInt(cell)).Append(';');
-                break;
-            case Tag.Rational:
-                sb.Append('R').Append(engine.AsRational(cell)).Append(';');
-                break;
-            case Tag.Str:
+            switch (cell.Tag)
             {
-                int fIdx = cell.AsHeapIndex;
-                if (!onPath.Add(fIdx)) { sb.Append('L').Append(';'); break; }
-                var (atomId, arity) = FunctorTable.Lookup(
-                    engine.GetHeap(fIdx).AsFunctorId);
-                sb.Append('c').Append(atomId).Append('/').Append(arity).Append('(');
-                for (int i = 0; i < arity; i++)
-                    AppendHeapWitnessKey(engine, engine.GetHeap(fIdx + 1 + i),
-                        varSlots, onPath, sb, depth + 1);
-                sb.Append(')');
-                onPath.Remove(fIdx);
-                break;
-            }
-            case Tag.Lis:
-            case Tag.Pstr:
-            {
-                // Uniform list walk — a packed list and its cons form are
-                // the same term, so they must key identically.
-                if (cell.Tag == Tag.Lis && !onPath.Add(cell.AsHeapIndex))
+                case Tag.AttVar:
                 {
-                    sb.Append('L').Append(';');
+                    int home = engine.Deref(cell.AsHeapIndex);
+                    if (!varSlots.TryGetValue(home, out int slot))
+                    {
+                        slot = varSlots.Count;
+                        varSlots[home] = slot;
+                    }
+                    sb.Append('v').Append(slot).Append(';');
                     break;
                 }
-                if (engine.TryUnconsListLike(cell, out Cell head, out Cell tail))
+                case Tag.Atom:
+                    sb.Append('a').Append(cell.AsAtomId).Append(';');
+                    break;
+                case Tag.Int:
+                    sb.Append('i').Append(cell.AsInt).Append(';');
+                    break;
+                case Tag.Float:
+                    sb.Append('f').Append(System.BitConverter.DoubleToInt64Bits(
+                        Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))))
+                      .Append(';');
+                    break;
+                case Tag.BigInt:
+                    sb.Append('B').Append(engine.AsBigInt(cell)).Append(';');
+                    break;
+                case Tag.Rational:
+                    sb.Append('R').Append(engine.AsRational(cell)).Append(';');
+                    break;
+                case Tag.Str:
                 {
-                    sb.Append('[');
-                    AppendHeapWitnessKey(engine, head, varSlots, onPath, sb, depth + 1);
-                    AppendHeapWitnessKey(engine, tail, varSlots, onPath, sb, depth + 1);
-                    sb.Append(']');
+                    int fIdx = cell.AsHeapIndex;
+                    if (!onPath.Add(fIdx)) { sb.Append('L').Append(';'); break; }
+                    var (atomId, arity) = FunctorTable.Lookup(
+                        engine.GetHeap(fIdx).AsFunctorId);
+                    sb.Append('c').Append(atomId).Append('/').Append(arity).Append('(');
+                    work.Add((default, ')', fIdx));
+                    for (int i = arity - 1; i >= 0; i--)
+                        work.Add((engine.GetHeap(fIdx + 1 + i), none, -1));
+                    break;
                 }
-                if (cell.Tag == Tag.Lis) onPath.Remove(cell.AsHeapIndex);
-                break;
+                case Tag.Lis:
+                case Tag.Pstr:
+                {
+                    // Uniform list walk — a packed list and its cons form are
+                    // the same term, so they must key identically.
+                    int addr = cell.Tag == Tag.Lis ? cell.AsHeapIndex : -1;
+                    if (addr >= 0 && !onPath.Add(addr))
+                    {
+                        sb.Append('L').Append(';');
+                        break;
+                    }
+                    if (engine.TryUnconsListLike(cell, out Cell head, out Cell tail))
+                    {
+                        sb.Append('[');
+                        work.Add((default, ']', addr));
+                        work.Add((tail, none, -1));
+                        work.Add((head, none, -1));
+                    }
+                    else if (addr >= 0) onPath.Remove(addr);
+                    break;
+                }
+                default:
+                    sb.Append('t').Append((int)cell.Tag).Append('_')
+                      .Append(cell.Payload).Append(';');
+                    break;
             }
-            default:
-                sb.Append('t').Append((int)cell.Tag).Append('_')
-                  .Append(cell.Payload).Append(';');
-                break;
         }
     }
 
@@ -382,36 +404,50 @@ public static partial class MetaBuiltins
     /// index (tracked in <paramref name="vars"/>), so the encoding is
     /// invariant under variable renaming: two variant non-ground answers
     /// (e.g. <c>p(X)</c> and <c>p(Y)</c>) canonicalise to the same string
-    /// and the tabling driver deduplicates them as one answer.</summary>
+    /// and the tabling driver deduplicates them as one answer.
+    ///
+    /// <para>Iterative: a tabled answer is user data of any depth, and a
+    /// recursive encoding overflowed the C# stack — which kills the process,
+    /// not the query — on an answer holding a list of some ten thousand
+    /// elements. A null entry closes the compound above it.</para></summary>
     private static void Canonicalize(
-        Term t, System.Text.StringBuilder sb, Dictionary<string, int> vars)
+        Term root, System.Text.StringBuilder sb, Dictionary<string, int> vars)
     {
-        switch (t)
+        var work = new List<Term?>(32) { root };
+        while (work.Count > 0)
         {
-            case VarTerm v:
-                if (!vars.TryGetValue(v.Name, out int vid))
-                {
-                    vid = vars.Count;
-                    vars[v.Name] = vid;
-                }
-                sb.Append('v').Append(vid).Append('.');
-                break;
-            case AtomTerm a:
-                sb.Append('a').Append(a.Name.Length).Append('_').Append(a.Name);
-                break;
-            case IntTerm i:
-                sb.Append('i').Append(i.Value).Append('.');
-                break;
-            case CompoundTerm c:
-                sb.Append('c').Append(c.Functor.Length).Append('_').Append(c.Functor)
-                  .Append('/').Append(c.Args.Length).Append('(');
-                foreach (var arg in c.Args) Canonicalize(arg, sb, vars);
-                sb.Append(')');
-                break;
-            default:
-                string s = t.ToString() ?? "";
-                sb.Append('o').Append(s.Length).Append('_').Append(s);
-                break;
+            Term? t = work[^1];
+            work.RemoveAt(work.Count - 1);
+            switch (t)
+            {
+                case null:
+                    sb.Append(')');
+                    break;
+                case VarTerm v:
+                    if (!vars.TryGetValue(v.Name, out int vid))
+                    {
+                        vid = vars.Count;
+                        vars[v.Name] = vid;
+                    }
+                    sb.Append('v').Append(vid).Append('.');
+                    break;
+                case AtomTerm a:
+                    sb.Append('a').Append(a.Name.Length).Append('_').Append(a.Name);
+                    break;
+                case IntTerm i:
+                    sb.Append('i').Append(i.Value).Append('.');
+                    break;
+                case CompoundTerm c:
+                    sb.Append('c').Append(c.Functor.Length).Append('_').Append(c.Functor)
+                      .Append('/').Append(c.Args.Length).Append('(');
+                    work.Add(null);
+                    for (int k = c.Args.Length - 1; k >= 0; k--) work.Add(c.Args[k]);
+                    break;
+                default:
+                    string s = t.ToString() ?? "";
+                    sb.Append('o').Append(s.Length).Append('_').Append(s);
+                    break;
+            }
         }
     }
 

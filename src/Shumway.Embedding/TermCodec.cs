@@ -39,7 +39,23 @@ public static class TermCodec
     private const byte TagString = 5;
     private const byte TagCompound = 6;
 
-    public static void WriteTerm(BinaryWriter w, Term term)
+    /// <summary>Writes a term. ITERATIVE over an explicit stack: a stored
+    /// clause can hold a list of any length, and a recursive walk overflowed
+    /// the C# stack — killing the process, not the compile — on a source file
+    /// carrying one. Arguments are pushed right to left so they are written
+    /// in order.</summary>
+    public static void WriteTerm(BinaryWriter w, Term root)
+    {
+        var work = new List<Term>(32) { root };
+        while (work.Count > 0)
+        {
+            Term term = work[^1];
+            work.RemoveAt(work.Count - 1);
+            WriteNode(w, term, work);
+        }
+    }
+
+    private static void WriteNode(BinaryWriter w, Term term, List<Term> work)
     {
         switch (term)
         {
@@ -74,8 +90,7 @@ public static class TermCodec
                 w.Write(TagCompound);
                 WriteString(w, c.Functor);
                 w.Write((uint)c.Args.Length);
-                foreach (var arg in c.Args)
-                    WriteTerm(w, arg);
+                for (int i = c.Args.Length - 1; i >= 0; i--) work.Add(c.Args[i]);
                 break;
             default:
                 throw new InvalidDataException(
@@ -83,7 +98,41 @@ public static class TermCodec
         }
     }
 
+    /// <summary>One compound being decoded: its arguments so far.</summary>
+    private sealed class ReadFrame
+    {
+        public string Functor = "";
+        public Term[] Args = System.Array.Empty<Term>();
+        public int Index;
+    }
+
+    /// <summary>Reads a term. ITERATIVE, for the same reason
+    /// <see cref="WriteTerm"/> is: a bundle can carry a clause holding a list
+    /// of any length, and the decode runs at load time, where a process death
+    /// is at its least diagnosable.</summary>
     public static Term ReadTerm(BinaryReader r)
+    {
+        var stack = new List<ReadFrame>();
+        while (true)
+        {
+            Term? done = ReadNode(r, stack);
+            // Hand the finished node to its parent, completing parents as
+            // they fill up.
+            while (done is not null && stack.Count > 0)
+            {
+                ReadFrame f = stack[^1];
+                f.Args[f.Index++] = done;
+                if (f.Index < f.Args.Length) { done = null; break; }
+                done = new CompoundTerm(f.Functor, f.Args);
+                stack.RemoveAt(stack.Count - 1);
+            }
+            if (done is not null && stack.Count == 0) return done;
+        }
+    }
+
+    /// <summary>Decodes one node. Returns null when it was a compound with
+    /// arguments — that pushed a frame and the caller keeps reading.</summary>
+    private static Term? ReadNode(BinaryReader r, List<ReadFrame> stack)
     {
         byte tag = r.ReadByte();
         switch (tag)
@@ -118,10 +167,14 @@ public static class TermCodec
             {
                 string functor = ReadString(r);
                 int arity = checked((int)r.ReadUInt32());
-                var args = new Term[arity];
-                for (int i = 0; i < arity; i++)
-                    args[i] = ReadTerm(r);
-                return new CompoundTerm(functor, args);
+                if (arity == 0)
+                    return new CompoundTerm(functor, System.Array.Empty<Term>());
+                stack.Add(new ReadFrame
+                {
+                    Functor = functor,
+                    Args = new Term[arity],
+                });
+                return null;
             }
             default:
                 throw new InvalidDataException(

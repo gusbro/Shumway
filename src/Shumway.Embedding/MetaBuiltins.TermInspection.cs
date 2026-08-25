@@ -747,48 +747,62 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, tail);
     }
 
-    private static void CollectVars(
-        Activation engine, int heapIdx, HashSet<int> visited, List<int> vars)
+    /// <summary>Pushes a compound's arguments onto <paramref name="work"/> so
+    /// they pop in source order (last pushed is visited first).</summary>
+    private static void PushArgsInOrder(Activation engine, Cell cell, List<int> work)
     {
-        int addr = engine.Deref(heapIdx);
-        if (!visited.Add(addr)) return;
-        Cell cell = engine.GetHeap(addr);
-        switch (cell.Tag)
+        if (cell.Tag == Tag.Str)
         {
-            case Tag.Ref:
-            case Tag.AttVar:   // an attributed variable IS a variable (ISO/SWI)
-                vars.Add(addr);
-                break;
-            case Tag.Str:
-            {
-                int functorIdx = cell.AsHeapIndex;
-                var (_, arity) = FunctorTable.Lookup(
-                    engine.GetHeap(functorIdx).AsFunctorId);
-                for (int i = 0; i < arity; i++)
-                    CollectVars(engine, functorIdx + 1 + i, visited, vars);
-                break;
-            }
-            case Tag.Lis:
-            {
-                int headIdx = cell.AsHeapIndex;
-                CollectVars(engine, headIdx, visited, vars);
-                CollectVars(engine, headIdx + 1, visited, vars);
-                break;
-            }
-            // Atoms, ints, floats, strings, PSTRs: leaf, no variables.
+            int functorIdx = cell.AsHeapIndex;
+            var (_, arity) = FunctorTable.Lookup(
+                engine.GetHeap(functorIdx).AsFunctorId);
+            for (int i = arity - 1; i >= 0; i--) work.Add(functorIdx + 1 + i);
+        }
+        else if (cell.Tag == Tag.Lis)
+        {
+            int headIdx = cell.AsHeapIndex;
+            work.Add(headIdx + 1);
+            work.Add(headIdx);
+        }
+    }
+
+    // Both walks below are ITERATIVE over an explicit work list. A term is
+    // user data of any depth, and recursion overflowed the C# stack — which
+    // kills the process, not the query — at some ten thousand list elements.
+    // Walking a list spine costs O(1) of that list: the tail replaces the
+    // cons that pushed it.
+
+    private static void CollectVars(
+        Activation engine, int rootIdx, HashSet<int> visited, List<int> vars)
+    {
+        var work = new List<int>(32) { rootIdx };
+        while (work.Count > 0)
+        {
+            int heapIdx = work[^1];
+            work.RemoveAt(work.Count - 1);
+            int addr = engine.Deref(heapIdx);
+            if (!visited.Add(addr)) continue;
+            Cell cell = engine.GetHeap(addr);
+            // an attributed variable IS a variable (ISO/SWI); atoms, numbers
+            // and packed strings are leaves with no variables.
+            if (cell.Tag is Tag.Ref or Tag.AttVar) vars.Add(addr);
+            else PushArgsInOrder(engine, cell, work);
         }
     }
 
     private static void WalkAndNumber(
-        Activation engine, int heapIdx, HashSet<int> visited, ref long counter)
+        Activation engine, int rootIdx, HashSet<int> visited, ref long counter)
     {
-        int addr = engine.Deref(heapIdx);
-        if (!visited.Add(addr)) return;
-
-        Cell cell = engine.GetHeap(addr);
-        switch (cell.Tag)
+        var work = new List<int>(32) { rootIdx };
+        while (work.Count > 0)
         {
-            case Tag.Ref:
+            int heapIdx = work[^1];
+            work.RemoveAt(work.Count - 1);
+            int addr = engine.Deref(heapIdx);
+            if (!visited.Add(addr)) continue;
+            Cell cell = engine.GetHeap(addr);
+            if (cell.Tag == Tag.Ref)
+            {
                 // Unbound — bind to '$VAR'(counter).
                 int varAtom = AtomTable.Intern("$VAR", permanent: true).Id;
                 int functorId = FunctorTable.Intern(varAtom, 1);
@@ -801,25 +815,9 @@ public static partial class MetaBuiltins
                 int strRefSlot = engine.AllocateHeap(1);
                 engine.SetHeap(strRefSlot, Cell.Ref(strBase));
                 engine.Unify(addr, strRefSlot);
-                break;
-
-            case Tag.Str:
-            {
-                int functorIdx = cell.AsHeapIndex;
-                var (_, arity) = FunctorTable.Lookup(
-                    engine.GetHeap(functorIdx).AsFunctorId);
-                for (int i = 0; i < arity; i++)
-                    WalkAndNumber(engine, functorIdx + 1 + i, visited, ref counter);
-                break;
+                continue;
             }
-            case Tag.Lis:
-            {
-                int headIdx = cell.AsHeapIndex;
-                WalkAndNumber(engine, headIdx, visited, ref counter);
-                WalkAndNumber(engine, headIdx + 1, visited, ref counter);
-                break;
-            }
-            // Atoms, ints, floats, PSTRs: leaf, nothing to do.
+            PushArgsInOrder(engine, cell, work);
         }
     }
 

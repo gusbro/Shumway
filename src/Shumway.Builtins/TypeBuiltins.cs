@@ -324,40 +324,51 @@ public static class TypeBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Int(len));
     }
 
-    private static bool IsAcyclicCell(Activation engine, Cell cell, HashSet<int> onPath)
+    /// <summary>Cycle test over an explicit work list: a term is user data of
+    /// any depth, and recursion overflowed the C# stack — which kills the
+    /// process, not the query — at some ten thousand list elements. An entry
+    /// with a non-negative Close lifts that address back off the current
+    /// path, which is what the return from a recursive call used to do.</summary>
+    private static bool IsAcyclicCell(Activation engine, Cell root, HashSet<int> onPath)
     {
-        if (cell.Tag == Tag.Ref)
+        var work = new List<(Cell Cell, int Close)>(32) { (root, -1) };
+        while (work.Count > 0)
         {
-            int addr = engine.Deref(cell.AsHeapIndex);
-            cell = engine.GetHeap(addr);
-            if (cell.Tag == Tag.Ref) return true;   // unbound var: acyclic
-        }
-        switch (cell.Tag)
-        {
-            case Tag.Str:
+            var (cell, close) = work[^1];
+            work.RemoveAt(work.Count - 1);
+            if (close >= 0) { onPath.Remove(close); continue; }
+            if (cell.Tag == Tag.Ref)
             {
-                int functorIdx = cell.AsHeapIndex;
-                if (!onPath.Add(functorIdx)) return false;   // back-edge → cyclic
-                var (_, arity) = FunctorTable.Lookup(
-                    engine.GetHeap(functorIdx).AsFunctorId);
-                for (int i = 0; i < arity; i++)
-                    if (!IsAcyclicCell(engine, engine.GetHeap(functorIdx + 1 + i), onPath))
-                        return false;
-                onPath.Remove(functorIdx);
-                return true;
+                int addr = engine.Deref(cell.AsHeapIndex);
+                cell = engine.GetHeap(addr);
+                if (cell.Tag == Tag.Ref) continue;   // unbound var: acyclic
             }
-            case Tag.Lis:
+            switch (cell.Tag)
             {
-                int headIdx = cell.AsHeapIndex;
-                if (!onPath.Add(headIdx)) return false;
-                bool ok = IsAcyclicCell(engine, engine.GetHeap(headIdx), onPath)
-                       && IsAcyclicCell(engine, engine.GetHeap(headIdx + 1), onPath);
-                onPath.Remove(headIdx);
-                return ok;
+                case Tag.Str:
+                {
+                    int functorIdx = cell.AsHeapIndex;
+                    if (!onPath.Add(functorIdx)) return false;   // back-edge → cyclic
+                    var (_, arity) = FunctorTable.Lookup(
+                        engine.GetHeap(functorIdx).AsFunctorId);
+                    work.Add((default, functorIdx));
+                    for (int i = arity - 1; i >= 0; i--)
+                        work.Add((engine.GetHeap(functorIdx + 1 + i), -1));
+                    break;
+                }
+                case Tag.Lis:
+                {
+                    int headIdx = cell.AsHeapIndex;
+                    if (!onPath.Add(headIdx)) return false;
+                    work.Add((default, headIdx));
+                    work.Add((engine.GetHeap(headIdx + 1), -1));
+                    work.Add((engine.GetHeap(headIdx), -1));
+                    break;
+                }
+                // atomic: nothing to descend into
             }
-            default:
-                return true;   // atomic
         }
+        return true;
     }
 
     private static Tag Tag0(Activation engine) => Resolve(engine, engine.GetRegister(0)).Tag;

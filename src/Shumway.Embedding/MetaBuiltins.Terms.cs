@@ -30,8 +30,7 @@ public static partial class MetaBuiltins
         // resolves to one shared heap cell, then read back each var's
         // heap-bound value for the bindings list.
         var names = new List<string>();
-        var seen = new HashSet<string>();
-        CollectNamedVarsFromTerm(parsed, names, seen);
+        CollectNamedVars(parsed, names, new Dictionary<string, int>());
 
         // Bindings vars must BE the term's vars (SWI contract — and what
         // singleton computation and read_term_from_chars build on). Build
@@ -59,19 +58,6 @@ public static partial class MetaBuiltins
         int wrapBase = wrapCell.AsHeapIndex;
         if (!engine.UnifyRegisterWithHeapAt(1, wrapBase + 2)) return false;
         return engine.UnifyRegisterWithHeapAt(2, wrapBase + 3);
-    }
-
-    private static void CollectNamedVarsFromTerm(Term t, List<string> order, HashSet<string> seen)
-    {
-        switch (t)
-        {
-            case VarTerm v when v.Name != "_":
-                if (seen.Add(v.Name)) order.Add(v.Name);
-                break;
-            case CompoundTerm c:
-                foreach (Term arg in c.Args) CollectNamedVarsFromTerm(arg, order, seen);
-                break;
-        }
     }
 
     private static Term BuildListTerm(IReadOnlyList<Term> items)
