@@ -465,16 +465,17 @@ public static partial class MetaBuiltins
                 return UnifyAtom(engine, 1, host.Flags.Debug ? "on" : "off");
 
             case "min_integer":
-                // ISO only requires these when `bounded` is true, and Shumway
-                // is unbounded — but SWI reports them anyway and portable code
-                // probes them (lgtunit's quick-check generator does). The
-                // answer is the INLINE fixnum range (ADR-002's 60-bit
-                // payload) — anything past it is a BigInt, which is exactly
-                // what "unbounded" means here.
-                return engine.UnifyRegisterWithCell(1, Cell.Int(Cell.MinInt60));
-
             case "max_integer":
-                return engine.UnifyRegisterWithCell(1, Cell.Int(Cell.MaxInt60));
+                // ISO 7.11.1: these flags carry a value only on a BOUNDED
+                // processor, and Shumway is unbounded (BigInt past the
+                // inline fixnum). The names are still RECOGNISED — they are
+                // ISO-spec flags, so no domain_error — but the query FAILS,
+                // exactly Trealla's model. That failure is also what keeps
+                // portable probes sound: Logtalk arbitrary's integer edge
+                // cases call current_prolog_flag(max_integer, _) unguarded
+                // inside a findall — a fail contributes no edge case, an
+                // error would tear the generator down.
+                return false;
 
             case "max_arity":
                 // ISO requires this be either an integer or
@@ -496,7 +497,7 @@ public static partial class MetaBuiltins
     /// the value is produced by the same bound-name switch.</summary>
     private static readonly string[] EnumerableFlags =
     {
-        "bounded", "max_arity", "min_integer", "max_integer",
+        "bounded", "max_arity",
         "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
         "debug", "dialect", "library_dialect", "version_data", "argv", "pid",
