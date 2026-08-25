@@ -361,22 +361,32 @@ internal static class Prelude
         % still resolves in the meta-caller's module; the quantified variables
         % are collected from INSIDE the tag as well.
         bagof(Template, Goal, Bag) :-
+            '$bagof_drive'(bagof, Template, Goal, Bag).
+        setof(Template, Goal, Set) :-
+            '$bagof_drive'(setof, Template, Goal, Set).
+        % Shared driver. With free variables it records Witness-Template
+        % pairs and enumerates witness groups through '$bagof_next' — the
+        % same LAZY enumerator the compiled bagof/setof rewrite uses, so
+        % both paths group identically (variant witnesses, standard order)
+        % and a caller that cuts after one group pays for one group.
+        '$bagof_drive'(Kind, Template, Goal, Bag) :-
             '$check_partial_list'(Bag),
             '$bagof_parts'(Goal, Inner, QVars),
             term_variables(Inner, GoalVars),
             term_variables(t(Template, QVars), BoundVars),
             '$bagof_witness'(GoalVars, BoundVars, Witness),
             (   Witness == [] ->
-                findall(Template, Inner, Bag),
-                Bag \= []
-            ;   findall(Witness-Template, Inner, Pairs),
-                Pairs \= [],
-                '$bagof_groups'(Pairs, Witness, Bag)
+                findall(Template, Inner, Bag0),
+                Bag0 \= [],
+                (   Kind == setof -> sort(Bag0, Bag) ; Bag = Bag0 )
+            ;   (   '$findall_push',
+                    call(Inner),
+                    '$bagof_record'(Witness-Template),
+                    fail
+                ;   true
+                ),
+                '$bagof_next'(Kind, Witness-Bag)
             ).
-        setof(Template, Goal, Set) :-
-            '$check_partial_list'(Set),
-            bagof(Template, Goal, Bag),
-            sort(Bag, Set).
         '$bagof_parts'('$mqual'(M, G), '$mqual'(M, S), Q) :- !, '$bagof_strip'(G, S, Q).
         '$bagof_parts'(G, S, Q) :- '$bagof_strip'(G, S, Q).
         '$bagof_strip'(V, S, Q) :- nonvar(V), V = Vs ^ G, !, Q = [Vs|Q1], '$bagof_strip'(G, S, Q1).
@@ -387,20 +397,6 @@ internal static class Prelude
             ;   W = [V|W1], '$bagof_witness'(Vs, Bound, W1)
             ).
         '$var_memberchk'(V, [X|Xs]) :- ( V == X -> true ; '$var_memberchk'(V, Xs) ).
-        % One group per distinct witness, in first-occurrence order; RE-SATISFIABLE
-        % (bagof enumerates groups on backtracking). Variant witnesses share a
-        % group and unify, binding the caller's free variables.
-        '$bagof_groups'([W0-T0|Rest], Witness, Bag) :-
-            '$bagof_take'(Rest, W0, Ts, Others),
-            (   Witness = W0, Bag = [T0|Ts]
-            ;   '$bagof_groups'(Others, Witness, Bag)
-            ).
-        '$bagof_take'([], _, [], []).
-        '$bagof_take'([W-T|Ps], W0, Ts, Others) :-
-            (   subsumes_term(W, W0), subsumes_term(W0, W) ->
-                W = W0, Ts = [T|Ts1], '$bagof_take'(Ps, W0, Ts1, Others)
-            ;   Others = [W-T|O1], '$bagof_take'(Ps, W0, Ts, O1)
-            ).
 
         %! catch(:Goal, ?Catcher, :Recovery) | Control | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead.
         % Runs in the LIVE engine using the catch-frame machinery

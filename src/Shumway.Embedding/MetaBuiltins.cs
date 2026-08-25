@@ -45,8 +45,8 @@ public static partial class MetaBuiltins
         // In-engine bagof/setof plumbing — reuse the findall
         // frame stack ('$findall_push' / '$findall_record'); only the
         // collect step differs (it groups the solutions by witness).
-        BuiltinsRegistry.Register("$bagof_collect",   1, BagofCollect);
-        BuiltinsRegistry.Register("$setof_collect",   1, SetofCollect);
+        BuiltinsRegistry.Register("$bagof_next", 2, MetaBuiltins.BagofNext);
+        BuiltinsRegistry.Register("$bagof_record", 1, MetaBuiltins.BagofRecord);
         // bagof/3 & setof/3 variable-goal fallbacks are prelude predicates
         // (live-engine findall + fail-on-empty), NOT builtins — the old
         // isolated-sub-engine builtins lacked the parent's bundle-precompiled
