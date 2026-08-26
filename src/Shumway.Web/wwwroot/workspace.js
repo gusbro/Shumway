@@ -240,7 +240,8 @@ export async function openFiles() {
 
 /** The examples workspace's files, fetched from the site. */
 export const EXAMPLE_FILES = [
-  'family.pl', 'queens.pl', 'zebra.pl', 'clpfd.pl', 'dcg.pl', 'tabling.pl',
+  'family.pl', 'queens.pl', 'zebra.pl', 'clpfd.pl', 'clpr.pl',
+  'coroutining.pl', 'dcg.pl', 'tabling.pl',
 ];
 
 export const EXAMPLES_WORKSPACE = 'examples';

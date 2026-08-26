@@ -11,7 +11,9 @@ queens(N, Qs) :-
     safe(Qs).
 
 safe([]).
-safe([Q|Qs]) :- no_attack(Q, Qs, 1), safe(Qs).
+safe([Q|Qs]) :-
+    no_attack(Q, Qs, 1),
+    safe(Qs).
 
 no_attack(_, [], _).
 no_attack(Q, [R|Rs], D) :-

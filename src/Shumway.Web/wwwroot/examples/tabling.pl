@@ -10,8 +10,11 @@ edge(b, c).
 edge(c, a).      % a cycle — plain SLD resolution would spin here
 edge(c, d).
 
-path(X, Y) :- edge(X, Y).
-path(X, Y) :- path(X, Z), edge(Z, Y).    % left-recursive, on purpose
+path(X, Y) :-
+    edge(X, Y).
+path(X, Y) :-
+    path(X, Z),        % left-recursive, on purpose
+    edge(Z, Y).
 
 :- table fib/2.
 
@@ -19,6 +22,8 @@ fib(0, 0).
 fib(1, 1).
 fib(N, F) :-
     N > 1,
-    A is N - 1, B is N - 2,
-    fib(A, FA), fib(B, FB),
+    A is N - 1,
+    B is N - 2,
+    fib(A, FA),
+    fib(B, FB),
     F is FA + FB.
