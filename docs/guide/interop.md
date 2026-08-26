@@ -2,7 +2,7 @@
 
 Shumway runs the Prolog engine **in the same process and managed heap as your C#
 code**. That changes what interop can be: a term is not an opaque handle on the
-far side of a marshalling boundary — it *is* a value in a `Cell[]` your C# can
+far side of a marshalling boundary: it *is* a value in a `Cell[]` your C# can
 read and write directly. This guide is the router for the whole topic: the
 four managed mechanisms below in depth, and where the two native-code
 mechanisms (their own documents) fit.
@@ -19,7 +19,7 @@ mechanisms (their own documents) fit.
 The first two are *convenience* interop: you work with ordinary C# values
 (`int`, `string`, `List<long>`, your own records) and Shumway converts. The last
 is the *hot-path* mechanism: you touch the engine's cells directly, no
-conversion, no allocation. Both matter — pick convenience for the 95% that isn't
+conversion, no allocation. Both matter: pick convenience for the 95% that isn't
 performance-critical, and zero-copy for the inner loop.
 
 ---
@@ -54,7 +54,7 @@ Parameter modes map from C# modifiers: plain → `+`, `out T` → `-`, `ref T?` 
 predicate. Errors: throw `PrologRuntimeException` to raise a catchable `error/2`.
 
 **Advantage:** you write plain C#; no knowledge of the WAM. **Disadvantage:**
-each composite argument/return is decoded through an intermediate `Term` tree —
+each composite argument/return is decoded through an intermediate `Term` tree;
 `List<long>` means one `IntTerm` object per element, plus the `List`. That is
 real GC traffic. Fine off the hot path; see §4 for the inner loop.
 
@@ -87,7 +87,7 @@ tiny calls. For calling Prolog repeatedly from inside a running query, use §3.
 
 The embedding pattern is often `C# → main → C#(method) → Prolog(goal) → …`: a
 foreign method, running mid-query, wants to call a Prolog goal *back on the live
-engine* — not spin up a new top-level query. `SolveOnce` does exactly that,
+engine*, not spin up a new top-level query. `SolveOnce` does exactly that,
 reusing the already-linked program.
 
 ```csharp
@@ -106,17 +106,17 @@ public static string Classify(Activation engine, int x)
 A `[PrologPredicate]` method may take an `Activation` parameter anywhere in its
 signature (the bridge passes the live engine). Overloads:
 
-- `SolveOnce<T>(engine, goal, outVar, out T value)` — lean; reads one named
+- `SolveOnce<T>(engine, goal, outVar, out T value)`: lean, reads one named
   output, no `Solution` object (the cheapest form).
-- `SolveOnce(engine, goal, out Solution sol)` — general; full bindings.
-- `SolveOnce(engine, goal)` — semidet check, discards bindings.
+- `SolveOnce(engine, goal, out Solution sol)`: general, full bindings.
+- `SolveOnce(engine, goal)`: semidet check, discards bindings.
 
 Bindings the goal makes persist on the shared heap and are visible to the outer
 computation (and correctly undone if it later backtracks past the call).
 
 **Database mutation.** The goal you pass is a real goal on the live engine, so a
-foreign method can mutate the Prolog database — `assertz`, `asserta`, `retract`,
-`abolish` — through the same mechanism:
+foreign method can mutate the Prolog database (`assertz`, `asserta`, `retract`,
+`abolish`) through the same mechanism:
 
 ```csharp
 [PrologPredicate("remember/1")]                       // remember(+N)
@@ -129,13 +129,13 @@ public static bool Remember(Activation engine, int n)
 ```
 
 The change is effective immediately, **visible to later goals of the same query**
-(the ISO logical update view), and **persists** into subsequent queries — the
+(the ISO logical update view), and **persists** into subsequent queries: the
 dynamic store lives on the engine, shared with the activation.
 
 **Advantage:** ~60× cheaper per call than a top-level `QueryAll` (reuses the
 linked program); nests correctly (`C# → Prolog → C# → Prolog`). **Disadvantage:**
 building the goal `Term` and reading a composite output still go through the
-Term-AST tier — for scalar in/out this is light, for large lists prefer §4.
+Term-AST tier, for scalar in/out this is light, for large lists prefer §4.
 
 ---
 
@@ -144,12 +144,12 @@ Term-AST tier — for scalar in/out this is light, for large lists prefer §4.
 This is the mechanism the other three are conveniences over, and the one that
 makes an in-process engine worth having. A term lives in the engine's managed
 `Cell[]` heap. From a foreign predicate you get the live `Activation` and can
-**read and write those cells directly** — no `Term` tree, no `List<T>`, no copy.
+**read and write those cells directly**: no `Term` tree, no `List<T>`, no copy.
 A native engine embedded over a P/Invoke boundary *cannot* do this: its cells are
 in unmanaged memory C# may not touch, so every term must be marshalled across.
 Here the C# side is less pretty, but it runs at cache speed.
 
-Use the **raw foreign form** — a `bool(Activation)` method. The generator leaves
+Use the **raw foreign form**: a `bool(Activation)` method. The generator leaves
 it alone; `RegisterPredicates` registers it as a builtin whose arity comes from
 the attribute. It reads its arguments from the argument registers and unifies its
 results back.
@@ -168,14 +168,14 @@ Everything below is on `Shumway.Core` (`Activation`, `Cell`, `Tag`, `AtomTable`,
 | `engine.UnifyRegisterWithCell(i, cell)` | unify argument `i` with a cell (bind the output) |
 | `Cell.Int(v)` `Cell.Atom(id)` `Cell.Lis(pairIdx)` `Cell.Str(fnIdx)` `Cell.Functor(fid)` | build cells |
 | `cell.AsInt` `cell.AsAtomId` `cell.AsHeapIndex` `cell.Tag` | read a cell |
-| `engine.TryUnconsListLike(c, out h, out t)` | peel one element off **any** list — cons or packed text |
+| `engine.TryUnconsListLike(c, out h, out t)` | peel one element off **any** list: cons or packed text |
 | `Activation.IsListLike(c)` | true for a non-empty list of either storage |
 
 Cell layout (ADR-002 / ADR-017):
 
 - **List** `[H|T]`: a `Tag.Lis` cell whose `AsHeapIndex` points at a 2-cell pair
   `[head, tail]`. The empty list is `Cell.Atom(AtomTable.EmptyListId)`. A list of
-  text may instead be **packed** into a `Tag.Pstr` header — same list, denser
+  text may instead be **packed** into a `Tag.Pstr` header: same list, denser
   storage; see "Lists of text" below.
 - **Compound** `f(A0,…,An)`: a `Tag.Str` cell whose `AsHeapIndex` points at a
   `Tag.Functor` cell, immediately followed by the argument cells.
@@ -189,7 +189,7 @@ static Cell Dr(Activation e, Cell c) => c.Tag == Tag.Ref ? e.GetHeap(e.Deref(c.A
 
 ### Traversing a term
 
-Walk a list and sum its integers — no allocation, one pass over the live cells:
+Walk a list and sum its integers: no allocation, one pass over the live cells:
 
 ```csharp
 [PrologPredicate("sum_direct/2")]                     // sum_direct(+List, -Sum)
@@ -203,7 +203,7 @@ public static bool SumDirect(Activation e)
         sum += Dr(e, e.GetHeap(pair)).AsInt;          // head, an integer
         c = Dr(e, e.GetHeap(pair + 1));               // advance to tail
     }
-    // c is now [] (proper list) or a var (partial) — check if you need to
+    // c is now [] (proper list) or a var (partial): check if you need to
     return e.UnifyRegisterWithCell(1, Cell.Int(sum)); // bind argument 1
 }
 ```
@@ -214,11 +214,11 @@ public static bool SumDirect(Activation e)
 
 ### Lists of text: use the cursor, not the tag
 
-A list of characters or codes may be stored **packed** — one `Tag.Pstr` header
+A list of characters or codes may be stored **packed**: one `Tag.Pstr` header
 plus 3 UTF-16 code units per cell, instead of the `2n+1` cells a cons list
 costs. It is still a list: it unifies with `[H|T]`, `is_list/1` is true of it,
 and it is `==` to the cons list of the same content (ADR-047). Only the storage
-differs, and at this tier you can see the storage — that is the whole point of
+differs, and at this tier you can see the storage: that is the whole point of
 this tier.
 
 That means a hand-written `while (c.Tag == Tag.Lis)` over text **silently
@@ -255,11 +255,11 @@ public static bool CountLetterA(Activation e)
 Two notes on the loop above:
 
 - **The head's tag depends on the list, not on the storage.** A list of codes
-  yields `Tag.Int`, a list of chars yields `Tag.Atom` — exactly as the cons list
+  yields `Tag.Int`, a list of chars yields `Tag.Atom`: exactly as the cons list
   would. Compare atom **ids** (`AtomTable.Intern("a").Id`, hoisted into a static
   like `AId`), never strings.
-- **Do not assume the tail is `[]`.** A packed list may be *partial* — its tail
-  an unbound variable — which is what makes lazy stream reading possible. The
+- **Do not assume the tail is `[]`.** A packed list may be *partial* (its tail
+  an unbound variable), which is what makes lazy stream reading possible. The
   cursor returns that tail to you as a `Tag.Ref`; treat it as you would a
   partial cons list.
 
@@ -278,7 +278,7 @@ obliged to produce packed text. When you do want the cheaper representation,
 return e.UnifyRegisterWithCell(1, e.GetHeap(e.MakePstr(text)));
 ```
 
-Reading a compound is the same idea — index past the functor cell:
+Reading a compound is the same idea: index past the functor cell:
 
 ```csharp
 [PrologPredicate("rec_id/2")]                         // rec_id(+rec(Id,_,_), -Id)
@@ -292,7 +292,7 @@ public static bool RecId(Activation e)
 ```
 
 Atoms are interned integers: `Dr(e, headCell).AsAtomId` gives you the id, and
-comparing ids is a plain integer compare — no string is materialised. Only call
+comparing ids is a plain integer compare: no string is materialised. Only call
 `AtomTable.GetById(id)?.Name` when you actually need the .NET string (it returns
 the already-interned string; no per-call transcode).
 
@@ -337,11 +337,11 @@ public static bool MakeRec(Activation e)
 }
 ```
 
-**Advantage:** the fastest interop there is — you read and write the engine's own
+**Advantage:** the fastest interop there is; you read and write the engine's own
 memory, so there is nothing to copy and nothing for the GC to collect. In the
 benchmarks (§below) it beats a native engine embedded over P/Invoke by 3–180× on
 list and term work, precisely because the native engine *must* copy where Shumway
-does not. **Disadvantage:** you are writing at the level of the abstract machine —
+does not. **Disadvantage:** you are writing at the level of the abstract machine;
 you must respect the cell layout, deref before inspecting, and get unification
 right; there is no type safety and mistakes corrupt the heap. Reserve it for the
 inner loop, keep the surface (§1–3) for everything else.
@@ -350,8 +350,8 @@ inner loop, keep the surface (§1–3) for everything else.
 
 ## Native C interop
 
-For calling **native C** (not .NET) with whole terms — P/Invoke to a C library
-that manipulates term snapshots — Shumway has a separate materializer/reftype
+For calling **native C** (not .NET) with whole terms (P/Invoke to a C library
+that manipulates term snapshots) Shumway has a separate materializer/reftype
 tier (`:- native`, `:- c`, the `reftype` cursor). That is its own subject; see
 [generic-term-interop.md](generic-term-interop.md) and
 [embedded-native-c.md](embedded-native-c.md).
@@ -362,23 +362,23 @@ tier (`:- native`, `:- c`, the `reftype` cursor). That is its own subject; see
 
 Measured Prolog→C# per crossing, marshalling only (loop/dispatch baseline
 subtracted), against **GNU Prolog embedded in the same C# host via P/Invoke** (a
-native engine — every crossing must marshal). Oracle-verified; representative
+native engine: every crossing must marshal). Oracle-verified; representative
 figures, ns/call.
 
 | Operation | GProlog (P/Invoke) | Shumway convenience (§1) | Shumway zero-copy (§4) |
 |---|---:|---:|---:|
-| integer scalar | ~95 | ~30 | (n/a — scalars don't copy) |
+| integer scalar | ~95 | ~30 | (n/a: scalars don't copy) |
 | int list, read (len 100) | ~700 | ~24000 | **~190** |
 | int list, build (len 100) | ~1400 | ~11500 | **~750** |
 | atom list, read (len 50) | ~3400 | ~12000 | **~20** |
 | atom list, build (len 50) | ~5100 | ~10900 | **~280** |
-| compound, traverse | ~800 | — | **~free** |
-| compound, build | ~680 | — | **~290** |
+| compound, traverse | ~800 | - | **~free** |
+| compound, build | ~680 | - | **~290** |
 
 Two honest readings:
 
 - The **convenience** path (§1–2) is **3–34× slower** than P/Invoke marshalling
-  on composites — the Term-AST intermediate is pure overhead here. It buys
+  on composites: the Term-AST intermediate is pure overhead here. It buys
   ergonomics, not speed. Use it where the crossing is not the bottleneck.
 - The **zero-copy** path (§4) is **3–180× faster** than P/Invoke marshalling, and
   list/term *traversal* is essentially free (just chasing the engine's own
@@ -386,6 +386,6 @@ Two honest readings:
   and the reason to run Prolog in-process.
 
 Scalars are a wash (both cheap; convenience even edges ahead). The takeaway is not
-"Shumway is faster at interop" flatly — it is: **for hot-path term manipulation,
+"Shumway is faster at interop" flatly. It is that, **for hot-path term manipulation,
 touching the engine's cells directly wins decisively; for everything else, the
 convenience API is there and its cost doesn't matter.**

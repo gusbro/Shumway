@@ -97,7 +97,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("string", 1, TypeBuiltins.IsString,
             Types, "string(@Term)",
             "Succeeds if the argument is a non-empty proper list of characters or of codes "
-            + "(there is no string type — see ADR-047).");
+            + "(there is no string type, see ADR-047).");
         // Scryer internal fast-path predicate (library error/iso_ext/crypto/…).
         BuiltinsRegistry.Register("$is_partial_string", 1, TypeBuiltins.IsPartialString);
         BuiltinsRegistry.Register("ground",  1, TypeBuiltins.IsGround,
@@ -171,7 +171,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("open",      4, StreamBuiltins.OpenWithOptions,
             Io, "open(+File, +Mode, -Stream, +Options)",
             "Opens a file with options (alias, type, encoding(utf8|iso_latin_1|ascii), "
-            + "eof_action) — ISO §8.11.5.");
+            + "eof_action). ISO §8.11.5.");
         BuiltinsRegistry.Register("close",     1, StreamBuiltins.Close,
             Io, "close(+Stream)", "Closes an open stream.");
         BuiltinsRegistry.Register("close",     2, StreamBuiltins.Close2,

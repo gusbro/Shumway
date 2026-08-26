@@ -100,7 +100,7 @@ public static partial class MetaBuiltins
     }
 
     /// <summary>GProlog-compatible <c>file_permission(+File, +Permission)</c>:
-    /// succeeds iff File (a file or directory) grants Permission — one of
+    /// succeeds iff File (a file or directory) grants Permission: one of
     /// <c>read</c> / <c>write</c> / <c>execute</c> / <c>search</c>. Windows
     /// has no execute bit, so <c>execute</c> follows the platform convention
     /// (executable extension); <c>search</c> means a traversable directory.

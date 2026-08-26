@@ -1,13 +1,13 @@
 # Native AOT
 
-Shumway can be published as a self-contained **Native AOT** executable —
+Shumway can be published as a self-contained **Native AOT** executable:
 a single native binary with no .NET runtime dependency and no JIT.
 
 ## What runs under AOT
 
 - **Tier-0 (the bytecode interpreter) is AOT-compatible** and runs the
   full engine: the compiler, builtins, the prelude, CLP(FD) and CLP(R).
-- **Tier-1 (IL promotion) is not** — it is runtime code generation
+- **Tier-1 (IL promotion) is not**: it is runtime code generation
   (`System.Reflection.Emit` / Sigil), which Native AOT does not support
   by design. Under AOT the engine cleanly stays on Tier-0:
   - `IlPromotionStore` checks `RuntimeFeature.IsDynamicCodeSupported`
@@ -22,7 +22,7 @@ a single native binary with no .NET runtime dependency and no JIT.
 ## Publishing
 
 The REPL project (`src/Shumway.Repl/`) is the AOT publish target. AOT is
-**opt-in at publish time** — the `.csproj` does not set `<PublishAot>`, so an
+**opt-in at publish time**: the `.csproj` does not set `<PublishAot>`, so an
 ordinary build stays a normal managed binary; pass `-p:PublishAot=true` to
 `dotnet publish` to produce the native `shumway` executable:
 
@@ -30,15 +30,15 @@ ordinary build stays a normal managed binary; pass `-p:PublishAot=true` to
 dotnet publish src/Shumway.Repl/ -r win-x64 -c Release -p:PublishAot=true
 ```
 
-The output is `src/Shumway.Repl/bin/Release/net10.0/win-x64/publish/shumway.exe`
-— a self-contained native binary (~2.5 MB).
+The output is `src/Shumway.Repl/bin/Release/net10.0/win-x64/publish/shumway.exe`:
+a self-contained native binary (~2.5 MB).
 
 ## Windows native-link requirement
 
 Native AOT compiles managed code to native object code (ILC) and then
 **links it with the platform C/C++ linker**. On Windows that linker is
 MSVC `link.exe`, which comes with the **Visual C++ build tools**
-("Desktop development with C++" — either Visual Studio or the standalone
+("Desktop development with C++": either Visual Studio or the standalone
 Build Tools).
 
 The publish locates the C++ toolchain by running `vswhere.exe`. If
@@ -58,7 +58,7 @@ C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe
 Two reliable ways to make the link step succeed:
 
 1. Run `dotnet publish` from a **Developer Command Prompt / Developer
-   PowerShell for VS** — these put the toolchain on `PATH`.
+   PowerShell for VS**: these put the toolchain on `PATH`.
 2. Prepend the VS Installer directory to `PATH` for the publish, e.g. in
    PowerShell:
 
@@ -75,8 +75,8 @@ is used and no equivalent setup is needed.
 
 The VS Code (DAP) debugging endpoint survives an AOT publish: the DAP layer
 is deliberately reflection-free (hand-rolled JSON over
-`JsonDocument`/`Utf8JsonWriter` — see `Debugging/Dap/DapWire.cs`), so an
+`JsonDocument`/`Utf8JsonWriter`: see `Debugging/Dap/DapWire.cs`), so an
 AOT-published binary built from debug-compiled sources still serves
 `--dap` / `SHUMWAY_DAP_PORT`. The Visual Studio (Concord) frontend also
-works — its channel is plain pinned memory — with the usual AOT caveat that
+works (its channel is plain pinned memory) with the usual AOT caveat that
 everything runs Tier-0.

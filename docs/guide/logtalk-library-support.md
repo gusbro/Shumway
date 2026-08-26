@@ -2,7 +2,7 @@
 
 Status of running **Logtalk 3.101.0's bundled libraries** on Shumway, measured
 by executing each library's own lgtunit test suite (`tester.lgt`) on a fresh
-Logtalk-on-Shumway boot — all 242 library testers swept, on a pristine clone
+Logtalk-on-Shumway boot: all 242 library testers swept, on a pristine clone
 of the released tree, with zero patches to it. Logtalk itself boots and runs
 fully on Shumway (see [`logtalk.md`](logtalk.md) for setup); this document is
 about its **library** collection, which in 3.101.x is large and includes
@@ -11,7 +11,7 @@ beyond the classic data-structure set.
 
 ## Headline numbers
 
-- **100% of the structurally supported set: 204 suites, all fully green —
+- **100% of the structurally supported set: 204 suites, all fully green:
   11,417 tests, 0 failures** (plus 124 tests the suites skip themselves on
   any backend).
 - **5 more suites pass sequentially** (+157 tests): the compute-heavy ML
@@ -21,13 +21,13 @@ beyond the classic data-structure set.
 - **3 suites are structurally N/A**: `process` (spawns OS processes), `redis`
   (network sockets), `java` (an in-process JVM). Their testers run under the
   announced dialect and would fail honestly, but they measure the host
-  platform gap, not Prolog conformance — the sweep harness skips them with a
+  platform gap, not Prolog conformance: the sweep harness skips them with a
   distinct marker instead of mis-scoring them.
 - **~22 suites declare themselves not applicable** (the sockets/HTTP service
   stack, `git`/`memcached` needing external binaries, the `iso_*` data
   libraries gated on the `encoding_directive` feature) and a couple remain
   genuinely too slow to score (`isolation_forest_anomaly_detector`,
-  `simulated_annealing` — 30+ minutes even alone).
+  `simulated_annealing`: 30+ minutes even alone).
 
 Highlights among the green suites: **random 216/216**, **types 149/149**,
 **crypto 158/158**, **linear_algebra 72/72**, **ieee_754 77/77** and the whole
@@ -44,7 +44,7 @@ Windows), grammars, meta/meta_compiler, and the classic data structures.
 
 The sweep is also a correctness campaign: every failure was either traced to
 a real engine defect and fixed, or shown to be structural. The engine work it
-produced — none of it Logtalk-specific — includes ADR-045 (text-mode CR-LF
+produced (none of it Logtalk-specific) includes ADR-045 (text-mode CR-LF
 translation; the bug was aborting whole test objects), the `close/1` output
 cursor restore (ISO §8.11.6), `predicate_property/2` reporting
 `meta_predicate(T)` templates (how Logtalk decides to wrap goal arguments for
@@ -69,6 +69,6 @@ shumway $LOGTALKHOME/adapters/shumway.pl $LOGTALKHOME/paths/paths.pl \
 ```
 
 Run suites **sequentially**, or in parallel ONLY with fully ISOLATED tree
-copies (one LOGTALKHOME/LOGTALKUSER per worker) — parallel runs over a
+copies (one LOGTALKHOME/LOGTALKUSER per worker): parallel runs over a
 shared tree collide on the scratch files of shared dependencies (every
 tester compiles lgtunit into its own directory).

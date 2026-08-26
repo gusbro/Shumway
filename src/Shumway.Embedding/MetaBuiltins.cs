@@ -106,7 +106,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$call", 2, CallWithBarrier);
         BuiltinsRegistry.Register("repeat", 0, Repeat,
             Control, "repeat",
-            "Succeeds, and succeeds again on every backtrack — an unbounded choice point.");
+            "Succeeds, and succeeds again on every backtrack: an unbounded choice point.");
 
         // ADR-022 item 1 — the embedded-native-block dispatcher. The native
         // transform rewrites a captured block to `'$native_run'('$nb$…', V1..Vk)`;
@@ -176,7 +176,7 @@ public static partial class MetaBuiltins
             + "names a dynamic predicate, then triggers the same full rebuild as the "
             + "0-arg form. The single buffer holds every dynamic predicate's bytecode "
             + "interleaved, so independent per-predicate reclamation isn't currently "
-            + "feasible without partial-relink support — the API surface is per-predicate "
+            + "feasible without partial-relink support: the API surface is per-predicate "
             + "for forward compatibility.");
         BuiltinsRegistry.Register("retract", 1, Retract,
             Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
@@ -513,8 +513,8 @@ public static partial class MetaBuiltins
             + "and errors are as consult/1.");
         BuiltinsRegistry.Register("use_module", 1, UseModule,
             Database, "use_module(+Spec)",
-            "Loads a library or file. Spec is either library(Name) — where Name "
-            + "is one of the built-in libraries (clpfd, clpr) — or an atom path "
+            "Loads a library or file. Spec is either library(Name), where Name "
+            + "is one of the built-in libraries (clpfd, clpr), or an atom path "
             + "(equivalent to consult/1). use_module(library(clpfd)) enables the "
             + "CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two "
             + "libraries cannot coexist in the same engine.");
@@ -676,7 +676,7 @@ public static partial class MetaBuiltins
             "Stream variant of skip/1.");
         BuiltinsRegistry.Register("tab", 2, Tab2,
             Io, "tab(+Stream, +N)",
-            "Stream variant of tab/1 — writes N spaces to Stream.");
+            "Stream variant of tab/1: writes N spaces to Stream.");
 
         // Arity-Prolog string<->term
         // conversion. In Arity, "string" means atom; these are write-
@@ -685,7 +685,7 @@ public static partial class MetaBuiltins
             Term, "string_term(?Atom, ?Term)",
             "Bidirectional: parses Atom as a Prolog term (binding Term), or "
             + "renders Term using write/1 form (binding Atom). 'string' in "
-            + "Arity-Prolog terminology means atom — the textual representation "
+            + "Arity-Prolog terminology means atom: the textual representation "
             + "is interned as an atom, not stored as a Shumway StringTerm.");
         BuiltinsRegistry.Register("string_termq", 2, StringTermq2,
             Term, "string_termq(?Atom, ?Term)",
@@ -700,7 +700,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("string_search", 4, StringSearch4,
             Term, "string_search(+Case, +SubAtom, +Atom, ?Location)",
             "Arity string_search/4: like string_search/3 with a leading case "
-            + "flag — 0 searches case-sensitively, 1 case-insensitively.");
+            + "flag: 0 searches case-sensitively, 1 case-insensitively.");
 
         // Arity-Prolog file-system operations on
         // top of System.IO. chdir/1 is a 1-arg alias of
@@ -738,7 +738,7 @@ public static partial class MetaBuiltins
             "Succeeds when File exists and is a regular file.");
         BuiltinsRegistry.Register("file_permission", 2, FilePermission2,
             Io, "file_permission(+File, +Permission)",
-            "Succeeds when File (a file or directory) grants Permission — "
+            "Succeeds when File (a file or directory) grants Permission: "
             + "read, write, execute or search. A "
             + "nonexistent path fails; unknown permissions raise "
             + "domain_error(os_file_permission, _).");

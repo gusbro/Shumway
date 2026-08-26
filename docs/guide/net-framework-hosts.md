@@ -1,14 +1,14 @@
 # Shumway on .NET Framework 4.8 (32-bit legacy hosts)
 
-Shumway multi-targets `net10.0;net48`, so a legacy C# application — WinForms,
-WPF, ASP.NET on .NET Framework, 32-bit or 64-bit — can embed the engine
+Shumway multi-targets `net10.0;net48`, so a legacy C# application (WinForms,
+WPF, ASP.NET on .NET Framework, 32-bit or 64-bit) can embed the engine
 without leaving its runtime. The engine core, Tier-1 IL promotion and
 persisted-IL bundles all work on Framework; this page collects what a
 Framework host needs to know. Design rationale: [ADR-043](../architecture/adr/043-net-framework-target.md).
 
 ## Building the net48 flavor
 
-The net48 flavor is **opt-in** — a plain `dotnet build` stays net10-only.
+The net48 flavor is **opt-in**: a plain `dotnet build` stays net10-only.
 Activate it with:
 
 ```bash
@@ -18,7 +18,7 @@ dotnet test tests/Shumway.Tests.Core -f net48 -p:ShumwayNetFx=true -- RunConfigu
 ```
 
 Compiling net48 needs no .NET Framework install and works on Linux/macOS too
-(the SDK compiles against NuGet reference assemblies) — only *running* net48
+(the SDK compiles against NuGet reference assemblies): only *running* net48
 binaries and tests needs Windows.
 
 ## What works, what does not
@@ -38,7 +38,7 @@ binaries and tests needs Windows.
 Persisted IL is emitted against the *linking* runtime's core library:
 
 - Linked by the **net10** toolchain → IL references `System.Private.CoreLib`.
-  Loads on net10; a net48 host **cannot bind it** — it falls back to the
+  Loads on net10; a net48 host **cannot bind it**: it falls back to the
   bundle's bytecode (correct answers, no persisted tier) and warns through
   `PrologEngine.Warnings`.
 - Linked by the **net48** toolchain → IL references `mscorlib`. Binds on
@@ -46,7 +46,7 @@ Persisted IL is emitted against the *linking* runtime's core library:
   compat shims).
 
 Rule of thumb: **if a Framework host is among your targets, link with the
-net48 build of `shumway-link`** — one bundle serves everything. Remember
+net48 build of `shumway-link`**: one bundle serves everything. Remember
 `--no-compress` if a net48 process must also *read* the bundle.
 
 ## `--exe` / `--dll`: Framework apps from the net48 toolchain
@@ -60,13 +60,13 @@ need the .NET SDK on the *build* machine (the generated stub compiles with
   the Shumway engine DLLs, and an `app.exe.config` that already carries the
   binding redirects and `gcAllowVeryLargeObjects`. Ship the folder;
   `--self-contained` is meaningless there (warned and ignored).
-- **`--dll`** produces the factory class library plus the engine DLLs — and a
+- **`--dll`** produces the factory class library plus the engine DLLs, and a
   **`<name>.app.config.sample`** with binding redirects computed from the
   versions actually deployed in that folder. The consumer exe uses it as its
   `App.config`:
   - old-style csproj: copy the sample in as `app.config`, done;
   - SDK-style csproj: also set
-    `<AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>` —
+    `<AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>`:
     the auto-generated redirects only see the references you declared, can
     land *below* the deployed versions, and override the sample's entries.
 
@@ -87,7 +87,7 @@ A Framework host wants two things in its `app.config`:
     <!-- Unify the versions of the compatibility packages Shumway's net48
          build depends on. SDK-style projects generate these automatically
          (AutoGenerateBindingRedirects); old-style csproj consumers need
-         them spelled out. Versions are the ones your restore resolves —
+         them spelled out. Versions are the ones your restore resolves:
          these are typical: -->
     <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
       <dependentAssembly>
@@ -110,7 +110,7 @@ A Framework host wants two things in its `app.config`:
 </configuration>
 ```
 
-Shumway's own assemblies are **unsigned** — Framework resolves them by simple
+Shumway's own assemblies are **unsigned**: Framework resolves them by simple
 name, no redirects needed for them.
 
 ## 32-bit memory expectations
@@ -134,7 +134,7 @@ execution, but the exe is `LARGEADDRESSAWARE` and gets 4 GB on a 64-bit OS.
 The `t_reftype` declaration in
 [generic-term-interop §10](generic-term-interop.md) serves 32-bit builds
 unchanged: MSVC x86 aligns the `int64_t`/`double` members at 8, so the field
-offsets (0/8/16/24) and `sizeof` (32) are identical — `pars` is just a
+offsets (0/8/16/24) and `sizeof` (32) are identical: `pars` is just a
 4-byte pointer at +16. Compile your native library for the **same bitness as
 the host process** and nothing else changes.
 

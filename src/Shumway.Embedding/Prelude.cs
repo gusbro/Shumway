@@ -266,7 +266,7 @@ internal static class Prelude
         %! if(:Condition, :Then, :Else) | Control | Soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
         if(C, T, E) :- ( C *-> T ; E ).
 
-        %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails — unlike (Condition -> Then), which fails.
+        %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails, unlike (Condition -> Then), which fails.
         ifthen(P, Q) :- ( P -> Q ; true ).
 
         %! ifthenelse(:Condition, :Then, :Else) | Control | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails.
@@ -984,7 +984,7 @@ internal static class Prelude
         permutation([], []).
         permutation(L, [X|P]) :- select(X, L, R), permutation(R, P).
 
-        %! memberchk(?Elem, +List) | Lists | Like member/2 but succeeds at most once — no backtracking over further matches.
+        %! memberchk(?Elem, +List) | Lists | Like member/2 but succeeds at most once, with no backtracking over further matches.
         memberchk(X, [Y|T]) :- ( X = Y -> true ; memberchk(X, T) ).
 
         %! nonmember(?Elem, +List) | Lists | True when Elem does not unify with any element of List.
@@ -1075,7 +1075,7 @@ internal static class Prelude
             call(F, X, K),
             map_list_to_pairs(F, Xs, Ps).
 
-        %! can_be(+Type, @Term) | Type checking | Like must_be/2, but an unbound Term (or one whose subterms are yet unbound enough) is still admissible — only a term already incompatible with Type raises.
+        %! can_be(+Type, @Term) | Type checking | Like must_be/2, but an unbound Term (or one whose subterms are yet unbound enough) is still admissible: only a term already incompatible with Type raises.
         can_be(Type, Term) :-
             ( var(Term) -> must_be_type_ok(Type)
             ; must_be(Type, Term)
@@ -1241,7 +1241,7 @@ internal static class Prelude
             min_list(Bs, B),
             sub_atom(Atom, B, _, A, Sep).
 
-        %! char_type(+Char, ?Type) | Atoms & strings | Tests or computes a character's type — alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on. Classification is full Unicode (the '$ctype' tables); digit(W) keeps its decimal ASCII weights.
+        %! char_type(+Char, ?Type) | Atoms & strings | Tests or computes a character's type: alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on. Classification is full Unicode (the '$ctype' tables); digit(W) keeps its decimal ASCII weights.
         char_type(Char, Type) :- char_code(Char, Code), '$char_type'(Type, Code).
 
         '$char_type'(alpha, Code) :-
@@ -1293,10 +1293,10 @@ internal static class Prelude
 
         % ===== control, database & inspection =====
 
-        %! false | Control | Always fails — ISO synonym of fail/0.
+        %! false | Control | Always fails; the ISO synonym of fail/0.
         false :- fail.
 
-        %! once(:Goal) | Control | Succeeds at most once — commits to the first solution of Goal.
+        %! once(:Goal) | Control | Succeeds at most once, committing to the first solution of Goal.
         once(Goal) :- call(Goal), !.
 
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
@@ -1471,7 +1471,7 @@ internal static class Prelude
         %! bb_b_put(+Key, +Value) | Global variables | Backtrackable blackboard assignment: the previous value is restored on backtracking.
         bb_b_put(Key, Value) :- '$bb_wrap'(Value, W), b_setval(Key, W).
 
-        %! consult_text(+Text) | Database | Consults Text (an atom or a chars/codes list) as Prolog source — the in-language form of the embedding API's ConsultString. A module loaded this way keeps its exports scoped (no auto-import into user).
+        %! consult_text(+Text) | Database | Consults Text (an atom or a chars/codes list) as Prolog source: the in-language form of the embedding API's ConsultString. A module loaded this way keeps its exports scoped (no auto-import into user).
         :- public consult_text/1.
         consult_text(Text) :-
             (   var(Text) -> throw(error(instantiation_error, consult_text/1))
@@ -1491,10 +1491,10 @@ internal static class Prelude
             with_output_to(atom(Atom), write_term(Term, Options)),
             atom_chars(Atom, Chars).
 
-        %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038 — an export-qualified module's own version of a builtin-named predicate must win for M:Goal.
+        %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038: an export-qualified module's own version of a builtin-named predicate must win for M:Goal.
         ':'(Module, Goal) :- call(Module:Goal).
 
-        %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []) — succeeds when the DCG Body derives List.
+        %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []): succeeds when the DCG Body derives List.
         phrase(Body, List) :- phrase(Body, List, []).
         %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime.
         % SS7.6.2 for DCG bodies: a number anywhere in the control
@@ -1628,7 +1628,7 @@ internal static class Prelude
                ( retract((Head :- _)), fail ; true )
             ; true ).
 
-        %! listing | Database | Lists the clauses of every user-defined predicate — consulted or asserted, never builtins or library predicates.
+        %! listing | Database | Lists the clauses of every user-defined predicate, consulted or asserted, never builtins or library predicates.
         listing :-
             '$listable_predicates'(All),
             '$listing_all'(All).
@@ -1917,7 +1917,7 @@ internal static class Prelude
             retractall('$wfs_active'),
             member(Goal, U).
 
-        %! well_founded(+Goal, -Status) | Database | The well-founded truth value of a tabled Goal — true, false or undefined.
+        %! well_founded(+Goal, -Status) | Database | The well-founded truth value of a tabled Goal: true, false or undefined.
         well_founded(Goal, Status) :-
             assertz('$wfs_active'),
             '$wfs_solve'(Goal, U, O),

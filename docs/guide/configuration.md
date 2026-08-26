@@ -1,19 +1,19 @@
 # Configuration
 
 Shumway exposes two separate kinds of `SHUMWAY_*` switch, through two different
-mechanisms — don't confuse them:
+mechanisms: don't confuse them:
 
-- **Runtime environment variables** — read by the engine, the REPL, or the
+- **Runtime environment variables**: read by the engine, the REPL, or the
   debugger while running. Set them in the environment before launching; no
   rebuild needed. Most of the list below is this kind.
-- **Build-time constants** — MSBuild properties that define a compile constant
+- **Build-time constants**: MSBuild properties that define a compile constant
   gating `[Conditional]` diagnostic code. A normal build strips those call
   sites entirely, so the corresponding switch does nothing unless you built
   with the property set. These live in `Directory.Build.props` and are listed
   in [Build-time constants](#build-time-constants) at the end.
 
 Everything a Prolog *program* can set at runtime is a `prolog_flag`
-(`set_prolog_flag/2`), not an environment variable — see the
+(`set_prolog_flag/2`), not an environment variable: see the
 [predicate reference](predicates.md). This page is about the host-level knobs.
 
 ## Runtime environment variables
@@ -38,7 +38,7 @@ reproducing or bisecting a GC-interaction bug.
 | Variable | Effect |
 |---|---|
 | `SHUMWAY_GC_THRESHOLD` | Heap size (in cells) that triggers a collection. Overrides the adaptive watermark. |
-| `SHUMWAY_GC_STRESS` | `=1` collects at every safe point — slow, for flushing out GC-safety bugs. |
+| `SHUMWAY_GC_STRESS` | `=1` collects at every safe point: slow, for flushing out GC-safety bugs. |
 | `SHUMWAY_GC_AT`, `SHUMWAY_GC_UPTO` | Fuzz/bisect bounds: collect only within a range of GC opportunities, to bracket the one that corrupts state. |
 
 ### Debugger
@@ -46,14 +46,14 @@ reproducing or bisecting a GC-interaction bug.
 | Variable | Effect |
 |---|---|
 | `SHUMWAY_DAP_PORT` | Default DAP port for a `--debug` executable (loopback `127.0.0.1:N`). Overridden by an explicit `--dap-port`. |
-| `SHUMWAY_DEBUG_LCO` | `on` / `off` — force last-call optimization under the debugger (off makes tail frames visible on the stack at the cost of constant-stack tail recursion). |
-| `SHUMWAY_DEBUG_ACTIVATION` | `attach` — LAZY full debug: under `--debug` the runtime machinery (ports, trail-everything, LCO off) stays off, at near-release Tier-0 speed, until a debugger actually attaches; a detach turns it back off. Unset: the machinery is on from startup, so the whole run's history is available to a debugger whenever it attaches. |
+| `SHUMWAY_DEBUG_LCO` | `on` / `off`: force last-call optimization under the debugger (off makes tail frames visible on the stack at the cost of constant-stack tail recursion). |
+| `SHUMWAY_DEBUG_ACTIVATION` | `attach`: LAZY full debug: under `--debug` the runtime machinery (ports, trail-everything, LCO off) stays off, at near-release Tier-0 speed, until a debugger actually attaches; a detach turns it back off. Unset: the machinery is on from startup, so the whole run's history is available to a debugger whenever it attaches. |
 | `SHUMWAY_EXE`, `SHUMWAY_ARGS` | Used by the Visual Studio debugger extension to locate the `shumway` executable and its launch arguments when not set in the options page or on `PATH`. |
 
 ### Advanced performance toggles
 
 These gate optimizations that are **on and tuned by default**. Flip one only to
-A/B-measure its effect or to work around a suspected codegen bug — the default
+A/B-measure its effect or to work around a suspected codegen bug: the default
 is what ships. Any build honors them.
 
 | Variable | Default | Effect when changed |
@@ -70,7 +70,7 @@ is what ships. Any build honors them.
 
 ### Developer diagnostics
 
-Internal instrumentation for working on the engine — **not a stable interface**;
+Internal instrumentation for working on the engine, **not a stable interface**;
 individual names come and go with the code they instrument. Most only do
 anything in a build made with `-p:ShumwayDiag=true` (their read sites sit inside
 `[Conditional("SHUMWAY_DIAG")]` methods); the rest print developer traces. Set
@@ -99,7 +99,7 @@ Declared in `Directory.Build.props`.
 | Property | Constant | Enables |
 |---|---|---|
 | `ShumwayDiag` | `SHUMWAY_DIAG` | The whole developer-diagnostics family above (the `SHUMWAY_*_DIAG` / dump / survey env-vars become live). |
-| `ShumwayProfile` | `SHUMWAY_PROFILE` | The `Profiler` hooks — opcode histogram, per-predicate/builtin counts and inclusive time, backtrack/unify/choice-point counters. |
+| `ShumwayProfile` | `SHUMWAY_PROFILE` | The `Profiler` hooks: opcode histogram, per-predicate/builtin counts and inclusive time, backtrack/unify/choice-point counters. |
 | `ShumwayRetractTrace` | `SHUMWAY_RETRACT_TRACE` | Trace of dynamic-store retract/assert bookkeeping. |
 | `ShumwayCpTrace` | `SHUMWAY_CP_TRACE` | Choice-point stack dumps (`ChoicePointTrace`). |
 
