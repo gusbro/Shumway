@@ -902,8 +902,13 @@ internal static class Prelude
         % queue is a FIFO buffer backed by dynamic facts — assertz appends,
         % retract removes the oldest match. thread_get_message/2 FAILS on an empty
         % queue (there is no other thread to wait for) rather than blocking.
+        %
+        % NO `%!` DOC LINES HERE, DELIBERATELY. These exist so a program written
+        % for SWI keeps working; they are not part of the surface this engine
+        % offers, and a "Threads" section in the predicate reference would
+        % advertise concurrency it does not have. A program that wants a queue
+        % within one thread is better served by the database directly.
         :- public with_mutex/2.
-        %! with_mutex(+Mutex, :Goal) | Threads | Runs Goal (once). Single-threaded: the mutex is a no-op.
         with_mutex(_Mutex, Goal) :- once(Goal).
         :- public mutex_create/1.
         mutex_create(_).
@@ -919,7 +924,6 @@ internal static class Prelude
         :- dynamic('$mq_msg'/2).
         :- dynamic('$mq_ctr'/1).
         :- public message_queue_create/1.
-        %! message_queue_create(?Queue) | Threads | Creates (or names) a FIFO message queue. Single-threaded buffer.
         message_queue_create(Q) :- ( var(Q) -> '$mq_fresh_id'(Q) ; true ).
         :- public message_queue_create/2.
         message_queue_create(Q, _Options) :- message_queue_create(Q).
@@ -928,12 +932,10 @@ internal static class Prelude
             assertz('$mq_ctr'(N)),
             number_codes(N, Cs), atom_codes(A, Cs), atom_concat('$mq_q_', A, Q).
         :- public thread_send_message/2.
-        %! thread_send_message(+Queue, +Message) | Threads | Appends Message to the queue (FIFO).
         thread_send_message(Q, M) :- assertz('$mq_msg'(Q, M)).
         :- public thread_send_message/3.
         thread_send_message(Q, M, _Opts) :- assertz('$mq_msg'(Q, M)).
         :- public thread_get_message/2.
-        %! thread_get_message(+Queue, ?Message) | Threads | Removes the oldest matching message; FAILS if none (single-threaded, no blocking).
         thread_get_message(Q, M) :- retract('$mq_msg'(Q, M)).
         :- public thread_peek_message/2.
         thread_peek_message(Q, M) :- '$mq_msg'(Q, M), !.
@@ -1350,7 +1352,7 @@ internal static class Prelude
             call(Goal),
             '$attv_new_since'(S, Vars).
 
-        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report: inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers.
+        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report: inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers.
         time(Goal) :-
             '$time_start'(Mark),
             (   call(Goal) *->
@@ -2012,6 +2014,8 @@ internal static class Prelude
         % (put) or checks-absent (get). (Scryer's put_atts/2 / get_atts/2 are the
         % module-implicit forms library(atts) generates per :- attribute; the
         % 3-arg forms are what its goal_expansion lowers a call to.)
+        %! put_atts(+Var, +Module, +Attr) | Attributed variables | SICStus/Scryer style, with the module written out: attaches Attr to Var under Module. Attributes are keyed by functor and arity, so one module can hold several at once and putting dom(5) replaces an earlier dom(_). +Attr and a bare Attr both set; -Attr removes. Available without loading anything; library(atts) adds the module-implicit put_atts/2 it generates from a :- attribute declaration.
+        %! get_atts(+Var, +Module, ?Attr) | Attributed variables | SICStus/Scryer style, with the module written out: reads back what put_atts/3 attached, unifying Attr with the attribute Var carries under Module whose functor and arity match, so get_atts(V, m, dom(D)) reads the dom/1 one. Fails when there is no such attribute; -Attr succeeds when there is none.
         put_atts(V, M, +Attr) :- !, '$put_to_attr_list'(V, M, Attr).
         put_atts(V, M, -Attr) :- !, '$del_from_attr_list'(V, M, Attr).
         put_atts(V, M, Attr)  :- '$put_to_attr_list'(V, M, Attr).

@@ -121,11 +121,12 @@ public static class StandardBuiltins
         // Attributed variables.
         const string Attr = "Attributed variables";
         BuiltinsRegistry.Register("put_attr", 3, AttvarBuiltins.PutAttr,
-            Attr, "put_attr(+Var, +Module, +Value)", "Attaches (or replaces) a module's attribute on a variable.");
+            Attr, "put_attr(+Var, +Module, +Value)", "Attaches (or replaces) a module's attribute on a variable: the SWI form, "
+            + "one value per module.");
         BuiltinsRegistry.Register("$lazy_freeze", 2, AttvarBuiltins.LazyFreeze,
             Attr, "'$lazy_freeze'(-Var, :Goal)", "Internal: delays Goal on Var via the native '$lazy' attribute module.");
         BuiltinsRegistry.Register("get_attr", 3, AttvarBuiltins.GetAttr,
-            Attr, "get_attr(+Var, +Module, -Value)", "Reads a module's attribute from a variable.");
+            Attr, "get_attr(+Var, +Module, -Value)", "Reads a module's attribute from a variable, the value put_attr/3 stored.");
         BuiltinsRegistry.Register("del_attr", 2, AttvarBuiltins.DelAttr,
             Attr, "del_attr(+Var, +Module)", "Removes a module's attribute from a variable.");
         BuiltinsRegistry.Register("$attr_modules", 2, AttvarBuiltins.AttrModules,

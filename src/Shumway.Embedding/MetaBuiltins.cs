@@ -548,7 +548,7 @@ public static partial class MetaBuiltins
             Database, "restore",
             "Destructively resets the user dynamic database to the last "
             + "save/0 snapshot: every user dynamic predicate's clauses are "
-            + "removed (declarations survive - calls fail rather than raise) "
+            + "removed (declarations survive, so calls fail rather than raise) "
             + "and the snapshot's clauses re-installed. Without a prior "
             + "save/0 the snapshot is empty, so restore/0 just clears all "
             + "user dynamics. Static predicates are never touched. Effects "
