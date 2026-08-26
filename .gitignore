@@ -487,6 +487,10 @@ $RECYCLE.BIN/
 # smoke-run artifacts
 vs/smoke/*-trace.txt
 
+# The collected toolchain directory (build/Shumway.Dist) — a build output,
+# the same as bin/ and obj/, but not named bin so nobody mistakes it for one.
+dist/
+
 # Local-only, not part of the repo
 buildall.bat
 buildNetFx.bat
