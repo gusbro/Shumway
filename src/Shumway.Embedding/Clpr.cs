@@ -129,7 +129,38 @@ internal static class Clpr
             clpr_scale_terms(Rest, NegInv, RestForm),
             clpr_var_cons(P, PCons),
             put_attr(P, clpr, dep(lin(C2, RestForm), PCons)),
-            clpr_check([P]).
+            % P's form is written in terms of the variables in RestForm, and
+            % nothing else records that it is. Without the back-link, solving
+            % one of THEM later leaves P determined but unbound: {A+B =:= 10}
+            % and then {B =:= 4} would answer with a residual for A rather
+            % than 6.0.
+            clpr_link(RestForm, P),
+            clpr_check([P]),
+            clpr_dependents([P], [], Affected),
+            clpr_settle(Affected).
+
+        % de(P) reads "P's form mentions me". A back-pointer, not a
+        % constraint: clpr_split steps over it and it projects as nothing.
+        clpr_link([], _).
+        clpr_link([V-_|R], P) :-
+            clpr_var_cons(V, Cons),
+            ( clpr_memq(de(P), Cons) -> true ; clpr_attach([V-0], de(P)) ),
+            clpr_link(R, P).
+
+        % Every variable that depends, transitively, on one of Seed, Seed
+        % included: the set a newly determined value can settle.
+        clpr_dependents([], Seen, Seen).
+        clpr_dependents([V|Vs], Seen, Out) :-
+            ( var(V), \+ clpr_memq(V, Seen) ->
+                clpr_var_cons(V, Cons),
+                clpr_dep_targets(Cons, Ds),
+                append(Ds, Vs, Vs1),
+                clpr_dependents(Vs1, [V|Seen], Out)
+            ; clpr_dependents(Vs, Seen, Out)
+            ).
+        clpr_dep_targets([], []).
+        clpr_dep_targets([de(P)|R], [P|Ps]) :- !, clpr_dep_targets(R, Ps).
+        clpr_dep_targets([_|R], Ps) :- clpr_dep_targets(R, Ps).
 
         clpr_zero(C) :- A is abs(C), A < 0.000000001.
 
@@ -232,6 +263,7 @@ internal static class Clpr
             append(V1, V2, Vars).
         clpr_con_vars(iq(lin(_, Terms), _), Vs) :- !, clpr_term_vars(Terms, Vs).
         clpr_con_vars(dq(lin(_, Terms)), Vs) :- !, clpr_term_vars(Terms, Vs).
+        clpr_con_vars(de(P), [P]) :- !.
         clpr_con_vars(nl(C), Vs) :- clpr_cvars(C, [], Vs).
 
         clpr_memq(X, [Y|_]) :- X == Y, !.
@@ -246,6 +278,7 @@ internal static class Clpr
         clpr_split([], [], [], []).
         clpr_split([iq(L, S)|R], [iq(L, S)|I], D, N) :- !, clpr_split(R, I, D, N).
         clpr_split([dq(L)|R], I, [dq(L)|D], N) :- !, clpr_split(R, I, D, N).
+        clpr_split([de(_)|R], I, D, N) :- !, clpr_split(R, I, D, N).
         clpr_split([nl(C)|R], I, D, [nl(C)|N]) :- clpr_split(R, I, D, N).
 
         clpr_reexpand_iqs([], []).
@@ -307,6 +340,15 @@ internal static class Clpr
             clpr_cons_vars(Ineqs, Raw),
             clpr_dedup(Raw, Vars),
             clpr_fm(Vars, Ineqs).
+
+        % The same elimination, kept rather than decided: what remains after
+        % dropping these variables is the projection onto the others.
+        clpr_fm_project([], Ineqs, Ineqs).
+        clpr_fm_project([V|Vs], Ineqs, Out) :-
+            clpr_partition(Ineqs, V, Pos, Neg, Zero),
+            clpr_combine_all(Pos, Neg, V, Comb),
+            append(Comb, Zero, Next),
+            clpr_fm_project(Vs, Next, Out).
 
         clpr_fm([], Ineqs) :- !, clpr_fm_ground(Ineqs).
         clpr_fm([V|Vs], Ineqs) :-
@@ -407,6 +449,97 @@ internal static class Clpr
             clpr_norm(Value, VLF),
             clpr_sub(FLF, VLF, D),
             clpr_solve(D).
+
+        % ===== asking the store questions (SWI / SICStus surface) =====
+
+        %! entailed(+Constraint) | CLP(R) | True when the store already implies Constraint, without adding it. Asks whether the negation is unsatisfiable, so the store is left exactly as it was.
+        :- public entailed/1.
+        entailed((A, B)) :- !, entailed(A), entailed(B).
+        entailed(C) :-
+            clpr_negate(C, N),
+            \+ '{}'(N).
+
+        clpr_negate(A =:= B, A =\= B) :- !.
+        clpr_negate(A =\= B, A =:= B) :- !.
+        clpr_negate(A  <  B, A >= B) :- !.
+        clpr_negate(A  >  B, A =< B) :- !.
+        clpr_negate(A =<  B, A  > B) :- !.
+        clpr_negate(A >=  B, A  < B) :- !.
+        clpr_negate(A  =  B, A =\= B) :- !.
+        clpr_negate(C, _) :- throw(error(type_error(clpr_constraint, C), _)).
+
+        %! inf(+Expr, -Inf) | CLP(R) | The infimum of Expr under the current store: the greatest lower bound the constraints imply. Fails when Expr is unbounded below.
+        :- public inf/2.
+        inf(Expr, Inf) :- clpr_optimum(Expr, min, Inf).
+
+        %! sup(+Expr, -Sup) | CLP(R) | The supremum of Expr under the current store: the least upper bound the constraints imply. Fails when Expr is unbounded above.
+        :- public sup/2.
+        sup(Expr, Sup) :- clpr_optimum(Expr, max, Sup).
+
+        %! minimize(+Expr) | CLP(R) | Pins Expr to its infimum, adding that equation to the store. Fails when Expr is unbounded below.
+        :- public minimize/1.
+        minimize(Expr) :- inf(Expr, I), '{}'(Expr =:= I).
+
+        %! maximize(+Expr) | CLP(R) | Pins Expr to its supremum, adding that equation to the store. Fails when Expr is unbounded above.
+        :- public maximize/1.
+        maximize(Expr) :- sup(Expr, S), '{}'(Expr =:= S).
+
+        % Optimising a linear objective with the machinery already here:
+        % introduce Z =:= Expr as two inequalities, eliminate every OTHER
+        % variable by Fourier-Motzkin, and read the bounds off what is left,
+        % which mentions Z alone. Equalities need no special handling: the
+        % expansion below substitutes each dependent variable's form first.
+        clpr_optimum(Expr, Dir, Value) :-
+            clpr_norm(Expr, ELF0),
+            clpr_expand(ELF0, lin(EC, ETerms)),
+            ( ETerms == [] -> Value = EC          % already a number
+            ; clpr_term_vars(ETerms, EVars),
+              clpr_gather(EVars, [], [], Raw),
+              clpr_dedup(Raw, Cons),
+              clpr_split(Cons, Iqs, _, _),
+              clpr_reexpand_iqs(Iqs, EIqs),
+              % Z - Expr >= 0 and Expr - Z >= 0, i.e. Z =:= Expr.
+              clpr_sub(lin(0, [Z-1]), lin(EC, ETerms), Up),
+              clpr_sub(lin(EC, ETerms), lin(0, [Z-1]), Down),
+              All = [iq(Up, 0), iq(Down, 0)|EIqs],
+              clpr_cons_vars(All, RawVars),
+              clpr_dedup(RawVars, AllVars),
+              clpr_del(AllVars, Z, ElimVars),
+              % clpr_fm/2 DECIDES; this keeps what the elimination leaves.
+              clpr_fm_project(ElimVars, All, Left),
+              clpr_zbounds(Left, Z, none, none, Lo, Hi),
+              ( Dir == min -> Lo = bound(Value) ; Hi = bound(Value) )
+            ).
+
+        % After the elimination every inequality is C + A*Z >= 0 (or > 0):
+        % a positive A is a lower bound on Z, a negative one an upper bound.
+        % The forms here are already expanded (the objective was, and the
+        % inequalities were re-expanded before the elimination). Expanding
+        % again would call clpr_norm on Z and ATTACH an attribute to it: a
+        % constraint-store entry on a variable that dies with this call.
+        clpr_zbounds([], _, Lo, Hi, Lo, Hi).
+        clpr_zbounds([iq(lin(C, Terms), _)|R], Z, Lo0, Hi0, Lo, Hi) :-
+            clpr_coeff(Terms, Z, A),
+            ( A > 0.000000001 ->
+                B is -C / A, clpr_tighter(Lo0, B, max, Lo1), Hi1 = Hi0
+            ; A < -0.000000001 ->
+                B is -C / A, clpr_tighter(Hi0, B, min, Hi1), Lo1 = Lo0
+            ; Lo1 = Lo0, Hi1 = Hi0
+            ),
+            clpr_zbounds(R, Z, Lo1, Hi1, Lo, Hi).
+
+        clpr_tighter(none, B, _, bound(B)).
+        clpr_tighter(bound(Old), B, Dir, bound(New)) :-
+            ( Dir == max -> ( B > Old -> New = B ; New = Old )
+            ; ( B < Old -> New = B ; New = Old )
+            ).
+
+        %! dump(+Vars, +Names, -Constraints) | CLP(R) | The residual constraints on Vars, written over Names instead of the variables themselves. The store is not changed: this reports it.
+        :- public dump/3.
+        dump(Vars, Names, Constraints) :-
+            copy_term(Vars, Copy, Goals),
+            Copy = Names,
+            Constraints = Goals.
 
         % ===== constraint projection =====
         % copy_term/3 collects, for every constrained variable of the

@@ -556,4 +556,10 @@ Load with `:- use_module(library(clpr)).` (embedding: `engine.UseClpr()`).
 
 | Predicate | Description |
 | --- | --- |
+| `dump(+Vars, +Names, -Constraints)` | The residual constraints on Vars, written over Names instead of the variables themselves. The store is not changed: this reports it. |
+| `entailed(+Constraint)` | True when the store already implies Constraint, without adding it. Asks whether the negation is unsatisfiable, so the store is left exactly as it was. |
+| `inf(+Expr, -Inf)` | The infimum of Expr under the current store: the greatest lower bound the constraints imply. Fails when Expr is unbounded below. |
+| `maximize(+Expr)` | Pins Expr to its supremum, adding that equation to the store. Fails when Expr is unbounded above. |
+| `minimize(+Expr)` | Pins Expr to its infimum, adding that equation to the store. Fails when Expr is unbounded below. |
+| `sup(+Expr, -Sup)` | The supremum of Expr under the current store: the least upper bound the constraints imply. Fails when Expr is unbounded above. |
 | `{}(+Constraints)` | Posts equality, inequality, disequality and (delayed) non-linear constraints over the reals. |

@@ -11,6 +11,8 @@
 %       triangle(A, 90, 60).             now it is not
 %       {X + Y =:= 10, X - Y =:= 2}.     a system, solved
 %       {X + Y =:= 10}.                  one equation: the answer IS it
+%       mortgage(100000, 0.01, 12, 0, Pay).      what does it cost a month?
+%       mortgage(P, 0.01, 12, 0, 8884.88).       what can I afford?
 
 :- use_module(library(clpr)).
 
@@ -37,8 +39,19 @@ triangle(A, B, C) :-
     {B > 0},
     {C > 0}.
 
-% Note for the curious: this solver propagates when an equation is posted.
-% Adding {A + B =:= 10} and later pinning {A =:= 6} keeps the store sound
-% (asking for B =:= 5 correctly fails) but leaves B as a residual rather
-% than binding it to 4. Post what you know before what you are solving for,
-% or post it all at once, and you get numbers.
+% The classic. A loan of P repaid over T periods at rate I per period,
+% leaving balance B, paying Pay each time. Every step posts one equation, so
+% the whole schedule is a single linear system: ask for the payment, or ask
+% what principal a payment you can afford buys. Same program, no flag.
+%
+% Note what is NOT in the store: the period counter. Money is real and
+% belongs there; counting down is ordinary integer arithmetic. Putting
+% `T1 is T - 1` inside {} would make T1 a float, and a float never matches
+% the integer 0 in the base clause.
+mortgage(P, _, 0, B, _) :-
+    {B =:= P}.
+mortgage(P, I, T, B, Pay) :-
+    T > 0,
+    T1 is T - 1,
+    {P1 =:= P * (1 + I) - Pay},
+    mortgage(P1, I, T1, B, Pay).

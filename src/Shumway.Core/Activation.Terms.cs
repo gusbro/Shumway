@@ -850,9 +850,17 @@ public sealed partial class Activation
                 // module entirely when it was absent before (-1).
                 {
                     var (home, mod, oldValue) = _attrTrailLog[entry.HeapIdx];
-                    var record = _attrTable[home];
-                    if (oldValue < 0) record.Remove(mod);
-                    else record[mod] = oldValue;
+                    // The record may be GONE: DropDeadAttrRecord removes it
+                    // once the cell at home is no longer a live attributed
+                    // variable, which is exactly when restoring an attribute
+                    // value for it would mean nothing. Indexing regardless
+                    // threw KeyNotFoundException out of the engine, where a
+                    // Prolog program could reach it.
+                    if (_attrTable.TryGetValue(home, out var record))
+                    {
+                        if (oldValue < 0) record.Remove(mod);
+                        else record[mod] = oldValue;
+                    }
                     // truncate the side log. entry.HeapIdx is the
                     // log index assigned at append time (TrailAttrChange),
                     // and extra-trail entries unwind strictly in reverse
