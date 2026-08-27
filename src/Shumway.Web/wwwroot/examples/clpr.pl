@@ -1,6 +1,6 @@
-% Constraints over the REALS: linear relationships you can run in any
+% Constraints over the reals: linear relationships you can run in any
 % direction. Where CLP(FD) narrows integers to a finite domain, CLP(R) solves
-% and KEEPS linear equations, so an answer can be a relationship rather than
+% and keeps linear equations, so an answer can be a relationship rather than
 % a number.
 %
 % Try:  celsius_fahrenheit(100, F).
@@ -10,7 +10,7 @@
 %       triangle(A, B, C).               angles: still under-determined
 %       triangle(A, 90, 60).             now it is not
 %       {X + Y =:= 10, X - Y =:= 2}.     a system, solved
-%       {X + Y =:= 10}.                  one equation: the answer IS it
+%       {X + Y =:= 10}.                  one equation: the answer is it
 %       mortgage(100000, 0.01, 12, 0, Pay).      what does it cost a month?
 %       mortgage(P, 0.01, 12, 0, 8884.88).       what can I afford?
 
@@ -44,7 +44,7 @@ triangle(A, B, C) :-
 % the whole schedule is a single linear system: ask for the payment, or ask
 % what principal a payment you can afford buys. Same program, no flag.
 %
-% Note what is NOT in the store: the period counter. Money is real and
+% Note what is not in the store: the period counter. Money is real and
 % belongs there; counting down is ordinary integer arithmetic. Putting
 % `T1 is T - 1` inside {} would make T1 a float, and a float never matches
 % the integer 0 in the base clause.

@@ -1,4 +1,4 @@
-% Goals that WAIT. A coroutined goal is posted now and runs later, when the
+% Goals that wait. A coroutined goal is posted now and runs later, when the
 % variable it is watching becomes bound. It is how you say "this must hold"
 % before you know enough to check it.
 %
@@ -8,6 +8,8 @@
 %       positive(N), N = 5.
 %       positive(N), N = -5.                the check fires on binding
 %       freeze(X, format("X became ~w~n", [X])), X = hello.
+%       at_most(2, L), L = [_,_].        a length limit, elements unbound
+%       at_most(2, L), L = [a|T], T = [b,c].     one too many
 %       dif(A, B).                          an answer that is a constraint
 
 :- use_module(library(coroutining)).
@@ -18,24 +20,31 @@
 distinct(X, Y) :-
     dif(X, Y).
 
-% freeze/2 delays a goal on ONE variable. Nothing runs until D is bound, and
+% freeze/2 delays a goal on a single variable. Nothing runs until D is bound,
 % then the guard runs before the division does, so the error is impossible
 % rather than caught.
 safe_divide(N, D, R) :-
     freeze(D, D =\= 0),
     freeze(D, R is N / D).
 
-% when/2 waits for a CONDITION rather than a single variable: ground(N),
+% when/2 waits for a condition rather than a single variable: ground(N),
 % nonvar(N), ?=(X, Y) (their equality is decided either way), and the
 % conjunctions and disjunctions of those.
 positive(N) :-
     when(ground(N), N > 0).
 
-% A use worth knowing: a length that constrains rather than generates. Post
-% it against a partial list and it holds as the list grows, instead of
-% enumerating lengths the way length/2 alone would.
+% A length limit that constrains rather than generates. What decides a list's
+% length is its spine, so that is what this watches: freeze/2 wakes on each
+% cons cell as the list grows, and the limit holds for a partial list as well
+% as for one whose elements are never bound.
 at_most(N, List) :-
-    when(ground(List), (length(List, L), L =< N)).
+    N >= 0,
+    freeze(List, at_most_cell(List, N)).
+at_most_cell([], _).
+at_most_cell([_|T], N) :-
+    N > 0,
+    N1 is N - 1,
+    at_most(N1, T).
 
 % Producer and consumer in one query. The consumer is posted first and waits;
 % the producer fills the list; each element wakes its own goal as it arrives.
