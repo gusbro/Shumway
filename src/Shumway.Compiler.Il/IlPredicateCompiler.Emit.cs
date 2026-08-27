@@ -861,6 +861,31 @@ public sealed partial class IlPredicateCompiler
 
                     var target = emit.DeclareLocal<int>($"metaCallTarget_pc{pc}{lt}");
 
+                    // A backtrackable builtin reached THROUGH this meta-call
+                    // captures BuiltinReturnPc for its resume, exactly as one
+                    // at a direct call_builtin site does. Without it the
+                    // builtin keeps whatever the PREVIOUS builtin call left
+                    // there, and its first retry re-enters somewhere that was
+                    // never its continuation. Tier-0's meta-call arm sets it
+                    // for the same reason (BytecodeInterpreter, the IsCall
+                    // branch); Tier-1 did not, so `call(append(_, _, L))` came
+                    // back wrong the moment the caller was promoted.
+                    //
+                    // A tail site takes the CALLER's continuation instead: Cp
+                    // is already the outer caller's there, and re-entering
+                    // this method's own cursor after a tail call would loop.
+                    emit.LoadArgument(0);
+                    if (tailCall)
+                    {
+                        emit.LoadArgument(0);
+                        emit.Call(EngineCpGetter);
+                    }
+                    else
+                    {
+                        EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
+                    }
+                    emit.Call(EngineBuiltinReturnPcSetter);
+
                     // Compute the call arity and cut barrier per builtin.
                     //   call/N : arity = N, barrier = engine.B
                     //   $call/2: arity = 1, barrier = X[1].AsInt
