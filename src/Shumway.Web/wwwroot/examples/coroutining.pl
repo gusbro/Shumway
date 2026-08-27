@@ -8,6 +8,9 @@
 %       positive(N), N = 5.
 %       positive(N), N = -5.                the check fires on binding
 %       freeze(X, format("X became ~w~n", [X])), X = hello.
+%       verdict(A, B), A = f(1), B = f(1).
+%       verdict(A, B), A = f(1), B = g(1).  decided the moment it cannot be
+%       verdict(A, B), A = f(_), B = f(_).  still open: nothing is claimed
 %       dif(A, B).                          an answer that is a constraint
 
 :- use_module(library(coroutining)).
@@ -30,6 +33,19 @@ safe_divide(N, D, R) :-
 % conjunctions and disjunctions of those.
 positive(N) :-
     when(ground(N), N > 0).
+
+% The other thing when/2 can wait for is a DECISION rather than a value.
+% ?=(X, Y) holds as soon as the two are known to be equal or known never to
+% unify, whichever comes first — so this reports the verdict without ever
+% guessing at it, and stays silent while the answer is genuinely still open.
+verdict(X, Y) :-
+    when(?=(X, Y), say_verdict(X, Y)).
+
+say_verdict(X, Y) :-
+    (   X == Y
+    ->  format("~w and ~w are the same~n", [X, Y])
+    ;   format("~w and ~w can never be~n", [X, Y])
+    ).
 
 % Producer and consumer in one query. The consumer is posted first and waits;
 % the producer fills the list; each element wakes its own goal as it arrives.

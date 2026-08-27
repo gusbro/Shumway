@@ -426,4 +426,67 @@ public class CoroutiningTests
             () => e.Query("when(silly(X), true)."));
         Assert.Contains("domain_error", ex.Message);
     }
+
+    // ===== when/2 and ?=, across an ALIASING =====
+    // Binding one variable to another is not what releases a frozen goal, so
+    // a condition over two variables needed its own look at the moment they
+    // became one.
+
+    [Fact]
+    public void WhenDecidedFiresWhenTwoVariablesAreAliased()
+    {
+        var e = Co();
+        e.ConsultString("""
+            :- dynamic ran/1.
+            probe(X, Y) :- when(?=(X, Y), assertz(ran(decided))).
+            """);
+        Assert.True(e.Query("probe(X, Y), X = Y, ran(decided).").Success);
+    }
+
+    [Fact]
+    public void WhenDecidedStillFiresOnValuesEitherWay()
+    {
+        var e = Co();
+        e.ConsultString("""
+            :- dynamic ran/1.
+            probe(X, Y) :- when(?=(X, Y), assertz(ran(decided))).
+            """);
+        // Equal, and unequal: both are decided.
+        Assert.True(e.Query("probe(X, Y), X = a, Y = a, ran(decided).").Success);
+        Assert.True(e.Query("probe(P, Q), P = a, Q = b, ran(decided).").Success);
+    }
+
+    [Fact]
+    public void WhenDecidedStaysQuietWhileTheAnswerIsOpen()
+    {
+        // f(_) against f(_) unifies but is not identical: still genuinely
+        // undecided, and claiming either way would be a guess.
+        var e = Co();
+        e.ConsultString("""
+            :- dynamic ran/1.
+            probe(X, Y) :- when(?=(X, Y), assertz(ran(decided))).
+            """);
+        Assert.False(e.Query("probe(X, Y), X = f(_), Y = f(_), ran(decided).").Success);
+    }
+
+    [Fact]
+    public void AnAliasingDoesNotDuplicateTheResidual()
+    {
+        // The constraint watches both variables, so it is in both goal lists;
+        // merging them on an aliasing used to leave the survivor carrying it
+        // twice, and the top level printed it once per copy.
+        var e = Co();
+        var sol = e.Query("when(?=(X, Y), true), X = f(_), Y = f(_), "
+                          + "copy_term(X, _, Attrs), length(Attrs, N), N =:= 1.");
+        Assert.True(sol.Success);
+    }
+
+    [Fact]
+    public void AliasingStillFailsAnImpossibleDif()
+    {
+        // The alias check earns its keep for dif/2 as well: the merge must not
+        // lose the suspension that has to fail right now.
+        Assert.False(Co().Query("dif(A, B), A = B.").Success);
+        Assert.True(Co().Query("dif(A, B), A = 1, B = 2.").Success);
+    }
 }
