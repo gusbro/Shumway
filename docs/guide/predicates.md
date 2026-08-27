@@ -556,6 +556,8 @@ Load with `:- use_module(library(clpr)).` (embedding: `engine.UseClpr()`).
 
 | Predicate | Description |
 | --- | --- |
+| `bb_inf(+Ints, +Expr, -Inf)` | The infimum of Expr with the variables in Ints restricted to integers: branch and bound over the linear relaxation. Requires those variables to be bounded, as the search has nothing to close otherwise. |
+| `bb_inf(+Ints, +Expr, -Inf, -Vertex)` | As bb_inf/3, and Vertex comes back as the values the Ints take where that infimum is reached. |
 | `dump(+Vars, +Names, -Constraints)` | The residual constraints on Vars, written over Names instead of the variables themselves. The store is not changed: this reports it. |
 | `entailed(+Constraint)` | True when the store already implies Constraint, without adding it. Asks whether the negation is unsatisfiable, so the store is left exactly as it was. |
 | `inf(+Expr, -Inf)` | The infimum of Expr under the current store: the greatest lower bound the constraints imply. Fails when Expr is unbounded below. |

@@ -484,55 +484,114 @@ internal static class Clpr
         :- public maximize/1.
         maximize(Expr) :- sup(Expr, S), '{}'(Expr =:= S).
 
-        % Optimising a linear objective with the machinery already here:
-        % introduce Z =:= Expr as two inequalities, eliminate every OTHER
-        % variable by Fourier-Motzkin, and read the bounds off what is left,
-        % which mentions Z alone. Equalities need no special handling: the
-        % expansion below substitutes each dependent variable's form first.
+        % Optimising a linear objective: hand the component's inequalities and
+        % the objective to the simplex, which answers with the bound AND a
+        % point that attains it. Equalities need no special handling — the
+        % expansion below substitutes each dependent variable's form first, so
+        % what the solver sees is the system over the free variables.
+        %
+        % It replaced a Fourier-Motzkin projection: FM decides satisfiability
+        % well but each eliminated variable can square the number of
+        % inequalities, and it yields bounds only. The vertex is what
+        % bb_inf/3 needs.
         clpr_optimum(Expr, Dir, Value) :-
+            clpr_optimum(Expr, Dir, Value, _, _).
+
+        % Vars/Vertex report the point: bb_inf/3 branches on it.
+        clpr_optimum(Expr, Dir, Value, Vars, Vertex) :-
             clpr_norm(Expr, ELF0),
             clpr_expand(ELF0, lin(EC, ETerms)),
-            ( ETerms == [] -> Value = EC          % already a number
+            ( ETerms == [] -> Value = EC, Vars = [], Vertex = []
             ; clpr_term_vars(ETerms, EVars),
               clpr_gather(EVars, [], [], Raw),
               clpr_dedup(Raw, Cons),
               clpr_split(Cons, Iqs, _, _),
               clpr_reexpand_iqs(Iqs, EIqs),
-              % Z - Expr >= 0 and Expr - Z >= 0, i.e. Z =:= Expr.
-              clpr_sub(lin(0, [Z-1]), lin(EC, ETerms), Up),
-              clpr_sub(lin(EC, ETerms), lin(0, [Z-1]), Down),
-              All = [iq(Up, 0), iq(Down, 0)|EIqs],
-              clpr_cons_vars(All, RawVars),
-              clpr_dedup(RawVars, AllVars),
-              clpr_del(AllVars, Z, ElimVars),
-              % clpr_fm/2 DECIDES; this keeps what the elimination leaves.
-              clpr_fm_project(ElimVars, All, Left),
-              clpr_zbounds(Left, Z, none, none, Lo, Hi),
-              ( Dir == min -> Lo = bound(Value) ; Hi = bound(Value) )
+              clpr_cons_vars([iq(lin(EC, ETerms), 0)|EIqs], RawVars),
+              clpr_dedup(RawVars, Vars),
+              length(Vars, N),
+              clpr_lp_rows(EIqs, Vars, N, Rows),
+              clpr_lp_row(lin(EC, ETerms), Vars, N, Obj),
+              ( Dir == max -> Max = true ; Max = false ),
+              '$lp_optimise'(N, Rows, Obj, Max, Status, Value0, Vertex),
+              Status == optimal,
+              Value = Value0
             ).
 
-        % After the elimination every inequality is C + A*Z >= 0 (or > 0):
-        % a positive A is a lower bound on Z, a negative one an upper bound.
-        % The forms here are already expanded (the objective was, and the
-        % inequalities were re-expanded before the elimination). Expanding
-        % again would call clpr_norm on Z and ATTACH an attribute to it: a
-        % constraint-store entry on a variable that dies with this call.
-        clpr_zbounds([], _, Lo, Hi, Lo, Hi).
-        clpr_zbounds([iq(lin(C, Terms), _)|R], Z, Lo0, Hi0, Lo, Hi) :-
-            clpr_coeff(Terms, Z, A),
-            ( A > 0.000000001 ->
-                B is -C / A, clpr_tighter(Lo0, B, max, Lo1), Hi1 = Hi0
-            ; A < -0.000000001 ->
-                B is -C / A, clpr_tighter(Hi0, B, min, Hi1), Lo1 = Lo0
-            ; Lo1 = Lo0, Hi1 = Hi0
-            ),
-            clpr_zbounds(R, Z, Lo1, Hi1, Lo, Hi).
+        % One flat row per inequality: the coefficient of each variable in
+        % order, then the constant. `a·x + c >= 0` is the shape both the store
+        % and the solver use, so nothing is transposed on the way.
+        clpr_lp_rows([], _, _, []).
+        clpr_lp_rows([iq(Lin, _)|R], Vars, N, Out) :-
+            clpr_lp_row(Lin, Vars, N, Row),
+            clpr_lp_rows(R, Vars, N, Rest),
+            append(Row, Rest, Out).
 
-        clpr_tighter(none, B, _, bound(B)).
-        clpr_tighter(bound(Old), B, Dir, bound(New)) :-
-            ( Dir == max -> ( B > Old -> New = B ; New = Old )
-            ; ( B < Old -> New = B ; New = Old )
+        clpr_lp_row(lin(C, Terms), Vars, _, Row) :-
+            clpr_lp_coeffs(Vars, Terms, Cs),
+            append(Cs, [C], Row).
+        clpr_lp_coeffs([], _, []).
+        clpr_lp_coeffs([V|Vs], Terms, [C|Cs]) :-
+            clpr_coeff(Terms, V, C),
+            clpr_lp_coeffs(Vs, Terms, Cs).
+
+        %! bb_inf(+Ints, +Expr, -Inf) | CLP(R) | The infimum of Expr with the variables in Ints restricted to integers: branch and bound over the linear relaxation. Requires those variables to be bounded, as the search has nothing to close otherwise.
+        :- public bb_inf/3.
+        bb_inf(Ints, Expr, Inf) :- bb_inf(Ints, Expr, Inf, _).
+
+        %! bb_inf(+Ints, +Expr, -Inf, -Vertex) | CLP(R) | As bb_inf/3, and Vertex comes back as the values the Ints take where that infimum is reached.
+        :- public bb_inf/4.
+        bb_inf(Ints, Expr, Inf, Vertex) :- bb_min(Ints, Expr, Inf, Vertex).
+
+        % Solve the relaxation; if an integer variable came out fractional,
+        % split the search there and keep the better half. Branching POSTS a
+        % constraint, so each half runs inside findall/3: the bound comes back
+        % as a number and the store is left as it was.
+        bb_min(Ints, Expr, Inf, Vertex) :-
+            clpr_optimum(Expr, min, V, Vars, Point),
+            ( bb_fractional(Ints, Vars, Point, X, Val) ->
+                F is floor(Val), C is ceiling(Val),
+                bb_half(Ints, Expr, X =< F, Lo),
+                bb_half(Ints, Expr, X >= C, Hi),
+                bb_better(Lo, Hi, Inf, Vertex)
+            ; Inf = V, bb_values(Ints, Vars, Point, Vertex)
             ).
+
+        bb_half(Ints, Expr, Constraint, Result) :-
+            findall(I-Vx, ( '{}'(Constraint), bb_min(Ints, Expr, I, Vx) ), Found),
+            ( Found = [R|_] -> Result = some(R) ; Result = none ).
+
+        bb_better(none, none, _, _) :- !, fail.
+        bb_better(some(I-Vx), none, I, Vx) :- !.
+        bb_better(none, some(I-Vx), I, Vx) :- !.
+        bb_better(some(A-Va), some(B-Vb), I, Vx) :-
+            ( A =< B -> I = A, Vx = Va ; I = B, Vx = Vb ).
+
+        % The first integer variable whose value at the vertex is not one.
+        bb_fractional([X|Xs], Vars, Point, Var, Val) :-
+            ( bb_value(X, Vars, Point, V), \+ bb_integral(V) -> Var = X, Val = V
+            ; bb_fractional(Xs, Vars, Point, Var, Val)
+            ).
+        bb_integral(V) :- R is round(V), D is abs(V - R), D < 0.000001.
+
+        % A variable's value at the vertex. It may be one of the solver's free
+        % variables, or a dependent one, in which case its form is evaluated
+        % over them.
+        bb_values([], _, _, []).
+        bb_values([X|Xs], Vars, Point, [V|Vs]) :-
+            bb_value(X, Vars, Point, V),
+            bb_values(Xs, Vars, Point, Vs).
+        bb_value(X, Vars, Point, Val) :-
+            clpr_norm(X, LF0),
+            clpr_expand(LF0, lin(C, Terms)),
+            bb_eval(Terms, Vars, Point, C, Val).
+        bb_eval([], _, _, Acc, Acc).
+        bb_eval([V-Coeff|R], Vars, Point, Acc, Val) :-
+            bb_at(V, Vars, Point, Xv),
+            Acc1 is Acc + Coeff * Xv,
+            bb_eval(R, Vars, Point, Acc1, Val).
+        bb_at(V, [W|_], [X|_], X) :- V == W, !.
+        bb_at(V, [_|Ws], [_|Xs], X) :- bb_at(V, Ws, Xs, X).
 
         %! dump(+Vars, +Names, -Constraints) | CLP(R) | The residual constraints on Vars, written over Names instead of the variables themselves. The store is not changed: this reports it.
         :- public dump/3.
