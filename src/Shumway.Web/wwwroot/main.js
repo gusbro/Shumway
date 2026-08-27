@@ -1328,6 +1328,9 @@ if (restoredLibs > 0) emit(`% ${restoredLibs} library(ies) restored\n`, 'note');
 // old once-ever flag respected deletion forever — which also meant an updated
 // example could never reach an existing profile.)
 if (!(await workspace.names()).includes('examples')) await workspace.seedExamples();
+// An example added since this profile was created still arrives: seeding only
+// the files it lacks leaves anything edited here untouched.
+else await workspace.seedExamples(true);
 const known = await workspace.names();
 await workspace.setActive(known.includes(config.workspace) ? config.workspace : 'scratch');
 await refreshWorkspaces();

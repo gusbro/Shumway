@@ -252,11 +252,17 @@ export const EXAMPLES_WORKSPACE = 'examples';
  * fresh, current copy is asked for. (It was once-ever, "respecting" deletion —
  * which also meant an updated example could never reach an existing profile,
  * and deleting it left you with no way back.)
+ *
+ * With onlyMissing, it adds the examples this profile has never seen and
+ * leaves the rest alone: a NEW example reaches an existing profile without
+ * overwriting a file someone edited.
  */
-export async function seedExamples() {
+export async function seedExamples(onlyMissing = false) {
   const was = active();
   await setActive(EXAMPLES_WORKSPACE);
+  const present = onlyMissing ? new Set(await list()) : new Set();
   for (const name of EXAMPLE_FILES) {
+    if (present.has(name)) continue;
     try {
       const source = await (await fetch('examples/' + name)).text();
       await write(name, source);
