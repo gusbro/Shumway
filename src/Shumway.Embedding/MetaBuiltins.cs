@@ -159,7 +159,7 @@ public static partial class MetaBuiltins
         // chain GC for retracted clauses (ADR-015 follow-up).
         BuiltinsRegistry.Register("garbage_collect_clauses", 0, GarbageCollectClauses0,
             Database, "garbage_collect_clauses",
-            "Re-threads every dynamic predicate's chain to skip retracted clauses (ADR-015).");
+            "Re-threads every dynamic predicate's chain to skip retracted clauses.");
         BuiltinsRegistry.Register("garbage_collect_clauses", 1, GarbageCollectClauses1,
             Database, "garbage_collect_clauses(+Name/Arity)",
             "Re-threads the named predicate's chain to skip retracted clauses.");
@@ -172,12 +172,10 @@ public static partial class MetaBuiltins
             + "re-link of the dynamic region on the next query.");
         BuiltinsRegistry.Register("compact_dynamic_buffer", 1, CompactDynamicBuffer1,
             Database, "compact_dynamic_buffer(+Name/Arity)",
-            "Per-predicate hint variant. Validates Name/Arity "
-            + "names a dynamic predicate, then triggers the same full rebuild as the "
-            + "0-arg form. The single buffer holds every dynamic predicate's bytecode "
-            + "interleaved, so independent per-predicate reclamation isn't currently "
-            + "feasible without partial-relink support: the API surface is per-predicate "
-            + "for forward compatibility.");
+            "Per-predicate hint variant. Checks that Name/Arity names a dynamic "
+            + "predicate, then does the same work as the 0-arg form: the reclamation "
+            + "is whole-database either way, so naming one predicate narrows what is "
+            + "checked, not what is compacted.");
         BuiltinsRegistry.Register("retract", 1, Retract,
             Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
         BuiltinsRegistry.Register("$retractall_modifiable", 1, RetractAllModifiable);
@@ -187,7 +185,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("garbage_collect", 0, GarbageCollect,
             Control, "garbage_collect",
             "Mark-compacts the heap, reclaiming cells unreachable from the live "
-            + "machine state (ADR-016). Always succeeds.");
+            + "machine state. Always succeeds.");
 
         // Opt-in Tier-1 warm-up. Bundle load is lazy — a predicate promotes to
         // IL once its invocation counter crosses the threshold. compile_all
@@ -475,8 +473,8 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("prolog_to_os_filename", 2, PrologToOsFilename2,
             Io, "prolog_to_os_filename(?PrologPath, ?OsPath)",
             "Converts between Shumway's canonical '/'-separated path form and the "
-            + "host's native form (ADR-044). Either argument may be the bound one; "
-            + "on Unix both forms are the same.");
+            + "host's native form. Either argument may be the bound one; on a "
+            + "system whose separator is already '/' the two forms are the same.");
         // Unshadowable alias for shim internals: a loaded library may EXPORT
         // working_directory/2 (Scryer files.pl), and imports win over builtins
         // at resolution — a shim emulation calling the builtin by its public
@@ -499,8 +497,8 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("consult", 1, Consult,
             Database, "consult(+File)",
             "Loads File and adds its clauses to the database, appending to any "
-            + "existing predicates. File is an atom path; a .shum extension routes "
-            + "through LoadBundle, everything else is read as Prolog source. An "
+            + "existing predicates. File is an atom path; a .shum extension is loaded "
+            + "as a compiled bundle, everything else is read as Prolog source. An "
             + "extensionless File that does not exist is retried as File.pl.");
         BuiltinsRegistry.Register("$load_text", 2, LoadTextCore,
             Database, "'$load_text'(+TextAtom, +Options)",
@@ -524,9 +522,9 @@ public static partial class MetaBuiltins
             Database, "save_state(+File)",
             "Writes a snapshot of the engine's user-visible state to File. "
             + "Captures every consulted source (in order, minus the prelude) "
-            + "plus every currently asserted dynamic clause. The snapshot is "
-            + "a Shumway V6 bundle; restore_state/1 reconstitutes equivalent "
-            + "state on a fresh engine. Arity-Prolog compatible builtin.");
+            + "plus every currently asserted dynamic clause. The snapshot is a "
+            + "Shumway bundle; restore_state/1 reconstitutes equivalent state "
+            + "on a fresh engine.");
         BuiltinsRegistry.Register("save_state", 2, SaveState2,
             Database, "save_state(+File, +Options)",
             "Like save_state/1 but accepts an options list. Recognised: "
@@ -687,8 +685,8 @@ public static partial class MetaBuiltins
             Term, "string_term(?Atom, ?Term)",
             "Bidirectional: parses Atom as a Prolog term (binding Term), or "
             + "renders Term using write/1 form (binding Atom). 'string' in "
-            + "Arity-Prolog terminology means atom: the textual representation "
-            + "is interned as an atom, not stored as a Shumway StringTerm.");
+            + "Arity-Prolog terminology means atom: the text is interned as an "
+            + "atom, since this engine has no separate string type.");
         BuiltinsRegistry.Register("string_termq", 2, StringTermq2,
             Term, "string_termq(?Atom, ?Term)",
             "writeq-style variant of string_term/2: atoms / functors are "

@@ -97,7 +97,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("string", 1, TypeBuiltins.IsString,
             Types, "string(@Term)",
             "Succeeds if the argument is a non-empty proper list of characters or of codes "
-            + "(there is no string type, see ADR-047).");
+            + "(this engine has no separate string type).");
         // Scryer internal fast-path predicate (library error/iso_ext/crypto/…).
         BuiltinsRegistry.Register("$is_partial_string", 1, TypeBuiltins.IsPartialString);
         BuiltinsRegistry.Register("ground",  1, TypeBuiltins.IsGround,

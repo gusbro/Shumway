@@ -45,7 +45,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `nonvar(@Term)` | Succeeds if the argument is not an unbound variable. |
 | `number(@Term)` | Succeeds if the argument is a number. |
 | `rational(@Term)` | Succeeds if the argument is a rational number (an integer is a rational with denominator 1). |
-| `string(@Term)` | Succeeds if the argument is a non-empty proper list of characters or of codes (there is no string type, see ADR-047). |
+| `string(@Term)` | Succeeds if the argument is a non-empty proper list of characters or of codes (this engine has no separate string type). |
 | `var(@Term)` | Succeeds if the argument is an unbound variable. |
 
 ## Arithmetic
@@ -103,7 +103,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `set_seed(+Seed)` | Reseeds the engine's random generator; alias of randomize/1. |
 | `string_search(+SubAtom, +Atom, ?Location)` | Searches Atom for the substring SubAtom; on success unifies Location with the 0-based starting offset. Backtrackable: produces every occurrence in left-to-right order. |
 | `string_search(+Case, +SubAtom, +Atom, ?Location)` | Arity string_search/4: like string_search/3 with a leading case flag: 0 searches case-sensitively, 1 case-insensitively. |
-| `string_term(?Atom, ?Term)` | Bidirectional: parses Atom as a Prolog term (binding Term), or renders Term using write/1 form (binding Atom). 'string' in Arity-Prolog terminology means atom: the textual representation is interned as an atom, not stored as a Shumway StringTerm. |
+| `string_term(?Atom, ?Term)` | Bidirectional: parses Atom as a Prolog term (binding Term), or renders Term using write/1 form (binding Atom). 'string' in Arity-Prolog terminology means atom: the text is interned as an atom, since this engine has no separate string type. |
 | `string_termq(?Atom, ?Term)` | writeq-style variant of string_term/2: atoms / functors are quoted when needed so the rendered atom re-parses to the same term. Equivalent to term_to_atom/2. |
 | `subsumes_term(@General, @Specific)` | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term. |
 | `term_attvars(+Term, -Vars)` | Unifies Vars with the attributed variables reachable from Term. |
@@ -119,7 +119,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 
 | Predicate | Description |
 | --- | --- |
-| `:(+Module, :Goal)` | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038: an export-qualified module's own version of a builtin-named predicate must win for M:Goal. |
+| `:(+Module, :Goal)` | Runtime module-qualified call: resolves Goal relative to Module, looking at Module's own predicates first, then what it imports, then the global namespace and the builtins. A module that defines its own version of a builtin-named predicate is the one M:Goal reaches. |
 | `apply(:Goal, +ExtraArgs)` | Calls Goal with the list of extra arguments appended. |
 | `call(:Goal)` | Calls a goal. |
 | `call(:Goal, +Extra1)` | Calls a goal extended with one extra argument. |
@@ -141,7 +141,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `fail` | Always fails. |
 | `false` | Always fails; the ISO synonym of fail/0. |
 | `forall(:Condition, :Action)` | Succeeds if Action holds for every solution of Condition. |
-| `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state (ADR-016). Always succeeds. |
+| `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state. Always succeeds. |
 | `get_cpu_time(-Time)` | Binds Time to a high-resolution monotonic process timer, in milliseconds (float). |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
@@ -184,16 +184,16 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate; Module:Head reads from that module's viewpoint. |
 | `clause(?Head, ?Body, ?Ref)` | clause/2 with a clause reference: fetches by Ref when bound, else enumerates Head's clauses binding Ref (de facto standard). |
 | `compact_dynamic_buffer` | Invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
-| `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Validates Name/Arity names a dynamic predicate, then triggers the same full rebuild as the 0-arg form. The single buffer holds every dynamic predicate's bytecode interleaved, so independent per-predicate reclamation isn't currently feasible without partial-relink support: the API surface is per-predicate for forward compatibility. |
-| `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl. |
-| `consult_text(+Text)` | Consults Text (an atom or a chars/codes list) as Prolog source: the in-language form of the embedding API's ConsultString. A module loaded this way keeps its exports scoped (no auto-import into user). |
+| `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Checks that Name/Arity names a dynamic predicate, then does the same work as the 0-arg form: the reclamation is whole-database either way, so naming one predicate narrows what is checked, not what is compacted. |
+| `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension is loaded as a compiled bundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl. |
+| `consult_text(+Text)` | Consults Text (an atom or a chars/codes list) as Prolog source, the way consult/1 loads a file. A module loaded this way keeps its exports scoped (no auto-import into user). |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own. |
 | `ensure_loaded(+File)` | Loads File unless it is already loaded, in which case it does nothing (ISO 7.4.2.8). Lets several files each name their own dependencies without any of them being loaded twice. A File that CHANGED on disk since it was loaded is reloaded. Argument and errors are as consult/1. |
 | `erase(+Ref)` | Removes the recorded entry with reference Ref. Fails on an unknown / already-erased reference. |
 | `eraseall(+Key)` | Removes every recorded entry stored under Key. |
 | `file_list(+File)` | Saves the entire user database (all listable predicates) to File as plain Prolog source. |
 | `file_list(+File, +Spec)` | Saves selected predicates to File. Spec is either Name/Arity or a list [Name1/Arity1, Name2/Arity2, ...]. |
-| `garbage_collect_clauses` | Re-threads every dynamic predicate's chain to skip retracted clauses (ADR-015). |
+| `garbage_collect_clauses` | Re-threads every dynamic predicate's chain to skip retracted clauses. |
 | `garbage_collect_clauses(+Name/Arity)` | Re-threads the named predicate's chain to skip retracted clauses. |
 | `instance(+Ref, -Term)` | Unifies Term with the term recorded under Ref. |
 | `key_count(+Key, -Count)` | Unifies Count with the number of recorded entries stored under Key. |
@@ -220,7 +220,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `retractall(+Head)` | Removes every clause whose head unifies with Head. |
 | `save` | Snapshots the current user dynamic database (all dynamic predicates' clauses) in memory, replacing any previous save/0 snapshot. System-internal ($-prefixed) dynamics are excluded. Restore with restore/0. Arity-Prolog compatible builtin. |
 | `save(+File)` | Like save/0 but writes the dynamic-database snapshot to File (a compact binary only Shumway reads back). Restore with restore/1. Arity-Prolog compatible builtin. |
-| `save_state(+File)` | Writes a snapshot of the engine's user-visible state to File. Captures every consulted source (in order, minus the prelude) plus every currently asserted dynamic clause. The snapshot is a Shumway V6 bundle; restore_state/1 reconstitutes equivalent state on a fresh engine. Arity-Prolog compatible builtin. |
+| `save_state(+File)` | Writes a snapshot of the engine's user-visible state to File. Captures every consulted source (in order, minus the prelude) plus every currently asserted dynamic clause. The snapshot is a Shumway bundle; restore_state/1 reconstitutes equivalent state on a fresh engine. |
 | `save_state(+File, +Options)` | Like save_state/1 but accepts an options list. Recognised: dynamic_only(true) restricts the snapshot to dynamic clauses (no consult history); restore_state/1 then merges them into the engine's current state via assertz without resetting. |
 | `use_module(+Spec)` | Loads a library or file. Spec is either library(Name), where Name is one of the built-in libraries (clpfd, clpr), or an atom path (equivalent to consult/1). use_module(library(clpfd)) enables the CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two libraries cannot coexist in the same engine. |
 | `well_founded(+Goal, -Status)` | The well-founded truth value of a tabled Goal: true, false or undefined. |
@@ -388,7 +388,7 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | `print(+Term)` | Writes a term using print conventions. |
 | `print(+Stream, +Term)` | Writes a term to a stream using print conventions. |
 | `prolog_load_context(?Key, ?Value)` | Load-context introspection (module / file / source / directory), used by term_expansion/goal_expansion hooks to read the module being loaded. Fails outside a consult. |
-| `prolog_to_os_filename(?PrologPath, ?OsPath)` | Converts between Shumway's canonical '/'-separated path form and the host's native form (ADR-044). Either argument may be the bound one; on Unix both forms are the same. |
+| `prolog_to_os_filename(?PrologPath, ?OsPath)` | Converts between Shumway's canonical '/'-separated path form and the host's native form. Either argument may be the bound one; on a system whose separator is already '/' the two forms are the same. |
 | `put(+Code)` | Writes the character with the given code to the current output stream. Edinburgh-style alias of put_code/1. |
 | `put(+Stream, +Code)` | Stream variant of put/1. |
 | `put_byte(+Byte)` | Writes one byte to the current output binary stream (ISO §8.13.3). |
@@ -460,7 +460,7 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime. |
 | `phrase_from_file(:Body, +File)` | Runs the DCG Body over File's text, read lazily; the file is closed on the way out. |
 | `phrase_from_file(:Body, +File, +Options)` | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes). |
-| `phrase_from_stream(:Body, +Stream)` | Runs the DCG Body over Stream's text, read lazily in windows. |
+| `phrase_from_stream(:Body, +Stream)` | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream. |
 | `phrase_from_stream(:Body, +Stream, +Kind)` | As phrase_from_stream/2, with Kind (chars or codes) choosing the list's elements. |
 
 ## Global variables

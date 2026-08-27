@@ -1473,7 +1473,7 @@ internal static class Prelude
         %! bb_b_put(+Key, +Value) | Global variables | Backtrackable blackboard assignment: the previous value is restored on backtracking.
         bb_b_put(Key, Value) :- '$bb_wrap'(Value, W), b_setval(Key, W).
 
-        %! consult_text(+Text) | Database | Consults Text (an atom or a chars/codes list) as Prolog source: the in-language form of the embedding API's ConsultString. A module loaded this way keeps its exports scoped (no auto-import into user).
+        %! consult_text(+Text) | Database | Consults Text (an atom or a chars/codes list) as Prolog source, the way consult/1 loads a file. A module loaded this way keeps its exports scoped (no auto-import into user).
         :- public consult_text/1.
         consult_text(Text) :-
             (   var(Text) -> throw(error(instantiation_error, consult_text/1))
@@ -1493,7 +1493,7 @@ internal static class Prelude
             with_output_to(atom(Atom), write_term(Term, Options)),
             atom_chars(Atom, Chars).
 
-        %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038: an export-qualified module's own version of a builtin-named predicate must win for M:Goal.
+        %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module, looking at Module's own predicates first, then what it imports, then the global namespace and the builtins. A module that defines its own version of a builtin-named predicate is the one M:Goal reaches.
         ':'(Module, Goal) :- call(Module:Goal).
 
         %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []): succeeds when the DCG Body derives List.
@@ -1529,7 +1529,7 @@ internal static class Prelude
         '$phrase'(call(G), S0, S) :- !, call(G, S0, S).
         '$phrase'(G, S0, S) :- call(G, S0, S).
 
-        %! phrase_from_stream(:Body, +Stream) | Grammar | Runs the DCG Body over Stream's text, read lazily in windows.
+        %! phrase_from_stream(:Body, +Stream) | Grammar | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream.
         phrase_from_stream(Body, Stream) :-
             phrase_from_stream(Body, Stream, chars).
 
