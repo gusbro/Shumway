@@ -8,8 +8,9 @@ namespace Shumway.Embedding;
 /// <para>Constraints are posted with the <c>{Constraint, ...}</c>
 /// wrapper. Equalities (<c>=:=</c>, <c>=</c>) feed a Gaussian-elimination
 /// solver; inequalities (<c>&lt;</c>, <c>&gt;</c>, <c>=&lt;</c>,
-/// <c>&gt;=</c>) are checked for joint satisfiability by Fourier–Motzkin
-/// elimination on every post. A disequality (<c>=\=</c>) is kept and
+/// <c>&gt;=</c>) are checked for joint satisfiability by a simplex on every
+/// post — the same one <c>inf/2</c> and <c>bb_inf/3</c> optimise with, so
+/// strictness travels with the rows. A disequality (<c>=\=</c>) is kept and
 /// fails only when the inequalities entail that its linear form is pinned
 /// to zero. A non-linear constraint (a product or quotient of two
 /// non-constants) is delayed and retried whenever a variable it mentions
@@ -234,14 +235,14 @@ internal static class Clpr
 
         % ===== the satisfiability check =====
         % gather the connected component of constraints reachable from the
-        % seed variables, then test it: inequalities by Fourier-Motzkin,
+        % seed variables, then test it: inequalities by the simplex,
         % disequalities by an entailment check, non-linear ones by retry.
         clpr_check(Seed) :-
             clpr_gather(Seed, [], [], Raw),
             clpr_dedup(Raw, Cons),
             clpr_split(Cons, Iqs, Dqs, Nls),
             clpr_reexpand_iqs(Iqs, EIqs),
-            clpr_fm_sat(EIqs),
+            clpr_lp_sat(EIqs),
             clpr_check_dqs(Dqs, EIqs),
             clpr_retry_nls(Nls).
 
@@ -296,8 +297,8 @@ internal static class Clpr
         clpr_check_dq(lin(C, []), _) :- !, \+ clpr_zero(C).
         clpr_check_dq(lin(C, Terms), Iqs) :-
             clpr_scale(-1, lin(C, Terms), Neg),
-            ( clpr_fm_sat([iq(lin(C, Terms), 1)|Iqs]) -> true
-            ; clpr_fm_sat([iq(Neg, 1)|Iqs])
+            ( clpr_lp_sat([iq(lin(C, Terms), 1)|Iqs]) -> true
+            ; clpr_lp_sat([iq(Neg, 1)|Iqs])
             ).
 
         % retry each delayed non-linear constraint: if it is linear now,
@@ -335,62 +336,26 @@ internal static class Clpr
             ; Out = [X|O1], clpr_del(R, E, O1)
             ).
 
-        % ===== Fourier-Motzkin satisfiability =====
-        clpr_fm_sat(Ineqs) :-
+        % ===== satisfiability, on the same simplex the optimiser uses =====
+        % One solver rather than two. Fourier-Motzkin decided this correctly,
+        % but each eliminated variable multiplies the positive rows by the
+        % negative ones, so a component with a handful of variables can square
+        % its way to thousands of inequalities before answering yes.
+        %
+        % Strictness is the whole reason this is not just a call to the
+        % optimiser: `X > 3, X < 3` has no solution and reads as one point if
+        % the strict rows are relaxed. The flags travel with the rows and the
+        % solver handles them with a slack of its own.
+        clpr_lp_sat(Ineqs) :-
             clpr_cons_vars(Ineqs, Raw),
             clpr_dedup(Raw, Vars),
-            clpr_fm(Vars, Ineqs).
+            length(Vars, N),
+            clpr_lp_rows(Ineqs, Vars, N, Rows),
+            clpr_lp_strict(Ineqs, Strict),
+            '$lp_feasible'(N, Rows, Strict).
 
-        % The same elimination, kept rather than decided: what remains after
-        % dropping these variables is the projection onto the others.
-        clpr_fm_project([], Ineqs, Ineqs).
-        clpr_fm_project([V|Vs], Ineqs, Out) :-
-            clpr_partition(Ineqs, V, Pos, Neg, Zero),
-            clpr_combine_all(Pos, Neg, V, Comb),
-            append(Comb, Zero, Next),
-            clpr_fm_project(Vs, Next, Out).
-
-        clpr_fm([], Ineqs) :- !, clpr_fm_ground(Ineqs).
-        clpr_fm([V|Vs], Ineqs) :-
-            clpr_partition(Ineqs, V, Pos, Neg, Zero),
-            clpr_combine_all(Pos, Neg, V, Comb),
-            append(Comb, Zero, Next),
-            clpr_fm(Vs, Next).
-
-        clpr_fm_ground([]).
-        clpr_fm_ground([iq(lin(C, _), S)|R]) :-
-            ( S =:= 0 -> C >= -0.000000001
-            ; C > 0.000000001
-            ),
-            clpr_fm_ground(R).
-
-        clpr_partition([], _, [], [], []).
-        clpr_partition([Iq|R], V, Pos, Neg, Zero) :-
-            clpr_partition(R, V, P1, N1, Z1),
-            Iq = iq(lin(_, Terms), _),
-            clpr_coeff(Terms, V, Cv),
-            ( Cv > 0 -> Pos = [Iq|P1], Neg = N1, Zero = Z1
-            ; Cv < 0 -> Pos = P1, Neg = [Iq|N1], Zero = Z1
-            ; Pos = P1, Neg = N1, Zero = [Iq|Z1]
-            ).
-
-        clpr_combine_all([], _, _, []).
-        clpr_combine_all([P|Ps], Neg, V, Out) :-
-            clpr_combine_one(P, Neg, V, O1),
-            clpr_combine_all(Ps, Neg, V, O2),
-            append(O1, O2, Out).
-        clpr_combine_one(_, [], _, []).
-        clpr_combine_one(P, [N|Ns], V, [C|Rest]) :-
-            clpr_combine(P, N, V, C),
-            clpr_combine_one(P, Ns, V, Rest).
-        clpr_combine(iq(LinP, Sp), iq(LinN, Sn), V, iq(LinC, Sc)) :-
-            LinP = lin(_, Tp), clpr_coeff(Tp, V, A),
-            LinN = lin(_, Tn), clpr_coeff(Tn, V, D),
-            NegD is -D,
-            clpr_scale(NegD, LinP, LP2),
-            clpr_scale(A, LinN, LN2),
-            clpr_add(LP2, LN2, LinC),
-            ( ( Sp =:= 1 ; Sn =:= 1 ) -> Sc = 1 ; Sc = 0 ).
+        clpr_lp_strict([], []).
+        clpr_lp_strict([iq(_, S)|R], [S|Ss]) :- clpr_lp_strict(R, Ss).
 
         % ===== the {}/1 constraint wrapper =====
         %! {}(+Constraints) | CLP(R) | Posts equality, inequality, disequality and (delayed) non-linear constraints over the reals.
@@ -490,10 +455,9 @@ internal static class Clpr
         % expansion below substitutes each dependent variable's form first, so
         % what the solver sees is the system over the free variables.
         %
-        % It replaced a Fourier-Motzkin projection: FM decides satisfiability
-        % well but each eliminated variable can square the number of
-        % inequalities, and it yields bounds only. The vertex is what
-        % bb_inf/3 needs.
+        % Strict rows are optimised as non-strict here: the infimum of X > 3 is
+        % 3 whether or not it is attained, which is what SWI and SICStus
+        % report. The satisfiability check is where strictness has to be kept.
         clpr_optimum(Expr, Dir, Value) :-
             clpr_optimum(Expr, Dir, Value, _, _).
 

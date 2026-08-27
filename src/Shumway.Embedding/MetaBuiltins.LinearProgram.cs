@@ -62,6 +62,35 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithHeapAt(6, BuildListFromCells(engine, cells));
     }
 
+    /// <summary><c>'$lp_feasible'(+NVars, +Rows, +Strict)</c> — succeeds when the
+    /// system has a solution, fails when it has none.
+    ///
+    /// <para>Rows are laid out as for <c>'$lp_optimise'</c>. Strict is one flag
+    /// per row, 1 for <c>a·x + c &gt; 0</c> and 0 for <c>&gt;=</c>: deciding is
+    /// the one place the difference is real, since <c>X &gt; 3, X &lt; 3</c>
+    /// reads as a satisfiable point if strictness is dropped.</para></summary>
+    public static bool LpFeasible(Activation engine)
+    {
+        int n = (int)ReadInteger(engine, 0, "$lp_feasible");
+        double[] flat = ReadNumbers(engine, 1, "$lp_feasible");
+        double[] flags = ReadNumbers(engine, 2, "$lp_feasible");
+
+        int width = n + 1;
+        if (flat.Length % width != 0 || flags.Length != flat.Length / width)
+            throw new PrologRuntimeException(
+                "type_error", "lp_matrix", engine, engine.GetRegister(1));
+
+        var rows = new double[flags.Length][];
+        var strict = new bool[flags.Length];
+        for (int i = 0; i < rows.Length; i++)
+        {
+            rows[i] = new double[width];
+            System.Array.Copy(flat, i * width, rows[i], 0, width);
+            strict[i] = flags[i] != 0;
+        }
+        return LinearProgram.Feasible(rows, strict);
+    }
+
     /// <summary>Reads a proper list of numbers from a register.</summary>
     private static double[] ReadNumbers(Activation engine, int reg, string who)
     {

@@ -9,9 +9,9 @@ namespace Shumway.Tests.Embedding;
 /// surface SWI and SICStus share: <c>entailed/1</c>, <c>inf/2</c>,
 /// <c>sup/2</c>, <c>minimize/1</c>, <c>maximize/1</c> and <c>dump/3</c>.
 ///
-/// <para>The optimisation ones are built on the Fourier-Motzkin elimination
-/// already there: state the objective as a variable, eliminate every other
-/// one, and read the bounds off what is left.</para>
+/// <para>The optimisation ones hand the component's inequalities and the
+/// objective to the simplex, which answers with the bound and with a point
+/// that attains it.</para>
 /// </summary>
 public class ClprQueryPredicatesTests
 {

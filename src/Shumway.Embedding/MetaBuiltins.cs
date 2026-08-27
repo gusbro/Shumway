@@ -397,6 +397,7 @@ public static partial class MetaBuiltins
             + "collections with cells reclaimed, and atom-table occupancy with atom-GC "
             + "sweeps, to the current output.");
         BuiltinsRegistry.Register("$lp_optimise", 7, LpOptimise);
+        BuiltinsRegistry.Register("$lp_feasible", 3, LpFeasible);
         BuiltinsRegistry.Register("$heap_live", 3, HeapLive);
         BuiltinsRegistry.Register("$heap_root_diag", 0, HeapRootDiag);
         BuiltinsRegistry.Register("$stack_top", 1, StackTopDiag);

@@ -41,6 +41,43 @@ internal static class LinearProgram
 {
     private const double Eps = 1e-9;
 
+    /// <summary>Is the system satisfiable, taking strictness seriously?
+    ///
+    /// <para>Optimising may read <c>&gt;</c> as <c>&gt;=</c> — the infimum of
+    /// <c>X &gt; 3</c> is 3 either way — but deciding cannot: <c>X &gt; 3</c>
+    /// with <c>X &lt; 3</c> has no solution and reads as one point if the
+    /// strictness is dropped. So each strict row gets a slack of its own,
+    /// <c>a·x + c - d &gt;= 0</c> with the same <c>d &gt;= 0</c> throughout,
+    /// and d is maximised under a cap of 1. A point with d &gt; 0 satisfies
+    /// every strict row with room to spare, which is what strict means; d
+    /// pinned at 0 says the only points left are on a boundary a strict row
+    /// excludes.</para></summary>
+    internal static bool Feasible(double[][] rows, bool[] strict)
+    {
+        int n = rows.Length == 0 ? 0 : rows[0].Length - 1;
+        int d = n;                                  // the slack's column
+        var lp = new double[rows.Length + 2][];
+        for (int i = 0; i < rows.Length; i++)
+        {
+            lp[i] = new double[n + 2];
+            System.Array.Copy(rows[i], lp[i], n);
+            lp[i][d] = strict[i] ? -1 : 0;
+            lp[i][n + 1] = rows[i][n];
+        }
+        // d >= 0, and d =< 1 so maximising it stays bounded whatever x does.
+        lp[rows.Length] = new double[n + 2];
+        lp[rows.Length][d] = 1;
+        lp[rows.Length + 1] = new double[n + 2];
+        lp[rows.Length + 1][d] = -1;
+        lp[rows.Length + 1][n + 1] = 1;
+
+        var objective = new double[n + 2];
+        objective[d] = 1;
+
+        LpStatus status = Solve(lp, objective, maximise: true, out double value, out _);
+        return status == LpStatus.Optimal && value > Eps;
+    }
+
     /// <summary>Optimises <paramref name="objective"/> subject to
     /// <paramref name="rows"/>.
     ///

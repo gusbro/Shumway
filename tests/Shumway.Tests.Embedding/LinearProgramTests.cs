@@ -140,4 +140,55 @@ public class LinearProgramTests
         Assert.Equal(LpStatus.Optimal, r.Status);
         Assert.Equal(0.0, r.Value, 9);
     }
+
+    // ----- satisfiability, where strictness counts -----
+
+    private static bool Feasible(double[][] rows, params bool[] strict)
+        => LinearProgram.Feasible(rows, strict);
+
+    [Fact]
+    public void StrictnessDecidesAnEmptyRegion()
+    {
+        // x >= 3 and x =< 3 meet at a point: satisfiable.
+        var closed = new[] { new[] { 1.0, -3.0 }, new[] { -1.0, 3.0 } };
+        Assert.True(Feasible(closed, false, false));
+        // x > 3 and x =< 3 do not, and that is the whole reason the slack
+        // exists: read as non-strict this is the same point.
+        Assert.False(Feasible(closed, true, false));
+        Assert.False(Feasible(closed, false, true));
+    }
+
+    [Fact]
+    public void StrictRowsWithRoomAreSatisfiable()
+    {
+        // 3 < x < 9 has an interior.
+        var rows = new[] { new[] { 1.0, -3.0 }, new[] { -1.0, 9.0 } };
+        Assert.True(Feasible(rows, true, true));
+    }
+
+    [Fact]
+    public void PlainInfeasibilityIsStillInfeasible()
+    {
+        var rows = new[] { new[] { 1.0, -5.0 }, new[] { -1.0, 3.0 } };
+        Assert.False(Feasible(rows, false, false));
+    }
+
+    [Fact]
+    public void NoRowsIsSatisfiable()
+    {
+        Assert.True(Feasible(System.Array.Empty<double[]>()));
+    }
+
+    [Fact]
+    public void StrictnessAcrossTwoVariables()
+    {
+        // x + y >= 4 with x + y =< 4: the line is all there is.
+        var rows = new[]
+        {
+            new[] { 1.0, 1.0, -4.0 },
+            new[] { -1.0, -1.0, 4.0 },
+        };
+        Assert.True(Feasible(rows, false, false));
+        Assert.False(Feasible(rows, true, false));
+    }
 }

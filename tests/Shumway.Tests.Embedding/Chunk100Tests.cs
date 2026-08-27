@@ -6,8 +6,8 @@ namespace Shumway.Tests.Embedding;
 /// <summary>
 /// Chunk 100 (Phase 7): CLP(R) inequalities — <c>&lt;</c>, <c>&gt;</c>,
 /// <c>=&lt;</c>, <c>&gt;=</c>. Each post gathers the connected component
-/// of inequalities and tests it for satisfiability by Fourier–Motzkin
-/// elimination, so an unsatisfiable system fails immediately.
+/// of inequalities and tests it for satisfiability with the simplex, so an
+/// unsatisfiable system fails immediately.
 /// </summary>
 public class Chunk100Tests
 {
@@ -61,6 +61,30 @@ public class Chunk100Tests
         Assert.False(Holds("{X > 0, X < 0}."));
     }
 
+    [Fact]
+    public void StrictnessIsWhatEmptiesAClosedRegion()
+    {
+        // Each of these is one point wide. Relax the strict side and it
+        // becomes satisfiable, which is why the strictness has to reach the
+        // solver rather than be dropped on the way in.
+        Assert.True(Holds("{X >= 3, X =< 3}."));
+        Assert.False(Holds("{X > 3, X =< 3}."));
+        Assert.False(Holds("{X >= 3, X < 3}."));
+        // Same thing spread over two variables, where no single bound is
+        // contradictory on its own.
+        Assert.True(Holds("{X + Y >= 4, X + Y =< 4}."));
+        Assert.False(Holds("{X + Y > 4, X + Y =< 4}."));
+    }
+
+    [Fact]
+    public void StrictBoundsWithRoomBetweenThemHold()
+    {
+        Assert.True(Holds("{X > 3, X < 9}."));
+        Assert.True(Holds("{X > 3, X < 9, X =:= 4}."));
+        Assert.False(Holds("{X > 3, X < 9, X =:= 3}."));
+        Assert.False(Holds("{X > 3, X < 9, X =:= 9}."));
+    }
+
     // ---- coefficients ----
 
     [Fact]
@@ -81,8 +105,8 @@ public class Chunk100Tests
     [Fact]
     public void MultiVariableInequalities_Contradict()
     {
-        // Neither inequality ever grounds; Fourier-Motzkin still detects
-        // that their conjunction is unsatisfiable.
+        // Neither inequality ever grounds; the check still detects that
+        // their conjunction is unsatisfiable.
         Assert.False(Holds("{X + Y >= 10, X + Y =< 5}."));
     }
 
