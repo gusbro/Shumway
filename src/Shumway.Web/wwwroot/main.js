@@ -1463,9 +1463,44 @@ if (!settings.persistent())
 // is the case where the server sends the headers itself and the worker is only
 // wanted for offline.)
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {
-    emit('% offline support unavailable in this browser\n', 'note');
-  });
+  navigator.serviceWorker.register('sw.js')
+    .then(warmOfflineCache)
+    .catch(() => { emit('% offline support unavailable in this browser\n', 'note'); });
+}
+
+/**
+ * Puts this page's own assets in the offline cache.
+ *
+ * The worker caches what passes THROUGH it, and where the server sends the
+ * isolation headers itself there is no first-visit reload — so everything the
+ * page loaded was fetched before the worker was controlling anything, and the
+ * cache ended up holding the four shell files and nothing else. Going offline
+ * after that first visit did not boot: measured, 4 entries against 56.
+ *
+ * Asking for them a second time, once the worker IS in charge, is what files
+ * them. It costs requests rather than bytes — the browser's HTTP cache answers
+ * them, and on a later visit the worker answers from its own cache without
+ * touching the network at all.
+ */
+async function warmOfflineCache() {
+  try {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await new Promise((resolve) => navigator.serviceWorker
+        .addEventListener('controllerchange', resolve, { once: true }));
+    }
+    const queue = [...new Set(performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .filter((url) => url.startsWith(location.origin)))];
+    // A few at a time, behind whatever the user is already doing.
+    const worker = async () => {
+      while (queue.length > 0) {
+        try { await fetch(queue.shift(), { cache: 'force-cache' }); }
+        catch { /* no network: there is nothing to warm and nothing to report */ }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+  } catch { /* no worker, or it never took control: the session is unaffected */ }
 }
 
 queryInput.focus();

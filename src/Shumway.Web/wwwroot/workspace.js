@@ -15,6 +15,10 @@
 // below), because reading and writing someone's filesystem should be something
 // they asked for rather than something a page does while they are not looking.
 
+// Only for the examples' bookkeeping: which version of each one this profile
+// was given, so a shipped change can reach it without writing over an edit.
+import * as settings from './settings.js';
+
 let engine = null;
 
 export function init(exports) { engine = exports; }
@@ -253,21 +257,65 @@ export const EXAMPLES_WORKSPACE = 'examples';
  * which also meant an updated example could never reach an existing profile,
  * and deleting it left you with no way back.)
  *
- * With onlyMissing, it adds the examples this profile has never seen and
- * leaves the rest alone: a NEW example reaches an existing profile without
- * overwriting a file someone edited.
+ * With onlyMissing, it adds the examples this profile has never seen AND
+ * brings the untouched ones up to date (see refreshExample below), so a
+ * corrected example reaches an existing profile without ever writing over a
+ * file someone edited. Offline it changes nothing: an example that cannot be
+ * fetched is one we have no newer version of, which is not an error.
  */
 export async function seedExamples(onlyMissing = false) {
   const was = active();
   await setActive(EXAMPLES_WORKSPACE);
   const present = onlyMissing ? new Set(await list()) : new Set();
+  const known = { ...(settings.get().exampleHashes ?? {}) };
   for (const name of EXAMPLE_FILES) {
-    if (present.has(name)) continue;
-    try {
-      const source = await (await fetch('examples/' + name)).text();
+    let source;
+    try { source = await (await fetch('examples/' + name)).text(); }
+    catch { continue; }   // offline: whatever is already here is what we use
+    if (!present.has(name)) {
       await write(name, source);
-    } catch { /* offline on a first visit: the rest still seed */ }
+      known[name] = await fingerprint(source);
+      continue;
+    }
+    const refreshed = await refreshExample(name, source, known[name]);
+    if (refreshed !== null) known[name] = refreshed;
   }
+  settings.update({ exampleHashes: known });
   await persist();
   await setActive(was);
+}
+
+/**
+ * Brings one already-present example up to date, when it is safe to.
+ *
+ * The rule is that a file you edited is YOURS. `baseline` is what this profile
+ * was given last time; a local copy that still matches it has not been touched,
+ * so a newer shipped version can replace it. A local copy that differs was
+ * edited here and is left alone for good, whatever ships later.
+ *
+ * A profile that predates the bookkeeping has no baseline. It adopts what is
+ * here rather than assuming it is pristine — an edited file must not be
+ * clobbered by the first update that comes along.
+ *
+ * @returns the new baseline, or null to leave the recorded one as it is.
+ */
+async function refreshExample(name, shipped, baseline) {
+  const local = await fingerprint((await read(name)) ?? '');
+  if (local === null) return null;                 // no digest here: never touch
+  if (baseline === undefined) return local;        // first sight: adopt, do not judge
+  if (local !== baseline) return null;             // edited here
+  const current = await fingerprint(shipped);
+  if (current === baseline) return null;           // already up to date
+  await write(name, shipped);
+  return current;
+}
+
+/** Enough of a SHA-256 to tell two texts apart. Null where the browser has no
+ *  subtle crypto, which turns the refresh off rather than guessing. Exported
+ *  because the selftest has to plant a baseline to exercise the refresh. */
+export async function fingerprint(text) {
+  if (!globalThis.crypto?.subtle) return null;
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(hash).slice(0, 8)]
+    .map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }

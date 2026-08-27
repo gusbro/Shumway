@@ -264,11 +264,22 @@ whole runtime lives.
 
 ### Offline
 
-The same worker makes a second visit start offline. Files whose name pins their
-contents (the runtime, the fingerprinted modules) are served from the cache;
-everything else (the stylesheet, the manifest, the examples) goes to the
-network first with the cache as fallback, because those keep their names across
-publishes and a cached copy can be stale.
+The same worker makes the next visit start offline, and **one visit is enough**.
+Files whose name pins their contents (the runtime, the fingerprinted modules)
+are served from the cache; everything else (the stylesheet, the manifest, the
+examples) goes to the network first with the cache as fallback, because those
+keep their names across publishes and a cached copy can be stale.
+
+The worker can only cache what passes through it, and the assets of the load
+that installed it did not: they were fetched before it controlled anything. On
+a host that needs the worker for isolation this is hidden, since that visit
+reloads once anyway; where the server sends the headers itself, it left the
+cache holding the four shell files and nothing else. So the page asks for its
+own assets again as soon as the worker is in charge. It costs requests rather
+than bytes, and on any later visit the worker answers them from its own cache.
+
+Your files are not part of this: a workspace lives in origin-private storage,
+so the examples and anything you wrote open with no network at all.
 
 ---
 

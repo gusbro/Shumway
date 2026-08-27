@@ -434,6 +434,75 @@ export async function run(session, emit, out, editor, workspace) {
           await until(async () => (await workspace.list()).includes(open())), true);
   }
 
+  // --- keeping the examples current ------------------------------------------
+  // A corrected example has to reach a profile that already has the old one,
+  // and a file someone edited must never be written over. The baseline is what
+  // this profile was last given, so both cases come down to comparing the local
+  // copy against it. The served files cannot be changed from inside the page,
+  // so the OLD version is planted here instead, baseline and all.
+  {
+    const name = 'family.pl';
+    const was = workspace.active();
+    const baseline = async (text) => settings.update(
+      { exampleHashes: { ...(settings.get().exampleHashes ?? {}),
+                         [name]: await workspace.fingerprint(text) } });
+
+    await workspace.setActive('examples');
+    const shipped = await workspace.read(name);
+
+    // Untouched: the local copy IS the baseline, and what ships differs from
+    // it, so the newer one lands.
+    const old = '% an older version of this example\n';
+    await workspace.write(name, old);
+    await baseline(old);
+    await workspace.seedExamples(true);
+    await workspace.setActive('examples');
+    check('an untouched example is brought up to date', await workspace.read(name), shipped);
+
+    // Edited: the local copy differs from the baseline, so it survives
+    // whatever ships, now and later.
+    const mine = '% mine, do not touch\n';
+    await workspace.write(name, mine);
+    await baseline(old);
+    await workspace.seedExamples(true);
+    await workspace.setActive('examples');
+    check('an edited example is left alone', await workspace.read(name), mine);
+
+    // Put the workspace back the way it was found.
+    await workspace.write(name, shipped);
+    await baseline(shipped);
+    await workspace.persist();
+    await workspace.setActive(was);
+  }
+
+  // --- offline ---------------------------------------------------------------
+  // ONE visit has to be enough. The worker caches what passes through it, and
+  // the assets of the load that INSTALLED it never did — so where the server
+  // sends the isolation headers itself and there is no first-visit reload, the
+  // cache held four entries and going offline did not boot. main.js asks for
+  // them again once the worker is in charge; this is that, from the outside.
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    const entries = async () => {
+      let n = 0;
+      for (const name of await caches.keys())
+        n += (await (await caches.open(name)).keys()).length;
+      return n;
+    };
+    const stop = performance.now() + 30000;
+    let filled = 0;
+    do {
+      filled = await entries();
+      if (filled > 20) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    } while (performance.now() < stop);
+    check('one visit fills the offline cache', filled > 20, true);
+    check('including the runtime itself',
+          (await (await caches.open((await caches.keys())[0])).keys())
+            .some((r) => r.url.includes('/_framework/')), true);
+  } else {
+    emit('note: no service worker here, so the offline cache is not checked\n', 'note');
+  }
+
   // --- debug (spike) --------------------------------------------------------
   // The whole loop, without a human: enable → consult debuggable → breakpoint
   // → run → the stop event arrives while the query's promise stays pending →
