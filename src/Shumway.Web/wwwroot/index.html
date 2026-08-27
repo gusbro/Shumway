@@ -69,7 +69,16 @@
       </div>
 
       <p id="build-status" class="status" aria-live="polite" hidden></p>
-      <div id="files" class="files" aria-label="workspace files"></div>
+      <!-- One row, whatever the file count. The strip scrolls sideways and the
+           arrows appear only when there IS something off the edge, so a small
+           workspace looks exactly as it always did. -->
+      <div class="files">
+        <button id="files-left" type="button" class="files-nav"
+                title="earlier files" aria-label="scroll files left" hidden>‹</button>
+        <div id="files" class="files-strip" aria-label="workspace files"></div>
+        <button id="files-right" type="button" class="files-nav"
+                title="later files" aria-label="scroll files right" hidden>›</button>
+      </div>
 
       <!-- The editor holds ONE copy of the program: the coloured text IS the
            text being edited. An earlier version drew colours on a second copy
@@ -95,6 +104,8 @@ par(b, c)."></div>
         <button id="consult" type="button" class="primary"
                 title="load this program into the engine (Ctrl-Enter)">Consult</button>
         <button id="new-file" type="button">New file</button>
+        <button id="delete-file" type="button"
+                title="delete this file from the workspace">Delete file</button>
         <button id="open-file" type="button">Open…</button>
         <button id="download-file" type="button" title="save this file to your computer">Download</button>
         <button id="share" type="button" title="copy a link containing this program">Share</button>

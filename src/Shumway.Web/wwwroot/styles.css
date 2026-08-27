@@ -220,8 +220,36 @@ select { background: var(--panel); }
 select option { background: var(--panel); color: light-dark(#111, #eee); }
 .bar button { font-size: .82rem; padding: .3rem .6rem; }
 
-.files { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .45rem; min-height: 1.6rem; }
+/* The file list is ONE row however many files there are: a wrapping list of
+   forty chips pushes the editor off the screen, and the thing you came for is
+   the editor. The strip scrolls instead, with its scrollbar hidden so the row
+   keeps a fixed height — the arrows are the visible affordance. */
+.files { display: flex; align-items: center; gap: .3rem; margin-bottom: .45rem; min-height: 1.6rem; }
+.files-strip {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: .3rem;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+}
+.files-strip::-webkit-scrollbar { display: none; }
+.files-nav {
+  flex: none;
+  font: 14px/1 system-ui, sans-serif;
+  padding: .1rem .35rem;
+  border-radius: .3rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.files-nav:hover:not(:disabled) { color: inherit; }
+.files-nav:disabled { opacity: .35; cursor: default; }
 .file {
+  flex: none;
+  white-space: nowrap;
   font: 12px var(--mono);
   padding: .15rem .5rem;
   border-radius: .3rem;

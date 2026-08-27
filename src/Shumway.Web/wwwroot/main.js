@@ -820,7 +820,30 @@ document.getElementById('guide').addEventListener('click', () => guideDialog.sho
 // itself a file in it, so it persists like any other.
 
 const filesEl = document.getElementById('files');
+const filesLeft = document.getElementById('files-left');
+const filesRight = document.getElementById('files-right');
 const workspaceEl = document.getElementById('workspace');
+
+// The strip is one row and scrolls sideways. The arrows show up only when
+// something is actually off the edge, so the common case — a handful of files
+// that fit — looks like a plain row of chips and nothing has been added to it.
+function updateFileNav() {
+  const hidden = filesEl.scrollWidth <= filesEl.clientWidth + 1;
+  filesLeft.hidden = hidden;
+  filesRight.hidden = hidden;
+  if (hidden) return;
+  filesLeft.disabled = filesEl.scrollLeft <= 0;
+  filesRight.disabled =
+    filesEl.scrollLeft + filesEl.clientWidth >= filesEl.scrollWidth - 1;
+}
+
+const scrollFiles = (direction) =>
+  filesEl.scrollBy({ left: direction * Math.max(120, filesEl.clientWidth * 0.8) });
+
+filesLeft.addEventListener('click', () => scrollFiles(-1));
+filesRight.addEventListener('click', () => scrollFiles(1));
+filesEl.addEventListener('scroll', updateFileNav);
+window.addEventListener('resize', updateFileNav);
 let currentFile = 'scratch.pl';
 // The library the open file belongs to, or null for the workspace's own. One
 // editor, two places a file can live — and saving has to reach the right one.
@@ -920,6 +943,10 @@ async function refreshFiles() {
     chips.unshift(chip);
   }
   filesEl.replaceChildren(...chips);
+  // The open file has to be the one you can see, whatever the strip was
+  // scrolled to before: `nearest` so it moves the strip and not the page.
+  filesEl.querySelector('.current')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  updateFileNav();
 }
 
 /** Opens a workspace. Its files are a different program, so the engine starts
@@ -1051,6 +1078,35 @@ document.getElementById('new-file').addEventListener('click', async () => {
   await editor.setText('');
   await workspace.persist();
   await refreshFiles();
+});
+
+document.getElementById('delete-file').addEventListener('click', async () => {
+  // A library file is not the workspace's to delete: it belongs to the
+  // collection, and removing one there is what Libraries… is for.
+  if (currentLib !== null) {
+    emit(`% ${currentFile} belongs to library ${currentLib} — remove it from Libraries…\n`,
+         'note');
+    return;
+  }
+  const doomed = currentFile;
+  const ok = await ask(
+    `Delete “${doomed}”?`,
+    'Its text is deleted from this browser. Whatever you already consulted '
+    + 'stays in the engine until you consult again.',
+    'Delete');
+  if (!ok) return;
+
+  // Deliberately NOT saving the buffer first: that would write the file back
+  // out on the way to deleting it.
+  await workspace.remove(doomed);
+  const left = await workspace.list();
+  const next = left[0] ?? 'scratch.pl';
+  if (left.length === 0) await workspace.write(next, '');
+  editingWorkspaceFile(next);
+  await editor.setText((await workspace.read(next)) ?? '');
+  await workspace.persist();
+  await refreshFiles();
+  emit(`% deleted ${doomed}\n`, 'note');
 });
 
 // --- sharing -------------------------------------------------------------

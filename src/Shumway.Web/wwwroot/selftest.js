@@ -364,6 +364,76 @@ export async function run(session, emit, out, editor, workspace) {
     await libraries.remove(collection);
   }
 
+  // --- the file bar ---------------------------------------------------------
+  // It is ONE row however many files there are. A wrapping list of forty chips
+  // pushes the editor off the screen, and the editor is what you came for.
+  {
+    const strip = document.getElementById('files');
+    const kept = [...strip.children];
+    const filler = (i) => Object.assign(document.createElement('button'),
+      { type: 'button', className: 'file', textContent: `filler_${i}.pl` });
+
+    strip.replaceChildren(filler(0));
+    const oneRow = strip.clientHeight;
+    for (let i = 1; i < 40; i++) strip.append(filler(i));
+    check('forty files stay one row', strip.clientHeight, oneRow);
+    check('and the strip scrolls instead', strip.scrollWidth > strip.clientWidth, true);
+
+    // The arrows are the visible affordance for that scrolling, and they show
+    // up only when there IS something past the edge. Resize is what main.js
+    // listens to, so this drives the real wiring rather than a copy of it.
+    const right = document.getElementById('files-right');
+    window.dispatchEvent(new Event('resize'));
+    check('and the arrows appear', right.hidden, false);
+    check('the left one is spent at the start',
+          document.getElementById('files-left').disabled, true);
+
+    strip.replaceChildren(...kept);
+    window.dispatchEvent(new Event('resize'));
+    check('a few files need no arrows', right.hidden, true);
+  }
+
+  // Creating and deleting a file, through the buttons and their dialogs — the
+  // path a person takes, including the confirmation that stands between them
+  // and losing a file.
+  {
+    const closed = (dialog) =>
+      new Promise((resolve) => dialog.addEventListener('close', resolve, { once: true }));
+    const promptDialog = document.getElementById('prompt-dialog');
+    const confirmDialog = document.getElementById('confirm');
+    const press = (root, label) =>
+      [...root.querySelectorAll('button')].find((b) => b.textContent === label)?.click();
+    // The handlers keep working after the dialog closes (they await storage),
+    // so wait for the RESULT rather than for a fixed number of turns.
+    const until = async (holds, ms = 5000) => {
+      const stop = performance.now() + ms;
+      do {
+        if (await holds()) return true;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      } while (performance.now() < stop);
+      return false;
+    };
+    const open = () => document.querySelector('#files .file.current')?.textContent ?? '';
+
+    document.getElementById('new-file').click();
+    document.getElementById('prompt-input').value = 'selftest_doomed.pl';
+    press(promptDialog, 'Create');
+    await closed(promptDialog);
+    check('the new file exists',
+          await until(async () => (await workspace.list()).includes('selftest_doomed.pl')), true);
+    check('and it is the one open',
+          await until(() => open() === 'selftest_doomed.pl'), true);
+
+    document.getElementById('delete-file').click();
+    check('deleting asks first', await until(() => confirmDialog.open), true);
+    press(document.getElementById('confirm-actions'), 'Delete');
+    await closed(confirmDialog);
+    check('and then it is gone',
+          await until(async () => !(await workspace.list()).includes('selftest_doomed.pl')), true);
+    check('leaving another file open',
+          await until(async () => (await workspace.list()).includes(open())), true);
+  }
+
   // --- debug (spike) --------------------------------------------------------
   // The whole loop, without a human: enable → consult debuggable → breakpoint
   // → run → the stop event arrives while the query's promise stays pending →

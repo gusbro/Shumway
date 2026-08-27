@@ -24,7 +24,7 @@
 // Versioned by cache name: bumping it discards the previous generation on
 // activate, which is how a republished app stops serving yesterday's runtime.
 
-const CACHE = 'webshumway-v6';
+const CACHE = 'webshumway-v7';
 
 /**
  * The response the page should get, isolated.
