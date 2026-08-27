@@ -120,6 +120,29 @@ attributed-variable machinery do) and packs the result with the **librarian**
 rather than the linker, because a library has no entry point to compute
 reachability from.
 
+### When one will not compile
+
+Importing a collection compiles libraries you did not ask about, so what they
+have to say is not your output. A collection written for another system may
+declare a foreign interface this engine has no way to bind, or import a library
+that is not there, and reporting each of those where you are working buries what
+you were doing.
+
+So the diagnostics are **filed against the library** rather than printed. The
+batch's summary names the ones that would not compile, and **Libraries** marks
+each of them:
+
+| in the list | what it means |
+|---|---|
+| compiled | ready, and fast |
+| source only | not built yet; it works, it just loads slowly |
+| compiled, with warnings | it built, but part of it did not load: often a foreign interface |
+| will not compile | it cannot be built here; **details** says why |
+
+The mark and its reason survive a reload, which is when it matters: the batch
+that found out runs once, at import. A library recompiled cleanly loses the
+mark, since the record describes the *last* compile.
+
 ### Sources are sources
 
 A collection is laid out so the rule needs no enforcing:

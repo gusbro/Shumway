@@ -473,7 +473,8 @@ async function buildCollection(name) {
 
   const queue = (await libraries.entries(name)).filter((e) => !e.compiled);
   const total = queue.length;
-  let built = 0, failed = 0, stoppedEarly = false;
+  let built = 0, stoppedEarly = false;
+  const failed = [];
   let wanted = await librariesInUse();
   let knownAt = consultEpoch;
   const started = performance.now();
@@ -506,8 +507,12 @@ async function buildCollection(name) {
       showBuildStatus(
         `compiling ${name}: ${entry.name} (${total - queue.length}/${total})`,
         () => { run.cancel = true; showBuildStatus('finishing the current library…'); });
+      // The error is NOT emitted: what a library from another system says
+      // while it compiles is not the output of whatever the user is doing.
+      // It is filed against the library and the summary names it, so the
+      // reason is a click away in the library list.
       const err = await libraries.compile(name, entry.name);
-      if (err) failed++; else built++;
+      if (err) failed.push(entry.name); else built++;
       // Stored as each one lands: a reload keeps what is already built.
       await libraries.persist();
       if (librariesDialog.open) await refreshLibraries();
@@ -520,12 +525,24 @@ async function buildCollection(name) {
 
   const seconds = ((performance.now() - started) / 1000).toFixed(0);
   emit(`% ${name}: ${built} librar${built === 1 ? 'y' : 'ies'} compiled in ${seconds}s`
-     + (failed > 0 ? `, ${failed} could not be` : '')
      + (run.cancel ? ' (stopped)' : '')
      + (stoppedEarly
           ? '. That is what your programs import; “compile the rest” for the others,'
             + ' which still load from source.\n'
           : '. The rest still load from source.\n'), 'note');
+
+  // Named, because "11 could not be" leaves you having to find out which. The
+  // list marks them and holds the reason.
+  if (failed.length > 0) {
+    emit(`% ${name}: ${nameList(failed)} would not compile`
+       + ' — Libraries marks them, with the reason\n', 'note');
+  }
+}
+
+/** A few names, then a count: forty of them is not a sentence. */
+function nameList(names, shown = 6) {
+  if (names.length <= shown) return names.join(', ');
+  return `${names.slice(0, shown).join(', ')} and ${names.length - shown} more`;
 }
 
 async function refreshLibraries() {
@@ -590,7 +607,32 @@ async function refreshLibraries() {
       });
 
       const state = document.createElement('span');
-      state.textContent = entry.compiled ? 'compiled' : 'source only';
+      state.textContent = entry.state === 'failed' ? 'will not compile'
+        : entry.note ? 'compiled, with warnings'
+        : entry.compiled ? 'compiled'
+        : 'source only';
+      if (entry.note) {
+        state.className = entry.state === 'failed' ? 'library-broken' : 'library-note';
+        state.title = entry.note;
+      }
+
+      // What went wrong, on request. Out of the LIST rather than out of the
+      // terminal: a collection compiles forty libraries nobody asked about one
+      // at a time, and the answer to "why does this one not work" is wanted
+      // when you go looking for the library, not while you are typing.
+      let why = null;
+      if (entry.note) {
+        why = document.createElement('button');
+        why.type = 'button';
+        why.className = 'heading-action';
+        why.textContent = 'details';
+        why.addEventListener('click', async () => {
+          const said = await libraries.diagnostic(name, entry.name);
+          librariesDialog.close('');          // modal: its backdrop hides output
+          emit(`% ${entry.name}:\n${said.split('\n').slice(1).join('\n')}\n`,
+               entry.state === 'failed' ? 'error' : 'note');
+        });
+      }
 
       // Editing a source does nothing until the library is built again: what
       // library(X) resolves to is the bundle beside the sources.
@@ -608,6 +650,7 @@ async function refreshLibraries() {
       });
 
       row.append(open, state, build);
+      if (why) row.append(why);
       parts.push(row);
     }
   }

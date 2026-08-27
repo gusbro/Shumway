@@ -380,6 +380,11 @@ dialog.wide .row input { flex: 1; max-width: 20rem; }
   min-width: 21rem;
 }
 .doc-entry span { color: var(--muted); font-size: .9rem; }
+/* A library whose last compile had something to say. Marked in the list
+   because that is where someone goes looking for a library to use. One that
+   will not compile is not usable at all, so it carries the stronger mark. */
+.doc-entry span.library-note { color: inherit; font-style: italic; }
+.doc-entry span.library-broken { color: var(--error); }
 @media (max-width: 52rem) {
   .doc-entry { display: block; padding-bottom: .5rem; }
   .doc-entry code { min-width: 0; }

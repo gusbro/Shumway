@@ -6,6 +6,7 @@
 // Loaded on demand, so a normal page never fetches it.
  
 import * as settings from './settings.js';
+import * as libraries from './libraries.js';
 
 /**
  * Whether a file survives a reload — the whole point of mirroring to OPFS, and
@@ -295,6 +296,58 @@ export async function run(session, emit, out, editor, workspace) {
   check('example clpfd.pl consults',
         await session.consult(await (await fetch('examples/clpfd.pl')).text()), null);
   check('and its constraints hold', await solutions('X #> 3, X #< 7.'), 'X in 4..6');
+
+  // --- libraries ------------------------------------------------------------
+  // Importing a collection compiles forty libraries nobody asked about, one at
+  // a time. Two claims here: none of that reaches the terminal, and a library
+  // that will not compile SAYS SO in the list, because that is where someone
+  // goes looking for a library to use.
+  {
+    const collection = 'selftest_libs';
+    await libraries.remove(collection);            // a previous run's leftovers
+    check('a collection is created', await libraries.create(collection, ''), null);
+    await libraries.write(collection, 'lib_good.pl',
+                          ':- module(lib_good, [g/1]).\ng(1).\n');
+    await libraries.write(collection, 'lib_broken.pl',
+                          ':- module(lib_broken, [b/1]).\nb(1) :- .\n');
+    await libraries.write(collection, 'lib_noisy.pl',
+                          ':- module(lib_noisy, [n/1]).\n:- no_such_directive(x).\nn(1).\n');
+
+    // All three first, with nothing of our own in between: what is measured
+    // here is what the COMPILES put in the transcript.
+    const before = out.textContent.length;
+    const good = await libraries.compile(collection, 'lib_good');
+    const broke = await libraries.compile(collection, 'lib_broken');
+    const noisy = await libraries.compile(collection, 'lib_noisy');
+    const said = out.textContent.slice(before);
+
+    check('a good library compiles', good, null);
+    check('a broken one reports one line', typeof broke === 'string' && !broke.includes('\n'), true);
+    check('a noisy one still compiles', noisy, null);
+    // THE point of the whole arrangement: compiling libraries the user only
+    // imported must not write into what the user is reading.
+    check('compiling says nothing in the terminal', said, '');
+
+    const listed = Object.fromEntries(
+      (await libraries.entries(collection)).map((e) => [e.name, e]));
+    check('the good one reads as compiled', listed.lib_good?.state, 'compiled');
+    check('and carries no note', listed.lib_good?.note, null);
+    check('the broken one is marked', listed.lib_broken?.state, 'failed');
+    check('with a reason to show', (listed.lib_broken?.note ?? '').length > 0, true);
+    check('the noisy one compiled', listed.lib_noisy?.state, 'compiled');
+    check('but is marked as having warned', (listed.lib_noisy?.note ?? '').includes('warning'), true);
+    check('the detail is kept', (await libraries.diagnostic(collection, 'lib_broken'))
+                                 .startsWith('failed\n'), true);
+
+    // Fixed, and the mark goes: the record describes the LAST compile.
+    await libraries.write(collection, 'lib_broken.pl',
+                          ':- module(lib_broken, [b/1]).\nb(1).\n');
+    check('recompiling clears it', await libraries.compile(collection, 'lib_broken'), null);
+    const again = (await libraries.entries(collection)).find((e) => e.name === 'lib_broken');
+    check('and the list agrees', `${again?.state} ${again?.note}`, 'compiled null');
+
+    await libraries.remove(collection);
+  }
 
   // --- debug (spike) --------------------------------------------------------
   // The whole loop, without a human: enable → consult debuggable → breakpoint
