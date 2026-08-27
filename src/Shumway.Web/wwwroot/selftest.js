@@ -280,7 +280,7 @@ export async function run(session, emit, out, editor, workspace) {
   // Every example must at least parse and load; one that does not is worse than
   // no example. (Their queries are exercised on the desktop REPL, where a wrong
   // answer is visible; here the point is that the files ship and consult.)
-  for (const name of ['family.pl', 'queens.pl', 'zebra.pl', 'dcg.pl', 'tabling.pl', 'clpfd.pl']) {
+  for (const name of ['family.pl', 'boards.pl', 'zebra.pl', 'dcg.pl', 'tabling.pl', 'clpfd.pl']) {
     const source = await (await fetch('examples/' + name)).text();
     check(`example ${name} is served`, source.length > 0, true);
   }
@@ -296,6 +296,21 @@ export async function run(session, emit, out, editor, workspace) {
   check('example clpfd.pl consults',
         await session.consult(await (await fetch('examples/clpfd.pl')).text()), null);
   check('and its constraints hold', await solutions('X #> 3, X #< 7.'), 'X in 4..6');
+
+  // boards.pl answers by DRAWING, so the drawing is what has to be checked: an
+  // example that solves and prints nothing is half broken.
+  check('example boards.pl consults',
+        await session.consult(await (await fetch('examples/boards.pl')).text()), null);
+  check('and queens answers',
+        await solutions('\\+ \\+ (queens(6, Qs), Qs == [2,4,6,1,3,5]).'), 'true');
+  const beforeBoard = out.textContent.length;
+  await solutions('queens_show(6, _).');
+  const board = out.textContent.slice(beforeBoard);
+  check('and draws the queens board', board.includes('♛') && board.includes('┌───┬'), true);
+  const beforeGrid = out.textContent.length;
+  await solutions('sudoku_show(easy).');
+  check('and solves the sudoku',
+        out.textContent.slice(beforeGrid).includes('│ 5 3 4 │'), true);
 
   // --- libraries ------------------------------------------------------------
   // Importing a collection compiles forty libraries nobody asked about, one at
