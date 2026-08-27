@@ -1789,7 +1789,14 @@ public sealed partial class BytecodeInterpreter
                     if (_engine.WriteMode)
                     {
                         int idx = _engine.AllocateHeap(1);
-                        _engine.SetHeap(idx, _engine.GetRegister(src));
+                        Cell v = _engine.GetRegister(src);
+                        // A bare ATTVAR goes in as a REF to its home, the
+                        // mirror of UnifyVariableX reading one out. Copying
+                        // the cell would make a SECOND variable claiming the
+                        // same attributes, and the attribute table keys on a
+                        // cell's own address: the copy's lookup finds nothing.
+                        _engine.SetHeap(idx,
+                            v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v);
                     }
                     else
                     {
@@ -1823,7 +1830,14 @@ public sealed partial class BytecodeInterpreter
                     if (_engine.WriteMode)
                     {
                         int idx = _engine.AllocateHeap(1);
-                        _engine.SetHeap(idx, _engine.GetY(src));
+                        Cell v = _engine.GetY(src);
+                        // A bare ATTVAR goes in as a REF to its home, the
+                        // mirror of UnifyVariableX reading one out. Copying
+                        // the cell would make a SECOND variable claiming the
+                        // same attributes, and the attribute table keys on a
+                        // cell's own address: the copy's lookup finds nothing.
+                        _engine.SetHeap(idx,
+                            v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v);
                     }
                     else
                     {

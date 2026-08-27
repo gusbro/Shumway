@@ -367,6 +367,12 @@ public sealed partial class Activation
         int ptr = _unifyPointer;
         if (_writeMode)
         {
+            // A bare ATTVAR goes in as a REF to its home, the mirror of
+            // UnifyVariableX reading one out. Copying the cell would make a
+            // SECOND variable claiming the same attributes, and the attribute
+            // table keys on a cell's own address: the copy's lookup finds
+            // nothing, which surfaced as KeyNotFoundException out of GetAttr.
+            if (value.Tag == Tag.AttVar) value = Cell.Ref(value.AsHeapIndex);
             if (_reservedWrite)
             {
                 // ADR-020: the cell is pre-reserved — write in place, then
