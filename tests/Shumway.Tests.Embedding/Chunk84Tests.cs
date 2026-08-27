@@ -266,7 +266,9 @@ public class Chunk84Tests
         clock.Restart();
         Assert.True(e.Query("first.").Success);
         System.TimeSpan grouped = clock.Elapsed;
-        Assert.True(grouped < bare * 20,
+        // Ticks rather than `bare * 20`: TimeSpan has no multiplication
+        // operator on .NET Framework, where this project also builds.
+        Assert.True(grouped.Ticks < bare.Ticks * 20,
             $"first witness group took {grouped}, bare enumeration {bare}");
     }
 }
