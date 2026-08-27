@@ -8,8 +8,6 @@
 %       positive(N), N = 5.
 %       positive(N), N = -5.                the check fires on binding
 %       freeze(X, format("X became ~w~n", [X])), X = hello.
-%       at_most(2, L), L = [_,_].        a length limit, elements unbound
-%       at_most(2, L), L = [a|T], T = [b,c].     one too many
 %       dif(A, B).                          an answer that is a constraint
 
 :- use_module(library(coroutining)).
@@ -32,19 +30,6 @@ safe_divide(N, D, R) :-
 % conjunctions and disjunctions of those.
 positive(N) :-
     when(ground(N), N > 0).
-
-% A length limit that constrains rather than generates. What decides a list's
-% length is its spine, so that is what this watches: freeze/2 wakes on each
-% cons cell as the list grows, and the limit holds for a partial list as well
-% as for one whose elements are never bound.
-at_most(N, List) :-
-    N >= 0,
-    freeze(List, at_most_cell(List, N)).
-at_most_cell([], _).
-at_most_cell([_|T], N) :-
-    N > 0,
-    N1 is N - 1,
-    at_most(N1, T).
 
 % Producer and consumer in one query. The consumer is posted first and waits;
 % the producer fills the list; each element wakes its own goal as it arrives.
