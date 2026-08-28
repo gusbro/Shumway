@@ -465,6 +465,30 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     private System.IO.TextWriter? _warnings;
 
+    /// <summary>Heap-collector totals for this ENGINE, across every query it
+    /// has run.
+    ///
+    /// <para>A query gets a fresh <see cref="Activation"/>, so the collector's
+    /// counters live and die with it. That is right for the machine and wrong
+    /// for the report: <c>statistics/0</c> is typed at a top level, where the
+    /// interesting question is what this session has done, and per-query
+    /// counters answered it with the same zeroes every time. SWI's are
+    /// session totals; so are these. The dying activation folds its counts in
+    /// here (<see cref="AccountGarbageCollection"/>), and the report adds the
+    /// activation still running.</para></summary>
+    internal long GcRunsTotal { get; private set; }
+    internal long GcCompactingTotal { get; private set; }
+    internal long GcReclaimedCellsTotal { get; private set; }
+
+    /// <summary>Folds a finished activation's collector counts into the
+    /// engine's totals. Called once, from the query teardown.</summary>
+    internal void AccountGarbageCollection(Activation engine)
+    {
+        GcRunsTotal += engine.HeapGcRuns;
+        GcCompactingTotal += engine.HeapGcCount;
+        GcReclaimedCellsTotal += engine.HeapGcReclaimedCells;
+    }
+
     /// <summary>Reports a load-time warning through <see cref="Warnings"/>.</summary>
     internal void Warn(string message)
     {

@@ -100,6 +100,7 @@ public sealed partial class PrologEngine
             if (engine.HasCleanupHandlers || engine.HasPendingCleanups)
                 interp.RunTeardownCleanups(program);
             host.DebugSession?.OnLeaveProlog(engine);
+            host.AccountGarbageCollection(engine);
             host._heapPool.Return(engine);
         }
     }

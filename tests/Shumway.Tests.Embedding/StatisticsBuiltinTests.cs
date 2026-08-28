@@ -60,10 +60,15 @@ public class StatisticsBuiltinTests
             + "with_output_to(atom(A), statistics), atom(A).");
         Assert.True(sol.Success);
         string report = ((Shumway.Compiler.Ast.AtomTerm)sol["A"]!).Name;
-        // The reclaim happened and the report says so: at least one
-        // collection, and the in-use count is back to a trivial residue
-        // (the 100k-cell list is gone).
-        Assert.Contains("collection", report);
+        // The reclaim happened and the report says so: at least one COMPACTING
+        // collection, and the in-use count is back to a trivial residue (the
+        // 100k-cell list is gone). Asserted as the number rather than the word:
+        // a collector that ran and moved nothing also used to read as
+        // "collection".
+        var gc = System.Text.RegularExpressions.Regex.Match(
+            report, @"Heap GC:\s+([\d,]+) runs?, ([\d,]+) compacting");
+        Assert.True(gc.Success, report);
+        Assert.True(int.Parse(gc.Groups[2].Value.Replace(",", "")) >= 1, report);
         var m = System.Text.RegularExpressions.Regex.Match(
             report, @"Heap:\s+([\d,]+) cells");
         Assert.True(m.Success, report);
@@ -116,5 +121,66 @@ public class StatisticsBuiltinTests
         // A key we do not special-case unifies with [0, 0] rather than failing,
         // so a program probing several keys keeps working.
         Assert.True(e.Query("statistics(some_unknown_key, [0, 0]).").Success);
+    }
+
+    [Fact]
+    public void TheReportSeparatesRunningFromCompacting()
+    {
+        // A collector that ran and found the whole heap live is not a
+        // collector that never ran. Reporting only the compacting ones said
+        // `0 collections` for both, which reads as "the GC never engaged" on a
+        // query whose memory came back through backtracking instead.
+        var e = new PrologEngine();
+        e.ConsultString("""
+            mklist(0, []) :- !.
+            mklist(N, [M|T]) :- M is N - 1, mklist(M, T).
+            churn(0) :- !.
+            churn(K) :- mklist(200000, L), length(L, _), K1 is K - 1, churn(K1).
+            """);
+        var sol = e.Query("churn(8), with_output_to(atom(A), statistics).");
+        Assert.True(sol.Success);
+        string report = ((Shumway.Compiler.Ast.AtomTerm)sol["A"]!).Name;
+        var gc = System.Text.RegularExpressions.Regex.Match(
+            report, @"Heap GC:\s+([\d,]+) runs?, ([\d,]+) compacting, ([\d,]+) cells");
+        Assert.True(gc.Success, report);
+        int runs = int.Parse(gc.Groups[1].Value.Replace(",", ""));
+        int compacting = int.Parse(gc.Groups[2].Value.Replace(",", ""));
+        // Allocation across goal boundaries reaches the safe points, so this
+        // shape does collect, and every run of it had something to move.
+        Assert.True(runs >= 1, report);
+        Assert.True(compacting <= runs, report);
+        Assert.True(compacting >= 1, report);
+    }
+
+    [Fact]
+    public void TheCollectorTotalsSurviveTheQueryThatEarnedThem()
+    {
+        // A query gets a fresh Activation, so the collector's counters die
+        // with it. statistics/0 is typed at a TOP LEVEL, where the question
+        // is what the session has done -- per-query counters answered it with
+        // the same zeroes however much work had gone by.
+        var e = new PrologEngine();
+        e.ConsultString("""
+            mklist(0, []) :- !.
+            mklist(N, [M|T]) :- M is N - 1, mklist(M, T).
+            churn(0) :- !.
+            churn(K) :- mklist(200000, L), length(L, _), K1 is K - 1, churn(K1).
+            """);
+
+        long Runs()
+        {
+            var sol = e.Query("with_output_to(atom(A), statistics).");
+            string report = ((Shumway.Compiler.Ast.AtomTerm)sol["A"]!).Name;
+            var m = System.Text.RegularExpressions.Regex.Match(
+                report, @"Heap GC:\s+([\d,]+) runs?");
+            Assert.True(m.Success, report);
+            return long.Parse(m.Groups[1].Value.Replace(",", ""));
+        }
+
+        Assert.True(e.Query("churn(6).").Success);
+        long after = Runs();
+        Assert.True(after >= 1, $"no collection was counted: {after}");
+        Assert.True(e.Query("churn(6).").Success);
+        Assert.True(Runs() > after, "the totals did not grow with the second run");
     }
 }
