@@ -465,6 +465,31 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     private System.IO.TextWriter? _warnings;
 
+    /// <summary>Whether a solution's values are materialized only as far as
+    /// the answer will be SHOWN. Off by default: an embedder's <c>Query</c>
+    /// hands back the whole term, always.
+    ///
+    /// <para>A top level turns it on, because its answers exist to be looked at
+    /// and it elides them anyway. Eliding afterwards bounds the output and not
+    /// the work: measured, an answer of 1.5 million cells spent 1.7s becoming
+    /// AST nodes against 0.04s being rendered -- more than SOLVING the query
+    /// cost. In WebShumway, with no JIT, the same wait is 25 seconds.</para>
+    ///
+    /// <para>How far is <c>answer_max_depth</c>, so the flag keeps its meaning
+    /// and its documented zero ("print everything") still materializes
+    /// everything. The allowance below is in NODES where the flag counts list
+    /// elements, and a cons is two nodes plus what its head costs -- it is
+    /// deliberately loose, so that what the answer looks like stays the
+    /// elision's decision and never this one's.</para></summary>
+    public bool ElideAnswersForDisplay { get; set; }
+
+    /// <summary>Nodes to materialize per displayed answer, or 0 for all of
+    /// them.</summary>
+    internal int AnswerMaterializeLimit =>
+        ElideAnswersForDisplay && Flags.AnswerMaxDepth > 0
+            ? Flags.AnswerMaxDepth * 8 + 64
+            : 0;
+
     /// <summary>Heap-collector totals for this ENGINE, across every query it
     /// has run.
     ///

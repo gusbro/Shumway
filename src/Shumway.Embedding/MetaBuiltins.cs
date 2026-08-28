@@ -397,6 +397,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$lp_optimise", 7, LpOptimise);
         BuiltinsRegistry.Register("$lp_feasible", 3, LpFeasible);
         BuiltinsRegistry.Register("$heap_live", 3, HeapLive);
+        BuiltinsRegistry.Register("$any_attvars", 0, AnyAttVars);
         BuiltinsRegistry.Register("$heap_root_diag", 0, HeapRootDiag);
         BuiltinsRegistry.Register("$stack_top", 1, StackTopDiag);
         BuiltinsRegistry.Register("term_cells", 2, TermCells,

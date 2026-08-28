@@ -89,7 +89,25 @@ public static class TermReader
     /// list structures iteratively; cycles are broken via a synthetic
     /// <c>VarTerm("_C{addr}")</c> placeholder.</summary>
     public static Term Materialize(Activation engine, int heapIdx)
+        => Materialize(engine, heapIdx, limit: 0);
+
+    /// <summary>Materializes at most <paramref name="limit"/> nodes, standing
+    /// in <c>'...'</c> for everything past that; <c>0</c> means all of it.
+    ///
+    /// <para>For a DISPLAY, where the term is about to be elided anyway.
+    /// Eliding afterwards bounds the output and not the work: an answer of a
+    /// million and a half cells was built as a million and a half AST nodes so
+    /// that twelve of them could be shown, which cost more than SOLVING the
+    /// query. Everything else that materializes -- findall/3, copy_term/2,
+    /// reading an attribute -- wants the whole term and passes no limit.</para>
+    ///
+    /// <para>The cut lands where a node would be EXPANDED, so every assemble
+    /// frame still gets the arity it is waiting for, and a list whose spine
+    /// runs out reads as <c>[a, b|...]</c>, which is what a top level shows
+    /// anyway.</para></summary>
+    public static Term Materialize(Activation engine, int heapIdx, int limit)
     {
+        int budget = limit > 0 ? limit : int.MaxValue;
         bool pooled = !_tlBusy;
         List<Frame> work;
         List<Term> results;
@@ -119,7 +137,7 @@ public static class TermReader
                 switch (f.Kind)
                 {
                     case 0:   // Expand
-                        Expand(engine, f.A, work, results, active, ref consFid);
+                        Expand(engine, f.A, work, results, active, ref consFid, ref budget);
                         break;
 
                     case 1:   // Assemble compound from Arity results
@@ -182,8 +200,15 @@ public static class TermReader
     /// result lands deepest). All C# stack growth is thereby replaced by growth
     /// of the explicit <paramref name="work"/> stack.</summary>
     private static void Expand(Activation engine, int heapIdx,
-        List<Frame> work, List<Term> results, HashSet<int> active, ref int consFid)
+        List<Frame> work, List<Term> results, HashSet<int> active, ref int consFid,
+        ref int budget)
     {
+        if (budget <= 0)
+        {
+            results.Add(new AtomTerm("..."));
+            return;
+        }
+        budget--;
         int derefAddr = engine.Deref(heapIdx);
         Cell cell = engine.GetHeap(derefAddr);
 

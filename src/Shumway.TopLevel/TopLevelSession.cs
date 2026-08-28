@@ -21,7 +21,12 @@ public sealed class TopLevelSession
     public PrologEngine Engine { get; }
 
     public TopLevelSession(PrologEngine engine)
-        => Engine = engine ?? throw new ArgumentNullException(nameof(engine));
+    {
+        Engine = engine ?? throw new ArgumentNullException(nameof(engine));
+        // An answer here is shown, not returned, and it is elided before it is
+        // shown -- so it does not have to be BUILT in full first.
+        Engine.ElideAnswersForDisplay = true;
+    }
 
     /// <summary>Loads clauses from Prolog source text.</summary>
     public void Consult(string source) => Engine.ConsultString(source);

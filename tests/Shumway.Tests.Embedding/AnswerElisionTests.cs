@@ -116,6 +116,64 @@ public sealed class AnswerElisionTests
         // The first sublist has one element, the second two: both intact.
         Assert.Matches(@"Ls = \[\[_[A-Za-z0-9]+\], \[_[A-Za-z0-9]+, _[A-Za-z0-9]+\],", shown);
     }
+
+    // ----- eliding the WORK, not just the output -----
+
+    [Fact]
+    public void AnEmbedderGetsTheWholeTerm()
+    {
+        // The one thing the display shortcut must never do. Query/1 is an API:
+        // its answer is returned, not looked at, and a truncated list would be
+        // a wrong answer rather than a tidy one.
+        var e = new PrologEngine();
+        var sol = e.Query("numlist(1, 2000, L).");
+        Assert.True(sol.Success);
+        int n = 0;
+        Term t = sol["L"]!;
+        while (t is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+        {
+            n++;
+            t = cons.Args[1];
+        }
+        Assert.Equal(2000, n);
+        Assert.Equal("[]", ((AtomTerm)t).Name);
+    }
+
+    [Fact]
+    public void ADisplayedAnswerIsNotBuiltInFull()
+    {
+        // Eliding after the fact bounds the output and not the work: the whole
+        // term became AST nodes so that a dozen could be shown, which cost more
+        // than solving the query. A top level asks for only as much as it will
+        // show, and the rest arrives as the same `...` the elision would put
+        // there anyway.
+        var e = new PrologEngine { ElideAnswersForDisplay = true };
+        var sol = e.Query("numlist(1, 20000, L).");
+        Assert.True(sol.Success);
+        int n = 0;
+        Term t = sol["L"]!;
+        while (t is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+        {
+            n++;
+            t = cons.Args[1];
+        }
+        Assert.True(n < 20000, $"the whole list was built anyway ({n} elements)");
+        Assert.Equal("...", ((AtomTerm)t).Name);
+    }
+
+    [Fact]
+    public void TheFlagsZeroStillMeansEverything()
+    {
+        // answer_max_depth = 0 is documented as "print everything", so it has
+        // to build everything too.
+        var e = new PrologEngine { ElideAnswersForDisplay = true };
+        e.Flags.AnswerMaxDepth = 0;
+        var sol = e.Query("numlist(1, 5000, L).");
+        Term t = sol["L"]!;
+        int n = 0;
+        while (t is CompoundTerm { Functor: ".", Args.Length: 2 } cons) { n++; t = cons.Args[1]; }
+        Assert.Equal(5000, n);
+    }
 }
 
 /// <summary>

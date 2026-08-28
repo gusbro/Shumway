@@ -177,4 +177,19 @@ public class StatisticsBuiltinTests
         Assert.True(e.Query("numlist(1, 1000, _), garbage_collect.").Success);
         Assert.True(Runs() > after, "the totals did not grow with the second query");
     }
+
+    [Fact]
+    public void TheResidualCopyIsSkippedWhenNothingCarriesAttributes()
+    {
+        // The top level wraps every query in copy_term/3 to project residual
+        // constraints, which copies the WHOLE answer for every solution.
+        // '$any_attvars' is how it learns in O(1) that there is nothing to
+        // project -- and it has to be right in both directions.
+        var e = new PrologEngine();
+        Assert.False(e.Query("'$any_attvars'.").Success);
+        e.UseCoroutining();
+        Assert.True(e.Query("freeze(X, true), '$any_attvars'.").Success);
+        // And the attribute goes away with the query that made it.
+        Assert.False(e.Query("'$any_attvars'.").Success);
+    }
 }

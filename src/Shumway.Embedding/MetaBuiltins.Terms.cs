@@ -547,6 +547,16 @@ public static partial class MetaBuiltins
             && engine.UnifyRegisterWithCell(2, Cell.Int(engine.AttrRecordCount));
     }
 
+    /// <summary><c>'$any_attvars'</c> — succeeds iff this activation holds any
+    /// attribute records at all, in O(1).
+    ///
+    /// <para>The top level wraps every query in <c>copy_term/3</c> so it can
+    /// project residual constraints, which copies the WHOLE answer on the heap
+    /// for every solution: measured, 4.6 of the 7.8 seconds an answer of 4.5
+    /// million cells took. With no attributed variable anywhere there is no
+    /// residual to find, and this says so without walking anything.</para></summary>
+    public static bool AnyAttVars(Activation engine) => engine.AttrRecordCount > 0;
+
     /// <summary><c>'$heap_root_diag'</c> — the stack-roots GC arc's
     /// diagnostic: attributes retained heap cells to the individual roots
     /// (registers, stack slots classified by frame/CP) that keep them alive,

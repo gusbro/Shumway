@@ -2200,7 +2200,8 @@ public sealed partial class PrologEngine
         var rootAddrs = new Dictionary<string, int>(varNames.Count);
         for (int i = 0; i < varNames.Count; i++)
         {
-            bindings[varNames[i]] = TermReader.Materialize(engine, varHeapIndices[i]);
+            bindings[varNames[i]] = TermReader.Materialize(
+                engine, varHeapIndices[i], host?.AnswerMaterializeLimit ?? 0);
             // Record the value's root-node address — the address a cyclic
             // term's _C{addr} marker carries when it cycles back to the root,
             // so the REPL can display the cycle as the variable itself.
