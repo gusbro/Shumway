@@ -689,11 +689,22 @@ public static partial class MetaBuiltins
         report.Append("Heap:      ").Append(Count(engine.HeapTop)).Append(" cells in use of ")
               .Append(Count(engine.HeapCapacity)).Append(" (")
               .Append(Count((long)engine.HeapCapacity * 8 / 1024)).Append(" KB)\n");
-        // ADR-016 — this query's collections; the reclaim total is what the
-        // bounded-memory machinery actually gave back.
-        report.Append("Heap GC:   ").Append(Count(engine.HeapGcCount))
-              .Append(engine.HeapGcCount == 1 ? " collection, " : " collections, ")
-              .Append(Count(engine.HeapGcReclaimedCells)).Append(" cells reclaimed\n");
+        // ADR-016 — this ENGINE's collections, this query included: a top level
+        // asks what the session has done, and per-query counters answered with
+        // the same zeroes every time.
+        //
+        // Both numbers, too. A collector that ran and found the whole heap live
+        // is not a collector that never ran, and reporting only the compacting
+        // ones said "0 collections" for both — including for a query whose
+        // memory came back through backtracking rather than through the
+        // collector at all.
+        long gcRuns = host.GcRunsTotal + engine.HeapGcRuns;
+        long gcMoved = host.GcCompactingTotal + engine.HeapGcCount;
+        long gcCells = host.GcReclaimedCellsTotal + engine.HeapGcReclaimedCells;
+        report.Append("Heap GC:   ").Append(Count(gcRuns))
+              .Append(gcRuns == 1 ? " run, " : " runs, ")
+              .Append(Count(gcMoved)).Append(" compacting, ")
+              .Append(Count(gcCells)).Append(" cells reclaimed\n");
         // ADR-004 — two trails, reported as the two they are.
         // How much of that heap is packed text. Reported as a resource, like
         // every other line here — it is the answer to "is my text costing what

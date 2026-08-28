@@ -396,6 +396,16 @@ public sealed partial class Activation
 
     public int HeapGcCount { get; private set; }
 
+    /// <summary>How many times the collector RAN, whether or not it found
+    /// anything to move. The two numbers differ by the collections that marked
+    /// the whole heap live and returned without compacting, and telling them
+    /// apart is the difference between "the collector never engaged" and "it
+    /// engaged and there was nothing to give back" — which
+    /// <c>statistics/0</c> reported as the same thing, `0 collections`, on a
+    /// query whose memory came back through BACKTRACKING rather than through
+    /// the collector.</summary>
+    public int HeapGcRuns { get; private set; }
+
     /// <summary>Cells reclaimed across every collection of this activation —
     /// the companion of <see cref="HeapGcCount"/> for statistics/0.</summary>
     public long HeapGcReclaimedCells { get; private set; }
@@ -423,6 +433,7 @@ public sealed partial class Activation
 
         int oldTop = _heapTop;
         if (oldTop == 0) return 0;
+        HeapGcRuns++;
 
         // ---- mark every cell reachable from the roots. ----
         bool[] marked = _gcMarked is { } m && m.Length >= oldTop ? m : (_gcMarked = new bool[oldTop]);
