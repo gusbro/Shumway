@@ -13,9 +13,17 @@ namespace Shumway.TopLevel;
 public static class SolutionFormatter
 {
     /// <summary>Shortens a term for DISPLAY, the way a top level does: a list
-    /// keeps <paramref name="limit"/> elements and ends in <c>|...</c>, and a
-    /// subterm nested deeper than that shows as <c>...</c>. A limit of zero
+    /// keeps <paramref name="limit"/> elements and ends in <c>|...</c>, a
+    /// subterm nested deeper than that shows as <c>...</c>, and the answer as
+    /// a WHOLE shows at most <paramref name="limit"/> items. A limit of zero
     /// leaves the term alone.
+    ///
+    /// <para>That last cap is the one that makes the promise hold. Per-list is
+    /// not a bound on the output: a list of lists shows limit x limit items, so
+    /// `findall(L, (between(1, 1000, X), length(L, X)), Ls)` came out at 55,000
+    /// characters with every rule above respected. One budget spent left to
+    /// right bounds it whatever shape the term has, and spends what it has on
+    /// the front of the answer, which is the part being read.</para>
     ///
     /// <para>Elision belongs here and not in the writer: <c>write/1</c> prints
     /// what it is given, because a program's output is not a summary of itself.
@@ -24,14 +32,16 @@ public static class SolutionFormatter
     public static Term Elide(Term term, int limit)
     {
         if (limit <= 0) return term;
-        return Walk(term, limit, limit);
+        int budget = limit;
+        return Walk(term, limit, limit, ref budget);
 
-        // `budget` is what is left of the nesting allowance; `limit` is how many
-        // elements a list may show. Passed rather than captured, so this stays a
-        // static local function and allocates no closure.
-        static Term Walk(Term t, int budget, int limit)
+        // `depth` is what is left of the nesting allowance, `limit` how many
+        // elements one list may show, `budget` how many items the whole answer
+        // has left. Passed rather than captured, so this stays a static local
+        // function and allocates no closure.
+        static Term Walk(Term t, int depth, int limit, ref int budget)
         {
-            if (budget <= 0) return new AtomTerm("...");
+            if (depth <= 0) return new AtomTerm("...");
             if (t is not CompoundTerm c) return t;
 
             if (c is { Functor: ".", Args.Length: 2 })
@@ -41,23 +51,30 @@ public static class SolutionFormatter
                 var kept = new List<Term>();
                 Term cursor = t;
                 while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cons
-                       && kept.Count < limit)
+                       && kept.Count < limit && budget > 0)
                 {
-                    kept.Add(Walk(cons.Args[0], budget - 1, limit));
+                    budget--;
+                    kept.Add(Walk(cons.Args[0], depth - 1, limit, ref budget));
                     cursor = cons.Args[1];
                 }
                 // Anything left becomes the improper tail `|...`, which is how
-                // every top level says "there is more".
+                // every top level says "there is more" -- whether what stopped
+                // us was this list's own length or the answer's total.
                 Term tail = cursor is CompoundTerm { Functor: ".", Args.Length: 2 }
                     ? new AtomTerm("...")
-                    : Walk(cursor, budget - 1, limit);
+                    : Walk(cursor, depth - 1, limit, ref budget);
                 for (int i = kept.Count - 1; i >= 0; i--)
                     tail = new CompoundTerm(".", new[] { kept[i], tail });
                 return tail;
             }
 
             var args = new Term[c.Args.Length];
-            for (int i = 0; i < args.Length; i++) args[i] = Walk(c.Args[i], budget - 1, limit);
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (budget <= 0) { args[i] = new AtomTerm("..."); continue; }
+                budget--;
+                args[i] = Walk(c.Args[i], depth - 1, limit, ref budget);
+            }
             return new CompoundTerm(c.Functor, args);
         }
     }

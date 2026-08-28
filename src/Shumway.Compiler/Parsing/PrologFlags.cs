@@ -175,8 +175,14 @@ public sealed class PrologFlags
     public bool PreferRationals { get; set; } = false;
 
     /// <summary>How much of an answer a TOP LEVEL prints before eliding: a list
-    /// shows this many elements and then <c>|...</c>, and a subterm nested
-    /// deeper than this shows as <c>...</c>. Zero means print everything.
+    /// shows this many elements and then <c>|...</c>, a subterm nested deeper
+    /// than this shows as <c>...</c>, and the answer as a WHOLE shows at most
+    /// this many items. Zero means print everything.
+    ///
+    /// <para>The total is what actually bounds the output. Per list is not a
+    /// bound: a list of lists shows the square of it, and
+    /// <c>findall(L, (between(1, 1000, X), length(L, X)), Ls)</c> printed
+    /// 55,000 characters with every other rule here respected.</para>
     ///
     /// <para>An answer is read by a person, and <c>numlist(1, 10000000, X)</c>
     /// has an answer nobody wants delivered in full. This affects ONLY what a
