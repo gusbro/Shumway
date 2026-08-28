@@ -1,6 +1,6 @@
 # Unicode `full` (astral planes) — viability study
 
-Status: **implemented and in v1.0.0** (branch `astral-unicode`,
+Status: **implemented and in v0.9.0** (branch `astral-unicode`,
 2026-08-24; canonical record: ADR-048). The study below (§1–§6) is
 preserved as written — its §6 recommendation ("B for v1, A after") was
 superseded by the decision to implement A immediately and let the §7

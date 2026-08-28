@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, implemented, and **in v1.0.0** (2026-08, branch
+Accepted, implemented, and **in v0.9.0** (2026-08, branch
 `astral-unicode`). This is the astral-plane arc that ADR-047 explicitly
 deferred. The inclusion decision was gated on the arc's A/B measurement —
 [`docs/design/unicode-full-viability.md`](../../design/unicode-full-viability.md) §7:

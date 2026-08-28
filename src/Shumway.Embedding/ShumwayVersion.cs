@@ -10,7 +10,7 @@ namespace Shumway.Embedding;
 /// only being rejected.</para>
 ///
 /// <para>Comparison is by (Major, Minor, Patch); the string form is the
-/// familiar <c>1.0.0</c>.</para></summary>
+/// familiar <c>0.9.0</c>.</para></summary>
 public readonly struct ShumwayVersion : IEquatable<ShumwayVersion>,
                                         IComparable<ShumwayVersion>
 {

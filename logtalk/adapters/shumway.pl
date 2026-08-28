@@ -84,7 +84,7 @@
 	).
 '$lgt_prolog_feature'(prolog_version, v(Major, Minor, Patch)) :-
 	current_prolog_flag(version_data, shumway(Major, Minor, Patch, _)).
-'$lgt_prolog_feature'(prolog_compatible_version, @>=(v(1, 0, 0))).
+'$lgt_prolog_feature'(prolog_compatible_version, @>=(v(0, 9, 0))).
 
 % Capability set — each value is the MEASURED truth, not modesty and not
 % optimism, because library code changes behavior on it (library(types) caps
