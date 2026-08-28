@@ -89,6 +89,33 @@ public sealed class AnswerElisionTests
         Assert.True(e.Query("numlist(1, 10, L), write(L).").Success);
         Assert.Equal("[1,2,3,4,5,6,7,8,9,10]", sink.ToString());
     }
+
+    [Fact]
+    public void NestingDoesNotMultiplyTheAnswer()
+    {
+        // Per-list elision alone is not a bound: a list of lists shows the
+        // limit SQUARED. This answer respected every per-list and per-depth
+        // rule and still came to 55,000 characters.
+        var e = new PrologEngine();
+        var sol = e.Query("findall(L, (between(1, 1000, X), length(L, X)), Ls).");
+        Assert.True(sol.Success);
+        string shown = SolutionFormatter.Format(
+            e, sol, new[] { "Ls" }, 1200);
+        Assert.True(shown.Length < 2000, $"answer is {shown.Length} characters");
+        Assert.Contains("| ...", shown);
+    }
+
+    [Fact]
+    public void TheBudgetIsSpentOnTheFrontOfTheAnswer()
+    {
+        // What survives has to be the BEGINNING: an elision that dropped the
+        // first elements would be worse than no elision at all.
+        var e = new PrologEngine();
+        var sol = e.Query("findall(L, (between(1, 1000, X), length(L, X)), Ls).");
+        string shown = SolutionFormatter.Format(e, sol, new[] { "Ls" }, 1200);
+        // The first sublist has one element, the second two: both intact.
+        Assert.Matches(@"Ls = \[\[_[A-Za-z0-9]+\], \[_[A-Za-z0-9]+, _[A-Za-z0-9]+\],", shown);
+    }
 }
 
 /// <summary>
