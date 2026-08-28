@@ -130,14 +130,16 @@ public class StatisticsBuiltinTests
         // collector that never ran. Reporting only the compacting ones said
         // `0 collections` for both, which reads as "the GC never engaged" on a
         // query whose memory came back through backtracking instead.
+        //
+        // garbage_collect/0 rather than megabytes of garbage: the claim here is
+        // about the REPORT, and forcing a run states it without waiting for the
+        // watermark. (That the compacting count tracks a real reclaim is what
+        // GarbageCollect_ReclaimsDeadStructures_DespiteStaleRegisters pins.)
         var e = new PrologEngine();
-        e.ConsultString("""
-            mklist(0, []) :- !.
-            mklist(N, [M|T]) :- M is N - 1, mklist(M, T).
-            churn(0) :- !.
-            churn(K) :- mklist(200000, L), length(L, _), K1 is K - 1, churn(K1).
-            """);
-        var sol = e.Query("churn(8), with_output_to(atom(A), statistics).");
+        // A little garbage first: an empty heap makes CollectHeap return
+        // before it counts anything, there being nothing there at all.
+        var sol = e.Query(
+            "numlist(1, 1000, _), garbage_collect, with_output_to(atom(A), statistics).");
         Assert.True(sol.Success);
         string report = ((Shumway.Compiler.Ast.AtomTerm)sol["A"]!).Name;
         var gc = System.Text.RegularExpressions.Regex.Match(
@@ -145,27 +147,19 @@ public class StatisticsBuiltinTests
         Assert.True(gc.Success, report);
         int runs = int.Parse(gc.Groups[1].Value.Replace(",", ""));
         int compacting = int.Parse(gc.Groups[2].Value.Replace(",", ""));
-        // Allocation across goal boundaries reaches the safe points, so this
-        // shape does collect, and every run of it had something to move.
         Assert.True(runs >= 1, report);
         Assert.True(compacting <= runs, report);
-        Assert.True(compacting >= 1, report);
     }
 
     [Fact]
     public void TheCollectorTotalsSurviveTheQueryThatEarnedThem()
     {
-        // A query gets a fresh Activation, so the collector's counters die
-        // with it. statistics/0 is typed at a TOP LEVEL, where the question
-        // is what the session has done -- per-query counters answered it with
-        // the same zeroes however much work had gone by.
+        // A query gets a fresh Activation, so the collector's counters die with
+        // it. statistics/0 is typed at a TOP LEVEL, where the question is what
+        // the SESSION has done -- per-query counters answered it with the same
+        // zeroes however much work had gone by. Each garbage_collect/0 below is
+        // its own query, so the growth is exactly what used to be lost.
         var e = new PrologEngine();
-        e.ConsultString("""
-            mklist(0, []) :- !.
-            mklist(N, [M|T]) :- M is N - 1, mklist(M, T).
-            churn(0) :- !.
-            churn(K) :- mklist(200000, L), length(L, _), K1 is K - 1, churn(K1).
-            """);
 
         long Runs()
         {
@@ -177,10 +171,10 @@ public class StatisticsBuiltinTests
             return long.Parse(m.Groups[1].Value.Replace(",", ""));
         }
 
-        Assert.True(e.Query("churn(6).").Success);
+        Assert.True(e.Query("numlist(1, 1000, _), garbage_collect.").Success);
         long after = Runs();
-        Assert.True(after >= 1, $"no collection was counted: {after}");
-        Assert.True(e.Query("churn(6).").Success);
-        Assert.True(Runs() > after, "the totals did not grow with the second run");
+        Assert.True(after >= 1, $"no collector run was counted: {after}");
+        Assert.True(e.Query("numlist(1, 1000, _), garbage_collect.").Success);
+        Assert.True(Runs() > after, "the totals did not grow with the second query");
     }
 }
