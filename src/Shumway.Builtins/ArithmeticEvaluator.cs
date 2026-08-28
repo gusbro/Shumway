@@ -4,15 +4,17 @@ using Shumway.Core;
 namespace Shumway.Builtins;
 
 /// <summary>
-/// Recursive arithmetic-expression evaluator. ISO Prolog arithmetic isn't
+/// Arithmetic-expression evaluator. ISO Prolog arithmetic isn't
 /// directly term-evaluating — the right-hand side of <c>is/2</c> is a term
 /// that the builtin walks, recognising specific functor names (<c>+</c>,
 /// <c>-</c>, <c>*</c>, …) as operations and integer / bigint / float cells
 /// as leaves. Variables in arithmetic position must be bound to evaluable
 /// terms, otherwise an <c>instantiation_error</c> is raised.
 ///
-/// <para>The evaluator is leaf-recursive over the heap. Integer / float
-/// promotion follows ISO: any operand being a float floats the whole
+/// <para>The evaluator walks the heap, recursing while the expression is
+/// shallow and switching to an explicit stack past a depth budget — see
+/// <see cref="RecursionBudget"/> for why it is not one or the other. Integer /
+/// float promotion follows ISO: any operand being a float floats the whole
 /// expression. <c>+</c> / <c>-</c> / <c>*</c> / unary <c>-</c> / <c>abs</c>
 /// fall back to <see cref="BigInteger"/> on long overflow; the result
 /// auto-collapses to inline range when it fits.</para>
@@ -22,15 +24,31 @@ public static class ArithmeticEvaluator
     /// <summary>Reads the value at <paramref name="cell"/> (dereferencing if
     /// it's a REF) and computes its numeric value.</summary>
     public static Number Evaluate(Activation engine, Cell cell)
+        => Evaluate(engine, cell, 0);
+
+    private static Number Evaluate(Activation engine, Cell cell, int depth)
     {
         cell = ResolveRef(engine, cell);
-        return cell.Tag switch
+        return cell.Tag == Tag.Str
+            ? EvaluateCompound(engine, cell, depth)
+            : EvaluateLeaf(engine, cell);
+    }
+
+    /// <summary>How deep the walk may recurse before moving to the explicit
+    /// stack. Two C# frames per level, so this is a fraction of the smallest
+    /// thread stack the engine runs on, and it is orders of magnitude past any
+    /// expression a program writes — a hand-written one nests under twenty.
+    /// </summary>
+    private const int RecursionBudget = 500;
+
+    /// <summary>The value of a non-compound cell.</summary>
+    private static Number EvaluateLeaf(Activation engine, Cell cell)
+        => cell.Tag switch
         {
             Tag.Int => new Number(cell.AsInt),
             Tag.BigInt => new Number(engine.AsBigInt(cell)),
             Tag.Rational => new Number(engine.AsRational(cell)),
             Tag.Float => new Number(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
-            Tag.Str => EvaluateCompound(engine, cell),
             Tag.Ref => throw new PrologRuntimeException("instantiation_error"),
             Tag.Atom => EvaluateAtomConstant(engine, cell),
             // Anything else in arithmetic position is non-evaluable.
@@ -38,7 +56,6 @@ public static class ArithmeticEvaluator
             // travels in the exception so the value slot binds to it.
             _ => throw new PrologRuntimeException("type_error", "evaluable", engine, cell),
         };
-    }
 
     private static Cell ResolveRef(Activation engine, Cell cell)
     {
@@ -77,35 +94,184 @@ public static class ArithmeticEvaluator
         throw EvaluableTypeError(engine, name ?? "?", 0);
     }
 
-    private static Number EvaluateCompound(Activation engine, Cell strCell)
+    // A resolved evaluable, as one int. The walk stores THIS rather than the
+    // functor name, so a node's name is switched on once (here) instead of
+    // twice (once to validate, once to apply) — which is what lets an
+    // explicit stack come out ahead of the C# one it replaced. The high
+    // nibble is the kind; the low bits the UnOp / BinOp code.
+    private const int OpUnary = 0x1000;
+    private const int OpBinary = 0x2000;
+    private const int OpRandom = 0x3000;
+    private const int OpMsb = 0x3001;
+    private const int OpLsb = 0x3002;
+    private const int OpPopcount = 0x3003;
+    private const int OpCodeMask = 0x0FFF;
+
+    /// <summary>Resolves a compound's functor to an operation code, raising the
+    /// ISO error when it is not evaluable.
+    ///
+    /// <para>The FUNCTOR is checked before the arguments are evaluated:
+    /// <c>foo(bar)</c> is type_error(evaluable, foo/1), not bar/0 (§7.1.2 —
+    /// the outermost non-evaluable is the culprit; GNU and SWI agree).</para></summary>
+    private static int ResolveEvaluable(Activation engine, int functorIdx, out int arity)
     {
-        int functorIdx = strCell.AsHeapIndex;
         int functorId = engine.GetHeap(functorIdx).AsFunctorId;
-        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        var (atomId, ar) = FunctorTable.Lookup(functorId);
+        arity = ar;
         // A functor without a name in the AtomTable is an engine invariant
         // violation, not a user error — InvalidOperationException stays.
         string name = AtomTable.GetById(atomId)?.Name
                       ?? throw new InvalidOperationException(
                              $"Functor {functorId} has no name.");
-
-        // The FUNCTOR is checked before the arguments are evaluated:
-        // `foo(bar)` is type_error(evaluable, foo/1), not bar/0 (§7.1.2 —
-        // the outermost non-evaluable is the culprit; GNU and SWI agree).
-        if ((arity == 1 && !TryUnOp(name, out _)
-                && name is not ("msb" or "lsb" or "popcount" or "random"))
-            || (arity == 2 && !TryBinOp(name, out _)))
-            throw EvaluableTypeError(engine, name, arity);
-
-        return arity switch
+        if (ar == 1)
         {
-            1 => EvaluateUnary(engine, name, engine.GetHeap(functorIdx + 1)),
-            2 => EvaluateBinary(engine, name,
-                                engine.GetHeap(functorIdx + 1),
-                                engine.GetHeap(functorIdx + 2)),
-            // Any other arity in arithmetic position is a non-evaluable
-            // compound: ISO type_error(evaluable, Name/Arity).
-            _ => throw EvaluableTypeError(engine, name, arity),
-        };
+            if (TryUnOp(name, out UnOp u)) return OpUnary | (int)u;
+            switch (name)
+            {
+                case "random": return OpRandom;
+                case "msb": return OpMsb;
+                case "lsb": return OpLsb;
+                case "popcount": return OpPopcount;
+            }
+        }
+        // Any arity but 1 and 2 in arithmetic position is a non-evaluable
+        // compound: ISO type_error(evaluable, Name/Arity).
+        else if (ar == 2 && TryBinOp(name, out BinOp b))
+        {
+            return OpBinary | (int)b;
+        }
+        throw EvaluableTypeError(engine, name, ar);
+    }
+
+    /// <summary>Applies a resolved unary code to an evaluated operand.</summary>
+    private static Number ApplyResolvedUnary(Activation engine, int code, Number a)
+        => (code & ~OpCodeMask) == OpUnary
+            ? ApplyUn((UnOp)(code & OpCodeMask), a)
+            : ApplyHostUnary(engine, code, a, HostUnaryName(code));
+
+    private static string HostUnaryName(int code) => code switch
+    {
+        OpRandom => "random",
+        OpMsb => "msb",
+        OpLsb => "lsb",
+        _ => "popcount",
+    };
+
+    /// <summary>One step of the expression walk: evaluate <see cref="Cell"/>
+    /// when <see cref="Op"/> is <see cref="Eval"/>, otherwise apply that
+    /// resolved operation to the operands on the value stack. No managed
+    /// reference in the struct — storing one would cost a write barrier per
+    /// push.</summary>
+    private readonly struct EvalStep
+    {
+        public const int Eval = -1;
+        public readonly Cell Cell;
+        public readonly int Op;
+        public readonly int Arity;
+        public EvalStep(Cell cell) { Cell = cell; Op = Eval; Arity = 0; }
+        public EvalStep(int op, int arity) { Cell = default; Op = op; Arity = arity; }
+    }
+
+    /// <summary>Evaluates a compound arithmetic expression.
+    ///
+    /// <para>An expression is user data of any depth — <c>X is E</c> where E
+    /// was read, built with <c>=..</c>, or folded by a loop — and recursing
+    /// per level overflowed the C# stack, which kills the process instead of
+    /// raising anything catchable. Past <see cref="RecursionBudget"/> levels
+    /// the walk therefore moves to an explicit work stack and value stack, the
+    /// same shape ADR-018 compiles arithmetic into.</para>
+    ///
+    /// <para>It does NOT move there sooner, and that is measured, not
+    /// preference: <see cref="Number"/> is a wide struct with managed
+    /// references inside it (BigInteger, Rational), so pushing values into an
+    /// array costs a wide copy plus a write barrier per reference field, where
+    /// recursion keeps them in registers. Running every expression on the
+    /// explicit stack cost 10% on integer expressions and 26% on float ones.
+    /// The budget is past anything a program writes, so what actually runs is
+    /// the recursive path — unchanged — and nothing overflows.</para></summary>
+    private static Number EvaluateCompound(Activation engine, Cell strCell, int depth)
+    {
+        int functorIdx = strCell.AsHeapIndex;
+        int op = ResolveEvaluable(engine, functorIdx, out int arity);
+        if (depth >= RecursionBudget) return EvaluateNested(engine, strCell, op, arity);
+        if (arity == 1)
+            return ApplyResolvedUnary(engine, op,
+                Evaluate(engine, engine.GetHeap(functorIdx + 1), depth + 1));
+        return ApplyBin((BinOp)(op & OpCodeMask),
+            Evaluate(engine, engine.GetHeap(functorIdx + 1), depth + 1),
+            Evaluate(engine, engine.GetHeap(functorIdx + 2), depth + 1),
+            engine.PreferRationals);
+    }
+
+    // The two stacks of the walk. [ThreadStatic] for the reason
+    // ArithEvalStack's slots are: arithmetic is LEAF — no Prolog goal runs
+    // between entering an evaluation and finishing it — so walks never nest or
+    // interleave on one thread, and this is not engine state (the engine stays
+    // thread-agile; a plain static would race two engines on two threads).
+    // The tops are LOCALS, so an exception mid-evaluation leaves nothing to
+    // reset. Reusing the arrays is what keeps an explicit stack from costing
+    // more than the C# one it replaced.
+    [ThreadStatic] private static EvalStep[]? _steps;
+    [ThreadStatic] private static Number[]? _operands;
+
+    /// <param name="rootOp">The root's already-resolved operation — the caller
+    /// looked it up to try the inline path, so the walk does not repeat it.</param>
+    private static Number EvaluateNested(
+        Activation engine, Cell strCell, int rootOp, int rootArity)
+    {
+        EvalStep[] work = _steps ??= new EvalStep[64];
+        Number[] values = _operands ??= new Number[64];
+        int wTop = 0, vTop = 0;
+        int rootIdx = strCell.AsHeapIndex;
+        work[wTop++] = new EvalStep(rootOp, rootArity);
+        // Pushed right to left, so the left operand is evaluated first — the
+        // order errors and random/1 were raised in.
+        for (int i = rootArity; i >= 1; i--)
+            work[wTop++] = new EvalStep(engine.GetHeap(rootIdx + i));
+
+        while (wTop > 0)
+        {
+            EvalStep step = work[--wTop];
+            if (step.Op != EvalStep.Eval)
+            {
+                Number result;
+                if (step.Arity == 1)
+                {
+                    result = ApplyResolvedUnary(engine, step.Op, values[vTop - 1]);
+                    vTop -= 1;
+                }
+                else
+                {
+                    result = ApplyBin((BinOp)(step.Op & OpCodeMask),
+                        values[vTop - 2], values[vTop - 1], engine.PreferRationals);
+                    vTop -= 2;
+                }
+                values[vTop++] = result;
+                continue;
+            }
+            Cell cell = ResolveRef(engine, step.Cell);
+            if (cell.Tag != Tag.Str)
+            {
+                if (vTop == values.Length)
+                {
+                    System.Array.Resize(ref values, values.Length * 2);
+                    _operands = values;
+                }
+                values[vTop++] = EvaluateLeaf(engine, cell);
+                continue;
+            }
+            int fIdx = cell.AsHeapIndex;
+            int op = ResolveEvaluable(engine, fIdx, out int arity);
+            if (wTop + arity + 1 > work.Length)
+            {
+                System.Array.Resize(ref work, work.Length * 2);
+                _steps = work;
+            }
+            work[wTop++] = new EvalStep(op, arity);
+            for (int i = arity; i >= 1; i--)
+                work[wTop++] = new EvalStep(engine.GetHeap(fIdx + i));
+        }
+        return values[0];
     }
 
     /// <summary>The ISO ball for an unknown evaluable: the culprit is the
@@ -129,12 +295,34 @@ public static class ArithmeticEvaluator
     /// (e.g. <see cref="Evaluate"/> dispatching a compound) reuse the full ISO
     /// semantics.</summary>
     public static Number EvaluateUnary(Activation engine, string name, Cell argCell)
+        => ApplyUnaryNamed(engine, name, Evaluate(engine, argCell));
+
+    /// <summary>Applies a unary arithmetic function to an operand already
+    /// evaluated — the half of <see cref="EvaluateUnary"/> the expression walk
+    /// runs once the operand has come off the value stack.</summary>
+    private static Number ApplyUnaryNamed(Activation engine, string name, Number a)
     {
-        Number a = Evaluate(engine, argCell);
         if (TryUnOp(name, out UnOp op)) return ApplyUn(op, a);
+        int code = name switch
+        {
+            "random" => OpRandom,
+            "msb" => OpMsb,
+            "lsb" => OpLsb,
+            "popcount" => OpPopcount,
+            // Unknown unary arithmetic function — ISO type_error(evaluable, Name/1).
+            _ => throw EvaluableTypeError(engine, name, 1),
+        };
+        return ApplyHostUnary(engine, code, a, name);
+    }
+
+    /// <summary>The unary functions that are not pure <see cref="UnOp"/>s —
+    /// host-dependent (<c>random</c>) or bit-index queries.</summary>
+    private static Number ApplyHostUnary(
+        Activation engine, int code, Number a, string name)
+    {
         // SWI's random(IntExpr): a random integer in [0, IntExpr). Host-dependent,
         // so it is not a pure UnOp; drawn from the engine's seedable generator.
-        if (name == "random" && engine.Host is IRandomHost rh && a.IsInt)
+        if (code == OpRandom && engine.Host is IRandomHost rh && a.IsInt)
         {
             long n = a.IntValue;
             if (n <= 0) throw new PrologRuntimeException("evaluation_error", "undefined");
@@ -142,14 +330,14 @@ public static class ArithmeticEvaluator
         }
         // SWI msb/lsb: index of the most/least significant set bit of a
         // positive integer (varnumbers' power-of-two rounding uses msb).
-        if ((name == "msb" || name == "lsb") && !a.IsRat)
+        if ((code == OpMsb || code == OpLsb) && !a.IsRat)
         {
             if (a.IsFloat) throw IntTypeError(a);
             if (a.IsBig)
             {
                 System.Numerics.BigInteger bv = a.BigValue;
                 if (bv.Sign <= 0) throw EvalError("undefined");
-                if (name == "msb") return new Number(bv.GetBitLength() - 1);
+                if (code == OpMsb) return new Number(bv.GetBitLength() - 1);
                 // lsb: first non-zero byte of the little-endian magnitude.
                 byte[] bytes = bv.ToByteArray();
                 for (int i = 0; i < bytes.Length; i++)
@@ -160,13 +348,12 @@ public static class ArithmeticEvaluator
             }
             long v = a.IntValue;
             if (v <= 0) throw EvalError("undefined");
-            return new Number(name == "msb"
+            return new Number(code == OpMsb
                 ? 63 - System.Numerics.BitOperations.LeadingZeroCount((ulong)v)
                 : System.Numerics.BitOperations.TrailingZeroCount((ulong)v));
         }
         // SWI/ECLiPSe popcount(Int): set-bit count of a non-negative integer.
-        if (name == "popcount") return Popcount(a);
-        // Unknown unary arithmetic function — ISO type_error(evaluable, Name/1).
+        if (code == OpPopcount) return Popcount(a);
         throw EvaluableTypeError(engine, name, 1);
     }
 
@@ -175,9 +362,14 @@ public static class ArithmeticEvaluator
     /// (e.g. <see cref="Evaluate"/> dispatching a compound) reuse the full ISO
     /// semantics.</summary>
     public static Number EvaluateBinary(Activation engine, string name, Cell aCell, Cell bCell)
+        => ApplyBinaryNamed(engine, name,
+            Evaluate(engine, aCell), Evaluate(engine, bCell));
+
+    /// <summary>Applies a binary arithmetic function to operands already
+    /// evaluated — see <see cref="ApplyUnaryNamed"/>.</summary>
+    private static Number ApplyBinaryNamed(
+        Activation engine, string name, Number a, Number b)
     {
-        Number a = Evaluate(engine, aCell);
-        Number b = Evaluate(engine, bCell);
         if (TryBinOp(name, out BinOp op)) return ApplyBin(op, a, b, engine.PreferRationals);
         // Unknown binary arithmetic function — ISO type_error(evaluable, Name/2).
         throw EvaluableTypeError(engine, name, 2);

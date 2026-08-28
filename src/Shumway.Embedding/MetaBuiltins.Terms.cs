@@ -30,8 +30,7 @@ public static partial class MetaBuiltins
         // resolves to one shared heap cell, then read back each var's
         // heap-bound value for the bindings list.
         var names = new List<string>();
-        var seen = new HashSet<string>();
-        CollectNamedVarsFromTerm(parsed, names, seen);
+        CollectNamedVars(parsed, names, new Dictionary<string, int>());
 
         // Bindings vars must BE the term's vars (SWI contract — and what
         // singleton computation and read_term_from_chars build on). Build
@@ -59,19 +58,6 @@ public static partial class MetaBuiltins
         int wrapBase = wrapCell.AsHeapIndex;
         if (!engine.UnifyRegisterWithHeapAt(1, wrapBase + 2)) return false;
         return engine.UnifyRegisterWithHeapAt(2, wrapBase + 3);
-    }
-
-    private static void CollectNamedVarsFromTerm(Term t, List<string> order, HashSet<string> seen)
-    {
-        switch (t)
-        {
-            case VarTerm v when v.Name != "_":
-                if (seen.Add(v.Name)) order.Add(v.Name);
-                break;
-            case CompoundTerm c:
-                foreach (Term arg in c.Args) CollectNamedVarsFromTerm(arg, order, seen);
-                break;
-        }
     }
 
     private static Term BuildListTerm(IReadOnlyList<Term> items)
@@ -185,6 +171,31 @@ public static partial class MetaBuiltins
                 "warning" => Shumway.Core.UnknownAction.Warning,
                 _ => Shumway.Core.UnknownAction.Error,
             };
+            return true;
+        }
+        if (flagName == "encoding")
+        {
+            // Default text encoding for source reads and new streams. The
+            // charset alias spellings normalize to the engine name, which
+            // is what current_prolog_flag/2 reports.
+            string? norm = Shumway.Core.TextEncodings.DirectiveNameToEngineName(valueName);
+            if (norm is null)
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", FlagValuePair()));
+            host.Flags.DefaultTextEncoding = norm;
+            if (engine.Streams is { } reg) reg.DefaultEncodingName = norm;
+            return true;
+        }
+        if (flagName == "lenient_escapes")
+        {
+            // Non-ISO escape sequences (SWI's fixed-width unicode escapes
+            // and friends) in ALL subsequent reads. Strict ISO rejects them
+            // (the conformance suite checks), so this is opt-in — the
+            // Logtalk adapter sets it, matching the reference backend.
+            if (valueName != "true" && valueName != "false")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", FlagValuePair()));
+            host.Flags.LenientEscapes = valueName == "true";
             return true;
         }
         if (flagName == "discontiguous_check")
@@ -417,6 +428,13 @@ public static partial class MetaBuiltins
             case "discontiguous_check":
                 return UnifyAtom(engine, 1, host.Flags.DiscontiguousCheck);
 
+            case "lenient_escapes":
+                return UnifyAtom(engine, 1,
+                    host.Flags.LenientEscapes ? "true" : "false");
+
+            case "encoding":
+                return UnifyAtom(engine, 1, host.Flags.DefaultTextEncoding);
+
             case "arity_compat":
                 return UnifyAtom(engine, 1, host.Flags.ArityCompat ? "true" : "false");
 
@@ -433,16 +451,17 @@ public static partial class MetaBuiltins
                 return UnifyAtom(engine, 1, host.Flags.Debug ? "on" : "off");
 
             case "min_integer":
-                // ISO only requires these when `bounded` is true, and Shumway
-                // is unbounded — but SWI reports them anyway and portable code
-                // probes them (lgtunit's quick-check generator does). The
-                // answer is the INLINE fixnum range (ADR-002's 60-bit
-                // payload) — anything past it is a BigInt, which is exactly
-                // what "unbounded" means here.
-                return engine.UnifyRegisterWithCell(1, Cell.Int(Cell.MinInt60));
-
             case "max_integer":
-                return engine.UnifyRegisterWithCell(1, Cell.Int(Cell.MaxInt60));
+                // ISO 7.11.1: these flags carry a value only on a BOUNDED
+                // processor, and Shumway is unbounded (BigInt past the
+                // inline fixnum). The names are still RECOGNISED — they are
+                // ISO-spec flags, so no domain_error — but the query FAILS,
+                // exactly Trealla's model. That failure is also what keeps
+                // portable probes sound: Logtalk arbitrary's integer edge
+                // cases call current_prolog_flag(max_integer, _) unguarded
+                // inside a findall — a fail contributes no edge case, an
+                // error would tear the generator down.
+                return false;
 
             case "max_arity":
                 // ISO requires this be either an integer or
@@ -464,11 +483,11 @@ public static partial class MetaBuiltins
     /// the value is produced by the same bound-name switch.</summary>
     private static readonly string[] EnumerableFlags =
     {
-        "bounded", "max_arity", "min_integer", "max_integer",
+        "bounded", "max_arity",
         "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
         "debug", "dialect", "library_dialect", "version_data", "argv", "pid",
-        "implicit_dynamic", "arity_compat",
+        "implicit_dynamic", "arity_compat", "lenient_escapes", "encoding",
         "compile_mode", "debug_lco", "prefer_rationals", "answer_max_depth",
         "tabling",
     };
@@ -670,6 +689,11 @@ public static partial class MetaBuiltins
         report.Append("Heap:      ").Append(Count(engine.HeapTop)).Append(" cells in use of ")
               .Append(Count(engine.HeapCapacity)).Append(" (")
               .Append(Count((long)engine.HeapCapacity * 8 / 1024)).Append(" KB)\n");
+        // ADR-016 — this query's collections; the reclaim total is what the
+        // bounded-memory machinery actually gave back.
+        report.Append("Heap GC:   ").Append(Count(engine.HeapGcCount))
+              .Append(engine.HeapGcCount == 1 ? " collection, " : " collections, ")
+              .Append(Count(engine.HeapGcReclaimedCells)).Append(" cells reclaimed\n");
         // ADR-004 — two trails, reported as the two they are.
         // How much of that heap is packed text. Reported as a resource, like
         // every other line here — it is the answer to "is my text costing what
@@ -685,8 +709,16 @@ public static partial class MetaBuiltins
               .Append(" bindings, ").Append(Count(engine.ExtraTrailTop)).Append(" other\n");
         report.Append("Stack:     ").Append(Count(engine.StackTop)).Append(" words in use of ")
               .Append(Count(engine.StackCapacity)).Append('\n');
+        // ADR-003 — the atom table is process-wide, and so are its GC numbers.
+        report.Append("Atoms:     ").Append(Count(AtomTable.TransientCount))
+              .Append(" transient + ").Append(Count(AtomTable.PermanentCount))
+              .Append(" permanent (").Append(Count(AtomTable.SweepCount))
+              .Append(AtomTable.SweepCount == 1 ? " sweep, " : " sweeps, ")
+              .Append(Count(AtomTable.SweptAtoms)).Append(" atoms reclaimed)\n");
 
-        host.Out.Write(report.ToString());
+        // The CURRENT output, so with_output_to/2 and set_output/1 capture
+        // the report — which is also what the doc line always promised.
+        engine.Out.Write(report.ToString());
         return true;
 
         static string Seconds(long ms) => (ms / 1000.0).ToString("0.000",

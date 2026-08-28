@@ -1,9 +1,9 @@
-# WebShumway — Prolog in the browser
+# WebShumway: Prolog in the browser
 
 WebShumway is the Shumway engine compiled to WebAssembly, with a Prolog top level
 around it. The engine, the files and the search all live in the page; there is no
 server behind it, and nothing to upload anything to. It is served as static
-files — with one requirement that CAN break a deploy: the page must be
+files, with one requirement that CAN break a deploy: the page must be
 cross-origin isolated (the COOP/COEP headers, or the service-worker fallback
 when the host cannot set them), described under [Hosting](#hosting).
 
@@ -24,7 +24,7 @@ top level. The interaction is the one every Prolog top level has: type a goal,
 get an answer, press `;` for the next one and `.` to stop.
 
 The browser build runs the **bytecode interpreter only**. Shumway's second tier
-compiles predicates to IL at runtime, which a browser does not allow — the
+compiles predicates to IL at runtime, which a browser does not allow: the
 capability gate (`Shumway.Core.RuntimeCaps`) reports it as absent, and the
 trimmer removes the IL compiler and its dependency from the payload. Programs
 behave identically; only speed differs.
@@ -50,7 +50,7 @@ and `L` go to the address bar; `J`, `D`, `P`, `R`, `U`, `W` are taken everywhere
 
 A workspace is a folder of files **and the engine's working directory**, so
 `:- use_module('other.pl').`, `consult/1` and `open/4` resolve inside it with no
-special casing — a program that spans several files works the way it does on a
+special casing; a program that spans several files works the way it does on a
 desktop.
 
 Switching workspace **starts a fresh engine**. A workspace is a separate
@@ -77,48 +77,71 @@ and it stays deleted.
 
 Two ways in:
 
-- **Import folder…** — a folder from your computer.
-- **Import from URL…** — a GitHub directory address, the one you get by
-  navigating there and copying the bar. Scryer's and SWI's are offered, so
-  borrowing a library does not mean installing a Prolog system.
+- **Import folder…**: a folder from your computer.
+- **Import from URL…**: a GitHub directory address, the one you get by
+  navigating there and copying the bar. Scryer's, SWI's and Trealla's are
+  offered, so borrowing a library does not mean installing a Prolog system.
 
 What you import is a **collection**, not a library. Scryer's `lib/` is one
 folder and about sixty libraries: every `x.pl` in it is `library(x)`.
 
-A collection carries a **dialect** (`scryer`, `swi`, or none). A library
+A collection carries a **dialect** (`scryer`, `swi`, `trealla`, or none). A library
 resolved from a collection tagged `scryer` loads under Scryer's name resolution
 and `double_quotes`, which is what lets both systems' versions of the same
-library sit in one engine — see [ADR-040](../architecture/adr/040-multi-dialect-shims.md).
+library sit in one engine: see [ADR-040](../architecture/adr/040-multi-dialect-shims.md).
 
 Libraries are **global**: shared by every workspace, unaffected by switching,
 and not part of a workspace's zip or share link.
 
 ### Compiling
 
-A library loads several times faster once compiled, because the compiling — the
-expensive part — stops happening on every consult. Scryer's clpz was measured at
+A library loads several times faster once compiled, because the compiling (the
+expensive part) stops happening on every consult. Scryer's clpz was measured at
 about six times faster from a bundle than from source.
 
 It runs by itself in the background after an import, one library after another:
 
 - **what your programs import goes first**, read out of the workspace's sources
   (the point is to build them *before* anything asks), and re-aimed after every
-  consult and workspace switch — which is when that answer changes;
+  consult and workspace switch, which is when that answer changes;
 - each library becomes fast the moment its own build lands; the batch does not
   have to finish to be worth having;
 - it **pauses while you consult**, so what a consult resolves against is a
   settled set, and pressing Consult does not mean waiting behind a library
   nobody asked for;
-- it can be stopped, and what is built stays built — across reloads too;
+- it can be stopped, and what is built stays built: across reloads too;
 - a big collection (SWI's library is about two hundred files) is not compiled
   through unasked: above eighty libraries the batch does what the workspace
   imports and stops. The rest are a button away and still load from source.
 
 Compiling uses the **consult** path (`ShmoViaConsult`), the only one that works
-for a library which generates clauses as it loads — which is what clpz and its
-attributed-variable machinery do — and packs the result with the **librarian**
+for a library which generates clauses as it loads (which is what clpz and its
+attributed-variable machinery do) and packs the result with the **librarian**
 rather than the linker, because a library has no entry point to compute
 reachability from.
+
+### When one will not compile
+
+Importing a collection compiles libraries you did not ask about, so what they
+have to say is not your output. A collection written for another system may
+declare a foreign interface this engine has no way to bind, or import a library
+that is not there, and reporting each of those where you are working buries what
+you were doing.
+
+So the diagnostics are **filed against the library** rather than printed. The
+batch's summary names the ones that would not compile, and **Libraries** marks
+each of them:
+
+| in the list | what it means |
+|---|---|
+| compiled | ready, and fast |
+| source only | not built yet; it works, it just loads slowly |
+| compiled, with warnings | it built, but part of it did not load: often a foreign interface |
+| will not compile | it cannot be built here; **details** says why |
+
+The mark and its reason survive a reload, which is when it matters: the batch
+that found out runs once, at import. A library recompiled cleanly loses the
+mark, since the record describes the *last* compile.
 
 ### Sources are sources
 
@@ -131,22 +154,38 @@ A collection is laid out so the rule needs no enforcing:
 
 The search path reaches the collection's root before its `src/`, so a compiled
 bundle wins over the source beside it. Editing a source therefore does nothing
-until **rebuild** — and that is visible in the layout rather than imposed by a
+until **rebuild**, and that is visible in the layout rather than imposed by a
 read-only flag somebody has to police. A library that will not compile still
 works; it just loads slowly.
 
 ---
 
+## Debugging
+
+The **Debug** toggle in the toolbar turns the page into the same source-level
+debugger the [VS / VS Code frontends](debugger.md) drive, over the same engine
+debug core: breakpoints in the editor gutter (conditional ones and logpoints
+included), port-based stepping while a query is stopped, the real Prolog call
+stack with per-frame variables and residual constraints, goal evaluation at a
+stop, and Set Next Statement. The views live in dockable panes on either side
+of the page, and `debugger_break/0` works here as it does everywhere else,
+with no debugger attached it succeeds and does nothing.
+
+The in-page guide (the `?` icon, *About WebShumway*) documents the
+debugger's controls and keyboard shortcuts in full.
+
+---
+
 ## Sharing
 
-**Share** puts the code itself in the link, in the fragment — the part of a URL
+**Share** puts the code itself in the link, in the fragment: the part of a URL
 browsers never send to a server. Sharing a link does not hand anyone's program
 to a third party.
 
 It asks what to carry: this file, or the whole workspace (a program that spans
 files is not shareable one file at a time). The fragment reads
 `#name~payload`: a name a person recognises before the encoded part, and
-decoration only — the payload says what it is, so a hand-edited label cannot
+decoration only: the payload says what it is, so a hand-edited label cannot
 mislead the loader.
 
 Opening a link never overwrites anything silently. A file identical to yours is
@@ -166,7 +205,7 @@ URL does not navigate to it again.
 
 Preferences are the page's, not the user's, so they are not in OPFS: deleting a
 workspace must not take the theme with it. The envelope carries a version, and a
-stored one of another version is **discarded** rather than half-read — the right
+stored one of another version is **discarded** rather than half-read: the right
 policy while the shape is still moving, and stated in one place (`settings.js`)
 rather than discovered later as a page misreading yesterday's data.
 
@@ -198,13 +237,13 @@ does).
 Serve the published `wwwroot` and set the two headers. The page is isolated from
 the first request; nothing below applies.
 
-### A host that cannot — GitHub Pages
+### A host that cannot: GitHub Pages
 
 A service worker controls the responses the page receives, so it can add the
 headers itself: what matters to the browser is what arrives, not who wrote it
 (`sw.js`). The cost is that a worker does not control the page that installed
 it, so the **first load of a fresh visit** is not isolated and the page reloads
-once — a blink, once per browser rather than once per visit.
+once: a blink, once per browser rather than once per visit.
 
 Two things make that work, and both are load-bearing:
 
@@ -225,11 +264,22 @@ whole runtime lives.
 
 ### Offline
 
-The same worker makes a second visit start offline. Files whose name pins their
-contents (the runtime, the fingerprinted modules) are served from the cache;
-everything else — the stylesheet, the manifest, the examples — goes to the
-network first with the cache as fallback, because those keep their names across
-publishes and a cached copy can be stale.
+The same worker makes the next visit start offline, and **one visit is enough**.
+Files whose name pins their contents (the runtime, the fingerprinted modules)
+are served from the cache; everything else (the stylesheet, the manifest, the
+examples) goes to the network first with the cache as fallback, because those
+keep their names across publishes and a cached copy can be stale.
+
+The worker can only cache what passes through it, and the assets of the load
+that installed it did not: they were fetched before it controlled anything. On
+a host that needs the worker for isolation this is hidden, since that visit
+reloads once anyway; where the server sends the headers itself, it left the
+cache holding the four shell files and nothing else. So the page asks for its
+own assets again as soon as the worker is in charge. It costs requests rather
+than bytes, and on any later visit the worker answers them from its own cache.
+
+Your files are not part of this: a workspace lives in origin-private storage,
+so the examples and anything you wrote open with no network at all.
 
 ---
 
@@ -240,7 +290,7 @@ app and prints the results into the transcript: consult, pulling solutions,
 failure, a syntax error, engine output, cancellation, the editor's highlighting
 over the real DOM, the workspace and Prolog's view of it, workspace separation,
 the zip, sharing both shapes, and the settings envelope. It is the only
-automatic test that reaches this layer — a browser-wasm project cannot be
+automatic test that reaches this layer: a browser-wasm project cannot be
 referenced by a normal test project.
 
 `#persist=write` then `#persist=check` (two loads, same profile) checks that a

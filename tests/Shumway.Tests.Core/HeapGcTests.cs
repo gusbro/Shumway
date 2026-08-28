@@ -152,4 +152,30 @@ public class HeapGcTests
         Assert.Equal("hello", e.AsPstrString(charsNow));
         Assert.Equal("world", e.AsPstrString(codesNow));
     }
+
+    [Fact]
+    public void Collect_PreservesThePstrAstralBitOfEverySurvivor()
+    {
+        // The astral flag lives at payload bit 58, rebuilt by Relocate like
+        // the kind bit. Losing it would re-split every surrogate pair into
+        // two malformed elements — only under memory pressure, never in a
+        // plain run.
+        var e = new Activation();
+        ClearRegisters(e);
+
+        e.AllocateHeapUnbound();                      // garbage, forces a slide
+        int astral = e.MakePstr("a😀b", TextKind.Chars);
+        e.AllocateHeapUnbound();
+        int bmp = e.MakePstr("plain", TextKind.Chars);
+        e.SetRegister(0, Cell.Ref(astral));
+        e.SetRegister(1, Cell.Ref(bmp));
+
+        e.CollectHeap();
+
+        int astralNow = e.GetRegister(0).AsHeapIndex;
+        int bmpNow = e.GetRegister(1).AsHeapIndex;
+        Assert.True(e.GetHeap(astralNow).AsPstrIsAstral);
+        Assert.False(e.GetHeap(bmpNow).AsPstrIsAstral);
+        Assert.Equal("a😀b", e.AsPstrString(astralNow));
+    }
 }

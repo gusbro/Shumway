@@ -232,17 +232,20 @@ public sealed partial class Activation
         int bufferStart = headerIdx + 1;
         int tailIdx = bufferStart + bufferCellCount;
 
+        bool astral = false;
         for (int i = 0; i < bufferCellCount; i++)
         {
             int basePos = i * Cell.PstrCodeUnitsPerBuffer;
             int cu0 = basePos < codeUnits ? value[basePos] : 0;
             int cu1 = (basePos + 1) < codeUnits ? value[basePos + 1] : 0;
             int cu2 = (basePos + 2) < codeUnits ? value[basePos + 2] : 0;
+            astral |= (cu0 & 0xF800) == 0xD800 || (cu1 & 0xF800) == 0xD800
+                || (cu2 & 0xF800) == 0xD800;
             _heap[bufferStart + i] = Cell.PstrBuffer(cu0, cu1, cu2);
         }
 
         _heap[tailIdx] = Cell.Atom(AtomTable.EmptyListId);
-        _heap[headerIdx] = Cell.Pstr(codeUnits, bufferStart, 0, kind);
+        _heap[headerIdx] = Cell.Pstr(codeUnits, bufferStart, 0, kind, astral);
         return headerIdx;
     }
 
@@ -393,7 +396,10 @@ public sealed partial class Activation
         // unification path's recursive Unify on tail indices follows the
         // chain transparently (UnifyPstrPstr dispatches on Pstr-Pstr).
         _heap[tailIdx] = _heap[bIdx];
-        _heap[headerIdx] = Cell.Pstr(totalALength, bufferStart, 0, aHdr.AsPstrKind);
+        bool aAstral = false;
+        for (int i = 0; i < totalALength && !aAstral; i++)
+            aAstral = (aChars[i] & 0xF800) == 0xD800;
+        _heap[headerIdx] = Cell.Pstr(totalALength, bufferStart, 0, aHdr.AsPstrKind, aAstral);
         return headerIdx;
     }
 
@@ -451,13 +457,62 @@ public sealed partial class Activation
     /// Every uncons path goes through here — the four of them producing their
     /// own head cell is how <c>X = "abc", X = [97,98,99]</c> came to fail
     /// through one cursor and succeed through another.</summary>
-    private static Cell PstrHeadCell(TextKind kind, int codeUnit)
+    private static Cell PstrHeadCell(TextKind kind, int codePoint)
     {
-        if (kind == TextKind.Codes) return Cell.Int(codeUnit);
-        int cached = AtomTable.GetSingleCharAtomId(codeUnit);
+        if (kind == TextKind.Codes) return Cell.Int(codePoint);
+        int cached = AtomTable.GetSingleCharAtomId(codePoint);
         return Cell.Atom(cached >= 0
             ? cached
-            : AtomTable.Intern(((char)codeUnit).ToString(), permanent: false).Id);
+            : AtomTable.Intern(Utf16Text.FromCodePoint(codePoint), permanent: false).Id);
+    }
+
+    /// <summary>The first CHARACTER of a non-empty packed list: its code
+    /// point and how many units it spans (2 for a surrogate pair, else 1).
+    /// BMP-flagged headers never reach the pair check. A lone surrogate
+    /// yields its own unit value — malformed text reads unit-wise, the same
+    /// policy as everywhere else.</summary>
+    internal int PstrHeadCodePoint(Cell header, out int unitsSpanned)
+    {
+        int u0 = GetPstrCodeUnit(header, 0);
+        if (header.AsPstrIsAstral && header.AsPstrLength > 1
+            && char.IsHighSurrogate((char)u0))
+        {
+            int u1 = GetPstrCodeUnit(header, 1);
+            if (char.IsLowSurrogate((char)u1))
+            {
+                unitsSpanned = 2;
+                return char.ConvertToUtf32((char)u0, (char)u1);
+            }
+        }
+        unitsSpanned = 1;
+        return u0;
+    }
+
+    /// <summary>The first element of a non-empty packed list as a CELL VALUE
+    /// — no heap allocation, so clause-selection dispatch can key on it. A
+    /// chars head may intern a one-character atom on a cache miss (managed
+    /// allocation only, deterministic).</summary>
+    public Cell PstrHeadElementCell(Cell header)
+        => PstrHeadCell(header.AsPstrKind, PstrHeadCodePoint(header, out _));
+
+    /// <summary>The tail of a non-empty packed list as a CELL VALUE: the
+    /// stored tail (deref'd) when one element remains, else a virtual slice
+    /// header. Never writes the heap — dispatch-safe.</summary>
+    public Cell PstrTailCellValue(Cell header)
+    {
+        PstrHeadCodePoint(header, out int span);
+        if (header.AsPstrLength == span)
+        {
+            int t = Deref(ComputePstrTailIndex(header));
+            Cell tail = _heap[t];
+            return tail.Tag is Tag.Ref or Tag.AttVar ? Cell.Ref(t) : tail;
+        }
+        int absoluteStart = header.AsPstrOffset + span;
+        return Cell.Pstr(
+            header.AsPstrLength - span,
+            header.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
+            absoluteStart % Cell.PstrCodeUnitsPerBuffer,
+            header.AsPstrKind, header.AsPstrIsAstral);
     }
 
     private int GetPstrCodeUnit(Cell header, int i)
@@ -795,9 +850,17 @@ public sealed partial class Activation
                 // module entirely when it was absent before (-1).
                 {
                     var (home, mod, oldValue) = _attrTrailLog[entry.HeapIdx];
-                    var record = _attrTable[home];
-                    if (oldValue < 0) record.Remove(mod);
-                    else record[mod] = oldValue;
+                    // The record may be GONE: DropDeadAttrRecord removes it
+                    // once the cell at home is no longer a live attributed
+                    // variable, which is exactly when restoring an attribute
+                    // value for it would mean nothing. Indexing regardless
+                    // threw KeyNotFoundException out of the engine, where a
+                    // Prolog program could reach it.
+                    if (_attrTable.TryGetValue(home, out var record))
+                    {
+                        if (oldValue < 0) record.Remove(mod);
+                        else record[mod] = oldValue;
+                    }
                     // truncate the side log. entry.HeapIdx is the
                     // log index assigned at append time (TrailAttrChange),
                     // and extra-trail entries unwind strictly in reverse
@@ -1431,7 +1494,8 @@ public sealed partial class Activation
         int sliceLength = bLen - aLen;
 
         int sliceSlot = AllocateHeap(1);
-        _heap[sliceSlot] = Cell.Pstr(sliceLength, sliceBufferIdx, sliceOffset, bHdr.AsPstrKind);
+        _heap[sliceSlot] = Cell.Pstr(sliceLength, sliceBufferIdx, sliceOffset,
+            bHdr.AsPstrKind, bHdr.AsPstrIsAstral);
         return Unify(aTailIdx, sliceSlot);
     }
 
@@ -1440,10 +1504,9 @@ public sealed partial class Activation
     /// <c>Int(cu)</c>, then recurses on the LIS tail with either the PSTR's stored tail
     /// (length 1) or a virtual one-shorter PSTR slice.
     ///
-    /// <para>Heads are emitted as 16-bit UTF-16 code units; supplementary codepoints
-    /// (above U+FFFF) appear as two separate surrogate values rather than one combined
-    /// codepoint. This is enough for BMP-only grammar workloads;
-    /// surrogate-pair fusion is a future refinement.</para>
+    /// <para>Heads are CODE POINTS: a supplementary character (above U+FFFF)
+    /// is one element spanning two packed units, joined by
+    /// <see cref="PstrHeadCodePoint"/>.</para>
     /// </summary>
     private bool UnifyPstrLis(int pstrAddr, int lisAddr)
     {
@@ -1453,22 +1516,24 @@ public sealed partial class Activation
         int lisHeadIdx = _heap[lisAddr].AsHeapIndex;
         int lisTailIdx = lisHeadIdx + 1;
 
+        int cp = PstrHeadCodePoint(pstrHdr, out int span);
         int headSlot = AllocateHeap(1);
-        _heap[headSlot] = PstrHeadCell(pstrHdr.AsPstrKind, GetPstrCodeUnit(pstrHdr, 0));
+        _heap[headSlot] = PstrHeadCell(pstrHdr.AsPstrKind, cp);
         if (!Unify(headSlot, lisHeadIdx)) return false;
 
-        if (length == 1)
+        if (length == span)
         {
             int origTailIdx = ComputePstrTailIndex(pstrHdr);
             return Unify(origTailIdx, lisTailIdx);
         }
 
-        int absoluteStart = pstrHdr.AsPstrOffset + 1;
+        int absoluteStart = pstrHdr.AsPstrOffset + span;
         int newBufferIdx = pstrHdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer;
         int newOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
 
         int sliceSlot = AllocateHeap(1);
-        _heap[sliceSlot] = Cell.Pstr(length - 1, newBufferIdx, newOffset, pstrHdr.AsPstrKind);
+        _heap[sliceSlot] = Cell.Pstr(length - span, newBufferIdx, newOffset,
+            pstrHdr.AsPstrKind, pstrHdr.AsPstrIsAstral);
         return Unify(sliceSlot, lisTailIdx);
     }
 

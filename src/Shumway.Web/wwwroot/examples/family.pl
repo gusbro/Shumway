@@ -8,8 +8,12 @@ parent(beto,  diego).
 parent(clara, elena).
 parent(diego, tomas).
 
-ancestor(X, Y) :- parent(X, Y).
-ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
+ancestor(X, Y) :-
+    parent(X, Y).
+ancestor(X, Z) :-
+    parent(X, Y),
+    ancestor(Y, Z).
 
 % Everyone reachable from X, collected in one go.
-descendants(X, L) :- findall(Y, ancestor(X, Y), L).
+descendants(X, L) :-
+    findall(Y, ancestor(X, Y), L).

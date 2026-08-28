@@ -172,32 +172,63 @@ public static class AtomListBuiltins
         {
             if (m > elems.Count) return false;
             int split = elems.Count - m;
+            // L2 is BUILT here rather than shared with L3's spine, which is
+            // what the enumerating path below does. Sharing means walking to
+            // the split point, and this mode's common shape is a long prefix
+            // with a short L2 (`append(_, [Last], L)`): the walk would cost a
+            // step per element to save building the handful that L2 has.
             int l1Heap = BuildListFromCells(engine, elems, 0, split, Cell.Atom(AtomTable.EmptyListId));
             int l2Heap = BuildListFromCells(engine, elems, split, elems.Count, cursor);
             return engine.UnifyRegisterWithHeapAt(0, l1Heap)
                 && engine.UnifyRegisterWithHeapAt(1, l2Heap);
         }
 
-        return new AppendSplitCursor(elems, cursor, returnPc).Start(engine);
+        return new AppendSplitCursor(elems, CollectSuffixes(engine, elems.Count), returnPc)
+            .Start(engine);
+    }
+
+    /// <summary>The suffix at every split point, for the ENUMERATING path.
+    ///
+    /// <para>Every split hands L2 a suffix of L3, and that suffix ALREADY
+    /// exists inside L3's spine, so there is nothing to build for it: sharing
+    /// it is what the two-clause Prolog <c>append/3</c> does when it reaches
+    /// <c>append([], L, L)</c>. One walk of the spine, and each of the n + 1
+    /// solutions reads one entry instead of building a list, which is what
+    /// takes the enumeration from two lists per solution down to one.</para>
+    ///
+    /// <para>Only worth it when there ARE n + 1 solutions to amortise it over:
+    /// the deterministic split builds its single L2 instead.</para></summary>
+    private static List<Cell> CollectSuffixes(Activation engine, int count)
+    {
+        var suffixes = new List<Cell>(count + 1);
+        Cell cursor = ListCursor.Resolve(engine, engine.GetRegister(2));
+        for (int i = 0; ; i++)
+        {
+            suffixes.Add(cursor);
+            if (i == count) return suffixes;
+            ListCursor.TryUncons(engine, cursor, out _, out Cell tail);
+            cursor = ListCursor.Resolve(engine, tail);
+        }
     }
 
     /// <summary>Resume state for the non-deterministic <c>append/3</c> split:
-    /// the collected L3 elements, the (possibly improper) tail, and the
+    /// the collected L3 elements, the suffix each split point yields, and the
     /// running split index, plus a cached resume delegate — allocated once
     /// per call and re-pushed unchanged on each backtrack, no per-split
     /// closure.</summary>
     private sealed class AppendSplitCursor
     {
         private readonly IReadOnlyList<Cell> _elems;
-        private readonly Cell _suffixTail;
+        private readonly IReadOnlyList<Cell> _suffixes;
         private readonly int _returnPc;
         private int _splitIdx;
         public readonly Func<Activation, int, bool> Resume;
 
-        public AppendSplitCursor(IReadOnlyList<Cell> elems, Cell suffixTail, int returnPc)
+        public AppendSplitCursor(
+            IReadOnlyList<Cell> elems, IReadOnlyList<Cell> suffixes, int returnPc)
         {
             _elems = elems;
-            _suffixTail = suffixTail;
+            _suffixes = suffixes;
             _returnPc = returnPc;
             _splitIdx = 0;
             Resume = (e, _) => Attempt(e, isResume: true);
@@ -222,12 +253,12 @@ public static class AtomListBuiltins
                 engine.PushBuiltinChoicePoint(Resume, arity: 3);
             }
 
-            // L1 = elems[0..splitIdx] (always proper); L2 = elems[splitIdx..n]
-            // with L3's tail ([] for a proper L3, the improper tail otherwise).
+            // L1 = elems[0..splitIdx], built fresh because it is a new list.
+            // L2 is L3's own suffix from splitIdx on, so it is handed over
+            // rather than rebuilt.
             int l1Heap = BuildListFromCells(engine, _elems, 0, splitIdx, Cell.Atom(AtomTable.EmptyListId));
-            int l2Heap = BuildListFromCells(engine, _elems, splitIdx, n, _suffixTail);
             if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
-            if (!engine.UnifyRegisterWithHeapAt(1, l2Heap)) return false;
+            if (!engine.UnifyRegisterWithCell(1, _suffixes[splitIdx])) return false;
             if (isResume) engine.ResumeAtReturnPc(_returnPc);
             return true;
         }
@@ -393,12 +424,12 @@ public static class AtomListBuiltins
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException(
                     "type_error", "integer", engine, head);
-            // BMP-only, same contract as char_code/2: silently casting would
-            // BUILD A DIFFERENT CHARACTER (0x10400 → 0x400).
-            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+            // Any Unicode scalar value, same contract as char_code/2;
+            // an astral code appends its surrogate pair.
+            if (!Utf16Text.IsScalarValue(head.AsInt))
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
-            sb.Append((char)head.AsInt);
+            Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             cursor = ListCursor.Resolve(engine, rTail);
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)
@@ -544,6 +575,13 @@ public static class AtomListBuiltins
         private bool Attempt(Activation engine, bool isResume)
         {
             int splitIdx = _splitIdx;
+            // A split point inside a surrogate pair is not a CHARACTER
+            // boundary: cutting there manufactured two lone-surrogate atoms
+            // ('😀x' used to enumerate 4 splits instead of 3).
+            while (splitIdx > 0 && splitIdx < _cName.Length
+                   && char.IsLowSurrogate(_cName[splitIdx])
+                   && char.IsHighSurrogate(_cName[splitIdx - 1]))
+                splitIdx++;
             if (splitIdx > _cName.Length) return false;
 
             if (splitIdx < _cName.Length)

@@ -176,7 +176,14 @@ public sealed partial class BytecodeInterpreter
                     if (_engine.WriteMode)
                     {
                         int idx = _engine.AllocateHeap(1);
-                        _engine.SetHeap(idx, _engine.GetRegister(src));
+                        Cell v = _engine.GetRegister(src);
+                        // A bare ATTVAR goes in as a REF to its home, the
+                        // mirror of UnifyVariableX reading one out. Copying
+                        // the cell would make a SECOND variable claiming the
+                        // same attributes, and the attribute table keys on a
+                        // cell's own address: the copy's lookup finds nothing.
+                        _engine.SetHeap(idx,
+                            v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v);
                     }
                     else if (!_engine.UnifyRegisterWithHeapAt(src, ptr))
                     {
@@ -200,7 +207,14 @@ public sealed partial class BytecodeInterpreter
                     if (_engine.WriteMode)
                     {
                         int idx = _engine.AllocateHeap(1);
-                        _engine.SetHeap(idx, _engine.GetY(src));
+                        Cell v = _engine.GetY(src);
+                        // A bare ATTVAR goes in as a REF to its home, the
+                        // mirror of UnifyVariableX reading one out. Copying
+                        // the cell would make a SECOND variable claiming the
+                        // same attributes, and the attribute table keys on a
+                        // cell's own address: the copy's lookup finds nothing.
+                        _engine.SetHeap(idx,
+                            v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v);
                     }
                     else if (!_engine.UnifyPermanentWithHeapAt(src, ptr))
                     {
@@ -491,6 +505,16 @@ public sealed partial class BytecodeInterpreter
             int arity = FunctorTable.Lookup(_engine.GetHeap(structIdx).AsFunctorId).Arity;
             if ((uint)idx >= (uint)arity) return false;
             next = DerefCell(_engine.GetHeap(structIdx + 1 + idx));
+            return true;
+        }
+        // A non-empty packed list is a cons: head/tail are computed cell
+        // VALUES (no heap write) so the sub-path can key through it.
+        if (cell.Tag == Tag.Pstr && cell.AsPstrLength > 0)
+        {
+            if ((uint)idx > 1u) return false;
+            next = idx == 0
+                ? _engine.PstrHeadElementCell(cell)
+                : _engine.PstrTailCellValue(cell);
             return true;
         }
         return false;

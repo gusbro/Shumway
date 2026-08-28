@@ -1,15 +1,20 @@
 % The zebra puzzle: five houses, and constraints enough to pin every fact.
-% Try:  houses(Hs), member(house(_,_,_,_,zebra), Hs).
+% Each house is house(Colour, Nation, Pet, Drink, Smoke), so the two classic
+% questions read straight off that shape. Plain Prolog, no constraint
+% library: the search is the point.
 %
-% Each house is house(Colour, Nation, Pet, Drink, Smoke)... here reduced to
-% the classic five-attribute form. Plain Prolog, no constraint library: the
-% search is the point.
+% Try:  houses(Hs), member(house(_,Who,zebra,_,_), Hs).     who owns it?
+%       houses(Hs), member(house(_,Who,_,water,_), Hs).     who drinks water?
+%       houses(Hs).                                         the whole street
 
 right_of(X, Y, [Y,X|_]).
-right_of(X, Y, [_|T]) :- right_of(X, Y, T).
+right_of(X, Y, [_|T]) :-
+    right_of(X, Y, T).
 
-next_to(X, Y, L) :- right_of(X, Y, L).
-next_to(X, Y, L) :- right_of(Y, X, L).
+next_to(X, Y, L) :-
+    right_of(X, Y, L).
+next_to(X, Y, L) :-
+    right_of(Y, X, L).
 
 houses(Hs) :-
     Hs = [house(_,norwegian,_,_,_), _, house(_,_,_,milk,_), _, _],

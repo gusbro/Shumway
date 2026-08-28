@@ -117,7 +117,9 @@ internal sealed class ConsultPipeline
             Debugging.ShumwayDebugHelper.NoteSourceFile(path);
         try
         {
-            ConsultStringInner(Shumway.Core.TextFile.ReadAllText(path), recordInHistory: true,
+            ConsultStringInner(
+                Shumway.Core.TextFile.ReadAllText(path, E._flags.DefaultTextEncoding),
+                recordInHistory: true,
                                reconsult: reconsult);
         }
         finally
@@ -2036,6 +2038,49 @@ internal sealed class ConsultPipeline
                     new[] { (Term)new AtomTerm(moduleName), goal }),
             });
 
+    /// <summary>How long a directive may read in a diagnostic before its
+    /// arguments are elided.</summary>
+    private const int DirectiveTextLimit = 120;
+
+    /// <summary>How a directive reads in a warning: without the wrapper the
+    /// consult put around it, and bounded.
+    ///
+    /// <para>A directive carries a term of any size — a foreign-interface
+    /// declaration listing four hundred functions renders to forty kilobytes,
+    /// and one unreadable line of that is worse than a short one that names
+    /// which directive it was. Big arguments become <c>...</c>, so the head
+    /// survives, which is the part that identifies it.</para></summary>
+    private static string DescribeDirective(Term goal)
+    {
+        Term shown = goal;
+        string prefix = "";
+        // QualifyGoalForModule's wrapper, read back as the M:G it stands for.
+        if (shown is CompoundTerm { Functor: "call", Args.Length: 1 } wrapper)
+            shown = wrapper.Args[0];
+        if (shown is CompoundTerm { Args.Length: 2 } qual
+            && qual.Functor == ModuleRewrite.MqualFunctor)
+        {
+            prefix = qual.Args[0] + ":";
+            shown = qual.Args[1];
+        }
+
+        string text = shown.ToString() ?? "";
+        if (text.Length <= DirectiveTextLimit) return prefix + text;
+
+        if (shown is CompoundTerm big)
+        {
+            var args = new string[big.Args.Length];
+            for (int i = 0; i < args.Length; i++)
+            {
+                string arg = big.Args[i].ToString() ?? "";
+                args[i] = arg.Length <= DirectiveTextLimit / 2 ? arg : "...";
+            }
+            string elided = $"{big.Functor}({string.Join(", ", args)})";
+            if (elided.Length <= DirectiveTextLimit) return prefix + elided;
+        }
+        return prefix + text[..DirectiveTextLimit] + "...";
+    }
+
     private void RunConsultDirectiveGoal(Term goal)
     {
         try
@@ -2049,13 +2094,13 @@ internal sealed class ConsultPipeline
 
             if (!ok)
                 E.Warn(
-                    $"Warning: directive failed: {goal}");
+                    $"Warning: directive failed: {DescribeDirective(goal)}");
         }
         catch (PrologHaltException) { throw; }
         catch (Exception ex)
         {
             E.Warn(
-                $"Warning: directive raised: {goal}: {ex.Message}");
+                $"Warning: directive raised: {DescribeDirective(goal)}: {ex.Message}");
             if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
                 E.Warn(ex.StackTrace ?? "");
         }

@@ -315,4 +315,52 @@ public class AtomListBuiltinsTests
         Assert.True(sol.Success);
         Assert.Equal(List(Atom("c"), Atom("b"), Atom("a")), sol["R"]);
     }
+
+    // ----- the split enumeration -----
+    // Each solution hands L2 a suffix of L3 rather than a copy of one, so
+    // these pin what the caller can still observe about it.
+
+    [Fact]
+    public void EverySplitOfAListIsEnumerated()
+    {
+        var e = new PrologEngine();
+        var sol = e.Query(
+            "findall(P-S, append(P, S, [a,b,c]), L), "
+            + "L == [ []-[a,b,c], [a]-[b,c], [a,b]-[c], [a,b,c]-[] ].");
+        Assert.True(sol.Success);
+    }
+
+    [Fact]
+    public void ASplitReconstructsWhatItCameFrom()
+    {
+        // The shared suffix has to BE the suffix: putting the halves back
+        // together must give the original list, for every split of it.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "numlist(1, 60, L), "
+            + "forall(append(P, S, L), (append(P, S, R), R == L)).").Success);
+    }
+
+    [Fact]
+    public void AnImproperListSplitsToo()
+    {
+        // ISO: the suffix simply carries the improper tail. This is the case
+        // the sharing touches most subtly, since the shared cell IS the tail.
+        var e = new PrologEngine();
+        var sol = e.Query(
+            "findall(P-S, append(P, S, [a,b|c]), L), "
+            + "L == [ []-[a,b|c], [a]-[b|c], [a,b]-c ].");
+        Assert.True(sol.Success);
+    }
+
+    [Fact]
+    public void BindingOneSplitDoesNotLeakIntoTheNext()
+    {
+        // A suffix shared with L3 must still be undone on backtracking: if
+        // solution k's binding survived, solution k+1 would see it.
+        var e = new PrologEngine();
+        var sol = e.Query(
+            "findall(S, ( append(_, S, [a,b,c]), S = [a,b,c] ), L), L == [[a,b,c]].");
+        Assert.True(sol.Success);
+    }
 }

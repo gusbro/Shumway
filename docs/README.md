@@ -26,6 +26,7 @@ documentation index; start with the [user guide](guide/user-guide.md).
 |---|---|
 | [swi-library-support.md](guide/swi-library-support.md) | SWI-Prolog libraries under the `swi` dialect |
 | [scryer-library-support.md](guide/scryer-library-support.md) | Scryer Prolog libraries under the `scryer` dialect |
+| [trealla-library-support.md](guide/trealla-library-support.md) | Trealla Prolog libraries under the `trealla` dialect |
 | [logtalk-library-support.md](guide/logtalk-library-support.md) | Logtalk's bundled library test suites |
 
 ## Architecture (`architecture/`)

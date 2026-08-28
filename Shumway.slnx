@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/build/">
+    <Project Path="build/Shumway.Dist/Shumway.Dist.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Shumway.Builtins/Shumway.Builtins.csproj" />
     <Project Path="src/Shumway.Compile/Shumway.Compile.csproj" />

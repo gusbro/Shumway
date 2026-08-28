@@ -229,6 +229,91 @@ public sealed partial class Activation
         MaybeCollectHeapSlow();
     }
 
+    // WAM X registers are caller-saved: at a call boundary the live ones are
+    // exactly the callee's arguments, and after a return none are (the caller
+    // reloads from Y slots). A stale high register would otherwise root a
+    // dead structure for the rest of the query — the classic "one register
+    // pins 400k cells" retention. -1 = unknown provenance, scan the whole
+    // bank (the safe default every legacy caller keeps).
+    private int _gcLiveRegisterBound = -1;
+
+    /// <summary>Safe point at a call boundary where the callee's FUNCTOR is
+    /// in hand: only its arguments are live registers. Same steady-state cost
+    /// as <see cref="MaybeCollectHeap"/> — the arity lookup happens on the
+    /// collection path only.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public void MaybeCollectHeapAtCall(int functorId)
+    {
+        if (_cancelRequested)
+            ThrowQueryCancelled();
+        if (_deadlineAt != 0)
+            CheckDeadline();
+        if (_debugArmPending)
+            ApplyDebugArm();
+        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
+        MaybeCollectHeapSlowAtCall(functorId);
+    }
+
+    /// <summary>Safe point at a dispatch whose target may be a resume marker
+    /// (functor recoverable — precise) or a raw code address (not — the
+    /// conservative full-bank scan stands in).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public void MaybeCollectHeapAtDispatch(int target)
+    {
+        if (_cancelRequested)
+            ThrowQueryCancelled();
+        if (_deadlineAt != 0)
+            CheckDeadline();
+        if (_debugArmPending)
+            ApplyDebugArm();
+        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
+        if (IsResumeMarker(target))
+            MaybeCollectHeapSlowAtCall(DecodeResumeMarker(target).FunctorId);
+        else
+            MaybeCollectHeapSlow();
+    }
+
+    /// <summary>Safe point where a callee has just Proceeded back: no X
+    /// register is live — the resuming caller reloads from its frame.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public void MaybeCollectHeapAtReturn()
+    {
+        if (_cancelRequested)
+            ThrowQueryCancelled();
+        if (_deadlineAt != 0)
+            CheckDeadline();
+        if (_debugArmPending)
+            ApplyDebugArm();
+        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
+        MaybeCollectHeapSlowBounded(0);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void MaybeCollectHeapSlowAtCall(int functorId)
+        => MaybeCollectHeapSlowBounded(FunctorTable.Lookup(functorId).Arity);
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void MaybeCollectHeapSlowBounded(int liveRegisters)
+    {
+        _gcLiveRegisterBound = liveRegisters;
+        try { MaybeCollectHeapSlow(); }
+        finally { _gcLiveRegisterBound = -1; }
+    }
+
+    /// <summary>Explicit collection with a known live-register bound —
+    /// <c>garbage_collect/0</c> (arity 0: nothing is live in the bank).</summary>
+    public int CollectHeapBounded(int liveRegisters)
+    {
+        _gcLiveRegisterBound = liveRegisters;
+        try { return CollectHeap(); }
+        finally { _gcLiveRegisterBound = -1; }
+    }
+
     // ADR-035 D5+ — the pending arm. Volatile: set from the session's watcher
     // thread, read here every safe point.
     private volatile bool _debugArmPending;
@@ -311,6 +396,10 @@ public sealed partial class Activation
 
     public int HeapGcCount { get; private set; }
 
+    /// <summary>Cells reclaimed across every collection of this activation —
+    /// the companion of <see cref="HeapGcCount"/> for statistics/0.</summary>
+    public long HeapGcReclaimedCells { get; private set; }
+
     /// <summary>Runs a mark-compact collection of the heap. Returns the
     /// number of cells reclaimed (0 if the collector bailed). Safe to
     /// call only at a safe point — between WAM instructions — where the
@@ -379,6 +468,7 @@ public sealed partial class Activation
                                         // debugger marks etc. stay valid as they are,
                                         // which is why HeapGcCount bumps only below)
         HeapGcCount++;
+        HeapGcReclaimedCells += oldTop - live;
 
         // ---- rewrite payloads in place (still at old positions). ----
         for (int i = 0; i < oldTop; i++)
@@ -708,7 +798,7 @@ public sealed partial class Activation
                     : c;
             case Tag.Pstr:
                 return InBounds(c.AsPstrBufferIndex, oldTop)
-                    ? Cell.Pstr(c.AsPstrLength, forward[c.AsPstrBufferIndex], c.AsPstrOffset, c.AsPstrKind)
+                    ? Cell.Pstr(c.AsPstrLength, forward[c.AsPstrBufferIndex], c.AsPstrOffset, c.AsPstrKind, c.AsPstrIsAstral)
                     : c;
             default:
                 return c;   // atomic / leaf
@@ -825,9 +915,25 @@ public sealed partial class Activation
     /// <see cref="GcMarkCell"/> directly — no per-slot delegate invoke.</summary>
     private void MarkRoots(int oldTop)
     {
-        // X registers — conservative: scan the whole bank.
-        for (int i = 0; i < _registers.Length; i++)
-            GcMarkReferents(_registers[i]);
+        // X registers. With a live bound (a call boundary whose callee arity
+        // is known) only the arguments are roots, and the DEAD registers are
+        // cleared to a harmless leaf — a stale one would re-root its dead
+        // structure at the next conservative collection, or dangle after
+        // this one slides the heap. Without a bound: the whole bank,
+        // conservatively.
+        int liveRegs = _gcLiveRegisterBound;
+        if (liveRegs >= 0)
+        {
+            for (int i = 0; i < liveRegs && i < _registers.Length; i++)
+                GcMarkReferents(_registers[i]);
+            for (int i = liveRegs; i < _registers.Length; i++)
+                _registers[i] = Cell.Int(0);
+        }
+        else
+        {
+            for (int i = 0; i < _registers.Length; i++)
+                GcMarkReferents(_registers[i]);
+        }
 
         // Entire control stack — conservative. Control words are RawInt
         // (leaves); every real ref is marked no matter which frame it is in.

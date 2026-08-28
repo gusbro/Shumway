@@ -421,7 +421,7 @@ public static partial class MetaBuiltins
             "call/N reached the sub-engine fallback in MetaBuiltins.CallN, but " +
             "call/N must be dispatched in the live engine by DispatchCall (Tier-0) " +
             "or IlMetaCallHelper (Tier-1). Reaching here means the IsCall meta-" +
-            "dispatch routing was bypassed — a bug to fix at the dispatch site, " +
+            "dispatch routing was bypassed, a bug to fix at the dispatch site, " +
             "not here.");
     }
 
@@ -430,7 +430,10 @@ public static partial class MetaBuiltins
     /// bails) or when there is nothing to reclaim.</summary>
     public static bool GarbageCollect(Activation engine)
     {
-        engine.CollectHeap();
+        // Arity 0: no X register is live, so none of the bank's stale
+        // leftovers can root garbage — the explicit collection the user
+        // asked for reclaims everything genuinely dead.
+        engine.CollectHeapBounded(0);
         return true;
     }
 

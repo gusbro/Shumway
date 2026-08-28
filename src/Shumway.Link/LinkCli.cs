@@ -774,7 +774,14 @@ internal static class LinkCli
     }
 
     // ADR-038 — the library search path: --library-dir flags first (highest
-    // precedence), then SHUMWAY_LIBRARY_PATH entries.
+    // precedence), then SHUMWAY_LIBRARY_PATH entries, then the shipped lib/
+    // directories.
+    //
+    // The last two are what PrologEngine searches by default, and the linker
+    // has to agree with it: a toolchain unpacked into one directory has lib/
+    // sitting next to the executables, so a program the REPL runs and
+    // shumway-compile compiles must also LINK without being told where the
+    // libraries are. Lowest precedence, so an explicit -L still wins.
     private static List<string> CollectLibraryDirs(List<string> flagged)
     {
         var dirs = new List<string>(flagged);
@@ -787,7 +794,15 @@ internal static class LinkCli
                 string d = raw.Trim();
                 if (d.Length > 0) dirs.Add(d);
             }
+        AddIfExists(dirs, System.IO.Path.Combine(AppContext.BaseDirectory, "lib"));
+        AddIfExists(dirs, System.IO.Path.Combine(
+            System.IO.Directory.GetCurrentDirectory(), "lib"));
         return dirs;
+    }
+
+    private static void AddIfExists(List<string> dirs, string dir)
+    {
+        if (System.IO.Directory.Exists(dir)) dirs.Add(dir);
     }
 
     /// <summary>A failed link must not leave a stale bundle behind, so remove any

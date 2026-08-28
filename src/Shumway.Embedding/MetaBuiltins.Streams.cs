@@ -57,7 +57,7 @@ public static partial class MetaBuiltins
     private static readonly HashSet<string> KnownStreamProperties = new()
     {
         "file_name", "mode", "alias", "input", "output", "end_of_stream",
-        "position", "type", "reposition", "eof_action",
+        "position", "type", "reposition", "eof_action", "encoding", "bom",
     };
 
     public static bool StreamProperty(Activation engine)
@@ -110,6 +110,11 @@ public static partial class MetaBuiltins
                 pairs.Add((h, new CompoundTerm("mode", new Term[] { new AtomTerm(h.Mode) })));
             if (Want("alias") && h.Alias is string al)
                 pairs.Add((h, new CompoundTerm("alias", new Term[] { new AtomTerm(al) })));
+            if (Want("encoding") && h.EncodingName is string en)
+                pairs.Add((h, new CompoundTerm("encoding", new Term[] { new AtomTerm(en) })));
+            if (Want("bom") && h.HadBom is bool hb)
+                pairs.Add((h, new CompoundTerm("bom",
+                    new Term[] { new AtomTerm(hb ? "true" : "false") })));
             if (h.IsReader ? Want("input") : Want("output"))
                 pairs.Add((h, h.IsReader ? (Term)new AtomTerm("input") : new AtomTerm("output")));
             if (h.IsReader && Want("end_of_stream"))
@@ -600,31 +605,31 @@ public static partial class MetaBuiltins
     }
 
     /// <summary>Collects the named (non-anonymous) variable names of an AST in
-    /// first-appearance order, counting occurrences of each.</summary>
+    /// first-appearance order, counting occurrences of each.
+    ///
+    /// <para>Iterative over an explicit work list: a read term is user data of
+    /// any depth, and recursion overflowed the C# stack — which kills the
+    /// process, not the read — at some ten thousand list elements. Arguments
+    /// are pushed right to left, so they pop in source order and the names
+    /// come out in first-appearance order.</para></summary>
     private static void CollectNamedVars(
-        Term t, List<string> order, Dictionary<string, int> counts)
+        Term root, List<string> order, Dictionary<string, int> counts)
     {
-        switch (t)
+        var work = new List<Term>(32) { root };
+        while (work.Count > 0)
         {
-            case VarTerm v when v.Name != "_":
-                if (counts.TryGetValue(v.Name, out int n)) counts[v.Name] = n + 1;
-                else { order.Add(v.Name); counts[v.Name] = 1; }
-                break;
-            case CompoundTerm c:
-                // Walk the list spine iteratively so a long list literal does
-                // not recurse once per element.
-                Term cursor = c;
-                while (cursor is CompoundTerm cc
-                       && cc.Functor == "." && cc.Args.Length == 2)
-                {
-                    CollectNamedVars(cc.Args[0], order, counts);
-                    cursor = cc.Args[1];
-                }
-                if (cursor is CompoundTerm rest && !(rest.Functor == "." && rest.Args.Length == 2))
-                    foreach (var arg in rest.Args) CollectNamedVars(arg, order, counts);
-                else if (cursor is not CompoundTerm)
-                    CollectNamedVars(cursor, order, counts);
-                break;
+            Term t = work[^1];
+            work.RemoveAt(work.Count - 1);
+            switch (t)
+            {
+                case VarTerm v when v.Name != "_":
+                    if (counts.TryGetValue(v.Name, out int n)) counts[v.Name] = n + 1;
+                    else { order.Add(v.Name); counts[v.Name] = 1; }
+                    break;
+                case CompoundTerm c:
+                    for (int i = c.Args.Length - 1; i >= 0; i--) work.Add(c.Args[i]);
+                    break;
+            }
         }
     }
 

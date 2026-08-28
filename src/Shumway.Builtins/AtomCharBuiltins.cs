@@ -48,11 +48,20 @@ public static class AtomCharBuiltins
             // SWI accepts any atomic (a number/string) and returns the length of
             // its text; ISO raises type_error(atom). Only for an SWI caller.
             if (SwiLenient.TryCoerce(engine, atomCell, out string coerced))
-                return engine.UnifyRegisterWithCell(1, Cell.Int(coerced.Length));
+                return engine.UnifyRegisterWithCell(1, Cell.Int(
+                    Utf16Text.Classify(coerced) == TextShape.Bmp
+                        ? coerced.Length
+                        : Utf16Text.CodePointLength(coerced)));
             throw new PrologRuntimeException("type_error", "atom", engine, atomCell);
         }
-        string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
-        return engine.UnifyRegisterWithCell(1, Cell.Int(name.Length));
+        Atom? atom = AtomTable.GetById(atomCell.AsAtomId);
+        string name = atom?.Name ?? "";
+        // Length is CODE POINTS. The per-atom shape (computed at intern)
+        // keeps the common all-BMP case at the exact unit count, O(1).
+        return engine.UnifyRegisterWithCell(1, Cell.Int(
+            atom is null || atom.IsAllBmp
+                ? name.Length
+                : Utf16Text.CodePointLength(name)));
     }
 
     // ---------- atom_string/2 ----------
@@ -160,25 +169,30 @@ public static class AtomCharBuiltins
         {
             string name = AtomTable.GetById(charCell.AsAtomId)?.Name ?? "";
             // ISO §8.16.5: a non-character first arg is type_error(character).
-            if (name.Length != 1)
+            // A character is ONE code point — an astral one spans two units.
+            if (!Utf16Text.IsOneCodePoint(name))
                 throw new PrologRuntimeException(
                     "type_error", "character", engine, charCell);
-            return engine.UnifyRegisterWithCell(1, Cell.Int(name[0]));
+            return engine.UnifyRegisterWithCell(
+                1, Cell.Int(Utf16Text.SingleCodePoint(name)));
         }
 
         if (codeCell.Tag == Tag.Int)
         {
             long code = codeCell.AsInt;
             // ISO §8.16.5.3.f: a code outside the implementation-defined
-            // character set is representation_error(character_code).
-            if (code < 0 || code > char.MaxValue)
+            // character set is representation_error(character_code). The set
+            // is every Unicode scalar value — surrogate values name no
+            // character.
+            if (!Utf16Text.IsScalarValue(code))
                 throw new PrologRuntimeException("representation_error", "character_code");
             // Cached single-char atom ids: no lock, no allocation for the
             // common range; higher BMP code points fall back to Intern.
             int cached = AtomTable.GetSingleCharAtomId((int)code);
             int atomId = cached >= 0
                 ? cached
-                : AtomTable.Intern(((char)code).ToString(), permanent: false).Id;
+                : AtomTable.Intern(
+                    Utf16Text.FromCodePoint((int)code), permanent: false).Id;
             return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
         }
 
@@ -522,9 +536,13 @@ public static class AtomCharBuiltins
             throw new PrologRuntimeException(
                 "representation_error", "character_code");
 
-        string category = char.ConvertFromUtf32((int)code) is { } s && s.Length > 0
-            ? CategoryCode(CharUnicodeInfo.GetUnicodeCategory(s, 0))
-            : "Cn";
+        // A surrogate value is a legitimate QUERY here (category Cs) but
+        // not a legitimate ConvertFromUtf32 argument — the BMP path asks the
+        // char overload, which answers Surrogate without building a string.
+        string category = code <= 0xFFFF
+            ? CategoryCode(CharUnicodeInfo.GetUnicodeCategory((char)code))
+            : CategoryCode(CharUnicodeInfo.GetUnicodeCategory(
+                char.ConvertFromUtf32((int)code), 0));
 
         // category(C) — built on the heap and unified with the Property arg,
         // so a bound category('Nd') acts as a test and a variable receives it.
@@ -535,6 +553,40 @@ public static class AtomCharBuiltins
         engine.SetHeap(idx, Cell.Functor(fid));
         engine.SetHeap(idx + 1, Cell.Atom(catAtom));
         return engine.UnifyRegisterWithCell(1, Cell.Str(idx));
+    }
+
+    /// <summary><c>'$ctype'(+Code, ?Category, ?UpperCode, ?LowerCode)</c> —
+    /// the Unicode facts <c>char_type/2</c> derives its types from, in one
+    /// call: the general category (two-letter atom) and the simple case
+    /// mappings (identity when the character is caseless, or when the
+    /// mapping is not a single code point). Fails on a non-scalar
+    /// code.</summary>
+    public static bool CodeCtype(Activation engine)
+    {
+        Cell codeCell = Resolve(engine, engine.GetRegister(0));
+        if (codeCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (codeCell.Tag != Tag.Int) return false;
+        long code = codeCell.AsInt;
+        if (!Utf16Text.IsScalarValue(code)) return false;
+        string ch = Utf16Text.FromCodePoint((int)code);
+        string category = CategoryCode(CharUnicodeInfo.GetUnicodeCategory(ch, 0));
+        int up = MapCase(ch, toUpper: true);
+        int low = MapCase(ch, toUpper: false);
+        int catAtom = AtomTable.Intern(category, permanent: true).Id;
+        return engine.UnifyRegisterWithCell(1, Cell.Atom(catAtom))
+            && engine.UnifyRegisterWithCell(2, Cell.Int(up))
+            && engine.UnifyRegisterWithCell(3, Cell.Int(low));
+    }
+
+    /// <summary>Simple (single code point) case mapping via the invariant
+    /// culture; identity when caseless or when the mapping expands.</summary>
+    private static int MapCase(string ch, bool toUpper)
+    {
+        string mapped = toUpper ? ch.ToUpperInvariant() : ch.ToLowerInvariant();
+        return Utf16Text.IsOneCodePoint(mapped)
+            ? Utf16Text.SingleCodePoint(mapped)
+            : Utf16Text.SingleCodePoint(ch);
     }
 
     /// <summary>The standard two-letter spelling of each .NET
@@ -798,12 +850,11 @@ public static class AtomCharBuiltins
                 if (head.Tag != Tag.Int)
                     throw new PrologRuntimeException(
                         "type_error", "integer", engine, head);
-                // BMP-only, same contract as char_code/2: silently casting
-                // would BUILD A DIFFERENT CHARACTER (0x10400 → 0x400).
-                if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+                // Any Unicode scalar value, same contract as char_code/2.
+                if (!Utf16Text.IsScalarValue(head.AsInt))
                     throw new PrologRuntimeException(
                         "representation_error", "character_code");
-                if (!hasUnbound) sb.Append((char)head.AsInt);
+                if (!hasUnbound) Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             }
             else
             {
@@ -811,10 +862,10 @@ public static class AtomCharBuiltins
                     throw new PrologRuntimeException(
                         "type_error", "character", engine, head);
                 string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
-                if (name.Length != 1)
+                if (!Utf16Text.IsOneCodePoint(name))
                     throw new PrologRuntimeException(
                         "type_error", "character", engine, head);
-                if (!hasUnbound) sb.Append(name[0]);
+                if (!hasUnbound) sb.Append(name);
             }
             cursor = ListCursor.Resolve(engine, aTail);
         }
@@ -857,11 +908,12 @@ public static class AtomCharBuiltins
             if (head.Tag != Tag.Int)
                 throw new PrologRuntimeException(
                     "type_error", "integer", engine, head);
-            // BMP-only, same contract as char_code/2 (see AtomCodes above).
-            if (head.AsInt < 0 || head.AsInt > char.MaxValue)
+            // Any Unicode scalar value, same contract as char_code/2;
+            // an astral code appends its surrogate pair.
+            if (!Utf16Text.IsScalarValue(head.AsInt))
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
-            sb.Append((char)head.AsInt);
+            Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
             cursor = ListCursor.Resolve(engine, cTail);
         }
         // A non-nil tail is a partial / non-proper list — ISO reports this
@@ -896,9 +948,9 @@ public static class AtomCharBuiltins
             if (head.Tag != Tag.Atom)
                 throw new PrologRuntimeException("type_error", "character", engine, head);
             string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
-            if (name.Length != 1)
+            if (!Utf16Text.IsOneCodePoint(name))
                 throw new PrologRuntimeException("type_error", "character", engine, head);
-            sb.Append(name[0]);
+            sb.Append(name);
             cursor = ListCursor.Resolve(engine, hTail);
         }
         if (cursor.Tag is Tag.Ref or Tag.AttVar)

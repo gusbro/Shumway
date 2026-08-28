@@ -206,6 +206,16 @@ public sealed partial class PrologEngine
         _findallStack[^1].Add(solution);
     }
 
+    /// <summary>Records an opaque frame entry (the bagof/setof record step
+    /// stores key+payload pairs the lazy enumerator groups later).</summary>
+    internal void RecordFindallEntry(object entry)
+    {
+        if (_findallStack.Count == 0)
+            throw new InvalidOperationException(
+                "'$bagof_record' invoked with no active findall frame.");
+        _findallStack[^1].Add(entry);
+    }
+
     /// <summary>Records a solution as a backtrack-safe cell image
     /// (the fast findall path).</summary>
     internal void RecordFindallSnapshot(Cell[] snapshot)

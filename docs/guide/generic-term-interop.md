@@ -1,29 +1,29 @@
 # Generic Prolog-term interop (the reftype tier)
 
-This page covers passing **whole Prolog terms** — compounds, lists, nested
-structures, not just scalars — between Prolog and your .NET code, the Arity
+This page covers passing **whole Prolog terms** (compounds, lists, nested
+structures, not just scalars) between Prolog and your .NET code, the Arity
 `reftype` way. It builds on [embedded native C](embedded-native-c.md) (the
 `:- c` / `{ … }` machinery and `UseNativeInterop`); read that first.
 
 > The int / float / string tier (page above) marshals a *value* in and out of a
 > block. This tier hands your .NET function a **cursor over a real Prolog term** so
-> it can inspect any shape and build any result — with no copy.
+> it can inspect any shape and build any result, with no copy.
 
 ---
 
 ## 1. The model: a reftype is a cursor, not a copy
 
 In Arity a `reftype` is an **opaque type for handling Prolog terms from C**. The
-C is embedded in the engine itself — everything runs in one process — and the
+C is embedded in the engine itself (everything runs in one process), and the
 reftype layer is a thin **convenience**: instead of C code reaching into the
 engine's internal structures, a term is marshalled into the "C world"
 (`fill_par`), worked on through plain C accessors, and marshalled back
 (`reftype_term`). Because that interface exposes nothing of the engine's
-internals, it is engine-agnostic — which is exactly why Shumway can offer the
+internals, it is engine-agnostic, which is exactly why Shumway can offer the
 **same interface** for functions that want to work with Prolog terms.
 
 Shumway implements it without the intermediate marshalling where the consumer
-is .NET: a `reftype` / `preftype` is a lightweight **`TermSlot`** — a cursor
+is .NET: a `reftype` / `preftype` is a lightweight **`TermSlot`**: a cursor
 over the actual term in the heap. Your .NET function reads its shape and builds
 into it directly; nothing is serialized to a struct. (When the consumer is a
 real C function that wants the C-world struct, §10's materializer tier performs
@@ -50,10 +50,10 @@ swap(P, Q) :-
     reftype_term(Q, Ptr).               % 4. slot → term    (cursor into Q)
 ```
 
-1. **`Ptr is &buf`** — `Ptr` becomes the cursor for the slot `buf`.
-2. **`fill_par(Term, Ptr)`** — stores the Prolog term into the slot.
-3. **the native call** — your function gets the slot and reads / builds the term.
-4. **`reftype_term(Term, Ptr)`** — materializes the slot's term and unifies it.
+1. **`Ptr is &buf`**: `Ptr` becomes the cursor for the slot `buf`.
+2. **`fill_par(Term, Ptr)`**: stores the Prolog term into the slot.
+3. **the native call**: your function gets the slot and reads / builds the term.
+4. **`reftype_term(Term, Ptr)`**: materializes the slot's term and unifies it.
 
 `fill_par/2` and `reftype_term/2` are built in; you do not define them (their Arity
 `prlg_ifce.pl` definitions, if present, are recognized and replaced).
@@ -74,7 +74,7 @@ reftype par1ref;      % Arity's predefined buffers are just reftype globals too
 
 Recognition is **by type, not by name**: any global declared `reftype` (or
 `preftype` / `t_reftype`) is a slot. The `par1ref … par10ref` buffers Arity
-programs use are nothing special — they are `reftype` globals declared in
+programs use are nothing special: they are `reftype` globals declared in
 `prlg_ifce.pl`. Declare your own the same way and use them identically.
 
 A slot follows C global linkage: declare it in one module, `extern reftype buf;`
@@ -83,7 +83,7 @@ queries (an Arity buffer is reused between calls; `fill_par` overwrites it).
 
 ---
 
-## 4. The .NET side — two APIs over the same cursor
+## 4. The .NET side: two APIs over the same cursor
 
 Your interop function receives a `Shumway.Embedding.TermSlot` for each `reftype`
 parameter. There are two equivalent APIs over it; pick per function.
@@ -126,7 +126,7 @@ that kind); the `put*` are `void`.
 
 ### 4b. The native Shumway API
 
-The same operations as methods on `TermSlot` — idiomatic for new code:
+The same operations as methods on `TermSlot`: idiomatic for new code:
 
 ```csharp
 public static int swap_pair(TermSlot r)
@@ -157,7 +157,7 @@ engine.UseNativeInterop(typeof(Shumway.Native.Interop));
 
 ---
 
-## 5. Reading and building — the cursor pattern
+## 5. Reading and building: the cursor pattern
 
 **Reading.** `FindType()` / `findtype_c` tells you the shape; then the matching
 getter. For a compound, `Arg(n)` / `getfuncarg_c(r, n, out arg)` gives a cursor for
@@ -165,14 +165,14 @@ argument `n`, which you read recursively.
 
 **Building.** To produce a result you build *into* the slot:
 
-- a scalar — `PutInt` / `PutFloat` / `PutAtom` (or `put*_c`);
-- a compound — `PutFunctor(name, arity)` reserves the functor and its argument
+- a scalar: `PutInt` / `PutFloat` / `PutAtom` (or `put*_c`);
+- a compound: `PutFunctor(name, arity)` reserves the functor and its argument
   slots; then `Arg(n)` (or `getfuncarg_c`) gives each argument slot, which you fill
   the same way, recursing for nested structure.
 
 `reftype_term/2` then materializes whatever you built and unifies it. Building
 mirrors Arity's `putfunctor` + `getfuncarg` recursion, but constructs the real
-Prolog term directly — no struct in between.
+Prolog term directly: no struct in between.
 
 A list is the functor `'.'/2` (with `[]` the empty list): `findtype_c` reports `5`,
 `getfunctor_c` reports `./2`, and `getfuncarg_c` walks head / tail.
@@ -254,7 +254,7 @@ System.Console.WriteLine(engine.Query("swap(pair(1, 2), Q).")["Q"]); // pair(2, 
 
 Arity programs pass C **strings** through reusable global buffers (`char par1str[]`,
 `char* buf`) using `make_c_string` / `make_prolog_string`. Shumway models a buffer
-global as a **string holder** — the same slot machinery, holding a string:
+global as a **string holder**: the same slot machinery, holding a string:
 
 ```prolog
 :- c.
@@ -268,10 +268,10 @@ fmt(In, Out) :-
 
 - A global declared `char*` / `char[]` in a `:- c` region is a holder slot; a
   variable assigned from it (`H is buf`) is a holder cursor.
-- **`make_c_string(Holder, _, Value, _)`** stores `Value` into the holder (a copy —
+- **`make_c_string(Holder, _, Value, _)`** stores `Value` into the holder (a copy:
   successive fills of the same buffer do **not** alias their Prolog values).
 - **`make_prolog_string(Holder, Var)`** reads the holder's current value into `Var`.
-- When the first argument is a plain **atom** (a value, not a holder — e.g. a
+- When the first argument is a plain **atom** (a value, not a holder: e.g. a
   predicate parameter that already holds a string), both degrade to identity
   (`make_prolog_string(CStr, Var)` unifies `Var = CStr`). So both the buffer pattern
   and direct value conversions work.
@@ -288,27 +288,27 @@ fmt(In, Out) :-
 - **Bundles work unchanged.** A reftype predicate compiles into a `.shmo` / `.shum`
   like any native predicate; the block's slots are created on first reference at
   run time, so a source-stripped release bundle (and the generated `--exe`) run it
-  identically — no `:- c` declarations need to ship.
+  identically: no `:- c` declarations need to ship.
 - **Reftype blocks compile to IL.** On first execution a reftype block compiles to
   a delegate (no per-call dictionaries / boxing / tree-walk); and when a reftype
-  predicate promotes to Tier-1 IL, the whole flow becomes one IL method — the
+  predicate promotes to Tier-1 IL, the whole flow becomes one IL method: the
   blocks are inlined and `fill_par` / `reftype_term` are fused in, so there is no
   per-call dispatch. A hot loop runs the reftype flow at full IL speed. (The small
   interpreter remains only as a fallback for constructs the code generators don't
   handle and for Native AOT.)
 - **Calling native C through a trampoline.** The cursor is for logic *in C#*. If
   your C# only forwards to a native C function (P/Invoke), that C cannot touch the
-  Shumway heap — the **materializer tier** (§10) copies a term to and from a
+  Shumway heap: the **materializer tier** (§10) copies a term to and from a
   physical `Reftype` struct for that case. See
   [ADR-024](../architecture/adr/024-generic-term-interop.md).
 
 ---
 
-## 10. The materializer tier — calling real native C (`:- native`)
+## 10. The materializer tier: calling real native C (`:- native`)
 
 The cursor (§1–§9) is for interop logic written *in C#*. When the work is a real
-**native C function** — a P/Invoke target in a `.dll` / `.so` / `.dylib` that cannot
-touch the Shumway heap — Shumway **materializes** each whole-term argument into a
+**native C function** (a P/Invoke target in a `.dll` / `.so` / `.dylib` that cannot
+touch the Shumway heap) Shumway **materializes** each whole-term argument into a
 physical `t_reftype` struct in native memory, calls the function by pointer,
 then **dematerializes** the (possibly modified) struct back into the term. A managed
 .NET method that wants a struct *snapshot* (a `Reftype` parameter) uses the same
@@ -330,7 +330,7 @@ typedef struct s_reftype {
 
 The same offsets hold in a **32-bit** build: MSVC x86 aligns the `int64_t`/`double`
 members at 8, so `pars` is a 4-byte pointer at +16 (followed by 4 bytes of padding)
-and `crep` stays at +24 — one declaration serves both bitnesses.
+and `crep` stays at +24: one declaration serves both bitnesses.
 
 ### 10a. Declaring a native function
 
@@ -343,7 +343,7 @@ char* star_label(short, short);   % a real native export
 :- prolog.
 ```
 
-`:- native fn/N` says *fn is a materializer-protocol function* — at the call site
+`:- native fn/N` says *fn is a materializer-protocol function*, at the call site
 Shumway decides, **once and caches**, whether it resolves to a registered C# interop
 method (→ managed `Reftype` snapshot) or to an export of a native library (→
 P/Invoke). Register the library with `engine.UseNativeLibrary("mylib.dll")`, or at
@@ -352,7 +352,7 @@ auto-loaded by `LoadBundle`). The native library is copied next to the output fo
 both `--exe` (the published executable) and `--dll` (the generated class library, so
 a consumer that calls the factory's `CreateEngine()` finds it). The `:- native`
 indicators and `:- c` prototypes travel in the bundle, so a source-stripped release
-bundle resolves them with no source — verified end-to-end through both a native
+bundle resolves them with no source; verified end-to-end through both a native
 `--exe` and a `--dll` consumer.
 
 ### 10b. Parameter and return marshalling
@@ -367,8 +367,8 @@ bundle resolves them with no source — verified end-to-end through both a nativ
 | `short*` / `int*` / `long*` / `double*` (`&local`) | out | scalar written through the pointer, read back into the block-local |
 
 `char*` text uses the engine's `NativeTextEncoding` (default **UTF-8**; set per
-engine — must be byte-oriented; UTF-16/32 are rejected). For a text node the
-struct's `nelem` is the **encoded byte length** — the invariant native C can rely
+engine: must be byte-oriented; UTF-16/32 are rejected). For a text node the
+struct's `nelem` is the **encoded byte length**: the invariant native C can rely
 on is `nelem == strlen(crep.cstr)`. Under single-byte encodings (Arity's
 original world) that equals the character count; under UTF-8 it stays the
 `strlen`, by design. A `char*`-returning function yields a raw pointer, so the
@@ -382,44 +382,44 @@ star_name(Catalog, Index, Name) :-
     make_prolog_string(Ptr, Name).            % copy the native string into an atom
 ```
 
-### 10c. Memory ownership — who frees what
+### 10c. Memory ownership: who frees what
 
 This is the contract. Read it before passing pointers.
 
 | Memory | Owner / who frees | Lifetime |
 |---|---|---|
-| **`char*` input arg** | **Shumway** — allocated for the call, freed right after. | The single call. |
-| **`reftype` materialized for the call** | **Shumway** — freed after dematerializing (`FreeHGlobal`, or the library's `freepar` when the library allocated sub-nodes). | The single call. |
-| **out-scalar slot** (`&local`) | **Shumway** — allocated, passed, read back, freed. | The single call. |
-| **`char*` *return* value** | **The native side — borrowed.** Shumway **copies** the bytes into a Prolog atom and **never frees** the pointer. | Owned by the callee. |
+| **`char*` input arg** | **Shumway**: allocated for the call, freed right after. | The single call. |
+| **`reftype` materialized for the call** | **Shumway**: freed after dematerializing (`FreeHGlobal`, or the library's `freepar` when the library allocated sub-nodes). | The single call. |
+| **out-scalar slot** (`&local`) | **Shumway**: allocated, passed, read back, freed. | The single call. |
+| **`char*` *return* value** | **The native side: borrowed.** Shumway **copies** the bytes into a Prolog atom and **never frees** the pointer. | Owned by the callee. |
 | **`char**` out-string** | **Split:** Shumway owns the pointer *cell* (allocated and freed around the call); the `char*` written into it is **borrowed** (native-owned), copied out, never freed. | Cell: the call. String: the callee. |
 
 The **borrowed** rule for returned strings matches Arity: `char*`-returning
 functions like `star_label` above typically return pointers into **static
 buffers or internal tables**
-the library owns and reuses — Shumway must *not* free them (doing so would be a
+the library owns and reuses: Shumway must *not* free them (doing so would be a
 double-free or corrupt the library's state), and must copy the bytes before the next
 call can overwrite the buffer (which `make_prolog_string` does immediately).
 
-**Consequence — a `malloc`'d return leaks.** If a native function returns memory it
+**Consequence: a `malloc`'d return leaks.** If a native function returns memory it
 expects the *caller* to free (a "caller-owns" convention), Shumway has no hook to
 free it and the block leaks. There is deliberately no automatic free for return
-strings — supporting caller-owns returns would need an explicit paired-free
+strings: supporting caller-owns returns would need an explicit paired-free
 annotation (e.g. a `:- native_free fn/1` naming the deallocator), not added until a
 real case requires it. For now: **return strings must be borrowed** (static /
 internal / pooled on the native side).
 
-### 10c-bis. Snapshot vs borrow — choosing the parameter type
+### 10c-bis. Snapshot vs borrow: choosing the parameter type
 
 A `:- native` C# interop method chooses its access mode by its **parameter type**:
 
-- **`TermSlot`** — the *borrow* path: the live cursor over the actual term, zero
+- **`TermSlot`**: the *borrow* path, the live cursor over the actual term, zero
   copy in either direction. Use it for **read-only** methods (or ones that build
   through the cursor). Nothing is materialized and nothing is written back.
-- **`Reftype`** — the *snapshot* path: the whole term is materialized to a managed
+- **`Reftype`**: the *snapshot* path, in which the whole term is materialized to a managed
   snapshot before the call and dematerialized back after, by contract. Use it when
   the method mutates the struct the Arity way. A read-only method taking `Reftype`
-  pays a full copy both ways it doesn't need — take `TermSlot` instead.
+  pays a full copy both ways it doesn't need: take `TermSlot` instead.
 
 ### 10d. IL emit
 
@@ -430,10 +430,10 @@ scalar work *around* the native call runs as IL too. Out-scalar and `char**`
 out-string write-backs (which target a block-local) are threaded through a read-back
 array the emitted IL stores from, so those calls compile to IL as well.
 
-### 10e. Native-library lifetime and thread-safety — read this
+### 10e. Native-library lifetime and thread-safety: read this
 
 A registered native library (`UseNativeLibrary` / `--native-dll`) is **loaded once
-per path for the whole process** and **shared across all engines** — the OS maps the
+per path for the whole process** and **shared across all engines**: the OS maps the
 module once, and Shumway deduplicates the load, so creating many engines that use the
 same library costs one mapping, not one per engine. The mapping is **never unloaded**;
 it lives until the process exits (there is no `Free` / `Dispose` hook).
@@ -446,7 +446,7 @@ responsibility, not the engine's:
   If two engines on two threads call the same native function concurrently, the C
   runs concurrently. That is safe only if the **library is reentrant / thread-safe**.
   In particular a **borrowed static-buffer return** (a `char*` into a reused internal
-  buffer — the classic style of `char*`-returning C APIs) is **not** safe
+  buffer: the classic style of `char*`-returning C APIs) is **not** safe
   under parallel calls: two threads race on the one buffer. Either keep such calls on
   a single engine/thread, or ensure the native side is thread-safe.
 

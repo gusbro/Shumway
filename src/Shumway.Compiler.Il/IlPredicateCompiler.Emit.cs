@@ -861,6 +861,31 @@ public sealed partial class IlPredicateCompiler
 
                     var target = emit.DeclareLocal<int>($"metaCallTarget_pc{pc}{lt}");
 
+                    // A backtrackable builtin reached THROUGH this meta-call
+                    // captures BuiltinReturnPc for its resume, exactly as one
+                    // at a direct call_builtin site does. Without it the
+                    // builtin keeps whatever the PREVIOUS builtin call left
+                    // there, and its first retry re-enters somewhere that was
+                    // never its continuation. Tier-0's meta-call arm sets it
+                    // for the same reason (BytecodeInterpreter, the IsCall
+                    // branch); Tier-1 did not, so `call(append(_, _, L))` came
+                    // back wrong the moment the caller was promoted.
+                    //
+                    // A tail site takes the CALLER's continuation instead: Cp
+                    // is already the outer caller's there, and re-entering
+                    // this method's own cursor after a tail call would loop.
+                    emit.LoadArgument(0);
+                    if (tailCall)
+                    {
+                        emit.LoadArgument(0);
+                        emit.Call(EngineCpGetter);
+                    }
+                    else
+                    {
+                        EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
+                    }
+                    emit.Call(EngineBuiltinReturnPcSetter);
+
                     // Compute the call arity and cut barrier per builtin.
                     //   call/N : arity = N, barrier = engine.B
                     //   $call/2: arity = 1, barrier = X[1].AsInt
@@ -1620,13 +1645,15 @@ public sealed partial class IlPredicateCompiler
                 // marker path does.
                 if (selfTailLabel is not null && siteFunctorId == selfFunctorId)
                 {
-                    // engine.SetB0(engine.B); engine.MaybeCollectHeap();
+                    // engine.SetB0(engine.B);
+                    // engine.MaybeCollectHeapAtCall(selfFunctorId);
                     emit.LoadArgument(0);
                     emit.LoadArgument(0);
                     emit.Call(EngineBGetter);
                     emit.Call(EngineSetB0Method);
                     emit.LoadArgument(0);
-                    emit.Call(EngineMaybeCollectHeapMethod);
+                    emit.LoadConstant(selfFunctorId);
+                    emit.Call(EngineMaybeCollectHeapAtCallMethod);
                     // A chain predicate's cursor-0 entry re-reads the incoming
                     // cursor (arg 1) to pick clause 0; a fresh self-call must
                     // restart from clause 0, so reset it. Harmless for the
@@ -2487,6 +2514,13 @@ public sealed partial class IlPredicateCompiler
                     EmitTagBranch(emit, tagLoc, (int)Tag.Atom, Target(node.ConstTarget));
                     EmitTagBranch(emit, tagLoc, (int)Tag.Int, Target(node.ConstTarget));
                     EmitTagBranch(emit, tagLoc, (int)Tag.Float, Target(node.ConstTarget));
+                    // ADR-048: a NON-EMPTY packed list is a cons and takes the
+                    // list bucket; the length guard keeps empty PSTR (= [])
+                    // on the sound var chain, where the const bucket's []
+                    // clauses are still reachable.
+                    emit.LoadLocal(cellLoc);
+                    emit.Call(IlIsNonEmptyPstrMethod);
+                    emit.BranchIfTrue(Target(node.ListTarget));
                     emit.Branch(Target(node.VarTarget));   // Ref / anything else
                     break;
 

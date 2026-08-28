@@ -7,14 +7,14 @@ declares the C environment those blocks use.
 
 Because Shumway targets .NET, there is **no C compiler involved**. A `{ … }` block
 is compiled into code that marshals values between Prolog and .NET and calls
-`public static` methods of a .NET class you provide — by default a class named
+`public static` methods of a .NET class you provide, by default a class named
 `Shumway.Native.Interop`. The embedded C is, in effect, a small DSL for calling
 into your .NET interop layer with Prolog↔.NET marshalling generated for you.
 
 > **Status.** This page describes the int / float / string **value tier**, working
 > both in-process (via `ConsultString`) and through the separate-compilation /
 > bundle pipeline (`shumway-compile` → `shumway-link`, including source-stripped
-> Release bundles and the generated `--exe`). Native blocks are **compiled to IL** —
+> Release bundles and the generated `--exe`). Native blocks are **compiled to IL**:
 > inlined into the predicate's Tier-1 method, both at runtime promotion and in
 > persisted bundles (see §10). Passing whole Prolog terms (the **reftype tier**) is
 > a separate mechanism documented in
@@ -36,14 +36,14 @@ ISO `{}/1` meaning and `:- c` is just an unknown directive.
 
 There are three pieces to a native-using program:
 
-1. a `:- c` **region** — the C declarations;
-2. one or more `{ … }` **blocks** — the native goals, inside clause bodies;
-3. your **interop class** — the `public static` C# methods that back the C
+1. a `:- c` **region**, the C declarations;
+2. one or more `{ … }` **blocks**: the native goals, inside clause bodies;
+3. your **interop class**: the `public static` C# methods that back the C
    functions.
 
 ---
 
-## 2. The `:- c` region — declarations
+## 2. The `:- c` region: declarations
 
 Everything between `:- c.` and the terminating `:- prolog.` is C declaration text.
 Shumway extracts what it needs and skips the rest (preprocessor lines, comments,
@@ -62,7 +62,7 @@ typedef char *pchar;                       % a typedef
   variables a block marshals, and the **C# signature** you must implement.
 - **Globals / buffers**:
   - a `char*` / `char[]` buffer, or a `reftype` / `preftype` global, is a reusable
-    **holder** — a slot the engine manages (not a field you declare on the interop
+    **holder**, a slot the engine manages (not a field you declare on the interop
     class), used by the reftype tier; see
     [generic-term interop](generic-term-interop.md);
   - a plain **scalar** global (e.g. `int counter;`, `double acc;`) has Arity
@@ -73,10 +73,10 @@ typedef char *pchar;                       % a typedef
     and floating kinds are both supported, and the persistence survives a
     source-stripped Release bundle / `--exe` (the scalar-global metadata travels in
     the bundle even though the `:- c` declarations themselves do not). Writes are
-    write-through — a later goal that fails does not roll back an earlier write. A
+    write-through: a later goal that fails does not roll back an earlier write. A
     scalar name used in a block that is **not** declared (as a `:- c` global or a
     block-local) is a consult error (§7), not a silent zero-init local. To reference
-    a global **defined in another module**, declare it `extern int g;` — `extern`
+    a global **defined in another module**, declare it `extern int g;`: `extern`
     counts as declared, and the per-engine storage is shared by name with the
     defining module (C-linkage).
 - **Typedefs** resolve type names (`pchar` → `char*` → a .NET `string`).
@@ -86,7 +86,7 @@ module may `extern`-declare it and reference it.
 
 ---
 
-## 3. The `{ … }` block — native goals
+## 3. The `{ … }` block: native goals
 
 A block is a goal in the clause body, executed in place; the clause continues after
 it. It is a **linear** sequence of statements (no C control flow) separated by `;`
@@ -101,7 +101,7 @@ or `,` (interchangeable):
 
 Expressions support native calls `'Name'(args)` (the quotes are optional), variable
 and global references, integer literals, simple arithmetic (`+ - * /`), `&Var`
-(address-of — used by the string intrinsics below), and string literals. `%` starts
+(address-of: used by the string intrinsics below), and string literals. `%` starts
 a line comment **inside** a block (Arity convention).
 
 ```prolog
@@ -120,7 +120,7 @@ string_length_bytes(S, L) :-
 For every Prolog variable a block marshals, Shumway must determine its **.NET
 type** and its **direction** (input read on entry / output unified on exit). It
 does this from the surrounding **Prolog guards** plus the block's own structure. If
-it cannot, **consulting fails with an error** (§7) — a block is never silently
+it cannot, **consulting fails with an error** (§7): a block is never silently
 ignored.
 
 So: **guard the variables your block uses.**
@@ -139,7 +139,7 @@ So: **guard the variables your block uses.**
 
 The type can also come from a block-local `Var: type` declaration, from the C type
 of an `is` right-hand side (a local, a prototype's return type, an integer
-literal), or from the string intrinsics below — so an explicit guard is not always
+literal), or from the string intrinsics below, so an explicit guard is not always
 required, but adding one is the reliable way to make a block compile.
 
 ### The string intrinsics (you do **not** implement these)
@@ -147,16 +147,16 @@ required, but adding one is the reliable way to make a block compile.
 In Arity these copy strings to/from C `char` buffers. In .NET a Prolog atom already
 *is* a `string`, so they are **intrinsics** Shumway lowers directly:
 
-- `'MakeCString'(buffer, length, &Var)` — marks `Var` a **string input**. The
+- `'MakeCString'(buffer, length, &Var)`: marks `Var` a **string input**. The
   buffer and length are vestigial in .NET; you ignore them.
-- `'MakePrologString'(source, &Var)` / `'MakePrologStringEx'(source, &Var)` — marks
+- `'MakePrologString'(source, &Var)` / `'MakePrologStringEx'(source, &Var)`: marks
   `Var` a **string output**, bound to the source string.
 
 They are recognised by name; do not put them in your interop class.
 
 ---
 
-## 5. The interop class — your `public static` methods
+## 5. The interop class: your `public static` methods
 
 Every native function a block calls (other than the intrinsics) must be a
 `public static` method of your interop class. The expected **signature** is derived
@@ -187,14 +187,14 @@ public static class Interop
 ```
 
 A C `char` buffer / reftype global declared in the `:- c` region (e.g.
-`char par2str[10240];`) is **not** a static field — Shumway manages it as a reusable
+`char par2str[10240];`) is **not** a static field: Shumway manages it as a reusable
 holder slot, the reftype tier (see
 [generic-term interop](generic-term-interop.md)); a value block referencing it gets
 a holder cursor, not a directly-read field.
 
 ---
 
-## 6. Registering the interop class — `UseNativeInterop` vs. auto-discovery
+## 6. Registering the interop class: `UseNativeInterop` vs. auto-discovery
 
 Tell the engine which class to use **before** consulting native-using source:
 
@@ -213,7 +213,7 @@ function. Be aware of the trade-offs:
 
 - it performs a **one-time reflection scan of every loaded assembly**, which can be
   noticeable in a large application with many assemblies;
-- it only finds a type with that exact full name — a differently named class is not
+- it only finds a type with that exact full name: a differently named class is not
   discovered (use `UseNativeInterop` for those);
 - if no such class is found, every block that calls a native function fails to
   consult (§7).
@@ -222,19 +222,19 @@ So in any real application, call `UseNativeInterop(typeof(YourClass))` explicitl
 
 ---
 
-## 7. Errors are loud — blocks are never silently ignored
+## 7. Errors are loud: blocks are never silently ignored
 
-A native block that the compiler cannot handle raises a **consult error** — it is
+A native block that the compiler cannot handle raises a **consult error**: it is
 never silently turned into a no-op. A no-op'd block would make the program
 misbehave without you noticing, so consulting fails instead, with a message naming
 the problem. This happens when:
 
-- the block uses **unsupported syntax** — C control flow, or C struct
+- the block uses **unsupported syntax**: C control flow, or C struct
   member-access syntax (`->`, `..`, `preftype`) inside a value block (whole-term /
-  reftype interop is done through its own intrinsics — see
+  reftype interop is done through its own intrinsics: see
   [generic-term interop](generic-term-interop.md));
 - a **variable's type or mode cannot be inferred** (add a guard, §4);
-- it **references an undeclared native global** — a scalar name that is not a Prolog
+- it **references an undeclared native global**: a scalar name that is not a Prolog
   variable, a block-local, or a `:- c`-declared global (declare it, or `extern` it if
   it lives in another module); or
 - it **calls a native function your interop class does not provide** (the message
@@ -243,7 +243,7 @@ the problem. This happens when:
 
 So set up your interop class **before** consulting, and make sure every native
 function a block calls exists. If a source uses a native construct Shumway does not
-yet support, it will not consult until that support lands — by design.
+yet support, it will not consult until that support lands, by design.
 
 ---
 
@@ -298,19 +298,19 @@ it produces) runs the blocks. There is one rule to remember:
   `engine.UseNativeInterop(typeof(YourClass))` *before* `engine.LoadBundle(...)`,
   exactly as for `ConsultString`. A block that calls a function the running
   engine's interop class does not provide raises a hard error when it executes
-  (§7) — never a silent no-op.
+  (§7), never a silent no-op.
 
-A native block inside a `:- dynamic` (or `:- visible`) predicate **works** — both
+A native block inside a `:- dynamic` (or `:- visible`) predicate **works**; both
 when consulted and through the `.shmo`/`.shum` pipeline. The native transform runs
 *before* a clause is routed to the runtime store, so the rewritten clause (carrying
-the portable `$native_run` dispatch — a normal builtin) is what becomes the dynamic
+the portable `$native_run` dispatch: a normal builtin) is what becomes the dynamic
 clause / bundle seed; calling the predicate runs the block exactly as a static
 clause does. Declaring a predicate dynamic is about `assert`/`retract`, not about
-whether its source clauses can compile. (Earlier this was a limitation — dynamic
+whether its source clauses can compile. (Earlier this was a limitation: dynamic
 clauses were rehydrated without the transform, leaving the block inert; that is no
 longer the case.)
 
-> **Interop resolution is checked at run time, not at link time — by design.** The
+> **Interop resolution is checked at run time, not at link time, by design.** The
 > linker cannot know which interop class the running engine will register (you may
 > call `UseNativeInterop` at run time with any class), so validating a block's
 > calls against a `--foreign-dll` at link time would reject programs that are in
@@ -323,14 +323,14 @@ longer the case.)
 
 - **Compiled to IL.** A block is never tree-walked on a hot path:
   - in a **Tier-1 IL** predicate (runtime promotion, or a `--with-compiled-il`
-    bundle), the block is **inlined directly into the predicate's IL** — its
+    bundle), the block is **inlined directly into the predicate's IL**; its
     marshalling, arithmetic and interop calls become IL in the predicate's own
     method, with no `$native_run` dispatch. In a persisted bundle the interop call
     is a direct cross-assembly call, bound by the CLR at load (the build resolves
-    the interop class — `Shumway.Native.Interop`, auto-discovered, or whatever the
+    the interop class: `Shumway.Native.Interop`, auto-discovered, or whatever the
     build engine registered);
   - otherwise (Tier-0, or a block the inliner declines) the block is compiled to a
-    delegate (an Expression tree → JIT IL) on first execution — no per-call
+    delegate (an Expression tree → JIT IL) on first execution: no per-call
     dictionaries, boxing or tree-walk, interop calls direct;
   - the small interpreter remains only as a fallback for constructs neither code
     generator handles and for Native AOT (no run-time IL generation).
@@ -339,7 +339,7 @@ longer the case.)
 - **Whole-term interop is a separate page.** This page is the int / float / string
   *value* tier. Passing whole Prolog terms (compounds, lists, nested structures)
   via Arity's `reftype` / `preftype` machinery (`fill_par` / `reftype_term`) is the
-  **reftype tier** — see [generic-term interop](generic-term-interop.md).
+  **reftype tier**: see [generic-term interop](generic-term-interop.md).
 - **C control flow** (`if` / `while` / `->` member access / `..`) inside a block is
   not supported; a source using it raises a consult error (§7) rather than running
   incorrectly.

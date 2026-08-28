@@ -115,10 +115,10 @@ internal static class CompatLibraries
         goal_expansion(get_atts(V, Spec), '$atts_get'(V, M, Spec)) :-
             prolog_load_context(module, M).
 
-        %! put_atts(-Var, +AccessSpec) | Attributed variables | SICStus atts: sets attributes of Var per AccessSpec — +Attr (or bare Attr) adds/replaces, -Attr removes, a list applies each in order. The attribute's MODULE is the calling module, resolved at compile time.
+        %! put_atts(-Var, +AccessSpec) | Attributed variables | SICStus atts: sets attributes of Var per AccessSpec: +Attr (or bare Attr) adds/replaces, -Attr removes, a list applies each in order. The attribute's MODULE is the calling module, resolved at compile time.
         put_atts(V, Spec) :- '$atts_put'(V, user, Spec).
 
-        %! get_atts(-Var, ?AccessSpec) | Attributed variables | SICStus atts: queries attributes of Var — +Attr (or bare Attr) unifies with the attribute, -Attr succeeds iff absent, an unbound AccessSpec returns the full list.
+        %! get_atts(-Var, ?AccessSpec) | Attributed variables | SICStus atts: queries attributes of Var: +Attr (or bare Attr) unifies with the attribute, -Attr succeeds iff absent, an unbound AccessSpec returns the full list.
         get_atts(V, Spec) :- '$atts_get'(V, user, Spec).
 
         get_attr(V, M, Value) :-

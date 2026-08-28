@@ -95,4 +95,63 @@ public sealed class ViaConsultCompileTests
         e.LoadBundle(link.Bundle!);
         Assert.True(e.Query("route(r(a, b)).").Success);
     }
+
+    [Fact]
+    public void ALoadWarningGoesToTheGivenSinkAndNowhereElse()
+    {
+        // A host that compiles on its own behalf — WebShumway building the
+        // forty libraries an imported collection provides — must not have
+        // those libraries' load warnings land in the user's terminal. The
+        // warnings still exist; they go where the caller says.
+        using var t = new TempDir();
+        string root = t.Add("noisy.pl", """
+            :- module(noisy, [ok/1]).
+            :- there_is_no_such_directive(x).
+            ok(yes).
+            """);
+
+        var said = new StringWriter();
+        var errors = new System.Collections.Generic.List<ShmoCompileError>();
+        var prev = System.Console.Error;
+        var stderr = new StringWriter();
+        System.Console.SetError(stderr);
+        try
+        {
+            var objects = ShmoViaConsult.Compile(
+                root, System.Array.Empty<string>(), ShmoBuildMode.Release, errors,
+                dialect: null, warnings: said);
+            Assert.Empty(errors);
+            Assert.Contains(objects, o => o.ModuleName == "noisy");
+        }
+        finally { System.Console.SetError(prev); }
+
+        Assert.Contains("there_is_no_such_directive", said.ToString());
+        Assert.DoesNotContain("there_is_no_such_directive", stderr.ToString());
+    }
+
+    [Fact]
+    public void WithoutASinkAWarningStillGoesToStandardError()
+    {
+        // The CLI compiles what its user asked for, so its warnings are the
+        // user's business: passing no sink must not silence them.
+        using var t = new TempDir();
+        string root = t.Add("noisy2.pl", """
+            :- module(noisy2, [ok/1]).
+            :- there_is_no_such_directive(x).
+            ok(yes).
+            """);
+
+        var errors = new System.Collections.Generic.List<ShmoCompileError>();
+        var prev = System.Console.Error;
+        var stderr = new StringWriter();
+        System.Console.SetError(stderr);
+        try
+        {
+            ShmoViaConsult.Compile(
+                root, System.Array.Empty<string>(), ShmoBuildMode.Release, errors);
+        }
+        finally { System.Console.SetError(prev); }
+
+        Assert.Contains("there_is_no_such_directive", stderr.ToString());
+    }
 }

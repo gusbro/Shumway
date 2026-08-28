@@ -22,7 +22,7 @@ public sealed class StreamHandle
 
     /// <summary>The underlying reader, or null when this is a writer
     /// or binary handle.</summary>
-    public TextReader? Reader { get; }
+    public PositionTrackingReader? Reader { get; }
 
     /// <summary>The underlying writer, or null when this is a reader
     /// or binary handle.</summary>
@@ -52,6 +52,16 @@ public sealed class StreamHandle
     /// <c>alias(Name)</c> option. A handle can be referred to by its
     /// alias atom anywhere a stream is required.</summary>
     public string? Alias { get; internal set; }
+
+    /// <summary>Engine encoding name of a TEXT stream (utf8, iso_latin_1,
+    /// ascii, utf16le/be, utf32le/be) — what stream_property/2 reports.
+    /// Null on binary streams.</summary>
+    public string? EncodingName { get; set; }
+
+    /// <summary>Whether the stream began with a byte order mark (read side:
+    /// detected; write side: written). Null when unknown / not applicable
+    /// (console streams, binary).</summary>
+    public bool? HadBom { get; set; }
 
     /// <summary>The <c>eof_action</c> stream option: <c>eof_code</c>
     /// (default — reads at/past eof keep yielding <c>end_of_file</c>),
@@ -147,12 +157,13 @@ public sealed class PositionTrackingReader : TextReader
     /// a real end-of-input answer.</summary>
     private const int Empty = int.MinValue;
 
-    /// <summary>A translated character produced by <see cref="Peek"/> ahead of
-    /// its <see cref="Read"/>. Only ever set on the CR path (see
-    /// <see cref="BufferAcrossCr"/>); end-of-input is deliberately NOT
-    /// buffered, because a reader like the REPL's may answer -1 now and yield
-    /// more once the user types.</summary>
+    /// <summary>Characters produced ahead of their <see cref="Read"/>: the
+    /// CR-translation path buffers one (see <see cref="BufferAcrossCr"/>) and
+    /// <see cref="PeekCodePoint"/> pushes back a surrogate pair, so two slots.
+    /// End-of-input is deliberately NOT buffered, because a reader like the
+    /// REPL's may answer -1 now and yield more once the user types.</summary>
     private int _buffered = Empty;
+    private int _buffered2 = Empty;
 
     /// <summary>The wrapped reader (typically a <c>StreamReader</c> for a
     /// file stream, or <c>Console.In</c> for <c>user_input</c>).</summary>
@@ -221,7 +232,8 @@ public sealed class PositionTrackingReader : TextReader
         if (_buffered != Empty)
         {
             c = _buffered;
-            _buffered = Empty;
+            _buffered = _buffered2;
+            _buffered2 = Empty;
         }
         else
         {
@@ -254,12 +266,64 @@ public sealed class PositionTrackingReader : TextReader
         return i;
     }
 
+    /// <summary>Buffer-aware peek that swallows a strict-decode error: the
+    /// pushed-back half must not be lost, and the error re-surfaces on the
+    /// NEXT read, which is the one positioned at the offending bytes.</summary>
+    private int PeekChecked()
+    {
+        try { return Peek(); }
+        catch (PrologRuntimeException) { return -1; }
+    }
+
+    /// <summary>Reads one CODE POINT: a surrogate pair is joined into its
+    /// astral value (the strict UTF-8 reader decodes full code points and
+    /// presents them as pairs — this is where the char layer re-joins them).
+    /// A lone surrogate reads unit-wise rather than throwing, matching
+    /// malformed-atom policy everywhere else.</summary>
+    public int ReadCodePoint()
+    {
+        int c = Read();
+        if (c < 0 || !char.IsHighSurrogate((char)c)) return c;
+        int l = PeekChecked();
+        if (l >= 0 && char.IsLowSurrogate((char)l))
+        {
+            Read();
+            return char.ConvertToUtf32((char)c, (char)l);
+        }
+        return c;
+    }
+
+    /// <summary>Peeks one CODE POINT without consuming it. Seeing an astral
+    /// character's low half forces consuming the high half; both units are
+    /// pushed back and the consumed count restored, so the operation is a
+    /// true peek.</summary>
+    public int PeekCodePoint()
+    {
+        int c = Peek();
+        if (c < 0 || !char.IsHighSurrogate((char)c)) return c;
+        long before = CharsConsumed;
+        int h = Read();
+        int l = PeekChecked();
+        if (l >= 0 && char.IsLowSurrogate((char)l))
+        {
+            Read();
+            _buffered = h;
+            _buffered2 = l;
+            CharsConsumed = before;
+            return char.ConvertToUtf32((char)h, (char)l);
+        }
+        _buffered = h;
+        CharsConsumed = before;
+        return h;
+    }
+
     /// <summary>Resets the consumed-character count after the caller has
     /// rewound the underlying stream (see <c>set_stream_position/2</c>).</summary>
     public void ResetCount()
     {
         CharsConsumed = 0;
         _buffered = Empty;
+        _buffered2 = Empty;
     }
 
     protected override void Dispose(bool disposing)

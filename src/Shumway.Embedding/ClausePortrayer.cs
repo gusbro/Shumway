@@ -279,24 +279,77 @@ public static class ClausePortrayer
         }
     }
 
-    /// <summary>Recursively rewrites every <see cref="CompoundTerm.Functor"/>
-    /// in the AST so listing output shows user-facing local
-    /// predicate names (<c>user$helper</c> → <c>helper</c>)
-    /// instead of the mangled forms <c>ModuleRewrite</c> stored.</summary>
+    /// <summary>Rewrites every <see cref="CompoundTerm.Functor"/> in the AST
+    /// so listing output shows user-facing local predicate names
+    /// (<c>user$helper</c> → <c>helper</c>) instead of the mangled forms
+    /// <c>ModuleRewrite</c> stored.</summary>
     private static Term DemangleTerm(Term term)
+        => RewriteBottomUp(term, leaf => leaf, PrologEngine.DemangleLocalName);
+
+    /// <summary>One pending compound: the arguments rewritten so far, and how
+    /// many of them are done.</summary>
+    private sealed class RewriteFrame
     {
-        if (term is not CompoundTerm c) return term;
-        var newArgs = new Term[c.Args.Length];
-        bool changed = false;
-        for (int i = 0; i < c.Args.Length; i++)
+        public CompoundTerm Node = null!;
+        public Term[] Args = null!;
+        public int Index;
+        public bool Changed;
+    }
+
+    /// <summary>Rewrites an AST bottom-up WITHOUT the C# stack: a clause a
+    /// program asserted can hold a list of any length, and a recursive
+    /// rewrite overflows — killing the process, not the goal — at some ten
+    /// thousand elements. <paramref name="mapLeaf"/> maps non-compound
+    /// terms, <paramref name="mapFunctor"/> maps a compound's name; a
+    /// subtree nothing changed in is returned as it was, so unchanged
+    /// structure stays shared.</summary>
+    private static Term RewriteBottomUp(
+        Term root, Func<Term, Term> mapLeaf, Func<string, string> mapFunctor)
+    {
+        if (root is not CompoundTerm rootCompound) return mapLeaf(root);
+
+        var stack = new List<RewriteFrame>(32)
         {
-            var newArg = DemangleTerm(c.Args[i]);
-            if (!ReferenceEquals(newArg, c.Args[i])) changed = true;
-            newArgs[i] = newArg;
+            new RewriteFrame
+            {
+                Node = rootCompound,
+                Args = new Term[rootCompound.Args.Length],
+            },
+        };
+        Term? finished = null;
+        while (stack.Count > 0)
+        {
+            RewriteFrame f = stack[^1];
+            if (finished is not null)
+            {
+                if (!ReferenceEquals(finished, f.Node.Args[f.Index])) f.Changed = true;
+                f.Args[f.Index++] = finished;
+                finished = null;
+            }
+            while (f.Index < f.Args.Length
+                   && f.Node.Args[f.Index] is not CompoundTerm)
+            {
+                Term mapped = mapLeaf(f.Node.Args[f.Index]);
+                if (!ReferenceEquals(mapped, f.Node.Args[f.Index])) f.Changed = true;
+                f.Args[f.Index++] = mapped;
+            }
+            if (f.Index < f.Args.Length)
+            {
+                var child = (CompoundTerm)f.Node.Args[f.Index];
+                stack.Add(new RewriteFrame
+                {
+                    Node = child,
+                    Args = new Term[child.Args.Length],
+                });
+                continue;
+            }
+            string newFunctor = mapFunctor(f.Node.Functor);
+            finished = !f.Changed && newFunctor == f.Node.Functor
+                ? f.Node
+                : new CompoundTerm(newFunctor, f.Args);
+            stack.RemoveAt(stack.Count - 1);
         }
-        string newFunctor = PrologEngine.DemangleLocalName(c.Functor);
-        if (!changed && newFunctor == c.Functor) return c;
-        return new CompoundTerm(newFunctor, newArgs);
+        return finished!;
     }
 
     /// <summary>Walks the AST mapping each synthetic <c>_G&lt;n&gt;</c>
@@ -316,31 +369,19 @@ public static class ClausePortrayer
             char c = (char)('A' + letter);
             return suffix == 0 ? c.ToString() : $"{c}{suffix}";
         }
-        Term Rewrite(Term t)
+        Term RenameLeaf(Term t)
         {
-            switch (t)
+            if (t is not VarTerm v || !IsSyntheticName(v.Name)) return t;
+            if (!map.TryGetValue(v.Name, out var nm))
             {
-                case VarTerm v when IsSyntheticName(v.Name):
-                    if (!map.TryGetValue(v.Name, out var nm))
-                    {
-                        nm = FreshName();
-                        map[v.Name] = nm;
-                    }
-                    return new VarTerm(nm);
-                case CompoundTerm c:
-                    var newArgs = new Term[c.Args.Length];
-                    bool changed = false;
-                    for (int i = 0; i < c.Args.Length; i++)
-                    {
-                        newArgs[i] = Rewrite(c.Args[i]);
-                        if (!ReferenceEquals(newArgs[i], c.Args[i])) changed = true;
-                    }
-                    return changed ? new CompoundTerm(c.Functor, newArgs) : c;
-                default:
-                    return t;
+                nm = FreshName();
+                map[v.Name] = nm;
             }
+            return new VarTerm(nm);
         }
-        return Rewrite(term);
+        // Leaves are reached left to right, so the letters still go out in
+        // first-occurrence order.
+        return RewriteBottomUp(term, RenameLeaf, f => f);
     }
 
     private static bool IsSyntheticName(string name)

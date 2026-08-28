@@ -6,13 +6,21 @@ Accepted and implemented (2026-08, branch `pstr-chars`): the presentation bit,
 the type and consumer sweep, the writer, the .NET boundary, the `chars` default,
 the producers, lazy input, and the removal of `Tag.String`.
 
-Two things it names are NOT delivered and are called out where they arise:
-astral-plane correctness (a separate arc), and bounded memory for lazy input.
-The memory promise is bounded memory *for grammars that commit*: a grammar
-that can still backtrack must keep the input it consumed, by definition —
-no representation changes that. Even the committing case is not delivered
-yet: it needs a precise control-stack scan the engine does not have (the
-conservative scan keeps dead frame slots alive). See "Consequences".
+The two follow-ups this ADR originally deferred both shipped in v1:
+
+- **Astral-plane correctness** — the code-point arc,
+  [ADR-048](048-code-point-text-semantics.md): a per-PSTR astral bit at
+  payload bit 58, pair-joining uncons, and code-point semantics across the
+  whole character surface.
+- **Bounded memory for lazy input** — the heap-GC arc (phase 40). The
+  promise is bounded memory *for grammars that commit*: a grammar that can
+  still backtrack must keep the input it consumed, by definition — no
+  representation changes that. The committing case did NOT need the precise
+  control-stack scan this ADR predicted: the retention was two concrete
+  bugs (orphaned attr-trail-log records, dead choice points under
+  LCO-reused frames), and with those fixed the conservative scan matches
+  the precise walk in practice. Measured: a lazy DCG over 4.1 MB holds
+  ~1k live cells mid-parse and 18 at the end.
 
 ## Context
 
@@ -126,7 +134,8 @@ selects.
 ### 5. `string` is a compatibility alias, not a type
 
 `double_quotes = string` produces a packed list of **chars**. There is no opaque
-string type. `Tag.String` (0x8) is deleted — it has no producer in `src/`.
+string type. `Tag.String` is deleted — it has no producer in `src/` — and
+the tag values are compacted so the 4-bit space stays contiguous.
 
 `string/1` survives as a **content** test: a non-empty proper list of characters
 or of codes. Testing the tag would answer differently for a packed list and the
@@ -220,7 +229,7 @@ would turn a list of chars into a list of codes *during a collection* —
 non-deterministic, reproducible only under memory pressure — so the encoding is
 chosen to keep that code path untouched.
 
-Buffer cells (`Tag.PstrBuffer`, 0xC) are unchanged: 3 UTF-16 code units at bits
+Buffer cells (`Tag.PstrBuffer`, 0xB) are unchanged: 3 UTF-16 code units at bits
 47..32, 31..16 and 15..0.
 
 `enum TextKind { Codes = 0, Chars = 1 }` lives in `Shumway.Core` and is threaded
@@ -357,10 +366,12 @@ workable.
   split into an inlined fast path and a cold `NoInlining` body.
 - Atom-table pressure under `chars`, mitigated by the Latin-1 pre-intern.
 
-### Deliberately not addressed
+### Deliberately not addressed (both since delivered — see Status)
 
-- **Surrogate pairs.** The current code treats a lone code unit as a character.
-  Astral-plane correctness is a separate arc with its own design.
+- **Surrogate pairs.** As designed here, a code unit was treated as a
+  character. ADR-048 delivered the astral arc: the header's bit 58 marks
+  surrogate-bearing packed text and uncons joins pairs, at measured-zero
+  cost to BMP workloads.
 - **`mmap`-backed buffers** — a stream option under which a single cell aliases
   an entire file, the OS doing the paging. Rejected on three grounds. The
   decisive one is encoding: our text is UTF-16 code units and a file is bytes,

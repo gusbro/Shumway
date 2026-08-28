@@ -2,7 +2,9 @@
 
 ## Status
 
-Shipped ([Phase 36](../../history/phase-36-closure.md)).
+Shipped ([Phase 36](../../history/phase-36-closure.md)). Tag values cited
+below are as of this decision; the tag space was compacted pre-v1
+(ADR-002) — `Tag.Rational` is now 0xD.
 
 Tag.Rational, `rdiv`, the `prefer_rationals` flag and the numeric tower.
 

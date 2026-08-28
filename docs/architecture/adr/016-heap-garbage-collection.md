@@ -2,7 +2,20 @@
 
 ## Status
 
-Shipped ([Phase 20](../../history/phase-20-closure.md)).
+Shipped ([Phase 20](../../history/phase-20-closure.md)). Tag values cited
+below are as of this decision; the tag space was compacted pre-v1
+(ADR-002) — `Tag.RawInt` is now 0xC.
+
+Amended pre-v1: the X-register root scan is PRECISE at the safe points
+that know the callee — WAM registers are caller-saved, so at a call
+boundary the live ones are exactly the callee's arguments and after a
+return none are. A collection with that bound also CLEARS the dead
+registers (a stale one would re-root its dead structure at the next
+conservative collection — the "one register pins 400k cells" retention),
+and `garbage_collect/0` collects with a bound of zero, so an explicit
+request reclaims everything genuinely dead. Safe points reached through
+a raw code address (no callee identity in hand) keep the conservative
+full-bank scan, as does the control stack.
 
 Adding a heap GC
 is a "major decision" under [the decision policy](../decision-policy.md) (comparable to the atom-GC

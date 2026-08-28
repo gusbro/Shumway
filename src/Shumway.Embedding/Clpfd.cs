@@ -368,8 +368,8 @@ internal static class Clpfd
         clpfd_term_expr(C-V, C*V).
 
         % ===== in / ins =====
-        %! in(?Var, +Domain) | CLP(FD) — domains | Constrains a variable to a finite domain (e.g. X in 1..9).
-        %! ins(?Vars, +Domain) | CLP(FD) — domains | Constrains every variable in a list to a finite domain.
+        %! in(?Var, +Domain) | CLP(FD): domains | Constrains a variable to a finite domain (e.g. X in 1..9).
+        %! ins(?Vars, +Domain) | CLP(FD): domains | Constrains every variable in a list to a finite domain.
         'in'(X, Spec) :-
             ( integer(Spec) -> X #= Spec
             ; Spec = L..H ->
@@ -431,12 +431,12 @@ internal static class Clpfd
             clpfd_post('$fd_times'(VA, V0, V), [VA, V0, V]).
 
         % ===== the six arithmetic constraints =====
-        %! #=(?Expr1, ?Expr2) | CLP(FD) — arithmetic constraints | The two integer expressions are equal.
-        %! #\=(?Expr1, ?Expr2) | CLP(FD) — arithmetic constraints | The two integer expressions are different.
-        %! #<(?Expr1, ?Expr2) | CLP(FD) — arithmetic constraints | The first integer expression is strictly less than the second.
-        %! #>(?Expr1, ?Expr2) | CLP(FD) — arithmetic constraints | The first integer expression is strictly greater than the second.
-        %! #=<(?Expr1, ?Expr2) | CLP(FD) — arithmetic constraints | The first integer expression is at most the second.
-        %! #>=(?Expr1, ?Expr2) | CLP(FD) — arithmetic constraints | The first integer expression is at least the second.
+        %! #=(?Expr1, ?Expr2) | CLP(FD): arithmetic constraints | The two integer expressions are equal.
+        %! #\=(?Expr1, ?Expr2) | CLP(FD): arithmetic constraints | The two integer expressions are different.
+        %! #<(?Expr1, ?Expr2) | CLP(FD): arithmetic constraints | The first integer expression is strictly less than the second.
+        %! #>(?Expr1, ?Expr2) | CLP(FD): arithmetic constraints | The first integer expression is strictly greater than the second.
+        %! #=<(?Expr1, ?Expr2) | CLP(FD): arithmetic constraints | The first integer expression is at most the second.
+        %! #>=(?Expr1, ?Expr2) | CLP(FD): arithmetic constraints | The first integer expression is at least the second.
         % Each comparison first tries to read its two expressions as ONE linear
         % form sum(Ci*Vi) Rel K (clpfd_norm), and if so posts a single global
         % bounds-consistency propagator ($fd_linear) instead of decomposing the
@@ -799,7 +799,7 @@ internal static class Clpfd
         % ===== sum/3 =====
         % sum(List, Rel, Total): Total stands in relation Rel to the sum
         % of List. Rel is one of the six arithmetic-constraint operators.
-        %! sum(+Vars, +Rel, ?Total) | CLP(FD) — global constraints | Total stands in relation Rel to the sum of the list of variables.
+        %! sum(+Vars, +Rel, ?Total) | CLP(FD): global constraints | Total stands in relation Rel to the sum of the list of variables.
         sum(List, Rel, Total) :-
             clpfd_sum_expr(List, 0, Expr),
             ( clpfd_rel_ok(Rel) -> clpfd_apply_rel(Rel, Expr, Total)
@@ -823,7 +823,7 @@ internal static class Clpfd
         % scalar_product(Coeffs, Vars, Rel, Total): Total stands in
         % relation Rel to the dot product of the equal-length lists
         % Coeffs and Vars.
-        %! scalar_product(+Coeffs, +Vars, +Rel, ?Total) | CLP(FD) — global constraints | Total stands in relation Rel to the dot product of the coefficient and variable lists.
+        %! scalar_product(+Coeffs, +Vars, +Rel, ?Total) | CLP(FD): global constraints | Total stands in relation Rel to the dot product of the coefficient and variable lists.
         scalar_product(Coeffs, Vars, Rel, Total) :-
             ( clpfd_rel_ok(Rel) -> true
             ; throw(error(domain_error(clpfd_relation, Rel), _))
@@ -841,10 +841,10 @@ internal static class Clpfd
         % label/1 and labeling/2 assign each variable a value from its
         % domain, backtracking over the choices; propagation runs between
         % assignments and prunes the remaining search.
-        %! label(+Vars) | CLP(FD) — labeling | Assigns each variable in the list a value from its domain, searching by backtracking.
+        %! label(+Vars) | CLP(FD): labeling | Assigns each variable in the list a value from its domain, searching by backtracking.
         label(Vars) :- labeling([], Vars).
 
-        %! labeling(+Options, +Vars) | CLP(FD) — labeling | Like label/1 with options for variable selection (leftmost, ff) and value order (up, down).
+        %! labeling(+Options, +Vars) | CLP(FD): labeling | Like label/1 with options for variable selection (leftmost, ff) and value order (up, down).
         labeling(Options, Vars) :-
             clpfd_label_opts(Options, Sel, Ord),
             clpfd_label(Vars, Sel, Ord).
@@ -899,7 +899,7 @@ internal static class Clpfd
         clpfd_pick(V, up)   :- clpfd_dom_of(V, D), clpfd_indomain_up(V, D).
         clpfd_pick(V, down) :- clpfd_dom_of(V, D), clpfd_indomain_down(V, D).
 
-        %! indomain(?Var) | CLP(FD) — labeling | Binds one variable to each value of its domain in turn, on backtracking.
+        %! indomain(?Var) | CLP(FD): labeling | Binds one variable to each value of its domain in turn, on backtracking.
         indomain(X) :-
             ( integer(X) -> true
             ; clpfd_dom_of(X, D), clpfd_indomain_up(X, D)
@@ -924,7 +924,7 @@ internal static class Clpfd
         % ===== all_different / all_distinct =====
         % all_different posts pairwise disequality: whenever a variable
         % grounds, '#\='/2 prunes its value from the others.
-        %! all_different(?Vars) | CLP(FD) — global constraints | Every element of the list takes a distinct value (pairwise).
+        %! all_different(?Vars) | CLP(FD): global constraints | Every element of the list takes a distinct value (pairwise).
         all_different(List) :-
             clpfd_diff_pairs(List),
             % A projection-only marker, so the answer reads `all_different([A,B,C])`
@@ -950,7 +950,7 @@ internal static class Clpfd
         % a tight Hall interval — those variables consume every value, so
         % [Lo,Hi] is removed from all the others; more variables than
         % values fails immediately.
-        %! all_distinct(?Vars) | CLP(FD) — global constraints | Every element of the list takes a distinct value, with Hall-interval pruning.
+        %! all_distinct(?Vars) | CLP(FD): global constraints | Every element of the list takes a distinct value, with Hall-interval pruning.
         all_distinct(List) :-
             clpfd_makevars(List),
             clpfd_post('$fd_alldiff'(List), List).
@@ -981,12 +981,12 @@ internal static class Clpfd
         % holds. #==>/#<== are (reverse) implication, #/\ / #\/ / #\ the
         % boolean connectives. Each is reified to a 0/1 variable and the
         % connective posted as an arithmetic constraint over those.
-        %! #<==>(?Bool, +Constraint) | CLP(FD) — reification | Bool is 1 exactly when the constraint holds, 0 otherwise.
+        %! #<==>(?Bool, +Constraint) | CLP(FD): reification | Bool is 1 exactly when the constraint holds, 0 otherwise.
         '#<==>'(B, C) :- clpfd_reify(C, B).
-        %! #==>(+Constraint1, +Constraint2) | CLP(FD) — reification | Constraint1 implies Constraint2.
+        %! #==>(+Constraint1, +Constraint2) | CLP(FD): reification | Constraint1 implies Constraint2.
         '#==>'(C1, C2) :-
             clpfd_reify(C1, B1), clpfd_reify(C2, B2), B1 #=< B2.
-        %! #<==(+Constraint1, +Constraint2) | CLP(FD) — reification | Constraint2 implies Constraint1.
+        %! #<==(+Constraint1, +Constraint2) | CLP(FD): reification | Constraint2 implies Constraint1.
         '#<=='(C1, C2) :-
             clpfd_reify(C1, B1), clpfd_reify(C2, B2), B2 #=< B1.
         % GNU-Prolog single-arrow reification operators (aliases) + ## (xor).
@@ -994,12 +994,12 @@ internal static class Clpfd
         '#=>'(X, Y) :- '#==>'(X, Y).
         '#<='(X, Y) :- '#<=='(X, Y).
         '##'(X, Y) :- X #\= Y.
-        %! #/\(+Constraint1, +Constraint2) | CLP(FD) — reification | Both constraints hold (conjunction).
+        %! #/\(+Constraint1, +Constraint2) | CLP(FD): reification | Both constraints hold (conjunction).
         '#/\\'(C1, C2) :- clpfd_reify(C1, 1), clpfd_reify(C2, 1).
-        %! #\/(+Constraint1, +Constraint2) | CLP(FD) — reification | At least one constraint holds (disjunction).
+        %! #\/(+Constraint1, +Constraint2) | CLP(FD): reification | At least one constraint holds (disjunction).
         '#\\/'(C1, C2) :-
             clpfd_reify(C1, B1), clpfd_reify(C2, B2), B1 + B2 #>= 1.
-        %! #\(+Constraint) | CLP(FD) — reification | The constraint does not hold (negation).
+        %! #\(+Constraint) | CLP(FD): reification | The constraint does not hold (negation).
         '#\\'(C) :- clpfd_reify(C, 0).
 
         % reify constraint expression C to the 0/1 variable B.

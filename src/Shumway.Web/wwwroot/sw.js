@@ -2,10 +2,12 @@
 //
 // OFFLINE. A precache list is not an option here: the runtime's files are
 // fingerprinted at publish time, so their names are not known when this file is
-// written. So the strategy is cache-as-you-go — the first visit fills the cache
-// from the network, and every visit after that can run with no network at all.
-// That also keeps this file correct across republishes without maintaining a
-// manifest.
+// written. So the strategy is cache-as-you-go, which keeps this file correct
+// across republishes without maintaining a manifest. What it cannot do by
+// itself is catch the assets of the very load that installed it — those were
+// fetched before this worker controlled anything — so main.js asks for them
+// again once it does (warmOfflineCache). Between the two, one visit is enough
+// to run with no network afterwards.
 //
 // ISOLATION. The app uses threads, threads need SharedArrayBuffer, and that
 // needs the page to be cross-origin isolated — which normally means the SERVER
@@ -24,7 +26,7 @@
 // Versioned by cache name: bumping it discards the previous generation on
 // activate, which is how a republished app stops serving yesterday's runtime.
 
-const CACHE = 'webshumway-v3';
+const CACHE = 'webshumway-v9';
 
 /**
  * The response the page should get, isolated.

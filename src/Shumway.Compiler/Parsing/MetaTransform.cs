@@ -957,9 +957,8 @@ public static class MetaTransform
     /// <summary>Rewrites <c>bagof(T, Goal, B)</c> / <c>setof(T, Goal, B)</c>
     /// into the in-engine form
     /// <code>
-    ///   ( '$findall_push', Goal', '$findall_record'(Wt-T), fail
-    ///   ; '$bagof_collect'(Groups) ),
-    ///   member(Wt-B, Groups)
+    ///   ( '$findall_push', Goal', '$bagof_record'(Wt-T), fail ; true ),
+    ///   '$bagof_next'(bagof|setof, Wt-B)
     /// </code>
     /// where <c>Wt</c> is the witness term — <c>'$w'(W1..Wk)</c> over the
     /// variables free in <c>Goal</c> but not in <c>T</c> and not bound by a
@@ -969,9 +968,13 @@ public static class MetaTransform
     /// <c>T</c> is a witness exactly like a named one.
     ///
     /// <para>The collect loop runs <c>Goal'</c> in the live engine and the
-    /// trailing <c>fail</c> enumerates it; <c>'$bagof_collect'</c> groups the
-    /// buffered <c>Wt-T</c> pairs by witness; <c>member/2</c> then backtracks
-    /// over the groups, binding the witness variables and the result.</para></summary>
+    /// trailing <c>fail</c> enumerates it, each solution recording its
+    /// <c>Wt-T</c> pair together with the witness's grouping key;
+    /// <c>'$bagof_next'</c> then splits the buffer into witness groups and
+    /// enumerates them on backtracking, materialising one group's
+    /// <c>Wt-Bag</c> at a time. The runtime driver in the prelude — the path
+    /// a meta-called bagof/setof takes — records and enumerates through the
+    /// same two builtins, so both paths group identically.</para></summary>
     private static Term RewriteBagof(
         string functor, Term template, Term goal, Term bag, ref int counter)
     {
@@ -1016,8 +1019,7 @@ public static class MetaTransform
             ? new AtomTerm("$w")
             : new CompoundTerm("$w", witnessVars.Select(n => (Term)new VarTerm(n)).ToArray());
 
-        var groups = new VarTerm("$BG" + counter++);
-        string collector = functor == "setof" ? "$setof_collect" : "$bagof_collect";
+        string kind = functor;   // '$bagof_next'(setof|bagof, Witness-Bag)
 
         // '$findall_push', Goal', '$findall_record'(Wt-T), fail
         Term splicedGoal = GoalHasLocalCut(goal)
@@ -1031,7 +1033,7 @@ public static class MetaTransform
                 splicedGoal,
                 new CompoundTerm(",", new[]
                 {
-                    (Term)new CompoundTerm("$findall_record", new[]
+                    (Term)new CompoundTerm("$bagof_record", new[]
                     {
                         (Term)new CompoundTerm("-", new[] { Witness(), template }),
                     }),
@@ -1040,21 +1042,26 @@ public static class MetaTransform
             }),
         });
 
-        // ( collectLoop ; '$<bag|set>of_collect'(Groups) )
+        // ( collectLoop ; true ), '$bagof_next'(Kind, Wt-B)
+        //
+        // The enumerator is LAZY: it groups the recorded pairs once (linear)
+        // and materialises each Witness-Bag only when backtracking demands
+        // it — a caller that cuts after the first group does not pay for the
+        // rest (the eager collector built every group up front, and
+        // permutation-style goals have a Bell number of them).
         Term disjunction = new CompoundTerm(";", new[]
         {
             collectLoop,
-            (Term)new CompoundTerm(collector, new Term[] { groups }),
+            (Term)new AtomTerm("true"),
         }) { Position = position };
 
-        // ( disjunction , member(Wt-B, Groups) )
         return new CompoundTerm(",", new[]
         {
             disjunction,
-            new CompoundTerm("member", new Term[]
+            new CompoundTerm("$bagof_next", new Term[]
             {
+                new AtomTerm(kind),
                 new CompoundTerm("-", new[] { Witness(), bag }),
-                groups,
             }),
         }) { Position = position };
     }

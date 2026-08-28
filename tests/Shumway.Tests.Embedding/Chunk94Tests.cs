@@ -59,7 +59,7 @@ public class Chunk94Tests
         Assert.Contains("# Shumway predicate reference", doc);
         Assert.Contains("## Arithmetic", doc);
         Assert.Contains("## Lists", doc);
-        Assert.Contains("## CLP(FD) — labeling", doc);
+        Assert.Contains("## CLP(FD): labeling", doc);
     }
 
     [Fact]

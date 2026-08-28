@@ -1,0 +1,106 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The toolchain directory: ONE folder holding every CLI, the assemblies they
+    share and the lib/ tree, so it can go on PATH and the tools run as
+    `shumway`, `shumway-compile`, … instead of a `dotnet run` on the project.
+    That matters for more than typing: `dotnet run` re-evaluates the project on
+    every invocation — restore checks, up-to-date checks, an MSBuild graph —
+    which is a second or two per run on Windows and worse on Linux, paid again
+    for every step of a compile/link/run cycle.
+
+    This is a COLLECTOR, not a build. The CLIs are ProjectReferences with
+    ReferenceOutputAssembly=false: they only order the work, and the copy runs
+    once they have all finished. Pointing their OutputPath at one shared
+    directory instead would RACE — two projects writing the same
+    Shumway.Core.dll at the same time is the file-in-use failure MSBuild warns
+    about, and it fails intermittently, which is the worst way to fail.
+
+    Several apps share one directory happily: the runtime finds each one's
+    dependencies through its own <app>.deps.json / <app>.runtimeconfig.json,
+    and those are named after the app. The shared assemblies are byte-identical
+    copies of the same build, so whichever project's copy lands last is the
+    same file.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>$(ShumwayTargetFrameworks)</TargetFrameworks>
+    <!-- Nothing to compile: this project exists for its Copy target. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Shumway.Dist</RootNamespace>
+
+    <ShumwayRepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)../..'))</ShumwayRepoRoot>
+    <!-- net10.0 lands at the top so the PATH entry is just dist/<cfg>; the
+         opt-in net48 flavour (ADR-043) gets a subdirectory of its own. -->
+    <ShumwayDistDir>$(ShumwayRepoRoot)dist/$(Configuration)/</ShumwayDistDir>
+    <ShumwayDistDir Condition="'$(TargetFramework)' != 'net10.0'">$(ShumwayRepoRoot)dist/$(Configuration)/$(TargetFramework)/</ShumwayDistDir>
+  </PropertyGroup>
+
+  <!--
+    The CLIs. Keep this list and the globs in CollectToolchain in step.
+
+    Only the three that multi-target (ADR-043) exist for net48; referencing a
+    net10.0-only project from the net48 pass is an outright build error, not a
+    skip. So the net48 toolchain is the three tools that HAVE a net48 build —
+    which is what ADR-043's opt-in offers.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../../src/Shumway.Repl/Shumway.Repl.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/Shumway.Compile/Shumway.Compile.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/Shumway.Link/Shumway.Link.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <ProjectReference Include="../../src/Shumway.Lib/Shumway.Lib.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/Shumway.Disasm/Shumway.Disasm.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/Shumway.Dap/Shumway.Dap.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!--
+    Condition: a multi-targeting project runs Build TWICE — once per inner
+    framework, and once in the outer pass that dispatches them, where
+    $(TargetFramework) is EMPTY. Without the guard the outer pass globs
+    bin/<cfg>/**, sweeping every framework's output into the toolchain as
+    net10.0/ and net48/ subdirectories.
+
+    The Exclude drops a stale publish/ tree: `dotnet publish` writes it INSIDE
+    the build output, and it is a different artifact, not part of the
+    toolchain.
+  -->
+  <Target Name="CollectToolchain" AfterTargets="Build"
+          Condition="'$(TargetFramework)' != ''">
+    <ItemGroup>
+      <ShumwayDistFile Include="$(ShumwayRepoRoot)src/Shumway.Repl/bin/$(Configuration)/$(TargetFramework)/**/*"
+                       Exclude="$(ShumwayRepoRoot)src/Shumway.Repl/bin/$(Configuration)/$(TargetFramework)/publish/**" />
+      <ShumwayDistFile Include="$(ShumwayRepoRoot)src/Shumway.Compile/bin/$(Configuration)/$(TargetFramework)/**/*"
+                       Exclude="$(ShumwayRepoRoot)src/Shumway.Compile/bin/$(Configuration)/$(TargetFramework)/publish/**" />
+      <ShumwayDistFile Include="$(ShumwayRepoRoot)src/Shumway.Link/bin/$(Configuration)/$(TargetFramework)/**/*"
+                       Exclude="$(ShumwayRepoRoot)src/Shumway.Link/bin/$(Configuration)/$(TargetFramework)/publish/**" />
+      <ShumwayDistFile Condition="'$(TargetFramework)' == 'net10.0'"
+                       Include="$(ShumwayRepoRoot)src/Shumway.Lib/bin/$(Configuration)/$(TargetFramework)/**/*"
+                       Exclude="$(ShumwayRepoRoot)src/Shumway.Lib/bin/$(Configuration)/$(TargetFramework)/publish/**" />
+      <ShumwayDistFile Condition="'$(TargetFramework)' == 'net10.0'"
+                       Include="$(ShumwayRepoRoot)src/Shumway.Disasm/bin/$(Configuration)/$(TargetFramework)/**/*"
+                       Exclude="$(ShumwayRepoRoot)src/Shumway.Disasm/bin/$(Configuration)/$(TargetFramework)/publish/**" />
+      <ShumwayDistFile Condition="'$(TargetFramework)' == 'net10.0'"
+                       Include="$(ShumwayRepoRoot)src/Shumway.Dap/bin/$(Configuration)/$(TargetFramework)/**/*"
+                       Exclude="$(ShumwayRepoRoot)src/Shumway.Dap/bin/$(Configuration)/$(TargetFramework)/publish/**" />
+      <!-- ADR-038: the engine resolves library(X) against <exe dir>/lib, so the
+           tree travels with the tools. Taken from the repo rather than from
+           whichever CLI happens to carry a copy — in this directory EVERY tool
+           gets it, not just the REPL. -->
+      <ShumwayDistFile Include="$(ShumwayRepoRoot)lib/**/*.pl" DistSubdir="lib/" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ShumwayDistFile)"
+          DestinationFiles="@(ShumwayDistFile->'$(ShumwayDistDir)%(DistSubdir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Shumway toolchain -> $(ShumwayDistDir)" />
+  </Target>
+
+  <!-- A stale executable on someone's PATH is worse than a missing one. -->
+  <Target Name="CleanToolchain" AfterTargets="Clean">
+    <RemoveDir Directories="$(ShumwayDistDir)" />
+  </Target>
+
+</Project>

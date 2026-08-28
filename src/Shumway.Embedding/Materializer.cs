@@ -68,8 +68,37 @@ public static class Materializer
         Activation engine, Term term, Dictionary<string, int> sharedVars)
         => MaterializeAsCell(engine, term, sharedVars);
 
+    /// <summary>Plants a term on the heap.
+    ///
+    /// <para>ITERATIVE. An AST is user data of any depth: the list SPINE was
+    /// already walked in a loop, but every other nesting — the left spine of
+    /// <c>1+2+3+…</c>, a canonical <c>'.'(H,T)</c> chain read back from
+    /// write_canonical/1 — recursed once per level and overflowed the C#
+    /// stack, which kills the process instead of raising anything catchable.
+    /// A child is pushed together with the heap slot it must fill, and
+    /// children pop in the order the recursive walk visited them, so the heap
+    /// layout and the variable numbering come out unchanged. The work list is
+    /// allocated only once a compound is met — materialising a leaf, the
+    /// common case, still allocates nothing.</para></summary>
     private static Cell MaterializeAsCell(
         Activation engine, Term term, Dictionary<string, int> varMap)
+    {
+        List<(Term Term, int Dest)>? work = null;
+        Cell root = MaterializeNode(engine, term, varMap, ref work);
+        while (work is { Count: > 0 })
+        {
+            var (pending, dest) = work[^1];
+            work.RemoveAt(work.Count - 1);
+            engine.SetHeap(dest, MaterializeNode(engine, pending, varMap, ref work));
+        }
+        return root;
+    }
+
+    /// <summary>Materialises ONE node, pushing its children onto
+    /// <paramref name="work"/> with the heap slots they must fill.</summary>
+    private static Cell MaterializeNode(
+        Activation engine, Term term, Dictionary<string, int> varMap,
+        ref List<(Term Term, int Dest)>? work)
     {
         switch (term)
         {
@@ -137,18 +166,15 @@ public static class Materializer
                 // Reserve every pair cell up front so the indices are stable
                 // while the elements (which may extend the heap) materialise.
                 int firstPair = engine.AllocateHeap(2 * count);
-                Cell tailCell = MaterializeAsCell(engine, cursor, varMap);
-                var headCells = new Cell[count];
-                for (int i = 0; i < count; i++)
-                    headCells[i] = MaterializeAsCell(engine, heads[i], varMap);
-                for (int i = 0; i < count; i++)
-                {
-                    int pair = firstPair + 2 * i;
-                    engine.SetHeap(pair, headCells[i]);
-                    engine.SetHeap(pair + 1, i + 1 < count
-                        ? Cell.Lis(firstPair + 2 * (i + 1))
-                        : tailCell);
-                }
+                for (int i = 0; i + 1 < count; i++)
+                    engine.SetHeap(firstPair + 2 * i + 1,
+                        Cell.Lis(firstPair + 2 * (i + 1)));
+                work ??= new List<(Term, int)>(16);
+                // Pushed so they pop tail-first, then elements left to right —
+                // the order the recursive version allocated them in.
+                for (int i = count - 1; i >= 0; i--)
+                    work.Add((heads[i], firstPair + 2 * i));
+                work.Add((cursor, firstPair + 2 * (count - 1) + 1));
                 return Cell.Lis(firstPair);
             }
 
@@ -170,16 +196,15 @@ public static class Materializer
                 // visit collapse to a field read once the node is warm.
                 int functorId = c.ResolveFunctorId();
 
-                // Reserve the STR + Functor + arg cells up front; recurse for
-                // each arg afterwards so children can freely extend the heap.
+                // Reserve the STR + Functor + arg cells up front; the args
+                // fill their slots as they pop, so they can freely extend the
+                // heap. Pushed right to left, so they pop in argument order.
                 int strBase = engine.AllocateHeap(2 + c.Args.Length);
                 engine.SetHeap(strBase, Cell.Str(strBase + 1));
                 engine.SetHeap(strBase + 1, Cell.Functor(functorId));
-                for (int i = 0; i < c.Args.Length; i++)
-                {
-                    Cell argCell = MaterializeAsCell(engine, c.Args[i], varMap);
-                    engine.SetHeap(strBase + 2 + i, argCell);
-                }
+                work ??= new List<(Term, int)>(16);
+                for (int i = c.Args.Length - 1; i >= 0; i--)
+                    work.Add((c.Args[i], strBase + 2 + i));
                 return Cell.Ref(strBase);
             }
 

@@ -12,8 +12,8 @@ namespace Shumway.Tests.Embedding;
 /// <para>Chunk 84 makes them compile transforms. <c>bagof(T, Goal, B)</c>
 /// becomes a fail-driven collect loop that pairs each solution with a
 /// <em>witness</em> term — the variables free in <c>Goal</c> but not in
-/// <c>T</c> and not bound by a <c>^/2</c> wrapper — and then backtracks the
-/// grouped result over <c>member/2</c>. The witness groups come out in
+/// <c>T</c> and not bound by a <c>^/2</c> wrapper — and then enumerates the
+/// witness groups on backtracking. The witness groups come out in
 /// standard order of the witness; each bag keeps its solutions in generation
 /// order (<c>bagof</c>) or sorted and de-duplicated (<c>setof</c>).
 /// <c>forall(C, A)</c> becomes <c>\+ (C, \+ A)</c>. Because the goals are
@@ -192,5 +192,83 @@ public class Chunk84Tests
         Assert.True(engine.Query(
             "bagof(X-Ys, bagof(Y, member(X-Y, [1-a,1-b,2-c]), Ys), R), " +
             "R == [1-[a,b], 2-[c]].").Success);
+    }
+
+    [Fact]
+    public void CompiledSetof_GroupsAliasingWitnesses_AtScale()
+    {
+        // permutation(L, L) over N fresh variables solves N! times, and the
+        // free variable L partitions those solutions into one witness group
+        // per variable-ALIASING pattern — a Bell number (52 for N=5, 203
+        // for N=6, 877 for N=7). This pins two things at once: the witness
+        // semantics over aliased unbound variables, and the collector's
+        // linear grouping — a per-pair scan of the groups made the same
+        // query quadratic in the Bell number (an 8-element setof took
+        // twenty seconds; N=7 here finishes in well under one).
+        var e = new PrologEngine();
+        e.ConsultString("""
+            groups(N, G) :-
+                length(L, N),
+                findall(x, setof(t, permutation(L, L), _), Xs),
+                length(Xs, G).
+            """);
+        var sol = e.Query("groups(5, G5), groups(6, G6), groups(7, G7).");
+        Assert.True(sol.Success);
+        Assert.Equal(52L, ((Shumway.Compiler.Ast.IntTerm)sol["G5"]!).Value);
+        Assert.Equal(203L, ((Shumway.Compiler.Ast.IntTerm)sol["G6"]!).Value);
+        Assert.Equal(877L, ((Shumway.Compiler.Ast.IntTerm)sol["G7"]!).Value);
+    }
+
+    [Fact]
+    public void RuntimeSetof_GroupsIdenticallyToTheCompiledRewrite()
+    {
+        // setof/3 reached through a meta-call runs the prelude driver, not
+        // the compile-time rewrite. Both record and group through the same
+        // builtins, and this pins that they agree where it is easiest to
+        // drift: witness groups over aliased unbound variables.
+        var e = new PrologEngine();
+        e.ConsultString("""
+            groups(N, G) :-
+                length(L, N),
+                findall(x, call(setof(t, permutation(L, L), _)), Xs),
+                length(Xs, G).
+            """);
+        var sol = e.Query("groups(5, G5), groups(6, G6), groups(7, G7).");
+        Assert.True(sol.Success);
+        Assert.Equal(52L, ((Shumway.Compiler.Ast.IntTerm)sol["G5"]!).Value);
+        Assert.Equal(203L, ((Shumway.Compiler.Ast.IntTerm)sol["G6"]!).Value);
+        Assert.Equal(877L, ((Shumway.Compiler.Ast.IntTerm)sol["G7"]!).Value);
+    }
+
+    [Fact]
+    public void Setof_CommittingToTheFirstGroup_DoesNotPayForTheRest()
+    {
+        // The enumerator is lazy: it groups the recorded solutions once and
+        // materialises a group's Witness-Bag only when backtracking demands
+        // it. Eight elements is 40,320 solutions in 4,140 witness groups,
+        // and a caller that commits to the first one used to wait for all
+        // 4,140.
+        //
+        // The bound is a RATIO against running the same goal under
+        // findall/3 — the solutions, and nothing else — so it means the same
+        // thing on any machine and in either build. Grouping and one group
+        // cost about 2.5x the bare enumeration; materialising every group
+        // cost 120x.
+        var e = new PrologEngine();
+        e.ConsultString("""
+            base :- length(L, 8), findall(x, permutation(L, L), _).
+            first :- length(L, 8), setof(t, permutation(L, L), [t]), !.
+            """);
+        Assert.True(e.Query("base, first.").Success);   // warm both paths
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.True(e.Query("base.").Success);
+        System.TimeSpan bare = clock.Elapsed;
+        clock.Restart();
+        Assert.True(e.Query("first.").Success);
+        System.TimeSpan grouped = clock.Elapsed;
+        // Ticks rather than `bare * 20`: TimeSpan has no multiplication
+        // operator on .NET Framework, where this project also builds.
+        Assert.True(grouped.Ticks < bare.Ticks * 20,
+            $"first witness group took {grouped}, bare enumeration {bare}");
     }
 }

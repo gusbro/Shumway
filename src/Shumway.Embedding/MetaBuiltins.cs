@@ -45,8 +45,8 @@ public static partial class MetaBuiltins
         // In-engine bagof/setof plumbing — reuse the findall
         // frame stack ('$findall_push' / '$findall_record'); only the
         // collect step differs (it groups the solutions by witness).
-        BuiltinsRegistry.Register("$bagof_collect",   1, BagofCollect);
-        BuiltinsRegistry.Register("$setof_collect",   1, SetofCollect);
+        BuiltinsRegistry.Register("$bagof_next", 2, MetaBuiltins.BagofNext);
+        BuiltinsRegistry.Register("$bagof_record", 1, MetaBuiltins.BagofRecord);
         // bagof/3 & setof/3 variable-goal fallbacks are prelude predicates
         // (live-engine findall + fail-on-empty), NOT builtins — the old
         // isolated-sub-engine builtins lacked the parent's bundle-precompiled
@@ -106,7 +106,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$call", 2, CallWithBarrier);
         BuiltinsRegistry.Register("repeat", 0, Repeat,
             Control, "repeat",
-            "Succeeds, and succeeds again on every backtrack — an unbounded choice point.");
+            "Succeeds, and succeeds again on every backtrack: an unbounded choice point.");
 
         // ADR-022 item 1 — the embedded-native-block dispatcher. The native
         // transform rewrites a captured block to `'$native_run'('$nb$…', V1..Vk)`;
@@ -155,11 +155,11 @@ public static partial class MetaBuiltins
         // 'assert/1' is the historical name; ISO and SWI
         // both accept it as a synonym for assertz/1.
         BuiltinsRegistry.Register("assert",  1, Assertz,
-            Database, "assert(+Clause)", "Synonym for assertz/1 (historical SWI/GProlog name).");
+            Database, "assert(+Clause)", "Historical synonym for assertz/1.");
         // chain GC for retracted clauses (ADR-015 follow-up).
         BuiltinsRegistry.Register("garbage_collect_clauses", 0, GarbageCollectClauses0,
             Database, "garbage_collect_clauses",
-            "Re-threads every dynamic predicate's chain to skip retracted clauses (ADR-015).");
+            "Re-threads every dynamic predicate's chain to skip retracted clauses.");
         BuiltinsRegistry.Register("garbage_collect_clauses", 1, GarbageCollectClauses1,
             Database, "garbage_collect_clauses(+Name/Arity)",
             "Re-threads the named predicate's chain to skip retracted clauses.");
@@ -172,12 +172,10 @@ public static partial class MetaBuiltins
             + "re-link of the dynamic region on the next query.");
         BuiltinsRegistry.Register("compact_dynamic_buffer", 1, CompactDynamicBuffer1,
             Database, "compact_dynamic_buffer(+Name/Arity)",
-            "Per-predicate hint variant. Validates Name/Arity "
-            + "names a dynamic predicate, then triggers the same full rebuild as the "
-            + "0-arg form. The single buffer holds every dynamic predicate's bytecode "
-            + "interleaved, so independent per-predicate reclamation isn't currently "
-            + "feasible without partial-relink support — the API surface is per-predicate "
-            + "for forward compatibility.");
+            "Per-predicate hint variant. Checks that Name/Arity names a dynamic "
+            + "predicate, then does the same work as the 0-arg form: the reclamation "
+            + "is whole-database either way, so naming one predicate narrows what is "
+            + "checked, not what is compacted.");
         BuiltinsRegistry.Register("retract", 1, Retract,
             Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
         BuiltinsRegistry.Register("$retractall_modifiable", 1, RetractAllModifiable);
@@ -187,7 +185,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("garbage_collect", 0, GarbageCollect,
             Control, "garbage_collect",
             "Mark-compacts the heap, reclaiming cells unreachable from the live "
-            + "machine state (ADR-016). Always succeeds.");
+            + "machine state. Always succeeds.");
 
         // Opt-in Tier-1 warm-up. Bundle load is lazy — a predicate promotes to
         // IL once its invocation counter crosses the threshold. compile_all
@@ -273,25 +271,25 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("numbervars",        3, NumberVars,
             Term, "numbervars(+Term, +Start, -End)", "Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start.");
         BuiltinsRegistry.Register("numbervars",        4, NumberVars4,
-            Term, "numbervars(+Term, +Start, -End, +Options)", "As numbervars/3 with an (accepted, ignored) SWI option list.");
+            Term, "numbervars(+Term, +Start, -End, +Options)", "As numbervars/3 with an accepted, ignored option list.");
         BuiltinsRegistry.Register("term_variables",    2, TermVariables,
             Term, "term_variables(+Term, -Variables)",
             "Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5).");
         BuiltinsRegistry.Register("term_to_atom",      2, TermToAtom,
             Term, "term_to_atom(?Term, ?Atom)", "Converts between a term and its textual atom representation.");
         BuiltinsRegistry.Register("term_string",       2, TermString,
-            Term, "term_string(?Term, ?String)", "Converts between a term and its textual string representation (SWI).");
+            Term, "term_string(?Term, ?String)", "Converts between a term and its textual string representation.");
         BuiltinsRegistry.Register("term_string",       3, TermString,
-            Term, "term_string(?Term, ?String, +Options)", "As term_string/2 with an (accepted, ignored) SWI option list.");
+            Term, "term_string(?Term, ?String, +Options)", "As term_string/2 with an accepted, ignored option list.");
 
         BuiltinsRegistry.Register("functor", 3, Functor,
             Term, "functor(?Term, ?Name, ?Arity)", "Relates a term to its functor name and arity.");
         BuiltinsRegistry.Register("compound_name_arity", 3, CompoundNameArity,
-            Term, "compound_name_arity(?Compound, ?Name, ?Arity)", "Like functor/3 but restricted to compound terms (arity >= 1) (SWI).");
+            Term, "compound_name_arity(?Compound, ?Name, ?Arity)", "Like functor/3 but restricted to compound terms (arity >= 1).");
         BuiltinsRegistry.Register("arg",     3, Arg,
             Term, "arg(+N, +Term, ?Arg)", "Unifies Arg with the Nth argument of the compound term.");
         BuiltinsRegistry.Register("is_stream", 1, IsStream,
-            Reflect, "is_stream(@Term)", "Succeeds if Term is a stream handle or a registered stream alias (SWI).");
+            Reflect, "is_stream(@Term)", "Succeeds if Term is a stream handle or a registered stream alias.");
         BuiltinsRegistry.Register("=..",     2, Univ,
             Term, "=..(?Term, ?List)", "Relates a term to the list of its functor and arguments.");
 
@@ -302,7 +300,7 @@ public static partial class MetaBuiltins
         // parser yet).
         BuiltinsRegistry.Register("read_term_from_atom", 3, ReadTermFromAtom3,
             Term, "read_term_from_atom(+Atom, -Term, +Options)",
-            "Parses an atom into a term; Options accepted for SWI/GProlog compat (currently ignored).");
+            "Parses an atom into a term; Options are accepted and currently ignored.");
 
         // GProlog name/2 — atom/number ↔ list of codes.
         BuiltinsRegistry.Register("name", 2, NameBuiltin,
@@ -393,7 +391,11 @@ public static partial class MetaBuiltins
             Reflect, "current_prolog_flag(?Flag, ?Value)", "Reads the value of a Prolog flag.");
         BuiltinsRegistry.Register("statistics", 0, Statistics0,
             Reflect, "statistics",
-            "Writes a report of runtime, walltime and heap/trail/stack use to the current output.");
+            "Writes a report of runtime, walltime, heap/trail/stack use, heap-GC "
+            + "collections with cells reclaimed, and atom-table occupancy with atom-GC "
+            + "sweeps, to the current output.");
+        BuiltinsRegistry.Register("$lp_optimise", 7, LpOptimise);
+        BuiltinsRegistry.Register("$lp_feasible", 3, LpFeasible);
         BuiltinsRegistry.Register("$heap_live", 3, HeapLive);
         BuiltinsRegistry.Register("$heap_root_diag", 0, HeapRootDiag);
         BuiltinsRegistry.Register("$stack_top", 1, StackTopDiag);
@@ -455,14 +457,14 @@ public static partial class MetaBuiltins
             + "HTTP failure raises existence_error(url, URL).");
         BuiltinsRegistry.Register("prolog_load_context", 2, PrologLoadContext2,
             Io, "prolog_load_context(?Key, ?Value)",
-            "SWI/Scryer load-context introspection (module / file / source / "
+            "Load-context introspection (module / file / source / "
             + "directory), used by term_expansion/goal_expansion hooks to read the "
             + "module being loaded. Fails outside a consult.");
         BuiltinsRegistry.Register("absolute_file_name", 2, AbsoluteFileName2,
             Io, "absolute_file_name(+FileSpec, -Absolute)",
             "Resolves a file specification to an absolute path. The basic 2-arg form: "
             + "takes an atom (a path, possibly relative) and unifies the second arg with "
-            + "the absolute form. The 3-arg SWI form with options (extensions, file_type, "
+            + "the absolute form. The 3-arg form with options (extensions, file_type, "
             + "access, file_search_path) is not yet supported.");
         BuiltinsRegistry.Register("working_directory", 2, WorkingDirectory2,
             Io, "working_directory(-Old, +New)",
@@ -471,8 +473,8 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("prolog_to_os_filename", 2, PrologToOsFilename2,
             Io, "prolog_to_os_filename(?PrologPath, ?OsPath)",
             "Converts between Shumway's canonical '/'-separated path form and the "
-            + "host's native form (ADR-044). Either argument may be the bound one; "
-            + "on Unix both forms are the same.");
+            + "host's native form. Either argument may be the bound one; on a "
+            + "system whose separator is already '/' the two forms are the same.");
         // Unshadowable alias for shim internals: a loaded library may EXPORT
         // working_directory/2 (Scryer files.pl), and imports win over builtins
         // at resolution — a shim emulation calling the builtin by its public
@@ -482,7 +484,7 @@ public static partial class MetaBuiltins
             Io, "file_name_extension(?Base, ?Ext, ?Full)",
             "Relates a file name to its base and extension. With Full bound, splits at "
             + "the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or "
-            + "just Base when Ext is empty). SWI / SICStus compatible.");
+            + "just Base when Ext is empty).");
         BuiltinsRegistry.Register("is_digit", 1, IsDigit1,
             Term, "is_digit(+Char)",
             "True when Char is a one-character atom representing an ASCII digit.");
@@ -495,10 +497,9 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("consult", 1, Consult,
             Database, "consult(+File)",
             "Loads File and adds its clauses to the database, appending to any "
-            + "existing predicates. File is an atom path; a .shum extension routes "
-            + "through LoadBundle, everything else is read as Prolog source. An "
-            + "extensionless File that does not exist is retried as File.pl "
-            + "(SWI-style).");
+            + "existing predicates. File is an atom path; a .shum extension is loaded "
+            + "as a compiled bundle, everything else is read as Prolog source. An "
+            + "extensionless File that does not exist is retried as File.pl.");
         BuiltinsRegistry.Register("$load_text", 2, LoadTextCore,
             Database, "'$load_text'(+TextAtom, +Options)",
             "Native core of load_text/2 (Trealla): consults TextAtom's characters "
@@ -512,8 +513,8 @@ public static partial class MetaBuiltins
             + "and errors are as consult/1.");
         BuiltinsRegistry.Register("use_module", 1, UseModule,
             Database, "use_module(+Spec)",
-            "Loads a library or file. Spec is either library(Name) — where Name "
-            + "is one of the built-in libraries (clpfd, clpr) — or an atom path "
+            "Loads a library or file. Spec is either library(Name), where Name "
+            + "is one of the built-in libraries (clpfd, clpr), or an atom path "
             + "(equivalent to consult/1). use_module(library(clpfd)) enables the "
             + "CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two "
             + "libraries cannot coexist in the same engine.");
@@ -521,9 +522,9 @@ public static partial class MetaBuiltins
             Database, "save_state(+File)",
             "Writes a snapshot of the engine's user-visible state to File. "
             + "Captures every consulted source (in order, minus the prelude) "
-            + "plus every currently asserted dynamic clause. The snapshot is "
-            + "a Shumway V6 bundle; restore_state/1 reconstitutes equivalent "
-            + "state on a fresh engine. Arity-Prolog compatible builtin.");
+            + "plus every currently asserted dynamic clause. The snapshot is a "
+            + "Shumway bundle; restore_state/1 reconstitutes equivalent state "
+            + "on a fresh engine.");
         BuiltinsRegistry.Register("save_state", 2, SaveState2,
             Database, "save_state(+File, +Options)",
             "Like save_state/1 but accepts an options list. Recognised: "
@@ -547,7 +548,7 @@ public static partial class MetaBuiltins
             Database, "restore",
             "Destructively resets the user dynamic database to the last "
             + "save/0 snapshot: every user dynamic predicate's clauses are "
-            + "removed (declarations survive - calls fail rather than raise) "
+            + "removed (declarations survive, so calls fail rather than raise) "
             + "and the snapshot's clauses re-installed. Without a prior "
             + "save/0 the snapshot is empty, so restore/0 just clears all "
             + "user dynamics. Static predicates are never touched. Effects "
@@ -675,7 +676,7 @@ public static partial class MetaBuiltins
             "Stream variant of skip/1.");
         BuiltinsRegistry.Register("tab", 2, Tab2,
             Io, "tab(+Stream, +N)",
-            "Stream variant of tab/1 — writes N spaces to Stream.");
+            "Stream variant of tab/1: writes N spaces to Stream.");
 
         // Arity-Prolog string<->term
         // conversion. In Arity, "string" means atom; these are write-
@@ -684,8 +685,8 @@ public static partial class MetaBuiltins
             Term, "string_term(?Atom, ?Term)",
             "Bidirectional: parses Atom as a Prolog term (binding Term), or "
             + "renders Term using write/1 form (binding Atom). 'string' in "
-            + "Arity-Prolog terminology means atom — the textual representation "
-            + "is interned as an atom, not stored as a Shumway StringTerm.");
+            + "Arity-Prolog terminology means atom: the text is interned as an "
+            + "atom, since this engine has no separate string type.");
         BuiltinsRegistry.Register("string_termq", 2, StringTermq2,
             Term, "string_termq(?Atom, ?Term)",
             "writeq-style variant of string_term/2: atoms / functors are "
@@ -699,7 +700,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("string_search", 4, StringSearch4,
             Term, "string_search(+Case, +SubAtom, +Atom, ?Location)",
             "Arity string_search/4: like string_search/3 with a leading case "
-            + "flag — 0 searches case-sensitively, 1 case-insensitively.");
+            + "flag: 0 searches case-sensitively, 1 case-insensitively.");
 
         // Arity-Prolog file-system operations on
         // top of System.IO. chdir/1 is a 1-arg alias of
@@ -737,8 +738,8 @@ public static partial class MetaBuiltins
             "Succeeds when File exists and is a regular file.");
         BuiltinsRegistry.Register("file_permission", 2, FilePermission2,
             Io, "file_permission(+File, +Permission)",
-            "Succeeds when File (a file or directory) grants Permission — "
-            + "read, write, execute or search (GProlog-compatible). A "
+            "Succeeds when File (a file or directory) grants Permission: "
+            + "read, write, execute or search. A "
             + "nonexistent path fails; unknown permissions raise "
             + "domain_error(os_file_permission, _).");
         BuiltinsRegistry.Register("copy_file", 2, CopyFile2,
@@ -748,8 +749,8 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("getenv", 2, GetEnv2,
             Io, "getenv(+Name, -Value)",
             "Unifies Value with the environment variable Name's contents "
-            + "as an atom; fails (does not raise) when Name is unset — "
-            + "SWI-compatible, so `(getenv(X,V) ; V = Default)` works.");
+            + "as an atom; fails (does not raise) when Name is unset, "
+            + "so `(getenv(X,V) ; V = Default)` works.");
         // Unshadowable alias — see $sys_working_directory (Scryer os.pl
         // exports getenv/2; the shim's emulation must not resolve back to it).
         BuiltinsRegistry.Register("$sys_getenv", 2, GetEnv2);
@@ -786,7 +787,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("directory_files", 2, DirectoryFiles2,
             Io, "directory_files(+Directory, -Files)",
             "Unifies Files with the list of entry names (atoms) in "
-            + "Directory, including '.' and '..' — SWI-compatible.");
+            + "Directory, including '.' and '..'.");
 
         // pseudo-random generation. Per-engine
         // System.Random seedable via randomize/1.
@@ -799,7 +800,7 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("random_between", 3, RandomBetween3,
             Term, "random_between(+Low, +High, -X)",
             "Unifies X with a fresh pseudo-random integer in [Low, High] "
-            + "(inclusive on both ends, matching SWI semantics).");
+            + "(inclusive on both ends).");
         // seed introspection pair.
         BuiltinsRegistry.Register("get_seed", 1, GetSeed1,
             Term, "get_seed(-Seed)",
@@ -841,8 +842,7 @@ public static partial class MetaBuiltins
             "Like consult/1 but first abolishes every predicate whose indicator "
             + "appears in File (in the target module), so an edit-reload cycle "
             + "replaces the file's predicates rather than duplicating clauses. "
-            + "Predicates not mentioned in File are left untouched (classical "
-            + "GProlog / SICStus semantics).");
+            + "Predicates not mentioned in File are left untouched.");
     }
 
 }

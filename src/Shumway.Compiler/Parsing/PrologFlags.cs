@@ -97,6 +97,11 @@ public sealed class PrologFlags
     /// use them freely).</summary>
     public bool LenientEscapes { get; set; }
 
+    /// <summary>The `encoding` flag: default text encoding for source reads
+    /// and newly opened streams that name none (engine name, e.g. utf8 /
+    /// utf16le). A BOM and a `:- encoding/1` directive both override it.</summary>
+    public string DefaultTextEncoding { get; set; } = "utf8";
+
     /// <summary>SWI argument priority: arguments and list elements are read at
     /// full 1200 priority with the separators suppressed as operators — comma
     /// always, bar only inside lists (where it marks the tail). Verified

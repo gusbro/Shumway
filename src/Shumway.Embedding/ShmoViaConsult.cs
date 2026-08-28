@@ -31,9 +31,11 @@ public static class ShmoViaConsult
         IReadOnlyList<string> libraryDirs,
         ShmoBuildMode buildMode,
         List<ShmoCompileError> errors,
-        string? dialect = null)
+        string? dialect = null,
+        System.IO.TextWriter? warnings = null)
     {
-        var rich = CompileMany(new[] { rootPath }, libraryDirs, buildMode, errors, dialect);
+        var rich = CompileMany(
+            new[] { rootPath }, libraryDirs, buildMode, errors, dialect, warnings);
         var outp = new List<(string, ShmoObject)>(rich.Count);
         foreach (var r in rich) outp.Add((r.ModuleName, r.Object));
         return outp;
@@ -46,15 +48,25 @@ public static class ShmoViaConsult
     /// timestamp (the <c>.pl</c> it came from, or the runtime assembly for a
     /// baked-in library) and whether it is one of the passed roots — the
     /// separate-compilation CLI uses these to skip regenerating a dependency
-    /// <c>.shmo</c> that is already up to date.</summary>
+    /// <c>.shmo</c> that is already up to date.
+    ///
+    /// <para><paramref name="warnings"/> takes the load-time warnings the
+    /// consult produces (a directive that raised, a <c>use_module</c> target
+    /// that is not there). Left null they go where an engine's warnings go,
+    /// standard error, which is right for a CLI compiling what its user
+    /// asked for; a host compiling on its own behalf passes a writer, since
+    /// warnings from a library nobody is watching are not the user's
+    /// business.</para></summary>
     public static List<(string ModuleName, ShmoObject Object, System.DateTime SourceTimeUtc, bool IsRoot)> CompileMany(
         IReadOnlyList<string> rootPaths,
         IReadOnlyList<string> libraryDirs,
         ShmoBuildMode buildMode,
         List<ShmoCompileError> errors,
-        string? dialect = null)
+        string? dialect = null,
+        System.IO.TextWriter? warnings = null)
     {
         var e = new PrologEngine();
+        if (warnings is not null) e.Warnings = warnings;
         // ADR-040: a library collection may be a non-shumway dialect. An
         // explicit dialect applies to every dir; otherwise each dir spec may
         // carry its own `dialect:path` prefix (AddLibraryDirectorySpec parses it).

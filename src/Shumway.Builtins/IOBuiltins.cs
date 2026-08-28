@@ -966,10 +966,10 @@ public static class IOBuiltins
             if (isCode)
             {
                 long code = head.AsInt;
-                if (code < 0 || code > 0x10FFFF)
+                if (!Utf16Text.IsScalarValue(code))
                     throw new PrologRuntimeException(
                         "representation_error", "character_code");
-                sb.Append(char.ConvertFromUtf32((int)code));
+                Utf16Text.AppendCodePoint(sb, (int)code);
             }
             else
             {

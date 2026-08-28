@@ -3,8 +3,9 @@
 ## Status
 
 Accepted ([Phase 1](../../history/phase-1-closure.md)). Amended by
-[ADR-047](047-pstr-is-a-list.md) (2026-08-20): tag 0x8 (`STRING`) is removed and
-the PSTR header payload gains a presentation bit. The amendments are marked
+[ADR-047](047-pstr-is-a-list.md) (2026-08-20): the `STRING` tag is removed and
+the PSTR header payload gains a presentation bit; the tag values were then
+compacted pre-v1 so the space stays contiguous. The amendments are marked
 inline below.
 
 ## Context
@@ -49,19 +50,21 @@ Bits 59..0:  payload (60 bits, interpretation depends on tag)
 | 0x5 | INT      | Signed 60-bit integer (inline). |
 | 0x6 | FLOAT    | 4 high bits of double + heap index to INT cell with 60 low bits. |
 | 0x7 | BIGINT   | Id in the per-engine BigInteger table. |
-| 0x8 | (free)   | Freed by ADR-047: there is no opaque string type, so packed text is a list like any other. |
-| 0x9 | FOREIGN  | Id in the per-engine foreign object table. |
-| 0xA | ATTVAR   | Heap index to the variable's own home cell (a self-referencing variable, like REF). Implemented in Phase 4 — see chunk 77. |
-| 0xB | PSTR     | Packed list header: presentation bit, length, buffer index, offset (see PSTR design doc). |
-| 0xC | PSTRBUF  | Packed-list buffer, 3 UTF-16 code units (`PstrBuffer`). |
-| 0xD | RAWINT   | Untagged control word (`RawInt`) in environment / choice-point slots — lets the conservative GC scan tell control data from heap references. |
-| 0xE | RATIONAL | Id in the per-engine rational table (`Rational`, ADR-039). |
+| 0x8 | FOREIGN  | Id in the per-engine foreign object table. |
+| 0x9 | ATTVAR   | Heap index to the variable's own home cell (a self-referencing variable, like REF). Implemented in Phase 4. |
+| 0xA | PSTR     | Packed list header: presentation bit (59), astral bit (58, ADR-048), length, buffer index, offset (see PSTR design doc). |
+| 0xB | PSTRBUF  | Packed-list buffer, 3 UTF-16 code units (`PstrBuffer`). |
+| 0xC | RAWINT   | Untagged control word (`RawInt`) in environment / choice-point slots — lets the conservative GC scan tell control data from heap references. |
+| 0xD | RATIONAL | Id in the per-engine rational table (`Rational`, ADR-039). |
+| 0xE | (free)   | Available for future extensions. |
 | 0xF | (free)   | Available for future extensions. |
 
-> **Amended by ADR-047.** Tags 0x8 and 0xF are the two free slots. The tag space
-> is 4 bits and cannot grow without changing the cell layout, so a new tag is a
-> major decision (see `decision-policy.md`) and 0x8 is not to be reclaimed
-> casually just because it is now free.
+> **Amended by ADR-047**, which removed the opaque string tag (there is no
+> string type: packed text is a list like any other), and compacted pre-v1:
+> the values above 0x7 shifted down one so the space stays contiguous, with
+> 0xE/0xF the two free slots. The tag space is 4 bits and cannot grow
+> without changing the cell layout, so a NEW tag is a major decision (see
+> `decision-policy.md`).
 
 ### The heap is fully blittable
 
@@ -222,14 +225,13 @@ public enum Tag : byte
     Int = 0x5,
     Float = 0x6,
     BigInt = 0x7,
-    // 0x8 free (was String; removed by ADR-047)
-    Foreign = 0x9,
-    AttVar = 0xA,  // attributed variable (Phase 4, chunk 77): payload = own home index
-    Pstr = 0xB,        // packed list header (ADR-047)
-    PstrBuffer = 0xC,
-    RawInt = 0xD,      // untagged control word (env / CP slots)
-    Rational = 0xE,    // rational table id (ADR-039)
-    // 0xF free
+    Foreign = 0x8,
+    AttVar = 0x9,      // attributed variable (Phase 4): payload = own home index
+    Pstr = 0xA,        // packed list header (ADR-047)
+    PstrBuffer = 0xB,
+    RawInt = 0xC,      // untagged control word (env / CP slots)
+    Rational = 0xD,    // rational table id (ADR-039)
+    // 0xE, 0xF free
 }
 ```
 
@@ -247,7 +249,7 @@ public enum Tag : byte
 - ADR-003 (Atom Three-Tier System): atom ids in cells correspond to entries in the global atom table.
 - ADR-004 (Two Trails): trail entries refer to heap indices that point to cells.
 - ADR-005 (Stack Layout): stack frames are also cells.
-- ADR-047 (A packed string is a list): amends the tag table (0x8 freed) and the PSTR header payload.
+- ADR-047 (A packed string is a list): amends the tag table (string tag removed; space compacted pre-v1) and the PSTR header payload.
 
 ## Related Design Docs
 

@@ -108,6 +108,50 @@ public sealed class DirectiveGoalTests
     }
 
     [Fact]
+    public void ABigDirectiveIsNotReportedInFull()
+    {
+        // A foreign-interface declaration from another system names hundreds of
+        // functions. Rendered whole it is a single line of tens of kilobytes,
+        // which is not a diagnostic anyone reads — the head is what identifies
+        // which directive it was, and the error already says what went wrong.
+        var args = string.Join(", ", Enumerable.Range(0, 400).Select(i => $"fn_{i}(ptr, sint)"));
+        var e = new PrologEngine();
+        string err = CaptureStderr(() =>
+            e.ConsultString($":- bind_them(libc, [{args}]).\np(ok)."));
+
+        string line = err.Split('\n').First(l => l.Contains("directive raised"));
+        Assert.True(line.Length < 200, $"still {line.Length} characters");
+        Assert.Contains("bind_them(libc, ...)", line);
+        Assert.Contains("bind_them/2", line);            // the error names it
+        Assert.True(e.Query("p(ok).").Success);
+    }
+
+    [Fact]
+    public void ASmallDirectiveIsReportedWhole()
+    {
+        // The elision is for the ones nobody can read. An ordinary directive
+        // still says exactly what it was.
+        var e = new PrologEngine();
+        string err = CaptureStderr(() => e.ConsultString(":- nope(a, b)."));
+        Assert.Contains("nope(a, b)", err);
+    }
+
+    [Fact]
+    public void AModuleDirectiveIsReportedAsQualified()
+    {
+        // Inside a module the consult wraps the goal to run it in that module's
+        // context. The wrapper is machinery, not something the user wrote, so
+        // the warning reads as the M:G it stands for.
+        var e = new PrologEngine();
+        string err = CaptureStderr(() => e.ConsultString("""
+            :- module(m, []).
+            :- nope(a).
+            """));
+        Assert.Contains("m:nope(a)", err);
+        Assert.DoesNotContain("$mqual", err);
+    }
+
+    [Fact]
     public void MultipleGoalDirectives_RunInSourceOrder()
     {
         var e = new PrologEngine();

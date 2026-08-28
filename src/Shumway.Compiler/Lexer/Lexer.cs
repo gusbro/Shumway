@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Shumway.Core;
 using System.Globalization;
 using System.Text;
 
@@ -142,6 +143,29 @@ public sealed class Lexer
         if (char.IsDigit(c)) return ParseNumber(pos);
         if (c == '_' || (c >= 'A' && c <= 'Z')) return ParseVariable(pos);
         if (c >= 'a' && c <= 'z') return ParseUnquotedAtom(pos);
+        // Extended identifier characters (every neighbouring engine accepts
+        // them): a non-ASCII LETTER starts an atom or — when upper/title
+        // case — a variable. An astral letter arrives as a surrogate pair;
+        // GetUnicodeCategory(string, i) classifies the whole pair.
+        if (c > 0x7F && char.IsLetter(c))
+            return char.IsUpper(c)
+                || CharUnicodeInfo.GetUnicodeCategory(c) == UnicodeCategory.TitlecaseLetter
+                ? ParseVariable(pos)
+                : ParseUnquotedAtom(pos);
+        if (char.IsHighSurrogate(c) && _offset + 1 < _source.Length
+            && char.IsLowSurrogate(_source[_offset + 1]))
+        {
+            switch (CharUnicodeInfo.GetUnicodeCategory(_source, _offset))
+            {
+                case UnicodeCategory.LowercaseLetter:
+                case UnicodeCategory.OtherLetter:
+                case UnicodeCategory.ModifierLetter:
+                    return ParseUnquotedAtom(pos);
+                case UnicodeCategory.UppercaseLetter:
+                case UnicodeCategory.TitlecaseLetter:
+                    return ParseVariable(pos);
+            }
+        }
         if (raw == '\'') return ParseQuotedAtom(pos);
         if (raw == '"') return ParseString(pos);
         if (raw == '$' && ArityCompat) return ParseDollarAtom(pos);
@@ -448,25 +472,42 @@ public sealed class Lexer
     private Token ParseUnquotedAtom(SourcePosition pos)
     {
         int start = _offset;
-        while (_offset < _source.Length)
-        {
-            char c = _source[_offset];
-            if (char.IsLetterOrDigit(c) || c == '_') Advance();
-            else break;
-        }
+        while (_offset < _source.Length && ScanIdentifierChar()) { }
         return new Token(TokenKind.Atom, pos, BuildText(start, _offset));
     }
 
     private Token ParseVariable(SourcePosition pos)
     {
         int start = _offset;
-        while (_offset < _source.Length)
-        {
-            char c = _source[_offset];
-            if (char.IsLetterOrDigit(c) || c == '_') Advance();
-            else break;
-        }
+        while (_offset < _source.Length && ScanIdentifierChar()) { }
         return new Token(TokenKind.Variable, pos, BuildText(start, _offset));
+    }
+
+    /// <summary>Consumes one identifier-tail character if present: ASCII or
+    /// BMP letter/digit/underscore (one unit), or an astral letter or digit
+    /// (a surrogate pair, classified as one code point).</summary>
+    private bool ScanIdentifierChar()
+    {
+        char c = _source[_offset];
+        if (char.IsLetterOrDigit(c) || c == '_') { Advance(); return true; }
+        if (char.IsHighSurrogate(c) && _offset + 1 < _source.Length
+            && char.IsLowSurrogate(_source[_offset + 1]))
+        {
+            switch (CharUnicodeInfo.GetUnicodeCategory(_source, _offset))
+            {
+                case UnicodeCategory.LowercaseLetter:
+                case UnicodeCategory.UppercaseLetter:
+                case UnicodeCategory.TitlecaseLetter:
+                case UnicodeCategory.OtherLetter:
+                case UnicodeCategory.ModifierLetter:
+                case UnicodeCategory.DecimalDigitNumber:
+                case UnicodeCategory.LetterNumber:
+                    Advance();
+                    Advance();
+                    return true;
+            }
+        }
+        return false;
     }
 
     private Token ParseSymbolAtom(SourcePosition pos)
@@ -724,6 +765,17 @@ public sealed class Lexer
                 $"Raw control character (0x{(int)c:x2}) after 0' at {pos} "
                 + "— use an escape sequence.", pos);
         }
+        // A raw astral character after 0' is one code point spanning two
+        // units — the literal denotes the code point, not the
+        // high-surrogate unit.
+        if (char.IsHighSurrogate(c) && _offset + 1 < _source.Length
+            && char.IsLowSurrogate(_source[_offset + 1]))
+        {
+            char lo = _source[_offset + 1];
+            Advance();
+            Advance();
+            return char.ConvertToUtf32(c, lo);
+        }
         Advance();
         return c;
     }
@@ -907,7 +959,15 @@ public sealed class Lexer
                 // doubled-quote escape ('') above applies in both modes.
                 Advance();
                 int e = ReadEscapeSequence(pos);
-                if (e != EscapeContinuation) sb.Append((char)e);
+                // An astral escape builds its surrogate pair — appending
+                // (char)e would TRUNCATE it to 16 bits, silently
+                // manufacturing a different character (0x1F600 became
+                // U+F600). A surrogate value names no character at all.
+                if (e != EscapeContinuation && !Utf16Text.IsScalarValue(e))
+                    throw new LexerException(
+                        $"Character escape 0x{e:X} is not a Unicode character at {pos}.",
+                        pos);
+                if (e != EscapeContinuation) Utf16Text.AppendCodePoint(sb, e);
             }
             else if ((c < ' ' || c == '\x7f') && !ArityCompat)
             {
@@ -993,7 +1053,15 @@ public sealed class Lexer
             {
                 Advance();
                 int e = ReadEscapeSequence(pos);
-                if (e != EscapeContinuation) sb.Append((char)e);
+                // An astral escape builds its surrogate pair — appending
+                // (char)e would TRUNCATE it to 16 bits, silently
+                // manufacturing a different character (0x1F600 became
+                // U+F600). A surrogate value names no character at all.
+                if (e != EscapeContinuation && !Utf16Text.IsScalarValue(e))
+                    throw new LexerException(
+                        $"Character escape 0x{e:X} is not a Unicode character at {pos}.",
+                        pos);
+                if (e != EscapeContinuation) Utf16Text.AppendCodePoint(sb, e);
             }
             else if ((c < ' ' || c == '\x7f') && !ArityCompat)
             {

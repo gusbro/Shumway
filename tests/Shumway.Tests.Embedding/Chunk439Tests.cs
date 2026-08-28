@@ -269,14 +269,17 @@ public class Chunk439Tests
     public void DcgStringTerminal_EmptyString_ConsumesNothing()
     {
         var e = new PrologEngine();
-        // "" is the empty terminal: S0 = S. Default (string) mode.
+        // "" is the empty terminal: S0 = S. Under the default chars mode a
+        // mid-body terminal consumes the literal's own presentation — the
+        // CHAR x, not code 120 (ADR-047; the codes expectation here pinned
+        // the pre-047 hardcoded-codes lowering).
         e.ConsultString("""
             e --> "".
             wrap --> e, "x", e.
             """);
         Assert.True(e.Query("phrase(e, []).").Success);
         Assert.True(e.Query("phrase(e, [a], [a]).").Success);
-        Assert.True(e.Query("phrase(wrap, [120]).").Success);
+        Assert.True(e.Query("phrase(wrap, [x]).").Success);
     }
 
     [Fact]

@@ -224,11 +224,22 @@ internal static class NativeTransform
         }
     }
 
-    private static bool Mentions(Term t, string functor)
+    /// <summary>Does the term mention a compound with this functor anywhere?
+    /// Iterative: this runs over every consulted clause, so it walks whatever
+    /// a source file holds — a recursive scan died on the C# stack, taking
+    /// the process with it, when a file carried a list literal of some ten
+    /// thousand elements.</summary>
+    private static bool Mentions(Term root, string functor)
     {
-        if (t is not CompoundTerm c) return false;
-        if (c.Functor == functor) return true;
-        foreach (var a in c.Args) if (Mentions(a, functor)) return true;
+        var work = new List<Term>(32) { root };
+        while (work.Count > 0)
+        {
+            Term t = work[^1];
+            work.RemoveAt(work.Count - 1);
+            if (t is not CompoundTerm c) continue;
+            if (c.Functor == functor) return true;
+            foreach (Term a in c.Args) work.Add(a);
+        }
         return false;
     }
 }

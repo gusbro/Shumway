@@ -84,7 +84,7 @@
 	).
 '$lgt_prolog_feature'(prolog_version, v(Major, Minor, Patch)) :-
 	current_prolog_flag(version_data, shumway(Major, Minor, Patch, _)).
-'$lgt_prolog_feature'(prolog_compatible_version, @>=(v(1, 0, 0))).
+'$lgt_prolog_feature'(prolog_compatible_version, @>=(v(0, 9, 0))).
 
 % Capability set — each value is the MEASURED truth, not modesty and not
 % optimism, because library code changes behavior on it (library(types) caps
@@ -94,28 +94,32 @@
 % - tabling: supported — the engine's `:- table` (variant tabling,
 %   well-founded negation). Logtalk forwards the directive over the compiled
 %   names; the table/1 meta-directive declaration below is the required half.
-% - unicode: unsupported is deliberate, NOT modesty backwards. The engine is
-%   BMP-clean (a code above 0xFFFF raises representation_error everywhere —
-%   silently truncating used to build a DIFFERENT character), but Logtalk's
-%   `unicode_full` charset generates astral codes whenever the flag is not
-%   `unsupported`, and its own docs say only backends declaring `full` (SWI,
-%   XVM) handle that. `bmp` was measured: arbitrary 43/43 → 40/43. Flip to
-%   `full` only with real astral atoms (surrogate-pair build/decompose,
-%   code-point atom_length) — that also un-skips a yaml test.
+% - unicode: full — the astral-unicode arc. Character-level operations
+%   answer in code points (atom_length, atom_chars/codes, char_code,
+%   sub_atom, atom_concat enumeration, get/peek/put_char, packed lists, the
+%   standard order); an astral code builds the real character. Logtalk's
+%   `unicode_full` charset generates astral codes for any flag except
+%   `unsupported`, so this claim is exactly what `arbitrary` exercises.
 % - threads/engines/sockets: genuinely absent (single-threaded activations,
 %   no socket layer).
 % - modules: Logtalk-compiling Prolog MODULE FILES as objects is more than
 %   ADR-038 provides (no current_module/1 reflection, M:G only shimmed).
 % - coinduction: needs verified rational-tree unification end to end;
 %   revisit deliberately, not as a flag flip.
-'$lgt_prolog_feature'(encoding_directive, unsupported).
+'$lgt_prolog_feature'(encoding_directive, full).
+
+% SWI-style fixed-width unicode escapes (\uXXXX / \UXXXXXXXX) in quoted
+% text, engine-wide for the Logtalk session — matching the reference
+% backend the swi dialect announces. Strict ISO reads stay the default
+% outside Logtalk.
+:- set_prolog_flag(lenient_escapes, true).
 '$lgt_prolog_feature'(sockets, unsupported).
 '$lgt_prolog_feature'(tabling, supported).
 '$lgt_prolog_feature'(engines, unsupported).
 '$lgt_prolog_feature'(threads, unsupported).
 '$lgt_prolog_feature'(modules, unsupported).
 '$lgt_prolog_feature'(coinduction, unsupported).
-'$lgt_prolog_feature'(unicode, unsupported).
+'$lgt_prolog_feature'(unicode, full).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -301,7 +305,37 @@
 '$shumway_provided_library'(library(atts)).
 '$shumway_provided_library'(library(time)).     % call_with_time_limit/2, below
 '$lgt_prolog_goal_expansion'(_, _) :- fail.
-'$lgt_logtalk_prolog_encoding'(_, _, _) :- fail.
+% Logtalk <-> engine encoding names (ADR-048 encoding/1 support). The
+% stream argument disambiguates the endianness-agnostic spellings by the
+% encoding the already-open stream detected (BOM); our stream_property/2
+% reports the engine names.
+'$lgt_logtalk_prolog_encoding'('US-ASCII', ascii, _).
+'$lgt_logtalk_prolog_encoding'('ISO-8859-1', iso_latin_1, _).
+'$lgt_logtalk_prolog_encoding'('UTF-8', utf8, _).
+'$lgt_logtalk_prolog_encoding'('UCS-2', Encoding, Stream) :-  % BOM mandatory
+	(	stream_property(Stream, encoding(utf16le)) ->
+		Encoding = utf16le
+	;	stream_property(Stream, encoding(utf16be)) ->
+		Encoding = utf16be
+	).
+'$lgt_logtalk_prolog_encoding'('UCS-2BE', utf16be, _).
+'$lgt_logtalk_prolog_encoding'('UCS-2LE', utf16le, _).
+'$lgt_logtalk_prolog_encoding'('UTF-16', Encoding, Stream) :-  % BOM expected
+	(	stream_property(Stream, encoding(utf16le)) ->
+		Encoding = utf16le
+	;	stream_property(Stream, encoding(utf16be)) ->
+		Encoding = utf16be
+	).
+'$lgt_logtalk_prolog_encoding'('UTF-16BE', utf16be, _).
+'$lgt_logtalk_prolog_encoding'('UTF-16LE', utf16le, _).
+'$lgt_logtalk_prolog_encoding'('UTF-32', Encoding, Stream) :-  % BOM expected
+	(	stream_property(Stream, encoding(utf32le)) ->
+		Encoding = utf32le
+	;	stream_property(Stream, encoding(utf32be)) ->
+		Encoding = utf32be
+	).
+'$lgt_logtalk_prolog_encoding'('UTF-32BE', utf32be, _).
+'$lgt_logtalk_prolog_encoding'('UTF-32LE', utf32le, _).
 '$lgt_string'(_) :- fail.
 '$lgt_string_codes'(_, _) :- fail.
 

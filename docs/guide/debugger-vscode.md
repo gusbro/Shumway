@@ -2,11 +2,11 @@
 
 Design and rationale: [ADR-036](../architecture/adr/036-vscode-dap-debugger.md).
 
-Cross-platform (Windows and Linux) source-level debugging in VS Code: breakpoints —
-including conditional ones whose condition is a Prolog goal — port-based stepping, the
+Cross-platform (Windows and Linux) source-level debugging in VS Code: breakpoints (
+including conditional ones whose condition is a Prolog goal), port-based stepping, the
 call stack, and per-frame variables. The engine hosts a DAP endpoint in-process; the
 `shumway-dap` adapter and a purely declarative extension connect VS Code to it. The
-Visual Studio (Concord) debugger of `docs/debugger.md` is unaffected — both endpoints
+Visual Studio (Concord) debugger of `docs/debugger.md` is unaffected: both endpoints
 are available in any debug build, first connected debugger drives.
 
 ## One-time setup
@@ -36,10 +36,10 @@ Open your `.pl` file and press F5 (pick **Shumway Prolog** the first time), or u
 }
 ```
 
-VS Code starts `shumway --dap <port> <program>` in the **integrated terminal** — the
+VS Code starts `shumway --dap <port> <program>` in the **integrated terminal**: the
 REPL prompt is yours. Set breakpoints in the editor, type a query in the terminal, and
 execution stops in VS Code. Optional config: `goal` (run a goal after consulting, like
-`-g`), `args` (extra shumway arguments — more files, `--clpfd`, `--foreign-dll` ...),
+`-g`), `args` (extra shumway arguments: more files, `--clpfd`, `--foreign-dll` ...),
 `port` (fix the DAP port), `cwd`.
 
 ## Attach
@@ -53,7 +53,7 @@ shumway-link ... --exe app --debug --dap-port 4711   # or bake the port at link 
 ```
 
 (`--dap 0` picks a free port and prints it. `SHUMWAY_DAP_PORT` opens the endpoint in
-ANY deployment shape whose debug session opens — no code or link change — and at run
+ANY deployment shape whose debug session opens (no code or link change) and at run
 time it overrides a baked `--dap-port` (0 disables).) Then:
 
 ```json
@@ -71,14 +71,14 @@ stop description), pause (stops at the next port, where a stack means something)
 stack with clause heads, per-frame variables (writeq-rendered), disconnect = run free +
 reconnect later.
 
-**Constraints scope** — a frame whose variables are attributed (CLP(FD), CLP(R),
+**Constraints scope**: a frame whose variables are attributed (CLP(FD), CLP(R),
 `dif`/`freeze`, clpz, …) shows a second scope next to Locals with the projected residual
 constraints, one read-only entry per variable: `X = X in 1..6, X#<Y`. The same
 projection the REPL prints for an answer, at every stop. In the Debug Console those
 variables carry their constraints too: `get_attr(X, clpfd, A)` answers, and posting
 `X #< 5` narrows the evaluation's copy (the suspended program is untouched).
 
-**Debug Console** — the Immediate window: goals run in the live suspended engine
+**Debug Console**, the Immediate window: goals run in the live suspended engine
 (side effects persist), `;` asks for the next solution, `X = term(1)` on a free frame
 variable commits the binding into the frame (Locals refresh at once), and a bare variable
 name prints its value. During a console evaluation breakpoints do not stop (a nested
@@ -86,32 +86,32 @@ break state has no DAP shape). **Set Value** in the Variables panel is the
 destructive edit: trailed (backtracking restores it), `_` un-instantiates, values render
 writeq so they round-trip. Hover shows frame variables and refuses goals.
 
-**Jump to Cursor** — right-click a line → *Jump to Cursor*: the ADR-035 Set Next
+**Jump to Cursor**: right-click a line → *Jump to Cursor*, the ADR-035 Set Next
 Statement. Forward skips the goals in between; backward rewinds the trail to the recorded
 mark (bindings undone; database effects are permanent, as designed); selecting another
 frame in the Call Stack first targets THAT frame (the frames above it pop). Only the
 lines the engine published as valid are offered; anything else is refused honestly.
 
-**Logpoints** — right-click a breakpoint → *Edit Breakpoint* → *Log Message* (or
+**Logpoints**: right-click a breakpoint → *Edit Breakpoint* → *Log Message* (or
 add a logpoint directly): the machine pauses invisibly, the message prints to the Debug
 Console with `{Var}` holes filled from the frame (writeq-rendered), and execution
-continues — no stop ever reaches the editor.
+continues: no stop ever reaches the editor.
 
 ## Not yet / different from Visual Studio
 
-- **Marketplace packaging polish** — the extension installs from the repo's script, not
+- **Marketplace packaging polish**: the extension installs from the repo's script, not
   from the marketplace yet.
-- **Mixed Prolog+C# stack in one view** — a DAP session shows Prolog only. For interop
+- **Mixed Prolog+C# stack in one view**: a DAP session shows Prolog only. For interop
   work run a compound session (this + `coreclr` attach to the same process) and switch
   stacks in the Call Stack panel.
-- **Step into C# from Prolog** — behaves as step over; use a C# breakpoint via the
+- **Step into C# from Prolog**: behaves as step over; use a C# breakpoint via the
   compound session.
 - One debugger drives at a time (VS Code vs Visual Studio vs a second VS Code): the
   second gets a clean refusal.
 
 ## Linux
 
-Everything here is cross-platform by construction — the engine, the DAP server, the
+Everything here is cross-platform by construction: the engine, the DAP server, the
 adapter and the extension are the same bits, and the protocol suite (`Adr036*Tests`)
 runs on any OS. Install with `sh vscode/install-extension.sh`. An end-to-end smoke on a
 real Linux box is still pending (no box at hand); if you hit anything there,
@@ -124,5 +124,5 @@ real Linux box is still pending (no box at hand); if you hit anything there,
 - A breakpoint that never hits: confirm the debuggee was started with `--dap` (the
   banner names the port) and the file consulted is the file the breakpoint is in
   (files are matched by name).
-- "a debugger is already attached": something else owns the session — detach it (or
+- "a debugger is already attached": something else owns the session, so detach it (or
   disconnect the other VS Code session) and retry.

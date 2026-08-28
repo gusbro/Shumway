@@ -700,6 +700,52 @@ public static class TermRenderer
     /// operators like <c>/</c> and <c>+</c> print unquoted under
     /// <c>quoted(true)</c> — quoting them (<c>'/'</c>) is wrong and
     /// breaks SWI-compatible round-tripping (term_to_atom/2).</summary>
+    /// <summary>Mirror of the LEXER's letter-atom classification — the two
+    /// must agree or writeq output stops round-tripping: an atom prints
+    /// unquoted exactly when its first character starts an unquoted atom
+    /// there (a lowercase / other / modifier letter, BMP or astral).</summary>
+    private static bool IsUnquotedAtomStart(string name, out int firstLen)
+    {
+        char c = name[0];
+        firstLen = 1;
+        if (char.IsHighSurrogate(c) && name.Length > 1
+            && char.IsLowSurrogate(name[1]))
+        {
+            firstLen = 2;
+            return System.Globalization.CharUnicodeInfo.GetUnicodeCategory(name, 0)
+                is System.Globalization.UnicodeCategory.LowercaseLetter
+                or System.Globalization.UnicodeCategory.OtherLetter
+                or System.Globalization.UnicodeCategory.ModifierLetter;
+        }
+        if (!char.IsLetter(c)) return false;
+        return !(char.IsUpper(c)
+            || System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)
+                == System.Globalization.UnicodeCategory.TitlecaseLetter);
+    }
+
+    /// <summary>One identifier-tail character at <paramref name="i"/> —
+    /// letter / digit / underscore, BMP or astral pair.</summary>
+    private static bool IsIdentifierTailAt(string name, int i, out int len)
+    {
+        char c = name[i];
+        len = 1;
+        if (char.IsLetterOrDigit(c) || c == '_') return true;
+        if (char.IsHighSurrogate(c) && i + 1 < name.Length
+            && char.IsLowSurrogate(name[i + 1]))
+        {
+            len = 2;
+            return System.Globalization.CharUnicodeInfo.GetUnicodeCategory(name, i)
+                is System.Globalization.UnicodeCategory.LowercaseLetter
+                or System.Globalization.UnicodeCategory.UppercaseLetter
+                or System.Globalization.UnicodeCategory.TitlecaseLetter
+                or System.Globalization.UnicodeCategory.OtherLetter
+                or System.Globalization.UnicodeCategory.ModifierLetter
+                or System.Globalization.UnicodeCategory.DecimalDigitNumber
+                or System.Globalization.UnicodeCategory.LetterNumber;
+        }
+        return false;
+    }
+
     private static bool NeedsNoQuoting(string name)
     {
         if (name.Length == 0) return false;
@@ -711,12 +757,12 @@ public static class TermRenderer
         if (name == "[]" || name == "{}" || name == "!"
             || name == ";") return true;
         char first = name[0];
-        if (char.IsLower(first))
+        if (IsUnquotedAtomStart(name, out int firstLen))
         {
-            for (int i = 1; i < name.Length; i++)
+            for (int i = firstLen; i < name.Length; )
             {
-                char c = name[i];
-                if (!(char.IsLetterOrDigit(c) || c == '_')) return false;
+                if (!IsIdentifierTailAt(name, i, out int len)) return false;
+                i += len;
             }
             return true;
         }

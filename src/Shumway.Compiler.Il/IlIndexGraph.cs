@@ -266,6 +266,7 @@ internal static class IlIndexGraph
                 {
                     Tag.Ref => node.VarTarget,
                     Tag.Lis => node.ListTarget,
+                    Tag.Pstr when a.AsPstrLength > 0 => node.ListTarget,
                     Tag.Str => node.StructTarget,
                     Tag.Atom or Tag.Int or Tag.Float => node.ConstTarget,
                     _ => node.VarTarget,
@@ -302,7 +303,8 @@ internal static class IlIndexGraph
                     if (!TrySubCell(engine, a, node.Sub0, node.Sub1, out Cell s))
                         return node.DefaultTarget;
                     if (s.Tag == Tag.Str) return Lookup(node, engine.GetHeap(s.AsHeapIndex).AsFunctorId);
-                    if (s.Tag == Tag.Lis) return Lookup(node, AtomTable.ConsFunctorId);
+                    if (s.Tag == Tag.Lis || (s.Tag == Tag.Pstr && s.AsPstrLength > 0))
+                        return Lookup(node, AtomTable.ConsFunctorId);
                     return node.DefaultTarget;
                 }
                 return a.Tag == Tag.Str
@@ -344,6 +346,14 @@ internal static class IlIndexGraph
         {
             if ((uint)idx > 1u) return false;
             next = DerefCell(engine, engine.GetHeap(cell.AsHeapIndex + idx));
+            return true;
+        }
+        if (cell.Tag == Tag.Pstr && cell.AsPstrLength > 0)
+        {
+            if ((uint)idx > 1u) return false;
+            next = idx == 0
+                ? engine.PstrHeadElementCell(cell)
+                : engine.PstrTailCellValue(cell);
             return true;
         }
         if (cell.Tag == Tag.Str)

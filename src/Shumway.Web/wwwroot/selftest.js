@@ -6,6 +6,7 @@
 // Loaded on demand, so a normal page never fetches it.
  
 import * as settings from './settings.js';
+import * as libraries from './libraries.js';
 
 /**
  * Whether a file survives a reload — the whole point of mirroring to OPFS, and
@@ -279,7 +280,7 @@ export async function run(session, emit, out, editor, workspace) {
   // Every example must at least parse and load; one that does not is worse than
   // no example. (Their queries are exercised on the desktop REPL, where a wrong
   // answer is visible; here the point is that the files ship and consult.)
-  for (const name of ['family.pl', 'queens.pl', 'zebra.pl', 'dcg.pl', 'tabling.pl', 'clpfd.pl']) {
+  for (const name of ['family.pl', 'boards.pl', 'zebra.pl', 'dcg.pl', 'tabling.pl', 'clpfd.pl']) {
     const source = await (await fetch('examples/' + name)).text();
     check(`example ${name} is served`, source.length > 0, true);
   }
@@ -295,6 +296,212 @@ export async function run(session, emit, out, editor, workspace) {
   check('example clpfd.pl consults',
         await session.consult(await (await fetch('examples/clpfd.pl')).text()), null);
   check('and its constraints hold', await solutions('X #> 3, X #< 7.'), 'X in 4..6');
+
+  // boards.pl answers by DRAWING, so the drawing is what has to be checked: an
+  // example that solves and prints nothing is half broken.
+  check('example boards.pl consults',
+        await session.consult(await (await fetch('examples/boards.pl')).text()), null);
+  check('and queens answers',
+        await solutions('\\+ \\+ (queens(6, Qs), Qs == [2,4,6,1,3,5]).'), 'true');
+  const beforeBoard = out.textContent.length;
+  await solutions('queens_show(6, _).');
+  const board = out.textContent.slice(beforeBoard);
+  check('and draws the queens board', board.includes('♛') && board.includes('┌───┬'), true);
+  const beforeGrid = out.textContent.length;
+  await solutions('sudoku_show(easy).');
+  check('and solves the sudoku',
+        out.textContent.slice(beforeGrid).includes('│ 5 3 4 │'), true);
+
+  // --- libraries ------------------------------------------------------------
+  // Importing a collection compiles forty libraries nobody asked about, one at
+  // a time. Two claims here: none of that reaches the terminal, and a library
+  // that will not compile SAYS SO in the list, because that is where someone
+  // goes looking for a library to use.
+  {
+    const collection = 'selftest_libs';
+    await libraries.remove(collection);            // a previous run's leftovers
+    check('a collection is created', await libraries.create(collection, ''), null);
+    await libraries.write(collection, 'lib_good.pl',
+                          ':- module(lib_good, [g/1]).\ng(1).\n');
+    await libraries.write(collection, 'lib_broken.pl',
+                          ':- module(lib_broken, [b/1]).\nb(1) :- .\n');
+    await libraries.write(collection, 'lib_noisy.pl',
+                          ':- module(lib_noisy, [n/1]).\n:- no_such_directive(x).\nn(1).\n');
+
+    // All three first, with nothing of our own in between: what is measured
+    // here is what the COMPILES put in the transcript.
+    const before = out.textContent.length;
+    const good = await libraries.compile(collection, 'lib_good');
+    const broke = await libraries.compile(collection, 'lib_broken');
+    const noisy = await libraries.compile(collection, 'lib_noisy');
+    const said = out.textContent.slice(before);
+
+    check('a good library compiles', good, null);
+    check('a broken one reports one line', typeof broke === 'string' && !broke.includes('\n'), true);
+    check('a noisy one still compiles', noisy, null);
+    // THE point of the whole arrangement: compiling libraries the user only
+    // imported must not write into what the user is reading.
+    check('compiling says nothing in the terminal', said, '');
+
+    const listed = Object.fromEntries(
+      (await libraries.entries(collection)).map((e) => [e.name, e]));
+    check('the good one reads as compiled', listed.lib_good?.state, 'compiled');
+    check('and carries no note', listed.lib_good?.note, null);
+    check('the broken one is marked', listed.lib_broken?.state, 'failed');
+    check('with a reason to show', (listed.lib_broken?.note ?? '').length > 0, true);
+    check('the noisy one compiled', listed.lib_noisy?.state, 'compiled');
+    check('but is marked as having warned', (listed.lib_noisy?.note ?? '').includes('warning'), true);
+    check('the detail is kept', (await libraries.diagnostic(collection, 'lib_broken'))
+                                 .startsWith('failed\n'), true);
+
+    // Fixed, and the mark goes: the record describes the LAST compile.
+    await libraries.write(collection, 'lib_broken.pl',
+                          ':- module(lib_broken, [b/1]).\nb(1).\n');
+    check('recompiling clears it', await libraries.compile(collection, 'lib_broken'), null);
+    const again = (await libraries.entries(collection)).find((e) => e.name === 'lib_broken');
+    check('and the list agrees', `${again?.state} ${again?.note}`, 'compiled null');
+
+    await libraries.remove(collection);
+  }
+
+  // --- the file bar ---------------------------------------------------------
+  // It is ONE row however many files there are. A wrapping list of forty chips
+  // pushes the editor off the screen, and the editor is what you came for.
+  {
+    const strip = document.getElementById('files');
+    const kept = [...strip.children];
+    const filler = (i) => Object.assign(document.createElement('button'),
+      { type: 'button', className: 'file', textContent: `filler_${i}.pl` });
+
+    strip.replaceChildren(filler(0));
+    const oneRow = strip.clientHeight;
+    for (let i = 1; i < 40; i++) strip.append(filler(i));
+    check('forty files stay one row', strip.clientHeight, oneRow);
+    check('and the strip scrolls instead', strip.scrollWidth > strip.clientWidth, true);
+
+    // The arrows are the visible affordance for that scrolling, and they show
+    // up only when there IS something past the edge. Resize is what main.js
+    // listens to, so this drives the real wiring rather than a copy of it.
+    const right = document.getElementById('files-right');
+    window.dispatchEvent(new Event('resize'));
+    check('and the arrows appear', right.hidden, false);
+    check('the left one is spent at the start',
+          document.getElementById('files-left').disabled, true);
+
+    strip.replaceChildren(...kept);
+    window.dispatchEvent(new Event('resize'));
+    check('a few files need no arrows', right.hidden, true);
+  }
+
+  // Creating and deleting a file, through the buttons and their dialogs — the
+  // path a person takes, including the confirmation that stands between them
+  // and losing a file.
+  {
+    const closed = (dialog) =>
+      new Promise((resolve) => dialog.addEventListener('close', resolve, { once: true }));
+    const promptDialog = document.getElementById('prompt-dialog');
+    const confirmDialog = document.getElementById('confirm');
+    const press = (root, label) =>
+      [...root.querySelectorAll('button')].find((b) => b.textContent === label)?.click();
+    // The handlers keep working after the dialog closes (they await storage),
+    // so wait for the RESULT rather than for a fixed number of turns.
+    const until = async (holds, ms = 5000) => {
+      const stop = performance.now() + ms;
+      do {
+        if (await holds()) return true;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      } while (performance.now() < stop);
+      return false;
+    };
+    const open = () => document.querySelector('#files .file.current')?.textContent ?? '';
+
+    document.getElementById('new-file').click();
+    document.getElementById('prompt-input').value = 'selftest_doomed.pl';
+    press(promptDialog, 'Create');
+    await closed(promptDialog);
+    check('the new file exists',
+          await until(async () => (await workspace.list()).includes('selftest_doomed.pl')), true);
+    check('and it is the one open',
+          await until(() => open() === 'selftest_doomed.pl'), true);
+
+    document.getElementById('delete-file').click();
+    check('deleting asks first', await until(() => confirmDialog.open), true);
+    press(document.getElementById('confirm-actions'), 'Delete');
+    await closed(confirmDialog);
+    check('and then it is gone',
+          await until(async () => !(await workspace.list()).includes('selftest_doomed.pl')), true);
+    check('leaving another file open',
+          await until(async () => (await workspace.list()).includes(open())), true);
+  }
+
+  // --- keeping the examples current ------------------------------------------
+  // A corrected example has to reach a profile that already has the old one,
+  // and a file someone edited must never be written over. The baseline is what
+  // this profile was last given, so both cases come down to comparing the local
+  // copy against it. The served files cannot be changed from inside the page,
+  // so the OLD version is planted here instead, baseline and all.
+  {
+    const name = 'family.pl';
+    const was = workspace.active();
+    const baseline = async (text) => settings.update(
+      { exampleHashes: { ...(settings.get().exampleHashes ?? {}),
+                         [name]: await workspace.fingerprint(text) } });
+
+    await workspace.setActive('examples');
+    const shipped = await workspace.read(name);
+
+    // Untouched: the local copy IS the baseline, and what ships differs from
+    // it, so the newer one lands.
+    const old = '% an older version of this example\n';
+    await workspace.write(name, old);
+    await baseline(old);
+    await workspace.seedExamples(true);
+    await workspace.setActive('examples');
+    check('an untouched example is brought up to date', await workspace.read(name), shipped);
+
+    // Edited: the local copy differs from the baseline, so it survives
+    // whatever ships, now and later.
+    const mine = '% mine, do not touch\n';
+    await workspace.write(name, mine);
+    await baseline(old);
+    await workspace.seedExamples(true);
+    await workspace.setActive('examples');
+    check('an edited example is left alone', await workspace.read(name), mine);
+
+    // Put the workspace back the way it was found.
+    await workspace.write(name, shipped);
+    await baseline(shipped);
+    await workspace.persist();
+    await workspace.setActive(was);
+  }
+
+  // --- offline ---------------------------------------------------------------
+  // ONE visit has to be enough. The worker caches what passes through it, and
+  // the assets of the load that INSTALLED it never did — so where the server
+  // sends the isolation headers itself and there is no first-visit reload, the
+  // cache held four entries and going offline did not boot. main.js asks for
+  // them again once the worker is in charge; this is that, from the outside.
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    const entries = async () => {
+      let n = 0;
+      for (const name of await caches.keys())
+        n += (await (await caches.open(name)).keys()).length;
+      return n;
+    };
+    const stop = performance.now() + 30000;
+    let filled = 0;
+    do {
+      filled = await entries();
+      if (filled > 20) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    } while (performance.now() < stop);
+    check('one visit fills the offline cache', filled > 20, true);
+    check('including the runtime itself',
+          (await (await caches.open((await caches.keys())[0])).keys())
+            .some((r) => r.url.includes('/_framework/')), true);
+  } else {
+    emit('note: no service worker here, so the offline cache is not checked\n', 'note');
+  }
 
   // --- debug (spike) --------------------------------------------------------
   // The whole loop, without a human: enable → consult debuggable → breakpoint

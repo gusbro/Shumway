@@ -335,8 +335,14 @@ public class BatteryRoundThreeConformance
             + "error(representation_error(max_arity), _), true).");
         Succeeds("atomic_concat(foo, 42, A), A == foo42.");
         Succeeds("atomic_list_concat([a, b], 42, X), X == a42b.");
-        Succeeds("current_prolog_flag(min_integer, Lo), Lo < 0, "
-            + "current_prolog_flag(max_integer, Hi), Hi > 0.");
+        // ISO 7.11.1: min_integer / max_integer carry a value only when
+        // bounded is true. Shumway is unbounded, so the queries FAIL —
+        // without a domain_error (the names are ISO-spec flags), which is
+        // what unguarded portable probes (Logtalk arbitrary's edge cases)
+        // rely on. The battery's own tests guard on bounded == true.
+        Succeeds("current_prolog_flag(bounded, false), "
+            + "\\+ current_prolog_flag(max_integer, _), "
+            + "\\+ current_prolog_flag(min_integer, _).");
     }
 
     [Fact]

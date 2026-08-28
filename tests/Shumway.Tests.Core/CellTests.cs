@@ -25,10 +25,12 @@ public class CellTests
         Assert.Equal(0x5, (byte)Tag.Int);
         Assert.Equal(0x6, (byte)Tag.Float);
         Assert.Equal(0x7, (byte)Tag.BigInt);
-        Assert.Equal(0x9, (byte)Tag.Foreign);
-        Assert.Equal(0xA, (byte)Tag.AttVar);
-        Assert.Equal(0xB, (byte)Tag.Pstr);
-        Assert.Equal(0xC, (byte)Tag.PstrBuffer);
+        Assert.Equal(0x8, (byte)Tag.Foreign);
+        Assert.Equal(0x9, (byte)Tag.AttVar);
+        Assert.Equal(0xA, (byte)Tag.Pstr);
+        Assert.Equal(0xB, (byte)Tag.PstrBuffer);
+        Assert.Equal(0xC, (byte)Tag.RawInt);
+        Assert.Equal(0xD, (byte)Tag.Rational);
     }
 
     // ---------- Hex patterns from docs/design/cell-layout-detail.md ----------

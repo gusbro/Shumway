@@ -26,7 +26,7 @@
       stamps the assemblies and the NuGet package. VersionAgreementTests pins
       the two together.
     -->
-    <Version>1.0.0</Version>
+    <Version>0.9.0</Version>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Copyright>Copyright (c) 2026 Gustavo Brown</Copyright>
     <LangVersion>latest</LangVersion>

@@ -45,7 +45,7 @@ public sealed class VersionAgreementTests
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
             ?.InformationalVersion;
         Assert.NotNull(info);
-        // The SDK may append source-revision metadata (`1.0.0+abc123`).
+        // The SDK may append source-revision metadata (`0.9.0+abc123`).
         string stamped = info!.Split('+')[0];
         Assert.Equal(PrologEngine.VersionString, stamped);
     }

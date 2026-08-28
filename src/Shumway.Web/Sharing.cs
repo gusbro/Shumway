@@ -14,7 +14,7 @@ namespace Shumway.Web;
 ///
 /// <para>A link carries EITHER one file or a whole workspace, because a program
 /// that spans files is not shareable one file at a time. The payload says which,
-/// so the readable label the URL starts with (<c>#queens.pl~…</c>) is decoration
+/// so the readable label the URL starts with (<c>#boards.pl~…</c>) is decoration
 /// for the person reading the link — a hand-edited label cannot mislead the
 /// loader.</para>
 ///

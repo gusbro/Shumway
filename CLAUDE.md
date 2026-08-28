@@ -105,7 +105,12 @@ published; the first tagged release will).
 # Restore dependencies
 dotnet restore
 
-# Build
+# Build. Besides each project's own bin/, this COLLECTS every CLI, the
+# assemblies they share and lib/ into dist/<configuration>/ — put that on
+# PATH and `shumway`, `shumway-compile`, `shumway-link`, `shumway-lib`,
+# `shumway-disasm`, `shumway-dap` are available directly. Prefer it to
+# `dotnet run --project`, which re-evaluates the project every invocation
+# (~5.8 s against ~0.65 s). Collected by build/Shumway.Dist.
 dotnet build
 
 # Run all tests
@@ -130,12 +135,13 @@ dotnet test tests/Shumway.Tests.IsoConformance/
 # Run benchmarks
 dotnet run -c Release --project tests/Shumway.Tests.Benchmarks/
 
-# Publish the toolchain CLIs
-dotnet publish src/Shumway.Compile/ -c Release
-dotnet publish src/Shumway.Link/ -c Release
+# Run the interactive top-level (REPL); any files listed are consulted at
+# startup. From the collected toolchain (see `dotnet build` above) — Release,
+# because a Debug engine is markedly slower.
+dist/Release/shumway [file.pl ...]
 
-# Run the interactive top-level (REPL); any files listed are consulted at startup
-dotnet run --project src/Shumway.Repl/ -- [file.pl ...]
+# The same in place, when you do not want to build the whole solution.
+dotnet run -c Release --project src/Shumway.Repl/ -- [file.pl ...]
 
 # Publish the REPL as a self-contained Native AOT executable
 # (see docs/guide/native-aot.md — Windows needs the Visual C++ build tools)
@@ -314,6 +320,7 @@ When proposing changes:
 | Text-mode CR-LF → `\n` translation | ADR-045 |
 | Module-scoped operator tables | ADR-046 |
 | A packed string is a list | ADR-047 |
+| A Prolog character is a code point | ADR-048 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

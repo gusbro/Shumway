@@ -263,10 +263,10 @@ internal static class Prelude
         % that would hide the called goals' assert/retract).
         forall(Cond, Action) :- \+ ( call(Cond), \+ call(Action) ).
 
-        %! if(:Condition, :Then, :Else) | Control | SICStus soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
+        %! if(:Condition, :Then, :Else) | Control | Soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
         if(C, T, E) :- ( C *-> T ; E ).
 
-        %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails — unlike (Condition -> Then), which fails.
+        %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails, unlike (Condition -> Then), which fails.
         ifthen(P, Q) :- ( P -> Q ; true ).
 
         %! ifthenelse(:Condition, :Then, :Else) | Control | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails.
@@ -361,22 +361,32 @@ internal static class Prelude
         % still resolves in the meta-caller's module; the quantified variables
         % are collected from INSIDE the tag as well.
         bagof(Template, Goal, Bag) :-
+            '$bagof_drive'(bagof, Template, Goal, Bag).
+        setof(Template, Goal, Set) :-
+            '$bagof_drive'(setof, Template, Goal, Set).
+        % Shared driver. With free variables it records Witness-Template
+        % pairs and enumerates witness groups through '$bagof_next' — the
+        % same LAZY enumerator the compiled bagof/setof rewrite uses, so
+        % both paths group identically (variant witnesses, standard order)
+        % and a caller that cuts after one group pays for one group.
+        '$bagof_drive'(Kind, Template, Goal, Bag) :-
             '$check_partial_list'(Bag),
             '$bagof_parts'(Goal, Inner, QVars),
             term_variables(Inner, GoalVars),
             term_variables(t(Template, QVars), BoundVars),
             '$bagof_witness'(GoalVars, BoundVars, Witness),
             (   Witness == [] ->
-                findall(Template, Inner, Bag),
-                Bag \= []
-            ;   findall(Witness-Template, Inner, Pairs),
-                Pairs \= [],
-                '$bagof_groups'(Pairs, Witness, Bag)
+                findall(Template, Inner, Bag0),
+                Bag0 \= [],
+                (   Kind == setof -> sort(Bag0, Bag) ; Bag = Bag0 )
+            ;   (   '$findall_push',
+                    call(Inner),
+                    '$bagof_record'(Witness-Template),
+                    fail
+                ;   true
+                ),
+                '$bagof_next'(Kind, Witness-Bag)
             ).
-        setof(Template, Goal, Set) :-
-            '$check_partial_list'(Set),
-            bagof(Template, Goal, Bag),
-            sort(Bag, Set).
         '$bagof_parts'('$mqual'(M, G), '$mqual'(M, S), Q) :- !, '$bagof_strip'(G, S, Q).
         '$bagof_parts'(G, S, Q) :- '$bagof_strip'(G, S, Q).
         '$bagof_strip'(V, S, Q) :- nonvar(V), V = Vs ^ G, !, Q = [Vs|Q1], '$bagof_strip'(G, S, Q1).
@@ -387,20 +397,6 @@ internal static class Prelude
             ;   W = [V|W1], '$bagof_witness'(Vs, Bound, W1)
             ).
         '$var_memberchk'(V, [X|Xs]) :- ( V == X -> true ; '$var_memberchk'(V, Xs) ).
-        % One group per distinct witness, in first-occurrence order; RE-SATISFIABLE
-        % (bagof enumerates groups on backtracking). Variant witnesses share a
-        % group and unify, binding the caller's free variables.
-        '$bagof_groups'([W0-T0|Rest], Witness, Bag) :-
-            '$bagof_take'(Rest, W0, Ts, Others),
-            (   Witness = W0, Bag = [T0|Ts]
-            ;   '$bagof_groups'(Others, Witness, Bag)
-            ).
-        '$bagof_take'([], _, [], []).
-        '$bagof_take'([W-T|Ps], W0, Ts, Others) :-
-            (   subsumes_term(W, W0), subsumes_term(W0, W) ->
-                W = W0, Ts = [T|Ts1], '$bagof_take'(Ps, W0, Ts1, Others)
-            ;   Others = [W-T|O1], '$bagof_take'(Ps, W0, Ts, O1)
-            ).
 
         %! catch(:Goal, ?Catcher, :Recovery) | Control | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead.
         % Runs in the LIVE engine using the catch-frame machinery
@@ -570,7 +566,7 @@ internal static class Prelude
         sub_atom(Atom, Before, Length, After, Sub) :-
             '$sub_atom_enum'(Atom, Before, Length, After, Sub).
 
-        %! sub_string(+String, ?Before, ?Length, ?After, ?SubString) | Atoms & strings | Backtracks over every substring decomposition of String; the parts are strings (SWI).
+        %! sub_string(+String, ?Before, ?Length, ?After, ?SubString) | Atoms & strings | Backtracks over every substring decomposition of String; the parts are strings.
         % The string counterpart of sub_atom/5: enumerate over the text (a string
         % arg is converted to an atom first) and hand each substring back as a
         % string.
@@ -906,8 +902,13 @@ internal static class Prelude
         % queue is a FIFO buffer backed by dynamic facts — assertz appends,
         % retract removes the oldest match. thread_get_message/2 FAILS on an empty
         % queue (there is no other thread to wait for) rather than blocking.
+        %
+        % NO `%!` DOC LINES HERE, DELIBERATELY. These exist so a program written
+        % for SWI keeps working; they are not part of the surface this engine
+        % offers, and a "Threads" section in the predicate reference would
+        % advertise concurrency it does not have. A program that wants a queue
+        % within one thread is better served by the database directly.
         :- public with_mutex/2.
-        %! with_mutex(+Mutex, :Goal) | Threads | Runs Goal (once). Single-threaded: the mutex is a no-op.
         with_mutex(_Mutex, Goal) :- once(Goal).
         :- public mutex_create/1.
         mutex_create(_).
@@ -923,7 +924,6 @@ internal static class Prelude
         :- dynamic('$mq_msg'/2).
         :- dynamic('$mq_ctr'/1).
         :- public message_queue_create/1.
-        %! message_queue_create(?Queue) | Threads | Creates (or names) a FIFO message queue. Single-threaded buffer.
         message_queue_create(Q) :- ( var(Q) -> '$mq_fresh_id'(Q) ; true ).
         :- public message_queue_create/2.
         message_queue_create(Q, _Options) :- message_queue_create(Q).
@@ -932,12 +932,10 @@ internal static class Prelude
             assertz('$mq_ctr'(N)),
             number_codes(N, Cs), atom_codes(A, Cs), atom_concat('$mq_q_', A, Q).
         :- public thread_send_message/2.
-        %! thread_send_message(+Queue, +Message) | Threads | Appends Message to the queue (FIFO).
         thread_send_message(Q, M) :- assertz('$mq_msg'(Q, M)).
         :- public thread_send_message/3.
         thread_send_message(Q, M, _Opts) :- assertz('$mq_msg'(Q, M)).
         :- public thread_get_message/2.
-        %! thread_get_message(+Queue, ?Message) | Threads | Removes the oldest matching message; FAILS if none (single-threaded, no blocking).
         thread_get_message(Q, M) :- retract('$mq_msg'(Q, M)).
         :- public thread_peek_message/2.
         thread_peek_message(Q, M) :- '$mq_msg'(Q, M), !.
@@ -988,7 +986,7 @@ internal static class Prelude
         permutation([], []).
         permutation(L, [X|P]) :- select(X, L, R), permutation(R, P).
 
-        %! memberchk(?Elem, +List) | Lists | Like member/2 but succeeds at most once — no backtracking over further matches.
+        %! memberchk(?Elem, +List) | Lists | Like member/2 but succeeds at most once, with no backtracking over further matches.
         memberchk(X, [Y|T]) :- ( X = Y -> true ; memberchk(X, T) ).
 
         %! nonmember(?Elem, +List) | Lists | True when Elem does not unify with any element of List.
@@ -1073,13 +1071,13 @@ internal static class Prelude
         pairs_keys_values([K-V|Ps], [K|Ks], [V|Vs]) :-
             pairs_keys_values(Ps, Ks, Vs).
 
-        %! map_list_to_pairs(:Key, +List, -KeyedPairs) | Lists | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key (SWI library(pairs) form).
+        %! map_list_to_pairs(:Key, +List, -KeyedPairs) | Lists | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key.
         map_list_to_pairs(_, [], []).
         map_list_to_pairs(F, [X|Xs], [K-X|Ps]) :-
             call(F, X, K),
             map_list_to_pairs(F, Xs, Ps).
 
-        %! can_be(+Type, @Term) | Type checking | Scryer library(si) form: like must_be/2 but an unbound Term (or one whose subterms are yet unbound enough) is still admissible — only a term already incompatible with Type raises.
+        %! can_be(+Type, @Term) | Type checking | Like must_be/2, but an unbound Term (or one whose subterms are yet unbound enough) is still admissible: only a term already incompatible with Type raises.
         can_be(Type, Term) :-
             ( var(Term) -> must_be_type_ok(Type)
             ; must_be(Type, Term)
@@ -1245,33 +1243,49 @@ internal static class Prelude
             min_list(Bs, B),
             sub_atom(Atom, B, _, A, Sep).
 
-        %! char_type(+Char, ?Type) | Atoms & strings | Tests or computes a character's type — alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on (ASCII range).
+        %! char_type(+Char, ?Type) | Atoms & strings | Tests or computes a character's type: alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on. Classification is full Unicode (the '$ctype' tables); digit(W) keeps its decimal ASCII weights.
         char_type(Char, Type) :- char_code(Char, Code), '$char_type'(Type, Code).
 
-        '$char_type'(alpha, Code) :- '$ascii_alpha'(Code).
-        '$char_type'(alnum, Code) :- ( '$ascii_alpha'(Code) -> true ; '$ascii_digit'(Code) ).
+        '$char_type'(alpha, Code) :-
+            ( '$ascii_alpha'(Code) -> true
+            ; Code > 127, '$ctype'(Code, Cat, _, _), '$cat_letter'(Cat) ).
+        '$char_type'(alnum, Code) :-
+            ( '$ascii_alpha'(Code) -> true ; '$ascii_digit'(Code) -> true
+            ; Code > 127, '$ctype'(Code, Cat, _, _),
+              ( '$cat_letter'(Cat) -> true ; Cat == 'Nd' ) ).
         '$char_type'(digit(W), Code) :- '$ascii_digit'(Code), W is Code - 48.
         '$char_type'(decimal_digit, Code) :- '$ascii_digit'(Code).
-        '$char_type'(space, Code) :- '$ascii_space'(Code).
+        '$char_type'(space, Code) :-
+            ( '$ascii_space'(Code) -> true ; Code =:= 0x85 -> true
+            ; Code > 127, '$ctype'(Code, Cat, _, _), '$cat_space'(Cat) ).
         '$char_type'(white, Code) :- ( Code =:= 32 -> true ; Code =:= 9 ).
         '$char_type'(end_of_line, Code) :- ( Code =:= 10 -> true ; Code =:= 13 ).
         '$char_type'(punct, Code) :-
-            Code >= 33, Code =< 126,
-            \+ '$ascii_alpha'(Code), \+ '$ascii_digit'(Code).
+            ( Code =< 126 ->
+                Code >= 33,
+                \+ '$ascii_alpha'(Code), \+ '$ascii_digit'(Code)
+            ; '$ctype'(Code, Cat, _, _), '$cat_punct'(Cat) ).
         '$char_type'(csym, Code) :-
-            ( '$ascii_alpha'(Code) -> true ; '$ascii_digit'(Code) -> true ; Code =:= 95 ).
+            ( Code =:= 95 -> true ; '$char_type'(alnum, Code) ).
         '$char_type'(csymf, Code) :-
-            ( '$ascii_alpha'(Code) -> true ; Code =:= 95 ).
+            ( Code =:= 95 -> true ; '$char_type'(alpha, Code) ).
         '$char_type'(upper(L), Code) :-
-            Code >= 65, Code =< 90, LC is Code + 32, char_code(L, LC).
+            '$ctype'(Code, 'Lu', _, LC), char_code(L, LC).
         '$char_type'(lower(U), Code) :-
-            Code >= 97, Code =< 122, UC is Code - 32, char_code(U, UC).
+            '$ctype'(Code, 'Ll', UC, _), char_code(U, UC).
         '$char_type'(to_lower(L), Code) :-
-            ( Code >= 65, Code =< 90 -> LC is Code + 32 ; LC = Code ),
-            char_code(L, LC).
+            '$ctype'(Code, _, _, LC), char_code(L, LC).
         '$char_type'(to_upper(U), Code) :-
-            ( Code >= 97, Code =< 122 -> UC is Code - 32 ; UC = Code ),
-            char_code(U, UC).
+            '$ctype'(Code, _, UC, _), char_code(U, UC).
+
+        '$cat_letter'('Lu'). '$cat_letter'('Ll'). '$cat_letter'('Lt').
+        '$cat_letter'('Lm'). '$cat_letter'('Lo').
+        '$cat_space'('Zs'). '$cat_space'('Zl'). '$cat_space'('Zp').
+        % iswpunct: the punctuation AND symbol categories.
+        '$cat_punct'('Pc'). '$cat_punct'('Pd'). '$cat_punct'('Ps').
+        '$cat_punct'('Pe'). '$cat_punct'('Pi'). '$cat_punct'('Pf').
+        '$cat_punct'('Po'). '$cat_punct'('Sm'). '$cat_punct'('Sc').
+        '$cat_punct'('Sk'). '$cat_punct'('So').
 
         '$ascii_alpha'(C) :- C >= 65, C =< 90, !.
         '$ascii_alpha'(C) :- C >= 97, C =< 122.
@@ -1281,16 +1295,16 @@ internal static class Prelude
 
         % ===== control, database & inspection =====
 
-        %! false | Control | Always fails — ISO synonym of fail/0.
+        %! false | Control | Always fails; the ISO synonym of fail/0.
         false :- fail.
 
-        %! once(:Goal) | Control | Succeeds at most once — commits to the first solution of Goal.
+        %! once(:Goal) | Control | Succeeds at most once, committing to the first solution of Goal.
         once(Goal) :- call(Goal), !.
 
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
         ignore(Goal) :- ( call(Goal) -> true ; true ).
 
-        %! time_out(:Goal, +MilliSeconds, -Result) | Control | Runs Goal under a time limit (SICStus-compatible). Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted.
+        %! time_out(:Goal, +MilliSeconds, -Result) | Control | Runs Goal under a time limit. Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted.
         time_out(Goal, MilliSeconds, Result) :-
             Seconds is MilliSeconds / 1000,
             '$catch_begin'(Ball, '$time_out_recover'(Ball, Result)),
@@ -1338,7 +1352,7 @@ internal static class Prelude
             call(Goal),
             '$attv_new_since'(S, Vars).
 
-        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report (SWI-style): inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers.
+        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report: inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers.
         time(Goal) :-
             '$time_start'(Mark),
             (   call(Goal) *->
@@ -1351,7 +1365,7 @@ internal static class Prelude
         chdir(Path) :- var(Path), !, working_directory(Path, Path).
         chdir(Path) :- working_directory(_, Path).
 
-        %! append(+ListOfLists, -List) | Lists | Concatenates a list of lists (SWI library form).
+        %! append(+ListOfLists, -List) | Lists | Concatenates a list of lists.
         append([], []).
         append([L|Ls], As) :- append(L, Ws, As), append(Ls, Ws).
 
@@ -1414,10 +1428,10 @@ internal static class Prelude
             N1 =< 1,
             '$tsing_count'(Xs, V, N1, N).
 
-        %! copy_term_nat(?Term, -Copy) | Term inspection & construction | copy_term/2 ignoring attributes (SWI/Trealla).
+        %! copy_term_nat(?Term, -Copy) | Term inspection & construction | copy_term/2 ignoring attributes.
         copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).
 
-        %! bb_put(+Key, +Value) | Global variables | Blackboard store (SICStus/Trealla): non-backtrackable global assignment.
+        %! bb_put(+Key, +Value) | Global variables | Blackboard store: non-backtrackable global assignment.
         % Attributed variables survive the blackboard (the SICStus/Trealla
         % contract): a value carrying attvars is stored RESIDUALIZED — the
         % attribute-free copy plus its copy_term/3 projection goals — and
@@ -1459,7 +1473,7 @@ internal static class Prelude
         %! bb_b_put(+Key, +Value) | Global variables | Backtrackable blackboard assignment: the previous value is restored on backtracking.
         bb_b_put(Key, Value) :- '$bb_wrap'(Value, W), b_setval(Key, W).
 
-        %! consult_text(+Text) | Database | Consults Text (an atom or a chars/codes list) as Prolog source — the in-language form of the embedding API's ConsultString. A module loaded this way keeps its exports scoped (no auto-import into user).
+        %! consult_text(+Text) | Database | Consults Text (an atom or a chars/codes list) as Prolog source, the way consult/1 loads a file. A module loaded this way keeps its exports scoped (no auto-import into user).
         :- public consult_text/1.
         consult_text(Text) :-
             (   var(Text) -> throw(error(instantiation_error, consult_text/1))
@@ -1479,10 +1493,10 @@ internal static class Prelude
             with_output_to(atom(Atom), write_term(Term, Options)),
             atom_chars(Atom, Chars).
 
-        %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module (module-local first, then imports, then the global namespace / builtins). ADR-038 — an export-qualified module's own version of a builtin-named predicate (Scryer iso_ext's copy_term/3) must win for M:Goal.
+        %! :(+Module, :Goal) | Control | Runtime module-qualified call: resolves Goal relative to Module, looking at Module's own predicates first, then what it imports, then the global namespace and the builtins. A module that defines its own version of a builtin-named predicate is the one M:Goal reaches.
         ':'(Module, Goal) :- call(Module:Goal).
 
-        %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []) — succeeds when the DCG Body derives List.
+        %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []): succeeds when the DCG Body derives List.
         phrase(Body, List) :- phrase(Body, List, []).
         %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime.
         % SS7.6.2 for DCG bodies: a number anywhere in the control
@@ -1515,7 +1529,7 @@ internal static class Prelude
         '$phrase'(call(G), S0, S) :- !, call(G, S0, S).
         '$phrase'(G, S0, S) :- call(G, S0, S).
 
-        %! phrase_from_stream(:Body, +Stream) | Grammar | Runs the DCG Body over Stream's text, read lazily in windows.
+        %! phrase_from_stream(:Body, +Stream) | Grammar | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream.
         phrase_from_stream(Body, Stream) :-
             phrase_from_stream(Body, Stream, chars).
 
@@ -1566,11 +1580,11 @@ internal static class Prelude
         %! display(+Stream, +Term) | Input / output | Edinburgh display/2: writes Term to Stream ignoring operator definitions, unquoted.
         display(S, X) :- write_term(S, X, [ignore_ops(true)]).
 
-        %! recorda(+Key, +Term) | Database | SWI 2-arg form of recorda/3 (reference discarded).
+        %! recorda(+Key, +Term) | Database | 2-arg form of recorda/3 (reference discarded).
         recorda(K, V) :- recorda(K, V, _).
-        %! recordz(+Key, +Term) | Database | SWI 2-arg form of recordz/3 (reference discarded).
+        %! recordz(+Key, +Term) | Database | 2-arg form of recordz/3 (reference discarded).
         recordz(K, V) :- recordz(K, V, _).
-        %! recorded(+Key, ?Term) | Database | SWI 2-arg form of recorded/3 (reference discarded); backtracks over matches.
+        %! recorded(+Key, ?Term) | Database | 2-arg form of recorded/3 (reference discarded); backtracks over matches.
         recorded(K, V) :- recorded(K, V, _).
 
         %! apply(:Goal, +ExtraArgs) | Control | Calls Goal with the list of extra arguments appended.
@@ -1616,7 +1630,7 @@ internal static class Prelude
                ( retract((Head :- _)), fail ; true )
             ; true ).
 
-        %! listing | Database | Lists the clauses of every user-defined predicate — consulted or asserted, never builtins or library predicates.
+        %! listing | Database | Lists the clauses of every user-defined predicate, consulted or asserted, never builtins or library predicates.
         listing :-
             '$listable_predicates'(All),
             '$listing_all'(All).
@@ -1905,7 +1919,7 @@ internal static class Prelude
             retractall('$wfs_active'),
             member(Goal, U).
 
-        %! well_founded(+Goal, -Status) | Database | The well-founded truth value of a tabled Goal — true, false or undefined.
+        %! well_founded(+Goal, -Status) | Database | The well-founded truth value of a tabled Goal: true, false or undefined.
         well_founded(Goal, Status) :-
             assertz('$wfs_active'),
             '$wfs_solve'(Goal, U, O),
@@ -2000,6 +2014,8 @@ internal static class Prelude
         % (put) or checks-absent (get). (Scryer's put_atts/2 / get_atts/2 are the
         % module-implicit forms library(atts) generates per :- attribute; the
         % 3-arg forms are what its goal_expansion lowers a call to.)
+        %! put_atts(+Var, +Module, +Attr) | Attributed variables | SICStus/Scryer style, with the module written out: attaches Attr to Var under Module. Attributes are keyed by functor and arity, so one module can hold several at once and putting dom(5) replaces an earlier dom(_). +Attr and a bare Attr both set; -Attr removes. Available without loading anything; library(atts) adds the module-implicit put_atts/2 it generates from a :- attribute declaration.
+        %! get_atts(+Var, +Module, ?Attr) | Attributed variables | SICStus/Scryer style, with the module written out: reads back what put_atts/3 attached, unifying Attr with the attribute Var carries under Module whose functor and arity match, so get_atts(V, m, dom(D)) reads the dom/1 one. Fails when there is no such attribute; -Attr succeeds when there is none.
         put_atts(V, M, +Attr) :- !, '$put_to_attr_list'(V, M, Attr).
         put_atts(V, M, -Attr) :- !, '$del_from_attr_list'(V, M, Attr).
         put_atts(V, M, Attr)  :- '$put_to_attr_list'(V, M, Attr).

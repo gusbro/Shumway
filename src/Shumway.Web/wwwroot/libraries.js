@@ -24,7 +24,7 @@ export const read = (name, file) => engine.LibraryRead(name, file);
 export const write = (name, file, content) => engine.LibraryWrite(name, file, content);
 
 /** Which dialects a library can be tagged with. Plain means none. */
-export const DIALECTS = ['', 'scryer', 'swi'];
+export const DIALECTS = ['', 'scryer', 'swi', 'trealla'];
 
 // --- importing a folder ---------------------------------------------------
 
@@ -101,6 +101,12 @@ export const SUGGESTED = [
     dialect: 'swi',
     name: 'swi',
   },
+  {
+    label: 'Trealla Prolog — library (about 40 files)',
+    url: 'https://github.com/trealla-prolog/trealla/tree/main/library',
+    dialect: 'trealla',
+    name: 'trealla',
+  },
 ];
 
 /** Reads `https://github.com/owner/repo/tree/ref/path` — what you get by
@@ -169,13 +175,23 @@ async function collect(dir, prefix, into) {
 
 export const compile = (name, library) => engine.LibraryCompile(name, library);
 
-/** What a collection provides: `[{name, compiled}]`, one per importable
- *  library. Scryer's lib/ is one folder and forty-six of these. */
+/** Everything the last compile of one library had to say. */
+export const diagnostic = (name, library) => engine.LibraryDiagnostic(name, library);
+
+/**
+ * What a collection provides: `[{name, state, note}]`, one per importable
+ * library. Scryer's lib/ is one folder and forty-six of these.
+ *
+ * `state` is 'compiled', 'source' or 'failed', and `note` is the headline of
+ * the last compile's diagnostic when there was one — a library that failed, or
+ * one that compiled while every one of its directives raised, which comes to
+ * the same thing for whoever tries to call it.
+ */
 export async function entries(name) {
   const text = await engine.LibraryEntries(name);
   return lines(text).map((line) => {
-    const [entry, state] = line.split('\t');
-    return { name: entry, compiled: state === 'compiled' };
+    const [entry, state, note] = line.split('\t');
+    return { name: entry, state, note: note ?? null, compiled: state === 'compiled' };
   });
 }
 
@@ -224,7 +240,20 @@ export async function persist() {
       await writeInto(libDir, '.dialect', tag);
       // Every compiled bundle, so a reload does not mean compiling again.
       // Base64 because it is the only shape bytes cross the boundary in.
+      // The diagnostics travel too: a library that could not be compiled has
+      // to still read as unusable tomorrow, and the batch that found that out
+      // runs once, at import.
+      const diagDir = await libDir.getDirectoryHandle('diag', { create: true });
       for (const entry of await entries(name)) {
+        if (entry.note) {
+          const said = await diagnostic(name, entry.name);
+          if (said.length > 0) await writeInto(libDir, `diag/${entry.name}`, said);
+        } else {
+          // A library that has been recompiled clean must stop reading as
+          // broken, which means the stored record has to GO — writing only
+          // when there is something to write would leave yesterday's.
+          try { await diagDir.removeEntry(entry.name); } catch { /* none stored */ }
+        }
         if (!entry.compiled) continue;
         const bundle = await engine.LibraryBundle(name, entry.name);
         if (bundle.length > 0) await writeInto(libDir, `built/${entry.name}`, bundle);
@@ -262,7 +291,13 @@ export async function restoreAll() {
       }
 
       for (const file of collected) {
-        if (file.path === '.dialect' || file.path.startsWith('built/')) continue;
+        if (!file.path.startsWith('diag/')) continue;
+        await engine.LibraryPutDiagnostic(name, file.path.slice(5), file.text);
+      }
+
+      for (const file of collected) {
+        if (file.path === '.dialect'
+            || file.path.startsWith('built/') || file.path.startsWith('diag/')) continue;
         // Stored under src/; the library's own file names are relative to it.
         const relative = file.path.startsWith('src/') ? file.path.slice(4) : file.path;
         await write(name, relative, file.text);

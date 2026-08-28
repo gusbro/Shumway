@@ -29,6 +29,13 @@ stamps in emitted artifacts, and the first user-visible conventions frozen —
 stream terms, `ensure_loaded/1`, `time_out/3`, `http_download/2`, and
 `open/4`'s `encoding(...)` option landed alongside.
 
+> **Later:** the number was pulled back to `0.9.0` before anything was
+> released. The work in this phase stands; the claim the number made did
+> not. Engine defects were still turning up at a rate that reads as pre-1.0,
+> and 0.9 keeps the freedom to move a format that 1.0 gives away. Nothing
+> had been published under 1.0.0, so no version anyone holds changes
+> meaning.
+
 **WebShumway gained debug mode**: the full debugger core — conditional
 breakpoints, port stepping, the real call stack with residual constraints,
 Set Next Statement — behind an embedded web frontend with dockable panes,

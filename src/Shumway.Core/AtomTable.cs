@@ -274,6 +274,7 @@ public static class AtomTable
         ArgumentNullException.ThrowIfNull(reachable);
         lock (_lock)
         {
+            SweepCount++;
             // compact foreign-hold weak refs and collect ids still alive in C#.
             var foreignAlive = new HashSet<int>();
             for (int i = _foreignWeakRefs.Count - 1; i >= 0; i--)
@@ -308,6 +309,7 @@ public static class AtomTable
                 _transientById.Remove(kv.Key);
                 _byName.TryRemove(kv.Value.Name, out _);
             }
+            SweptAtoms += toDrop.Count;
 
             // walk TransientWeak. Promote back to Transient if an engine resurrected
             // it; drop entirely if the .NET GC has collected the atom; otherwise leave alone.
@@ -347,8 +349,16 @@ public static class AtomTable
 
     // ---------- Diagnostics / test helpers ----------
 
-    internal static int PermanentCount { get { lock (_lock) return _permanentById.Count; } }
-    internal static int TransientCount { get { lock (_lock) return _transientById.Count; } }
+    /// <summary>Sweeps run and transient atoms dropped by them, process-wide
+    /// like the table itself — statistics/0 reports both.</summary>
+    public static int SweepCount { get; private set; }
+    public static long SweptAtoms { get; private set; }
+
+    /// <summary>Occupancy of the two liveness tiers — statistics/0's atom
+    /// line reads them (public: the counters are process-wide diagnostics,
+    /// like the sweep counters above).</summary>
+    public static int PermanentCount { get { lock (_lock) return _permanentById.Count; } }
+    public static int TransientCount { get { lock (_lock) return _transientById.Count; } }
     internal static int TransientWeakCount { get { lock (_lock) return _transientWeak.Count; } }
     internal static int ForeignHoldCount { get { lock (_lock) return _foreignWeakRefs.Count; } }
 

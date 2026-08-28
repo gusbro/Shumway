@@ -31,6 +31,11 @@ public sealed class StreamRegistry
     private readonly Dictionary<string, StreamHandle> _byAlias = new();
     private int _nextId;
 
+    /// <summary>Default encoding (engine name) for text streams opened with
+    /// no encoding option and no BOM — the `encoding` Prolog flag's
+    /// stream-side mirror.</summary>
+    public string DefaultEncodingName { get; set; } = "utf8";
+
     public StreamHandle CurrentInput { get; private set; }
     public StreamHandle CurrentOutput { get; private set; }
 

@@ -367,6 +367,12 @@ public sealed partial class Activation
         int ptr = _unifyPointer;
         if (_writeMode)
         {
+            // A bare ATTVAR goes in as a REF to its home, the mirror of
+            // UnifyVariableX reading one out. Copying the cell would make a
+            // SECOND variable claiming the same attributes, and the attribute
+            // table keys on a cell's own address: the copy's lookup finds
+            // nothing, which surfaced as KeyNotFoundException out of GetAttr.
+            if (value.Tag == Tag.AttVar) value = Cell.Ref(value.AsHeapIndex);
             if (_reservedWrite)
             {
                 // ADR-020: the cell is pre-reserved — write in place, then
@@ -854,20 +860,21 @@ public sealed partial class Activation
 
     private int UnconsPstrToPair(Cell pstr)
     {
+        int cp = PstrHeadCodePoint(pstr, out int span);
         int pair = AllocateHeap(2);
-        _heap[pair] = PstrHeadCell(pstr.AsPstrKind, GetPstrCodeUnit(pstr, 0));
-        if (pstr.AsPstrLength == 1)
+        _heap[pair] = PstrHeadCell(pstr.AsPstrKind, cp);
+        if (pstr.AsPstrLength == span)
         {
             _heap[pair + 1] = Cell.Ref(ComputePstrTailIndex(pstr));
         }
         else
         {
-            int absoluteStart = pstr.AsPstrOffset + 1;
+            int absoluteStart = pstr.AsPstrOffset + span;
             _heap[pair + 1] = Cell.Pstr(
-                pstr.AsPstrLength - 1,
+                pstr.AsPstrLength - span,
                 pstr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
                 absoluteStart % Cell.PstrCodeUnitsPerBuffer,
-                pstr.AsPstrKind);
+                pstr.AsPstrKind, pstr.AsPstrIsAstral);
         }
         return pair;
     }

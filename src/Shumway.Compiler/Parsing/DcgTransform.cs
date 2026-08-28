@@ -265,16 +265,16 @@ public static class DcgTransform
         }
 
         // Double-quoted string terminal (standard DCG, not
-        // dialect-gated). Under double_quotes = codes / chars the parser
-        // already expanded "ab" into a cons list at parse time, so the
-        // terminal-list case above covers those modes. Under the default
-        // `string` mode the literal survives as a StringTerm; a DCG
-        // terminal must still mean "consume these characters", so expand
-        // to the equivalent code-list terminal (Shumway's PSTR is a
-        // compact character-code list, so codes are the representation a
-        // string already unifies with): "ab" emits
-        // sIn = [0'a, 0'b | sOut]; the empty string "" consumes nothing
-        // (S0 = S), mirroring the [] empty terminal.
+        // dialect-gated). Since ADR-047 the literal survives as a
+        // StringTerm under EVERY double_quotes mode, carrying its own
+        // presentation kind — the elements it consumes must match it
+        // (chars under `chars`, codes under `codes`/`string`), exactly
+        // like the leading-terminal hoist above. Hardcoding codes here
+        // was a pre-ADR-047 leftover: under the chars default a
+        // NON-LEADING terminal ("]" after a nonterminal — Trealla's
+        // json grammar) silently failed against chars input. The empty
+        // string "" consumes nothing (S0 = S), mirroring the [] empty
+        // terminal.
         if (body is StringTerm str)
         {
             if (str.Content.Length == 0)
@@ -282,7 +282,8 @@ public static class DcgTransform
             var sOut = FreshState(ref counter);
             Term acc = sOut;
             for (int i = str.Content.Length - 1; i >= 0; i--)
-                acc = new CompoundTerm(".", new Term[] { new IntTerm(str.Content[i]), acc });
+                acc = new CompoundTerm(".",
+                    new Term[] { TextElement(str.Content[i], str.Kind), acc });
             Term goal = new CompoundTerm("=", new[] { (Term)sIn, acc }) { Position = body.Position };
             return (goal, sOut);
         }

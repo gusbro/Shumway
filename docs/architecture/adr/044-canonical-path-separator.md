@@ -2,10 +2,10 @@
 
 ## Status
 
-Accepted (2026-08-14; ships with 1.0.0).
+Accepted (2026-08-14; ships with 0.9.0).
 
-Landing before 1.0.0 reaches `main`, so no released
-version changes behavior: the version bump and this convention ship together.
+Landing before any release, so no published version changes behavior: the
+first release and this convention arrive together.
 
 ## Context
 
@@ -106,8 +106,9 @@ directory returns `C:/temp/`. Before this ADR the two disagreed
 - Third-party Prolog (SWI's and Scryer's libraries, Logtalk's `library(os)`)
   gets the path shape it was written against.
 - Programs that pinned the Windows form of Shumway's output change. Since
-  1.0.0 has not been released, no published behavior is broken; after 1.0.0
-  a change of this kind would need the release-compatibility treatment.
+  nothing has been released, no published behavior is broken; after the
+  first release a change of this kind would need the release-compatibility
+  treatment.
 - Passing a canonical path to an external tool that insists on backslashes
   (a `.bat`, a native DLL) needs `prolog_to_os_filename/2` — the reason it
   exists.

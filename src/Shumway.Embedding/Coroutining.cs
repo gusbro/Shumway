@@ -68,7 +68,7 @@ internal static class Coroutining
             ; throw(error(domain_error(when_condition, Condition), when/2))
             ),
             ( '$when_holds'(Condition) -> call(Goal)
-            ; '$when_attach'(Condition, trigger(Condition, Goal, _Fired))
+            ; '$when_attach'(Condition, trigger(Condition, Goal, _Fired, _Alive))
             ).
 
         '$when_valid'(nonvar(_)).
@@ -96,15 +96,24 @@ internal static class Coroutining
             '$when_watch'(Vs, Trigger).
 
         % A watched variable was bound. Re-check:
-        %   already fired   -> nothing;
+        %   already fired, or a retired incarnation -> nothing;
         %   now holds       -> claim the flag and run Goal once;
-        %   still undecided -> re-attach to the variables that remain (a
-        %                      partial binding can expose new ones, e.g. under
-        %                      ground/1), reusing Fired so the run stays unique.
-        '$when_fire'(trigger(Condition, Goal, Fired)) :-
+        %   still undecided -> retire THIS incarnation and re-attach to the
+        %                      variables that remain (a partial binding can
+        %                      expose new ones, e.g. under ground/1), reusing
+        %                      Fired so the run stays unique.
+        %
+        % TWO flags, as dif/2 has: Fired is shared by every incarnation and
+        % keeps Goal to one run; Alive belongs to one incarnation and retires
+        % it. Without Alive each re-suspension left the previous records live,
+        % and the top level showed one residual per record -- three copies of
+        % the same constraint for a condition that had been re-suspended twice.
+        '$when_fire'(trigger(Condition, Goal, Fired, Alive)) :-
             ( Fired == fired -> true
+            ; Alive == dead -> true
             ; '$when_holds'(Condition) -> Fired = fired, call(Goal)
-            ; '$when_attach'(Condition, trigger(Condition, Goal, Fired))
+            ; Alive = dead,
+              '$when_attach'(Condition, trigger(Condition, Goal, Fired, _))
             ).
 
         %! dif(?X, ?Y) | Coroutining | Constrains X and Y to be different: fails when they become identical, succeeds once they cannot unify.
@@ -153,21 +162,44 @@ internal static class Coroutining
         verify_attributes(coroutining, frozen(G), Value, Goals) :-
             ( var(Value) ->
                 ( get_attr(Value, coroutining, frozen(G2)) ->
-                    Goals = [put_attr(Value, coroutining, frozen((G2, G))),
-                             '$co_alias_check'((G2, G))]
+                    '$co_merge'(G2, G, Merged),
+                    Goals = [put_attr(Value, coroutining, frozen(Merged)),
+                             '$co_alias_check'(Merged)]
                 ; Goals = [put_attr(Value, coroutining, frozen(G)),
                            '$co_alias_check'(G)]
                 )
             ; Goals = [G]
             ).
 
-        % Fails iff some live dif/2 suspension's arguments became identical.
-        % Anything still non-identical stays covered by the migrated
-        % suspension; non-dif frozen goals are untouched by aliasing.
+        % A constraint watching BOTH variables sits in each one's goal list, so
+        % concatenating them leaves the survivor carrying it twice and the top
+        % level showing it twice. Append only what is not already there; the
+        % two records are literally the same term, so == decides it.
+        '$co_merge'(Old, (A, B), Merged) :-
+            !,
+            '$co_merge'(Old, A, Mid),
+            '$co_merge'(Mid, B, Merged).
+        '$co_merge'(Old, G, Merged) :-
+            ( '$co_has'(Old, G) -> Merged = Old ; Merged = (Old, G) ).
+
+        '$co_has'((A, B), G) :- !, ( '$co_has'(A, G) -> true ; '$co_has'(B, G) ).
+        '$co_has'(G0, G) :- G0 == G.
+
+        % Runs after the aliasing is committed, which is the only place a
+        % constraint over TWO variables can see that they became one.
+        %
+        % dif/2: fails iff some live suspension's arguments became identical.
+        % when/2: an aliasing can DECIDE ?=(X, Y), since the two are now the
+        % same term, and nothing else would ever look -- a binding to a VALUE
+        % is what releases a frozen goal, and this was not one. So
+        % `when(?=(P,Q), G), P = Q` left G suspended for good.
+        % Anything still undecided stays covered by the migrated suspension.
         '$co_alias_check'((A, B)) :-
             !, '$co_alias_check'(A), '$co_alias_check'(B).
         '$co_alias_check'('$dif_wake'(dif_c(X, Y, Alive))) :-
             !, ( Alive == dead -> true ; X \== Y ).
+        '$co_alias_check'('$when_fire'(Trigger)) :-
+            !, '$when_fire'(Trigger).
         '$co_alias_check'(_).
 
         % ===== projection: residual constraints for the top level =====
@@ -194,9 +226,9 @@ internal static class Coroutining
               -> Goals = [dif(X, Y)|Tail]
             ; Goals = Tail
             ).
-        co_project('$when_fire'(trigger(Cond, Goal, Fired)), V, Goals, Tail) :-
+        co_project('$when_fire'(trigger(Cond, Goal, Fired, Alive)), V, Goals, Tail) :-
             !,
-            ( Fired \== fired, '$co_owner'(Cond, V)
+            ( Fired \== fired, Alive \== dead, '$co_owner'(Cond, V)
               -> Goals = [when(Cond, Goal)|Tail]
             ; Goals = Tail
             ).

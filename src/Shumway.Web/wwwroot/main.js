@@ -473,7 +473,8 @@ async function buildCollection(name) {
 
   const queue = (await libraries.entries(name)).filter((e) => !e.compiled);
   const total = queue.length;
-  let built = 0, failed = 0, stoppedEarly = false;
+  let built = 0, stoppedEarly = false;
+  const failed = [];
   let wanted = await librariesInUse();
   let knownAt = consultEpoch;
   const started = performance.now();
@@ -506,8 +507,12 @@ async function buildCollection(name) {
       showBuildStatus(
         `compiling ${name}: ${entry.name} (${total - queue.length}/${total})`,
         () => { run.cancel = true; showBuildStatus('finishing the current library…'); });
+      // The error is NOT emitted: what a library from another system says
+      // while it compiles is not the output of whatever the user is doing.
+      // It is filed against the library and the summary names it, so the
+      // reason is a click away in the library list.
       const err = await libraries.compile(name, entry.name);
-      if (err) failed++; else built++;
+      if (err) failed.push(entry.name); else built++;
       // Stored as each one lands: a reload keeps what is already built.
       await libraries.persist();
       if (librariesDialog.open) await refreshLibraries();
@@ -520,12 +525,24 @@ async function buildCollection(name) {
 
   const seconds = ((performance.now() - started) / 1000).toFixed(0);
   emit(`% ${name}: ${built} librar${built === 1 ? 'y' : 'ies'} compiled in ${seconds}s`
-     + (failed > 0 ? `, ${failed} could not be` : '')
      + (run.cancel ? ' (stopped)' : '')
      + (stoppedEarly
           ? '. That is what your programs import; “compile the rest” for the others,'
             + ' which still load from source.\n'
           : '. The rest still load from source.\n'), 'note');
+
+  // Named, because "11 could not be" leaves you having to find out which. The
+  // list marks them and holds the reason.
+  if (failed.length > 0) {
+    emit(`% ${name}: ${nameList(failed)} would not compile`
+       + ' — Libraries marks them, with the reason\n', 'note');
+  }
+}
+
+/** A few names, then a count: forty of them is not a sentence. */
+function nameList(names, shown = 6) {
+  if (names.length <= shown) return names.join(', ');
+  return `${names.slice(0, shown).join(', ')} and ${names.length - shown} more`;
 }
 
 async function refreshLibraries() {
@@ -590,7 +607,32 @@ async function refreshLibraries() {
       });
 
       const state = document.createElement('span');
-      state.textContent = entry.compiled ? 'compiled' : 'source only';
+      state.textContent = entry.state === 'failed' ? 'will not compile'
+        : entry.note ? 'compiled, with warnings'
+        : entry.compiled ? 'compiled'
+        : 'source only';
+      if (entry.note) {
+        state.className = entry.state === 'failed' ? 'library-broken' : 'library-note';
+        state.title = entry.note;
+      }
+
+      // What went wrong, on request. Out of the LIST rather than out of the
+      // terminal: a collection compiles forty libraries nobody asked about one
+      // at a time, and the answer to "why does this one not work" is wanted
+      // when you go looking for the library, not while you are typing.
+      let why = null;
+      if (entry.note) {
+        why = document.createElement('button');
+        why.type = 'button';
+        why.className = 'heading-action';
+        why.textContent = 'details';
+        why.addEventListener('click', async () => {
+          const said = await libraries.diagnostic(name, entry.name);
+          librariesDialog.close('');          // modal: its backdrop hides output
+          emit(`% ${entry.name}:\n${said.split('\n').slice(1).join('\n')}\n`,
+               entry.state === 'failed' ? 'error' : 'note');
+        });
+      }
 
       // Editing a source does nothing until the library is built again: what
       // library(X) resolves to is the bundle beside the sources.
@@ -608,6 +650,7 @@ async function refreshLibraries() {
       });
 
       row.append(open, state, build);
+      if (why) row.append(why);
       parts.push(row);
     }
   }
@@ -777,7 +820,30 @@ document.getElementById('guide').addEventListener('click', () => guideDialog.sho
 // itself a file in it, so it persists like any other.
 
 const filesEl = document.getElementById('files');
+const filesLeft = document.getElementById('files-left');
+const filesRight = document.getElementById('files-right');
 const workspaceEl = document.getElementById('workspace');
+
+// The strip is one row and scrolls sideways. The arrows show up only when
+// something is actually off the edge, so the common case — a handful of files
+// that fit — looks like a plain row of chips and nothing has been added to it.
+function updateFileNav() {
+  const hidden = filesEl.scrollWidth <= filesEl.clientWidth + 1;
+  filesLeft.hidden = hidden;
+  filesRight.hidden = hidden;
+  if (hidden) return;
+  filesLeft.disabled = filesEl.scrollLeft <= 0;
+  filesRight.disabled =
+    filesEl.scrollLeft + filesEl.clientWidth >= filesEl.scrollWidth - 1;
+}
+
+const scrollFiles = (direction) =>
+  filesEl.scrollBy({ left: direction * Math.max(120, filesEl.clientWidth * 0.8) });
+
+filesLeft.addEventListener('click', () => scrollFiles(-1));
+filesRight.addEventListener('click', () => scrollFiles(1));
+filesEl.addEventListener('scroll', updateFileNav);
+window.addEventListener('resize', updateFileNav);
 let currentFile = 'scratch.pl';
 // The library the open file belongs to, or null for the workspace's own. One
 // editor, two places a file can live — and saving has to reach the right one.
@@ -877,6 +943,10 @@ async function refreshFiles() {
     chips.unshift(chip);
   }
   filesEl.replaceChildren(...chips);
+  // The open file has to be the one you can see, whatever the strip was
+  // scrolled to before: `nearest` so it moves the strip and not the page.
+  filesEl.querySelector('.current')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  updateFileNav();
 }
 
 /** Opens a workspace. Its files are a different program, so the engine starts
@@ -1008,6 +1078,35 @@ document.getElementById('new-file').addEventListener('click', async () => {
   await editor.setText('');
   await workspace.persist();
   await refreshFiles();
+});
+
+document.getElementById('delete-file').addEventListener('click', async () => {
+  // A library file is not the workspace's to delete: it belongs to the
+  // collection, and removing one there is what Libraries… is for.
+  if (currentLib !== null) {
+    emit(`% ${currentFile} belongs to library ${currentLib} — remove it from Libraries…\n`,
+         'note');
+    return;
+  }
+  const doomed = currentFile;
+  const ok = await ask(
+    `Delete “${doomed}”?`,
+    'Its text is deleted from this browser. Whatever you already consulted '
+    + 'stays in the engine until you consult again.',
+    'Delete');
+  if (!ok) return;
+
+  // Deliberately NOT saving the buffer first: that would write the file back
+  // out on the way to deleting it.
+  await workspace.remove(doomed);
+  const left = await workspace.list();
+  const next = left[0] ?? 'scratch.pl';
+  if (left.length === 0) await workspace.write(next, '');
+  editingWorkspaceFile(next);
+  await editor.setText((await workspace.read(next)) ?? '');
+  await workspace.persist();
+  await refreshFiles();
+  emit(`% deleted ${doomed}\n`, 'note');
 });
 
 // --- sharing -------------------------------------------------------------
@@ -1328,6 +1427,9 @@ if (restoredLibs > 0) emit(`% ${restoredLibs} library(ies) restored\n`, 'note');
 // old once-ever flag respected deletion forever — which also meant an updated
 // example could never reach an existing profile.)
 if (!(await workspace.names()).includes('examples')) await workspace.seedExamples();
+// An example added since this profile was created still arrives: seeding only
+// the files it lacks leaves anything edited here untouched.
+else await workspace.seedExamples(true);
 const known = await workspace.names();
 await workspace.setActive(known.includes(config.workspace) ? config.workspace : 'scratch');
 await refreshWorkspaces();
@@ -1361,9 +1463,44 @@ if (!settings.persistent())
 // is the case where the server sends the headers itself and the worker is only
 // wanted for offline.)
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {
-    emit('% offline support unavailable in this browser\n', 'note');
-  });
+  navigator.serviceWorker.register('sw.js')
+    .then(warmOfflineCache)
+    .catch(() => { emit('% offline support unavailable in this browser\n', 'note'); });
+}
+
+/**
+ * Puts this page's own assets in the offline cache.
+ *
+ * The worker caches what passes THROUGH it, and where the server sends the
+ * isolation headers itself there is no first-visit reload — so everything the
+ * page loaded was fetched before the worker was controlling anything, and the
+ * cache ended up holding the four shell files and nothing else. Going offline
+ * after that first visit did not boot: measured, 4 entries against 56.
+ *
+ * Asking for them a second time, once the worker IS in charge, is what files
+ * them. It costs requests rather than bytes — the browser's HTTP cache answers
+ * them, and on a later visit the worker answers from its own cache without
+ * touching the network at all.
+ */
+async function warmOfflineCache() {
+  try {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await new Promise((resolve) => navigator.serviceWorker
+        .addEventListener('controllerchange', resolve, { once: true }));
+    }
+    const queue = [...new Set(performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .filter((url) => url.startsWith(location.origin)))];
+    // A few at a time, behind whatever the user is already doing.
+    const worker = async () => {
+      while (queue.length > 0) {
+        try { await fetch(queue.shift(), { cache: 'force-cache' }); }
+        catch { /* no network: there is nothing to warm and nothing to report */ }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+  } catch { /* no worker, or it never took control: the session is unaffected */ }
 }
 
 queryInput.focus();

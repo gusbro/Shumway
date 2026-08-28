@@ -70,7 +70,8 @@ public static class IncludeExpander
             try
             {
                 sub = new ClauseReader(
-                    new Lexer.Lexer(Shumway.Core.TextFile.ReadAllText(full),
+                    new Lexer.Lexer(
+                        Shumway.Core.TextFile.ReadAllText(full, flags.DefaultTextEncoding),
                         flags.CharConversionEnabled ? flags.CharConversion : null),
                     operators, flags).ReadAll().ToList();
             }

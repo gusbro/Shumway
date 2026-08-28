@@ -1521,6 +1521,18 @@ public sealed partial class PrologEngine
                 if (valueName == "true") _flags.PreferRationals = true;
                 else if (valueName == "false") _flags.PreferRationals = false;
                 break;
+            case "lenient_escapes":
+                if (valueName == "true") _flags.LenientEscapes = true;
+                else if (valueName == "false") _flags.LenientEscapes = false;
+                break;
+            case "encoding":
+                if (Shumway.Core.TextEncodings.DirectiveNameToEngineName(valueName)
+                    is string encNorm)
+                {
+                    _flags.DefaultTextEncoding = encNorm;
+                    Streams.DefaultEncodingName = encNorm;
+                }
+                break;
             case "arity_compat":
                 // consult-time directive form. The ClauseReader's
                 // pre-pass already flipped the live lexer for THIS file; this

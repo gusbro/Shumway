@@ -1,3 +1,4 @@
+using Shumway.Core;
 using Shumway.Compiler.Ast;
 
 namespace Shumway.Embedding;
@@ -33,8 +34,8 @@ public static class TermStandardOrder
         {
             0 => string.CompareOrdinal(((VarTerm)a).Name, ((VarTerm)b).Name),
             1 => CompareNumbers(a, b),
-            2 => string.CompareOrdinal(((AtomTerm)a).Name, ((AtomTerm)b).Name),
-            3 => string.CompareOrdinal(((StringTerm)a).Content, ((StringTerm)b).Content),
+            2 => Utf16Text.CompareCodePointOrder(((AtomTerm)a).Name, ((AtomTerm)b).Name),
+            3 => Utf16Text.CompareCodePointOrder(((StringTerm)a).Content, ((StringTerm)b).Content),
             4 => CompareCompounds((CompoundTerm)a, (CompoundTerm)b),
             _ => 0,
         };
@@ -68,7 +69,7 @@ public static class TermStandardOrder
     {
         int cmp = a.Args.Length.CompareTo(b.Args.Length);
         if (cmp != 0) return cmp;
-        cmp = string.CompareOrdinal(a.Functor, b.Functor);
+        cmp = Utf16Text.CompareCodePointOrder(a.Functor, b.Functor);
         if (cmp != 0) return cmp;
         for (int i = 0; i < a.Args.Length; i++)
         {
