@@ -101,13 +101,16 @@ jobs:
           name: parallel-logs-net48-x86
           path: TestResults/parallel/*.log
       - name: Smoke build (32-bit)
-        # Debug, deliberately and temporarily: in Release this smoke reports
-        # `promoted predicates: 0` on the runner and nowhere else -- every
-        # answer correct, no IL ever emitted. Chased on its own branch; the
-        # exe now prints why promotion declined, so that run says something.
-        run: dotnet build tests/Shumway.Smoke.Net48 -p:SmokeBitness=x86 -p:ShumwayNetFx=true -t:Rebuild -v q
+        run: dotnet build tests/Shumway.Smoke.Net48 -c Release -p:SmokeBitness=x86 -p:ShumwayNetFx=true -t:Rebuild -v q
+      # Known intermittent, roughly 1 in 100: this reported `promoted
+      # predicates: 0` once on a runner -- every answer correct, no IL ever
+      # emitted, a silent fall back to Tier-0. Not a Release defect: 60 runs on
+      # a runner and 60 on a real 32-bit box, all Release, promoted 9 every
+      # time. The exe now prints tracked/unpromotable counts and per-predicate
+      # reasons when it promotes nothing, so the next occurrence arrives with
+      # its own diagnosis instead of another round of guessing.
       - name: Smoke run (32-bit process, Tier-0 + Tier-1)
-        run: .\tests\Shumway.Smoke.Net48\bin\Debug\net48\shumway-smoke-net48.exe
+        run: .\tests\Shumway.Smoke.Net48\bin\Release\net48\shumway-smoke-net48.exe
 
   net48-x64:
     runs-on: windows-latest
