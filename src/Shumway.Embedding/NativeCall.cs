@@ -143,7 +143,34 @@ internal static class NativeCall
     // Emits `object? Invoke(IntPtr fn, object[] args)` doing a cdecl calli with the
     // native signature. Args are boxed; each is unboxed to its CLR param type, the
     // function pointer pushed, calli, the result boxed (null for void).
+    //
+    // One invoker per (return, params) SHAPE, process-wide and rooted for the
+    // process lifetime. An invoker is a pure function of its CLR signature, so
+    // sharing is semantics-free and the set is small (one per distinct `:- c`
+    // prototype shape). It is also load-bearing: on .NET Framework x86, LCG
+    // reclaims a dead DynamicMethod's code on the finalizer thread, and that
+    // reclamation racing the first-call JIT of a NEW invoker on the same code
+    // heap corrupted the fresh code (~10% of test processes: callee received
+    // arg0 intact and stack garbage for the rest — AV or a silently wrong
+    // answer). Rooted invokers are never reclaimed, so the race has no window.
+    private static readonly Dictionary<string, Func<IntPtr, object?[], object?>> InvokersByShape = new();
+    private static readonly object InvokersLock = new();
+
     private static Func<IntPtr, object?[], object?> BuildInvoker(Type retType, Type[] paramTypes)
+    {
+        var key = new System.Text.StringBuilder(retType.FullName).Append('(');
+        foreach (var p in paramTypes) key.Append(p.FullName).Append(',');
+        string shape = key.Append(')').ToString();
+        lock (InvokersLock)
+        {
+            if (InvokersByShape.TryGetValue(shape, out var hit)) return hit;
+            var built = BuildInvokerCore(retType, paramTypes);
+            InvokersByShape[shape] = built;
+            return built;
+        }
+    }
+
+    private static Func<IntPtr, object?[], object?> BuildInvokerCore(Type retType, Type[] paramTypes)
     {
         var dm = new DynamicMethod(
             "shumway_native_calli", typeof(object),
