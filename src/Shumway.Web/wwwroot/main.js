@@ -1350,9 +1350,18 @@ if (!crossOriginIsolated && !window.shumwayIsolationFailed) {
   throw new Error('reloading to isolate the page');
 }
 if (window.shumwayIsolationFailed) {
-  emit('% this page could not be isolated, so the engine shares the page\'s'
-     + ' thread: a long query will freeze the tab until it answers or you'
-     + ' reload\n', 'error');
+  // Booting anyway is not an option: the published runtime is the THREADED
+  // one, and it asserts on SharedArrayBuffer before answering anything. The
+  // old fallback message promised a shared-thread engine that no longer
+  // exists in this build — what actually happened was that assert.
+  emit('% the engine needs cross-origin isolation (SharedArrayBuffer) and this'
+     + ' page could not get it — the service worker did not take control of'
+     + ' this load.\n', 'error');
+  emit('% reloading (F5) almost always fixes it. If it persists: serve the'
+     + ' site with COOP/COEP headers (docs/guide/webshumway.md), and note'
+     + ' file:// and some private windows cannot isolate at all.\n', 'note');
+  setPending(false);
+  throw new Error('the engine requires cross-origin isolation');
 }
 
 // --- debug (spike) -------------------------------------------------------
