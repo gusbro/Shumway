@@ -17,6 +17,7 @@ namespace Shumway.Tests.Embedding;
 /// lower to the SAME <c>;</c> / <c>\+</c> collect loop — yet they ARE goals the user wrote and
 /// must stop / show as themselves. MetaTransform tags their collect-loop helper with the
 /// meta-predicate's kind so the two are told apart.</para></summary>
+[Collection("debugger")]
 public class Adr035ControlTransparencyTests
 {
     private readonly ITestOutputHelper _log;

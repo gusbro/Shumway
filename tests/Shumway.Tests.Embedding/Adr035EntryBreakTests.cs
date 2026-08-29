@@ -20,6 +20,7 @@ namespace Shumway.Tests.Embedding;
 /// entry-break wired to a plain callback and pin the part that is ours to get right: that the
 /// arm fires exactly once, at the first goal, and never fires unarmed.</para>
 /// </summary>
+[Collection("debugger")]
 public sealed class Adr035EntryBreakTests
 {
     private static PrologEngine DebugEngine(string program)

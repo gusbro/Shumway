@@ -20,6 +20,7 @@ namespace Shumway.Tests.Embedding;
 /// it clobbers (the per-query debug tables, the channel snapshot, the service's own
 /// step state) and puts it back, stop or no stop.</para>
 /// </summary>
+[Collection("debugger")]
 public class Adr035EvaluateTests
 {
     private readonly ITestOutputHelper _log;

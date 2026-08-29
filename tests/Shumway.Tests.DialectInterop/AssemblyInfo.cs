@@ -1,9 +1,11 @@
-// Same discipline as the other test projects: the global FunctorTable /
-// AtomTable that this project's tests touch through PrologEngine are
-// process-wide and can't safely be exercised in parallel.
-//
-// This project was missing it, and the shape of the bug is why the gap went
-// unnoticed for so long: with no engine directory configured every test was a
-// no-op, so there was nothing to collide. Configure all three dialects and the
-// Trealla validation fails beside the others and passes on its own.
-[assembly: Xunit.CollectionBehavior(DisableTestParallelization = true)]
+// Collections run in parallel, like the other engine suites. This assembly
+// once carried the serial attribute as a stopgap for a real symptom — the
+// Trealla validation failed beside the other validations and passed alone —
+// that was blamed on the process-global AtomTable/FunctorTable. The actual
+// cause was the tests themselves: each validation swapped the process-global
+// Console.Error to capture consult warnings AND derived its load verdict from
+// the capture, so concurrent validations contaminated each other's verdicts
+// (and could restore each other's writer on the way out). The captures now go
+// through the engine's own per-engine Warnings writer, which removes the
+// shared stream entirely.
+[assembly: Xunit.CollectionBehavior(MaxParallelThreads = 3)]

@@ -13,6 +13,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>Repro of the user's --dap-wait corruption: breakpoints armed BEFORE the
 /// consult (the launch flow), consult after, then run — expect a working program.</summary>
+[Collection("debugger")]
 public class Adr036LaunchRaceTests
 {
     private readonly ITestOutputHelper _log;

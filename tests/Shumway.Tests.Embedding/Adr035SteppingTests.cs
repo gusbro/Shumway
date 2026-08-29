@@ -18,6 +18,7 @@ namespace Shumway.Tests.Embedding;
 /// the next port that satisfies the step's condition", and the conditions are stated
 /// in the machine's logical call depth.</para>
 /// </summary>
+[Collection("debugger")]
 public class Adr035SteppingTests
 {
     private readonly ITestOutputHelper _log;

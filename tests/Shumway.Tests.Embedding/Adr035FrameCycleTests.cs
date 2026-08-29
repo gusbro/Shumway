@@ -12,6 +12,7 @@ namespace Shumway.Tests.Embedding;
 /// always a recursion; the middle is elided on CYCLE boundaries so whole cycles survive at the
 /// innermost end (where the machine is) and the outermost end (where the recursion began,
 /// with the non-recursive origin frames), instead of a blind head/tail cut.</summary>
+[Collection("debugger")]
 public class Adr035FrameCycleTests
 {
     private readonly ITestOutputHelper _log;

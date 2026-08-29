@@ -16,6 +16,7 @@ namespace Shumway.Tests.Embedding;
 /// program bound nothing and was FORGOTTEN — and the program then ran to completion through
 /// every breakpoint in it, with no error anywhere to say so.</para>
 /// </summary>
+[Collection("debugger")]
 public class Adr035PendingBreakpointTests
 {
     private static string WriteTemp(string text)

@@ -85,18 +85,20 @@ public sealed class TreallaEndToEndValidation
         foreach (var (lib, query) in Cases)
         {
             string load, smoke;
+            // Per-engine Warnings capture — not a Console.Error swap; see the
+            // note in ScryerEndToEndValidation. This class was the visible
+            // victim: it fails beside the other validations and passes alone,
+            // because a neighbour's "failed:" warning landing in this capture
+            // (or this one's landing elsewhere) flips the load verdict.
             var errCapture = new StringWriter();
-            var prevErr = Console.Error;
-            Console.SetError(errCapture);
             PrologEngine? e = null;
             try
             {
-                e = new PrologEngine();
+                e = new PrologEngine { Warnings = errCapture };
                 e.AddLibraryDirectory(dir, "trealla");
                 e.ConsultString($":- use_module(library({lib})).");
             }
             catch (Exception ex) { errCapture.Write("\nEXC:" + ex.Message); }
-            finally { Console.SetError(prevErr); }
 
             string warn = errCapture.ToString();
             bool topLevelOk = e is not null && !warn.Contains("EXC:");

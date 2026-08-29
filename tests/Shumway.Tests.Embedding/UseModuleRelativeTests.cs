@@ -9,6 +9,8 @@ namespace Shumway.Tests.Embedding;
 /// one — which is how a page whose workspace IS the current directory expects
 /// `:- use_module('other.pl')` to work.
 /// </summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class UseModuleRelativeTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "shumway_um_" + Guid.NewGuid().ToString("N"));
@@ -102,6 +104,8 @@ public sealed class LoadWarningTests
 /// is the one that must be running. Both rules are right; the file's own
 /// timestamp decides which applies.</para>
 /// </summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class UseModuleReloadTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "shumway_rl_" + Guid.NewGuid().ToString("N"));

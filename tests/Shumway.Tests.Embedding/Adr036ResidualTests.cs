@@ -14,6 +14,7 @@ namespace Shumway.Tests.Embedding;
 /// variables over DAP. A frame with attributed variables serves a second scope next to
 /// Locals; one without does not.
 /// </summary>
+[Collection("debugger")]
 public class Adr036ResidualTests
 {
     private readonly ITestOutputHelper _log;

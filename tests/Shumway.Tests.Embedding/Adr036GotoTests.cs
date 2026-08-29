@@ -12,6 +12,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>ADR-036 V4 — Jump to Cursor over DAP: gotoTargets answers from the engine's
 /// published SetNextLines; goto runs the ADR-035 Set Next Statement (forward skip,
 /// backward trail rewind, cross-frame via the Call Stack selection).</summary>
+[Collection("debugger")]
 public class Adr036GotoTests
 {
     private readonly ITestOutputHelper _log;

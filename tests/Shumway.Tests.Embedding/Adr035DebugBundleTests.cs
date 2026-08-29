@@ -14,6 +14,7 @@ namespace Shumway.Tests.Embedding;
 /// Debug build mode, and <see cref="CompiledModuleCodec"/> round-trips it (re-interning stop
 /// sites into the loading process's <see cref="DebugSiteTable"/>).
 /// </summary>
+[Collection("debugger")]
 public class Adr035DebugBundleTests
 {
     private const string Source =

@@ -15,6 +15,7 @@ namespace Shumway.Tests.Embedding;
 /// synthetic program reproduces the shape self-contained: a debug-compiled
 /// predicate driven in a loop, the breakpoint removed INSIDE its first stop,
 /// and the loop then re-entering the (formerly) patched code many times.</summary>
+[Collection("debugger")]
 public class Adr035DisableBpMidRunTests
 {
     private readonly ITestOutputHelper _log;

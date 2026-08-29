@@ -25,6 +25,7 @@ namespace Shumway.Tests.Embedding;
 /// the engine says so when a stack is history rather than current; and it never renders one
 /// unless somebody stopped.</para>
 /// </summary>
+[Collection("debugger")]
 public partial class Adr035PauseTests
 {
     private readonly ITestOutputHelper _log;

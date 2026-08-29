@@ -20,6 +20,7 @@ namespace Shumway.Tests.Embedding;
 /// permanent and never trims — which is the reason debug and release are not the same
 /// code, stated in one sentence.</para>
 /// </summary>
+[Collection("debugger")]
 public class Adr035VariablesTests
 {
     private readonly ITestOutputHelper _log;

@@ -12,6 +12,8 @@ namespace Shumway.Tests.Embedding;
 /// order, before any initialization/1 goal). A goal that fails or raises
 /// warns and loading continues; it does not abort the consult.
 /// </summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class DirectiveGoalTests
 {
     private static string CaptureStderr(Action a)

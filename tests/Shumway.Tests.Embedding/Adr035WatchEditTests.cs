@@ -13,6 +13,7 @@ namespace Shumway.Tests.Embedding;
 /// variable's value is REPLACED (the old binding trailed away, so backtracking restores
 /// it), and assigning <c>_</c> UN-instantiates. The Immediate window deliberately keeps
 /// pure unification — this surface is the edit gesture only.</summary>
+[Collection("debugger")]
 public class Adr035WatchEditTests
 {
     private readonly ITestOutputHelper _log;

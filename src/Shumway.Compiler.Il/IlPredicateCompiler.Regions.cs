@@ -29,6 +29,16 @@ public sealed partial class IlPredicateCompiler
     public static bool RegionCompile { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_REGION") != "0";
 
+    /// <summary>The persisted build's per-thread override of <see cref="RegionCompile"/>.
+    /// ThreadStatic like <see cref="RegionMemberScopeFids"/> and for the same reason:
+    /// a bundle build must not change what a concurrently-promoting engine compiles —
+    /// the process default above stays untouched and other threads keep reading it.
+    /// Null = no override (the runtime promotion path).</summary>
+    [System.ThreadStatic]
+    public static bool? RegionCompileOverride;
+
+    internal static bool EffectiveRegionCompile => RegionCompileOverride ?? RegionCompile;
+
     /// <summary>ADR-031 — delayed choice point for the neck-cut guard clause.
     /// A non-last chain clause of the shape <c>Head :- InlineGuard, !, Body.</c>
     /// (guard = non-binding, non-allocating inline ops — currently the
@@ -48,8 +58,13 @@ public sealed partial class IlPredicateCompiler
     /// ROOTS — excluded from absorption into any OTHER region. Promoting a shared member
     /// to its own root trades N duplicated copies of its sub-region for one copy + N
     /// cross-region trampolines, cutting the all-as-roots inter-root duplication. Set by
-    /// the bundle build (save/restore) before a pruned-IL build; null = none.</summary>
-    public static ISet<int>? RegionForcedRootFids { get; set; }
+    /// the bundle build (save/restore) before a pruned-IL build; null = none.
+    /// ThreadStatic on purpose (it carries the BUNDLE module's fids): a concurrent
+    /// promotion on another thread reading these would plan regions with an unrelated
+    /// module's roots. The root selector's probe loop mutates this between probes,
+    /// which is why it is an ambient rather than a parameter — same thread, so safe.</summary>
+    [System.ThreadStatic]
+    public static ISet<int>? RegionForcedRootFids;
 
     /// <summary>When non-null, region
     /// membership is restricted to these functor ids (the bundle entry's own

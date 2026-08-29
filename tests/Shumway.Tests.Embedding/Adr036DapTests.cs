@@ -19,6 +19,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>ADR-036 V1 — the in-process DAP server, driven exactly as VS Code drives it:
 /// a real TCP client speaking framed DAP JSON against the real server, cross-platform,
 /// no IDE in the loop. The debuggee programs mirror the ADR-035 test corpus.</summary>
+[Collection("debugger")]
 public class Adr036DapTests
 {
     private readonly ITestOutputHelper _log;

@@ -21,6 +21,7 @@ namespace Shumway.Tests.Embedding;
 /// address are right, the debugger works; if they are only right when read as a C#
 /// array, it does not.</para>
 /// </summary>
+[Collection("debugger")]
 public class Adr035ChannelTests
 {
     private readonly ITestOutputHelper _log;

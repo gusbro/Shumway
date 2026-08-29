@@ -15,6 +15,7 @@ namespace Shumway.Tests.Embedding;
 /// is that switch, and a bundle that still carries its module source is shown FROM that
 /// source.
 /// </summary>
+[Collection("debugger")]
 public class Adr035EmbeddingTests
 {
     //   1: :- public run/1.

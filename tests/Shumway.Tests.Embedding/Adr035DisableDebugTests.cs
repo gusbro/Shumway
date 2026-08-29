@@ -20,6 +20,7 @@ namespace Shumway.Tests.Embedding;
 /// predicate it calls is debugged normally, because the two compile independently
 /// and the machine's environment chain runs through both.</para>
 /// </summary>
+[Collection("debugger")]
 public class Adr035DisableDebugTests
 {
     private readonly ITestOutputHelper _log;

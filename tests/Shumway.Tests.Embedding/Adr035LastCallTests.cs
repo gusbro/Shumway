@@ -15,6 +15,7 @@ namespace Shumway.Tests.Embedding;
 /// <c>call</c> that keeps the caller's frame alive (LCO off — what a debugger
 /// needs, since that frame is the goal's stack entry and holds its variables).
 /// </summary>
+[Collection("debugger")]
 public class Adr035LastCallTests
 {
     private readonly ITestOutputHelper _log;

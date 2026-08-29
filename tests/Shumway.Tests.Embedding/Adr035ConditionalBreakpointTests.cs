@@ -14,6 +14,7 @@ namespace Shumway.Tests.Embedding;
 /// debugger hears of the hit: success stops, failure runs on, and a condition that cannot
 /// run (syntax error, exception, timeout) stops WITH the error — a broken condition that
 /// silently swallowed its breakpoint would be undiagnosable.</summary>
+[Collection("debugger")]
 public class Adr035ConditionalBreakpointTests
 {
     private readonly ITestOutputHelper _log;

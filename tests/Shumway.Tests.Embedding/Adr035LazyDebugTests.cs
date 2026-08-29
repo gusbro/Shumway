@@ -17,6 +17,7 @@ namespace Shumway.Tests.Embedding;
 /// <para>The stop-behavior tests drive a test-notify session (the real transport's
 /// detach-awareness would disarm on the first hit in a debugger-less test process); the
 /// EnableDebugging wiring is asserted separately on the engine flags.</para></summary>
+[Collection("debugger")]
 public class Adr035LazyDebugTests
 {
     private readonly ITestOutputHelper _log;

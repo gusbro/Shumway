@@ -90,18 +90,20 @@ public sealed class ScryerEndToEndValidation
         {
             if (lib.Contains("-check")) continue;   // placeholder rows
             string load, smoke;
+            // Per-engine Warnings capture. This used to swap the process-global
+            // Console.Error, and the verdict below reads the capture — so two
+            // validations running concurrently contaminated each other's
+            // verdicts (and could restore each other's writer). The engine's
+            // own Warnings writer receives the same messages, per engine.
             var errCapture = new StringWriter();
-            var prevErr = Console.Error;
-            Console.SetError(errCapture);
             PrologEngine? e = null;
             try
             {
-                e = new PrologEngine();
+                e = new PrologEngine { Warnings = errCapture };
                 e.AddLibraryDirectory(dir, "scryer");
                 e.ConsultString($":- use_module(library({lib})).");
             }
             catch (Exception ex) { errCapture.Write("\nEXC:" + ex.Message); }
-            finally { Console.SetError(prevErr); }
 
             string warn = errCapture.ToString();
             bool topLevelOk = e is not null && !warn.Contains("EXC:");

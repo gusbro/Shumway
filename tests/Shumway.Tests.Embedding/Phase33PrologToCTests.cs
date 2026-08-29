@@ -13,6 +13,8 @@ namespace Shumway.Tests.Embedding;
 /// mode, Edinburgh see/tell resume semantics, user_error, read/1 with live
 /// operators and lexical clause-end detection.
 /// </summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public class Phase33PrologToCTests : IDisposable
 {
     private readonly string _dir;

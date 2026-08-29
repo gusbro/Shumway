@@ -18,6 +18,7 @@ namespace Shumway.Tests.Embedding;
 /// stop's frames carry per-variable residual rows, and an Immediate-window goal sees the
 /// frame variables WITH their constraints.</para>
 /// </summary>
+[Collection("debugger")]
 public class Adr035ResidualTests
 {
     private readonly ITestOutputHelper _log;
