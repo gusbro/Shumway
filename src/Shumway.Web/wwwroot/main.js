@@ -57,8 +57,14 @@ const emitDiagnostic = (text) => emit(text, 'error');
 
 // A page that dies silently looks like a page that is still loading. Anything
 // that escapes lands in the transcript, where it can be read and reported.
-const emitFailure = (what, detail) =>
+// EXCEPT the deliberate boot abort while isolation is pending: that path has
+// already said what is happening, and "% script error" on top of it read as a
+// breakage to report (it was reported).
+const ISOLATION_ABORT = 'boot aborted: the page is not cross-origin isolated';
+const emitFailure = (what, detail) => {
+  if (detail && detail.message === ISOLATION_ABORT) return;
   emit(`% ${what}: ${detail && detail.stack ? detail.stack : detail}\n`, 'error');
+};
 addEventListener('error', (e) => emitFailure('script error', e.error ?? e.message));
 addEventListener('unhandledrejection', (e) => emitFailure('unhandled rejection', e.reason));
 
@@ -1343,25 +1349,41 @@ layout.init();
 
 out.textContent = '';
 
-// isolate.js (a plain script, ahead of this module) has already decided what to
-// do about cross-origin isolation. If it is reloading the page to get it, there
-// is nothing worth starting here.
-if (!crossOriginIsolated && !window.shumwayIsolationFailed) {
-  throw new Error('reloading to isolate the page');
-}
-if (window.shumwayIsolationFailed) {
+// isolate.js (a plain script, ahead of this module) has already decided what
+// to do about cross-origin isolation. Aborting boot is CONTROL FLOW here, not
+// a failure — the marked throw below is skipped by the script-error reporter,
+// whose "% script error: reloading to isolate the page" used to be the only
+// thing a user saw when the wait outlived the hide.
+function explainIsolationFailure() {
   // Booting anyway is not an option: the published runtime is the THREADED
   // one, and it asserts on SharedArrayBuffer before answering anything. The
   // old fallback message promised a shared-thread engine that no longer
   // exists in this build — what actually happened was that assert.
+  freshLine();
   emit('% the engine needs cross-origin isolation (SharedArrayBuffer) and this'
-     + ' page could not get it — the service worker did not take control of'
-     + ' this load.\n', 'error');
-  emit('% reloading (F5) almost always fixes it. If it persists: serve the'
-     + ' site with COOP/COEP headers (docs/guide/webshumway.md), and note'
-     + ' file:// and some private windows cannot isolate at all.\n', 'note');
+     + ' page has not managed it yet — the worker that provides it did not'
+     + ' take control of this load.\n', 'error');
+  emit('% if the worker is still installing, this page will reload itself'
+     + ' when it is ready. Otherwise F5 almost always fixes it; if it'
+     + ' persists, serve the site with COOP/COEP headers'
+     + ' (docs/guide/webshumway.md) — file:// and some private windows cannot'
+     + ' isolate at all.\n', 'note');
   setPending(false);
-  throw new Error('the engine requires cross-origin isolation');
+}
+if (!crossOriginIsolated) {
+  if (window.shumwayIsolationFailed) {
+    explainIsolationFailure();
+  } else {
+    // The dance window: isolate.js is installing the worker and will reload.
+    // Normally invisible (the page is hidden and the reload is milliseconds
+    // away); on a slow connection the hide times out and THIS text is what
+    // the visitor reads while the install keeps going underneath.
+    emit('% first visit setup: installing the worker that lets this page run'
+       + ' the engine. The page reloads itself when it is ready.\n', 'note');
+    window.addEventListener('shumway-isolation-failed',
+      explainIsolationFailure, { once: true });
+  }
+  throw new Error(ISOLATION_ABORT);
 }
 
 // --- debug (spike) -------------------------------------------------------

@@ -34,24 +34,26 @@
     return;
   }
 
-  // A registration that went through the dance and still could not isolate the
-  // page is not one to keep: drop it, so the NEXT attempt installs a fresh
-  // worker instead of inheriting whatever state got this one stuck.
-  const giveUp = () => {
+  // Show the page and tell main.js (which already printed its waiting note and
+  // listens for this event) that isolation has not arrived. NOT final: the
+  // ready→reload path stays armed wherever a registration is still installing.
+  const showFailed = () => {
+    document.documentElement.style.visibility = '';
+    window.shumwayIsolationFailed = true;
+    window.dispatchEvent(new Event('shumway-isolation-failed'));
+  };
+
+  // Already reloaded once and still not isolated: the worker went through a
+  // whole dance, took control, and its response STILL did not isolate the
+  // page — that worker is broken, not slow. Drop the registration so the next
+  // attempt installs a fresh one instead of re-inheriting it, and let main.js
+  // explain — the threaded runtime cannot start without isolation.
+  if (sessionStorage.getItem(TRIED)) {
     sessionStorage.removeItem(TRIED);
     navigator.serviceWorker.getRegistration()
       .then((r) => r && r.unregister())
       .catch(() => { });
-    document.documentElement.style.visibility = '';
-    window.shumwayIsolationFailed = true;
-  };
-
-  // Already reloaded once and still not isolated: something is stopping the
-  // worker from taking over, and reloading again would do it forever. Give up
-  // and let main.js explain — the threaded runtime cannot start without
-  // isolation, so there is nothing to run.
-  if (sessionStorage.getItem(TRIED)) {
-    giveUp();
+    showFailed();
     return;
   }
 
@@ -59,23 +61,23 @@
   // runtime would assert and the reload would throw the work away anyway.
   document.documentElement.style.visibility = 'hidden';
 
-  // The timeout is load-bearing: `ready` resolves only when the registration
-  // gains an ACTIVE worker, and a worker stuck installing never provides one —
-  // which left this page hidden forever, throwing "reloading to isolate" on
-  // every F5. Bounded wait, then give up VISIBLY with the registration dropped.
-  const readyOrStuck = Promise.race([
-    navigator.serviceWorker.register('sw.js')
-      .then(() => navigator.serviceWorker.ready),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('stuck')), 5000)),
-  ]);
-  readyOrStuck
+  let reloading = false;
+  navigator.serviceWorker.register('sw.js')
+    .then(() => navigator.serviceWorker.ready)
     .then(() => {
+      reloading = true;
       sessionStorage.setItem(TRIED, 'yes');
       location.reload();
     })
-    .catch(giveUp);
+    .catch(showFailed);   // no registration at all — nothing will ever isolate
 
-  // The reload is what should happen; anything the rest of the page would do
-  // meanwhile is wasted. Blocking further module execution is not possible from
-  // here, so the page is merely hidden — the reload follows in milliseconds.
+  // Stop hiding after a bounded wait, but KEEP the registration and keep the
+  // reload armed. `ready` resolves only when the registration gains an ACTIVE
+  // worker, and on a slow connection the worker's install competes with the
+  // runtime download this page is doing at the same time — it can take far
+  // longer than any reasonable hide. Unregistering here was self-sabotage:
+  // every F5 killed the worker mid-install and started over, a loop that
+  // never converged. Left installing, the worker eventually activates and the
+  // reload above brings the page back working, F5 or no F5.
+  setTimeout(() => { if (!reloading) showFailed(); }, 5000);
 })();
