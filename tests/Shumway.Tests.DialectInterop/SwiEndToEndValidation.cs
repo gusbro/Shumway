@@ -78,13 +78,14 @@ public sealed class SwiEndToEndValidation
         foreach (var (lib, query) in Cases)
         {
             string load, smoke;
+            // Per-engine Warnings capture — not a Console.Error swap; see the
+            // note in ScryerEndToEndValidation (concurrent validations were
+            // contaminating each other's verdicts through the global stream).
             var errCapture = new StringWriter();
-            var prevErr = Console.Error;
-            Console.SetError(errCapture);
             PrologEngine? e = null;
             try
             {
-                e = new PrologEngine();
+                e = new PrologEngine { Warnings = errCapture };
                 e.AddLibraryDirectory(dir, "swi");
                 e.ConsultString($":- use_module(library({lib})).");
                 if (lib == "record")
@@ -96,7 +97,6 @@ public sealed class SwiEndToEndValidation
                     e.ConsultString(":- use_module(library(yall)).");
             }
             catch (Exception ex) { errCapture.Write("\nEXC:" + ex.Message); }
-            finally { Console.SetError(prevErr); }
 
             string warn = errCapture.ToString();
             // The top-level use_module either threw (real load failure) or not. A

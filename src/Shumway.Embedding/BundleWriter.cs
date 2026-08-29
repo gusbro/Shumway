@@ -547,9 +547,12 @@ public static class BundleWriter
         // RUNTIME default (IlPredicateCompiler.RegionCompile, now ON) is
         // deliberately overridden for the persisted build either way so a
         // direct ToBytes caller gets the same bundle regardless of the
-        // process-wide toggle.
-        bool savedRegionCompile = Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile;
-        Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = regionPruneSeeds is not null;
+        // process-wide toggle. THREAD-LOCAL override, not a flip of the
+        // process default: an engine promoting a predicate on another thread
+        // mid-build must keep compiling with the runtime settings (the
+        // region-ambient statics are per-thread for the same reason).
+        bool? savedRegionCompile = Shumway.Compiler.Il.IlPredicateCompiler.RegionCompileOverride;
+        Shumway.Compiler.Il.IlPredicateCompiler.RegionCompileOverride = regionPruneSeeds is not null;
         // ADR-022 item 2 (stage C) — inline this module's native blocks into the
         // persisted IL. The build engine carries the block table (rehydrated from
         // the bundle's NativeBlocks at LoadBundle); a block's interop functions are
@@ -575,7 +578,7 @@ public static class BundleWriter
         }
         finally
         {
-            Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = savedRegionCompile;
+            Shumway.Compiler.Il.IlPredicateCompiler.RegionCompileOverride = savedRegionCompile;
             Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = savedForcedRoots;
             Shumway.Compiler.Il.IlPredicateCompiler.RegionMemberScopeFids = savedScope;
             Shumway.Compiler.Il.IlPredicateCompiler.EndNativeInline(prevInline);

@@ -708,7 +708,7 @@ public sealed partial class IlPredicateCompiler
         DiagnoseRegion(predicate, calleeMap);
         // Region compilation (Stage 3, gated): emit the root + its local
         // closure as ONE IL method when the region is in the minimal subset.
-        if (RegionCompile && calleeMap is not null)
+        if (EffectiveRegionCompile && calleeMap is not null)
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
                 extraEligible: p => IsRegionMemberEligible(p, calleeMap));
@@ -987,7 +987,7 @@ public sealed partial class IlPredicateCompiler
         // every other persisted method. (Region compilation is off unless RegionCompile
         // is set; with it on, EVERY predicate compiles as a region root — correct but
         // duplicative until the prune skips absorbed-only members.)
-        if (RegionCompile && calleeMap is not null)
+        if (EffectiveRegionCompile && calleeMap is not null)
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
                 extraEligible: p => IsRegionMemberEligible(p, calleeMap));

@@ -148,16 +148,16 @@ public sealed class CrossDialectInteropTests
             string name = System.IO.Path.GetFileNameWithoutExtension(f);
             if (name == "INDEX") continue;
             attempted++;
-            var e = new PrologEngine();
-            e.AddLibraryDirectory(dir, dialect);
             string outcome;
             // A library that fails to load is NOT thrown — the directive handler
-            // catches it and prints `warning: use_module(...) failed: <msg>` to
-            // Console.Error, then use_module returns null. So capture stderr and
-            // treat any such warning as a failure.
+            // catches it and reports `warning: use_module(...) failed: <msg>`,
+            // then use_module returns null. Captured through the engine's own
+            // per-engine Warnings writer (not a Console.Error swap — see the
+            // note in ScryerEndToEndValidation) and any such warning is a
+            // failure.
             var errCapture = new System.IO.StringWriter();
-            var prevErr = System.Console.Error;
-            System.Console.SetError(errCapture);
+            var e = new PrologEngine { Warnings = errCapture };
+            e.AddLibraryDirectory(dir, dialect);
             try
             {
                 e.ConsultString($":- use_module(library({name})).");
@@ -166,7 +166,6 @@ public sealed class CrossDialectInteropTests
             {
                 errCapture.Write("\nEXC: " + ex.Message);
             }
-            finally { System.Console.SetError(prevErr); }
 
             string err = errCapture.ToString();
             int fi = err.IndexOf("failed:", System.StringComparison.Ordinal);
