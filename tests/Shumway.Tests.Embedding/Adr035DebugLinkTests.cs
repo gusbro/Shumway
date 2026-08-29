@@ -13,6 +13,7 @@ namespace Shumway.Tests.Embedding;
 /// skip it, and a local <c>--entry</c>/<c>--goal</c> is promoted to public WITHOUT shifting the
 /// source lines the debug stop sites are keyed to.
 /// </summary>
+[Collection("debugger")]
 public sealed class Adr035DebugLinkTests
 {
     private static CompiledPredicate DecodeEntryPredicate(

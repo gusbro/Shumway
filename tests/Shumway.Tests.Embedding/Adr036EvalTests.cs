@@ -12,6 +12,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>ADR-036 V3 — Debug Console evaluation (the Immediate window over DAP) and
 /// the destructive setVariable, against the real server over the real socket.</summary>
+[Collection("debugger")]
 public class Adr036EvalTests
 {
     private readonly ITestOutputHelper _log;

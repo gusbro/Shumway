@@ -21,6 +21,7 @@ namespace Shumway.Tests.Embedding;
 /// <para>The consequence worth pinning: debug-compiled code with no breakpoints
 /// armed runs exactly the instructions release code would.</para>
 /// </summary>
+[Collection("debugger")]
 public class Adr035BreakTests
 {
     private readonly ITestOutputHelper _log;

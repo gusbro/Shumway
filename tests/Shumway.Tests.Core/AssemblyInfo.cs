@@ -1,9 +1,11 @@
-// Shumway's AtomTable and FunctorTable are intentionally process-global per ADR-001.
-// xUnit runs test classes in parallel by default; without this attribute, tests in
-// different classes that mutate or read these tables race with each other (notably
-// FunctorTableTests.ResetForTesting vs. CompoundUnifyTests.Intern). Disabling parallel
-// execution serialises everything in this assembly. The whole Core suite currently
-// runs in well under a second, so the speed cost is negligible; once it grows enough
-// to matter we can switch to a finer-grained xUnit Collection for the global-state
-// classes only.
+// Serial NOT because the engine can't take parallelism — the AtomTable and
+// FunctorTable are thread-safe by invariant, and Shumway.Tests.Embedding runs
+// its collections concurrently precisely to exercise multi-engine
+// thread-agility. This assembly stays serial because AtomTableTests and
+// FunctorTableTests call ResetForTesting() in their constructors: a
+// test-only hook that WIPES the process-global tables, which no amount of
+// table thread-safety survives while a neighbour interns. The whole suite
+// runs in under a second, so serializing it costs nothing; if that changes,
+// the fix is a two-phase split (parallel population + the two destructive
+// classes alone), not re-enabling parallelism wholesale.
 [assembly: Xunit.CollectionBehavior(DisableTestParallelization = true)]

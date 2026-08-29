@@ -19,6 +19,7 @@ namespace Shumway.Tests.Embedding;
 /// catch; it just reported the writeln's line, so it looked like nothing had happened. The
 /// replacement now carries the construct's own position.</para>
 /// </summary>
+[Collection("debugger")]
 public class Adr035CatchRepro
 {
     private readonly ITestOutputHelper _log;

@@ -9,6 +9,8 @@ namespace Shumway.Tests.Embedding;
 /// term_expansion generating clauses, operators defined by a dependency,
 /// sibling-directory library resolution — and every module in the chain
 /// serialises to its own linkable ShmoObject.</summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class ViaConsultCompileTests
 {
     private sealed class TempDir : System.IDisposable

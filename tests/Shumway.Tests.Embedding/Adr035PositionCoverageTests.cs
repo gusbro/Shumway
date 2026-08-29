@@ -20,6 +20,7 @@ namespace Shumway.Tests.Embedding;
 /// the call had no site, its frame showed line 0, and the DCG re-enter had no anchor).
 /// This suite is the tripwire: one representative program per transform shape, asserting
 /// site presence LINE BY LINE.</para></summary>
+[Collection("debugger")]
 public class Adr035PositionCoverageTests
 {
     private readonly ITestOutputHelper _log;

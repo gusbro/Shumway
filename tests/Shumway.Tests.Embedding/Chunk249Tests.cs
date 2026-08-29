@@ -12,6 +12,8 @@ namespace Shumway.Tests.Embedding;
 /// HistoryStore covers the persistence + dedup + capping
 /// behaviour the editor relies on.
 /// </summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public class Chunk249Tests
 {
     private static string TempPath() =>

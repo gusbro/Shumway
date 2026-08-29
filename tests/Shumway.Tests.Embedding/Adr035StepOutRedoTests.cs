@@ -17,6 +17,7 @@ namespace Shumway.Tests.Embedding;
 /// synthetic program reproduces the shape self-contained: a multi-clause
 /// predicate whose first clause fails after a head match (the redo), called
 /// mid-conjunction inside a catch, with a builtin goal right after it.</summary>
+[Collection("debugger")]
 public class Adr035StepOutRedoTests
 {
     private readonly ITestOutputHelper _log;

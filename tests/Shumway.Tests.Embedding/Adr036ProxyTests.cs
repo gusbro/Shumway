@@ -14,6 +14,7 @@ namespace Shumway.Tests.Embedding;
 /// <summary>ADR-036 V2 — the <c>shumway-dap</c> adapter (<see cref="DapProxy"/>), driven
 /// as VS Code drives it: the test plays the IDE on the two halves of the adapter's
 /// stdio, and a real engine + <see cref="DapDebugServer"/> plays the debuggee.</summary>
+[Collection("debugger")]
 public class Adr036ProxyTests
 {
     private const string Program =

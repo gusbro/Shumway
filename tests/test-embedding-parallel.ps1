@@ -53,10 +53,18 @@ $parts = @(
     @{ Name = 'ch23-ph'; Expr = "(FullyQualifiedName~.Chunk2)|(FullyQualifiedName~.Chunk3)|(FullyQualifiedName~.Phase)" },
     @{ Name = 'rest';    Expr = "(FullyQualifiedName!~.Adr0)&(FullyQualifiedName!~.Chunk1)&(FullyQualifiedName!~.Chunk2)&(FullyQualifiedName!~.Chunk3)&(FullyQualifiedName!~.Phase)" }
 )
+# Two phases. The buckets run the PARALLEL population — in-process xUnit
+# parallelism is on (AssemblyInfo: MaxParallelThreads=3), so each bucket
+# process is itself a live multi-engine exercise. Classes that mutate
+# process-wide state (Console.Error, env vars, cwd, ==-asserts on global
+# counters) are tagged Concurrency=exclusive and run in a single serial pass
+# AFTER the buckets, apart from everyone.
 $buckets = foreach ($p in $parts) {
     $f = if ($Full) { $p.Expr } else { "(Category!=Slow)&($($p.Expr))" }
-    @{ Name = $p.Name; Filter = $f }
+    @{ Name = $p.Name; Filter = "($f)&(Concurrency!=exclusive)" }
 }
+$exclusiveFilter = if ($Full) { 'Concurrency=exclusive' }
+                   else { '(Category!=Slow)&(Concurrency=exclusive)' }
 
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
@@ -101,6 +109,21 @@ foreach ($e in $procs) {
         Get-Content $e.Log | Select-String -Pattern '^\s*Failed ' |
             ForEach-Object { Write-Host ("[parallel]   {0}" -f $_.Line.Trim()) }
     }
+}
+
+# Phase 2: the exclusive population, alone in the process, serially (they all
+# share one xUnit collection). Runs only after every parallel bucket is done.
+$exLog = Join-Path $logDir 'exclusive.log'
+dotnet test $proj -c $Configuration -f $Framework --no-build --nologo @fxProps `
+    --filter $exclusiveFilter --blame-hang-timeout 300s `
+    @(if ($Platform -ne '') { @('--', "RunConfiguration.TargetPlatform=$Platform") }) *> $exLog
+$exTail = (Get-Content $exLog | Select-String -Pattern 'Passed!|Failed!' | Select-Object -Last 1)
+if ($null -eq $exTail) { $exTail = "(no summary - see $exLog)" }
+Write-Host ("[parallel] {0,-8} {1}" -f 'excl', $exTail)
+if (($LASTEXITCODE -ne 0) -or ("$exTail" -notmatch 'Passed!')) {
+    $failed = $true
+    Get-Content $exLog | Select-String -Pattern '^\s*Failed ' |
+        ForEach-Object { Write-Host ("[parallel]   {0}" -f $_.Line.Trim()) }
 }
 
 $sw.Stop()

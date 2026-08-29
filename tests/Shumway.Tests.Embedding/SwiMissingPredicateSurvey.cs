@@ -22,6 +22,8 @@ namespace Shumway.Tests.Embedding;
 /// if another references it without importing it. Ranked by how many libraries
 /// reference each gap: the shim priority list. Writes to <c>SHUMWAY_TRIAGE_OUT</c>
 /// when set. Never fails (a clone without the libraries is a logged no-op).</para></summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class SwiMissingPredicateSurvey
 {
     private readonly ITestOutputHelper _out;

@@ -13,6 +13,7 @@ namespace Shumway.Tests.Embedding;
 /// consumer: the <c>trace/0</c> tracer. These are the tests that keep the
 /// engine-side debug core honest with no debugger in the loop.
 /// </summary>
+[Collection("debugger")]
 public class Adr035TracerTests
 {
     private readonly ITestOutputHelper _log;

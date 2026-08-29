@@ -13,6 +13,7 @@ namespace Shumway.Tests.Embedding;
 /// process, each arming a PENDING breakpoint (file not consulted yet) and then
 /// consulting the same file. If the second engine fails, the bug is in the ADR-035
 /// core (static DebugSiteTable vs per-engine state), not in the DAP frontend.</summary>
+[Collection("debugger")]
 public class Adr036PendingBreakpointTests
 {
     private readonly ITestOutputHelper _log;

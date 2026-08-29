@@ -11,6 +11,8 @@ using Xunit.Abstractions;
 // machinery (signature from prototype + cdecl calli over a real native t_reftype)
 // WITHOUT needing a C compiler: the "native" function is a C# method exposed as a
 // cdecl function pointer, operating on the native struct exactly as real C would.
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public class NativePInvokeTests
 {
     private readonly ITestOutputHelper _output;

@@ -16,6 +16,7 @@ namespace Shumway.Tests.Embedding;
 /// trailing, transactionally. If the commit instantiated anything, the parked evaluation's
 /// choice points die: <c>;</c> may not walk to another solution the frame is no longer
 /// free to take.</para></summary>
+[Collection("debugger")]
 public class Adr035BindIntoFrameTests
 {
     private readonly ITestOutputHelper _log;

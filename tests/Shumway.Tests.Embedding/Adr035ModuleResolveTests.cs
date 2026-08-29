@@ -12,6 +12,7 @@ namespace Shumway.Tests.Embedding;
 /// module's own code, a goal typed by its source name (`show_usage`) reaches the module-local
 /// predicate (`blint$show_usage`), and an explicit `Module:Goal` works too — the user does not
 /// have to know the mangled name.</summary>
+[Collection("debugger")]
 public class Adr035ModuleResolveTests
 {
     private readonly ITestOutputHelper _log;

@@ -18,6 +18,7 @@ namespace Shumway.Tests.Embedding;
 /// left untrailed. Nothing re-executes; the user continues from there themselves. The
 /// HEAD span rewinds to the caller's mark for the call, so continuing re-runs the call —
 /// head unification is pure, so that replay is safe.</para></summary>
+[Collection("debugger")]
 public class Adr035SetNextStatementTests
 {
     private readonly ITestOutputHelper _log;

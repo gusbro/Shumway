@@ -9,6 +9,8 @@ namespace Shumway.Tests.Embedding;
 /// clpfd + clpz coexistence surprise). The engine now warns — aggregated,
 /// on stderr — in both load orders, and on import-vs-import collisions.
 /// Normal single-source loads stay quiet.</summary>
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class ImportShadowWarningTests
 {
     private sealed class LibDir : System.IDisposable

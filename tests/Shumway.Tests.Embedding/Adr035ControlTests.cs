@@ -20,6 +20,7 @@ namespace Shumway.Tests.Embedding;
 /// a breakpoint can be armed on a program that is ALREADY RUNNING, which is what F9 during
 /// a long query is and which nothing before D3 could do.</para>
 /// </summary>
+[Collection("debugger")]
 public class Adr035ControlTests
 {
     private readonly ITestOutputHelper _log;
