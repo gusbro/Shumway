@@ -18,29 +18,22 @@ public sealed class CrossDialectInteropTests
     private const string ScryerEnv = "SHUMWAY_SCRYER_LIB";
     private const string SwiEnv = "SHUMWAY_SWI_LIB";
 
-    // Returns the configured, existing directory for an engine, or null (with a
-    // logged reason) when the test should be skipped.
-    private string? Dir(string env)
+    // The configured, existing directory for an engine. When there is none the
+    // test SKIPS rather than passing: a run with nothing configured verifies
+    // nothing, and reporting that as a pass made it indistinguishable from a
+    // run that loaded the real libraries (2 seconds against 43).
+    private string Dir(string env)
     {
         string? d = System.Environment.GetEnvironmentVariable(env);
-        if (string.IsNullOrWhiteSpace(d))
-        {
-            _out.WriteLine($"SKIPPED: {env} not set.");
-            return null;
-        }
-        if (!System.IO.Directory.Exists(d))
-        {
-            _out.WriteLine($"SKIPPED: {env}='{d}' does not exist.");
-            return null;
-        }
-        return d;
+        Skip.If(string.IsNullOrWhiteSpace(d), $"{env} is not set.");
+        Skip.If(!System.IO.Directory.Exists(d), $"{env}='{d}' does not exist.");
+        return d!;
     }
 
-    [Fact]
+    [SkippableFact]
     public void Scryer_Clpz_Loads_And_Solves()
     {
-        string? scryer = Dir(ScryerEnv);
-        if (scryer is null) return;
+        string scryer = Dir(ScryerEnv);
 
         var e = new PrologEngine();
         e.AddLibraryDirectory(scryer, "scryer");
@@ -51,15 +44,14 @@ public sealed class CrossDialectInteropTests
         Assert.False(e.Query("Z in 1..3, Z #> 5, indomain(Z).").Success);
     }
 
-    [Fact]
+    [SkippableFact]
     public void Swi_Gensym_Runs_Via_AtomConcat_Coercion()
     {
         // SWI's own library(gensym) calls atom_concat(Base, Integer, Atom) — an
         // ISO type_error, but SWI coerces the number. Because gensym's module is
         // loaded as the swi dialect, the dialect-sensitive atom_concat/3 applies
         // the coercion, so SWI's unmodified gensym.pl runs. (ADR-040.)
-        string? swi = Dir(SwiEnv);
-        if (swi is null) return;
+        string swi = Dir(SwiEnv);
 
         var e = new PrologEngine();
         e.AddLibraryDirectory(swi, "swi");
@@ -68,12 +60,11 @@ public sealed class CrossDialectInteropTests
         Assert.Equal("foo2", e.Query("gensym(foo, X).").Get<string>("X"));
     }
 
-    [Fact]
+    [SkippableFact]
     public void Swi_Heaps_Standalone_Loads_And_Works()
     {
         // A real SWI library (priority queues), loaded on its own.
-        string? swi = Dir(SwiEnv);
-        if (swi is null) return;
+        string swi = Dir(SwiEnv);
 
         var e = new PrologEngine();
         e.AddLibraryDirectory(swi, "swi");
@@ -83,14 +74,13 @@ public sealed class CrossDialectInteropTests
             "list_to_heap([3-c, 1-a, 2-b], H), get_from_heap(H, 1, a, _).").Success);
     }
 
-    [Fact]
+    [SkippableFact]
     public void Swi_Assoc_Standalone_Loads_And_Works()
     {
         // AVL-tree library — loads standalone, exercising the full chain of
         // engine features it needs: :- meta_predicate, :- autoload, `=>` (SSU),
         // and :- if/else/endif conditional compilation.
-        string? swi = Dir(SwiEnv);
-        if (swi is null) return;
+        string swi = Dir(SwiEnv);
 
         var e = new PrologEngine();
         e.AddLibraryDirectory(swi, "swi");
@@ -101,7 +91,7 @@ public sealed class CrossDialectInteropTests
             "list_to_assoc([x-1], A0), put_assoc(y, A0, 2, A), get_assoc(y, A, 2).").Success);
     }
 
-    [Fact]
+    [SkippableFact]
     public void UniteWorlds_ScryerClpz_And_SwiAssoc_InOneEngine()
     {
         // The headline ADR-040 property: a Scryer library and an SWI library,
@@ -109,9 +99,8 @@ public sealed class CrossDialectInteropTests
         // in ONE engine — attribute-variable constraints (clpz) next to AVL trees
         // (SWI assoc, which needed meta_predicate + autoload + => + if/else/endif
         // to load), each parsed in its own dialect.
-        string? scryer = Dir(ScryerEnv);
-        string? swi = Dir(SwiEnv);
-        if (scryer is null || swi is null) return;
+        string scryer = Dir(ScryerEnv);
+        string swi = Dir(SwiEnv);
 
         var e = new PrologEngine();
         e.AddLibraryDirectory(scryer, "scryer");
@@ -133,19 +122,17 @@ public sealed class CrossDialectInteropTests
     /// the error class. Prints a triage summary — feeds docs/library-triage-swi.md.
     /// Not an assertion sweep (it never fails); run with SHUMWAY_SWI_LIB set and
     /// read the test output.</summary>
-    [Fact]
+    [SkippableFact]
     public void Swi_Triage_Sweep()
     {
-        string? swi = Dir(SwiEnv);
-        if (swi is null) return;
+        string swi = Dir(SwiEnv);
         SweepLibraries(swi, "swi");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Scryer_Triage_Sweep()
     {
-        string? scryer = Dir(ScryerEnv);
-        if (scryer is null) return;
+        string scryer = Dir(ScryerEnv);
         SweepLibraries(scryer, "scryer");
     }
 

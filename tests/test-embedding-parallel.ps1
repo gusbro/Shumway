@@ -25,7 +25,12 @@ param(
     # framework a bare `dotnet test` would run BOTH flavors of every bucket.
     [string] $Framework = 'net10.0',
     # net48 only: 'x86' / 'x64' forces the testhost bitness (empty = default).
-    [string] $Platform = ''
+    [string] $Platform = '',
+    # Debug by default, which is what a working tree is usually built as.
+    # CI passes Release: that is the configuration that ships, and the IL
+    # compiler emits DIFFERENT code in the two (the DbgCheck_* markers live
+    # under `#if DEBUG`), so a Debug-only gate never sees the IL that runs.
+    [string] $Configuration = 'Debug'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,8 +65,8 @@ $sw = [System.Diagnostics.Stopwatch]::StartNew()
 # The net48 flavor only exists under the opt-in switch (Directory.Build.props).
 $fxProps = @(); if ($Framework -eq 'net48') { $fxProps = @('-p:ShumwayNetFx=true') }
 
-Write-Host "[parallel] building ($Framework)..."
-dotnet build $proj -c Debug -f $Framework @fxProps --nologo -v q
+Write-Host "[parallel] building ($Configuration, $Framework)..."
+dotnet build $proj -c $Configuration -f $Framework @fxProps --nologo -v q
 if ($LASTEXITCODE -ne 0) { Write-Host '[parallel] BUILD FAILED'; exit 1 }
 
 Write-Host "[parallel] launching $($buckets.Count) test processes..."
@@ -71,7 +76,7 @@ foreach ($b in $buckets) {
     $p = Start-Process -FilePath 'dotnet' -PassThru -NoNewWindow `
         -RedirectStandardOutput $log `
         -ArgumentList @(
-            'test', $proj, '-c', 'Debug', '-f', $Framework, '--no-build', '--nologo'
+            'test', $proj, '-c', $Configuration, '-f', $Framework, '--no-build', '--nologo'
             $fxProps
             '--filter', $b.Filter,
             '--blame-hang-timeout', '300s'

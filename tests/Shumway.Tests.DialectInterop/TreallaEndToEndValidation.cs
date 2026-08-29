@@ -72,15 +72,14 @@ public sealed class TreallaEndToEndValidation
     /// notes) — tolerated by the hard assertion below.</summary>
     private static readonly HashSet<string> ExpectedLoadFail = new() { "rbtrees" };
 
-    [Fact]
+    [SkippableFact]
     public void Validate()
     {
         string? dir = Environment.GetEnvironmentVariable("SHUMWAY_TREALLA_LIB");
-        if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
-        {
-            _out.WriteLine("SKIPPED: SHUMWAY_TREALLA_LIB not set / missing.");
-            return;
-        }
+        // Skipped, not passed: with no directory there is nothing to load,
+        // and a pass here would look exactly like a real run.
+        Skip.If(string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir),
+                "SHUMWAY_TREALLA_LIB is not set, or names a directory that is not there.");
 
         var rows = new List<(string Lib, string Load, string Smoke)>();
         foreach (var (lib, query) in Cases)

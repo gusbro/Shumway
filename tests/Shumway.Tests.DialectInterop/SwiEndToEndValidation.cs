@@ -65,15 +65,14 @@ public sealed class SwiEndToEndValidation
         ("nb_set",      "empty_nb_set(S), add_nb_set(a, S), nb_set_to_list(S, [a])."),
     };
 
-    [Fact]
+    [SkippableFact]
     public void Validate()
     {
         string? dir = Environment.GetEnvironmentVariable("SHUMWAY_SWI_LIB");
-        if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
-        {
-            _out.WriteLine("SKIPPED: SHUMWAY_SWI_LIB not set / missing.");
-            return;
-        }
+        // Skipped, not passed: with no directory there is nothing to load,
+        // and a pass here would look exactly like a real run.
+        Skip.If(string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir),
+                "SHUMWAY_SWI_LIB is not set, or names a directory that is not there.");
 
         var rows = new List<(string Lib, string Load, string Smoke)>();
         foreach (var (lib, query) in Cases)

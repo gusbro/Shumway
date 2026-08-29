@@ -76,15 +76,14 @@ public sealed class ScryerEndToEndValidation
         ("ops_and_meta_predicates", null),
     };
 
-    [Fact]
+    [SkippableFact]
     public void Validate()
     {
         string? dir = Environment.GetEnvironmentVariable("SHUMWAY_SCRYER_LIB");
-        if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
-        {
-            _out.WriteLine("SKIPPED: SHUMWAY_SCRYER_LIB not set / missing.");
-            return;
-        }
+        // Skipped, not passed: with no directory there is nothing to load,
+        // and a pass here would look exactly like a real run.
+        Skip.If(string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir),
+                "SHUMWAY_SCRYER_LIB is not set, or names a directory that is not there.");
 
         var rows = new List<(string Lib, string Load, string Smoke)>();
         foreach (var (lib, query) in Cases)

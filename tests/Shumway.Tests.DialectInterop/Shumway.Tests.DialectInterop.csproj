@@ -21,7 +21,11 @@
     if they want and have the libraries.
   -->
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Multi-targeted like the rest of the suite: whether a third party's
+         libraries load is a question about .NET Framework too, and that is
+         where the answer differs (no runtime codegen assumptions, 32-bit). -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>$(ShumwayTargetFrameworks)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -31,6 +35,10 @@
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
+    <!-- A run with no engine directory configured verifies NOTHING; without
+         this it reported ten passes, which is the same picture as a run that
+         did the work. Skippable turns it into `Skipped: 10`. -->
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
 
