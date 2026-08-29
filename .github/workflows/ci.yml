@@ -37,16 +37,25 @@ jobs:
           arch: x64
       - name: Neutralize vcvars Platform
         run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
+      # The test steps below build the ENGINE and nothing else, so the CLIs had
+      # no cover at all: shumway-link, shumway-compile, shumway-lib,
+      # shumway-disasm, shumway-dap and the dist collector are referenced by no
+      # test project, and could be broken on main with CI green. Nearly free in
+      # wall clock: it builds what the tests were about to build anyway, and
+      # they then find it done. It goes AFTER the Platform neutralisation --
+      # vcvars leaves Platform=x64 set, which the build would trip over.
+      - name: Build everything (the CLIs have no tests to build them)
+        run: dotnet build Shumway.slnx -c Release --nologo -v q
       - name: Core
-        run: dotnet test tests/Shumway.Tests.Core -f net10.0
+        run: dotnet test tests/Shumway.Tests.Core -c Release -f net10.0
       - name: Interpreter
-        run: dotnet test tests/Shumway.Tests.Interpreter -f net10.0
+        run: dotnet test tests/Shumway.Tests.Interpreter -c Release -f net10.0
       - name: Compiler
-        run: dotnet test tests/Shumway.Tests.Compiler -f net10.0
+        run: dotnet test tests/Shumway.Tests.Compiler -c Release -f net10.0
       - name: IsoConformance
-        run: dotnet test tests/Shumway.Tests.IsoConformance -f net10.0
+        run: dotnet test tests/Shumway.Tests.IsoConformance -c Release -f net10.0
       - name: Embedding (parallel)
-        run: powershell -File tests/test-embedding-parallel.ps1
+        run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release
       # A failed test's message lives in the per-bucket logs, which die with
       # the runner — surface them (the job log only carries the test NAME).
       - name: Upload parallel logs on failure
@@ -71,15 +80,15 @@ jobs:
       - name: Neutralize vcvars Platform
         run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
       - name: Core
-        run: dotnet test tests/Shumway.Tests.Core -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
+        run: dotnet test tests/Shumway.Tests.Core -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: Interpreter
-        run: dotnet test tests/Shumway.Tests.Interpreter -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
+        run: dotnet test tests/Shumway.Tests.Interpreter -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: Compiler
-        run: dotnet test tests/Shumway.Tests.Compiler -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
+        run: dotnet test tests/Shumway.Tests.Compiler -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: IsoConformance
-        run: dotnet test tests/Shumway.Tests.IsoConformance -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
+        run: dotnet test tests/Shumway.Tests.IsoConformance -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: Embedding (parallel)
-        run: powershell -File tests/test-embedding-parallel.ps1 -Framework net48 -Platform x86
+        run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release -Framework net48 -Platform x86
       - name: Upload parallel logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -87,9 +96,9 @@ jobs:
           name: parallel-logs-net48-x86
           path: TestResults/parallel/*.log
       - name: Smoke build (32-bit)
-        run: dotnet build tests/Shumway.Smoke.Net48 -p:SmokeBitness=x86 -p:ShumwayNetFx=true -t:Rebuild -v q
+        run: dotnet build tests/Shumway.Smoke.Net48 -c Release -p:SmokeBitness=x86 -p:ShumwayNetFx=true -t:Rebuild -v q
       - name: Smoke run (32-bit process, Tier-0 + Tier-1)
-        run: .\tests\Shumway.Smoke.Net48\bin\Debug\net48\shumway-smoke-net48.exe
+        run: .\tests\Shumway.Smoke.Net48\bin\Release\net48\shumway-smoke-net48.exe
 
   net48-x64:
     runs-on: windows-latest
@@ -105,15 +114,15 @@ jobs:
       - name: Neutralize vcvars Platform
         run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
       - name: Core
-        run: dotnet test tests/Shumway.Tests.Core -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
+        run: dotnet test tests/Shumway.Tests.Core -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: Interpreter
-        run: dotnet test tests/Shumway.Tests.Interpreter -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
+        run: dotnet test tests/Shumway.Tests.Interpreter -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: Compiler
-        run: dotnet test tests/Shumway.Tests.Compiler -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
+        run: dotnet test tests/Shumway.Tests.Compiler -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: IsoConformance
-        run: dotnet test tests/Shumway.Tests.IsoConformance -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
+        run: dotnet test tests/Shumway.Tests.IsoConformance -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: Embedding (parallel)
-        run: powershell -File tests/test-embedding-parallel.ps1 -Framework net48 -Platform x64
+        run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release -Framework net48 -Platform x64
       - name: Upload parallel logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
