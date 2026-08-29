@@ -14,6 +14,14 @@ namespace Shumway.Tests.Embedding;
 /// <para>The limit is enforced at the engine's safe points (the same ones
 /// cancellation uses), which is what lets a failure-driven loop be
 /// interrupted even though it allocates nothing.</para></summary>
+// Exclusive for a different reason than the others: nothing here mutates
+// process state, but these tests pin WALL-CLOCK deadlines whose margins are
+// tight by design (per-solution restart needs each solution under the limit
+// and the whole enumeration over it). Under 4 processes × 3 threads on a
+// 4-core runner, scheduling stretched a 250 ms solution past its 400 ms
+// budget. The exclusive phase runs alone in the process, after the buckets.
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class TimeOutTests
 {
     private static string ResultOf(PrologEngine e, string goal, int ms)
