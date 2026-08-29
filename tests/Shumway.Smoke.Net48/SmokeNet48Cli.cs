@@ -120,6 +120,25 @@ internal static class SmokeNet48Cli
                 if (e.QueryFirst<long>("loop(100000, 0, R).", "R") != 5000050000L) return false;
             }
             Console.WriteLine($"        promoted predicates: {e.IlPromotion.PromotedCount}");
+            // Zero means the engine answered every query correctly from Tier-0
+            // and never emitted any IL, which is a silent fallback: the numbers
+            // below say whether the compiler declined each predicate (and why)
+            // or was never asked. Printed only on failure, and only here,
+            // because a smoke that fails on a machine you cannot attach to has
+            // to arrive with its own diagnosis.
+            if (e.IlPromotion.PromotedCount == 0)
+            {
+                Console.WriteLine(
+                    $"        tracked={e.IlPromotion.TrackedCount} "
+                    + $"unpromotable={e.IlPromotion.UnpromotableCount} "
+                    + $"threshold={e.IlPromotion.Threshold}");
+                foreach (var (fid, reason) in e.IlPromotion.UnpromotableEntries())
+                {
+                    var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+                    string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? $"#{atomId}";
+                    Console.WriteLine($"        unpromotable: {name}/{arity} — {reason}");
+                }
+            }
             return e.IlPromotion.PromotedCount > 0;
         });
 

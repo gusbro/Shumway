@@ -4,8 +4,8 @@ name: CI
 # (ADR-043). Each lane arms MSVC for its OWN bitness so the real-DLL native
 # interop tests compile a host-matching DLL and actually run (they self-skip
 # without a C compiler on PATH — which is how they silently skipped in every
-# pre-CI gate). Individual test projects are built directly; the solution is
-# NOT built wholesale because Shumway.Web needs the wasm-tools workload.
+# pre-CI gate). The solution IS built once (see the step) -- Shumway.Web, whose
+# wasm-tools workload was the reason not to, is not in it.
 # One suite per step: pwsh only propagates the LAST command's exit code, so
 # stacking suites in one step would mask an intermediate failure.
 #
@@ -32,20 +32,25 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-      - name: Neutralize vcvars Platform
-        run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
       # The test steps below build the ENGINE and nothing else, so the CLIs had
       # no cover at all: shumway-link, shumway-compile, shumway-lib,
       # shumway-disasm, shumway-dap and the dist collector are referenced by no
       # test project, and could be broken on main with CI green. Nearly free in
       # wall clock: it builds what the tests were about to build anyway, and
-      # they then find it done. It goes AFTER the Platform neutralisation --
-      # vcvars leaves Platform=x64 set, which the build would trip over.
+      # they then find it done.
+      #
+      # BEFORE vcvars, and before the Platform=AnyCPU that undoes it. A solution
+      # build reads Platform, and the platform is spelled `Any CPU` there, so an
+      # inherited `AnyCPU` makes MSBuild look for a `Release|AnyCPU` that does
+      # not exist. The per-project test steps below are unaffected -- they never
+      # consult the solution.
       - name: Build everything (the CLIs have no tests to build them)
         run: dotnet build Shumway.slnx -c Release --nologo -v q
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Neutralize vcvars Platform
+        run: Add-Content -Path $env:GITHUB_ENV -Value "Platform=AnyCPU"
       - name: Core
         run: dotnet test tests/Shumway.Tests.Core -c Release -f net10.0
       - name: Interpreter
@@ -96,9 +101,13 @@ jobs:
           name: parallel-logs-net48-x86
           path: TestResults/parallel/*.log
       - name: Smoke build (32-bit)
-        run: dotnet build tests/Shumway.Smoke.Net48 -c Release -p:SmokeBitness=x86 -p:ShumwayNetFx=true -t:Rebuild -v q
+        # Debug, deliberately and temporarily: in Release this smoke reports
+        # `promoted predicates: 0` on the runner and nowhere else -- every
+        # answer correct, no IL ever emitted. Chased on its own branch; the
+        # exe now prints why promotion declined, so that run says something.
+        run: dotnet build tests/Shumway.Smoke.Net48 -p:SmokeBitness=x86 -p:ShumwayNetFx=true -t:Rebuild -v q
       - name: Smoke run (32-bit process, Tier-0 + Tier-1)
-        run: .\tests\Shumway.Smoke.Net48\bin\Release\net48\shumway-smoke-net48.exe
+        run: .\tests\Shumway.Smoke.Net48\bin\Debug\net48\shumway-smoke-net48.exe
 
   net48-x64:
     runs-on: windows-latest
