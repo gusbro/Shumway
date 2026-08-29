@@ -23,8 +23,9 @@
     // this successful dance for the whole tab session — and the next
     // un-isolated load (a deploy racing the worker's skipWaiting takeover, a
     // cache-bypassing reload) found it and gave up on its FIRST try instead of
-    // doing the one reload that fixes it.
+    // doing the one reload that fixes it. Same for the zombie-purge marker.
     sessionStorage.removeItem(TRIED);
+    sessionStorage.removeItem('shumway.zombie-purged');
     return;
   }
   if (!('serviceWorker' in navigator) || location.protocol === 'file:') {
@@ -62,12 +63,34 @@
   document.documentElement.style.visibility = 'hidden';
 
   let reloading = false;
+  const PURGED = 'shumway.zombie-purged';
   navigator.serviceWorker.register('sw.js')
-    .then(() => navigator.serviceWorker.ready)
-    .then(() => {
-      reloading = true;
-      sessionStorage.setItem(TRIED, 'yes');
-      location.reload();
+    .then((reg) => {
+      // A CORRUPTED registration record: it has our scope but no worker in
+      // any state, and update() rejects with InvalidStateError, script
+      // 'Unknown'. Seen in the wild (Chrome, after deploy churn): register()
+      // happily resolves with it and `ready` then waits forever for a worker
+      // that cannot exist. It cannot be revived — drop it and reload so the
+      // next load registers from scratch. Once per tab session, so a zombie
+      // that survives its own funeral cannot loop us.
+      if (!reg.installing && !reg.waiting && !reg.active) {
+        if (sessionStorage.getItem(PURGED)) {
+          sessionStorage.removeItem(PURGED);
+          showFailed();
+          return;
+        }
+        sessionStorage.setItem(PURGED, 'yes');
+        reloading = true;
+        reg.unregister().then(
+          () => location.reload(),
+          () => { reloading = false; showFailed(); });
+        return;
+      }
+      return navigator.serviceWorker.ready.then(() => {
+        reloading = true;
+        sessionStorage.setItem(TRIED, 'yes');
+        location.reload();
+      });
     })
     .catch(showFailed);   // no registration at all — nothing will ever isolate
 
