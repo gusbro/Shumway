@@ -1364,10 +1364,16 @@ function explainIsolationFailure() {
      + ' page has not managed it yet — the worker that provides it did not'
      + ' take control of this load.\n', 'error');
   emit('% if the worker is still installing, this page will reload itself'
-     + ' when it is ready. Otherwise F5 almost always fixes it; if it'
-     + ' persists, serve the site with COOP/COEP headers'
-     + ' (docs/guide/webshumway.md) — file:// and some private windows cannot'
-     + ' isolate at all.\n', 'note');
+     + ' when it is ready. Otherwise F5 almost always fixes it.\n', 'note');
+  // The terminal case, seen in the wild: a browser-side worker registration
+  // so corrupted that every operation on it hangs. No page can remove it;
+  // only the user can. Say the action, not the diagnosis.
+  emit('% if it KEEPS happening: clear this site\'s data (padlock icon next'
+     + ' to the address → site settings → delete data) and reload —'
+     + ' a corrupted worker registration can only be removed from outside the'
+     + ' page. file:// and some private windows cannot isolate at all;'
+     + ' self-hosting works with COOP/COEP headers'
+     + ' (docs/guide/webshumway.md).\n', 'note');
   setPending(false);
 }
 if (!crossOriginIsolated) {
