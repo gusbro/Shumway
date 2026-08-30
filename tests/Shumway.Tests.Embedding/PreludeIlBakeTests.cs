@@ -128,7 +128,10 @@ public sealed class PreludeIlBakeTests
             proc.WaitForExit(30000);
 
             Assert.True(proc.ExitCode == 0, $"exit {proc.ExitCode}\n{stdout}\n{stderr}");
-            Assert.Contains("true.", stdout);          // scenario succeeded
+            // Full transcript on failure: Assert.Contains truncates its
+            // display, which once hid the child's actual error.
+            Assert.True(stdout.Contains("true."),
+                $"child transcript lacks \"true.\"\nstdout:\n{stdout}\nstderr:\n{stderr}");   // scenario succeeded
             Assert.DoesNotContain("false.", stdout);
         }
         finally
