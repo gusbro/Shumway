@@ -176,7 +176,8 @@ public class PePatchEndToEnd
             // failure the WHOLE transcript matters (Assert.Contains truncates
             // its display, which once hid the child's actual error).
             Assert.True(stdout.Contains("true."),
-                $"child transcript lacks \"true.\"\nstdout:\n{stdout}\nstderr:\n{stderr}");
+                $"child transcript lacks \"true.\"\nstdout:\n{stdout}\nstderr:\n{stderr}\n"
+                + BundleRaceDiag.CompareWithRebuild(bytes, () => BuildBundleBytes(src)));
         }
         finally
         {

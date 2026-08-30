@@ -67,7 +67,12 @@ public class Adr036LaunchRaceTests
                 {
                     for (; seen < 500; seen++)
                     {
-                        JsonElement ev = client.WaitEvent("stopped", 10000);
+                        // 30 s, not 10: under the parallel suite on a saturated runner a
+                        // DELAYED stop (starved engine thread, socket latency) arrives
+                        // late and is fine; a LOST stop never arrives and fails at any
+                        // timeout - so the generous wait discriminates the two instead
+                        // of conflating them.
+                        JsonElement ev = client.WaitEvent("stopped", 30000);
                         _log.WriteLine("stop " + seen + ": "
                             + ev.GetProperty("body").GetProperty("reason").GetString());
                         client.Request("continue", "{\"threadId\":1}");
@@ -96,7 +101,7 @@ public class Adr036LaunchRaceTests
                 var again = new QueryRun(engine, "test.");
                 for (int stops = 0; stops < 5 && !again.Join(50); stops++)
                 {
-                    client.WaitEvent("stopped", 10000);
+                    client.WaitEvent("stopped", 30000);   // same 30 s discrimination as above
                     client.Request("continue", "{\"threadId\":1}");
                 }
                 Assert.True(again.Join(20_000), "round " + round + ": rerun done");

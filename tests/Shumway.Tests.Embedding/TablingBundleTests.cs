@@ -117,7 +117,8 @@ public sealed class TablingBundleTests
 
             Assert.True(proc.ExitCode == 0, $"exit {proc.ExitCode}\n{stdout}\n{stderr}");
             Assert.True(stdout.Contains("Sc = true"),
-                $"child transcript lacks \"Sc = true\"\nstdout:\n{stdout}\nstderr:\n{stderr}");
+                $"child transcript lacks \"Sc = true\"\nstdout:\n{stdout}\nstderr:\n{stderr}\n"
+                + BundleRaceDiag.CompareWithRebuild(bytes, () => LinkWfs(ShmoBuildMode.Release, il: true)));
             Assert.Contains("Sa = undefined", stdout);
         }
         finally
@@ -226,7 +227,8 @@ public sealed class TablingBundleTests
 
             Assert.True(proc.ExitCode == 0, $"exit {proc.ExitCode}\n{stdout}\n{stderr}");
             Assert.True(stdout.Contains("[a, b, c, d]"),
-                $"child transcript lacks \"[a, b, c, d]\"\nstdout:\n{stdout}\nstderr:\n{stderr}");
+                $"child transcript lacks \"[a, b, c, d]\"\nstdout:\n{stdout}\nstderr:\n{stderr}\n"
+                + BundleRaceDiag.CompareWithRebuild(bytes, () => Link(ShmoBuildMode.Release, il: true, stripWam: stripWam)));
         }
         finally
         {
