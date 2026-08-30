@@ -26,6 +26,17 @@ public sealed class ControlConnectiveHeadTests
         Assert.True(e.Query("ok_after.").Success);
     }
 
+    // Edinburgh tradition (SWI/GNU/SICStus): `?- G.` in Prolog TEXT is a
+    // directive, same as `:- G.`. It used to read as a clause FOR '?-'/1 —
+    // stored, listed, never run.
+    [Fact]
+    public void QuestionDash_InText_RunsAsADirective()
+    {
+        var e = new PrologEngine { Warnings = new StringWriter() };
+        e.ConsultString("?- assertz(ran_directive).\n");
+        Assert.True(e.Query("ran_directive.").Success);
+    }
+
     [Fact]
     public void Assertz_StillRaisesThePermissionError()
     {
