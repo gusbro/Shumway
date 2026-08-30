@@ -909,11 +909,7 @@ E = resource_error(memory).
 ```
 
 uniformly — whichever operation hits it (`^`, `<<`, a multiplication) and
-whichever tier runs it. This is the same shape other unbounded engines
-give at their own ceilings (SWI raises `resource_error(stack)`; GMP-based
-systems have a higher cap of the same nature). Trivial cases stay exact at
-any exponent: `1^2147483648` is `1`, `0 << N` is `0`, and a shift past
-every bit of its operand floors to `0` or `-1` rather than erroring.
+whichever tier runs it.
 
 ### Operator scope (ADR-046)
 
