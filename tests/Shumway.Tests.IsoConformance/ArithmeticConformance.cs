@@ -230,6 +230,39 @@ public class ArithmeticConformance
         AssertSucceeds("catch(_ is popcount(-1), error(domain_error(not_less_than_zero, V), _), true), V == -1.");
     }
 
+    [Fact]
+    public void Is_RepresentationCap_IsACatchableResourceError()
+    {
+        // Unbounded integers still live in a finite representation (.NET's
+        // BigInteger caps a magnitude at int.MaxValue bits). The cap used to
+        // leak as a raw OverflowException / OutOfMemoryException at one
+        // exponent and a non-ISO error tag at the next; all three neighbours
+        // now answer with the same catchable ISO resource_error(memory).
+        AssertSucceeds("catch(_ is 2^2147483646, error(resource_error(memory), _), true).");
+        AssertSucceeds("catch(_ is 2^2147483647, error(resource_error(memory), _), true).");
+        AssertSucceeds("catch(_ is 2^2147483648, error(resource_error(memory), _), true).");
+        // A trivial base stays exact at ANY exponent.
+        AssertBinding("X is 1^2147483648.", "X", Int(1));
+        AssertBinding("X is (-1)^2147483649.", "X", Int(-1));
+        AssertBinding("X is 0^2147483648.", "X", Int(0));
+    }
+
+    [Fact]
+    public void Is_ShiftCounts_BeyondIntRange()
+    {
+        // The shift count was truncated by a bare (int) cast, so
+        // `1 << 4294967296` shifted by zero and answered 1 — silently wrong.
+        AssertSucceeds("catch(_ is 1 << 4294967296, error(resource_error(memory), _), true).");
+        AssertBinding("X is 0 << 4294967296.", "X", Int(0));
+        AssertBinding("X is 5 >> 4294967296.", "X", Int(0));
+        AssertBinding("X is -5 >> 4294967296.", "X", Int(-1));
+        // C# masks a long's shift count to 0..63: `1L >> 64` was 1.
+        AssertBinding("X is 1 >> 64.", "X", Int(0));
+        AssertBinding("X is -1 >> 200.", "X", Int(-1));
+        // A negative count shifts the other way (BigInteger semantics).
+        AssertBinding("X is 5 >> -2.", "X", Int(20));
+    }
+
     // ---------- Helpers ----------
 
     private static void AssertBinding(string query, string varName, Term expected)

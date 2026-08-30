@@ -887,6 +887,30 @@ This matches GNU Prolog, SICStus and Scryer (SWI orders numbers by value).
 It affects everything built on the standard order: `sort/2`, `msort/2`,
 `setof/3`, `keysort/2`, `@</2` and friends.
 
+### Integer limits
+
+Integers are unbounded: arithmetic promotes past 64 bits transparently
+(`X is 2^100` answers exactly), and rationals (ADR-039) build on the same
+representation. "Unbounded" means no bound imposed by the language — the
+ceiling is the representation's, which for Shumway is .NET's
+[`System.Numerics.BigInteger`](https://learn.microsoft.com/dotnet/api/system.numerics.biginteger):
+Microsoft documents it as having "no theoretical upper or lower bounds",
+with any operation free to fail once a value grows too large for memory.
+In practice its magnitude is indexed in 32 bits (a hard format cap near
+2^31 bits ≈ 256 MB ≈ 646 million decimal digits per number), and internal
+buffers give out somewhat earlier: measured on this engine, `2^100000000`
+(a 12.5 MB integer) computes exactly and `2^1000000000` does not.
+
+At the ceiling the engine raises the ISO error
+
+```prolog
+?- catch(_ is 2^2147483647, error(E, _), true).
+E = resource_error(memory).
+```
+
+uniformly — whichever operation hits it (`^`, `<<`, a multiplication) and
+whichever tier runs it.
+
 ### Operator scope (ADR-046)
 
 Operator tables are **module-scoped**, following SWI/YAP/Ciao/Scryer:
