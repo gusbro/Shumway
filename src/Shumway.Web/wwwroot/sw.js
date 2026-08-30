@@ -23,10 +23,37 @@
 // docs/guide/webshumway.md), the page is isolated from the start and neither the
 // rewriting nor the reload ever happens.
 //
+// CACHE STORAGE IS BEST-EFFORT, NEVER LOAD-BEARING. Diagnosed live: a browser
+// whose Cache Storage backend for this origin is damaged makes caches.open /
+// match / keys HANG rather than fail — and this worker used to sit on the
+// request path awaiting them, so every navigation and asset request hung with
+// it (activation too, which parks navigations forever behind an `activating`
+// worker). Every cache operation here is therefore bounded by a short timeout
+// and falls through to the network, and writes are fire-and-forget: a broken
+// cache costs speed and offline support, never the page.
+//
 // Versioned by cache name: bumping it discards the previous generation on
 // activate, which is how a republished app stops serving yesterday's runtime.
 
-const CACHE = 'webshumway-v9';
+const CACHE = 'webshumway-v10';
+
+/** A promise, or a rejection after `ms` — cache ops must never park a request. */
+const bounded = (promise, ms) => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(reject, ms, new Error('cache timeout'))),
+]);
+
+/** Best-effort cache write: never awaited, never fatal. */
+function stash(request, response) {
+  try {
+    const copy = response.clone();   // clone NOW — the body streams away otherwise
+    caches.open(CACHE).then((c) => c.put(request, copy)).catch(() => { });
+  } catch { /* an already-consumed body is not worth a failure */ }
+}
+
+/** Best-effort cache read: a hit, or null — hangs and errors both read as miss. */
+const cached = (request) =>
+  bounded(caches.match(request), 1500).catch(() => null);
 
 /**
  * The response the page should get, isolated.
@@ -68,19 +95,26 @@ const immutable = (url) =>
 
 self.addEventListener('install', (event) => {
   // The shell, whose names we DO know. Everything else arrives via fetch.
+  // Bounded and tolerated: a hanging cache backend must not park this worker
+  // in `installing` — a stuck installation is how the scope got wedged once.
   event.waitUntil((async () => {
-    const cache = await caches.open(CACHE);
-    await cache.addAll(['./', './index.html', './styles.css', './manifest.webmanifest'])
-      .catch(() => { /* a shell file missing must not block installation */ });
+    await bounded(
+      caches.open(CACHE).then((c) =>
+        c.addAll(['./', './index.html', './styles.css', './manifest.webmanifest'])),
+      8000).catch(() => { /* a shell file missing must not block installation */ });
     self.skipWaiting();
   })());
 });
 
 self.addEventListener('activate', (event) => {
+  // Navigations WAIT for an `activating` worker to finish, so nothing here may
+  // hang: cleanup of older cache generations is bounded and best-effort.
   event.waitUntil((async () => {
-    for (const name of await caches.keys()) {
-      if (name !== CACHE) await caches.delete(name);
-    }
+    await bounded((async () => {
+      for (const name of await caches.keys()) {
+        if (name !== CACHE) await caches.delete(name);
+      }
+    })(), 5000).catch(() => { });
     await self.clients.claim();
   })());
 });
@@ -99,11 +133,11 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       try {
         const fresh = await fetch(request);
-        (await caches.open(CACHE)).put('./', fresh.clone());
+        stash('./', fresh);
         return isolated(fresh);
       } catch {
-        const cached = (await caches.match('./')) ?? (await caches.match('./index.html'));
-        return cached ? isolated(cached) : Response.error();
+        const hit = (await cached('./')) ?? (await cached('./index.html'));
+        return hit ? isolated(hit) : Response.error();
       }
     })());
     return;
@@ -114,10 +148,10 @@ self.addEventListener('fetch', (event) => {
   // possible.
   if (immutable(url)) {
     event.respondWith((async () => {
-      const hit = await caches.match(request);
+      const hit = await cached(request);
       if (hit) return isolated(hit);
       const fresh = await fetch(request);
-      if (fresh.ok) (await caches.open(CACHE)).put(request, fresh.clone());
+      if (fresh.ok) stash(request, fresh);
       return isolated(fresh);
     })());
     return;
@@ -129,11 +163,11 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     try {
       const fresh = await fetch(request);
-      if (fresh.ok) (await caches.open(CACHE)).put(request, fresh.clone());
+      if (fresh.ok) stash(request, fresh);
       return isolated(fresh);
     } catch {
-      const cached = await caches.match(request);
-      return cached ? isolated(cached) : Response.error();
+      const hit = await cached(request);
+      return hit ? isolated(hit) : Response.error();
     }
   })());
 });
