@@ -80,6 +80,28 @@ public sealed class PreludeIlBakeTests
         "    call((member(Z, [x,y]), Z == y)),\n" +
         "    (numlist(1,5,NL), sum_list(NL, 15)).\n";
 
+    // The premise BundleRaceDiag stands on: two serial builds of the same
+    // input agree on every section except the persisted-IL blob, which
+    // embeds a fresh MVID / PE timestamp per emit — in place, at constant
+    // length. Everything a load consumes structurally is deterministic, so a
+    // rebuild-diff in a failure report indicts the concurrent build.
+    [Fact]
+    public void BundleBuild_BackToBack_IsStructurallyDeterministic()
+    {
+        byte[] Build() => ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(Scenario, "app") },
+            EntryPoints = new[] { new PredicateRef("scenario", 0) },
+            BakePrelude = true,
+            IncludeCompiledIl = true,
+            StripWam = false,
+        }).Bytes!;
+        string table = BundleRaceDiag.Structural(
+            BundleReader.FromBytes(Build()), BundleReader.FromBytes(Build()));
+        Assert.DoesNotContain("DIFFER", table);
+        Assert.DoesNotContain("NULL-MISMATCH", table);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]   // --strip-wam
@@ -131,7 +153,15 @@ public sealed class PreludeIlBakeTests
             // Full transcript on failure: Assert.Contains truncates its
             // display, which once hid the child's actual error.
             Assert.True(stdout.Contains("true."),
-                $"child transcript lacks \"true.\"\nstdout:\n{stdout}\nstderr:\n{stderr}");   // scenario succeeded
+                $"child transcript lacks \"true.\"\nstdout:\n{stdout}\nstderr:\n{stderr}\n"
+                + BundleRaceDiag.CompareWithRebuild(r.Bytes!, () => ShmoLinker.Link(new LinkConfig
+                {
+                    Objects = new[] { ShmoCompiler.CompileSource(Scenario, "app") },
+                    EntryPoints = new[] { new PredicateRef("scenario", 0) },
+                    BakePrelude = true,
+                    IncludeCompiledIl = true,
+                    StripWam = stripWam,
+                }).Bytes!));   // scenario succeeded
             Assert.DoesNotContain("false.", stdout);
         }
         finally
