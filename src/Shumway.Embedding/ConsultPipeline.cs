@@ -150,6 +150,31 @@ internal sealed class ConsultPipeline
         }
     }
 
+    /// <summary>Rejects clauses whose head functor is a control connective
+    /// (see the call site). Reported through the warnings channel and dropped,
+    /// so the rest of the file still loads — the SWI-style file behavior of
+    /// the error assertz/1 raises for the same head.</summary>
+    private List<Clause> DropControlConnectiveHeads(List<Clause> clauses)
+    {
+        List<Clause>? kept = null;
+        for (int i = 0; i < clauses.Count; i++)
+        {
+            bool bad = TryReadClauseHead(clauses[i], out var spec) && spec switch
+            {
+                (",", 2) or (";", 2) or ("->", 2) or ("*->", 2) or ("!", 0) => true,
+                _ => false,
+            };
+            if (bad)
+            {
+                kept ??= new List<Clause>(clauses.GetRange(0, i));
+                E.Warn($"error: no permission to modify static procedure "
+                     + $"({spec.Name})/{spec.Arity} — clause ignored");
+            }
+            else kept?.Add(clauses[i]);
+        }
+        return kept ?? clauses;
+    }
+
     /// <summary>A clause with a module-qualified head <c>M:Head</c> (a bound atom
     /// <c>M</c>) defines <c>Head</c> in module <c>M</c> — e.g. atts.pl's
     /// <c>user:term_expansion(...)</c>. Returns the module name and the clause with
@@ -1417,6 +1442,16 @@ internal sealed class ConsultPipeline
                 E.Warn(
                     $"warning: redefinition of builtin {name}/{arity} ignored (arity_compat)");
         }
+
+        // A clause whose head is a control CONNECTIVE — `a,b.` reads as a
+        // clause for ','/2 — can never be dispatched: the compiler lowers
+        // these functors inline unconditionally, so the stored clauses are
+        // unreachable dead weight that listing/0 shows and nothing can call.
+        // assertz/1 already refuses them (permission_error, §8.9.2.3); consult
+        // now reports the same and drops the clause, loading on. Deliberately
+        // NOT the full builtin set: catch/3, call/N and friends are real
+        // prelude predicates consulted through this very pipeline.
+        clauses = DropControlConnectiveHeads(clauses);
 
         // In-file term_expansion hooks defined this consult: their unexpanded
         // clauses (a grammar operator like clpz's `++>`, all sharing one head
