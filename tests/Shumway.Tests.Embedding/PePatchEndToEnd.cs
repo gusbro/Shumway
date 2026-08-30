@@ -172,8 +172,11 @@ public class PePatchEndToEnd
             // The query succeeds → REPL prints "true." on a goal that
             // returned a single solution. A failure prints "false."
             // and an exception prints "% PrologRuntimeException: ...".
-            // The "true." check is enough to distinguish all three.
-            Assert.Contains("true.", stdout);
+            // The "true." check is enough to distinguish all three — and on
+            // failure the WHOLE transcript matters (Assert.Contains truncates
+            // its display, which once hid the child's actual error).
+            Assert.True(stdout.Contains("true."),
+                $"child transcript lacks \"true.\"\nstdout:\n{stdout}\nstderr:\n{stderr}");
         }
         finally
         {

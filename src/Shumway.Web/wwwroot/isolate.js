@@ -81,7 +81,15 @@
         }
         sessionStorage.setItem(PURGED, 'yes');
         reloading = true;
-        reg.unregister().then(
+        // Bounded: on a TRULY corrupted record every avenue hangs — ready,
+        // unregister, even register with a different script URL (verified
+        // against a live specimen). Nothing a page runs can remove it; only
+        // the user can, by clearing the site's data. So when the funeral
+        // itself hangs, stop hiding and say exactly that.
+        Promise.race([
+          reg.unregister(),
+          new Promise((_, no) => setTimeout(() => no(new Error('stuck')), 4000)),
+        ]).then(
           () => location.reload(),
           () => { reloading = false; showFailed(); });
         return;

@@ -116,7 +116,8 @@ public sealed class TablingBundleTests
             proc.WaitForExit(30000);
 
             Assert.True(proc.ExitCode == 0, $"exit {proc.ExitCode}\n{stdout}\n{stderr}");
-            Assert.Contains("Sc = true", stdout);
+            Assert.True(stdout.Contains("Sc = true"),
+                $"child transcript lacks \"Sc = true\"\nstdout:\n{stdout}\nstderr:\n{stderr}");
             Assert.Contains("Sa = undefined", stdout);
         }
         finally
@@ -224,7 +225,8 @@ public sealed class TablingBundleTests
             proc.WaitForExit(30000);
 
             Assert.True(proc.ExitCode == 0, $"exit {proc.ExitCode}\n{stdout}\n{stderr}");
-            Assert.Contains("[a, b, c, d]", stdout);
+            Assert.True(stdout.Contains("[a, b, c, d]"),
+                $"child transcript lacks \"[a, b, c, d]\"\nstdout:\n{stdout}\nstderr:\n{stderr}");
         }
         finally
         {
