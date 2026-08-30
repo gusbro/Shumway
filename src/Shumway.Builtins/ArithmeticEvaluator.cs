@@ -499,7 +499,23 @@ public static class ArithmeticEvaluator
     /// <paramref name="preferRationals"/> is the <c>prefer_rationals</c> flag,
     /// consulted only by <c>/</c> (ADR-039); the default false is the
     /// ISO / GProlog behaviour and the compile-time constant-folding path.</summary>
-    public static Number ApplyBin(BinOp op, Number a, Number b, bool preferRationals = false) => op switch
+    // Unbounded integers still live in a finite representation: .NET's
+    // BigInteger caps a magnitude at int.MaxValue BITS (~256 MB, ~646 million
+    // decimal digits) and throws a raw OverflowException at the cap — which
+    // used to escape `is/2` as "% OverflowException: ..." instead of an ISO
+    // error. Every arithmetic apply funnels through these two wrappers, so the
+    // cap (and an allocation failure on a near-cap temporary) surfaces as the
+    // catchable resource_error(memory) everywhere: Tier-0, the ADR-018 eval
+    // stack, and the IL tier alike. The int64→BigInteger promotion paths catch
+    // their own OverflowException locally and never reach this.
+    public static Number ApplyBin(BinOp op, Number a, Number b, bool preferRationals = false)
+    {
+        try { return ApplyBinCore(op, a, b, preferRationals); }
+        catch (OverflowException) { throw new PrologRuntimeException("resource_error", "memory"); }
+        catch (OutOfMemoryException) { throw new PrologRuntimeException("resource_error", "memory"); }
+    }
+
+    private static Number ApplyBinCore(BinOp op, Number a, Number b, bool preferRationals) => op switch
     {
         BinOp.Add => Add(a, b),
         BinOp.Sub => Subtract(a, b),
@@ -603,8 +619,16 @@ public static class ArithmeticEvaluator
         return new Number(qi);
     }
 
-    /// <summary>Applies a unary op to an already-evaluated number.</summary>
-    public static Number ApplyUn(UnOp op, Number a) => op switch
+    /// <summary>Applies a unary op to an already-evaluated number. Same
+    /// representation-cap wrapper as <see cref="ApplyBin"/>.</summary>
+    public static Number ApplyUn(UnOp op, Number a)
+    {
+        try { return ApplyUnCore(op, a); }
+        catch (OverflowException) { throw new PrologRuntimeException("resource_error", "memory"); }
+        catch (OutOfMemoryException) { throw new PrologRuntimeException("resource_error", "memory"); }
+    }
+
+    private static Number ApplyUnCore(UnOp op, Number a) => op switch
     {
         UnOp.Neg => Negate(a),
         UnOp.Pos => a,
@@ -809,6 +833,16 @@ public static class ArithmeticEvaluator
     private static Number ShiftLeft(Number a, Number b)
     {
         EnsureBothInt(a, b);
+        // NOT a bare (int) cast: it truncated the count, so `1 << 4294967296`
+        // shifted by 0 and answered 1 — a silently wrong answer. A count past
+        // int.MaxValue pushes any nonzero value over the representation cap
+        // (the cap IS 2^31 bits); a count below int.MinValue is a right shift
+        // past every bit.
+        if (b.IntValue > int.MaxValue)
+            return a.AsBigInteger().IsZero ? new Number(0L)
+                : throw new PrologRuntimeException("resource_error", "memory");
+        if (b.IntValue < int.MinValue)
+            return new Number(a.AsBigInteger().Sign < 0 ? -1L : 0L);
         int shift = (int)b.IntValue;
         if (a.IsBig) return new Number(a.BigValue << shift);
         // `checked` does NOT cover shifts in C# (they wrap silently, and the
@@ -827,9 +861,22 @@ public static class ArithmeticEvaluator
     private static Number ShiftRight(Number a, Number b)
     {
         EnsureBothInt(a, b);
+        // Mirror of ShiftLeft's count handling — the bare (int) cast truncated
+        // here too. Right past every bit floors to 0 / -1; left (negative
+        // count) past int.MinValue overflows any nonzero value.
+        if (b.IntValue > int.MaxValue)
+            return new Number(a.AsBigInteger().Sign < 0 ? -1L : 0L);
+        if (b.IntValue < int.MinValue)
+            return a.AsBigInteger().IsZero ? new Number(0L)
+                : throw new PrologRuntimeException("resource_error", "memory");
         int shift = (int)b.IntValue;
         if (a.IsBig) return new Number(a.BigValue >> shift);
-        return new Number(a.IntValue >> shift);
+        // C# masks a long's shift count to 0..63 (`1L >> 64` is 1) — outside
+        // that window BigInteger has the intended unbounded semantics,
+        // including the negative count that shifts the other way.
+        long v = a.IntValue;
+        if (shift >= 0 && shift < 64) return new Number(v >> shift);
+        return new Number((System.Numerics.BigInteger)v >> shift);
     }
 
     private static Number Gcd(Number a, Number b)
@@ -845,8 +892,19 @@ public static class ArithmeticEvaluator
         // integer; otherwise it's a float.
         if (!a.IsFloat && !b.IsFloat && b.IsInt && b.IntValue >= 0)
         {
+            // An exponent past int.MaxValue cannot even be passed to Pow, and
+            // any non-trivial result would exceed the representation cap
+            // anyway — same resource_error(memory) the cap itself raises, so
+            // 2^2147483646 (OOM at the cap), 2^2147483647 (overflow past it)
+            // and 2^2147483648 (this guard) answer identically. |base| <= 1
+            // stays exact at any exponent.
             if (b.IntValue > int.MaxValue)
-                throw new PrologRuntimeException("evaluation_error", "exponent_too_large");
+            {
+                BigInteger bb = a.AsBigInteger();
+                if (bb.IsZero || bb.IsOne) return new Number(bb);
+                if ((-bb).IsOne) return new Number((b.IntValue & 1) == 0 ? 1L : -1L);
+                throw new PrologRuntimeException("resource_error", "memory");
+            }
             return new Number(System.Numerics.BigInteger.Pow(a.AsBigInteger(), (int)b.IntValue));
         }
         // ISO 9.3.10 (Cor.2): integer base, NEGATIVE integer exponent —
@@ -860,11 +918,17 @@ public static class ArithmeticEvaluator
             if (baseInt.IsOne) return new Number(1L);
             if ((-baseInt).IsOne)
                 return new Number((b.IntValue & 1) == 0 ? 1L : -1L);
-            if (b.IntValue < -int.MaxValue)
-                throw new PrologRuntimeException("evaluation_error", "exponent_too_large");
             if (preferRationals)
+            {
+                // The denominator Base^|N| meets the same representation cap
+                // as the positive-exponent path — same resource_error(memory).
+                if (b.IntValue < -int.MaxValue)
+                    throw new PrologRuntimeException("resource_error", "memory");
                 return new Number(Rational.Create(
                     BigInteger.One, BigInteger.Pow(baseInt, (int)(-b.IntValue))));
+            }
+            // Without rationals there is no integer value at ANY magnitude of
+            // negative exponent — type_error(float), never a resource error.
             throw new PrologRuntimeException("type_error", "float",
                 a.IsBig ? (object)a.BigValue : (object)a.IntValue);
         }
