@@ -871,8 +871,8 @@ Other directives (`set_prolog_flag/2`, etc.) are honoured at consult time
 but do not affect link-time decisions.
 
 `?- Goal.` in Prolog text is the Edinburgh spelling of a directive and is
-equivalent to `:- Goal.` — the goal runs at consult time. This is what makes
-a pasted top-level transcript loadable as a file: the `?-` lines execute
+equivalent to `:- Goal.` so the goal runs at consult time. This makes a 
+pasted top-level transcript loadable as a file: the `?-` lines execute
 instead of being misread as clauses.
 
 ### Standard order of terms
