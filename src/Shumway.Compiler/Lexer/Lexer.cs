@@ -656,7 +656,15 @@ public sealed class Lexer
             }
 
             string floatSource = StripSeparators(_source[start.._offset]);
-            double f = double.Parse(floatSource, CultureInfo.InvariantCulture);
+            // .NET Framework's double.Parse THROWS OverflowException for a
+            // syntactically valid literal beyond double range ("9.9e999")
+            // where .NET Core returns Infinity — go through TryParse and
+            // supply the Core value so both frameworks lex identically (the
+            // literal is unsigned here, so overflow is always +Inf; the
+            // number_chars path rejects the infinity as a syntax error).
+            if (!double.TryParse(floatSource, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out double f))
+                f = double.PositiveInfinity;
             return new Token(TokenKind.Float, pos, floatSource) { FloatValue = f };
         }
 
