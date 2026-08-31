@@ -173,7 +173,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 
 | Predicate | Description |
 | --- | --- |
-| `[+File\|+Files]` | Edinburgh consult syntax: calling a list as a goal consults each element, so `?- [file1, file2].` loads both and `?- [user].` reads clauses interactively from current input until end_of_file. An element is anything consult/1 accepts. |
+| `[+File\|+Files]` | Edinburgh consult syntax: calling a list as a goal consults each element in order, so `?- [file1, file2, ...].` loads every file of the list and `?- [user].` reads clauses interactively from current input until end_of_file. An element is anything consult/1 accepts. |
 | `abolish(+PredicateIndicator)` | Removes every clause of the named dynamic predicate. |
 | `abolish_all_tables` | Discards every tabled answer; later queries recompute against the current program. |
 | `abolish_table(+PredicateIndicator)` | Discards the tabled answers of one predicate, given as Name/Arity. |
