@@ -440,6 +440,11 @@ internal static class Prelude
                     functor(H, N, A),
                     throw(error(permission_error(
                         access, private_procedure, N/A), _))
+                % '-->'/2 is source syntax, not a procedure — reading its
+                % clauses is as private as modifying them (phrase case 25).
+            ;   functor(H, -->, 2) ->
+                    throw(error(permission_error(
+                        access, private_procedure, (-->)/2), _))
             ;   true
             ),
             '$clause_enum'(H, H-B).
@@ -1521,13 +1526,32 @@ internal static class Prelude
         '$dcg_body_check'((A ; B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
         '$dcg_body_check'((A -> B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
         '$dcg_body_check'('|'(A, B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
+        % {G} translates to call(G): a number ANYWHERE in G's control skeleton
+        % can never be called, and the check runs before anything else does —
+        % phrase(([a],{1}), []) raises even though [a] would have failed first
+        % (Neumerkel's phrase case 10).
+        '$dcg_body_check'({G}) :- !, '$dcg_goal_check'(G).
         '$dcg_body_check'(N) :-
             number(N), !, throw(error(type_error(callable, N), phrase/3)).
         '$dcg_body_check'(_).
 
+        '$dcg_goal_check'(G) :- var(G), !.
+        '$dcg_goal_check'((A, B)) :- !, '$dcg_goal_check'(A), '$dcg_goal_check'(B).
+        '$dcg_goal_check'((A ; B)) :- !, '$dcg_goal_check'(A), '$dcg_goal_check'(B).
+        '$dcg_goal_check'((A -> B)) :- !, '$dcg_goal_check'(A), '$dcg_goal_check'(B).
+        '$dcg_goal_check'(N) :-
+            number(N), !, throw(error(type_error(callable, N), phrase/3)).
+        '$dcg_goal_check'(_).
+
         '$phrase'(V, _, _) :- var(V), !, throw(error(instantiation_error, phrase/3)).
         '$phrase'([], S0, S) :- !, S0 = S.
-        '$phrase'([H|T], S0, S) :- !, append([H|T], S, S0).
+        % A terminal list must be PROPER before it consumes anything: an open
+        % tail is an instantiation_error (phrase([a|L], K) may not guess L),
+        % an improper one a type_error — and without the check the open case
+        % grew the list it was matching forever (phrase([a|L], L)).
+        '$phrase'([H|T], S0, S) :- !,
+            '$dcg_terminal_check'(T, [H|T]),
+            append([H|T], S, S0).
         '$phrase'(!, S0, S) :- !, S0 = S.
         '$phrase'((A, B), S0, S) :- !, '$phrase'(A, S0, S1), '$phrase'(B, S1, S).
         '$phrase'((A ; B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
@@ -1540,6 +1564,18 @@ internal static class Prelude
         '$phrase'(\+ A, S0, S) :- !, \+ '$phrase'(A, S0, _), S0 = S.
         '$phrase'(call(G), S0, S) :- !, call(G, S0, S).
         '$phrase'(G, S0, S) :- call(G, S0, S).
+
+        '$dcg_terminal_check'(T, Orig) :-
+            (   '$cyclic_spine'(Orig) ->
+                throw(error(type_error(list, Orig), phrase/3))
+            ;   '$dcg_terminal_walk'(T, Orig)
+            ).
+        '$dcg_terminal_walk'(V, _) :- var(V), !,
+            throw(error(instantiation_error, phrase/3)).
+        '$dcg_terminal_walk'([], _) :- !.
+        '$dcg_terminal_walk'([_|T], Orig) :- !, '$dcg_terminal_walk'(T, Orig).
+        '$dcg_terminal_walk'(_, Orig) :-
+            throw(error(type_error(list, Orig), phrase/3)).
 
         %! phrase_from_stream(:Body, +Stream) | Grammar | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream.
         phrase_from_stream(Body, Stream) :-

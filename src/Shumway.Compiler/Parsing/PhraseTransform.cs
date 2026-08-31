@@ -101,8 +101,11 @@ public static class PhraseTransform
     {
         switch (body)
         {
-            case AtomTerm a when a.Name != "[]":
-                // phrase(a, L, R) → a(L, R).
+            case AtomTerm a when a.Name != "[]" && a.Name != "!":
+                // phrase(a, L, R) → a(L, R). NOT for `!`: a cut body is the
+                // control construct "consume nothing", not a non-terminal —
+                // expanding it called a nonexistent !/2 (Neumerkel's phrase
+                // case 3); the runtime '$phrase' interpreter handles it.
                 return new CompoundTerm(a.Name, new[] { list, rest })
                 { Position = origin.Position };
             case CompoundTerm bc when IsBodyControlConstruct(bc):

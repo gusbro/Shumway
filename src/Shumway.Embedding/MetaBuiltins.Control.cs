@@ -665,9 +665,12 @@ public static partial class MetaBuiltins
         // procedure (WG17 reading; SWI and GNU agree).
         string hn = head is AtomTerm ha ? ha.Name : ((CompoundTerm)head).Functor;
         int harity = head is CompoundTerm hc ? hc.Args.Length : 0;
+        // '-->'/2 belongs here too: a DCG rule is source syntax the loader
+        // TRANSLATES — an asserted '-->'/2 clause would be stored, listed and
+        // never dispatched (Neumerkel's phrase case 24; GNU agrees).
         if ((harity == 0 && hn == "!")
             || (harity == 1 && hn == ":-")
-            || (harity == 2 && hn is "," or ";" or "->" or "*->" or ":-"))
+            || (harity == 2 && hn is "," or ";" or "->" or "*->" or ":-" or "-->"))
             throw new ShumwayPrologException(IsoError.PermissionError(
                 "modify", "static_procedure",
                 new CompoundTerm("/", new Term[] { new AtomTerm(hn), new IntTerm(harity) })));
