@@ -7,7 +7,12 @@ namespace Shumway.Tests.IsoConformance;
 /// (complang.tuwien.ac.at/ulrich/iso-prolog/number_chars): the undisputed
 /// ISO cases plus the Cor.2:2012 reversible semantics for a partially
 /// instantiated character list. The out-of-scope cyclic case answers a
-/// catchable type_error(list, _) here — the page accepts even halting.</summary>
+/// catchable type_error(list, _) here — the page accepts even halting.
+/// The C-numbered section is the newer number_chars_cont comparison
+/// (cases 54..83, run there under double_quotes=chars — this engine's
+/// default): quoted/escaped signs, 0'-literal edges, radix forms, and
+/// the float-range cases, where a literal past double's range is a
+/// syntax error, never an infinity.</summary>
 public sealed class NumberCharsConformance
 {
     private static void True(string q) =>
@@ -76,4 +81,66 @@ public sealed class NumberCharsConformance
     [Fact] public void M45() => Raises("number_chars(1, [[]|2])", "type_error(character, [])");
     [Fact] public void M46_Cyclic() =>
         Raises("(L = ['1'|L], number_chars(_, L))", "type_error(list, _)");
+
+    // ---- number_chars_cont: contemporary comparison (54..83) ----
+
+    [Fact] public void C54_QuotedMinus() =>
+        True("number_chars(N, \"'-'1\"), N == -1.");
+    [Fact] public void C55_TrailingZeroFraction() => True("number_chars(1.2, \"1.20\").");
+    [Fact] public void C56_LowercaseExponent() => True("number_chars(1.0e9, \"1.0e9\").");
+    [Fact] public void C57_SignSpaceComment() =>
+        True("number_chars(N, \"- /**/1\"), N == -1.");
+    [Fact] public void C58_BareCharQuote() =>
+        Raises("number_chars(_, \"0'\")", "syntax_error(_)");
+    [Fact] public void C59_RawNewlineCharLiteral() =>
+        Raises("number_chars(_, \"0'\\n\")", "syntax_error(_)");
+    [Fact] public void C60_EscapedNewlineCharLiteral() =>
+        True("number_chars(N, \"0'\\\\n\"), N == 10.");
+    [Fact] public void C61_OctalEscapeCharLiteral() =>
+        True("number_chars(N, \"0'\\\\7\\\\\"), N == 7.");
+    [Fact] public void C62_DotCharLiteral() =>
+        True("number_chars(N, \"0'.\"), N == 46.");
+    [Fact] public void C63_ContinuationEscapeInQuotedMinus() =>
+        True("number_chars(N, \"'\\\\\\n-' 3\"), N == -3.");
+    [Fact] public void C64_NegativeZeroFloat() => True("number_chars(0.0, \"-0.0\").");
+    [Fact] public void C65_LeadingZeroInteger() => True("number_chars(10, \"010\").");
+    [Fact] public void C66_LeadingZeroSolves() =>
+        True("number_chars(N, \"010\"), N == 10.");
+    [Fact] public void C67_LeadingZeroEightIsDecimal() =>
+        True("number_chars(N, \"08\"), N == 8.");
+    [Fact] public void C68_Binary() => True("number_chars(N, \"0b11\"), N == 3.");
+    [Fact] public void C69_Octal() => True("number_chars(N, \"0o11\"), N == 9.");
+    [Fact] public void C70_Hex() => True("number_chars(N, \"0x11\"), N == 17.");
+    [Fact] public void C71_UnterminatedOctalEscape() =>
+        Raises("number_chars(_, \"0'\\\\7\")", "syntax_error(_)");
+    [Fact] public void C72_MixedBadList() =>
+        // The battery sanctions four errors; this engine reports the first
+        // non-character element.
+        Raises("number_chars(_, [1,[],_|2])", "type_error(character, 1)");
+    [Fact] public void C73_ParenthesizedIsNotANumber() =>
+        Raises("number_chars(_, \"(0)\")", "syntax_error(_)");
+    [Fact] public void C74_SignCommentZero() =>
+        True("number_chars(N, \"-%\\n0\"), N == 0.");
+    [Fact] public void C75_QuotedQuoteCharLiteral() =>
+        True("number_chars(N, \"0'''\"), N == 39.");
+    [Fact] public void C76_EscapedQuoteCharLiteral() =>
+        True("number_chars(N, \"0'\\\\'\"), N == 39.");
+    [Fact] public void C77_SpaceCharLiteral() =>
+        True("number_chars(N, \"0' \"), N == 32.");
+    [Fact] public void C78_RoundTripStability() =>
+        True("number_chars(N, \"1.0e-8\"), number_chars(N, L), number_chars(N, L).");
+    [Fact] public void C79_ArithmeticUnderflowIsZero() =>
+        // The battery also sanctions evaluation_error(underflow).
+        True("N is 0.1*10** -999, N == 0.0.");
+    [Fact] public void C80_LiteralUnderflowIsZero() =>
+        // The battery also sanctions representation_error(number).
+        True("number_chars(N, \"0.1e-999\"), N == 0.0.");
+    [Fact] public void C81_ArithmeticOverflowErrs() =>
+        Raises("_ is 9.9*10**999", "evaluation_error(float_overflow)");
+    [Fact] public void C82_LiteralOverflowErrs() =>
+        // Of the sanctioned errors this engine picks syntax_error, with
+        // SICStus, Scryer and Trealla; an infinity is non-conforming.
+        Raises("number_chars(_, \"9.9e999\")", "syntax_error(_)");
+    [Fact] public void C83_AllCodesList() =>
+        Raises("number_chars(_, [1,2,3])", "type_error(character, 1)");
 }

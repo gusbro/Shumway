@@ -224,12 +224,16 @@ public sealed class VariableNamesConformance
 
     // ---- read_term: variable_names/singletons are OUTPUT options ----
 
-    [Fact] public void V45_46_ReadAtomNoVariables() => WithData("a.",
-        "open('{F}',read,S), read_term(S,T,[variable_names(VN)]), close(S), "
-      + "T == a, VN == [].");
-    [Fact] public void V29_32_FirstAppearanceOrder() => WithData("B+C+A+B+C+A.",
-        "open('{F}',read,S), read_term(S,_,[variable_names(VN)]), close(S), "
-      + "VN = [_=1,_=2,_=3], with_output_to(atom(A), writeq(VN)), "
+    [Fact] public void V45_46_ReadAtomNoVariables() => WithData("a.\n",
+        // The quad also pins peeks("\n"): the newline after the end dot
+        // stays unconsumed.
+        "open('{F}',read,S), read_term(S,T,[variable_names(VN)]), "
+      + "peek_char(S, C), close(S), T == a, VN == [], C == '\\n'.");
+    [Fact] public void V29_32_FirstAppearanceOrder() => WithData("B+C+A+B+C+A.\n",
+        "open('{F}',read,S), read_term(S,T,[variable_names(VN)]), "
+      + "peek_char(S, C), close(S), "
+      + "VN = [_=1,_=2,_=3], T == 1+2+3+1+2+3, C == '\\n', "
+      + "with_output_to(atom(A), writeq(VN)), "
       + "A == '[\\'B\\'=1,\\'C\\'=2,\\'A\\'=3]'.");
     [Fact] public void V47_48_ValueMismatchFails() => WithData("a.",
         "open('{F}',read,S), read_term(S,_,[variable_names(42)]).", expect: false);

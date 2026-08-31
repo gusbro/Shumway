@@ -725,7 +725,10 @@ public static partial class MetaBuiltins
         {
             Shumway.Compiler.Ast.IntTerm it => it.Value,
             Shumway.Compiler.Ast.BigIntTerm bt => bt.Value,
-            Shumway.Compiler.Ast.FloatTerm ft => ft.Value,
+            // Never hand back an infinity: a float literal past double's range
+            // ("9.9e999") is a syntax error, not +inf (number_chars_cont 82).
+            Shumway.Compiler.Ast.FloatTerm ft =>
+                double.IsFinite(ft.Value) ? (object)ft.Value : null,
             _ => null,
         };
     }

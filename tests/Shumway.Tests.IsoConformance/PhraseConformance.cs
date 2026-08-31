@@ -53,7 +53,9 @@ public sealed class PhraseConformance
         Raises("phrase([a|_],[])", "instantiation_error");
     [Fact] public void P09_TerminalThenNil() => True("phrase(([a],[]),[a]).");
     [Fact] public void P10_BraceNumberAfterFailingTerminal() =>
-        Raises("phrase(([a],{1}),[])", "type_error(callable, 1)");
+        // A number INSIDE braces surfaces from call/1 with the whole
+        // translated goal as culprit (quad: type_error(callable,(...,...))).
+        Raises("phrase(([a],{1}),[])", "type_error(callable, (_,_))");
     [Fact] public void P11_CutFailInBraces_IsTransparent() =>
         // Tr({G}) inlines G, so the cut's extent is the translated call —
         // the whole phrase — and the ;[] branch is cut away (Scryer agrees;
@@ -65,7 +67,9 @@ public sealed class PhraseConformance
     [Fact] public void P14_DisjunctionFirstSolution() =>
         True("phrase(([a];[]),L), L == [a].");
     [Fact] public void P15_NonCallableConjInBraces() =>
-        Raises("phrase({fail,1},_)", "type_error(callable, _)");
+        // quad: type_error(callable, ((fail,1),[]=_)) — the culprit is the
+        // translated goal, so the (,)/2 shape is what the pin holds.
+        Raises("phrase({fail,1},_)", "type_error(callable, (_,_))");
     [Fact] public void P16_ThrowInBraces() =>
         True("catch(phrase({throw(h)},[a]), h, true).");
     [Fact] public void P17_TerminalCheckedBeforeBraceRuns() =>
@@ -99,14 +103,14 @@ public sealed class PhraseConformance
     [Fact] public void P28_NegatedNumber() =>
         Raises("phrase(\\+1,_)", "type_error(callable, 1)");
     [Fact] public void P29_NegatedNumberAfterTerminal() =>
-        // \+ is supported as an extension (case 27's sanctioned "true");
-        // the number inside it errs AT TRANSLATION, same model as case 10.
-        // Scryer instead rejects \+ wholesale (representation_error).
-        Raises("phrase(([a],\\+1),[])", "type_error(callable, 1)");
+        // \+ is an extension (TS has no negation; Scryer rejects it with
+        // representation_error(dcg_body)). Its argument translates INSIDE
+        // the negation at call time, so [a] failing against [] means the
+        // \+1 never runs — the quad sanctions exactly this "false".
+        False("phrase(([a],\\+1),[]).");
     [Fact] public void P30_NegationInDisjunction() =>
-        // Same translation-time error as case 29 — the ;[] branch cannot
-        // rescue a body that does not translate.
-        Raises("phrase(([a],\\+1;[]),[])", "type_error(callable, 1)");
+        // Same lazy reading: the ([a],\+1) branch fails, ;[] succeeds.
+        True("phrase(([a],\\+1;[]),[]).");
     [Fact] public void P31_PhraseOfPhrase() =>
         Raises("phrase(phrase(phrase,[]),_)", "existence_error(procedure, phrase/4)");
     [Fact] public void P32_CallNilBody() =>
@@ -117,7 +121,7 @@ public sealed class PhraseConformance
         True("(phrase(!,[_]) ; L=1), L == 1.");
     [Fact] public void P36_ClosedTailMatch() => True("L=[], phrase([a|L],[a]).");
     [Fact] public void P37_CutTerminalBraceNumber() =>
-        Raises("phrase((!,[a],{1}),[])", "type_error(callable, 1)");
+        Raises("phrase((!,[a],{1}),[])", "type_error(callable, (_,_))");
     [Fact] public void P38_TerminalTailIsRest() =>
         Raises("phrase([a|L],L)", "instantiation_error");
     [Fact] public void P39_VarBody() => Raises("phrase(_,_)", "instantiation_error");
@@ -133,7 +137,9 @@ public sealed class PhraseConformance
     [Fact] public void P46_NumberThenBraceNumber() =>
         Raises("phrase((1,{2}),[])", "type_error(callable, 1)");
     [Fact] public void P47_BraceNumberThenNumber() =>
-        Raises("phrase(({2},1),[])", "type_error(callable, 2)");
+        // The brace goal translates without inspection, so the culprit is
+        // the BODY number 1 — the quad's only sanctioned answer.
+        Raises("phrase(({2},1),[])", "type_error(callable, 1)");
     [Fact] public void P48_ManyNonCallables() =>
         Raises("phrase((1,(2,[_|_],3),4),[])", "type_error(callable, _)");
 }

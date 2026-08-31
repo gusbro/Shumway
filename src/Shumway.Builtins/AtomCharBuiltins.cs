@@ -256,6 +256,12 @@ public static class AtomCharBuiltins
                 // token parser above doesn't cover. Fall back to the host's full
                 // term reader (wired on the engine); a non-number result stays a
                 // syntax error.
+                // A parenthesized term is NOT a number token sequence — "(0)"
+                // is a syntax error (number_chars_cont case 73) even though
+                // the term reader below would happily parse it to 0.
+                int open = SkipLayout(s, 0);
+                if (open < s.Length && s[open] == '(')
+                    throw new PrologRuntimeException("syntax_error", "illegal_number");
                 if (engine.NumberFromChars?.Invoke(s) is { } boxed)
                 {
                     if (boxed is double d)
@@ -394,6 +400,10 @@ public static class AtomCharBuiltins
         if (!double.TryParse(s.Substring(start), NumberStyles.Float,
                 CultureInfo.InvariantCulture, out double dv))
             return false;
+        // An exponent past double's range parses to Infinity in .NET —
+        // "9.9e999" must be a syntax error (number_chars_cont case 82), never
+        // an infinite float. Underflow to 0.0 stays accepted (case 80).
+        if (!double.IsFinite(dv)) return false;
         floatIdx = engine.MakeFloat(neg ? -dv : dv);
         return true;
     }

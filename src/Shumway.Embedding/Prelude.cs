@@ -1552,14 +1552,20 @@ internal static class Prelude
         '$dcg_translate'((A -> B), S0, S, (GA -> GB)) :- !,
             '$dcg_translate'(A, S0, S1, GA),
             '$dcg_translate'(B, S1, S, GB).
-        '$dcg_translate'(\+ A, S0, S, (\+ GA, S0 = S)) :- !,
-            '$dcg_translate'(A, S0, _, GA).
+        % \+ is an extension (TS 13211-3 has no negation; phrase_quad.pl
+        % sanctions representation_error(dcg_body) or the LAZY reading).
+        % A translates at call time, inside the negation: ([a],\+1) on []
+        % is false — [a] fails first — never an eager type_error (case 29),
+        % while \+1 alone still errs when the negation runs (case 28).
+        '$dcg_translate'(\+ A, S0, S, (\+ phrase(A, S0, _), S0 = S)) :- !.
         % Tr({G}) = (G, S0 = S) — G INLINED, not wrapped in call/1, so a cut
-        % inside the braces keeps the translated goal's extent. The number
-        % check runs at translation: phrase(([a],{1}), []) raises even though
-        % [a] would have failed first.
-        '$dcg_translate'({G}, S0, S, (G, S0 = S)) :- !,
-            '$dcg_goal_check'(G).
+        % inside the braces keeps the translated goal's extent. No eager
+        % check on G: a number inside braces surfaces from call/1 with the
+        % WHOLE translated goal as culprit — phrase({fail,1},L) is
+        % type_error(callable, ((fail,1), _=[])), exactly phrase_quad.pl's
+        % cases 10/15/37 — while a number as a DCG BODY element (below) errs
+        % at translation with itself as culprit (cases 13/46/47).
+        '$dcg_translate'({G}, S0, S, (G, S0 = S)) :- !.
         '$dcg_translate'(call(G), S0, S, call(G, S0, S)) :- !.
         '$dcg_translate'(N, _, _, _) :-
             number(N), !, throw(error(type_error(callable, N), phrase/3)).
@@ -1567,14 +1573,6 @@ internal static class Prelude
             NT =.. L0,
             '$dcg_terminal_concat'(L0, [S0, S], L),
             G =.. L.
-
-        '$dcg_goal_check'(G) :- var(G), !.
-        '$dcg_goal_check'((A, B)) :- !, '$dcg_goal_check'(A), '$dcg_goal_check'(B).
-        '$dcg_goal_check'((A ; B)) :- !, '$dcg_goal_check'(A), '$dcg_goal_check'(B).
-        '$dcg_goal_check'((A -> B)) :- !, '$dcg_goal_check'(A), '$dcg_goal_check'(B).
-        '$dcg_goal_check'(N) :-
-            number(N), !, throw(error(type_error(callable, N), phrase/3)).
-        '$dcg_goal_check'(_).
 
         '$dcg_terminal_check'(T, Orig) :-
             (   '$cyclic_spine'(Orig) ->
