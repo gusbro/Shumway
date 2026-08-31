@@ -12,7 +12,24 @@
 :- use_module(library(http/http_open)).
 
 conformity_engine(swi).
-conformity_skips([]).
+% length #30: the freeze-driven infinite list drives this engine into an
+% uninterruptible kernel loop (a cyclic unification never reaches the
+% safe point call_with_time_limit's alarm needs), so not even the timed
+% call bounds it.
+conformity_skips([length-30]).
+
+% loops-sanctioned tests run bounded: call_with_time_limit's
+% time_limit_exceeded IS the loops outcome.
+conformity_timed_call(G, Ms, O) :-
+    S is Ms / 1000,
+    catch( ( call_with_time_limit(S, G) -> O = succeeds ; O = fails ),
+           E,
+           ( E == time_limit_exceeded -> O = timeout
+           ; cf_error_class(E, O) ) ).
+
+% CONFORMITY_DEEP=1: loops-or-resource tests run unbounded and must end
+% in the resource error.
+conformity_deep :- catch(getenv('CONFORMITY_DEEP', V), _, fail), V == '1'.
 
 % format-string adaptation: this engine's format/2,3 accepts an atom.
 cf_format(F, A) :- format(F, A).
@@ -33,6 +50,8 @@ conformity_fetch(Url, File) :-
 :- consult('number_chars_suite.pl').
 :- consult('variable_names_suite.pl').
 :- consult('dif_suite.pl').
+:- consult('quad_suites.pl').
+:- consult('cleanup_suite.pl').
 :- consult('conformity.pl').
 
 :- initialization((conformity_main, halt)).

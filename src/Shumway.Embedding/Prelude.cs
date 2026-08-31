@@ -547,14 +547,13 @@ internal static class Prelude
         '$length_walk'(L, N, Acc) :-
             (   var(L) ->
                 (   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
-                    % Length identical to the open tail (length(L,L),
-                    % length([a|X],X)): every enumeration candidate binds the
-                    % tail to a k-skeleton and then fails unifying that LIST
-                    % with the integer k as output — false is the limit the
-                    % enumeration never reaches. (SWI fails too; Scryer and
-                    % Trealla throw resource_error(finite_memory) instead —
-                    % accepted divergence, their test1095.)
-                ;   L == N -> fail
+                    % A length aliased to the open tail (length(L,L),
+                    % length([a|X],X)) enumerates like any other var-var
+                    % pair: every candidate fails and the growth ends in a
+                    % genuine, catchable resource_error(memory) — the ISO
+                    % outcome (Neumerkel length 21/22). Do NOT short-circuit
+                    % it to `false`: sound, but not among the sanctioned
+                    % answers.
                 ;   var(N) -> '$length_enum'(L, N, Acc)
                 ;   throw(error(type_error(integer, N), length/2))
                 )

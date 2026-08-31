@@ -313,7 +313,17 @@ public sealed partial class Activation
         if (newSize > int.MaxValue)
             throw new PrologRuntimeException("resource_error", "memory");
         Profiler.Realloc(name, (long)newSize * System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
-        Array.Resize(ref buffer, (int)newSize);
+        // A machine that cannot hold the doubled buffer raises .NET's OOM
+        // from the resize itself, long before the int.MaxValue guard — the
+        // buffer is untouched (Resize allocates before copying), so it maps
+        // to the same catchable, fully-recoverable resource_error. This is
+        // what makes length(L,L)'s enumeration end in the ISO-sanctioned
+        // outcome on ANY machine, not only ones with 16 GB to burn.
+        try { Array.Resize(ref buffer, (int)newSize); }
+        catch (OutOfMemoryException)
+        {
+            throw new PrologRuntimeException("resource_error", "memory");
+        }
     }
 
     // ----- Internal / test hooks -----

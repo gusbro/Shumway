@@ -112,11 +112,10 @@ public class BatteryRoundTwoConformance
     public void ReadTermOptions_AreValidated()
     {
         Succeeds("catch(read_term(_, [foo]), error(domain_error(read_option, foo), _), true).");
-        // Cor.3 (Neumerkel variable_names cases 47-49): a recognised OUTPUT
-        // option's value unifies AFTER the read — a mismatch fails, it is
-        // never a domain_error. Pinned in VariableNamesConformance
-        // (V47_48, V69_70); read_term_from_atom/3 is compat and ignores
-        // these options, so it cannot carry the pin.
+        // Cor.3: a recognised OUTPUT option's value unifies AFTER the read —
+        // a mismatch fails, it is never a domain_error. Pinned in
+        // ConformanceArcRegressionTests; read_term_from_atom/3 is compat
+        // and ignores these options, so it cannot carry the pin.
         Succeeds("catch(read_term(_, bar), error(type_error(list, bar), _), true).");
     }
 
