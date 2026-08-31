@@ -83,6 +83,10 @@ public sealed class Clause
             {
                 (":-", 2) => ClauseKind.Rule,
                 (":-", 1) => ClauseKind.Directive,
+                // Edinburgh tradition, kept by SWI/GNU/SICStus: `?- G.` in
+                // Prolog TEXT is a directive, same as `:- G.`. Without this it
+                // read as a clause FOR '?-'/1 — stored, listed, never run.
+                ("?-", 1) => ClauseKind.Directive,
                 ("-->", 2) => ClauseKind.DcgRule,
                 ("=>", 2) => ClauseKind.SsuRule,
                 _ => ClauseKind.Fact,
