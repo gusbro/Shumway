@@ -119,17 +119,15 @@ public class ControlAndListsConformance
     }
 
     [Fact]
-    public void Length_TailIdenticalToLength_Fails()
+    public void Length_AliasedNeighboursAreUndisturbed()
     {
-        // length(L, L): any candidate binds the open tail to a k-skeleton and
-        // then fails unifying that LIST with the integer k — false is the
-        // limit the plain enumeration loops toward. SWI fails too; Scryer and
-        // Trealla throw resource_error(finite_memory) (accepted divergence).
+        // length(L, L) itself ENUMERATES toward a genuine resource_error
+        // (the ISO outcome — pinned time-bounded in
+        // ConformanceArcRegressionTests.Length_SelfAliasedEnumerates).
+        // What this pin holds: the aliased shape's NEIGHBOURS — a var
+        // length that is an ELEMENT is fine, and a nonvar non-integer
+        // length still errors.
         var engine = new PrologEngine();
-        Assert.False(engine.Query("length(L, L).").Success);
-        Assert.False(engine.Query("L = [a|X], length(L, X).").Success);
-        // The identity check must not disturb the neighbours: a var LENGTH
-        // that is an ELEMENT is fine, and a nonvar non-integer still errors.
         Assert.True(engine.Query("length([N|T], N), N == 1, T == [].").Success);
         Assert.True(engine.Query(
             "catch(length([a|_], [a|_]), error(type_error(integer, _), _), true).").Success);
@@ -177,8 +175,10 @@ public class ControlAndListsConformance
         var engine = new PrologEngine();
         Assert.True(engine.Query(
             "catch(length(_, a), error(type_error(integer, a), _), true).").Success);
-        Assert.True(engine.Query(
-            "catch(length(a, _), error(type_error(list, a), _), true).").Success);
+        // A non-list first argument FAILS rather than raising
+        // type_error(list, _) — the de-facto standard (Neumerkel's length
+        // case 4: length(2,0) is false); see LengthConformance.
+        Assert.False(engine.Query("length(a, _).").Success);
     }
 
     [Fact]

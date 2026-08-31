@@ -56,15 +56,54 @@ public static class MultiSolutionHelpers
     public static bool ListLength(Activation engine)
     {
         Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
+        // Tortoise-and-hare over the SPINE: a cyclic list has no finite
+        // length, and without the check this while loop is an uninterruptible
+        // C# spin — `L = [a|L], length(L, 0)` hung the engine past every safe
+        // point (Neumerkel's length case 27).
+        Cell hare = cur;
+        bool hareRuns = true;
         int count = 0;
         while (ListCursor.TryUncons(engine, cur, out _, out Cell tail))
         {
             count++;
             cur = ListCursor.Resolve(engine, tail);
+            // Compare ONLY after the hare advanced BOTH steps: a hare that
+            // ran off the end proves the spine finite, and comparing anyway
+            // reports "cycle" when the tortoise catches it resting on nil —
+            // which failed length/2 on every short proper list.
+            if (hareRuns && ListCursor.TryUncons(engine, hare, out _, out Cell h1)
+                && ListCursor.TryUncons(engine, ListCursor.Resolve(engine, h1), out _, out Cell h2))
+            {
+                hare = ListCursor.Resolve(engine, h2);
+                if (cur.Equals(hare)) return false;   // the spine loops
+            }
+            else hareRuns = false;
         }
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
             return false;
         return engine.UnifyRegisterWithCell(1, Cell.Int(count));
+    }
+
+    /// <summary><c>'$cyclic_spine'(L)</c> — true when L's list SPINE loops
+    /// (tortoise and hare; heads are not entered). The prelude's length/2
+    /// fails such lists outright: walking them, in C# or in Prolog, never
+    /// ends.</summary>
+    public static bool CyclicSpine(Activation engine)
+    {
+        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
+        Cell hare = cur;
+        while (ListCursor.TryUncons(engine, cur, out _, out Cell tail))
+        {
+            cur = ListCursor.Resolve(engine, tail);
+            // Same rule as ListLength: only a hare that advanced BOTH steps
+            // may be compared — one that ran off the end proves finiteness.
+            if (!ListCursor.TryUncons(engine, hare, out _, out Cell h1)
+                || !ListCursor.TryUncons(engine, ListCursor.Resolve(engine, h1), out _, out Cell h2))
+                return false;
+            hare = ListCursor.Resolve(engine, h2);
+            if (cur.Equals(hare)) return true;
+        }
+        return false;
     }
 
     /// <summary><c>'$make_var_list'(N, List)</c> — builds a fresh list
@@ -77,10 +116,18 @@ public static class MultiSolutionHelpers
         // ISO precedence — instantiation_error before type_error.
         if (nCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
+        // A BIGINT count is a well-typed integer no list can ever have: the
+        // heap cannot hold 2N+1 cells of it. Fail, like the length such a
+        // list will never reach (Neumerkel's length case 31); the bare (int)
+        // cast this replaces silently TRUNCATED a large long instead.
         if (nCell.Tag != Tag.Int)
+        {
+            if (nCell.Tag == Tag.BigInt) return false;
             throw new PrologRuntimeException("type_error", "integer");
+        }
         long n = nCell.AsInt;
         if (n < 0) return false;
+        if (n > int.MaxValue / 2 - 1) return false;   // 2N+1 cells cannot exist
         int listIdx = BuildFreshVarList(engine, (int)n);
         return engine.UnifyRegisterWithHeapAt(1, listIdx);
     }

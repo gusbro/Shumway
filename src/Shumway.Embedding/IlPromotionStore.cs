@@ -559,4 +559,30 @@ public sealed class IlPromotionStore
     }
 
     public IEnumerable<int> PromotedFunctorIds() => _delegates.Keys;
+
+    /// <summary>Multi-line promotion forensics for a machine one cannot attach
+    /// to (the net48/x86 smoke prints this when zero predicates promoted):
+    /// per tracked candidate its invocation count and state — a candidate
+    /// stuck at "pending" with a dead or never-started worker is a compile
+    /// that was queued and never completed.</summary>
+    public string DescribePromotionState()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("        " + IlCompileWorker.Describe());
+        sb.AppendLine(
+            $"        suspended={PromotionsSuspended} background={BackgroundCompilation} "
+            + $"dynamicCode={DynamicCodeSupported} completedQueue={_completedCompiles.Count}");
+        foreach (var kv in _counters)
+        {
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(kv.Key);
+            string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? $"#{atomId}";
+            string state =
+                _delegates.ContainsKey(kv.Key) ? "promoted"
+                : _pendingCompiles.Contains(kv.Key) ? "PENDING-FOREVER?"
+                : _unpromotableReason.TryGetValue(kv.Key, out var why) ? $"unpromotable:{why}"
+                : "counting";
+            sb.AppendLine($"        candidate {name}/{arity}: count={kv.Value} {state}");
+        }
+        return sb.ToString();
+    }
 }

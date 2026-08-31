@@ -540,7 +540,12 @@ public static class ArithmeticEvaluator
         BinOp.PowFloat => PowFloatChecked(a, b),
         BinOp.Rdiv => RationalDivide(a, b),
         BinOp.LogBase => LogBase(a, b),
-        _ => throw new PrologRuntimeException("type_error", "evaluable"),
+        // Unreachable by construction: `op` was decoded from compiled code, and
+        // an unknown user functor already errs with a culprit at lookup. Landing
+        // here means a corrupted operand (the cross-process bundle flake once
+        // surfaced as a culpritless type_error(evaluable)) — say WHICH value.
+        _ => throw new PrologRuntimeException("system_error",
+            $"ApplyBin reached with undecodable BinOp {(int)op} - corrupted arithmetic operand"),
     };
 
     private static PrologRuntimeException EvalError(string what)
@@ -685,7 +690,9 @@ public static class ArithmeticEvaluator
         UnOp.Atanh => Math.Abs(FloatOperand(a)) >= 1
             ? throw EvalError("undefined")
             : new Number(Math.Atanh(FloatOperand(a))),
-        _ => throw new PrologRuntimeException("type_error", "evaluable"),
+        // Unreachable by construction — see ApplyBinCore's default arm.
+        _ => throw new PrologRuntimeException("system_error",
+            $"ApplyUn reached with undecodable UnOp {(int)op} - corrupted arithmetic operand"),
     };
 
     /// <summary>Exact rational division <c>A rdiv B</c> (ADR-039). Both operands

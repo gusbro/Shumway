@@ -125,7 +125,7 @@ public sealed partial class PrologEngine
             }
             catch (ShumwayPrologException ex)
             {
-                int addr = TryCatch(engine, ex.Term, out _);
+                int addr = TryCatch(engine, ex.Term, out _, IsResourceBall(ex.Term));
                 if (addr < 0) throw;
                 if (CatchDiag)
                     Console.Error.WriteLine(
@@ -135,7 +135,8 @@ public sealed partial class PrologEngine
             catch (PrologRuntimeException ex)
             {
                 Term ball = MetaBuiltins.TranslateRuntimeError(ex);
-                int addr = TryCatch(engine, ball, out bool insideCatch);
+                int addr = TryCatch(engine, ball, out bool insideCatch,
+                    lowMemory: ex.Kind == "resource_error");
                 if (addr >= 0)
                     step = () => interp.Run(program, addr);
                 else if (insideCatch)
@@ -161,8 +162,16 @@ public sealed partial class PrologEngine
     internal static readonly bool CatchDiag =
         System.Environment.GetEnvironmentVariable("SHUMWAY_CATCH_DIAG") == "1";
 
-    private static int TryCatch(Activation engine, Term ballTerm, out bool hadActiveFrame)
-        => TryCatchFrom(engine, ballTerm, 0, out hadActiveFrame);
+    private static int TryCatch(Activation engine, Term ballTerm,
+        out bool hadActiveFrame, bool lowMemory = false)
+        => TryCatchFrom(engine, ballTerm, 0, out hadActiveFrame, lowMemory);
+
+    /// <summary>True for an <c>error(resource_error(...), _)</c> ball — the
+    /// one shape whose catch resolution must not allocate on the exhausted
+    /// heap that raised it.</summary>
+    private static bool IsResourceBall(Term ball) =>
+        ball is CompoundTerm { Functor: "error", Args.Length: 2 } e
+        && e.Args[0] is CompoundTerm { Functor: "resource_error" };
 
     /// <summary>The <see cref="TryCatch"/> walk restricted to frames at or
     /// above <paramref name="minFrameIndex"/> — the nested in-engine goal
@@ -170,7 +179,8 @@ public sealed partial class PrologEngine
     /// frames opened INSIDE itself; anything older belongs to an outer
     /// driver's scope.</summary>
     private static int TryCatchFrom(
-        Activation engine, Term ballTerm, int minFrameIndex, out bool hadActiveFrame)
+        Activation engine, Term ballTerm, int minFrameIndex, out bool hadActiveFrame,
+        bool lowMemory = false)
     {
         hadActiveFrame = false;
         for (int i = engine.CatchFrameCount - 1; i >= minFrameIndex; i--)
@@ -178,6 +188,26 @@ public sealed partial class PrologEngine
             CatchFrame frame = engine.GetCatchFrame(i);
             if (!frame.Active) continue;
             hadActiveFrame = true;
+
+            if (lowMemory)
+            {
+                // A resource_error left the heap FULL: the speculative trial
+                // below would materialize the ball at the exhausted top, raise
+                // resource_error again from inside catch resolution, and the
+                // original error would escape every catch/3. The machine can
+                // only continue through a rollback anyway, so roll back to
+                // THIS frame first (exactly what a match commits to) and
+                // materialize in the reclaimed space — the ball is ground and
+                // the catcher slot predates the snapshot. A mismatch keeps
+                // walking outward: outer frames' snapshots are older, so each
+                // further rollback stays monotonic; if nothing matches the
+                // machine was dead regardless.
+                engine.UnwindToCatchFrame(i);
+                Cell lmBall = Materializer.MaterializeAsCell(engine, ballTerm);
+                if (!engine.UnifyHeapWithCell(frame.CatcherHeapIdx, lmBall))
+                    continue;
+                return SetupRecoveryCall(engine, frame.RecoveryHeapIdx);
+            }
 
             // Speculatively unify the ball with the catcher, then undo —
             // testing the match must not disturb the machine. That includes
@@ -1755,7 +1785,9 @@ public sealed partial class PrologEngine
                 _ => null,
             };
             if (nestedBall is null) return -1;
-            return TryCatchFrom(engine, nestedBall, minFrameIndex, out _);
+            bool nestedLowMem = ex is Shumway.Core.PrologRuntimeException
+                { Kind: "resource_error" } || IsResourceBall(nestedBall);
+            return TryCatchFrom(engine, nestedBall, minFrameIndex, out _, nestedLowMem);
         };
         // Cheap throw: a throw/1 whose catcher was opened in the SAME dispatch
         // invocation resolves to a PC jump — no .NET exception construction or
@@ -1764,7 +1796,7 @@ public sealed partial class PrologEngine
         {
             Term ball = TermReader.Materialize(engine, ballIdx);
             if (ball is Shumway.Compiler.Ast.VarTerm) return -1;   // ISO error path
-            return TryCatchFrom(engine, ball, minFrameIndex, out _);
+            return TryCatchFrom(engine, ball, minFrameIndex, out _, IsResourceBall(ball));
         };
         engine.MaterializeCellToTerm = cell =>
         {

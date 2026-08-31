@@ -12,9 +12,26 @@
 :- use_module(library(dif)).
 :- use_module(library(freeze)).
 :- use_module(library('http/http_open')).
+% The new suites call predicates this engine ships in libraries:
+% length/2 (lists), setup_call_cleanup/3 (iso_ext), phrase/2,3 (dcgs).
+:- use_module(library(lists)).
+:- use_module(library(iso_ext)).
+% library(dcgs) loads LATE, via the conformity_pre_quads hook: it defines
+% op(1100, xfy, '|'), which would turn syntax test 285 (X=[(a|b)] must
+% be a syntax error) into a parse, and this engine refuses op/3 on '|'
+% so the operator cannot be removed once it is in.
+conformity_pre_quads :- use_module(library(dcgs)).
 
 conformity_engine(scryer).
-conformity_skips([]).
+conformity_skips([length-30]).
+
+% No portable timeout on this engine; its bounded default heap makes the
+% remaining loops-sanctioned length tests resource-error quickly. #30
+% (freeze-driven infinite list) would hang the unbounded fallback: skip.
+conformity_timed_call(G, _Ms, O) :-
+    catch( ( call(G) -> O = succeeds ; O = fails ), E, cf_error_class(E, O) ).
+
+conformity_deep :- fail.
 
 % format-string adaptation: Scryer's format/2,3 wants a LIST, not an atom.
 cf_format(F, A) :- atom_chars(F, C), format(C, A).
@@ -42,6 +59,8 @@ conformity_copy_bytes(In, Out) :-
        consult('number_chars_suite.pl'),
        consult('variable_names_suite.pl'),
        consult('dif_suite.pl'),
+       consult('quad_suites.pl'),
+       consult('cleanup_suite.pl'),
        consult('conformity.pl'),
        conformity_main,
        halt

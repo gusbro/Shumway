@@ -263,10 +263,10 @@ internal static class Prelude
         % that would hide the called goals' assert/retract).
         forall(Cond, Action) :- \+ ( call(Cond), \+ call(Action) ).
 
-        %! if(:Condition, :Then, :Else) | Control | Soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
+        %! if(:Condition, :Then, :Else) | Control | Soft-cut if/3: runs Then for every solution of Condition; Else only if Condition never succeeded.
         if(C, T, E) :- ( C *-> T ; E ).
 
-        %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails, unlike (Condition -> Then), which fails.
+        %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); succeeds without running Then when Condition fails, unlike (Condition -> Then), which fails.
         ifthen(P, Q) :- ( P -> Q ; true ).
 
         %! ifthenelse(:Condition, :Then, :Else) | Control | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails.
@@ -440,6 +440,11 @@ internal static class Prelude
                     functor(H, N, A),
                     throw(error(permission_error(
                         access, private_procedure, N/A), _))
+                % '-->'/2 is source syntax, not a procedure — reading its
+                % clauses is as private as modifying them (phrase case 25).
+            ;   functor(H, -->, 2) ->
+                    throw(error(permission_error(
+                        access, private_procedure, (-->)/2), _))
             ;   true
             ),
             '$clause_enum'(H, H-B).
@@ -519,37 +524,41 @@ internal static class Prelude
         '$check_qualified_indicator'(_, Spec) :-
             throw(error(type_error(predicate_indicator, Spec), _)).
 
-        %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound.
-        % Proper lists take the native '$list_length' fast path; everything
-        % else (partial list, improper term, bad Length) walks with the
-        % original term kept for the type_error(list, Culprit).
+        %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A term that is not a partial list, a cyclic list included, fails.
+        % Proper lists take the native '$list_length' fast path (cycle-safe:
+        % it fails a looping spine rather than spinning). A cyclic list has no
+        % finite length — fail, before the Prolog walk would recurse into it
+        % forever. An improper tail also FAILS rather than raising
+        % type_error(list, _): the de-facto standard behavior (Neumerkel's
+        % length cases 4-7 — length(2,0) is false).
         length(L, N) :-
             integer(N), N < 0, !,
             throw(error(domain_error(not_less_than_zero, N), length/2)).
+        length(L, _) :-
+            nonvar(L), '$cyclic_spine'(L), !, fail.
         length(L, N) :-
             nonvar(L), '$list_length'(L, M), !,
             (   integer(N) -> N = M
             ;   var(N) -> N = M
             ;   throw(error(type_error(integer, N), length/2))
             ).
-        length(L, N) :- '$length_walk'(L, L, N, 0).
+        length(L, N) :- '$length_walk'(L, N, 0).
 
-        '$length_walk'(L, Orig, N, Acc) :-
+        '$length_walk'(L, N, Acc) :-
             (   var(L) ->
                 (   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
-                    % Length identical to the open tail (length(L,L),
-                    % length([a|X],X)): every enumeration candidate binds the
-                    % tail to a k-skeleton and then fails unifying that LIST
-                    % with the integer k as output — false is the limit the
-                    % enumeration never reaches. (SWI fails too; Scryer and
-                    % Trealla throw resource_error(finite_memory) instead —
-                    % accepted divergence, their test1095.)
-                ;   L == N -> fail
+                    % A length aliased to the open tail (length(L,L),
+                    % length([a|X],X)) enumerates like any other var-var
+                    % pair: every candidate fails and the growth ends in a
+                    % genuine, catchable resource_error(memory) — the ISO
+                    % outcome (Neumerkel length 21/22). Do NOT short-circuit
+                    % it to `false`: sound, but not among the sanctioned
+                    % answers.
                 ;   var(N) -> '$length_enum'(L, N, Acc)
                 ;   throw(error(type_error(integer, N), length/2))
                 )
-            ;   L = [_|T] -> Acc1 is Acc + 1, '$length_walk'(T, Orig, N, Acc1)
-            ;   throw(error(type_error(list, Orig), length/2))
+            ;   L = [_|T] -> Acc1 is Acc + 1, '$length_walk'(T, N, Acc1)
+            ;   fail
             ).
 
         '$length_enum'([], N, N).
@@ -751,6 +760,27 @@ internal static class Prelude
         maplist(G, [X|Xs], [Y|Ys], [Z|Zs]) :-
             call(G, X, Y, Z), maplist(G, Xs, Ys, Zs).
 
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4) | Lists | Succeeds if Goal holds for corresponding elements of four lists.
+        maplist(_, [], [], [], []).
+        maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws]) :-
+            call(G, X, Y, Z, W), maplist(G, Xs, Ys, Zs, Ws).
+
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5) | Lists | Succeeds if Goal holds for corresponding elements of five lists.
+        maplist(_, [], [], [], [], []).
+        maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws], [V|Vs]) :-
+            call(G, X, Y, Z, W, V), maplist(G, Xs, Ys, Zs, Ws, Vs).
+
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6) | Lists | Succeeds if Goal holds for corresponding elements of six lists.
+        maplist(_, [], [], [], [], [], []).
+        maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws], [V|Vs], [U|Us]) :-
+            call(G, X, Y, Z, W, V, U), maplist(G, Xs, Ys, Zs, Ws, Vs, Us).
+
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6, ?List7) | Lists | Succeeds if Goal holds for corresponding elements of seven lists.
+        maplist(_, [], [], [], [], [], [], []).
+        maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws], [V|Vs], [U|Us], [T|Ts]) :-
+            call(G, X, Y, Z, W, V, U, T),
+            maplist(G, Xs, Ys, Zs, Ws, Vs, Us, Ts).
+
         %! foldl(:Goal, ?List, +V0, -V) | Lists | Folds Goal over a list, threading an accumulator from V0 to V.
         foldl(_, [], Acc, Acc).
         foldl(G, [X|Xs], Acc, Out) :-
@@ -762,6 +792,68 @@ internal static class Prelude
         foldl(G, [X|Xs], [Y|Ys], Acc, Out) :-
             call(G, X, Y, Acc, Acc1),
             foldl(G, Xs, Ys, Acc1, Out).
+
+        %! foldl(:Goal, ?List1, ?List2, ?List3, +V0, -V) | Lists | Folds Goal over three lists, threading an accumulator from V0 to V.
+        foldl(_, [], [], [], Acc, Acc).
+        foldl(G, [X|Xs], [Y|Ys], [Z|Zs], Acc, Out) :-
+            call(G, X, Y, Z, Acc, Acc1),
+            foldl(G, Xs, Ys, Zs, Acc1, Out).
+
+        % Prolog-prologue nth0/4 (p.p.8): the element at 0-based index N
+        % plus the list WITHOUT that occurrence. Eager argument checks:
+        % a bound non-integer N is a type error, a negative one a domain
+        % error, both before any list walk.
+        %! nth0(?Index, ?List, ?Elem, ?Rest) | Lists | Relates a 0-based index, the element there, and the list without that occurrence.
+        nth0(N, Es0, E, Es) :-
+            '$nth_index_check'(N, nth0/4),
+            (   integer(N) -> '$nth0_at'(N, Es0, E, Es)
+            ;   '$nth0_enum'(Es0, E, Es, 0, N)
+            ).
+
+        %! nth1(?Index, ?List, ?Elem, ?Rest) | Lists | Relates a 1-based index, the element there, and the list without that occurrence.
+        nth1(N, Es0, E, Es) :-
+            '$nth_index_check'(N, nth1/4),
+            (   integer(N) -> N >= 1, N0 is N - 1, '$nth0_at'(N0, Es0, E, Es)
+            ;   '$nth0_enum'(Es0, E, Es, 1, N)
+            ).
+
+        '$nth_index_check'(N, Ctx) :-
+            (   var(N) -> true
+            ;   integer(N) ->
+                (   N >= 0 -> true
+                ;   throw(error(domain_error(not_less_than_zero, N), Ctx))
+                )
+            ;   throw(error(type_error(integer, N), Ctx))
+            ).
+
+        '$nth0_at'(0, [E|Es], E, Es) :- !.
+        '$nth0_at'(N, [X|Es0], E, [X|Es]) :-
+            N1 is N - 1,
+            '$nth0_at'(N1, Es0, E, Es).
+
+        '$nth0_enum'([E|Es], E, Es, N, N).
+        '$nth0_enum'([X|Es0], E, [X|Es], N0, N) :-
+            N1 is N0 + 1,
+            '$nth0_enum'(Es0, E, Es, N1, N).
+
+        % Prolog-prologue countall/2 (p.p.11): every argument check runs
+        % BEFORE the goal — countall(false, -1) is the domain error, not
+        % a mere failure.
+        %! countall(:Goal, ?N) | Findall & aggregation | N is the total number of answers of Goal.
+        countall(G, N) :-
+            (   var(G) -> throw(error(instantiation_error, countall/2))
+            ;   callable(G) -> true
+            ;   throw(error(type_error(callable, G), countall/2))
+            ),
+            (   var(N) -> true
+            ;   integer(N) ->
+                (   N >= 0 -> true
+                ;   throw(error(domain_error(not_less_than_zero, N), countall/2))
+                )
+            ;   throw(error(type_error(integer, N), countall/2))
+            ),
+            findall(t, G, Ts),
+            length(Ts, N).
 
         %! aggregate_all(+Template, :Goal, -Result) | Findall & aggregation | Aggregates Goal's solutions with a count, sum, bag or set template.
         aggregate_all(count, Goal, Count) :-
@@ -865,7 +957,7 @@ internal static class Prelude
             copy_term(A, A1), numbervars(A1, 0, N),
             copy_term(B, B1), numbervars(B1, 0, M),
             N == M, A1 == B1.
-        %! \=@=(@Term1, @Term2) | Term ordering | Term1 and Term2 are NOT variants.
+        %! \=@=(@Term1, @Term2) | Term ordering | Term1 and Term2 are not variants.
         A \=@= B :- \+ (A =@= B).
 
         % ===== SSU (Head => Body) runtime support =====
@@ -1304,7 +1396,7 @@ internal static class Prelude
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
         ignore(Goal) :- ( call(Goal) -> true ; true ).
 
-        %! time_out(:Goal, +MilliSeconds, -Result) | Control | Runs Goal under a time limit. Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted.
+        %! time_out(:Goal, +MilliSeconds, -Result) | Control | Runs Goal under a time limit. Result is success, or time_out if the limit expired. Non-deterministic: Goal keeps its solutions, and re-entering it on backtracking restarts the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted.
         time_out(Goal, MilliSeconds, Result) :-
             Seconds is MilliSeconds / 1000,
             '$catch_begin'(Ball, '$time_out_recover'(Ball, Result)),
@@ -1448,7 +1540,7 @@ internal static class Prelude
             ;   W = Value
             ).
 
-        %! bb_get(+Key, -Value) | Global variables | Reads a blackboard entry; FAILS when Key is unset (unlike nb_getval/2, which throws).
+        %! bb_get(+Key, -Value) | Global variables | Reads a blackboard entry; fails when Key is unset (unlike nb_getval/2, which throws).
         bb_get(Key, Value) :-
             catch(nb_getval(Key, V0), _, fail),
             V0 \== '$bb_absent',
@@ -1505,36 +1597,79 @@ internal static class Prelude
 
         %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []): succeeds when the DCG Body derives List.
         phrase(Body, List) :- phrase(Body, List, []).
-        %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime.
-        % SS7.6.2 for DCG bodies: a number anywhere in the control
-        % skeleton makes the WHOLE body non-translatable, checked BEFORE
-        % anything runs — phrase(({fail}, 1), _) raises, fail never runs.
-        phrase(Body, S0, S) :- '$dcg_body_check'(Body), '$phrase'(Body, S0, S).
+        %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; a variable/control-construct Body is translated at runtime and run as one goal.
+        % The TS 13211-3 model, faithfully: the WHOLE body becomes one goal
+        % first — validating as it goes — and runs as a single call. Two
+        % consequences the old step-by-step interpreter got wrong:
+        % a cut the body carries is a REAL cut whose extent is that call,
+        % which is what makes phrase(({!,fail};[]), L) false; and a terminal
+        % is validated before anything executes, which is what makes
+        % phrase(({L=[]},[a|L]), [a]) an instantiation_error — translation
+        % precedes execution (Scryer agrees on both; the old behavior
+        % matched only SWI).
+        phrase(Body, S0, S) :- '$dcg_translate'(Body, S0, S, G), call(G).
 
-        '$dcg_body_check'(B) :- var(B), !.
-        '$dcg_body_check'((A, B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
-        '$dcg_body_check'((A ; B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
-        '$dcg_body_check'((A -> B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
-        '$dcg_body_check'('|'(A, B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
-        '$dcg_body_check'(N) :-
-            number(N), !, throw(error(type_error(callable, N), phrase/3)).
-        '$dcg_body_check'(_).
-
-        '$phrase'(V, _, _) :- var(V), !, throw(error(instantiation_error, phrase/3)).
-        '$phrase'([], S0, S) :- !, S0 = S.
-        '$phrase'([H|T], S0, S) :- !, append([H|T], S, S0).
-        '$phrase'(!, S0, S) :- !, S0 = S.
-        '$phrase'((A, B), S0, S) :- !, '$phrase'(A, S0, S1), '$phrase'(B, S1, S).
-        '$phrase'((A ; B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
+        '$dcg_translate'(V, _, _, _) :- var(V), !,
+            throw(error(instantiation_error, phrase/3)).
+        '$dcg_translate'([], S0, S, S0 = S) :- !.
+        % A terminal must be PROPER before it consumes anything: an open tail
+        % is an instantiation_error (phrase([a|L], K) may not guess L, and
+        % phrase([a|L], L) once grew the list it was matching forever), an
+        % improper or cyclic one a type_error. Tr([a,b], S0, S) = (S0 = [a,b|S]).
+        '$dcg_translate'([H|T], S0, S, S0 = List) :- !,
+            '$dcg_terminal_check'(T, [H|T]),
+            '$dcg_terminal_concat'([H|T], S, List).
+        '$dcg_translate'(!, S0, S, (!, S0 = S)) :- !.
+        '$dcg_translate'((A, B), S0, S, (GA, GB)) :- !,
+            '$dcg_translate'(A, S0, S1, GA),
+            '$dcg_translate'(B, S1, S, GB).
+        '$dcg_translate'((A ; B), S0, S, (GA ; GB)) :- !,
+            '$dcg_translate'(A, S0, S, GA),
+            '$dcg_translate'(B, S0, S, GB).
         % '|'(A,B) written canonically: `|` is only an operator inside a DCG
-        % rule body (strict ISO has no bar operator), and this is a plain
-        % clause matching the alternation a DCG body term carries at runtime.
-        '$phrase'('|'(A, B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
-        '$phrase'((A -> B), S0, S) :- !, ( '$phrase'(A, S0, S1) -> '$phrase'(B, S1, S) ).
-        '$phrase'({G}, S0, S) :- !, call(G), S0 = S.
-        '$phrase'(\+ A, S0, S) :- !, \+ '$phrase'(A, S0, _), S0 = S.
-        '$phrase'(call(G), S0, S) :- !, call(G, S0, S).
-        '$phrase'(G, S0, S) :- call(G, S0, S).
+        % rule body (strict ISO has no bar operator).
+        '$dcg_translate'('|'(A, B), S0, S, (GA ; GB)) :- !,
+            '$dcg_translate'(A, S0, S, GA),
+            '$dcg_translate'(B, S0, S, GB).
+        '$dcg_translate'((A -> B), S0, S, (GA -> GB)) :- !,
+            '$dcg_translate'(A, S0, S1, GA),
+            '$dcg_translate'(B, S1, S, GB).
+        % \+ is an extension (TS 13211-3 has no negation; phrase_quad.pl
+        % sanctions representation_error(dcg_body) or the LAZY reading).
+        % A translates at call time, inside the negation: ([a],\+1) on []
+        % is false — [a] fails first — never an eager type_error (case 29),
+        % while \+1 alone still errs when the negation runs (case 28).
+        '$dcg_translate'(\+ A, S0, S, (\+ phrase(A, S0, _), S0 = S)) :- !.
+        % Tr({G}) = (G, S0 = S) — G INLINED, not wrapped in call/1, so a cut
+        % inside the braces keeps the translated goal's extent. No eager
+        % check on G: a number inside braces surfaces from call/1 with the
+        % WHOLE translated goal as culprit — phrase({fail,1},L) is
+        % type_error(callable, ((fail,1), _=[])), exactly phrase_quad.pl's
+        % cases 10/15/37 — while a number as a DCG BODY element (below) errs
+        % at translation with itself as culprit (cases 13/46/47).
+        '$dcg_translate'({G}, S0, S, (G, S0 = S)) :- !.
+        '$dcg_translate'(call(G), S0, S, call(G, S0, S)) :- !.
+        '$dcg_translate'(N, _, _, _) :-
+            number(N), !, throw(error(type_error(callable, N), phrase/3)).
+        '$dcg_translate'(NT, S0, S, G) :-
+            NT =.. L0,
+            '$dcg_terminal_concat'(L0, [S0, S], L),
+            G =.. L.
+
+        '$dcg_terminal_check'(T, Orig) :-
+            (   '$cyclic_spine'(Orig) ->
+                throw(error(type_error(list, Orig), phrase/3))
+            ;   '$dcg_terminal_walk'(T, Orig)
+            ).
+        '$dcg_terminal_walk'(V, _) :- var(V), !,
+            throw(error(instantiation_error, phrase/3)).
+        '$dcg_terminal_walk'([], _) :- !.
+        '$dcg_terminal_walk'([_|T], Orig) :- !, '$dcg_terminal_walk'(T, Orig).
+        '$dcg_terminal_walk'(_, Orig) :-
+            throw(error(type_error(list, Orig), phrase/3)).
+
+        '$dcg_terminal_concat'([], S, S).
+        '$dcg_terminal_concat'([H|T], S, [H|R]) :- '$dcg_terminal_concat'(T, S, R).
 
         %! phrase_from_stream(:Body, +Stream) | Grammar | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream.
         phrase_from_stream(Body, Stream) :-

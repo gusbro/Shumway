@@ -31,6 +31,17 @@ internal static class IlCompileWorker
     private static readonly SemaphoreSlim _signal = new(0);
     private static Thread? _thread;
     private static readonly object _startLock = new();
+    private static long _processed;
+    private static long _callbackFaults;
+
+    /// <summary>One line of worker liveness for promotion diagnostics: a dead
+    /// or never-started worker with a non-empty queue is exactly the silent
+    /// zero-promotions state the net48/x86 smoke flake shows.</summary>
+    internal static string Describe() =>
+        $"worker thread={( _thread is null ? "never-started"
+            : _thread.IsAlive ? "alive" : "DEAD")} "
+        + $"queued={_queue.Count} processed={Interlocked.Read(ref _processed)} "
+        + $"callbackFaults={Interlocked.Read(ref _callbackFaults)}";
 
     /// <summary>Runs <paramref name="work"/> on the shared large-stack worker and
     /// waits for the result; exceptions propagate to the caller. Work submitted
@@ -72,7 +83,17 @@ internal static class IlCompileWorker
                 Name = "shumway-il-compile",
             };
             _thread = t;   // publish before Start so the re-entrancy check holds
-            t.Start();
+            try { t.Start(); }
+            catch
+            {
+                // A failed Start (e.g. the 16 MB stack reservation on a
+                // fragmented 32-bit address space) must NOT leave the dead
+                // thread published: every later enqueue would feed a queue
+                // nobody drains — the silent zero-promotions state.
+                _thread = null;
+                Console.Error.WriteLine("[il-worker] worker thread failed to start");
+                throw;
+            }
         }
     }
 
@@ -84,8 +105,21 @@ internal static class IlCompileWorker
             if (!_queue.TryDequeue(out var item)) continue;
             try { item.Result = item.Work(); }
             catch (Exception ex) { item.Error = ex; }
+            Interlocked.Increment(ref _processed);
             if (item.Done is not null) item.Done.Set();
-            else item.OnCompleted?.Invoke(item.Result, item.Error);
+            else
+            {
+                // A throwing completion callback must not kill the ONLY
+                // worker — that would strand every later compile as
+                // pending-forever. Count and report instead.
+                try { item.OnCompleted?.Invoke(item.Result, item.Error); }
+                catch (Exception ex)
+                {
+                    Interlocked.Increment(ref _callbackFaults);
+                    Console.Error.WriteLine(
+                        $"[il-worker] completion callback threw {ex.GetType().Name}: {ex.Message}");
+                }
+            }
         }
     }
 }

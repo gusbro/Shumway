@@ -827,11 +827,25 @@ internal sealed class ConsultPipeline
         }
         else if (preludeSource || librarySource || HasIncludeDirective(source))
         {
+            // The prelude AST is cached process-wide (s_preludeClauses), so its
+            // parse must not depend on WHICH engine constructs first: default
+            // flags and operators, never E._flags — an arity_compat engine's
+            // lexer would read the prelude's `{G}` DCG clauses as ADR-022
+            // native-goal blocks and every later engine would share the
+            // poisoned AST (cross-process children then die in '$native_run').
+            var parseFlags = preludeSource
+                ? new Shumway.Compiler.Parsing.PrologFlags()
+                : E._flags;
+            var parseOps = preludeSource
+                ? Shumway.Compiler.Parsing.OperatorTable.Default()
+                : E._operators;
             var list = new ClauseReader(
-                new Lexer(source, E._flags.CharConversionEnabled ? E._flags.CharConversion : null)
+                new Lexer(source, !preludeSource && E._flags.CharConversionEnabled
+                        ? E._flags.CharConversion : null)
                 { FileId = E._debugFileId },
-                E._operators, E._flags)
-            { ModuleLayerProvider = E.ModuleOperatorLayer }.ReadAll().ToList();
+                parseOps, parseFlags)
+            { ModuleLayerProvider = preludeSource ? null : E.ModuleOperatorLayer }
+                .ReadAll().ToList();
             if (preludeSource)
                 System.Threading.Volatile.Write(ref s_preludeClauses, list);
             // ISO 7.4.2.7 `:- include(File)` — textual inclusion.
