@@ -59,7 +59,13 @@ public static class ListBuiltins
         if (n.Tag == Tag.Ref)
             return NthStep(engine, new NthCursor(oneBased, engine.BuiltinReturnPc), isResume: false);
         if (n.Tag != Tag.Int)
-            throw new PrologRuntimeException("type_error", "integer");
+            throw new PrologRuntimeException("type_error", "integer", engine, n);
+        // Prolog prologue p.p.8: a negative index is a domain error, not a
+        // failure; nth1's index 0 (target -1 after the shift) stays a plain
+        // failure.
+        if (n.AsInt < 0)
+            throw new PrologRuntimeException(
+                "domain_error", "not_less_than_zero", engine, n);
         long target = n.AsInt;
         if (oneBased) target--;
         if (target < 0) return false;
@@ -73,7 +79,65 @@ public static class ListBuiltins
             cur = Resolve(engine, tail);
             i++;
         }
-        return false;
+        // Prologue generate mode: an integer index against a PARTIAL list
+        // (unbound tail) extends it — nth0(2, Es, E) gives Es = [_,_,E|_].
+        // A closed or improper tail still just fails.
+        if (cur.Tag != Tag.Ref) return false;
+        Cell built = BuildOpenSkeleton(engine, target - i, out int elemSlot);
+        return engine.UnifyHeapWithCell(cur.AsHeapIndex, built)
+            && engine.UnifyRegisterWithCell(2, Cell.Ref(elemSlot));
+    }
+
+    /// <summary>Advances one list cell, EXTENDING a partial list by a fresh
+    /// <c>[H|T]</c> cons when the walk reaches an unbound tail — the prologue
+    /// generate mode, and what makes a variable-index enumeration over a
+    /// partial list produce answers ad infinitum instead of stopping at the
+    /// end. The extension binding is trailed like any other, so backtracking
+    /// past the whole call undoes it. A bound non-list tail fails.</summary>
+    private static bool UnconsOrExtend(Activation engine, ref Cell cur, out Cell head)
+    {
+        if (ListCursor.TryUncons(engine, cur, out head, out Cell tail))
+        {
+            cur = Resolve(engine, tail);
+            return true;
+        }
+        if (cur.Tag != Tag.Ref) return false;
+        int h = engine.AllocateHeap(1);
+        engine.SetHeap(h, Cell.Ref(h));
+        int t = engine.AllocateHeap(1);
+        engine.SetHeap(t, Cell.Ref(t));
+        int p = engine.AllocateHeap(2);
+        engine.SetHeap(p, Cell.Ref(h));
+        engine.SetHeap(p + 1, Cell.Ref(t));
+        if (!engine.UnifyHeapWithCell(cur.AsHeapIndex, Cell.Lis(p))) return false;
+        head = Cell.Ref(h);
+        cur = Cell.Ref(t);
+        return true;
+    }
+
+    /// <summary>Builds the open list skeleton <c>[_,...,_,E|_]</c> with
+    /// <paramref name="before"/> fresh elements ahead of E, returning the
+    /// list cell and E's heap slot. The tail stays a fresh variable.</summary>
+    private static Cell BuildOpenSkeleton(Activation engine, long before, out int elemSlot)
+    {
+        int tailSlot = engine.AllocateHeap(1);
+        engine.SetHeap(tailSlot, Cell.Ref(tailSlot));
+        elemSlot = engine.AllocateHeap(1);
+        engine.SetHeap(elemSlot, Cell.Ref(elemSlot));
+        int pair = engine.AllocateHeap(2);
+        engine.SetHeap(pair, Cell.Ref(elemSlot));
+        engine.SetHeap(pair + 1, Cell.Ref(tailSlot));
+        Cell list = Cell.Lis(pair);
+        for (long k = 0; k < before; k++)
+        {
+            int h = engine.AllocateHeap(1);
+            engine.SetHeap(h, Cell.Ref(h));
+            int p2 = engine.AllocateHeap(2);
+            engine.SetHeap(p2, Cell.Ref(h));
+            engine.SetHeap(p2 + 1, list);
+            list = Cell.Lis(p2);
+        }
+        return list;
     }
 
     /// <summary>Resume state for a variable-index <c>nth0</c>/<c>nth1</c>
@@ -103,11 +167,10 @@ public static class ListBuiltins
         Cell cur = Resolve(engine, engine.GetRegister(1));
         for (int k = 0; k < c.Pos; k++)
         {
-            if (!ListCursor.TryUncons(engine, cur, out _, out Cell skipped)) return false;
-            cur = Resolve(engine, skipped);
+            if (!UnconsOrExtend(engine, ref cur, out _)) return false;
         }
-        if (!ListCursor.TryUncons(engine, cur, out Cell head, out _))
-            return false;                              // past the list end
+        if (!UnconsOrExtend(engine, ref cur, out Cell head))
+            return false;                              // improper tail
 
         int pos = c.Pos;
         c.Pos = pos + 1;

@@ -165,6 +165,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `aggregate_all(+Template, :Goal, -Result)` | Aggregates Goal's solutions with a count, sum, bag or set template. |
 | `bagof(?Template, :Goal, -List)` | Collects Goal's solutions; fails when there are none. |
+| `countall(:Goal, ?N)` | N is the total number of answers of Goal. |
 | `findall(?Template, :Goal, -List)` | Collects an instance of Template for every solution of Goal into a list. |
 | `findall(?Template, :Goal, -List, ?Tail)` | Like findall/3 but the result is a difference list ending in Tail. |
 | `setof(?Template, :Goal, -List)` | Like bagof/3 but the result list is sorted and duplicate-free. |
@@ -237,6 +238,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `flatten(+Nested, -Flat)` | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat. |
 | `foldl(:Goal, ?List, +V0, -V)` | Folds Goal over a list, threading an accumulator from V0 to V. |
 | `foldl(:Goal, ?List1, ?List2, +V0, -V)` | Folds Goal over two lists, threading an accumulator from V0 to V. |
+| `foldl(:Goal, ?List1, ?List2, ?List3, +V0, -V)` | Folds Goal over three lists, threading an accumulator from V0 to V. |
 | `include(:Goal, +List, -Included)` | Included holds the elements of List for which Goal succeeds. |
 | `intersection(+Set1, +Set2, -Intersection)` | Intersection holds the elements of Set1 that also occur in Set2. |
 | `keysort(+Pairs, -Sorted)` | Stable-sort a list of K-V pairs by K in the standard order of terms. Each element must be a -/2 compound; relative order of equal-key pairs is preserved. ISO §8.4.4. |
@@ -247,6 +249,10 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `maplist(:Goal, ?List)` | Succeeds if Goal holds for every element of List. |
 | `maplist(:Goal, ?List1, ?List2)` | Succeeds if Goal holds for corresponding elements of two lists. |
 | `maplist(:Goal, ?List1, ?List2, ?List3)` | Succeeds if Goal holds for corresponding elements of three lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4)` | Succeeds if Goal holds for corresponding elements of four lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5)` | Succeeds if Goal holds for corresponding elements of five lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6)` | Succeeds if Goal holds for corresponding elements of six lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6, ?List7)` | Succeeds if Goal holds for corresponding elements of seven lists. |
 | `max_list(+List, -Max)` | Max is the largest number in the non-empty list. |
 | `max_member(?Max, +List)` | Max is the largest element of List in the standard order of terms. |
 | `member(?Elem, ?List)` | Succeeds when Elem is a member of List; enumerates members on backtracking. |
@@ -256,7 +262,9 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `msort(+List, -Sorted)` | Sorts a list into standard order, keeping duplicates. |
 | `nonmember(?Elem, +List)` | True when Elem does not unify with any element of List. |
 | `nth0(?Index, ?List, ?Elem)` | Relates a 0-based index to the list element at that position. |
+| `nth0(?Index, ?List, ?Elem, ?Rest)` | Relates a 0-based index, the element there, and the list without that occurrence. |
 | `nth1(?Index, ?List, ?Elem)` | Relates a 1-based index to the list element at that position. |
+| `nth1(?Index, ?List, ?Elem, ?Rest)` | Relates a 1-based index, the element there, and the list without that occurrence. |
 | `numlist(+Low, +High, -List)` | List is the consecutive integers from Low to High inclusive. |
 | `pairs_keys(+Pairs, -Keys)` | The keys of a list of Key-Value pairs. |
 | `pairs_keys_values(?Pairs, ?Keys, ?Values)` | Relates a list of Key-Value pairs to its lists of keys and values. |

@@ -129,6 +129,52 @@ public sealed class ConformanceArcRegressionTests
     [Fact] public void Scc_CleanupCannotRebindTheAnswer() =>
         True("setup_call_cleanup(true, V = won, V = lost), V == won.");
 
+    // ---- Prolog prologue additions: countall, nth0/4, maplist/5..8 ----
+
+    [Fact] public void Countall_CountsAnswers() =>
+        True("countall(member(_, [q,w,e]), N), N == 3, "
+           + "countall((Q = 1 ; Q = 1), M), M == 2.");
+    [Fact] public void Countall_ChecksArgumentsBeforeRunning() =>
+        // countall(fail, -3) is the domain error, never a mere failure.
+        True("catch(countall(_, _), error(instantiation_error, _), true), "
+           + "catch(countall(9, _), error(type_error(callable, 9), _), true), "
+           + "catch(countall(fail, -3), error(domain_error(not_less_than_zero, -3), _), true), "
+           + "catch(countall(fail, w), error(type_error(integer, w), _), true), "
+           + "\\+ countall(fail, 5).");
+    [Fact] public void Nth4_SelectsElementAndRest() =>
+        True("nth0(1, [q,w,e], E, R), E == w, R == [q,e], "
+           + "nth1(3, [q,w,e], F, S), F == e, S == [q,w], "
+           + "\\+ nth1(0, [q], _, _).");
+    [Fact] public void Nth4_ErrorsAreEager() =>
+        True("catch(nth0(x, _, _, _), error(type_error(integer, x), _), true), "
+           + "catch(nth1(-2, _, _, _), error(domain_error(not_less_than_zero, -2), _), true).");
+    [Fact] public void Nth3_GeneratesPartialLists() =>
+        // An integer index against an unbound list EXTENDS it, and a
+        // variable index enumerates past any partial prefix ad infinitum.
+        True("nth0(2, L, z), L = [_,_,z|_], "
+           + "nth1(2, K, y), K = [_,y|_], "
+           + "call_nth(nth0(N, _M, _E), 4), N == 3.");
+    [Fact] public void Nth3_NegativeIndexIsDomainError() =>
+        Raises("nth0(-1, [q], _)", "domain_error(not_less_than_zero, -1)");
+    [Fact]
+    public void MaplistAndFoldl_HighArities()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(
+            "j4(A, B, C, A-B-C).\n"
+          + "j5(A, B, C, D, A-B-C-D).\n"
+          + "j6(A, B, C, D, E, A-B-C-D-E).\n"
+          + "j7(A, B, C, D, E, F, A-B-C-D-E-F).\n"
+          + "acc3(X, Y, Z, S0, S) :- S is S0 + X*Y*Z.\n");
+        Assert.True(e.Query(
+            "maplist(j4, [1], [2], [3], [1-2-3]), "
+          + "maplist(j5, [1], [2], [3], [4], [1-2-3-4]), "
+          + "maplist(j6, [1], [2], [3], [4], [5], [1-2-3-4-5]), "
+          + "maplist(j7, [1,9], [2,8], [3,7], [4,6], [5,5], [6,4], R), "
+          + "R == [1-2-3-4-5-6, 9-8-7-6-5-4], "
+          + "foldl(acc3, [1,2], [3,4], [5,6], 0, S), S == 63.").Success);
+    }
+
     // ---- write_term/2 variable_names ----
 
     [Fact] public void WriteTerm_VariableNameWrittenVerbatim() =>

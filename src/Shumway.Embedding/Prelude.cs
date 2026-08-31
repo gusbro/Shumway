@@ -760,6 +760,27 @@ internal static class Prelude
         maplist(G, [X|Xs], [Y|Ys], [Z|Zs]) :-
             call(G, X, Y, Z), maplist(G, Xs, Ys, Zs).
 
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4) | Lists | Succeeds if Goal holds for corresponding elements of four lists.
+        maplist(_, [], [], [], []).
+        maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws]) :-
+            call(G, X, Y, Z, W), maplist(G, Xs, Ys, Zs, Ws).
+
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5) | Lists | Succeeds if Goal holds for corresponding elements of five lists.
+        maplist(_, [], [], [], [], []).
+        maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws], [V|Vs]) :-
+            call(G, X, Y, Z, W, V), maplist(G, Xs, Ys, Zs, Ws, Vs).
+
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6) | Lists | Succeeds if Goal holds for corresponding elements of six lists.
+        maplist(_, [], [], [], [], [], []).
+        maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws], [V|Vs], [U|Us]) :-
+            call(G, X, Y, Z, W, V, U), maplist(G, Xs, Ys, Zs, Ws, Vs, Us).
+
+        %! maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6, ?List7) | Lists | Succeeds if Goal holds for corresponding elements of seven lists.
+        maplist(_, [], [], [], [], [], [], []).
+        maplist(G, [X|Xs], [Y|Ys], [Z|Zs], [W|Ws], [V|Vs], [U|Us], [T|Ts]) :-
+            call(G, X, Y, Z, W, V, U, T),
+            maplist(G, Xs, Ys, Zs, Ws, Vs, Us, Ts).
+
         %! foldl(:Goal, ?List, +V0, -V) | Lists | Folds Goal over a list, threading an accumulator from V0 to V.
         foldl(_, [], Acc, Acc).
         foldl(G, [X|Xs], Acc, Out) :-
@@ -771,6 +792,68 @@ internal static class Prelude
         foldl(G, [X|Xs], [Y|Ys], Acc, Out) :-
             call(G, X, Y, Acc, Acc1),
             foldl(G, Xs, Ys, Acc1, Out).
+
+        %! foldl(:Goal, ?List1, ?List2, ?List3, +V0, -V) | Lists | Folds Goal over three lists, threading an accumulator from V0 to V.
+        foldl(_, [], [], [], Acc, Acc).
+        foldl(G, [X|Xs], [Y|Ys], [Z|Zs], Acc, Out) :-
+            call(G, X, Y, Z, Acc, Acc1),
+            foldl(G, Xs, Ys, Zs, Acc1, Out).
+
+        % Prolog-prologue nth0/4 (p.p.8): the element at 0-based index N
+        % plus the list WITHOUT that occurrence. Eager argument checks:
+        % a bound non-integer N is a type error, a negative one a domain
+        % error, both before any list walk.
+        %! nth0(?Index, ?List, ?Elem, ?Rest) | Lists | Relates a 0-based index, the element there, and the list without that occurrence.
+        nth0(N, Es0, E, Es) :-
+            '$nth_index_check'(N, nth0/4),
+            (   integer(N) -> '$nth0_at'(N, Es0, E, Es)
+            ;   '$nth0_enum'(Es0, E, Es, 0, N)
+            ).
+
+        %! nth1(?Index, ?List, ?Elem, ?Rest) | Lists | Relates a 1-based index, the element there, and the list without that occurrence.
+        nth1(N, Es0, E, Es) :-
+            '$nth_index_check'(N, nth1/4),
+            (   integer(N) -> N >= 1, N0 is N - 1, '$nth0_at'(N0, Es0, E, Es)
+            ;   '$nth0_enum'(Es0, E, Es, 1, N)
+            ).
+
+        '$nth_index_check'(N, Ctx) :-
+            (   var(N) -> true
+            ;   integer(N) ->
+                (   N >= 0 -> true
+                ;   throw(error(domain_error(not_less_than_zero, N), Ctx))
+                )
+            ;   throw(error(type_error(integer, N), Ctx))
+            ).
+
+        '$nth0_at'(0, [E|Es], E, Es) :- !.
+        '$nth0_at'(N, [X|Es0], E, [X|Es]) :-
+            N1 is N - 1,
+            '$nth0_at'(N1, Es0, E, Es).
+
+        '$nth0_enum'([E|Es], E, Es, N, N).
+        '$nth0_enum'([X|Es0], E, [X|Es], N0, N) :-
+            N1 is N0 + 1,
+            '$nth0_enum'(Es0, E, Es, N1, N).
+
+        % Prolog-prologue countall/2 (p.p.11): every argument check runs
+        % BEFORE the goal — countall(false, -1) is the domain error, not
+        % a mere failure.
+        %! countall(:Goal, ?N) | Findall & aggregation | N is the total number of answers of Goal.
+        countall(G, N) :-
+            (   var(G) -> throw(error(instantiation_error, countall/2))
+            ;   callable(G) -> true
+            ;   throw(error(type_error(callable, G), countall/2))
+            ),
+            (   var(N) -> true
+            ;   integer(N) ->
+                (   N >= 0 -> true
+                ;   throw(error(domain_error(not_less_than_zero, N), countall/2))
+                )
+            ;   throw(error(type_error(integer, N), countall/2))
+            ),
+            findall(t, G, Ts),
+            length(Ts, N).
 
         %! aggregate_all(+Template, :Goal, -Result) | Findall & aggregation | Aggregates Goal's solutions with a count, sum, bag or set template.
         aggregate_all(count, Goal, Count) :-
