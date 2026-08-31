@@ -6,10 +6,11 @@ namespace Shumway.Tests.IsoConformance;
 /// <summary>Neumerkel's phrase/2-3 battery
 /// (complang.tuwien.ac.at/ulrich/iso-prolog/phrase), 48 cases plus its call/1
 /// and functor/3 preliminaries. Where the battery lists alternatives, the pin
-/// records the one this engine takes. Two deliberate divergences, both shared
-/// with SWI: case 11 ({!,fail};[]) succeeds — the cut inside braces is local
-/// to the brace goal — and case 17 ({L=[]},[a|L]) succeeds because the brace
-/// goal runs (and binds L) before the terminal is checked.</summary>
+/// records the one this engine takes. The runtime driver follows the
+/// TS 13211-3 TRANSLATION model — the whole body becomes one goal before
+/// anything executes — which is what cases 11 and 17 exercise: the cut in
+/// {!,fail} is a real cut with the translated call's extent, and a terminal
+/// is validated before the brace goal that would have bound its tail runs.</summary>
 public sealed class PhraseConformance
 {
     private static void True(string q) =>
@@ -53,10 +54,11 @@ public sealed class PhraseConformance
     [Fact] public void P09_TerminalThenNil() => True("phrase(([a],[]),[a]).");
     [Fact] public void P10_BraceNumberAfterFailingTerminal() =>
         Raises("phrase(([a],{1}),[])", "type_error(callable, 1)");
-    [Fact] public void P11_CutFailInBraces_SwiDivergence() =>
-        // The battery expects false (a transparent cut); SWI and this engine
-        // keep the brace goal's cut LOCAL, so the ;[] branch answers [].
-        True("phrase(({!,fail};[]),L), L == [].");
+    [Fact] public void P11_CutFailInBraces_IsTransparent() =>
+        // Tr({G}) inlines G, so the cut's extent is the translated call —
+        // the whole phrase — and the ;[] branch is cut away (Scryer agrees;
+        // SWI keeps the cut local and answers []).
+        False("phrase(({!,fail};[]),_).");
     [Fact] public void P12_BarAlternation() => True("phrase('|'([],[a]),[a]).");
     [Fact] public void P13_NumberAfterBraces() =>
         Raises("phrase(({fail},1),_)", "type_error(callable, 1)");
@@ -66,15 +68,17 @@ public sealed class PhraseConformance
         Raises("phrase({fail,1},_)", "type_error(callable, _)");
     [Fact] public void P16_ThrowInBraces() =>
         True("catch(phrase({throw(h)},[a]), h, true).");
-    [Fact] public void P17_BraceBindsThenTerminal_SwiDivergence() =>
-        // The battery expects instantiation_error from checking [a|L] before
-        // anything runs; SWI and this engine run {L=[]} first, so the
-        // terminal is proper by the time it consumes.
-        True("phrase(({L=[]},[a|L]),[a]).");
+    [Fact] public void P17_TerminalCheckedBeforeBraceRuns() =>
+        // Translation precedes execution: [a|L] is validated while L is
+        // still unbound — {L=[]} never runs (Scryer agrees; SWI runs the
+        // brace goal first and succeeds).
+        Raises("phrase(({L=[]},[a|L]),[a])", "instantiation_error");
     [Fact] public void P18_OpenTerminalThenBind() =>
         Raises("(phrase([a|L],_), L=[b])", "instantiation_error");
     [Fact] public void P19_OpenTerminalThenNumber() =>
-        Raises("phrase(([a|_],1),[])", "type_error(callable, 1)");
+        // The battery allows either error; translation reads left to right,
+        // so the open terminal is found before the number.
+        Raises("phrase(([a|_],1),[])", "instantiation_error");
     [Fact] public void P20_NumberThenOpenTerminal() =>
         Raises("phrase((1,[a|_]),[])", "type_error(callable, 1)");
     [Fact] public void P21_NumberThenImproper() =>
@@ -95,9 +99,14 @@ public sealed class PhraseConformance
     [Fact] public void P28_NegatedNumber() =>
         Raises("phrase(\\+1,_)", "type_error(callable, 1)");
     [Fact] public void P29_NegatedNumberAfterTerminal() =>
-        False("phrase(([a],\\+1),[]).");
+        // \+ is supported as an extension (case 27's sanctioned "true");
+        // the number inside it errs AT TRANSLATION, same model as case 10.
+        // Scryer instead rejects \+ wholesale (representation_error).
+        Raises("phrase(([a],\\+1),[])", "type_error(callable, 1)");
     [Fact] public void P30_NegationInDisjunction() =>
-        True("phrase(([a],\\+1;[]),[]).");
+        // Same translation-time error as case 29 — the ;[] branch cannot
+        // rescue a body that does not translate.
+        Raises("phrase(([a],\\+1;[]),[])", "type_error(callable, 1)");
     [Fact] public void P31_PhraseOfPhrase() =>
         Raises("phrase(phrase(phrase,[]),_)", "existence_error(procedure, phrase/4)");
     [Fact] public void P32_CallNilBody() =>

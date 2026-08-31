@@ -263,10 +263,10 @@ internal static class Prelude
         % that would hide the called goals' assert/retract).
         forall(Cond, Action) :- \+ ( call(Cond), \+ call(Action) ).
 
-        %! if(:Condition, :Then, :Else) | Control | Soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded.
+        %! if(:Condition, :Then, :Else) | Control | Soft-cut if/3: runs Then for every solution of Condition; Else only if Condition never succeeded.
         if(C, T, E) :- ( C *-> T ; E ).
 
-        %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails, unlike (Condition -> Then), which fails.
+        %! ifthen(:Condition, :Then) | Control | Arity form: runs Then if Condition succeeds (committing to its first solution); succeeds without running Then when Condition fails, unlike (Condition -> Then), which fails.
         ifthen(P, Q) :- ( P -> Q ; true ).
 
         %! ifthenelse(:Condition, :Then, :Else) | Control | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails.
@@ -875,7 +875,7 @@ internal static class Prelude
             copy_term(A, A1), numbervars(A1, 0, N),
             copy_term(B, B1), numbervars(B1, 0, M),
             N == M, A1 == B1.
-        %! \=@=(@Term1, @Term2) | Term ordering | Term1 and Term2 are NOT variants.
+        %! \=@=(@Term1, @Term2) | Term ordering | Term1 and Term2 are not variants.
         A \=@= B :- \+ (A =@= B).
 
         % ===== SSU (Head => Body) runtime support =====
@@ -1314,7 +1314,7 @@ internal static class Prelude
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
         ignore(Goal) :- ( call(Goal) -> true ; true ).
 
-        %! time_out(:Goal, +MilliSeconds, -Result) | Control | Runs Goal under a time limit. Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted.
+        %! time_out(:Goal, +MilliSeconds, -Result) | Control | Runs Goal under a time limit. Result is success, or time_out if the limit expired. Non-deterministic: Goal keeps its solutions, and re-entering it on backtracking restarts the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted.
         time_out(Goal, MilliSeconds, Result) :-
             Seconds is MilliSeconds / 1000,
             '$catch_begin'(Ball, '$time_out_recover'(Ball, Result)),
@@ -1458,7 +1458,7 @@ internal static class Prelude
             ;   W = Value
             ).
 
-        %! bb_get(+Key, -Value) | Global variables | Reads a blackboard entry; FAILS when Key is unset (unlike nb_getval/2, which throws).
+        %! bb_get(+Key, -Value) | Global variables | Reads a blackboard entry; fails when Key is unset (unlike nb_getval/2, which throws).
         bb_get(Key, Value) :-
             catch(nb_getval(Key, V0), _, fail),
             V0 \== '$bb_absent',
@@ -1515,25 +1515,58 @@ internal static class Prelude
 
         %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []): succeeds when the DCG Body derives List.
         phrase(Body, List) :- phrase(Body, List, []).
-        %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime.
-        % SS7.6.2 for DCG bodies: a number anywhere in the control
-        % skeleton makes the WHOLE body non-translatable, checked BEFORE
-        % anything runs — phrase(({fail}, 1), _) raises, fail never runs.
-        phrase(Body, S0, S) :- '$dcg_body_check'(Body), '$phrase'(Body, S0, S).
+        %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; a variable/control-construct Body is translated at runtime and run as one goal.
+        % The TS 13211-3 model, faithfully: the WHOLE body becomes one goal
+        % first — validating as it goes — and runs as a single call. Two
+        % consequences the old step-by-step interpreter got wrong:
+        % a cut the body carries is a REAL cut whose extent is that call,
+        % which is what makes phrase(({!,fail};[]), L) false; and a terminal
+        % is validated before anything executes, which is what makes
+        % phrase(({L=[]},[a|L]), [a]) an instantiation_error — translation
+        % precedes execution (Scryer agrees on both; the old behavior
+        % matched only SWI).
+        phrase(Body, S0, S) :- '$dcg_translate'(Body, S0, S, G), call(G).
 
-        '$dcg_body_check'(B) :- var(B), !.
-        '$dcg_body_check'((A, B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
-        '$dcg_body_check'((A ; B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
-        '$dcg_body_check'((A -> B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
-        '$dcg_body_check'('|'(A, B)) :- !, '$dcg_body_check'(A), '$dcg_body_check'(B).
-        % {G} translates to call(G): a number ANYWHERE in G's control skeleton
-        % can never be called, and the check runs before anything else does —
-        % phrase(([a],{1}), []) raises even though [a] would have failed first
-        % (Neumerkel's phrase case 10).
-        '$dcg_body_check'({G}) :- !, '$dcg_goal_check'(G).
-        '$dcg_body_check'(N) :-
+        '$dcg_translate'(V, _, _, _) :- var(V), !,
+            throw(error(instantiation_error, phrase/3)).
+        '$dcg_translate'([], S0, S, S0 = S) :- !.
+        % A terminal must be PROPER before it consumes anything: an open tail
+        % is an instantiation_error (phrase([a|L], K) may not guess L, and
+        % phrase([a|L], L) once grew the list it was matching forever), an
+        % improper or cyclic one a type_error. Tr([a,b], S0, S) = (S0 = [a,b|S]).
+        '$dcg_translate'([H|T], S0, S, S0 = List) :- !,
+            '$dcg_terminal_check'(T, [H|T]),
+            '$dcg_terminal_concat'([H|T], S, List).
+        '$dcg_translate'(!, S0, S, (!, S0 = S)) :- !.
+        '$dcg_translate'((A, B), S0, S, (GA, GB)) :- !,
+            '$dcg_translate'(A, S0, S1, GA),
+            '$dcg_translate'(B, S1, S, GB).
+        '$dcg_translate'((A ; B), S0, S, (GA ; GB)) :- !,
+            '$dcg_translate'(A, S0, S, GA),
+            '$dcg_translate'(B, S0, S, GB).
+        % '|'(A,B) written canonically: `|` is only an operator inside a DCG
+        % rule body (strict ISO has no bar operator).
+        '$dcg_translate'('|'(A, B), S0, S, (GA ; GB)) :- !,
+            '$dcg_translate'(A, S0, S, GA),
+            '$dcg_translate'(B, S0, S, GB).
+        '$dcg_translate'((A -> B), S0, S, (GA -> GB)) :- !,
+            '$dcg_translate'(A, S0, S1, GA),
+            '$dcg_translate'(B, S1, S, GB).
+        '$dcg_translate'(\+ A, S0, S, (\+ GA, S0 = S)) :- !,
+            '$dcg_translate'(A, S0, _, GA).
+        % Tr({G}) = (G, S0 = S) — G INLINED, not wrapped in call/1, so a cut
+        % inside the braces keeps the translated goal's extent. The number
+        % check runs at translation: phrase(([a],{1}), []) raises even though
+        % [a] would have failed first.
+        '$dcg_translate'({G}, S0, S, (G, S0 = S)) :- !,
+            '$dcg_goal_check'(G).
+        '$dcg_translate'(call(G), S0, S, call(G, S0, S)) :- !.
+        '$dcg_translate'(N, _, _, _) :-
             number(N), !, throw(error(type_error(callable, N), phrase/3)).
-        '$dcg_body_check'(_).
+        '$dcg_translate'(NT, S0, S, G) :-
+            NT =.. L0,
+            '$dcg_terminal_concat'(L0, [S0, S], L),
+            G =.. L.
 
         '$dcg_goal_check'(G) :- var(G), !.
         '$dcg_goal_check'((A, B)) :- !, '$dcg_goal_check'(A), '$dcg_goal_check'(B).
@@ -1542,28 +1575,6 @@ internal static class Prelude
         '$dcg_goal_check'(N) :-
             number(N), !, throw(error(type_error(callable, N), phrase/3)).
         '$dcg_goal_check'(_).
-
-        '$phrase'(V, _, _) :- var(V), !, throw(error(instantiation_error, phrase/3)).
-        '$phrase'([], S0, S) :- !, S0 = S.
-        % A terminal list must be PROPER before it consumes anything: an open
-        % tail is an instantiation_error (phrase([a|L], K) may not guess L),
-        % an improper one a type_error — and without the check the open case
-        % grew the list it was matching forever (phrase([a|L], L)).
-        '$phrase'([H|T], S0, S) :- !,
-            '$dcg_terminal_check'(T, [H|T]),
-            append([H|T], S, S0).
-        '$phrase'(!, S0, S) :- !, S0 = S.
-        '$phrase'((A, B), S0, S) :- !, '$phrase'(A, S0, S1), '$phrase'(B, S1, S).
-        '$phrase'((A ; B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
-        % '|'(A,B) written canonically: `|` is only an operator inside a DCG
-        % rule body (strict ISO has no bar operator), and this is a plain
-        % clause matching the alternation a DCG body term carries at runtime.
-        '$phrase'('|'(A, B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
-        '$phrase'((A -> B), S0, S) :- !, ( '$phrase'(A, S0, S1) -> '$phrase'(B, S1, S) ).
-        '$phrase'({G}, S0, S) :- !, call(G), S0 = S.
-        '$phrase'(\+ A, S0, S) :- !, \+ '$phrase'(A, S0, _), S0 = S.
-        '$phrase'(call(G), S0, S) :- !, call(G, S0, S).
-        '$phrase'(G, S0, S) :- call(G, S0, S).
 
         '$dcg_terminal_check'(T, Orig) :-
             (   '$cyclic_spine'(Orig) ->
@@ -1576,6 +1587,9 @@ internal static class Prelude
         '$dcg_terminal_walk'([_|T], Orig) :- !, '$dcg_terminal_walk'(T, Orig).
         '$dcg_terminal_walk'(_, Orig) :-
             throw(error(type_error(list, Orig), phrase/3)).
+
+        '$dcg_terminal_concat'([], S, S).
+        '$dcg_terminal_concat'([H|T], S, [H|R]) :- '$dcg_terminal_concat'(T, S, R).
 
         %! phrase_from_stream(:Body, +Stream) | Grammar | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream.
         phrase_from_stream(Body, Stream) :-

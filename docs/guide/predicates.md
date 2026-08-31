@@ -73,7 +73,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `@=<(@Term1, @Term2)` | Standard-order-of-terms less-than-or-equal comparison. |
 | `@>(@Term1, @Term2)` | Standard-order-of-terms greater-than comparison. |
 | `@>=(@Term1, @Term2)` | Standard-order-of-terms greater-than-or-equal comparison. |
-| `\=@=(@Term1, @Term2)` | Term1 and Term2 are NOT variants. |
+| `\=@=(@Term1, @Term2)` | Term1 and Term2 are not variants. |
 | `compare(?Order, @Term1, @Term2)` | Unifies Order with the relation (<, = or >) between the two terms. |
 
 ## Term inspection & construction
@@ -145,8 +145,8 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `get_cpu_time(-Time)` | Binds Time to a high-resolution monotonic process timer, in milliseconds (float). |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
-| `if(:Condition, :Then, :Else)` | Soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded. |
-| `ifthen(:Condition, :Then)` | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails, unlike (Condition -> Then), which fails. |
+| `if(:Condition, :Then, :Else)` | Soft-cut if/3: runs Then for every solution of Condition; Else only if Condition never succeeded. |
+| `ifthen(:Condition, :Then)` | Arity form: runs Then if Condition succeeds (committing to its first solution); succeeds without running Then when Condition fails, unlike (Condition -> Then), which fails. |
 | `ifthenelse(:Condition, :Then, :Else)` | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
 | `notrace` | Turns the four-port tracer off. |
@@ -155,7 +155,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `setup_call_cleanup(:Setup, :Goal, :Cleanup)` | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. |
 | `throw(+Exception)` | Throws an exception term, unwinding to the nearest catch/3. |
 | `time(:Goal)` | Calls Goal like call/1 and prints a per-answer resource report: inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers. |
-| `time_out(:Goal, +MilliSeconds, -Result)` | Runs Goal under a time limit. Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
+| `time_out(:Goal, +MilliSeconds, -Result)` | Runs Goal under a time limit. Result is success, or time_out if the limit expired. Non-deterministic: Goal keeps its solutions, and re-entering it on backtracking restarts the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
 | `trace` | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. |
 | `true` | Always succeeds. |
 
@@ -458,7 +458,7 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | Predicate | Description |
 | --- | --- |
 | `phrase(:Body, ?List)` | phrase(Body, List, []): succeeds when the DCG Body derives List. |
-| `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime. |
+| `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; a variable/control-construct Body is translated at runtime and run as one goal. |
 | `phrase_from_file(:Body, +File)` | Runs the DCG Body over File's text, read lazily; the file is closed on the way out. |
 | `phrase_from_file(:Body, +File, +Options)` | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes). |
 | `phrase_from_stream(:Body, +Stream)` | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream. |
@@ -472,7 +472,7 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. |
 | `bb_b_put(+Key, +Value)` | Backtrackable blackboard assignment: the previous value is restored on backtracking. |
 | `bb_delete(+Key, -Value)` | Unifies Value with the current value and removes the entry. |
-| `bb_get(+Key, -Value)` | Reads a blackboard entry; FAILS when Key is unset (unlike nb_getval/2, which throws). |
+| `bb_get(+Key, -Value)` | Reads a blackboard entry; fails when Key is unset (unlike nb_getval/2, which throws). |
 | `bb_put(+Key, +Value)` | Blackboard store: non-backtrackable global assignment. |
 | `bb_update(+Key, ?Old, +New)` | Unifies Old with the current value and replaces it with New; fails (leaving the entry unchanged) when Old does not match. |
 | `flag(+Key, ?Old, +New)` | Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked. |
