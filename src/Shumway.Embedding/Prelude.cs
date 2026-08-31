@@ -519,22 +519,27 @@ internal static class Prelude
         '$check_qualified_indicator'(_, Spec) :-
             throw(error(type_error(predicate_indicator, Spec), _)).
 
-        %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound.
-        % Proper lists take the native '$list_length' fast path; everything
-        % else (partial list, improper term, bad Length) walks with the
-        % original term kept for the type_error(list, Culprit).
+        %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A term that is not a partial list, a cyclic list included, fails.
+        % Proper lists take the native '$list_length' fast path (cycle-safe:
+        % it fails a looping spine rather than spinning). A cyclic list has no
+        % finite length — fail, before the Prolog walk would recurse into it
+        % forever. An improper tail also FAILS rather than raising
+        % type_error(list, _): the de-facto standard behavior (Neumerkel's
+        % length cases 4-7 — length(2,0) is false).
         length(L, N) :-
             integer(N), N < 0, !,
             throw(error(domain_error(not_less_than_zero, N), length/2)).
+        length(L, _) :-
+            nonvar(L), '$cyclic_spine'(L), !, fail.
         length(L, N) :-
             nonvar(L), '$list_length'(L, M), !,
             (   integer(N) -> N = M
             ;   var(N) -> N = M
             ;   throw(error(type_error(integer, N), length/2))
             ).
-        length(L, N) :- '$length_walk'(L, L, N, 0).
+        length(L, N) :- '$length_walk'(L, N, 0).
 
-        '$length_walk'(L, Orig, N, Acc) :-
+        '$length_walk'(L, N, Acc) :-
             (   var(L) ->
                 (   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
                     % Length identical to the open tail (length(L,L),
@@ -548,8 +553,8 @@ internal static class Prelude
                 ;   var(N) -> '$length_enum'(L, N, Acc)
                 ;   throw(error(type_error(integer, N), length/2))
                 )
-            ;   L = [_|T] -> Acc1 is Acc + 1, '$length_walk'(T, Orig, N, Acc1)
-            ;   throw(error(type_error(list, Orig), length/2))
+            ;   L = [_|T] -> Acc1 is Acc + 1, '$length_walk'(T, N, Acc1)
+            ;   fail
             ).
 
         '$length_enum'([], N, N).

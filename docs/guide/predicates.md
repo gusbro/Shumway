@@ -241,7 +241,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `intersection(+Set1, +Set2, -Intersection)` | Intersection holds the elements of Set1 that also occur in Set2. |
 | `keysort(+Pairs, -Sorted)` | Stable-sort a list of K-V pairs by K in the standard order of terms. Each element must be a -/2 compound; relative order of equal-key pairs is preserved. ISO §8.4.4. |
 | `last(?List, ?Last)` | Relates a list to its last element. |
-| `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. |
+| `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A term that is not a partial list, a cyclic list included, fails. |
 | `list_to_set(+List, -Set)` | Removes duplicates from a list, keeping the first occurrence of each. |
 | `map_list_to_pairs(:Key, +List, -KeyedPairs)` | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key. |
 | `maplist(:Goal, ?List)` | Succeeds if Goal holds for every element of List. |

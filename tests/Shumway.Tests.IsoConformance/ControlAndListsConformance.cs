@@ -177,8 +177,10 @@ public class ControlAndListsConformance
         var engine = new PrologEngine();
         Assert.True(engine.Query(
             "catch(length(_, a), error(type_error(integer, a), _), true).").Success);
-        Assert.True(engine.Query(
-            "catch(length(a, _), error(type_error(list, a), _), true).").Success);
+        // A non-list first argument FAILS rather than raising
+        // type_error(list, _) — the de-facto standard (Neumerkel's length
+        // case 4: length(2,0) is false); see LengthConformance.
+        Assert.False(engine.Query("length(a, _).").Success);
     }
 
     [Fact]
