@@ -54,9 +54,12 @@ public static class PredicateDoc
             .ToList();
     }
 
-    /// <summary>Matches a <c>%! Template | Category | Summary</c> comment.</summary>
+    /// <summary>Matches a <c>%! Template | Category | Summary</c> comment.
+    /// The field separator is a pipe WITH surrounding whitespace, so a
+    /// template may itself contain a bare cons pipe — <c>[+File|+Files]</c> —
+    /// without splitting the line early.</summary>
     private static readonly Regex DocComment = new(
-        @"^\s*%!\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.+?)\s*$",
+        @"^\s*%!\s*(.+?)\s+\|\s+([^|]+?)\s+\|\s+(.+?)\s*$",
         RegexOptions.Compiled);
 
     /// <summary>The complete section order — every category a predicate
@@ -157,6 +160,10 @@ public static class PredicateDoc
     /// <c>nl/0</c>.</summary>
     private static (string Name, int Arity) ParseTemplate(string template)
     {
+        // The cons template `[+File|+Files]` documents '.'/2 — the list-call
+        // consult entry — under its readable spelling.
+        if (template.StartsWith('[') && template.Contains('|'))
+            return (".", 2);
         int open = template.IndexOf('(');
         if (open < 0) return (template, 0);
         string name = template[..open].Trim();
@@ -214,7 +221,7 @@ public static class PredicateDoc
                 .OrderBy(e => e.Name, StringComparer.Ordinal)
                 .ThenBy(e => e.Arity);
             foreach (Entry e in inCategory)
-                sb.Append("| `").Append(e.Template).Append("` | ")
+                sb.Append("| `").Append(e.Template.Replace("|", "\\|")).Append("` | ")
                   .Append(e.Summary.Replace("|", "\\|")).Append(" |\n");
         }
         return sb.ToString();

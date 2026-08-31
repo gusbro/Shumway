@@ -1473,11 +1473,10 @@ internal static class Prelude
         %! bb_b_put(+Key, +Value) | Global variables | Backtrackable blackboard assignment: the previous value is restored on backtracking.
         bb_b_put(Key, Value) :- '$bb_wrap'(Value, W), b_setval(Key, W).
 
-        %! '.'(+File, +Files) | Database | Edinburgh consult syntax: calling a list as a goal consults each element, so `?- [file1, file2].` loads both and `?- [user].` reads clauses interactively from current input (|: prompt) until end_of_file. Not ISO (13211-1 defines no load syntax) but universal practice. An element is anything consult/1 accepts.
+        %! [+File|+Files] | Database | Edinburgh consult syntax: calling a list as a goal consults each element, so `?- [file1, file2].` loads both and `?- [user].` reads clauses interactively from current input until end_of_file. An element is anything consult/1 accepts.
         :- public '.'/2.
         [F|Fs] :- consult([F|Fs]).
 
-        %! '[]' | Database | The empty consult list, so `?- [].` (and the tail of every file list) trivially succeeds.
         :- public '[]'/0.
         [].
 

@@ -50,15 +50,17 @@ public class Chunk48Tests
     public void ParseError_ConsultStringSurfacesPosition()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<ParseException>(
+        // The ISO ball, not the raw ParseException: a parse failure crossing
+        // out of a consult is syntax_error so Prolog-side catch/3 can take it.
+        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
             () => engine.ConsultString("""
                 ok_clause.
                 bad_clause(
                 """));
-        // Should contain "line:col:" somewhere — the exact line depends
-        // on where the parser stops, but the message must start with the
-        // position prefix.
-        Assert.Matches(@"^\d+:\d+:", ex.Message);
+        // The position prefix ("line:col:") must survive the translation —
+        // the exact line depends on where the parser stops.
+        Assert.Matches(@"\d+:\d+:", ex.Message);
+        Assert.Contains("syntax_error", ex.Message);
     }
 
     // ============================================================================

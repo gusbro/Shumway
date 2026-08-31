@@ -58,8 +58,18 @@ internal sealed class ConsultPipeline
             E.LoadBundle(path);
             return;
         }
-        LoadSourceFile(path, reconsult: false);
+        try { LoadSourceFile(path, reconsult: false); }
+        catch (Shumway.Compiler.Parsing.ParseException ex) { throw AsSyntaxError(ex); }
     }
+
+    /// <summary>A parse failure crossing OUT of a consult becomes a proper ISO
+    /// <c>syntax_error</c> ball (the position rides in the message), so the
+    /// top level reports it as an error and <c>catch/3</c> can take it — it
+    /// used to escape as the raw .NET exception, uncatchable from Prolog.
+    /// The all-or-nothing outcome itself is the documented GNU model: on a
+    /// failed compilation "a message is displayed and nothing is loaded".</summary>
+    private static Exception AsSyntaxError(Shumway.Compiler.Parsing.ParseException ex)
+        => new Shumway.Core.PrologRuntimeException("syntax_error", ex.Message);
 
     /// <summary>SWI-style extension defaulting: <c>consult(algo)</c> with no
     /// extension resolves to <c>algo.pl</c> when <c>algo</c> itself does not
@@ -711,7 +721,8 @@ internal sealed class ConsultPipeline
     public void ConsultString(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        ConsultStringInner(source, recordInHistory: true);
+        try { ConsultStringInner(source, recordInHistory: true); }
+        catch (Shumway.Compiler.Parsing.ParseException ex) { throw AsSyntaxError(ex); }
     }
 
     /// <summary>Cached parse of the internal prelude. The prelude source is a

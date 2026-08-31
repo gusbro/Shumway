@@ -99,6 +99,29 @@ public sealed class EdinburghConsultTests
     }
 
     [Fact]
+    public void SyntaxError_IsACatchableIsoBall_AndNothingLoads()
+    {
+        // The GNU-documented model: on a failed compilation a message is
+        // displayed and NOTHING is loaded. The message crosses into Prolog as
+        // a proper syntax_error ball (it used to escape as the raw .NET parse
+        // exception, uncatchable from Prolog).
+        string f = WriteTemp("bad.pl", "buena(a).\nrota(b :- .\nbuena2(c).\n");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"catch(consult('{f}'), error(syntax_error(_), _), true).").Success);
+        Assert.False(e.Query("catch(buena(_), _, fail).").Success);
+
+        var e2 = new PrologEngine
+        {
+            In = new StringReader("ok(1).\nrota(b :- .\nend_of_file.\n"),
+            Out = new StringWriter(),
+        };
+        Assert.True(e2.Query(
+            "catch([user], error(syntax_error(_), _), true).").Success);
+        Assert.False(e2.Query("catch(ok(_), _, fail).").Success);
+    }
+
+    [Fact]
     public void VariableSpec_IsAnInstantiationError()
     {
         Assert.True(new PrologEngine().Query(

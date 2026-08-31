@@ -168,9 +168,9 @@ false.
 - A query wider than the terminal wraps across rows; the cursor tracks
   the edit position. `↑`/`↓` walk history, `Tab` completes predicate
   names, and the usual Home/End/Ctrl-A/E/U/K editing keys work.
-- `?- [file1, file2].` consults each file (Edinburgh syntax — not ISO,
-  which defines no load syntax, but universal practice). An extensionless
-  name is retried as `name.pl`; `consult/1` accepts the same list.
+- `?- [file1, file2].` consults each file (the Edinburgh syntax). An
+  extensionless name is retried as `name.pl`; `consult/1` accepts the
+  same list.
 - `?- [user].` enters clauses **interactively**: each input line is read
   behind a `|: ` prompt and collected until Ctrl-D / Ctrl-Z+Enter or a
   line reading `end_of_file.` — then the collected text is consulted like
