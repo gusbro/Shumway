@@ -329,27 +329,30 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>consult(user)</c> / <c>[user]</c> — the classic interactive
-    /// entry: clauses are read from CURRENT INPUT, one line at a time behind a
-    /// <c>|: </c> prompt, until end of input (Ctrl-D / Ctrl-Z) or a line
-    /// consisting of <c>end_of_file.</c> — then the collected text is consulted
-    /// like any source file.</summary>
+    /// entry: clauses are read from CURRENT INPUT until end of input (Ctrl-Z,
+    /// or a Ctrl-D character on a Windows console), or a line consisting of
+    /// <c>end_of_file.</c> — then the collected text is consulted like any
+    /// source file. NO prompt is written here: the <c>|: </c> belongs to the
+    /// interactive input source (the REPL's user_input reader prints it per
+    /// refilled line, same as for read/1), so a piped script correctly sees
+    /// none and an interactive session sees exactly one per line.</summary>
     private static void ConsultUserInput(PrologEngine host, Activation engine)
     {
         var reader = engine.Streams?.CurrentInput?.Reader
             ?? (System.IO.TextReader?)host.In ?? System.Console.In;
-        var writer = engine.Streams?.CurrentOutput?.Writer ?? host.Out;
         var text = new System.Text.StringBuilder();
         var line = new System.Text.StringBuilder();
         while (true)
         {
-            writer.Write("|: ");
-            writer.Flush();
             line.Clear();
             int ch;
             while ((ch = reader.Read()) >= 0 && ch != '\n') line.Append((char)ch);
             if (ch < 0 && line.Length == 0) break;                    // end of input
             string s = line.ToString().TrimEnd('\r');
-            if (s.Trim() == "end_of_file.") break;
+            string t = s.Trim();
+            // A cooked Windows console delivers Ctrl-D as an in-line \x04
+            // rather than end-of-input; honor it as the Unix habit intends.
+            if (t == "end_of_file." || t == "\u0004") break;
             text.Append(s).Append('\n');
             if (ch < 0) break;                        // last line without newline
         }

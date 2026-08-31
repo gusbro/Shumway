@@ -46,17 +46,35 @@ public sealed class EdinburghConsultTests
     }
 
     [Fact]
-    public void ConsultUser_ReadsUntilEndOfFileLine_AndPrompts()
+    public void ConsultUser_ReadsUntilEndOfFileLine()
     {
+        // No "|: " in the transcript on purpose: the prompt belongs to the
+        // INTERACTIVE input source (the REPL's user_input reader prints it per
+        // refilled line, as for read/1) — writing it here too doubled it, and
+        // a piped script correctly sees none.
         var output = new StringWriter();
         var e = new PrologEngine
         {
-            In = new StringReader("gato(tom).\ngato(felix).\nend_of_file.\n"),
+            In = new StringReader("gato(tom).\n\ngato(felix).\nend_of_file.\n"),
             Out = output,
         };
         Assert.True(e.Query("[user].").Success);
         Assert.True(e.Query("gato(tom), gato(felix).").Success);
-        Assert.Contains("|: ", output.ToString());
+        Assert.DoesNotContain("|: ", output.ToString());
+    }
+
+    [Fact]
+    public void ConsultUser_CtrlD_EndsTheEntry()
+    {
+        // A cooked Windows console delivers Ctrl-D as an in-line \x04.
+        var e = new PrologEngine
+        {
+            In = new StringReader("pez(blub).\n\u0004\nno_llega(x).\n"),
+            Out = new StringWriter(),
+        };
+        Assert.True(e.Query("[user].").Success);
+        Assert.True(e.Query("pez(blub).").Success);
+        Assert.False(e.Query("catch(no_llega(_), _, fail).").Success);
     }
 
     [Fact]
