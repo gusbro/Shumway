@@ -212,6 +212,18 @@ async function step() {
 async function run(queryText) {
   freshLine();
   emit('?- ' + queryText + '\n', 'query');
+  // `restart.` is answered by the PAGE, not the engine: a fresh engine with
+  // nothing loaded — what switching workspaces does, without the switch.
+  // Files and the editor stay; consult again to reload them.
+  if (/^\s*restart\s*\.?\s*$/.test(queryText)) {
+    await abandonQuery();
+    if (debugUi.active()) await debugUi.onWorkspaceChanged();
+    else await session.resetEngine();
+    consultedSomething = false;
+    consultEpoch++;
+    emit('% the engine is fresh — nothing is loaded (consult to reload)\n\n', 'note');
+    return;
+  }
   const err = await session.start(queryText);
   if (err) { emit(err + '\n\n', 'error'); return; }
   await step();
