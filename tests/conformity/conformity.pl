@@ -28,6 +28,9 @@ cf_page(conformity_testing, 'artifacts/conformity.html').
 cf_page(number_chars_cont,  'artifacts/number_chars_cont.html').
 cf_page(variable_names,     'artifacts/variable_names.html').
 cf_page(dif,                'artifacts/dif.html').
+cf_page('length_quad.pl',   'artifacts/length_quad.pl').
+cf_page('phrase_quad.pl',   'artifacts/phrase_quad.pl').
+cf_page(cleanup,            'artifacts/cleanup.html').
 
 conformity_fetch_pages :-
     cf_base(B),
@@ -99,10 +102,22 @@ conformity_run_suites :-
     nc_generate,
     vn_generate,
     dif_generate,
+    length_generate,
+    phrase_generate,
+    cleanup_generate,
     cf_report('----------------------------------------~n', []),
     syntax_run,
     nc_run,
     vn_run,
+    % Optional driver hook, between the strict-syntax suites and the quad
+    % suites: Scryer loads library(dcgs) HERE — the library defines
+    % op(1100, xfy, '|'), which would break syntax test 285 (X=[(a|b)]
+    % must be a syntax error) if it were loaded at startup, and the
+    % engine refuses op/3 on '|' so it cannot be removed afterwards.
+    catch(conformity_pre_quads, error(existence_error(_, _), _), true),
+    length_run,
+    phrase_run,
+    cleanup_run,
     % dif/2 is not ISO: probe for it; without it (GNU Prolog) the suite is
     % reported skipped rather than failed en masse.
     ( catch(( dif(a, b) -> true ; true ), _, fail)

@@ -823,6 +823,18 @@ internal sealed class BundleLoader
         }
     }
 
+    /// <summary>SHUMWAY_BUNDLE_DIAG=1 — cross-process bundle forensics: a child
+    /// prints what it actually LOADED (hashes of the blobs, patch counts) to
+    /// stderr, so a failing spawner's captured transcript can be lined up
+    /// against the same hashes computed on the bytes it wrote. Matching hashes
+    /// clear the file transfer and indict patch/execution in the child.</summary>
+    private static readonly bool BundleDiag =
+        Environment.GetEnvironmentVariable("SHUMWAY_BUNDLE_DIAG") == "1";
+
+    internal static string DiagHash(byte[]? bytes) => bytes is null ? "null"
+        : Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(bytes)).Substring(0, 8);
+
     private static PersistedIlModule? LoadPersistedIl(BundleEntry entry)
     {
         // overwrite each baked build-time atom/functor id sentinel
@@ -831,11 +843,22 @@ internal sealed class BundleLoader
         // mapped, so the patch must happen on the byte buffer (a copy so we
         // don't mutate the caller's reusable BundleEntry).
         byte[] ilBytes = entry.CompiledIl!;
+        int patchCount = 0;
         if (entry.CompiledIlPatches is not null && entry.CompiledIlPatches.Length > 0)
         {
             ilBytes = (byte[])entry.CompiledIl!.Clone();
+            patchCount = Shumway.Compiler.Il.IlPatchSiteCodec
+                .Decode(entry.CompiledIlPatches).Count;
             ApplyIlPatches(ilBytes, entry.CompiledIlPatches);
         }
+        if (BundleDiag)
+            Console.Error.WriteLine(
+                $"[bundle-diag-child] {entry.ModuleName}: "
+                + $"il-pre={DiagHash(entry.CompiledIl)}/{entry.CompiledIl!.Length}B "
+                + $"patches={patchCount}({DiagHash(entry.CompiledIlPatches)}) "
+                + $"il-post={DiagHash(ilBytes)} "
+                + $"bytecode={DiagHash(entry.CompiledBytecode)} "
+                + $"ilEntries={DiagHash(entry.CompiledIlEntries)}");
         var asm = System.Reflection.Assembly.Load(ilBytes);
         System.Threading.Interlocked.Increment(ref PersistedIlLoadCount);
         var type = asm.GetType(Shumway.Compiler.Il.PersistedIlBuilder.TypeName);

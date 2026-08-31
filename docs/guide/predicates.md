@@ -73,7 +73,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `@=<(@Term1, @Term2)` | Standard-order-of-terms less-than-or-equal comparison. |
 | `@>(@Term1, @Term2)` | Standard-order-of-terms greater-than comparison. |
 | `@>=(@Term1, @Term2)` | Standard-order-of-terms greater-than-or-equal comparison. |
-| `\=@=(@Term1, @Term2)` | Term1 and Term2 are NOT variants. |
+| `\=@=(@Term1, @Term2)` | Term1 and Term2 are not variants. |
 | `compare(?Order, @Term1, @Term2)` | Unifies Order with the relation (<, = or >) between the two terms. |
 
 ## Term inspection & construction
@@ -145,8 +145,8 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `get_cpu_time(-Time)` | Binds Time to a high-resolution monotonic process timer, in milliseconds (float). |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
-| `if(:Condition, :Then, :Else)` | Soft-cut if/3: runs Then for EVERY solution of Condition; Else only if Condition never succeeded. |
-| `ifthen(:Condition, :Then)` | Arity form: runs Then if Condition succeeds (committing to its first solution); SUCCEEDS without running Then when Condition fails, unlike (Condition -> Then), which fails. |
+| `if(:Condition, :Then, :Else)` | Soft-cut if/3: runs Then for every solution of Condition; Else only if Condition never succeeded. |
+| `ifthen(:Condition, :Then)` | Arity form: runs Then if Condition succeeds (committing to its first solution); succeeds without running Then when Condition fails, unlike (Condition -> Then), which fails. |
 | `ifthenelse(:Condition, :Then, :Else)` | Arity form of if-then-else: Then over the first solution of Condition, Else when Condition fails. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
 | `notrace` | Turns the four-port tracer off. |
@@ -155,7 +155,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `setup_call_cleanup(:Setup, :Goal, :Cleanup)` | Runs Setup once, then Goal, running Cleanup exactly once when Goal completes: deterministic success, failure, exhaustion, error, external cut, or query teardown. |
 | `throw(+Exception)` | Throws an exception term, unwinding to the nearest catch/3. |
 | `time(:Goal)` | Calls Goal like call/1 and prints a per-answer resource report: inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers. |
-| `time_out(:Goal, +MilliSeconds, -Result)` | Runs Goal under a time limit. Result is success, or time_out if the limit expired. NON-DETERMINISTIC: Goal keeps its solutions, and re-entering it on backtracking RESTARTS the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
+| `time_out(:Goal, +MilliSeconds, -Result)` | Runs Goal under a time limit. Result is success, or time_out if the limit expired. Non-deterministic: Goal keeps its solutions, and re-entering it on backtracking restarts the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
 | `trace` | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. |
 | `true` | Always succeeds. |
 
@@ -165,6 +165,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | --- | --- |
 | `aggregate_all(+Template, :Goal, -Result)` | Aggregates Goal's solutions with a count, sum, bag or set template. |
 | `bagof(?Template, :Goal, -List)` | Collects Goal's solutions; fails when there are none. |
+| `countall(:Goal, ?N)` | N is the total number of answers of Goal. |
 | `findall(?Template, :Goal, -List)` | Collects an instance of Template for every solution of Goal into a list. |
 | `findall(?Template, :Goal, -List, ?Tail)` | Like findall/3 but the result is a difference list ending in Tail. |
 | `setof(?Template, :Goal, -List)` | Like bagof/3 but the result list is sorted and duplicate-free. |
@@ -237,16 +238,21 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `flatten(+Nested, -Flat)` | Flattens nested lists into a single list; a non-list element (or variable) becomes an element of Flat. |
 | `foldl(:Goal, ?List, +V0, -V)` | Folds Goal over a list, threading an accumulator from V0 to V. |
 | `foldl(:Goal, ?List1, ?List2, +V0, -V)` | Folds Goal over two lists, threading an accumulator from V0 to V. |
+| `foldl(:Goal, ?List1, ?List2, ?List3, +V0, -V)` | Folds Goal over three lists, threading an accumulator from V0 to V. |
 | `include(:Goal, +List, -Included)` | Included holds the elements of List for which Goal succeeds. |
 | `intersection(+Set1, +Set2, -Intersection)` | Intersection holds the elements of Set1 that also occur in Set2. |
 | `keysort(+Pairs, -Sorted)` | Stable-sort a list of K-V pairs by K in the standard order of terms. Each element must be a -/2 compound; relative order of equal-key pairs is preserved. ISO §8.4.4. |
 | `last(?List, ?Last)` | Relates a list to its last element. |
-| `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. |
+| `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A term that is not a partial list, a cyclic list included, fails. |
 | `list_to_set(+List, -Set)` | Removes duplicates from a list, keeping the first occurrence of each. |
 | `map_list_to_pairs(:Key, +List, -KeyedPairs)` | For each element E of List, KeyedPairs holds K-E where call(Key, E, K) computes the key. |
 | `maplist(:Goal, ?List)` | Succeeds if Goal holds for every element of List. |
 | `maplist(:Goal, ?List1, ?List2)` | Succeeds if Goal holds for corresponding elements of two lists. |
 | `maplist(:Goal, ?List1, ?List2, ?List3)` | Succeeds if Goal holds for corresponding elements of three lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4)` | Succeeds if Goal holds for corresponding elements of four lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5)` | Succeeds if Goal holds for corresponding elements of five lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6)` | Succeeds if Goal holds for corresponding elements of six lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3, ?List4, ?List5, ?List6, ?List7)` | Succeeds if Goal holds for corresponding elements of seven lists. |
 | `max_list(+List, -Max)` | Max is the largest number in the non-empty list. |
 | `max_member(?Max, +List)` | Max is the largest element of List in the standard order of terms. |
 | `member(?Elem, ?List)` | Succeeds when Elem is a member of List; enumerates members on backtracking. |
@@ -256,7 +262,9 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `msort(+List, -Sorted)` | Sorts a list into standard order, keeping duplicates. |
 | `nonmember(?Elem, +List)` | True when Elem does not unify with any element of List. |
 | `nth0(?Index, ?List, ?Elem)` | Relates a 0-based index to the list element at that position. |
+| `nth0(?Index, ?List, ?Elem, ?Rest)` | Relates a 0-based index, the element there, and the list without that occurrence. |
 | `nth1(?Index, ?List, ?Elem)` | Relates a 1-based index to the list element at that position. |
+| `nth1(?Index, ?List, ?Elem, ?Rest)` | Relates a 1-based index, the element there, and the list without that occurrence. |
 | `numlist(+Low, +High, -List)` | List is the consecutive integers from Low to High inclusive. |
 | `pairs_keys(+Pairs, -Keys)` | The keys of a list of Key-Value pairs. |
 | `pairs_keys_values(?Pairs, ?Keys, ?Values)` | Relates a list of Key-Value pairs to its lists of keys and values. |
@@ -458,7 +466,7 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | Predicate | Description |
 | --- | --- |
 | `phrase(:Body, ?List)` | phrase(Body, List, []): succeeds when the DCG Body derives List. |
-| `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime. |
+| `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; a variable/control-construct Body is translated at runtime and run as one goal. |
 | `phrase_from_file(:Body, +File)` | Runs the DCG Body over File's text, read lazily; the file is closed on the way out. |
 | `phrase_from_file(:Body, +File, +Options)` | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes). |
 | `phrase_from_stream(:Body, +Stream)` | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream. |
@@ -472,7 +480,7 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. |
 | `bb_b_put(+Key, +Value)` | Backtrackable blackboard assignment: the previous value is restored on backtracking. |
 | `bb_delete(+Key, -Value)` | Unifies Value with the current value and removes the entry. |
-| `bb_get(+Key, -Value)` | Reads a blackboard entry; FAILS when Key is unset (unlike nb_getval/2, which throws). |
+| `bb_get(+Key, -Value)` | Reads a blackboard entry; fails when Key is unset (unlike nb_getval/2, which throws). |
 | `bb_put(+Key, +Value)` | Blackboard store: non-backtrackable global assignment. |
 | `bb_update(+Key, ?Old, +New)` | Unifies Old with the current value and replaces it with New; fails (leaving the entry unchanged) when Old does not match. |
 | `flag(+Key, ?Old, +New)` | Unifies Old with the flag's value (0 if unset), then sets it to New (an arithmetic expression is evaluated). Not backtracked. |

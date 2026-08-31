@@ -18,40 +18,9 @@ public static class AtomListBuiltins
     /// <item>(-, +): List is unbound, N is a non-negative integer — bind
     ///   List to a fresh list of N anonymous variables.</item>
     /// </list></summary>
-    public static bool Length(Activation engine)
-    {
-        Cell listCell = Resolve(engine, engine.GetRegister(0));
-        Cell nCell = Resolve(engine, engine.GetRegister(1));
-
-        if (listCell.Tag is not (Tag.Ref or Tag.AttVar))
-        {
-            int count = 0;
-            Cell cursor = engine.NormalizeListCell(listCell);
-            while (ListCursor.TryUncons(engine, cursor, out _, out Cell lenTail))
-            {
-                count++;
-                cursor = ListCursor.Resolve(engine, lenTail);
-            }
-            if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-                return false;   // partial / improper list
-            return engine.UnifyRegisterWithCell(1, Cell.Int(count));
-        }
-
-        if (nCell.Tag == Tag.Int)
-        {
-            long n = nCell.AsInt;
-            if (n < 0) return false;
-            int listHeapIdx = BuildFreshVarList(engine, (int)n);
-            return engine.UnifyRegisterWithHeapAt(0, listHeapIdx);
-        }
-
-        // ISO precedence: both var → instantiation_error; N at the wrong
-        // type → type_error(integer, _).
-        if (listCell.Tag is Tag.Ref or Tag.AttVar && nCell.Tag is Tag.Ref or Tag.AttVar)
-            throw new PrologRuntimeException("instantiation_error");
-        throw new PrologRuntimeException("type_error", "integer");
-    }
-
+    /// <summary>Builds a fresh list of <paramref name="count"/> unbound
+    /// variables on the heap and returns its start index (ADR-017 layout).
+    /// Used by append/3's enumeration cursor.</summary>
     private static int BuildFreshVarList(Activation engine, int count)
     {
         if (count == 0)

@@ -284,6 +284,7 @@ public static class StandardBuiltins
 
         // Multi-solution helpers called from the prelude.
         BuiltinsRegistry.Register("$list_length",              2, MultiSolutionHelpers.ListLength);
+        BuiltinsRegistry.Register("$cyclic_spine",             1, MultiSolutionHelpers.CyclicSpine);
         BuiltinsRegistry.Register("$make_var_list",            2, MultiSolutionHelpers.MakeVarList);
         BuiltinsRegistry.Register("$type_error_callable",      1, ControlBuiltins.TypeErrorCallable);
         BuiltinsRegistry.Register("$is_evaluable",             2, ControlBuiltins.IsEvaluable);

@@ -51,7 +51,7 @@ multi-target build. The test gate currently runs on Windows.
 
 ## Highlights
 
-- **ISO Prolog** passing all four of [Neumerkel conformity suites](tests/conformity/README.md) (Aug 2026): syntax (365/365), number_chars/2 (67/67), variable_names/1 (63/63), and dif/2 (26/26).
+- **ISO Prolog** passing all seven of the [Neumerkel conformity suites](tests/conformity/README.md) (Aug 2026): syntax (365/365), number_chars/2 (67/67), variable_names/1 (63/63), dif/2 (26/26), length/2 (37/37), phrase/2,3 (58/58) and setup_call_cleanup/3 (23/23).
 - **Prolog extensions** including attributed variables, coroutining (`dif/2`,
   `freeze/2`, `when/2`), tabling with well-founded negation, CLP(FD) and CLP(R),
   rationals, module system, partial strings, and exceptions with full error terms.

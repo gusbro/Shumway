@@ -472,6 +472,11 @@ public static partial class MetaBuiltins
             Cell head = ResolveLocal(engine, engine.GetHeap(hb));
             if (head.Tag is Tag.Ref or Tag.AttVar)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
+            // Only the option NAME is validated here. The list-valued options
+            // are OUTPUT arguments: their value unifies after the read, so
+            // read_term(T, [singletons(1)]) on "a." FAILS (Cor.3, Neumerkel
+            // cases 47-49/69-70) — it is not a domain_error, and a syntax
+            // error in the input still surfaces first.
             bool ok = false;
             if (head.Tag == Tag.Str)
             {
@@ -479,24 +484,6 @@ public static partial class MetaBuiltins
                     engine.GetHeap(head.AsHeapIndex).AsFunctorId);
                 ok = ar == 1
                     && KnownReadOptions.Contains(AtomTable.GetById(aid)?.Name ?? "");
-            }
-            if (ok)
-            {
-                // The three list-valued options must take a list (partial or
-                // unbound is fine — they are OUTPUT arguments); anything else
-                // is domain_error(read_option, Option).
-                var (oaid, _) = FunctorTable.Lookup(
-                    engine.GetHeap(head.AsHeapIndex).AsFunctorId);
-                string oname = AtomTable.GetById(oaid)?.Name ?? "";
-                if (oname is "variables" or "variable_names" or "singletons")
-                {
-                    Cell v = ResolveLocal(engine, engine.GetHeap(head.AsHeapIndex + 1));
-                    if (v.Tag is not (Tag.Ref or Tag.AttVar or Tag.Lis or Tag.Pstr)
-                        && !(v.Tag == Tag.Atom && v.AsAtomId == AtomTable.EmptyListId))
-                        ok = false;
-                    else if (v.Tag == Tag.Lis && !IsPartialOrProperList(engine, v))
-                        ok = false;
-                }
             }
             if (!ok)
             {
@@ -507,19 +494,6 @@ public static partial class MetaBuiltins
             }
             node = ResolveLocal(engine, engine.GetHeap(hb + 1));
         }
-    }
-
-    /// <summary>True when the cell is a proper list or a PARTIAL one (an
-    /// unbound tail) — an improper tail (<c>[X|a]</c>) is not a valid
-    /// read-option value.</summary>
-    private static bool IsPartialOrProperList(Activation engine, Cell c)
-    {
-        Cell cur = c;
-        int guard = engine.HeapTop + 2;
-        while (cur.Tag == Tag.Lis && guard-- > 0)
-            cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
-        return cur.Tag is Tag.Ref or Tag.AttVar
-            || (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId);
     }
 
     public static bool ReadTermWithOptions(Activation engine)
@@ -751,7 +725,10 @@ public static partial class MetaBuiltins
         {
             Shumway.Compiler.Ast.IntTerm it => it.Value,
             Shumway.Compiler.Ast.BigIntTerm bt => bt.Value,
-            Shumway.Compiler.Ast.FloatTerm ft => ft.Value,
+            // Never hand back an infinity: a float literal past double's range
+            // ("9.9e999") is a syntax error, not +inf (number_chars_cont 82).
+            Shumway.Compiler.Ast.FloatTerm ft =>
+                double.IsFinite(ft.Value) ? (object)ft.Value : null,
             _ => null,
         };
     }

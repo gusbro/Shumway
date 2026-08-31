@@ -138,6 +138,11 @@ internal static class SmokeNet48Cli
                     string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? $"#{atomId}";
                     Console.WriteLine($"        unpromotable: {name}/{arity} — {reason}");
                 }
+                // Per-candidate state + compile-worker liveness: the flake's
+                // signature (tracked>0, promoted=0) needs to say WHERE each
+                // candidate stalled — counting, pending on a dead worker, or
+                // rejected — and whether the worker thread is even alive.
+                Console.Write(e.IlPromotion.DescribePromotionState());
             }
             return e.IlPromotion.PromotedCount > 0;
         });

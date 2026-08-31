@@ -138,6 +138,9 @@ public sealed class PreludeIlBakeTests
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
+            // Child prints [bundle-diag-child] blob hashes to stderr — lined
+            // up against the "suspect hashes" in a failure's bundle-diag.
+            psi.Environment["SHUMWAY_BUNDLE_DIAG"] = "1";
             psi.ArgumentList.Add(replDll);
             psi.ArgumentList.Add(bundlePath);
 
