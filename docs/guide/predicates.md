@@ -173,6 +173,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 
 | Predicate | Description |
 | --- | --- |
+| `[+File\|+Files]` | Edinburgh consult syntax: calling a list as a goal consults each element in order, so `?- [file1, file2, ...].` loads every file of the list and `?- [user].` reads clauses interactively from current input until end_of_file. An element is anything consult/1 accepts. |
 | `abolish(+PredicateIndicator)` | Removes every clause of the named dynamic predicate. |
 | `abolish_all_tables` | Discards every tabled answer; later queries recompute against the current program. |
 | `abolish_table(+PredicateIndicator)` | Discards the tabled answers of one predicate, given as Name/Arity. |
@@ -185,7 +186,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `clause(?Head, ?Body, ?Ref)` | clause/2 with a clause reference: fetches by Ref when bound, else enumerates Head's clauses binding Ref (de facto standard). |
 | `compact_dynamic_buffer` | Invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
 | `compact_dynamic_buffer(+Name/Arity)` | Per-predicate hint variant. Checks that Name/Arity names a dynamic predicate, then does the same work as the 0-arg form: the reclamation is whole-database either way, so naming one predicate narrows what is checked, not what is compacted. |
-| `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension is loaded as a compiled bundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl. |
+| `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension is loaded as a compiled bundle, everything else is read as Prolog source. An extensionless File that does not exist is retried as File.pl. File may also be a list of specifications, each consulted in order, or the atom user: clauses are then read from current input until end of input or a line reading end_of_file. |
 | `consult_text(+Text)` | Consults Text (an atom or a chars/codes list) as Prolog source, the way consult/1 loads a file. A module loaded this way keeps its exports scoped (no auto-import into user). |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators; Module:Name/Arity enumerates a module's own. |
 | `ensure_loaded(+File)` | Loads File unless it is already loaded, in which case it does nothing (ISO 7.4.2.8). Lets several files each name their own dependencies without any of them being loaded twice. A File that CHANGED on disk since it was loaded is reloaded. Argument and errors are as consult/1. |

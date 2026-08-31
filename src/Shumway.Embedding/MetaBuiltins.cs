@@ -500,7 +500,10 @@ public static partial class MetaBuiltins
             "Loads File and adds its clauses to the database, appending to any "
             + "existing predicates. File is an atom path; a .shum extension is loaded "
             + "as a compiled bundle, everything else is read as Prolog source. An "
-            + "extensionless File that does not exist is retried as File.pl.");
+            + "extensionless File that does not exist is retried as File.pl. File may "
+            + "also be a list of specifications, each consulted in order, or the atom "
+            + "user: clauses are then read from current input until end of input or a "
+            + "line reading end_of_file.");
         BuiltinsRegistry.Register("$load_text", 2, LoadTextCore,
             Database, "'$load_text'(+TextAtom, +Options)",
             "Native core of load_text/2 (Trealla): consults TextAtom's characters "

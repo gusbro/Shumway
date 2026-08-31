@@ -168,6 +168,13 @@ false.
 - A query wider than the terminal wraps across rows; the cursor tracks
   the edit position. `↑`/`↓` walk history, `Tab` completes predicate
   names, and the usual Home/End/Ctrl-A/E/U/K editing keys work.
+- `?- [file1, file2, …].` consults each file of the list, in order (the
+  Edinburgh syntax). An extensionless name is retried as `name.pl`;
+  `consult/1` accepts the same list.
+- `?- [user].` enters clauses **interactively**: each input line is read
+  behind a `|: ` prompt and collected until Ctrl-D / Ctrl-Z+Enter or a
+  line reading `end_of_file.` — then the collected text is consulted like
+  a file.
 - End the session with `halt.` (or `halt(N).` to exit with an explicit
   exit code), or with Ctrl-D / Ctrl-Z+Enter (end of input).
 - `true` is printed for variable-less success, `false` for failure,

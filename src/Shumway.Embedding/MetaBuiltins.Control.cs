@@ -289,24 +289,74 @@ public static partial class MetaBuiltins
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "consult/1 requires the engine to be hosted by a PrologEngine.");
-
-        Cell cell = MaterializeRegisterAsCell(engine, 0);
-        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
-            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        if (cell.Tag != Tag.Atom)
-            throw new Shumway.Core.PrologRuntimeException(
-                "type_error(atom, _)");
-
-        string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
-        path = ConsultPipeline.ResolveSourcePath(path);   // SWI-style: consult(algo) → algo.pl
-        if (!System.IO.File.Exists(path))
-            throw new Shumway.Core.PrologRuntimeException(
-                $"existence_error(source_sink, '{path}')");
-
-        // Runtime consult: thread the live engine so source-declared dynamic
-        // clauses become visible to a later call in the same query.
-        host.ConsultFileLive(path, engine);
+        ConsultSpec(host, engine, MaterializeRegister(engine, 0));
         return true;
+    }
+
+    /// <summary>One consult specification: an atom path, the atom <c>user</c>
+    /// (read clauses from current input until end_of_file), or a list of
+    /// specifications — the Edinburgh <c>[file1, file2]</c> shape, which the
+    /// prelude also makes callable as a goal.</summary>
+    private static void ConsultSpec(PrologEngine host, Activation engine, Term spec)
+    {
+        switch (spec)
+        {
+            case Shumway.Compiler.Ast.VarTerm:
+                throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+            case Shumway.Compiler.Ast.AtomTerm { Name: "[]" }:
+                return;   // the end of a file list
+            case Shumway.Compiler.Ast.AtomTerm { Name: "user" }:
+                ConsultUserInput(host, engine);
+                return;
+            case Shumway.Compiler.Ast.AtomTerm a:
+            {
+                string path = ConsultPipeline.ResolveSourcePath(a.Name);   // SWI-style: consult(algo) → algo.pl
+                if (!System.IO.File.Exists(path))
+                    throw new Shumway.Core.PrologRuntimeException(
+                        $"existence_error(source_sink, '{path}')");
+                // Runtime consult: thread the live engine so source-declared dynamic
+                // clauses become visible to a later call in the same query.
+                host.ConsultFileLive(path, engine);
+                return;
+            }
+            case Shumway.Compiler.Ast.CompoundTerm { Functor: ".", Args: [var f, var fs] }:
+                ConsultSpec(host, engine, f);
+                ConsultSpec(host, engine, fs);
+                return;
+            default:
+                throw new Shumway.Core.PrologRuntimeException("type_error(atom, _)");
+        }
+    }
+
+    /// <summary><c>consult(user)</c> / <c>[user]</c> — the classic interactive
+    /// entry: clauses are read from CURRENT INPUT until end of input (Ctrl-Z,
+    /// or a Ctrl-D character on a Windows console), or a line consisting of
+    /// <c>end_of_file.</c> — then the collected text is consulted like any
+    /// source file. NO prompt is written here: the <c>|: </c> belongs to the
+    /// interactive input source (the REPL's user_input reader prints it per
+    /// refilled line, same as for read/1), so a piped script correctly sees
+    /// none and an interactive session sees exactly one per line.</summary>
+    private static void ConsultUserInput(PrologEngine host, Activation engine)
+    {
+        var reader = engine.Streams?.CurrentInput?.Reader
+            ?? (System.IO.TextReader?)host.In ?? System.Console.In;
+        var text = new System.Text.StringBuilder();
+        var line = new System.Text.StringBuilder();
+        while (true)
+        {
+            line.Clear();
+            int ch;
+            while ((ch = reader.Read()) >= 0 && ch != '\n') line.Append((char)ch);
+            if (ch < 0 && line.Length == 0) break;                    // end of input
+            string s = line.ToString().TrimEnd('\r');
+            string t = s.Trim();
+            // A cooked Windows console delivers Ctrl-D as an in-line \x04
+            // rather than end-of-input; honor it as the Unix habit intends.
+            if (t == "end_of_file." || t == "\u0004") break;
+            text.Append(s).Append('\n');
+            if (ch < 0) break;                        // last line without newline
+        }
+        host.ConsultString(text.ToString());
     }
 
     /// <summary><c>'$timeout_push'(+Seconds)</c> — starts the deadline that

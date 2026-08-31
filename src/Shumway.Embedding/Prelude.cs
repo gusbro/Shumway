@@ -1473,6 +1473,13 @@ internal static class Prelude
         %! bb_b_put(+Key, +Value) | Global variables | Backtrackable blackboard assignment: the previous value is restored on backtracking.
         bb_b_put(Key, Value) :- '$bb_wrap'(Value, W), b_setval(Key, W).
 
+        %! [+File|+Files] | Database | Edinburgh consult syntax: calling a list as a goal consults each element in order, so `?- [file1, file2, ...].` loads every file of the list and `?- [user].` reads clauses interactively from current input until end_of_file. An element is anything consult/1 accepts.
+        :- public '.'/2.
+        [F|Fs] :- consult([F|Fs]).
+
+        :- public '[]'/0.
+        [].
+
         %! consult_text(+Text) | Database | Consults Text (an atom or a chars/codes list) as Prolog source, the way consult/1 loads a file. A module loaded this way keeps its exports scoped (no auto-import into user).
         :- public consult_text/1.
         consult_text(Text) :-
