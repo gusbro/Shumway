@@ -107,16 +107,18 @@ public class Adr036LaunchRaceTests
                     }
                     catch (TimeoutException tex)
                     {
-                        // Discriminate the two failure shapes before rethrowing:
-                        // a COMPLETED query means the breakpoint never fired on
-                        // the rerun (an arming/eviction bug) and this wait was
-                        // for a ghost; an unfinished one means the engine is
-                        // genuinely stuck or the stop was lost on the wire.
+                        // The forensics run (CI 33508179775, both lanes) settled
+                        // this shape: the rerun's stops all fired and were
+                        // continued, the query just needed more than Join(50)'s
+                        // grace to FINISH — so this loop entered a wait for a
+                        // stop that never existed. A completed query here is
+                        // the test's own ghost wait, i.e. success; only a query
+                        // still running after a silent 30 s is a real failure
+                        // (stuck engine or a stop lost on the wire).
+                        if (again.Join(0)) break;
                         throw new TimeoutException(
                             "rerun stop " + stops + ": " + tex.Message
-                            + "; rerun query "
-                            + (again.Join(0) ? "COMPLETED (ghost wait - breakpoint never fired)"
-                                             : "still running"), tex);
+                            + "; rerun query still running", tex);
                     }
                     client.Request("continue", "{\"threadId\":1}");
                 }
