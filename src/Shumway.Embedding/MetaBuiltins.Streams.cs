@@ -714,30 +714,27 @@ public static partial class MetaBuiltins
     /// dot terminate the clause (space so a graphic-atom tail can't fuse the dot).</summary>
     private static object? NumberFromCharsHook(Activation engine, string chars)
     {
-        // number_chars is STRICTER than a clause read: the chars must be exactly a
-        // number, with no TRAILING content — `"3 "` and `"3."` are syntax errors,
-        // though a clause read would skip the trailing space / treat `.` as the
-        // terminator. So reject a trailing-whitespace tail, and read WITHOUT a dot
-        // (ReadTerm) then require true EOF — a trailing `.` leaves a Dot token, so
-        // IsAtEnd is false and `"3."` is rejected. (Leading layout is fine.)
-        if (chars.Length != chars.TrimEnd().Length) return null;
-        // A trailing COMMENT is junk too — `"3%"` and `"3/* */"` are syntax
-        // errors even though the lexer skips both. `0'%` is the one place a
-        // '%' belongs to the number itself, and the token parser has already
-        // handled that shape before this fallback runs.
-        if (!chars.Contains("0'", StringComparison.Ordinal))
-        {
-            int pct = chars.IndexOf('%');
-            if (pct >= 0 && chars.IndexOf('\n', pct) < 0) return null;
-            if (chars.EndsWith("*/", StringComparison.Ordinal)) return null;
-        }
+        // number_chars is STRICTER than a clause read: the chars must be
+        // exactly layout* + number, with NOTHING after — `"3 "`, `"3."`,
+        // `"3% junk"` and `"0%0'"` are all syntax errors, though a clause
+        // read would skip the trailing layout/comment or treat `.` as the
+        // terminator (GNU agrees on every one). Enforced positionally: the
+        // parse must succeed at EOF (rejects `"3."` — the Dot token
+        // survives) AND the last real token must end exactly where the
+        // string does (rejects any trailing layout or comment — parser
+        // lookahead lexes past those to find EOF, so IsAtEnd alone cannot
+        // see them). Layout and comments BEFORE or INSIDE the term stay
+        // fine: `" 0"`, `"- /**/1"`.
         Term parsed;
         try
         {
+            var lexer = new Shumway.Compiler.Lexer.Lexer(chars);
             var parser = new Shumway.Compiler.Parsing.Parser(
-                new Shumway.Compiler.Lexer.Lexer(chars), LiveOperators(engine));
+                lexer, LiveOperators(engine));
             parsed = parser.ReadTerm();
-            if (!parser.IsAtEnd()) return null;   // trailing junk → not a number
+            if (!parser.IsAtEnd()) return null;   // trailing token → not a number
+            if (lexer.LastTokenEndOffset != chars.Length)
+                return null;                      // trailing layout/comment
         }
         catch (Exception ex) when (ex is Shumway.Compiler.Parsing.ParseException
                                     or Shumway.Compiler.Lexer.LexerException)
