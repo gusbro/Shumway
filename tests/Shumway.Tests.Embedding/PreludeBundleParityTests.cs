@@ -41,8 +41,8 @@ public sealed class PreludeBundleParityTests
             RegexOptions.Multiline))
         {
             string name = m.Groups[1].Value.Trim('\'');
-            string? args = m.Groups[3].Success ? m.Groups[3].Value : null;
-            int arity = string.IsNullOrEmpty(args) ? 0 : SplitTopLevel(args);
+            string args = m.Groups[3].Success ? m.Groups[3].Value : "";
+            int arity = args.Length == 0 ? 0 : SplitTopLevel(args);
             if (publics.Contains((name, arity))) continue;
             int fid = Shumway.Core.FunctorTable.Intern(
                 Shumway.Core.AtomTable.Intern(name, permanent: true).Id, arity);
