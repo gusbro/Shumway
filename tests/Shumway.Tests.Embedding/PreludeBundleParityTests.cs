@@ -101,4 +101,38 @@ public sealed class PreludeBundleParityTests
             Assert.True(engine.Query(q).Success, q);
         }
     }
+
+    [Fact]
+    public void BakedBundle_TreatsPreludePredicatesAsBuiltIn()
+    {
+        // The introspection contract must not depend on HOW the prelude got
+        // installed: a baked $prelude entry records its predicates as
+        // prelude functors exactly like the live consult, so
+        // predicate_property reports built_in, current_predicate skips them
+        // and listing stays quiet about them.
+        var shmo = ShmoCompiler.CompileSource("probe_root2.\n",
+            moduleNameFallback: "probe2");
+        var link = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { shmo },
+            EntryPoints = new[] { new PredicateRef("probe_root2", 0) },
+            BakePrelude = true,
+        });
+        Assert.True(link.Success);
+
+        var baked = PrologEngine.FromBundle(link.Bundle!);
+        var live = new PrologEngine();
+        foreach (string q in new[]
+        {
+            "predicate_property(findall(_, _, _), built_in).",
+            "predicate_property(member(_, _), built_in).",
+            "predicate_property(countall(_, _), built_in).",
+            "\\+ current_predicate(member/2).",
+            "\\+ current_predicate(findall/3).",
+        })
+        {
+            Assert.True(live.Query(q).Success, "live: " + q);
+            Assert.True(baked.Query(q).Success, "baked: " + q);
+        }
+    }
 }

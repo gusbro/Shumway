@@ -944,6 +944,11 @@ public sealed partial class PrologEngine
             set.UnionWith(manifest.DiscontiguousFunctors);
             set.UnionWith(manifest.MultifileFunctors);
         }
+        // Source-less bundle entries have no AST to scan — their predicates
+        // live in the precompiled set. Without them a FromBundle engine
+        // answered predicate_property / ground current_predicate with plain
+        // failure for every loaded predicate (its own program included).
+        set.UnionWith(_precompiledStaticPredicates.Keys);
         _staticHeadFunctorsCache = set;
         return set;
     }

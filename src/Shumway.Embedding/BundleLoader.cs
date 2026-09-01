@@ -1330,6 +1330,10 @@ internal sealed class BundleLoader
             throw new InvalidOperationException(
                 $"LoadEntryFromBytecode: entry '{entry.ModuleName}' has no compiled bytecode.");
 
+        // The precompiled set is about to grow; StaticHeadFunctors folds it
+        // in, so its cache must not survive this load.
+        E._staticHeadFunctorsCache = null;
+
         // Resolve the manifest under the entry's module name. The
         // contract here mirrors ConsultString's "explicit module"
         // path (PrologEngine.cs:2792) — `:- module(name).` would have
@@ -1362,11 +1366,25 @@ internal sealed class BundleLoader
                 Shumway.Core.AtomTable.Intern(imp.Pred.Name, permanent: true).Id,
                 imp.Pred.Arity)] = imp.Source;
 
+        // A BAKED prelude is still the prelude: its predicates are library
+        // predicates, and predicate_property/2 must report them built_in,
+        // current_predicate/1 must skip them and listing/1 must not show
+        // them — exactly as the live consult records (ConsultPipeline's
+        // preludeSource path). Without this a FromBundle engine (every
+        // --exe, WebShumway) answered predicate_property(findall(_,_,_), _)
+        // with plain failure.
+        bool isPrelude = entry.ModuleName == Prelude.ModuleName;
+
         foreach (var d in entry.Defined)
         {
             int fid = Shumway.Core.FunctorTable.Intern(
                 Shumway.Core.AtomTable.Intern(d.Indicator.Name, permanent: true).Id,
                 d.Indicator.Arity);
+            // Statics only: the live consult records CLAUSE heads, so a
+            // clauseless `:- dynamic` prelude predicate stays out — the
+            // seeds loop below adds the ones that ship initial clauses.
+            if (isPrelude && d.Visibility != PredicateVisibility.Dynamic)
+                E._preludeFunctors.Add(fid);
             if (d.Visibility == PredicateVisibility.Public)
                 manifest.PublicFunctors.Add(fid);
             else if (d.Visibility == PredicateVisibility.Dynamic)
@@ -1402,6 +1420,14 @@ internal sealed class BundleLoader
             int fid = Shumway.Core.FunctorTable.Intern(
                 Shumway.Core.AtomTable.Intern(seed.Indicator.Name, permanent: true).Id,
                 seed.Indicator.Arity);
+            // Mirror the live consult exactly: it records the heads of
+            // CLAUSES in the source, so a `:- dynamic` prelude predicate
+            // joins only when it ships initial clauses. '$wfs_active' (no
+            // clauses, asserted by the WFS driver) must NOT join — marked
+            // built_in it would trip the prelude clause/2 privacy guard the
+            // tabling driver reads it through.
+            if (isPrelude && seed.EncodedClauses.Count > 0)
+                E._preludeFunctors.Add(fid);
             var slot = E._dynStore.Slot(fid);
             foreach (var encoded in seed.EncodedClauses)
                 slot.Add(TermCodec.DecodeClause(encoded));
