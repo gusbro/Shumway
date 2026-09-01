@@ -2007,18 +2007,51 @@ public sealed partial class PrologEngine
             engine.Debug?.RelocateHeapRoots(engine, relocIndex, relocBoundary);
         };
 
+        // Test seam: fires INSIDE the arm-publish race window — after the
+        // activation's DebugFullyArmed read at construction, before its
+        // publication as LiveActivation. The regression pin runs the whole
+        // watcher-thread arm dance here, which is the exact interleaving no
+        // amount of blind thread-stressing lands on (a microseconds-wide
+        // window; 60 stress rounds never hit it once).
+        TestHookBeforeActivationPublish?.Invoke();
         // Tier-0 deterministic benchmark metric: keep a reference to the
         // per-query engine so the harness can read its monotonic
         // CellsAllocated after the query completes (the engine is
-        // otherwise local and discarded). Read-only diagnostic; does not
-        // affect execution.
+        // otherwise local and discarded). Read-only diagnostic — and ALSO
+        // the LiveActivation a lazily-arming debug session reaches for.
         _lastQueryEngine = engine;
+        // ADR-035 D5+ — close the arm-publish race. ActivateFullDebug (a
+        // watcher/DAP thread) sets DebugFullyArmed and then requests an arm
+        // on LiveActivation; if it read the PREVIOUS (dead) activation
+        // because this one was not yet published, the request was silently
+        // lost and the query ran unarmed forever (a debugger that could
+        // never stop an infinite loop — the CI hang that ran a billion
+        // iterations to completion). Dekker-shaped symmetric check: both
+        // sides write then read across a full fence, so at least one side
+        // observes the other — the armer finds this activation, or this
+        // re-check finds the flag; both finding each other is fine, arming
+        // is idempotent.
+        System.Threading.Interlocked.MemoryBarrier();
+        if (DebugFullyArmed && DebugSession is not null && engine.Debug is null)
+        {
+            engine.Debug = DebugSession;
+            engine.TrailEverything = true;
+            engine.LastCallOptimisation = DebugLcoWhenArmed;
+        }
         if (LoadProfEnabled)
             ProfActivationTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profAc0;
         return (programView, varNames, varHeapIndices, engine, interp);
     }
 
-    private Activation? _lastQueryEngine;
+    // Volatile: published by the engine thread at query setup, read by a
+    // debug session's watcher/DAP thread as LiveActivation (the arm-publish
+    // Dekker pair).
+    private volatile Activation? _lastQueryEngine;
+
+    /// <summary>Test-only seam for the arm-publish race window — see its
+    /// call site in query setup. Null in production; a single null check
+    /// per query setup.</summary>
+    internal System.Action? TestHookBeforeActivationPublish;
 
     /// <summary>Monotonic count of WAM heap cells reserved by the most
     /// recent query's engine (0 before any query). A deterministic,

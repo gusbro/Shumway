@@ -101,7 +101,23 @@ public class Adr036LaunchRaceTests
                 var again = new QueryRun(engine, "test.");
                 for (int stops = 0; stops < 5 && !again.Join(50); stops++)
                 {
-                    client.WaitEvent("stopped", 30000);   // same 30 s discrimination as above
+                    try
+                    {
+                        client.WaitEvent("stopped", 30000);   // same 30 s discrimination as above
+                    }
+                    catch (TimeoutException tex)
+                    {
+                        // Discriminate the two failure shapes before rethrowing:
+                        // a COMPLETED query means the breakpoint never fired on
+                        // the rerun (an arming/eviction bug) and this wait was
+                        // for a ghost; an unfinished one means the engine is
+                        // genuinely stuck or the stop was lost on the wire.
+                        throw new TimeoutException(
+                            "rerun stop " + stops + ": " + tex.Message
+                            + "; rerun query "
+                            + (again.Join(0) ? "COMPLETED (ghost wait - breakpoint never fired)"
+                                             : "still running"), tex);
+                    }
                     client.Request("continue", "{\"threadId\":1}");
                 }
                 Assert.True(again.Join(20_000), "round " + round + ": rerun done");

@@ -152,6 +152,11 @@ public sealed class ChannelDebugSession : IDisposable
     {
         if (_engine.DebugFullyArmed) return;
         _engine.DebugFullyArmed = true;
+        // Full fence between the flag write and the LiveActivation read —
+        // the other half of the Dekker pair in query setup's post-publish
+        // re-check. Without it, both sides could read stale and a query
+        // starting exactly now would run unarmed with the arm request lost.
+        System.Threading.Interlocked.MemoryBarrier();
         _engine.SetDebugLastCall(_engine.DebugLcoWhenArmed);
         ShumwayDebugHelper.DiagLine("full debug ARMED"
             + (_engine.LiveActivation is null ? "" : " (live query arms at its next goal)"));
