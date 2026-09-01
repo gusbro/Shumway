@@ -22,6 +22,17 @@ public enum IlPatchKind : byte
     /// marker encodes <c>(owner-functor-id, cursor)</c>; only the functor
     /// id needs runtime remapping, the cursor is owner-local.</summary>
     ResumeMarker = 3,
+
+    /// <summary>Builtin registry id — emitted by the <c>CallBuiltin</c> /
+    /// <c>ExecuteBuiltin</c> dispatch (<c>GetById(id).Impl</c>). Registry
+    /// ids are assigned in REGISTRATION ORDER, which concurrent engine
+    /// construction in the building process can shuffle — a baked absolute
+    /// id then dispatches a DIFFERENT builtin in the loading process (the
+    /// cross-process bundle flake: type_error(evaluable)/fd_bound/
+    /// '$native_run' zoo). Resolved by (Name, Arity) through
+    /// <c>BuiltinsRegistry.TryGetByFunctor</c>, exactly like the bytecode
+    /// codec's builtin-ref table already does for Tier-0.</summary>
+    Builtin = 4,
 }
 
 /// <summary>

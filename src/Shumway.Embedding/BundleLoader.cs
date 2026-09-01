@@ -837,7 +837,7 @@ internal sealed class BundleLoader
 
     private static PersistedIlModule? LoadPersistedIl(BundleEntry entry)
     {
-        // overwrite each baked build-time atom/functor id sentinel
+        // overwrite each baked build-time atom/functor/builtin id sentinel
         // with the runtime-process id BEFORE handing the bytes to
         // Assembly.Load. Once the assembly is loaded its IL is read-only
         // mapped, so the patch must happen on the byte buffer (a copy so we
@@ -852,13 +852,23 @@ internal sealed class BundleLoader
             ApplyIlPatches(ilBytes, entry.CompiledIlPatches);
         }
         if (BundleDiag)
+        {
             Console.Error.WriteLine(
                 $"[bundle-diag-child] {entry.ModuleName}: "
                 + $"il-pre={DiagHash(entry.CompiledIl)}/{entry.CompiledIl!.Length}B "
                 + $"patches={patchCount}({DiagHash(entry.CompiledIlPatches)}) "
                 + $"il-post={DiagHash(ilBytes)} "
                 + $"bytecode={DiagHash(entry.CompiledBytecode)} "
-                + $"ilEntries={DiagHash(entry.CompiledIlEntries)}");
+                + $"ilEntries={DiagHash(entry.CompiledIlEntries)} "
+                + $"{IlCompileWorker.Describe()}");
+            // Re-verify every patch site against a FRESH intern of its name:
+            // a mismatch here means the id the patch wrote and the id the
+            // table answers NOW disagree — the torn-intern signature the
+            // cross-process flake evidence points at (bytes verified good,
+            // values wrong at runtime).
+            if (entry.CompiledIlPatches is { Length: > 0 })
+                VerifyIlPatches(ilBytes, entry.CompiledIlPatches, entry.ModuleName);
+        }
         var asm = System.Reflection.Assembly.Load(ilBytes);
         System.Threading.Interlocked.Increment(ref PersistedIlLoadCount);
         var type = asm.GetType(Shumway.Compiler.Il.PersistedIlBuilder.TypeName);
@@ -1080,6 +1090,78 @@ internal sealed class BundleLoader
         return Convert.ToHexString(sha.GetHashAndReset());
     }
 
+    /// <summary>SHUMWAY_BUNDLE_DIAG audit: recompute every patch site's
+    /// runtime value from its NAME and compare with the four bytes the
+    /// patch pass wrote moments ago. Agreement proves the id tables were
+    /// stable across the application; a mismatch names the exact site,
+    /// what was written, and what the table answers now.</summary>
+    private static void VerifyIlPatches(byte[] ilBytes, byte[] patchTable, string moduleName)
+    {
+        var sites = Shumway.Compiler.Il.IlPatchSiteCodec.Decode(patchTable);
+        int bad = 0;
+        foreach (var s in sites)
+        {
+            int off = s.AbsoluteByteOffset;
+            if (off < 0 || off + 4 > ilBytes.Length) continue;
+            int written = ilBytes[off]
+                | (ilBytes[off + 1] << 8)
+                | (ilBytes[off + 2] << 16)
+                | (ilBytes[off + 3] << 24);
+            int expect;
+            switch (s.Kind)
+            {
+                case Shumway.Compiler.Il.IlPatchKind.Atom:
+                    expect = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    break;
+                case Shumway.Compiler.Il.IlPatchKind.Functor:
+                {
+                    int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    expect = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
+                    break;
+                }
+                case Shumway.Compiler.Il.IlPatchKind.ResumeMarker:
+                {
+                    int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    int fid = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
+                    expect = Shumway.Core.Activation.EncodeResumeMarker(fid, s.Cursor);
+                    break;
+                }
+                case Shumway.Compiler.Il.IlPatchKind.Builtin:
+                    expect = ResolveBuiltinPatch(s.Name, s.Arity);
+                    break;
+                default: continue;
+            }
+            if (written != expect)
+            {
+                bad++;
+                Console.Error.WriteLine(
+                    $"[bundle-diag-child] {moduleName}: PATCH-MISMATCH "
+                    + $"{s.Kind} {s.Name}/{s.Arity} at 0x{off:X}: "
+                    + $"written=0x{written:X8} table-now=0x{expect:X8}");
+            }
+        }
+        Console.Error.WriteLine(
+            $"[bundle-diag-child] {moduleName}: patch-verify "
+            + $"{sites.Count - bad}/{sites.Count} stable");
+    }
+
+    /// <summary>Resolves a <see cref="Shumway.Compiler.Il.IlPatchKind.Builtin"/>
+    /// patch to THIS process's registry id. Builtin ids are assigned in
+    /// registration order, which is not process-portable — the name/arity
+    /// pair is. A missing builtin fails loudly with its name: a silent 0
+    /// would dispatch builtin #0 and reproduce the misdispatch this patch
+    /// kind exists to kill.</summary>
+    private static int ResolveBuiltinPatch(string name, int arity)
+    {
+        int aid = Shumway.Core.AtomTable.Intern(name).Id;
+        int fid = Shumway.Core.FunctorTable.Intern(aid, arity);
+        if (!Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out int builtinId))
+            throw new InvalidDataException(
+                $"Persisted IL references builtin {name}/{arity}, which is not "
+                + "registered in this process.");
+        return builtinId;
+    }
+
     private static void ApplyIlPatches(byte[] ilBytes, byte[] patchTable)
     {
         var sites = Shumway.Compiler.Il.IlPatchSiteCodec.Decode(patchTable);
@@ -1104,6 +1186,9 @@ internal sealed class BundleLoader
                     runtimeValue = Shumway.Core.Activation.EncodeResumeMarker(fid, s.Cursor);
                     break;
                 }
+                case Shumway.Compiler.Il.IlPatchKind.Builtin:
+                    runtimeValue = ResolveBuiltinPatch(s.Name, s.Arity);
+                    break;
                 default:
                     throw new InvalidDataException(
                         $"Unknown IL patch kind {(int)s.Kind}.");
