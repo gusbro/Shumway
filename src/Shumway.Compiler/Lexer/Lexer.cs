@@ -116,6 +116,14 @@ public sealed class Lexer
         return _charConversion.TryGetValue(c, out char r) ? r : c;
     }
 
+    /// <summary>End offset (into the source string) of the last non-EOF token
+    /// produced — where the token's own text stops, before any layout or
+    /// comment that follows it. Lets number_chars/number_codes require that
+    /// NOTHING follows the number: parser lookahead lexes past trailing
+    /// layout to find EOF, so the parser's own position cannot tell
+    /// <c>"0"</c> from <c>"0%junk"</c>.</summary>
+    public int LastTokenEndOffset { get; private set; }
+
     /// <summary>Reads and returns the next token, advancing the lexer. After EOF has
     /// been returned the lexer will keep returning EOF on subsequent calls — useful
     /// for parser lookahead.</summary>
@@ -125,6 +133,7 @@ public sealed class Lexer
         SkipWhitespaceAndComments();
         bool hadWs = _offset > beforeWs;
         Token tok = NextTokenInner();
+        if (tok.Kind != TokenKind.Eof) LastTokenEndOffset = _offset;
         return hadWs ? tok with { HasLeadingWhitespace = true } : tok;
     }
 

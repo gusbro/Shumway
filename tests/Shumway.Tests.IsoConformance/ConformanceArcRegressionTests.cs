@@ -115,6 +115,28 @@ public sealed class ConformanceArcRegressionTests
     [Fact] public void NumberChars_QuotedMinusStillReads() =>
         // the term-reader fallback exists FOR this shape.
         True("number_chars(N, ['''','-','''','3']), N == -3.");
+    [Fact] public void NumberChars_TrailingCommentIsSyntaxError() =>
+        // Issue #25 (UWN): "0%0'" read through to 0 — the old trailing-junk
+        // sniff skipped its comment check whenever the text contained 0'.
+        // The rule is positional now: the number token must end exactly
+        // where the chars end, so NO trailing text of any kind — comment
+        // (terminated or not), layout, anything — survives. GNU agrees on
+        // every case here.
+        Raises("number_chars(_, ['0','%','0',''''])", "syntax_error(_)");
+    [Fact] public void NumberChars_TrailingCommentAfterCharCode_IsSyntaxError() =>
+        // "0'a%x" — same bypass, char-code spelling.
+        Raises("number_chars(_, ['0','''','a','%','x'])", "syntax_error(_)");
+    [Fact] public void NumberChars_TerminatedTrailingCommentStillErrs() =>
+        // "3%\n" — a COMPLETE comment after the number is trailing text too.
+        Raises("number_chars(_, ['3','%','\\n'])", "syntax_error(_)");
+    [Fact] public void NumberChars_TrailingLayoutStillErrs() =>
+        Raises("number_chars(_, ['1',' '])", "syntax_error(_)");
+    [Fact] public void NumberChars_InteriorCommentAndLeadingLayoutStillFine() =>
+        // Comments BETWEEN sign and digits are part of the term-reader
+        // fallback's contract; leading layout is ISO.
+        True("number_chars(A, ['-',' ','/','*','*','/','1']), A == -1, "
+           + "number_chars(B, [' ','1']), B == 1, "
+           + "number_chars(C, ['0','''','a']), C == 97.");
     [Fact] public void NumberChars_ReversibleOnPartialList() =>
         True("number_chars(74, [C, D]), C == '7', D == '4', "
            + "\\+ number_chars(74, [_]).");
