@@ -65,9 +65,15 @@ public static class ErrorRendering
     public static string FormatRuntimeError(PrologRuntimeException re)
     {
         ArgumentNullException.ThrowIfNull(re);
+        // The culprit travels in Value when the throw site captured one —
+        // print it: "type_error(evaluable)" hides exactly the term a
+        // forensic transcript needs (the cross-process bundle flake was
+        // undiagnosable until this said WHICH value reached arithmetic).
         string body = string.IsNullOrEmpty(re.Detail)
             ? re.Kind
-            : $"{re.Kind}({re.Detail})";
+            : re.Value is { } culprit
+                ? $"{re.Kind}({re.Detail}, {culprit})"
+                : $"{re.Kind}({re.Detail})";
         if (!string.IsNullOrEmpty(re.BuiltinName))
             return $"{body} in {re.BuiltinName}/{re.BuiltinArity}";
         return body;
