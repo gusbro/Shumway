@@ -61,6 +61,11 @@ jobs:
         run: dotnet test tests/Shumway.Tests.IsoConformance -c Release -f net10.0
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release
+        env:
+          # Debug-family flake forensics: the in-process DAP server and
+          # session log attach/detach/read-loop-end lines to stderr, so a
+          # failing test's captured transcript says WHY a session dropped.
+          SHUMWAY_DEBUG_DIAG: "1"
       # A failed test's message lives in the per-bucket logs, which die with
       # the runner — surface them (the job log only carries the test NAME).
       - name: Upload parallel logs on failure
@@ -94,6 +99,11 @@ jobs:
         run: dotnet test tests/Shumway.Tests.IsoConformance -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release -Framework net48 -Platform x86
+        env:
+          # Debug-family flake forensics: the in-process DAP server and
+          # session log attach/detach/read-loop-end lines to stderr, so a
+          # failing test's captured transcript says WHY a session dropped.
+          SHUMWAY_DEBUG_DIAG: "1"
       - name: Upload parallel logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -135,6 +145,11 @@ jobs:
         run: dotnet test tests/Shumway.Tests.IsoConformance -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release -Framework net48 -Platform x64
+        env:
+          # Debug-family flake forensics: the in-process DAP server and
+          # session log attach/detach/read-loop-end lines to stderr, so a
+          # failing test's captured transcript says WHY a session dropped.
+          SHUMWAY_DEBUG_DIAG: "1"
       - name: Upload parallel logs on failure
         if: failure()
         uses: actions/upload-artifact@v4

@@ -119,6 +119,13 @@ internal static class SmokeNet48Cli
                 if (e.QueryFirst<string>("pick(-1, Y).", "Y") != "nonpos") return false;
                 if (e.QueryFirst<long>("loop(100000, 0, R).", "R") != 5000050000L) return false;
             }
+            // Settle before judging: compiles queued to the background worker
+            // may still be in flight — on a contended CI runner (the x86 lane
+            // shares 4 cores with everything) a pending compile is NOT a
+            // failure, just late. The ~1-in-100 "promoted predicates: 0"
+            // sightings match this window exactly; a worker that is genuinely
+            // dead still fails below, now with the state dump saying so.
+            e.IlPromotion.WaitForPendingPromotions(120_000);
             Console.WriteLine($"        promoted predicates: {e.IlPromotion.PromotedCount}");
             // Zero means the engine answered every query correctly from Tier-0
             // and never emitted any IL, which is a silent fallback: the numbers
