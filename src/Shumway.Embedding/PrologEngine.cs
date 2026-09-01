@@ -312,6 +312,60 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         }
     }
 
+    /// <summary>Records the prelude's <c>:- meta_predicate</c> templates
+    /// WITHOUT consulting it — a BAKED prelude (FromBundle: every --exe,
+    /// WebShumway's stdlib) installs bytecode and executes no directives, so
+    /// the <c>meta_predicate(T)</c> property would silently vanish there
+    /// while the live engine reports it (Logtalk's compiler decides wrapping
+    /// from exactly this property). The directives are one-per-line in
+    /// <see cref="Prelude.Source"/>; scanning them costs nothing next to the
+    /// full parse the bake exists to avoid. Parsed with the DEFAULT operator
+    /// table, like the prelude's own consult.</summary>
+    internal void SeedPreludeMetaTemplates()
+    {
+        foreach (System.Text.RegularExpressions.Match m in
+            System.Text.RegularExpressions.Regex.Matches(Prelude.Source,
+                @"^\s*:-\s*meta_predicate\((.*)\)\s*\.\s*$",
+                System.Text.RegularExpressions.RegexOptions.Multiline))
+        {
+            try
+            {
+                var parser = new Shumway.Compiler.Parsing.Parser(
+                    new Shumway.Compiler.Lexer.Lexer(m.Groups[1].Value),
+                    Shumway.Compiler.Parsing.OperatorTable.Default());
+                RecordMetaTemplateSpec(parser.ReadTerm());
+            }
+            catch (Exception ex) when (
+                ex is Shumway.Compiler.Parsing.ParseException
+                    or Shumway.Compiler.Lexer.LexerException)
+            {
+                // advisory, like the consult-time directive
+            }
+        }
+    }
+
+    /// <summary>The same walk ConsultPipeline's directive handler does: a
+    /// single template, a <c>','</c>-conjunction, or <c>Module:Template</c>
+    /// (stored under the bare name).</summary>
+    private void RecordMetaTemplateSpec(Term spec)
+    {
+        switch (spec)
+        {
+            case CompoundTerm { Functor: ",", Args.Length: 2 } conj:
+                RecordMetaTemplateSpec(conj.Args[0]);
+                RecordMetaTemplateSpec(conj.Args[1]);
+                break;
+            case CompoundTerm { Functor: ":", Args.Length: 2 } qual:
+                RecordMetaTemplateSpec(qual.Args[1]);
+                break;
+            case CompoundTerm template:
+                _metaPredicateTemplates[FunctorTable.Intern(
+                    AtomTable.Intern(template.Functor, permanent: true).Id,
+                    template.Args.Length)] = template;
+                break;
+        }
+    }
+
     /// <summary>The module that declared a dynamic functor <c>:- dynamic</c>,
     /// or <c>null</c> if it was auto-promoted (implicit_dynamic) with no
     /// declaration.</summary>
@@ -882,6 +936,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         {
             engine.ConsultStringInner(Prelude.Source, recordInHistory: false);
             engine.MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
+        }
+        else
+        {
+            // The baked prelude executes no directives — recover its
+            // meta_predicate templates from the source constant so
+            // predicate_property/2 reports them like a live engine.
+            engine.SeedPreludeMetaTemplates();
         }
         engine.LoadBundleCore(bundle, bundleDir);
         // ADR-035 — the BAKED prelude is still the prelude: not the user's code,

@@ -129,6 +129,13 @@ public sealed class PreludeBundleParityTests
             "predicate_property(countall(_, _), built_in).",
             "\\+ current_predicate(member/2).",
             "\\+ current_predicate(findall/3).",
+            // The prelude's :- meta_predicate directives never execute on
+            // the baked path — the templates are recovered from the source
+            // constant, so the ENUMERATION (findall over properties) is
+            // identical too, template included.
+            "findall(X, predicate_property(findall(_, _, _), X), L), "
+                + "memberchk(meta_predicate(findall(*, 0, *)), L).",
+            "predicate_property(catch(_, _, _), meta_predicate(catch(0, *, 0))).",
         })
         {
             Assert.True(live.Query(q).Success, "live: " + q);
