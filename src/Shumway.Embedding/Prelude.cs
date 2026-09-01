@@ -343,7 +343,7 @@ internal static class Prelude
         % variable Goal. It must NOT use an isolated sub-engine — that lacked the
         % parent's bundle-precompiled predicates and hid the goal's side effects.
         findall(Template, Goal, List) :-
-            '$check_partial_list'(List),
+            '$check_partial_list'(List, findall, 3),
             ( '$findall_push', call(Goal), '$findall_record_s'(Template), fail
             ; '$findall_collect'(List) ).
 
@@ -370,7 +370,7 @@ internal static class Prelude
         % both paths group identically (variant witnesses, standard order)
         % and a caller that cuts after one group pays for one group.
         '$bagof_drive'(Kind, Template, Goal, Bag) :-
-            '$check_partial_list'(Bag),
+            '$check_partial_list'(Bag, Kind, 3),
             '$bagof_parts'(Goal, Inner, QVars),
             term_variables(Inner, GoalVars),
             term_variables(t(Template, QVars), BoundVars),
@@ -511,7 +511,7 @@ internal static class Prelude
             ;   nonvar(A), \+ integer(A) ->
                 throw(error(type_error(predicate_indicator, I), _))
             ;   integer(A), A < 0 ->
-                throw(error(domain_error(not_less_than_zero, A), _))
+                throw(error(type_error(predicate_indicator, I), _))
             ;   true
             ).
         '$check_predicate_indicator'(I) :-
@@ -1741,8 +1741,8 @@ internal static class Prelude
 
         %! findall(?Template, :Goal, -List, ?Tail) | Findall & aggregation | Like findall/3 but the result is a difference list ending in Tail.
         findall(Template, Goal, List, Tail) :-
-            '$check_partial_list'(List),
-            '$check_partial_list'(Tail),
+            '$check_partial_list'(List, findall, 4),
+            '$check_partial_list'(Tail, findall, 4),
             findall(Template, Goal, List0),
             append(List0, Tail, List).
 

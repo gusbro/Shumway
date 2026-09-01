@@ -36,12 +36,28 @@ public static class MetaBodyConvert
     /// both dispatchers have built by the time they route). Sees through
     /// '$mqual'/':' tags — PrepareMqualGoal distributes the module tag over a
     /// construct's args before this check runs — and strips them from the
-    /// culprit so the ball names the goal the caller wrote.</summary>
+    /// culprit so the ball names the goal the caller wrote.
+    ///
+    /// <para>Also APPLIES the conversion: a variable in goal position within
+    /// the assembled construct is wrapped as <c>call(V)</c> in place, exactly
+    /// as WrapVariableSubgoals does for a whole-goal <c>call/1</c>. Without
+    /// it a metacalled <c>call(',', X=!, (Y=1,X ; Y=2))</c> executes the
+    /// bound <c>!</c> as if written literally and cuts the disjunction.</para>
+    /// </summary>
     public static void CheckControlGoalFromRegisters(Activation engine, int atomId)
     {
         Cell a = StripQual(engine, engine.GetRegister(0));
         Cell b = StripQual(engine, engine.GetRegister(1));
-        if (IsBodyConvertible(engine, a) && IsBodyConvertible(engine, b)) return;
+        if (IsBodyConvertible(engine, a) && IsBodyConvertible(engine, b))
+        {
+            bool w0 = false;
+            Cell c0 = WrapVariableSubgoals(engine, engine.GetRegister(0), ref w0);
+            if (w0) engine.SetRegister(0, c0);
+            bool w1 = false;
+            Cell c1 = WrapVariableSubgoals(engine, engine.GetRegister(1), ref w1);
+            if (w1) engine.SetRegister(1, c1);
+            return;
+        }
         int fid = FunctorTable.Intern(atomId, 2);
         int strBase = engine.AllocateHeap(3);
         engine.SetHeap(strBase, Cell.Functor(fid));
@@ -99,7 +115,16 @@ public static class MetaBodyConvert
 
     /// <summary>Returns the converted goal — the input untouched (and
     /// <paramref name="wrapped"/> left false) when nothing needed wrapping,
-    /// which is allocation-free.</summary>
+    /// which is allocation-free.
+    ///
+    /// <para>Besides wrapping unbound sub-goals as <c>call(V)</c>, this
+    /// NORMALISES bound goal positions: a cell that reaches a value through a
+    /// REF chain is replaced by the dereferenced cell. Downstream a raw REF
+    /// in goal position then means exactly "was a variable at the call
+    /// boundary" — the discriminator DispatchCall's fresh-barrier rule needs.
+    /// Without it, <c>X = !, call((… , X))</c> ships the ref to the sub
+    /// dispatch, which cannot tell it from a variable bound MID-body, and
+    /// the pre-bound <c>!</c> loses its (real, §7.8.3) cut.</para></summary>
     public static Cell WrapVariableSubgoals(Activation engine, Cell c, ref bool wrapped)
     {
         Cell d = Deref(engine, c);
@@ -128,7 +153,7 @@ public static class MetaBodyConvert
                     Cell inner = engine.GetHeap(fIdx + 2);
                     bool innerSub = false;
                     Cell wInner = WrapVariableSubgoals(engine, inner, ref innerSub);
-                    if (!innerSub) return c;
+                    if (!innerSub) return Normalized(c, d, ref wrapped);
                     wrapped = true;
                     int qBase = engine.AllocateHeap(3);
                     engine.SetHeap(qBase, Cell.Functor(fid));
@@ -138,13 +163,13 @@ public static class MetaBodyConvert
                 }
                 if (fid != ConjFid && fid != DisjFid
                     && fid != ArrowFid && fid != SoftArrowFid)
-                    return c;
+                    return Normalized(c, d, ref wrapped);
                 Cell arg0 = engine.GetHeap(fIdx + 1);
                 Cell arg1 = engine.GetHeap(fIdx + 2);
                 bool sub = false;
                 Cell w0 = WrapVariableSubgoals(engine, arg0, ref sub);
                 Cell w1 = WrapVariableSubgoals(engine, arg1, ref sub);
-                if (!sub) return c;
+                if (!sub) return Normalized(c, d, ref wrapped);
                 wrapped = true;
                 int strBase = engine.AllocateHeap(3);
                 engine.SetHeap(strBase, Cell.Functor(fid));
@@ -153,7 +178,17 @@ public static class MetaBodyConvert
                 return Cell.Str(strBase);
             }
             default:
-                return c;
+                return Normalized(c, d, ref wrapped);
         }
+    }
+
+    /// <summary>The dereferenced cell, flagging the change so the enclosing
+    /// skeleton rebuilds with it; the original when no ref chain was
+    /// involved (allocation-free fast path).</summary>
+    private static Cell Normalized(Cell original, Cell dereffed, ref bool wrapped)
+    {
+        if (original.Equals(dereffed)) return original;
+        wrapped = true;
+        return dereffed;
     }
 }

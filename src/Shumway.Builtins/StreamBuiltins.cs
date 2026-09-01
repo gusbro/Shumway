@@ -277,6 +277,9 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("system_error", ex.Message);
         }
 
+        // open/3 = open/4 with an empty options list: the eof_action
+        // default (ISO error; arity_compat eof_code) applies here too.
+        handle.EofAction = registry.DefaultEofAction;
         registry.Add(handle);
         return engine.UnifyRegisterWithCell(2, MakeStreamTerm(engine, handle));
     }
@@ -352,7 +355,9 @@ public static class StreamBuiltins
         // Parse the options list. Each option is a 1-arg compound;
         // anything else is a stream_option domain error.
         string? alias = null;
-        string eofAction = "eof_code";
+        // ISO default is eof_action(error); arity_compat flips the
+        // registry default to eof_code (see StreamRegistry.DefaultEofAction).
+        string eofAction = engine.Streams?.DefaultEofAction ?? "error";
         bool repositionable = true;
         bool binary = false;
         string? encodingName = null;
@@ -946,7 +951,8 @@ public static class StreamBuiltins
     private static bool ParseCloseOptions(Activation engine, Cell optsCell)
     {
         bool force = false;
-        Cell cur = Resolve(engine, optsCell);
+        Cell given = Resolve(engine, optsCell);
+        Cell cur = given;
         while (true)
         {
             if (cur.Tag is Tag.Ref or Tag.AttVar)
@@ -954,7 +960,9 @@ public static class StreamBuiltins
             if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId)
                 return force;
             if (cur.Tag != Tag.Lis)
-                throw new PrologRuntimeException("type_error", "list", engine, cur);
+                // Culprit is the WHOLE options argument, not the improper
+                // tail alone (same rule as §8.16.7.3's list culprits).
+                throw new PrologRuntimeException("type_error", "list", engine, given);
             Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
             if (head.Tag is Tag.Ref or Tag.AttVar)
                 throw new PrologRuntimeException("instantiation_error");
@@ -981,7 +989,10 @@ public static class StreamBuiltins
         }
     }
 
-    private static void CheckPastEof(Activation engine, StreamHandle h)
+    // Public: the term-reading paths (read/1,2, read_term/2,3 — in the
+    // embedding layer) share the same §8.11 past-end discipline as the
+    // character/byte readers here.
+    public static void CheckPastEof(Activation engine, StreamHandle h)
     {
         if (h.PastEof && h.EofAction == "error")
             throw new PrologRuntimeException("permission_error",
@@ -1304,14 +1315,13 @@ public static class StreamBuiltins
 
     // ---------- at_end_of_stream ----------
 
-    /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.9.</summary>
+    /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.8. Defined by
+    /// stream PROPERTY (end_of_stream at/past), and §8.11.8.3 lists no
+    /// permission error — an output stream simply lacks the property, so
+    /// the call FAILS rather than raising.</summary>
     public static bool AtEndOfStream1(Activation engine)
     {
-        Cell arg = engine.GetRegister(0);
-        var h = ResolveStream(engine, arg);
-        if (!h.IsReader)
-            throw new PrologRuntimeException("permission_error", "input,stream",
-                engine, Resolve(engine, arg));
+        var h = ResolveStream(engine, engine.GetRegister(0));
         return AtEnd(engine, h);
     }
 

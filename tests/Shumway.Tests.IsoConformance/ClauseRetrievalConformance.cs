@@ -24,21 +24,36 @@ public class ClauseRetrievalConformance
     // ---------- §8.8.1 clause/2 ----------
 
     [Fact]
-    public void Clause_StaticFact_RetrievesBodyTrue()
+    public void Clause_PrivateStatic_RaisesPermissionError()
     {
-        // For a fact `p(1).`, clause(p(1), B) should give B = true.
+        // §8.8.1.3.d: a static predicate not declared public is a PRIVATE
+        // procedure — clause/2 raises permission_error (GNU and Scryer
+        // agree; SWI-dialect modules keep SWI's laxer introspection).
         var e = new PrologEngine();
         e.ConsultString("p(1). p(2).");
+        var sol = e.Query(
+            "catch(clause(p(1), _), error(permission_error(access, private_procedure, PI), _), true).");
+        Assert.True(sol.Success);
+        var pi = Assert.IsType<CompoundTerm>(sol["PI"]);
+        Assert.Equal("/", pi.Functor);
+    }
+
+    [Fact]
+    public void Clause_PublicStaticFact_RetrievesBodyTrue()
+    {
+        // A `:- public` static IS readable (ISO's public-procedure notion).
+        var e = new PrologEngine();
+        e.ConsultString(":- public p/1.\np(1). p(2).");
         var sol = e.Query("clause(p(1), B).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("true"), sol["B"]);
     }
 
     [Fact]
-    public void Clause_StaticRule_RetrievesBody()
+    public void Clause_PublicStaticRule_RetrievesBody()
     {
         var e = new PrologEngine();
-        e.ConsultString("p(X) :- q(X), r(X). q(1). r(1).");
+        e.ConsultString(":- public p/1.\np(X) :- q(X), r(X). q(1). r(1).");
         var sol = e.Query("clause(p(X), Body).");
         Assert.True(sol.Success);
         // Body unifies with q(X), r(X) — Body has structure ','(...).
@@ -51,7 +66,7 @@ public class ClauseRetrievalConformance
     {
         // Backtracking visits each clause head matching the pattern.
         var e = new PrologEngine();
-        e.ConsultString("p(1). p(2). p(3).");
+        e.ConsultString(":- public p/1.\np(1). p(2). p(3).");
         var xs = e.QueryAll("clause(p(X), _).")
             .Select(s => (s["X"] as IntTerm)!.Value)
             .ToList();
@@ -70,7 +85,7 @@ public class ClauseRetrievalConformance
     public void Clause_NoMatch_Fails()
     {
         var e = new PrologEngine();
-        e.ConsultString("p(1).");
+        e.ConsultString(":- public p/1.\np(1).");
         Assert.False(e.Query("clause(p(99), _).").Success);
     }
 

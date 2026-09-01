@@ -76,12 +76,16 @@ public class Chunk152Tests
     }
 
     [Fact]
-    public void CharConversion_NonAtomArg_RaisesTypeError()
+    public void CharConversion_NonAtomArg_RaisesRepresentationError()
     {
+        // ISO §8.14.9.3.c: a bound argument that is not a one-char atom is
+        // representation_error(character) — NOT type_error; contrast
+        // current_char_conversion/2 (§8.14.10.3), which uses type_error.
         var e = new PrologEngine();
-        var sol = e.Query("catch(char_conversion(123, 'a'), error(type_error(T, _), _), true).");
+        var sol = e.Query(
+            "catch(char_conversion(123, 'a'), error(representation_error(F), _), true).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("character"), sol["T"]);
+        Assert.Equal(Atom("character"), sol["F"]);
     }
 
     [Fact]

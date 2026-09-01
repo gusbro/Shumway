@@ -228,6 +228,16 @@ public static partial class MetaBuiltins
                 // presentations are packed.
                 host.Flags.DoubleQuotes =
                     Shumway.Compiler.Parsing.DoubleQuotesMode.Codes;
+                // Arity has no exceptions: programs retry reads past eof and
+                // expect end_of_file forever, so streams opened under the
+                // dialect default to eof_action(eof_code) instead of the ISO
+                // eof_action(error). Set on the HOST's registry — it outlives
+                // this query.
+                host.Streams.DefaultEofAction = "eof_code";
+            }
+            else
+            {
+                host.Streams.DefaultEofAction = "error";
             }
             return true;
         }
@@ -1181,32 +1191,25 @@ public static partial class MetaBuiltins
             (e, i) => CurrentOpUnify(e, ops, i));
     }
 
-    /// <summary>§8.14.4.3: a BOUND argument of current_op/3 is checked —
-    /// the priority must be an integer in 0..1200, the specifier one of
-    /// the seven operator types, and the name an atom.</summary>
+    /// <summary>§8.14.4.3: a BOUND argument of current_op/3 is checked.
+    /// These are QUERY filters, so the standard uses domain_error for both
+    /// the priority and the specifier whatever the wrong term's type —
+    /// current_op(a, T, N) is domain_error(operator_priority, a), not
+    /// type_error(integer, a) as it would be for op/3.</summary>
     private static void ValidateCurrentOpArgs(Activation engine, int regBase)
     {
         Cell p = ResolveLocal(engine, engine.GetRegister(regBase));
-        if (p.Tag is not (Tag.Ref or Tag.AttVar))
-        {
-            if (p.Tag != Tag.Int)
-                throw new ShumwayPrologException(
-                    IsoError.TypeError("integer", MaterializeRegister(engine, regBase)));
-            if (p.AsInt < 0 || p.AsInt > 1200)
-                throw new ShumwayPrologException(IsoError.DomainError(
-                    "operator_priority", MaterializeRegister(engine, regBase)));
-        }
+        if (p.Tag is not (Tag.Ref or Tag.AttVar)
+            && (p.Tag != Tag.Int || p.AsInt < 0 || p.AsInt > 1200))
+            throw new ShumwayPrologException(IsoError.DomainError(
+                "operator_priority", MaterializeRegister(engine, regBase)));
         Cell t = ResolveLocal(engine, engine.GetRegister(regBase + 1));
-        if (t.Tag is not (Tag.Ref or Tag.AttVar))
-        {
-            if (t.Tag != Tag.Atom)
-                throw new ShumwayPrologException(
-                    IsoError.TypeError("atom", MaterializeRegister(engine, regBase + 1)));
-            string tn = AtomTable.GetById(t.AsAtomId)?.Name ?? "";
-            if (tn is not ("fx" or "fy" or "xf" or "yf" or "xfx" or "xfy" or "yfx"))
-                throw new ShumwayPrologException(IsoError.DomainError(
-                    "operator_specifier", MaterializeRegister(engine, regBase + 1)));
-        }
+        if (t.Tag is not (Tag.Ref or Tag.AttVar)
+            && (t.Tag != Tag.Atom
+                || AtomTable.GetById(t.AsAtomId)?.Name
+                    is not ("fx" or "fy" or "xf" or "yf" or "xfx" or "xfy" or "yfx")))
+            throw new ShumwayPrologException(IsoError.DomainError(
+                "operator_specifier", MaterializeRegister(engine, regBase + 1)));
         Cell n = ResolveLocal(engine, engine.GetRegister(regBase + 2));
         if (n.Tag is not (Tag.Ref or Tag.AttVar) && n.Tag != Tag.Atom)
             throw new ShumwayPrologException(
@@ -1296,20 +1299,28 @@ public static partial class MetaBuiltins
                 "char_conversion/2 requires the engine to be hosted by a PrologEngine.");
         Cell inCell = ResolveLocal(engine, engine.GetRegister(0));
         Cell outCell = ResolveLocal(engine, engine.GetRegister(1));
-        if (inCell.Tag == Tag.Ref)
+        if (inCell.Tag is Tag.Ref or Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        if (outCell.Tag == Tag.Ref)
+        if (outCell.Tag is Tag.Ref or Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        if (inCell.Tag != Tag.Atom)
-            throw new Shumway.Core.PrologRuntimeException("type_error", "character");
-        if (outCell.Tag != Tag.Atom)
-            throw new Shumway.Core.PrologRuntimeException("type_error", "character");
-        string inName = AtomTable.GetById(inCell.AsAtomId)?.Name ?? "";
-        string outName = AtomTable.GetById(outCell.AsAtomId)?.Name ?? "";
-        if (inName.Length != 1)
-            throw new Shumway.Core.PrologRuntimeException("type_error", "character");
-        if (outName.Length != 1)
-            throw new Shumway.Core.PrologRuntimeException("type_error", "character");
+        // ISO §8.14.9.3.c-d: a bound argument that is not a one-char atom is
+        // representation_error(character) — NOT type_error; contrast
+        // current_char_conversion/2 (§8.14.10.3), which uses type_error.
+        if (inCell.Tag != Tag.Atom
+            || AtomTable.GetById(inCell.AsAtomId)?.Name is not { } inName
+            || !Shumway.Core.Utf16Text.IsOneCodePoint(inName))
+            throw new Shumway.Core.PrologRuntimeException(
+                "representation_error", "character");
+        if (outCell.Tag != Tag.Atom
+            || AtomTable.GetById(outCell.AsAtomId)?.Name is not { } outName
+            || !Shumway.Core.Utf16Text.IsOneCodePoint(outName))
+            throw new Shumway.Core.PrologRuntimeException(
+                "representation_error", "character");
+        if (inName.Length != 1 || outName.Length != 1)
+            // ADR-048: a character is one code point, but the conversion
+            // TABLE is keyed by UTF-16 unit — an astral mapping does not fit.
+            throw new Shumway.Core.PrologRuntimeException(
+                "representation_error", "character");
         char ic = inName[0], oc = outName[0];
         if (ic == oc) host.Flags.CharConversion.Remove(ic);
         else host.Flags.CharConversion[ic] = oc;
@@ -1325,6 +1336,19 @@ public static partial class MetaBuiltins
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "current_char_conversion/2 requires the engine to be hosted by a PrologEngine.");
+        // ISO §8.14.10.3: a bound argument that is not a one-char atom is
+        // type_error(character, C) — checked before the table is consulted,
+        // so an empty table still raises rather than failing silently.
+        for (int reg = 0; reg < 2; reg++)
+        {
+            Cell c = ResolveLocal(engine, engine.GetRegister(reg));
+            if (c.Tag is Tag.Ref or Tag.AttVar) continue;
+            if (c.Tag != Tag.Atom
+                || AtomTable.GetById(c.AsAtomId)?.Name is not { } nm
+                || !Shumway.Core.Utf16Text.IsOneCodePoint(nm))
+                throw new Shumway.Core.PrologRuntimeException(
+                    "type_error", "character", engine, c);
+        }
         // Snapshot so backtracking sees a stable view.
         var entries = host.Flags.CharConversion
             .Select(kv => (In: kv.Key, Out: kv.Value))

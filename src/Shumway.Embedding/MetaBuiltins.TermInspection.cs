@@ -896,9 +896,31 @@ public static partial class MetaBuiltins
         Term headPattern = MaterializeRegister(engine, 0);
         int fid = ExtractCallableFunctorId(headPattern, "clause/2");
 
+        var statics = new List<Clause>(host.StaticClausesFor(fid));
+        // ISO §8.8.1.3: clause/2 reads PUBLIC procedures only — dynamic, or
+        // static and declared `:- public` (the ISO public-procedure notion);
+        // any other static user predicate is private — permission_error,
+        // like GNU and Scryer. SWI lets programs inspect their own static
+        // clauses, so an SWI-dialect caller keeps that; Arity has no such
+        // restriction either.
+        if (statics.Count > 0 && !host.IsDynamic(fid)
+            && !host.IsDeclaredPublic(fid)
+            && !host.Flags.ArityCompat
+            && !host.CallerModuleHasDialect(engine, "swi"))
+        {
+            var (aId, ar) = FunctorTable.Lookup(fid);
+            throw new ShumwayPrologException(IsoError.PermissionError(
+                "access", "private_procedure",
+                new CompoundTerm("/", new Term[]
+                {
+                    new AtomTerm(AtomTable.GetById(aId)?.Name ?? "?"),
+                    new IntTerm(ar),
+                })));
+        }
+
         var candidates = new List<Clause>();
         candidates.AddRange(host.DynamicClausesFor(fid));
-        candidates.AddRange(host.StaticClausesFor(fid));
+        candidates.AddRange(statics);
         // Drop the clauses whose head DEFINITELY cannot match the pattern, so
         // the cursor enumerates SOLUTIONS rather than the whole predicate —
         // first-argument indexing's answer to the same question, at the AST

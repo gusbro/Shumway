@@ -338,7 +338,7 @@ public static class AtomListBuiltins
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
             // With BOTH arguments bound the list is still type-checked
             // (§8.16.5.3): atom_codes(abc, [a,b,c]) is
-            // type_error(integer, a), not a silent failure.
+            // representation_error(character_code), not a silent failure.
             // Only a PROPER list is validated-and-compared: a partial
             // one (atom_codes(abc, [0'a|T])) must still unify.
             if (ListCursor.IsProperListCell(engine, codesCell))
@@ -390,12 +390,11 @@ public static class AtomListBuiltins
             Cell head = Resolve(engine, rawHead);
             if (head.Tag is Tag.Ref or Tag.AttVar)
                 throw new PrologRuntimeException("instantiation_error");
-            if (head.Tag != Tag.Int)
-                throw new PrologRuntimeException(
-                    "type_error", "integer", engine, head);
-            // Any Unicode scalar value, same contract as char_code/2;
-            // an astral code appends its surrogate pair.
-            if (!Utf16Text.IsScalarValue(head.AsInt))
+            // ISO §8.16.5.3.d: any bound element that is not a character
+            // code — wrong type or out of range alike — is
+            // representation_error(character_code). An astral code appends
+            // its surrogate pair.
+            if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
             Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
@@ -425,6 +424,13 @@ public static class AtomListBuiltins
 
         if (aCell.Tag == Tag.Atom && bCell.Tag == Tag.Atom)
         {
+            // §8.16.2.3.c: a BOUND non-atom result argument is
+            // type_error(atom, A3), not a silent unification failure. An SWI
+            // caller keeps SWI's compare-as-text (silent fail) for atomics.
+            Cell resCell = Resolve(engine, engine.GetRegister(2));
+            if (resCell.Tag is not (Tag.Ref or Tag.AttVar) && resCell.Tag != Tag.Atom
+                && !(SwiLenient.IsBoundAtomic(resCell) && SwiLenient.CallerIsSwi(engine)))
+                throw new PrologRuntimeException("type_error", "atom", engine, resCell);
             string aName = AtomTable.GetById(aCell.AsAtomId)?.Name ?? "";
             string bName = AtomTable.GetById(bCell.AsAtomId)?.Name ?? "";
             int newAtomId = AtomTable.Intern(aName + bName, permanent: false).Id;

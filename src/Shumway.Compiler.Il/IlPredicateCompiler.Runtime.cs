@@ -247,7 +247,10 @@ public sealed partial class IlPredicateCompiler
                 case Tag.AttVar:
                     throw new PrologRuntimeException("instantiation_error");
                 default:
-                    throw new PrologRuntimeException("type_error", "callable");
+                    // §7.8.3.3: call(3, X) is type_error(callable, 3) — the
+                    // closure itself is the culprit, not an anonymous slot.
+                    throw new PrologRuntimeException(
+                        "type_error", "callable", engine, goal);
             }
 
             int totalArity = goalArity + extraCount;

@@ -870,6 +870,18 @@ public sealed partial class PrologEngine
     internal static bool IsLibraryModule(string moduleName)
         => Array.IndexOf(LibraryModules, moduleName) >= 0;
 
+    /// <summary>True when some module declared the functor <c>:- public</c>
+    /// (or exports it, the module-scoped spelling of the same intent). ISO's
+    /// notion of a PUBLIC procedure: clause/2 may read its clauses even
+    /// though it is static.</summary>
+    internal bool IsDeclaredPublic(int fid)
+    {
+        foreach (var m in _modules.Values)
+            if (m.PublicFunctors.Contains(fid) || m.ExportFunctors.Contains(fid))
+                return true;
+        return false;
+    }
+
     /// <summary>true when the functor belongs to one of those libraries.
     ///
     /// <para>The name test is not redundant with the public-functor test: a

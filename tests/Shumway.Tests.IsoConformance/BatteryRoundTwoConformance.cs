@@ -158,7 +158,11 @@ public class BatteryRoundTwoConformance
         Succeeds("catch(sub_atom(abc, a, _, _, _), error(type_error(integer, a), _), true).");
         Succeeds("catch(sub_atom(abc, -2, _, _, _), "
             + "error(domain_error(not_less_than_zero, -2), _), true).");
-        Succeeds("catch(number_codes(_, [0'4, a]), error(type_error(integer, a), _), true).");
+        // §8.16.8.3.d — a codes element that is not a character code is
+        // representation_error(character_code) (the chars side keeps
+        // type_error(character, E); the asymmetry is the standard's).
+        Succeeds("catch(number_codes(_, [0'4, a]), "
+            + "error(representation_error(character_code), _), true).");
         Succeeds("catch(set_prolog_flag(5, x), error(type_error(atom, 5), _), true).");
         Succeeds("catch(set_prolog_flag(unknown, foo), "
             + "error(domain_error(flag_value, unknown+foo), _), true).");
@@ -268,7 +272,7 @@ public class BatteryRoundTwoConformance
         // list, or one holding unbound elements, is the generate
         // direction and must unify.
         Succeeds("catch(atom_codes(abc, [a,b,c]), "
-            + "error(type_error(integer, a), _), true).");
+            + "error(representation_error(character_code), _), true).");
         Succeeds("catch(atom_codes('ABC', [66|67]), "
             + "error(type_error(list, [66|67]), _), true).");
         Succeeds("catch(atom_chars(abc, ['A'|'B']), "
@@ -339,9 +343,15 @@ public class BatteryRoundTwoConformance
             + "error(domain_error(operator_priority, 1201), _), true).");
         Succeeds("catch(current_op(_, yfy, _), "
             + "error(domain_error(operator_specifier, yfy), _), true).");
-        Succeeds("catch(current_op(_, 0, _), error(type_error(atom, 0), _), true).");
+        // These are QUERY filters: whatever the wrong term's type, priority
+        // and specifier report domain_error (GNU-verified: current_op(1,2,_)
+        // is domain_error(operator_specifier, 2) there too). Only the
+        // operator name slot uses type_error(atom).
+        Succeeds("catch(current_op(_, 0, _), "
+            + "error(domain_error(operator_specifier, 0), _), true).");
         Succeeds("catch(current_op(_, _, 5), error(type_error(atom, 5), _), true).");
-        Succeeds("catch(current_op(a, _, _), error(type_error(integer, a), _), true).");
+        Succeeds("catch(current_op(a, _, _), "
+            + "error(domain_error(operator_priority, a), _), true).");
         Succeeds("current_op(P, xfx, =), P == 700.");
     }
 

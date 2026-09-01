@@ -10,11 +10,13 @@ public static partial class MetaBuiltins
     /// open findall buffer and unifies <c>List</c> with its collected
     /// solutions. Each solution is materialised with its own variable map
     /// so distinct solutions never accidentally share a variable.</summary>
-    /// <summary><c>'$check_partial_list'(L)</c> — succeeds when L is a
-    /// partial list (a variable, or a list ending in [] or a variable) and
-    /// raises <c>type_error(list, L)</c> otherwise. The solutions argument
+    /// <summary><c>'$check_partial_list'(L, Name, Arity)</c> — succeeds when
+    /// L is a partial list (a variable, or a list ending in [] or a variable)
+    /// and raises <c>type_error(list, L)</c> otherwise. The solutions argument
     /// of findall/bagof/setof is checked with it BEFORE the goal runs.
-    /// </summary>
+    /// Name/Arity is the PUBLIC caller (<c>findall/3</c>, <c>bagof/3</c>, …):
+    /// it is pre-stamped as the error's context indicator so the internal
+    /// helper's own name never leaks into the ball.</summary>
     public static bool CheckPartialList(Activation engine)
     {
         Cell given = ResolveLocal(engine, engine.GetRegister(0));
@@ -24,8 +26,17 @@ public static partial class MetaBuiltins
             if (cur.Tag is Tag.Ref or Tag.AttVar or Tag.Pstr) return true;
             if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) return true;
             if (cur.Tag != Tag.Lis)
-                throw new Shumway.Core.PrologRuntimeException(
+            {
+                var ex = new Shumway.Core.PrologRuntimeException(
                     "type_error", "list", engine, given);
+                Cell nameCell = ResolveLocal(engine, engine.GetRegister(1));
+                Cell arityCell = ResolveLocal(engine, engine.GetRegister(2));
+                if (nameCell.Tag == Tag.Atom && arityCell.Tag == Tag.Int)
+                    ex.StampBuiltin(
+                        AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "?",
+                        (int)arityCell.AsInt);
+                throw ex;
+            }
             cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
         }
     }

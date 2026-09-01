@@ -130,13 +130,18 @@ public static partial class MetaBuiltins
                 pairs.Add((h, new CompoundTerm("end_of_stream",
                     new Term[] { new AtomTerm(state) })));
             }
-            // position/1 — present when the underlying
-            // .NET stream is seekable. user_input / user_output
-            // (console-backed) aren't.
+            // position/1 — seekable position when the underlying .NET
+            // stream has one; otherwise the chars-consumed count of a
+            // tracking reader still IS a stream position (user_input has
+            // one this way — GNU and SWI report one for stdin too), it
+            // just cannot be repositioned to.
             long? pos = TryGetStreamPosition(h);
-            if (Want("position") && pos.HasValue)
+            long? propPos = pos
+                ?? (h.Reader is Shumway.Core.PositionTrackingReader tr
+                    ? tr.CharsConsumed : null);
+            if (Want("position") && propPos.HasValue)
                 pairs.Add((h, new CompoundTerm("position",
-                    new Term[] { new IntTerm(pos.Value) })));
+                    new Term[] { new IntTerm(propPos.Value) })));
             if (Want("type"))
                 pairs.Add((h, new CompoundTerm("type",
                     new Term[] { new AtomTerm(h.IsBinary ? "binary" : "text") })));
@@ -405,8 +410,25 @@ public static partial class MetaBuiltins
             if (ReferenceEquals(h.Reader, reader)) { h.PastEof = true; return; }
     }
 
+    /// <summary>The §8.11 past-end discipline for the TERM readers, mirroring
+    /// what get_char and friends already do: a read on a stream that is
+    /// already past end-of-stream raises permission_error(input,
+    /// past_end_of_stream, S) under eof_action(error) — the ISO default for
+    /// opened streams.</summary>
+    private static void CheckPastEofByReader(Activation engine, System.IO.TextReader reader)
+    {
+        if (engine.Streams is not { } reg) return;
+        foreach (var h in reg.All())
+            if (ReferenceEquals(h.Reader, reader))
+            {
+                Shumway.Builtins.StreamBuiltins.CheckPastEof(engine, h);
+                return;
+            }
+    }
+
     private static bool ReadOneTermInto(Activation engine, System.IO.TextReader reader, int regOut)
     {
+        CheckPastEofByReader(engine, reader);
         Term? parsed = ParseOneTerm(engine, reader);
         if (parsed is null)
         {
@@ -508,6 +530,7 @@ public static partial class MetaBuiltins
         Activation engine, System.IO.TextReader reader, int termReg, int optReg)
     {
         ValidateReadOptions(engine, optReg);
+        CheckPastEofByReader(engine, reader);
         Term? parsed = ParseOneTerm(engine, reader);
         if (parsed is null)
         {

@@ -44,13 +44,15 @@ public class CharConversionConformance
     }
 
     [Fact]
-    public void CharConversion_TypeError_OnNonCharacterAtom()
+    public void CharConversion_RepresentationError_OnNonCharacterArg()
     {
+        // §8.14.9.3.c: not a one-char atom → representation_error(character)
+        // (current_char_conversion/2 is the one that uses type_error).
         var e = new PrologEngine();
         var sol = e.Query(
-            "catch(char_conversion(123, 'a'), error(type_error(T, _), _), true).");
+            "catch(char_conversion(123, 'a'), error(representation_error(F), _), true).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("character"), sol["T"]);
+        Assert.Equal(Atom("character"), sol["F"]);
     }
 
     [Fact]

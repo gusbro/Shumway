@@ -36,6 +36,16 @@ public sealed class StreamRegistry
     /// stream-side mirror.</summary>
     public string DefaultEncodingName { get; set; } = "utf8";
 
+    /// <summary>Default <c>eof_action</c> for streams opened without the
+    /// option. ISO §8.11.5.3: <c>error</c> — a second read on a stream
+    /// already past end-of-stream raises
+    /// <c>permission_error(input, past_end_of_stream, S)</c>. The
+    /// <c>arity_compat</c> flag flips this to <c>eof_code</c>: Arity has no
+    /// exceptions, and its programs retry reads past eof expecting
+    /// <c>end_of_file</c> forever. The standard streams are unaffected
+    /// (user_input opens with <c>reset</c> regardless).</summary>
+    public string DefaultEofAction { get; set; } = "error";
+
     public StreamHandle CurrentInput { get; private set; }
     public StreamHandle CurrentOutput { get; private set; }
 
@@ -60,8 +70,14 @@ public sealed class StreamRegistry
     {
         ArgumentNullException.ThrowIfNull(defaultOut);
 
+        // Wrapped in a PositionTrackingReader so user_input HAS a stream
+        // position (the position(N) property; GNU and SWI report one for
+        // stdin too). No newline translation: the console reader's chars
+        // pass through exactly as before.
         UserInput = new StreamHandle(
-            id: AllocateId(), reader: defaultIn ?? HostInput(),
+            id: AllocateId(),
+            reader: new PositionTrackingReader(
+                defaultIn ?? HostInput(), translateNewlines: false),
             mode: "read", filename: null, alias: "user_input");
         // ISO §7.10.2.4: the standard streams report eof_action(reset)
         // (a tty read past eof may succeed again).
