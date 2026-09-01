@@ -35,8 +35,16 @@ internal static class Prelude
         :- public maplist/2.
         :- public maplist/3.
         :- public maplist/4.
+        :- public maplist/5.
+        :- public maplist/6.
+        :- public maplist/7.
+        :- public maplist/8.
         :- public foldl/4.
         :- public foldl/5.
+        :- public foldl/6.
+        :- public countall/2.
+        :- public nth0/4.
+        :- public nth1/4.
         :- public aggregate_all/3.
         :- public forall/2.
         :- public if/3.
