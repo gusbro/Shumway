@@ -142,6 +142,21 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(sentinel);
     }
 
+    private static void EmitBuiltinId(Sigil.Emit<PredicateDelegate> emit, int builtinId)
+    {
+        if (_persistPatches is null) { emit.LoadConstant(builtinId); return; }
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        int sentinel = _persistNextSentinel++;
+        _persistPatches.Add(new IlPatchSite
+        {
+            Sentinel = sentinel,
+            Kind = IlPatchKind.Builtin,
+            Name = entry.Name,
+            Arity = entry.Arity,
+        });
+        emit.LoadConstant(sentinel);
+    }
+
     private static void EmitClauseBody(
         Sigil.Emit<PredicateDelegate> emit, byte[] code, int start, int end,
         Sigil.Label failLabel, IReadOnlyList<CallSite> callSites,
@@ -997,7 +1012,7 @@ public sealed partial class IlPredicateCompiler
                     EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
                     emit.Call(EngineBuiltinReturnPcSetter);
                 }
-                emit.LoadConstant(builtinId);
+                EmitBuiltinId(emit, builtinId);
                 emit.Call(BuiltinsRegistryGetByIdMethod);
                 emit.Call(BuiltinEntryImplGetter);
                 emit.LoadArgument(0);
@@ -1042,7 +1057,7 @@ public sealed partial class IlPredicateCompiler
                     emit.Call(EngineCpGetter);
                     emit.Call(EngineBuiltinReturnPcSetter);
                 }
-                emit.LoadConstant(tailBuiltinId);
+                EmitBuiltinId(emit, tailBuiltinId);
                 emit.Call(BuiltinsRegistryGetByIdMethod);
                 emit.Call(BuiltinEntryImplGetter);
                 emit.LoadArgument(0);
