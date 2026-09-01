@@ -151,6 +151,12 @@ public class Phase33Wave4Tests
         int fid = Fid("big", 1);
         Assert.True(e.Query("big(a5).").Success);
         Assert.True(e.Query("big(a6).").Success);
+        // Settle like the sibling test above: IsPromoted's own wait gives up
+        // at 10 s, and under the parallel gate a 100 KB Sigil emit on a
+        // saturated 4-core box legitimately takes longer — the pin is that
+        // promotion COMPLETES, not that it wins a load race.
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(120_000),
+            "background compile of the corpus-scale table timed out");
         Assert.True(e.IlPromotion.IsPromoted(fid),
             "a ~100 KB fact table must promote under the default background cap");
         Assert.True(e.Query("big(a4199).").Success);
