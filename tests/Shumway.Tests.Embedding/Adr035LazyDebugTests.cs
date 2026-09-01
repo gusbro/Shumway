@@ -126,6 +126,54 @@ public class Adr035LazyDebugTests
     }
 
     [Fact]
+    public void ActivateFullDebug_InTheArmPublishWindow_StillArms()
+    {
+        // The arm-publish race, pinned DETERMINISTICALLY: ActivateFullDebug
+        // from a watcher thread sets the flag and requests an arm on
+        // LiveActivation. A query starting at that exact moment used to fall
+        // in the window between reading the flag (activation construction)
+        // and publishing itself as LiveActivation — the arm request landed
+        // on the PREVIOUS, dead activation and was silently lost: the query
+        // ran unarmed to the end (the CI hang that ran its full billion
+        // iterations with a breakpoint that never fired). The window is
+        // microseconds wide — blind thread-stressing never hits it (60
+        // rounds, zero hits) — so the engine's test seam fires the whole
+        // watcher-thread dance exactly inside it. The publish-side Dekker
+        // re-check must then arm this query anyway.
+        var engine = DebugCompiledEngine(
+            "spin(0) :- !.\nspin(N) :- N1 is N - 1, spin(N1).\n" +
+            "work :- spin(3000000).\n");
+        int stops = 0;
+        using var cts = new System.Threading.CancellationTokenSource();
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, _ =>
+        {
+            stops++;
+            cts.Cancel();
+            session!.Channel.WriteCommands(new DebugCommand(DebugCommandKind.Continue));
+        }) { ActivateOnAttach = true };
+        engine.DebugFullyArmed = false;
+        engine.DebugLcoWhenArmed = false;
+        engine.SetDebugLastCall(true);
+        // spin/1's recursive clause — hit constantly once armed.
+        Assert.True(engine.AddBreakpoint("<string>", 3) > 0);
+        engine.TestHookBeforeActivationPublish = () =>
+        {
+            engine.TestHookBeforeActivationPublish = null;   // this query only
+            var armer = new System.Threading.Thread(() => session!.ActivateFullDebug());
+            armer.Start();
+            armer.Join();   // the watcher's whole dance completes IN the window
+        };
+        using (session)
+        {
+            try { engine.QueryAll("work.", cts.Token).ToList(); }
+            catch (OperationCanceledException) { }
+        }
+        Assert.True(stops > 0,
+            "the arm landed in the publish window and must still reach this query");
+    }
+
+    [Fact]
     public void ActivateFullDebug_MidQuery_ArmsAtTheNextGoalBoundary()
     {
         // The mid-run attach: a long query is in flight when the arm request lands from

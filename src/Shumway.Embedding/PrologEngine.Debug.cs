@@ -1691,7 +1691,16 @@ public sealed partial class PrologEngine
     /// queries run at near-release Tier-0 speed — and flips it when a debugger actually
     /// attaches. Compile-time debuggability (<c>compile_mode=debug</c>) is independent:
     /// code is compiled debuggable either way.</summary>
-    internal bool DebugFullyArmed { get; set; } = true;
+    // Volatile: written by a session's watcher/DAP thread (ActivateFullDebug),
+    // read by the engine thread at query setup — one half of the Dekker pair
+    // that closes the arm-publish race (see SetupQueryFromTermUnderGateCore's
+    // post-publish re-check).
+    private volatile bool _debugFullyArmed = true;
+    internal bool DebugFullyArmed
+    {
+        get => _debugFullyArmed;
+        set => _debugFullyArmed = value;
+    }
 
     /// <summary>The LCO choice full debug applies WHEN it arms (the pin / option
     /// resolution done once at <see cref="EnableDebugging"/>).</summary>

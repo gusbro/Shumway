@@ -166,10 +166,35 @@ internal sealed class DapTestClient : IDisposable
         {
             int remaining = (int)Math.Max(1, deadline - Environment.TickCount64);
             if (!_incoming.TryTake(out JsonDocument? doc, remaining))
-                throw new TimeoutException("no " + what + " within " + timeoutMs + "ms");
+                // A flake transcript must say what DID arrive: a stash full of
+                // other traffic means the wire is alive and the adapter never
+                // sent this one message; an empty stash means silence.
+                throw new TimeoutException(
+                    "no " + what + " within " + timeoutMs + "ms; "
+                    + (_stashed.Count == 0
+                        ? "nothing else arrived either"
+                        : "meanwhile received: " + string.Join(", ",
+                            _stashed.Select(Describe))));
             if (match(doc)) return doc;
             _stashed.Add(doc);
         }
+    }
+
+    private static string Describe(JsonDocument d)
+    {
+        JsonElement r = d.RootElement;
+        string type = r.TryGetProperty("type", out JsonElement t)
+            ? t.GetString() ?? "?" : "?";
+        return type switch
+        {
+            "event" => "event:" + (r.TryGetProperty("event", out JsonElement e)
+                ? e.GetString() : "?"),
+            "response" => "response:" + (r.TryGetProperty("command", out JsonElement c)
+                ? c.GetString() : "?"),
+            "request" => "request:" + (r.TryGetProperty("command", out JsonElement q)
+                ? q.GetString() : "?"),
+            _ => type,
+        };
     }
 
     private void ReadLoop()
