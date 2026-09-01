@@ -3,6 +3,7 @@
 % before you know enough to check it.
 %
 % Try:  safe_divide(10, D, R), D = 2.       the division waits for D
+%       safe_divide(N, D, R), D = 2.        and re-suspends waiting for N
 %       distinct(X, Y), X = a, Y = b.       dif/2 holds, both ways round
 %       distinct(X, Y), X = a, Y = a.       and this one fails
 %       positive(N), N = 5.
@@ -23,10 +24,12 @@ distinct(X, Y) :-
 
 % freeze/2 delays a goal on a single variable. Nothing runs until D is bound,
 % then the guard runs before the division does, so the error is impossible
-% rather than caught.
+% rather than caught. The division itself waits on BOTH arguments: when D
+% arrives first, the inner freeze re-suspends on N — that is how a chain of
+% freezes waits for several variables, in whatever order they get bound.
 safe_divide(N, D, R) :-
     freeze(D, D =\= 0),
-    freeze(D, R is N / D).
+    freeze(D, freeze(N, R is N / D)).
 
 % when/2 waits for a condition rather than a single variable: ground(N),
 % nonvar(N), ?=(X, Y) (their equality is decided either way), and the
