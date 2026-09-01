@@ -26,7 +26,7 @@ public sealed class IlBacktrackReproTests
     }
 
     [Theory]
-    [InlineData("f1(1). f1(2). f1(3).\nmc(H, B) :- '$clause_enum'(H, H-B).", "mc(f1(X), true)")]
+    [InlineData(":- public f1/1.\nf1(1). f1(2). f1(3).\nmc(H, B) :- '$clause_enum'(H, H-B).", "mc(f1(X), true)")]
     [InlineData("p(_). q(_, _).\ncp(I) :- '$current_predicate_enum'(I).", "cp(p/N)")]
     [InlineData("sa(B, L, S) :- sub_atom(banana, B, L, _, S).", "sa(B, 2, S)")]
     // Preceding choice point before the backtrackable builtin (the sf1 / maplist

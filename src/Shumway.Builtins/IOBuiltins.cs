@@ -82,9 +82,11 @@ public static class IOBuiltins
     {
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
         if (h.IsBinary)
-            throw new PrologRuntimeException("permission_error", "output,binary_stream");
+            throw new PrologRuntimeException("permission_error", "output,binary_stream",
+                engine, engine.GetRegister(0));
         if (h.Writer is null)
-            throw new PrologRuntimeException("permission_error", "output,stream");
+            throw new PrologRuntimeException("permission_error", "output,stream",
+                engine, engine.GetRegister(0));
         var opts = QuotedOptions(engine);
         TermRenderer.Render(engine, engine.GetRegister(1), h.Writer, opts);
         return true;
@@ -119,17 +121,19 @@ public static class IOBuiltins
     {
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
         if (h.IsBinary)
-            throw new PrologRuntimeException("permission_error", "output,binary_stream");
+            throw new PrologRuntimeException("permission_error", "output,binary_stream",
+                engine, engine.GetRegister(0));
         if (h.Writer is null)
-            throw new PrologRuntimeException("permission_error", "output,stream");
+            throw new PrologRuntimeException("permission_error", "output,stream",
+                engine, engine.GetRegister(0));
         var options = ReadWriteTermOptions(engine, optsReg: 2);
         TermRenderer.Render(engine, engine.GetRegister(1), h.Writer, options);
         return true;
     }
 
     /// <summary>Options write_term recognises but does not act on (SWI
-    /// extras real code passes) — accepted so a domain_error only fires on
-    /// genuinely unknown names.</summary>
+    /// extras real code passes) — accepted for an SWI-dialect caller only;
+    /// an ISO caller gets domain_error(write_option, E) for these too.</summary>
     private static readonly System.Collections.Generic.HashSet<string> IgnoredWriteOptions = new()
     {
         "fullstop", "nl", "dotlists", "brace_terms",
@@ -254,7 +258,11 @@ public static class IOBuiltins
                     options.Portray = null;
                 break;
             default:
-                if (!IgnoredWriteOptions.Contains(name))
+                // The ignore list exists for SWI extras real code passes —
+                // honoured only for an SWI-dialect caller. ISO §8.14.2.3:
+                // an unrecognised option is domain_error(write_option, E).
+                if (!IgnoredWriteOptions.Contains(name)
+                    || !SwiLenient.CallerIsSwi(engine))
                     throw new PrologRuntimeException(
                         "domain_error", "write_option", engine, optCell);
                 break;
@@ -378,9 +386,11 @@ public static class IOBuiltins
     {
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
         if (h.IsBinary)
-            throw new PrologRuntimeException("permission_error", "output,binary_stream");
+            throw new PrologRuntimeException("permission_error", "output,binary_stream",
+                engine, engine.GetRegister(0));
         if (h.Writer is null)
-            throw new PrologRuntimeException("permission_error", "output,stream");
+            throw new PrologRuntimeException("permission_error", "output,stream",
+                engine, engine.GetRegister(0));
         TermRenderer.Render(engine, engine.GetRegister(1), h.Writer,
             CanonicalOptions(engine));
         return true;
@@ -443,7 +453,8 @@ public static class IOBuiltins
         // aliases work too.
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
         if (!h.IsWriter)
-            throw new PrologRuntimeException("permission_error", "output,stream");
+            throw new PrologRuntimeException("permission_error", "output,stream",
+                engine, engine.GetRegister(0));
         return FormatImpl(engine, h.Writer!, fmtReg: 1, argsReg: 2, "format/3");
     }
 

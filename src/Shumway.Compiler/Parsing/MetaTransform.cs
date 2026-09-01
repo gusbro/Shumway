@@ -280,7 +280,7 @@ public static class MetaTransform
                 {
                     collectLoop,
                     (Term)new CompoundTerm("$findall_collect", new[] { fa.Args[2] }),
-                }), goal.Position);
+                }), "findall", goal.Position);
             // ADR-035 — name the collect-loop's $disj helper for the meta-predicate
             // it stands for, so the debugger shows/stops on it as findall/3 (a real
             // user goal) rather than a transparent user ';'.
@@ -299,7 +299,7 @@ public static class MetaTransform
         {
             Term rewritten = WithResultListCheck(bs.Args[2], RewriteBagof(
                 bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], ref counter),
-                goal.Position);
+                bs.Functor, goal.Position);
             // ADR-035 — the inner collect-loop ';' is bagof/setof, not a user ';'.
             _nextHelperKind = bs.Functor;
             return TransformGoal(rewritten, ref counter, helpers);
@@ -656,12 +656,16 @@ public static class MetaTransform
     /// has to be a partial list, checked BEFORE the goal runs — the inline
     /// rewrites bypass the prelude clause that would otherwise do it.</summary>
     private static Term WithResultListCheck(
-        Term resultArg, Term body, Shumway.Compiler.Lexer.SourcePosition pos)
+        Term resultArg, Term body, string callerName,
+        Shumway.Compiler.Lexer.SourcePosition pos)
     {
         if (resultArg is VarTerm) return WithPosition(body, pos);
         return new CompoundTerm(",", new[]
         {
-            (Term)new CompoundTerm("$check_partial_list", new[] { resultArg }),
+            (Term)new CompoundTerm("$check_partial_list", new[]
+            {
+                resultArg, new AtomTerm(callerName), (Term)new IntTerm(3),
+            }),
             body,
         }) { Position = pos };
     }

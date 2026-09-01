@@ -857,11 +857,12 @@ public static class AtomCharBuiltins
             }
             else if (asCodes)
             {
-                if (head.Tag != Tag.Int)
-                    throw new PrologRuntimeException(
-                        "type_error", "integer", engine, head);
-                // Any Unicode scalar value, same contract as char_code/2.
-                if (!Utf16Text.IsScalarValue(head.AsInt))
+                // ISO §8.16.8.3.d: an element that is not a character code —
+                // an atom, a compound, an out-of-range integer alike — is
+                // representation_error(character_code). The chars side keeps
+                // its own type_error(character, E) (§8.16.7.3): the standard
+                // is asymmetric here on purpose.
+                if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))
                     throw new PrologRuntimeException(
                         "representation_error", "character_code");
                 if (!hasUnbound) Utf16Text.AppendCodePoint(sb, (int)head.AsInt);
@@ -910,17 +911,14 @@ public static class AtomCharBuiltins
             }
             if (!ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell cTail)) break;
             Cell head = Resolve(engine, rawHead);
-            // ISO §8.16.7 / §8.16.8 type errors: a non-int element is
-            // type_error(character_code); an unbound element is
-            // instantiation_error (precedence rule applies).
+            // ISO §8.16.5.3.d: an unbound element is instantiation_error
+            // (precedence rule applies); any bound element that is not a
+            // character code — wrong type or out of range alike — is
+            // representation_error(character_code). An astral code appends
+            // its surrogate pair.
             if (head.Tag is Tag.Ref or Tag.AttVar)
                 throw new PrologRuntimeException("instantiation_error");
-            if (head.Tag != Tag.Int)
-                throw new PrologRuntimeException(
-                    "type_error", "integer", engine, head);
-            // Any Unicode scalar value, same contract as char_code/2;
-            // an astral code appends its surrogate pair.
-            if (!Utf16Text.IsScalarValue(head.AsInt))
+            if (head.Tag != Tag.Int || !Utf16Text.IsScalarValue(head.AsInt))
                 throw new PrologRuntimeException(
                     "representation_error", "character_code");
             Utf16Text.AppendCodePoint(sb, (int)head.AsInt);

@@ -18,21 +18,27 @@ public class IntrospectionTests
     // ---------- clause/2 ----------
 
     [Fact]
-    public void Clause_StaticFact_BindsHeadAndTrueBody()
+    public void Clause_StaticFact_RaisesPermissionError()
     {
+        // ISO §8.8.1.3: clause/2 reads PUBLIC (dynamic) procedures only; a
+        // static user predicate is private (GNU and Scryer agree). SWI-dialect
+        // modules keep SWI's introspection of their own static clauses.
         var engine = new PrologEngine();
         engine.ConsultString("greeting(hello).");
-        var sol = engine.Query("clause(greeting(X), B).");
+        var sol = engine.Query(
+            "catch(clause(greeting(_), _), error(permission_error(A, K, P), _), true).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("hello"), sol["X"]);
-        Assert.Equal(Atom("true"), sol["B"]);
+        Assert.Equal(Atom("access"), sol["A"]);
+        Assert.Equal(Atom("private_procedure"), sol["K"]);
+        var pi = Assert.IsType<CompoundTerm>(sol["P"]);
+        Assert.Equal("/", pi.Functor);
     }
 
     [Fact]
-    public void Clause_StaticRule_BindsBodyTerm()
+    public void Clause_DynamicRule_BindsBodyTerm()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("double(X, Y) :- Y is X * 2.");
+        engine.ConsultString(":- dynamic double/2.\ndouble(X, Y) :- Y is X * 2.");
         var sol = engine.Query("clause(double(A, B), Body).");
         Assert.True(sol.Success);
         // Body is `B is A * 2` — exact AST shape depends on parser, but it

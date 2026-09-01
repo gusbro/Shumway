@@ -36,6 +36,9 @@ public sealed class PreludeIlDifferentialTests
         "foldadd2(E1, E2, A, B) :- B is A + E1 + E2.\n" +
         "cmp3(O, A, B) :- compare(O, A, B).\n" +
         "inc(A, B) :- B is A + 1.\n" +
+        // public: the clause/2 case reads f1's clauses — a static predicate
+        // must be declared public for that (ISO §8.8.1.3).
+        ":- public f1/1.\n" +
         "f1(1). f1(2). f1(3).\n";
 
     public sealed record Case(

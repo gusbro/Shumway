@@ -645,10 +645,10 @@ public static partial class MetaBuiltins
     /// control skeleton raises <c>type_error(callable, Culprit)</c>. A var
     /// in goal position is fine (it meta-calls). Without this the bad body
     /// surfaces later as an uncatchable compiler exception at dispatch.</summary>
-    private static void ValidateAssertClause(Term clauseTerm)
+    private static void ValidateAssertClause(Term clauseTerm, Activation? engine = null)
     {
         if (clauseTerm is VarTerm)
-            throw new ShumwayPrologException(IsoError.InstantiationError());
+            throw new ShumwayPrologException(IsoError.InstantiationError(engine));
         Term head = clauseTerm;
         Term? body = null;
         if (clauseTerm is CompoundTerm { Functor: ":-", Args.Length: 2 } rule)
@@ -657,9 +657,9 @@ public static partial class MetaBuiltins
             body = rule.Args[1];
         }
         if (head is VarTerm)
-            throw new ShumwayPrologException(IsoError.InstantiationError());
+            throw new ShumwayPrologException(IsoError.InstantiationError(engine));
         if (head is not AtomTerm and not CompoundTerm)
-            throw new ShumwayPrologException(IsoError.TypeError("callable", head));
+            throw new ShumwayPrologException(IsoError.TypeError("callable", head, engine));
         // Control constructs are not procedures — asserting a clause for
         // `!`, `,`/2, `;`/2, `->`/2 or `*->`/2 is modifying a static
         // procedure (WG17 reading; SWI and GNU agree).
@@ -673,11 +673,12 @@ public static partial class MetaBuiltins
             || (harity == 2 && hn is "," or ";" or "->" or "*->" or ":-" or "-->"))
             throw new ShumwayPrologException(IsoError.PermissionError(
                 "modify", "static_procedure",
-                new CompoundTerm("/", new Term[] { new AtomTerm(hn), new IntTerm(harity) })));
-        if (body is not null) ValidateGoalTerm(body);
+                new CompoundTerm("/", new Term[] { new AtomTerm(hn), new IntTerm(harity) }),
+                engine));
+        if (body is not null) ValidateGoalTerm(body, engine);
     }
 
-    private static void ValidateGoalTerm(Term goal)
+    private static void ValidateGoalTerm(Term goal, Activation? engine = null)
     {
         switch (goal)
         {
@@ -685,13 +686,13 @@ public static partial class MetaBuiltins
                 return;
             case CompoundTerm { Args.Length: 2 } c
                 when c.Functor is "," or ";" or "->" or "*->":
-                ValidateGoalTerm(c.Args[0]);
-                ValidateGoalTerm(c.Args[1]);
+                ValidateGoalTerm(c.Args[0], engine);
+                ValidateGoalTerm(c.Args[1], engine);
                 return;
             case AtomTerm or CompoundTerm:
                 return;
             default:
-                throw new ShumwayPrologException(IsoError.TypeError("callable", goal));
+                throw new ShumwayPrologException(IsoError.TypeError("callable", goal, engine));
         }
     }
 
@@ -804,7 +805,7 @@ public static partial class MetaBuiltins
     {
         Term clauseTerm = MaterializeRegister(engine, 0);
         clauseTerm = StripAssertQualifiers(clauseTerm);
-        ValidateAssertClause(clauseTerm);
+        ValidateAssertClause(clauseTerm, engine);
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         // Asserta/Assertz extract the head functor id anyway —
         // take it from the return instead of re-extracting (a second
@@ -1416,9 +1417,9 @@ public static partial class MetaBuiltins
             CompoundTerm c => c.ResolveFunctorId(),
             // ISO §8.9.3 — an unbound head raises
             // instantiation_error; anything else non-callable raises
-            // type_error(callable, _).
-            VarTerm => throw new Shumway.Core.PrologRuntimeException("instantiation_error"),
-            _ => throw new Shumway.Core.PrologRuntimeException("type_error", "callable"),
+            // type_error(callable, Head) with the head as culprit.
+            VarTerm => throw new ShumwayPrologException(IsoError.InstantiationError()),
+            _ => throw new ShumwayPrologException(IsoError.TypeError("callable", head)),
         };
     }
 

@@ -470,19 +470,21 @@ public class StreamControlConformance : IDisposable
     [Fact]
     public void EofActionError_SecondReadPastEndRaises()
     {
-        // §8.11.5 eof_action(error): the read that consumed eof yields
-        // end_of_file; the NEXT read raises permission_error(input,
-        // past_end_of_stream, S). Matches GNU. Default (eof_code) keeps
-        // yielding end_of_file.
+        // §8.11.5.3: eof_action(error) is the DEFAULT — the read that
+        // consumed eof yields end_of_file; the NEXT read raises
+        // permission_error(input, past_end_of_stream, S). Matches GNU.
+        // eof_action(eof_code) opts back into end_of_file forever (and is
+        // what arity_compat flips the default to).
         File.WriteAllText(_tempPath, "");
         var path = _tempPath.Replace("\\", "\\\\");
         var e = new PrologEngine();
         Assert.True(e.Query(
-            $"open('{path}', read, S, [eof_action(error)]), get_char(S, end_of_file), "
+            $"open('{path}', read, S), get_char(S, end_of_file), "
             + "catch(get_char(S, _), error(permission_error(input, past_end_of_stream, _), _), true), "
             + "stream_property(S, end_of_stream(past)), close(S).").Success);
         Assert.True(e.Query(
-            $"open('{path}', read, S), get_char(S, end_of_file), get_char(S, end_of_file), "
+            $"open('{path}', read, S, [eof_action(eof_code)]), "
+            + "get_char(S, end_of_file), get_char(S, end_of_file), "
             + "stream_property(S, end_of_stream(past)), close(S).").Success);
     }
 
@@ -533,7 +535,9 @@ public class StreamControlConformance : IDisposable
         var e = new PrologEngine();
         Assert.True(e.Query(
             "catch(get_char(user_output, _), error(permission_error(input, stream, user_output), _), true).").Success);
-        Assert.True(e.Query(
-            "catch(at_end_of_stream(user_output), error(permission_error(input, stream, user_output), _), true).").Success);
+        // at_end_of_stream/1 is property-based (§8.11.8): an output stream
+        // simply lacks the end_of_stream property, so the call FAILS —
+        // §8.11.8.3 lists no permission error.
+        Assert.True(e.Query("\\+ at_end_of_stream(user_output).").Success);
     }
 }

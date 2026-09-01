@@ -205,8 +205,11 @@ public sealed class QualifiedReflectionTests
     [Fact]
     public void UnqualifiedFromUser_IsUntouched()
     {
+        // `:- public` keeps the static predicate clause/2-readable (ISO's
+        // public-procedure notion); without it clause/2 raises
+        // permission_error(access, private_procedure, _).
         var e = new PrologEngine();
-        e.ConsultString("plain(1).\nplain(2).\n");
+        e.ConsultString(":- public plain/1.\nplain(1).\nplain(2).\n");
         Assert.True(e.Query("clause(plain(1), true).").Success);
         Assert.True(e.Query("predicate_property(plain(_), static).").Success);
         Assert.True(e.Query("current_predicate(plain/1).").Success);

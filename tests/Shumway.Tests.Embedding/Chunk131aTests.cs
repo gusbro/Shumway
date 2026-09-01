@@ -110,17 +110,17 @@ public class Chunk131aTests
     }
 
     [Fact]
-    public void NumberCodes_ProperList_NonInt_RaisesTypeErrorInteger()
+    public void NumberCodes_ProperList_NonInt_RaisesRepresentationError()
     {
-        // A non-integer element of a code list is type_error(integer, E)
-        // with the element as culprit — GNU's reading, and the one the
-        // Logtalk conformity battery accepts.
+        // ISO §8.16.8.3.d: an element of a code list that is not a
+        // character code — wrong type or out of range alike — is
+        // representation_error(character_code). The chars side keeps
+        // type_error(character, E); the standard is asymmetric on purpose.
         var e = new PrologEngine();
         var sol = e.Query(
-            "catch(number_codes(_N, [foo]), error(type_error(T, V), _), true).");
+            "catch(number_codes(_N, [foo]), error(representation_error(F), _), true).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("integer"), sol["T"]);
-        Assert.Equal(Atom("foo"), sol["V"]);
+        Assert.Equal(Atom("character_code"), sol["F"]);
     }
 
     [Fact]

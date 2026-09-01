@@ -598,6 +598,10 @@ public static class ArithmeticEvaluator
     {
         double x = FloatOperand(a), y = b.AsDouble();
         if (x == 0 && y < 0) throw EvalError("zero_divisor");
+        // A negative base demands an INTEGRAL exponent by VALUE: -2 ** 3.0
+        // is -8.0 (GNU, SWI and Scryer agree), only a fractional exponent
+        // is undefined. Reading §9.3.1.3's "not an integer" as the TYPE
+        // would reject 3.0 — that is the ECLiPSe reading, not the field's.
         if (x < 0 && y != Math.Floor(y)) throw EvalError("undefined");
         return FiniteOrOverflow(Math.Pow(x, y));
     }
