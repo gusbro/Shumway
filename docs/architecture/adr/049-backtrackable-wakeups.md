@@ -2,9 +2,12 @@
 
 ## Status
 
-Proposed (2026-09-03). Refines the deferred-wakeup design that has carried
-attributed variables since phase 4. Tier-0 first; Tier-1 follows within the
-arc (see Staging). Supersedes the once-semantics drain for the non-cut goal
+Accepted. Stage 1 (Tier-0) shipped 2026-09-03 (#55); stage 2 (Tier-1 region
+boundaries) implemented in the same arc — the interrupt core moved onto the
+Activation so both tiers fire the same machinery, and the emitted region
+flushes became suspend/resume points over the phase-16 resume markers.
+Refines the deferred-wakeup design that has carried attributed variables
+since phase 4. Supersedes the once-semantics drain for the non-cut goal
 boundaries; the cut-boundary drain stays, deliberately (see Decision §5).
 
 ## Context
@@ -142,14 +145,18 @@ The constraint is breadth: every emission site must change shape from
 run, resume", and that is its own round of IL-emission work with its own
 canaries (`PreludeIlBakeTests`).
 
-- **Stage 1 — Tier-0.** The interrupt, frame, driver, return builtin, and
-  the new test suite. Tier-1 keeps the once-drain via the existing
-  `Tier1WakeupFlusher`, whose behaviour is unchanged and pinned; the
-  divergence (nondeterministic wakes only — deterministic wakes behave
-  identically on both tiers) is documented and gated by tests that name it.
-- **Stage 2 — Tier-1.** The flush sites become suspend points returning to
-  the dispatch loop, which runs the same driver and resumes via marker.
-  The IL cut sites stay on the once-drain per Decision §5.
+- **Stage 1 — Tier-0.** The interrupt, frame, driver, sentinel return, and
+  the test suite.
+- **Stage 2 — Tier-1.** The region-boundary flush sites became suspend
+  points: the emitted IL arms the interrupt (a verdict call), bails to the
+  dispatch loop via the tail-call protocol, the loop runs the same driver,
+  and the resume is a forward resume marker — for a call boundary it
+  dispatches the callee (whose cut barrier is re-established as B post-wake,
+  so a callee cut can never prune the wake's alternatives); for a proceed
+  boundary it jumps to the continuation CP. The IL cut sites stay on the
+  once-drain per Decision §5, as do non-region IL bodies, which have never
+  flushed at their call sites — their wakes surface at the surrounding
+  region or interpreter boundaries, unchanged.
 - **Stage 3 — retirement.** The nested drain (`RunWakeups`,
   `MetaCallInEngine`'s wake role) shrinks to what still needs it
   (`ReentrantSolve` keeps its documented once-semantics).
