@@ -639,6 +639,8 @@ internal static class ReplTopLevel
             else if (engine.LastHaltExitCode is null) { EnsureLineStart(); Console.WriteLine("false."); }
             return;
         }
+        // `a` runs to the end, `f` fills out the current five: the pacer counts.
+        var pacer = new AnswerPrompt.Pacer();
         while (true)
         {
             int width;
@@ -655,7 +657,9 @@ internal static class ReplTopLevel
                 Console.WriteLine(".");
                 return;
             }
-            if (!WantsAnotherSolution())
+            // Under `a` or `f` the pacer says to take the next one without
+            // asking; otherwise the reader decides.
+            if (pacer.AskAfterShowing() && !pacer.Accept(WantsAnotherSolution()))
             {
                 Console.WriteLine(".");
                 return;
@@ -788,8 +792,9 @@ internal static class ReplTopLevel
             + "\n"
             + "Interactive Shumway Prolog top-level. Consults each file named on the\n"
             + "command line (a .pl consults source; a .shum loads a linked bundle), then\n"
-            + "reads queries from the console. End a query with '.'; ';' or space for more\n"
-            + $"solutions; ESC cancels a running query; 'halt.' or {eof} exits.\n"
+            + "reads queries from the console. End a query with '.'; at an answer, ';' or\n"
+            + "space gives the next solution, 'a' every one of them, 'f' the next five and\n"
+            + $"'h' the list; ESC cancels a running query; 'halt.' or {eof} exits.\n"
             + "\n"
             + "Arguments after `--` are not consulted: they reach the program as the argv\n"
             + "Prolog flag (current_prolog_flag(argv, Argv)) — SWI/GNU convention.\n"
@@ -845,9 +850,10 @@ internal static class ReplTopLevel
             + "  SHUMWAY_DEBUG_DIAG=1     Verbose debug-session diagnostics on stderr.");
     }
 
-    /// <summary>After a solution, asks whether to search for the next:
-    /// ';', space or Tab mean yes (a single keypress when interactive,
-    /// SWI-style); anything else stops.
+    /// <summary>After a solution, asks what to do next. One keypress, no
+    /// RETURN — <c>;</c>, SPACE, Tab or <c>n</c> for the next one, <c>a</c> for
+    /// all of them, <c>f</c> for the next chunk of five, <c>h</c> for the list;
+    /// anything else stops.
     ///
     /// <para>With redirected/piped input the top-level takes only the FIRST
     /// solution and does not consume any input — every <c>.</c>-terminated
@@ -857,11 +863,18 @@ internal static class ReplTopLevel
     /// after <c>member(X,[a,b,c]).</c>), silently dropping it. A script that
     /// wants every solution uses <c>findall/3</c> / <c>forall/2</c>.</para>
     /// </summary>
-    private static bool WantsAnotherSolution()
+    private static MoreAnswers WantsAnotherSolution()
     {
         if (Console.IsInputRedirected)
-            return false;
-        ConsoleKeyInfo k = Console.ReadKey(intercept: true);
-        return k.KeyChar is ';' or ' ' || k.Key == ConsoleKey.Tab;
+            return MoreAnswers.Stop;
+        while (true)
+        {
+            ConsoleKeyInfo k = Console.ReadKey(intercept: true);
+            MoreAnswers asked = AnswerPrompt.KeyMeans(k.KeyChar, k.Key == ConsoleKey.Tab);
+            if (asked != MoreAnswers.Help) return asked;
+            Console.WriteLine();
+            Console.WriteLine(AnswerPrompt.Help);
+            Console.Write("   ");   // re-open the line the answer sat on
+        }
     }
 }
