@@ -203,24 +203,39 @@ export const canPickFiles = () => typeof window !== 'undefined' && !!window.show
 
 /**
  * Opens files the user chooses and puts them in the active workspace.
- * Falls back to an <input type=file> where the picker does not exist, which
- * every browser has — the difference is only that saving cannot write back to
- * the same file.
- * @returns {Promise<string[]>} the names that arrived
+ * @param {(name: string) => Promise<boolean>} confirmReplace asked about a
+ *        file this workspace already holds with different text; the default
+ *        replaces without asking, for callers that have nobody to ask.
+ * @returns {Promise<Array<{name: string, kept: boolean}>>} see acceptFiles
  */
-export async function openFiles() {
+export async function openFiles(confirmReplace = async () => true) {
+  return acceptFiles(await pickFiles(), confirmReplace);
+}
+
+/**
+ * Reads the files the user picks. Falls back to an <input type=file> where the
+ * picker does not exist, which every browser has — the difference is only that
+ * saving cannot write back to the same file.
+ * @returns {Promise<Array<{name: string, text: string}>>} empty if dismissed
+ */
+async function pickFiles() {
+  const picked = [];
   if (canPickFiles()) {
-    const handles = await window.showOpenFilePicker({
-      multiple: true,
-      types: [{ description: 'Prolog', accept: { 'text/plain': ['.pl', '.pro', '.prolog'] } }],
-    });
-    const arrived = [];
+    let handles;
+    try {
+      handles = await window.showOpenFilePicker({
+        multiple: true,
+        types: [{ description: 'Prolog', accept: { 'text/plain': ['.pl', '.pro', '.prolog'] } }],
+      });
+    } catch (ex) {
+      if (ex && ex.name === 'AbortError') return picked;   // dismissed
+      throw ex;
+    }
     for (const handle of handles) {
       const file = await handle.getFile();
-      await write(file.name, await file.text());
-      arrived.push(file.name);
+      picked.push({ name: file.name, text: await file.text() });
     }
-    return arrived;
+    return picked;
   }
 
   return new Promise((resolve) => {
@@ -229,15 +244,46 @@ export async function openFiles() {
     input.multiple = true;
     input.accept = '.pl,.pro,.prolog,text/plain';
     input.addEventListener('change', async () => {
-      const arrived = [];
-      for (const file of input.files ?? []) {
-        await write(file.name, await file.text());
-        arrived.push(file.name);
-      }
-      resolve(arrived);
+      for (const file of input.files ?? [])
+        picked.push({ name: file.name, text: await file.text() });
+      resolve(picked);
     }, { once: true });
     input.click();
   });
+}
+
+/**
+ * Whether two versions of a file hold the same text. Line endings do not
+ * count: the editor hands back \n whatever came in, so a file that arrived
+ * with CRLF and was saved once here would otherwise look changed every time it
+ * was reopened — and asking about a difference nobody made is worse than not
+ * asking at all.
+ */
+const sameText = (a, b) => a.replace(/\r\n/g, '\n') === b.replace(/\r\n/g, '\n');
+
+/**
+ * Puts files that have been read into the active workspace. Reopening a file
+ * edited elsewhere is what the picker is FOR, so a new file, and one whose
+ * text is unchanged, go straight in. One that is here already and now holds
+ * different text is the case with something to lose, and only that one is
+ * asked about.
+ *
+ * @param {Array<{name: string, text: string}>} picked
+ * @param {(name: string) => Promise<boolean>} confirmReplace
+ * @returns {Promise<Array<{name: string, kept: boolean}>>} what arrived, in
+ *          the order picked; `kept` means this workspace's own copy stayed.
+ */
+export async function acceptFiles(picked, confirmReplace) {
+  const settled = [];
+  for (const file of picked) {
+    const here = await read(file.name);
+    const present = here !== null && here !== undefined;
+    const same = present && sameText(here, file.text);
+    const take = same || !present || await confirmReplace(file.name);
+    if (take && !same) await write(file.name, file.text);
+    settled.push({ name: file.name, kept: !take });
+  }
+  return settled;
 }
 
 // --- the examples --------------------------------------------------------
