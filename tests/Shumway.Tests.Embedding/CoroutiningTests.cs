@@ -489,4 +489,98 @@ public class CoroutiningTests
         Assert.False(Co().Query("dif(A, B), A = B.").Success);
         Assert.True(Co().Query("dif(A, B), A = 1, B = 2.").Success);
     }
+
+    // ===== dif/2 keeps ONE copy of a constraint it already has =====
+    // The unifier of the two terms is what a dif really constrains, so terms
+    // that unify the same way ARE the same constraint. Storing that form makes
+    // equivalent posts recognisable, and a redundant one is then not posted at
+    // all: the store stays small (less to re-check on every later binding) and
+    // the top level shows the constraint once.
+
+    /// <summary>An engine that can COUNT the live dif suspensions a variable
+    /// carries: the store measured rather than described.</summary>
+    private static PrologEngine CoCounting()
+    {
+        var e = Co();
+        e.ConsultString("""
+            tally((A, B), N0, N) :- !, tally(A, N0, N1), tally(B, N1, N).
+            tally('$dif_wake'(dif_c(_, _, Alive)), N0, N) :-
+                !, ( Alive == dead -> N = N0 ; N is N0 + 1 ).
+            tally(_, N, N).
+            live(V, N) :- frozen(V, G), tally(G, 0, N).
+            """);
+        return e;
+    }
+
+    [Fact]
+    public void EquivalentDifsCollapseToOne()
+    {
+        // The reported case: five posts of one constraint, one residual.
+        var e = CoCounting();
+
+        var five = e.Query(
+            "dif(X, Y), dif(Y, X), dif(-X, -Y), dif(-Y, -X), dif(X, Y), live(X, N).");
+        Assert.True(five.Success);
+        Assert.Equal(1L, ((Shumway.Compiler.Ast.IntTerm)five["N"]!).Value);
+
+        // Symmetry alone is enough to recognise a duplicate.
+        var two = e.Query("dif(X, Y), dif(Y, X), live(X, N).");
+        Assert.True(two.Success);
+        Assert.Equal(1L, ((Shumway.Compiler.Ast.IntTerm)two["N"]!).Value);
+    }
+
+    [Fact]
+    public void DifferentConstraintsAreAllKept()
+    {
+        // The pruning must not reach anything that is not the same constraint:
+        // X \= f(Y) and X \= g(Y) share their variables and nothing else.
+        var e = CoCounting();
+        var sol = e.Query("dif(X, f(Y)), dif(X, g(Y)), live(X, N).");
+        Assert.True(sol.Success);
+        Assert.Equal(2L, ((Shumway.Compiler.Ast.IntTerm)sol["N"]!).Value);
+    }
+
+    [Fact]
+    public void ADifOverOneArgumentReducesToThatArgument()
+    {
+        // dif(-X, -Y) unifies by {X = Y} alone, so it IS dif(X, Y): one pair in
+        // the unifier means the disjunction has a single disequality.
+        // ONE residual, and its arguments are the plain variables — before
+        // this it read back as dif(-X, -Y), the shape as posted.
+        Assert.True(Co().Query(
+            "dif(-X, -Y), copy_term(X-Y, _, Gs), "
+          + @"Gs = [dif(A, B)], var(A), var(B), A \== B.").Success);
+    }
+
+    [Fact]
+    public void ADifOverSwappedArgumentsReducesToo()
+    {
+        // f(X,Y) vs f(Y,X) decomposes to (X\=Y ; Y\=X) — the same disequality
+        // twice, so it collapses.
+        Assert.True(Co().Query(
+            "dif(f(X,Y), f(Y,X)), copy_term(X-Y, _, Gs), "
+          + @"Gs = [dif(A, B)], var(A), var(B), A \== B.").Success);
+    }
+
+    [Fact]
+    public void ADifOverTwoArgumentsDoesNotReduce()
+    {
+        // f(X,Y) vs f(A,B) is X\=A OR Y\=B — a real disjunction, and not any
+        // one dif. It must be kept whole, or the constraint would be wrong.
+        var e = Co();
+        Assert.True(e.Query("dif(f(X,Y), f(A,B)), X = A, Y = 1, B = 2.").Success);
+        Assert.False(e.Query("dif(f(X,Y), f(A,B)), X = A, Y = B.").Success);
+    }
+
+    [Fact]
+    public void CollapsingDoesNotWeakenTheConstraint()
+    {
+        // The point of the exercise is fewer copies, not a weaker dif: the one
+        // that survives still fails the moment the terms become identical, and
+        // still lets a genuinely different pair through.
+        var e = Co();
+        Assert.False(e.Query("dif(X, Y), dif(-X, -Y), X = Y.").Success);
+        Assert.False(e.Query("dif(f(X,Y), f(Y,X)), X = Y.").Success);
+        Assert.True(e.Query("dif(X, Y), dif(-X, -Y), X = 1, Y = 2.").Success);
+    }
 }

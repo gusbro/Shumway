@@ -120,8 +120,57 @@ internal static class Coroutining
         dif(X, Y) :-
             '$dif_check'(X, Y, Out),
             ( Out == none -> true
-            ; '$dif_suspend'(X, Y, Out)
+            ; '$dif_canon'(X, Y, CX, CY),
+              ( '$dif_live_already'(Out, CX, CY) -> true
+              ; '$dif_suspend'(CX, CY, Out)
+              )
             ).
+
+        % ===== canonical form, and not posting what is already posted =====
+        % The UNIFIER of the two terms is what a dif really constrains: the
+        % terms are equal exactly when every one of its pairs holds, so the
+        % disequality is the negation of that conjunction — a DISJUNCTION of
+        % pair-disequalities. Two consequences, and both are why this is here:
+        %
+        %   one pair  -> the disjunction is a single disequality, so the whole
+        %                constraint IS that pair. dif(-X, -Y), dif(f(X,Y),
+        %                f(Y,X)) and dif(X, Y) all unify by {X = Y} and are one
+        %                and the same constraint; storing the pair makes them
+        %                literally so, which is both smaller to re-check on
+        %                every wake and what the top level then shows.
+        %   many pairs -> a real disjunction (dif(f(X,Y), f(A,B)) is X\=A OR
+        %                Y\=B), which does not reduce; the terms stay as
+        %                written.
+        %
+        % Having a canonical form makes the duplicate check a comparison. A dif
+        % already suspended and still live subsumes the one being posted, so the
+        % new one is simply not posted. Keeping the OLDER is not a preference:
+        % its lifetime contains the newer one's, so discarding it and keeping
+        % the newcomer would drop the constraint entirely on backtracking to
+        % between the two — answers, not just output, would be wrong.
+        '$dif_canon'(X, Y, CX, CY) :-
+            (   unifiable(X, Y, [A = B]) ->
+                % Orient var-var by standard order so dif(X,Y) and dif(Y,X)
+                % land on the same pair; a non-var side always sits second.
+                (   var(B), B @< A -> CX = B, CY = A
+                ;   CX = A, CY = B
+                )
+            ;   CX = X, CY = Y
+            ).
+
+        % Is an equivalent constraint already watching these variables? Only
+        % the first is examined: equivalent constraints unify the same way, so
+        % they suspend on the same variables in the same order.
+        '$dif_live_already'([V|_], A, B) :-
+            var(V),
+            get_attr(V, coroutining, frozen(G)),
+            '$dif_conj_holds'(G, A, B).
+        '$dif_conj_holds'((P, Q), A, B) :-
+            !,
+            ( '$dif_conj_holds'(P, A, B) -> true ; '$dif_conj_holds'(Q, A, B) ).
+        '$dif_conj_holds'('$dif_wake'(dif_c(X, Y, Alive)), A, B) :-
+            Alive \== dead,
+            ( X == A, Y == B -> true ; X == B, Y == A ).
 
         % Post ONE constraint incarnation, watching every variable of the
         % current unifier. The incarnation carries a shared Alive flag; a
