@@ -254,6 +254,9 @@ internal static partial class WebShumwayApp
     {
         bool wasRunning = _run is not null;
         _run?.Cancel();
+        // The abandoned query's unpainted output goes with it — see
+        // DropBufferedOutput.
+        DropBufferedOutput();
         // A search stopped at a breakpoint is BLOCKED, not running: the token
         // alone would never be observed. Wake it so it can see the cancel.
         TryReleaseStop("continue");
@@ -368,14 +371,129 @@ internal static partial class WebShumwayApp
         {
             if (string.IsNullOrEmpty(value)) return;
             if (_jsThread is null || SynchronizationContext.Current == _jsThread)
-                Emit(value);
-            else
-                _jsThread.Post(s => Emit((string)s!), value);
+            {
+                // Already on the thread that owns JavaScript. Anything buffered
+                // goes first, or this write would jump ahead of it.
+                FlushOutput();
+                Emit(asError, value);
+                return;
+            }
+            BufferOutput(asError, value);
         }
+    }
 
-        private void Emit(string text)
+    /// <summary>Engine output on its way to the page: what has been written and
+    /// not yet painted.
+    ///
+    /// <para>Posting each write on its own is what made an output-heavy goal
+    /// unusable. <c>trace, numlist(1, 10000, X)</c> writes tens of thousands of
+    /// lines; the page cannot paint them as fast as the search produces them, so
+    /// the queue grows without bound and the search ends up wedged behind its own
+    /// output — which is why Stop looked like it did nothing: the search had been
+    /// asked to stop, but the transcript kept painting the backlog for minutes.
+    /// </para>
+    ///
+    /// <para>So writes accumulate here and at most ONE flush is ever in flight.
+    /// The post is scheduled on the first buffered write rather than on a timer,
+    /// so when the page is keeping up a write still crosses on the next turn —
+    /// a prompt written before a read is not left sitting in a buffer. When the
+    /// page is NOT keeping up, everything written meanwhile arrives as one
+    /// string. Both kinds share one list, so ordinary output and diagnostics
+    /// keep the order they were written in.</para></summary>
+    private static readonly object _outLock = new();
+    private static readonly List<(bool AsError, System.Text.StringBuilder Text)> _outSegments = new();
+    private static bool _flushPending;
+    private static int _outChars;
+
+    /// <summary>How much unpainted output the search may run ahead by before it
+    /// is made to wait. Batching alone was not enough to keep Stop working: a
+    /// goal that writes without pause fills the runtime thread's queue with
+    /// flushes, and QueryCancel needs THAT thread to reach the engine — so the
+    /// search outran the only thread that could stop it. Waiting here throttles
+    /// the producer to roughly the speed of the page, which leaves the runtime
+    /// thread time to answer, and bounds the memory a runaway goal can take.
+    /// </summary>
+    private const int OutputHighWater = 64 * 1024;
+    private static readonly ManualResetEventSlim _outDrained = new(true);
+
+    private static void BufferOutput(bool asError, string text)
+    {
+        bool schedule, overHighWater;
+        lock (_outLock)
         {
-            if (asError) WriteErrorToPage(text); else WriteToPage(text);
+            if (_outSegments.Count > 0 && _outSegments[^1].AsError == asError)
+                _outSegments[^1].Text.Append(text);
+            else
+                _outSegments.Add((asError, new System.Text.StringBuilder(text)));
+            _outChars += text.Length;
+            schedule = !_flushPending;
+            _flushPending = true;
+            overHighWater = _outChars > OutputHighWater;
+            if (overHighWater) _outDrained.Reset();
         }
+        if (schedule) _jsThread!.Post(static _ => FlushOutput(), null);
+        // A BOUNDED wait: a throttle, never a block. If the page has stopped
+        // painting altogether (a hidden tab), the search proceeds anyway rather
+        // than wedging — it has already yielded the time that matters.
+        //
+        // CA1416 flags the wait as unsupported on browser, which is true of the
+        // thread that must never block: the runtime thread. This runs only on
+        // the SEARCH thread — the branch above returned early when the caller is
+        // the runtime thread — and that one is a pool thread whose whole job is
+        // a synchronous search. Blocking it briefly is the design, not a
+        // violation of it.
+#pragma warning disable CA1416
+        if (overHighWater)
+        {
+            _outDrained.Wait(100);
+            // ...and then leave the runtime thread a gap it can answer in.
+            // Waiting for the drain alone is not enough: the search wakes the
+            // instant the flush lands and refills, so the thread QueryCancel has
+            // to reach goes straight back to painting. A few idle milliseconds
+            // per batch cost nothing at these volumes (a batch is 64 KB) and are
+            // what makes Stop reliable while a goal is writing.
+            System.Threading.Thread.Sleep(5);
+        }
+#pragma warning restore CA1416
+    }
+
+    /// <summary>Paints everything buffered. Runs on the runtime thread — the only
+    /// one that may call into JavaScript.</summary>
+    private static void FlushOutput()
+    {
+        (bool AsError, string Text)[] segments;
+        lock (_outLock)
+        {
+            _flushPending = false;
+            if (_outSegments.Count == 0) { _outChars = 0; _outDrained.Set(); return; }
+            segments = new (bool, string)[_outSegments.Count];
+            for (int i = 0; i < _outSegments.Count; i++)
+                segments[i] = (_outSegments[i].AsError, _outSegments[i].Text.ToString());
+            _outSegments.Clear();
+            _outChars = 0;
+            _outDrained.Set();   // let a throttled writer go on
+        }
+        foreach (var (asError, text) in segments) Emit(asError, text);
+    }
+
+    /// <summary>Throws away output that has not been painted yet — what an
+    /// ABANDONED query still had queued. Without it, Stop stops the search and
+    /// the transcript goes on painting its trace long afterwards, which reads as
+    /// Stop having done nothing.</summary>
+    private static void DropBufferedOutput()
+    {
+        lock (_outLock)
+        {
+            _outSegments.Clear();
+            _outChars = 0;
+            // An abandoned query must not be left parked on the throttle: it has
+            // to run on to its next safe point to see that it was cancelled.
+            _outDrained.Set();
+        }
+    }
+
+    private static void Emit(bool asError, string text)
+    {
+        if (asError) WriteErrorToPage(text); else WriteToPage(text);
     }
 }

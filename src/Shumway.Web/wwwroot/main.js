@@ -32,10 +32,24 @@ let editor = null;
 // without a newline would otherwise have the next answer run onto its output.
 let atLineStart = true;
 
-/** Appends text in a role: 'query' | 'answer' | 'error' | 'note' | '' (engine). */
+// Whether the view is following the tail. Kept from the SCROLL event rather
+// than measured per write: reading scrollHeight/scrollTop forces the browser to
+// lay the transcript out, and doing that on every line made an output-heavy goal
+// slower the longer it ran (the cost grows with the transcript). A scroll event
+// fires at most once a frame, so the same three reads there are bounded.
+let stickToBottom = true;
+let scrollQueued = 0;
+
+out.addEventListener('scroll', () => {
+  stickToBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+});
+
+/** Appends text in a role: 'query' | 'answer' | 'error' | 'note' | '' (engine).
+ * The node lands synchronously — the transcript is always current for anything
+ * that reads it — while the scroll that follows the tail is coalesced to one
+ * per frame, since that is the part that costs a layout. */
 function emit(text, role = '') {
   if (!text) return;
-  const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
   const span = document.createElement('span');
   if (role) span.className = role;
   span.textContent = text;
@@ -43,7 +57,11 @@ function emit(text, role = '') {
   atLineStart = text.endsWith('\n');
   // Follow the tail only if the user was already there — scrolling back to read
   // something should not be undone by the next line of output.
-  if (atBottom) out.scrollTop = out.scrollHeight;
+  if (stickToBottom && !scrollQueued)
+    scrollQueued = requestAnimationFrame(() => {
+      scrollQueued = 0;
+      if (stickToBottom) out.scrollTop = out.scrollHeight;
+    });
 }
 
 /** Starts a line, unless one is already started. */
