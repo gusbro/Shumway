@@ -1,3 +1,4 @@
+﻿using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using Shumway.Core;
@@ -336,7 +337,7 @@ public static class AtomCharBuiltins
             if (i < n && char.IsWhiteSpace(s[i]))
                 i = SkipLayout(s, i);   // "- 1" or "- /**/1" → -1
         }
-        if (i >= n || !char.IsDigit(s[i])) return false;
+        if (i >= n || !IsDecimalDigit(s[i])) return false;
 
         // Radix / char-code literals — all start "0<marker>".
         if (s[i] == '0' && i + 1 < n)
@@ -350,6 +351,12 @@ public static class AtomCharBuiltins
                 int digits = 0;
                 while (j < n)
                 {
+                    if (s[j] == '_' && digits > 0)
+                    {
+                        int after = AfterDigitSeparator(s, j, radix);
+                        if (after < 0) break;
+                        j = after;
+                    }
                     int d = RadixDigitValue(s[j], radix);
                     if (d < 0) break;
                     acc = acc * radix + d;
@@ -368,36 +375,43 @@ public static class AtomCharBuiltins
 
         // Decimal integer / float.
         int start = i;
-        while (i < n && char.IsDigit(s[i])) i++;
+        // A digit separator may span layout and comments, so the digits cannot
+        // be recovered by deleting '_' from the text: `1_ /*2*/ 3` is 13, and
+        // the 2 is a comment. The scan records the span each separator
+        // occupies; Splice cuts them back out.
+        List<(int From, int To)>? cuts = null;
+        ScanDecimalRun(s, ref i, ref cuts);
         if (i == n)
         {
             var acc = System.Numerics.BigInteger.Parse(
-                s.Substring(start), CultureInfo.InvariantCulture);
+                Splice(s, start, i, cuts), CultureInfo.InvariantCulture);
             return FinishInteger(engine, neg ? -acc : acc, ref cell);
         }
         // Float: fraction and/or exponent after the integer part.
         bool sawFraction = false;
-        if (s[i] == '.' && i + 1 < n && char.IsDigit(s[i + 1]))
+        if (s[i] == '.' && i + 1 < n && IsDecimalDigit(s[i + 1]))
         {
             sawFraction = true;
-            i += 2;
-            while (i < n && char.IsDigit(s[i])) i++;
+            i++;                                    // the '.'
+            ScanDecimalRun(s, ref i, ref cuts);
         }
         if (i < n && (s[i] == 'e' || s[i] == 'E'))
         {
             int j = i + 1;
             if (j < n && (s[j] == '+' || s[j] == '-')) j++;
-            if (j < n && char.IsDigit(s[j]))
+            // The exponent starts with a DIGIT — a separator may only sit
+            // between two of them, so `1.0e_5` has no exponent at all.
+            if (j < n && IsDecimalDigit(s[j]))
             {
-                i = j + 1;
-                while (i < n && char.IsDigit(s[i])) i++;
+                i = j;
+                ScanDecimalRun(s, ref i, ref cuts);
             }
         }
         // ISO §6.3.1.2: a float MUST have a fractional part (a decimal point
         // followed by digits); an exponent alone (1e1) is not a valid float.
         if (!sawFraction) return false;
         if (i != n) return false;
-        if (!double.TryParse(s.Substring(start), NumberStyles.Float,
+        if (!double.TryParse(Splice(s, start, i, cuts), NumberStyles.Float,
                 CultureInfo.InvariantCulture, out double dv))
             return false;
         // An exponent past double's range parses to Infinity in .NET —
@@ -416,6 +430,13 @@ public static class AtomCharBuiltins
             : engine.MakeBigInt(value);
         return true;
     }
+
+    /// <summary>§6.5.2 decimal digit char: 0 to 9, and nothing else.
+    /// <c>char.IsDigit</c> also answers true for every other Unicode decimal
+    /// digit (٣, ৩, ９…), which no number production accepts and no numeric
+    /// parse understands — those used to reach BigInteger.Parse and throw a
+    /// raw FormatException straight past catch/3.</summary>
+    private static bool IsDecimalDigit(char c) => c is >= '0' and <= '9';
 
     private static int RadixDigitValue(char c, int radix)
     {
@@ -455,6 +476,52 @@ public static class AtomCharBuiltins
             break;
         }
         return i;
+    }
+
+    /// <summary>Advances <paramref name="i"/> over a run of decimal digits and
+    /// over the digit separators inside it, appending the span each separator
+    /// occupies to <paramref name="cuts"/>.</summary>
+    private static void ScanDecimalRun(
+        string s, ref int i, ref List<(int From, int To)>? cuts)
+    {
+        while (i < s.Length)
+        {
+            if (IsDecimalDigit(s[i])) { i++; continue; }
+            if (s[i] != '_') break;
+            int after = AfterDigitSeparator(s, i, radix: 0);
+            if (after < 0) break;
+            (cuts ??= new List<(int, int)>()).Add((i, after));
+            i = after;
+        }
+    }
+
+    /// <summary>The text between two indices with the recorded separator spans
+    /// cut out — the digits of the number, and nothing else.</summary>
+    private static string Splice(
+        string s, int from, int to, List<(int From, int To)>? cuts)
+    {
+        if (cuts is null) return s.Substring(from, to - from);
+        var text = new StringBuilder(to - from);
+        int at = from;
+        foreach ((int cutFrom, int cutTo) in cuts)
+        {
+            text.Append(s, at, cutFrom - at);
+            at = cutTo;
+        }
+        return text.Append(s, at, to - at).ToString();
+    }
+
+    /// <summary>At an <c>_</c> inside a number: the index of the digit that
+    /// ends the digit separator — the underscore may be followed by layout
+    /// text before it, which is what lets a large integer span lines — or −1
+    /// when no digit follows and the underscore is therefore not a separator
+    /// at all. <paramref name="radix"/> 0 means a decimal run.</summary>
+    private static int AfterDigitSeparator(string s, int i, int radix)
+    {
+        int j = SkipLayout(s, i + 1);
+        if (j >= s.Length) return -1;
+        bool digit = radix == 0 ? IsDecimalDigit(s[j]) : RadixDigitValue(s[j], radix) >= 0;
+        return digit ? j : -1;
     }
 
     private static bool TryParseCharCodeLiteral(string s, int i, out long code)

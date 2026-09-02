@@ -21,8 +21,8 @@ Point the engine at an SWI library tree with the `swi` dialect tag:
 
 Then `:- use_module(library(X)).` works as in SWI, including subdirectory
 libraries (`library(dcg/basics)`). While a library from a `swi`-tagged
-directory loads, the parser accepts SWI's syntax extensions (digit separators
-`10_000`, `:- dynamic X as volatile.`, `0''`, arguments at full operator
+directory loads, the parser accepts SWI's syntax extensions
+(`:- dynamic X as volatile.`, `0''`, arguments at full operator
 priority; `f(a :- b)`, `[ :- D1, :- D2 ]`, `f(a|b)`, and `[](Args)`
 compounds, plus the `as` and `thread_local` operators). Outside such a load the
 engine stays strictly ISO.
