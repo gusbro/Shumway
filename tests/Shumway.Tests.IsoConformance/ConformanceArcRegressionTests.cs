@@ -57,6 +57,11 @@ public sealed class ConformanceArcRegressionTests
         // points. time_out bounds the pin without exhausting the heap.
         True("time_out(length(L, L), 300, R), R == time_out, "
            + "time_out(length([x,y|T], T), 300, S), S == time_out.");
+    [Fact] public void AtomChars_CyclicListFailsInsteadOfLooping() =>
+        // IsProperListCell's exhausted guard read as "proper": a cyclic list
+        // took the check direction and was walked as text.
+        True("X = [a|X], \\+ atom_chars(abc, X), \\+ atom_codes(abc, X), "
+           + "Y = [0'a|Y], \\+ atom_codes(abc, Y).");
     [Fact] public void Length_HugeCountFailsWithoutTruncation() =>
         // 2^64: a silent (int) cast once made this allocate a wrong-sized list.
         False("length(_, 18446744073709551616).");

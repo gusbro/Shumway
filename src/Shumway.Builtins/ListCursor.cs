@@ -42,6 +42,9 @@ internal static class ListCursor
             if (Resolve(engine, head).Tag is Tag.Ref or Tag.AttVar) return false;
             cur = Resolve(engine, tail);
         }
+        // Guard exhausted: a spine longer than the heap is cyclic (no proper
+        // list has more conses than cells), and a cyclic list is not proper.
+        if (guard < 0) return false;
         return cur.Tag is not (Tag.Ref or Tag.AttVar);
     }
 }
