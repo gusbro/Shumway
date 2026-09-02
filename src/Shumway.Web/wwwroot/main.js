@@ -32,17 +32,18 @@ let editor = null;
 // without a newline would otherwise have the next answer run onto its output.
 let atLineStart = true;
 
-// Whether the view is following the tail. Kept from the SCROLL event rather
-// than measured per write: reading scrollHeight/scrollTop forces the browser to
-// lay the transcript out, and doing that on every line made an output-heavy goal
-// slower the longer it ran (the cost grows with the transcript). A scroll event
-// fires at most once a frame, so the same three reads there are bounded.
+// Whether the view was following the tail when this frame's output began.
+//
+// The question is "was the reader at the bottom BEFORE the new text arrived",
+// so it has to be asked before appending — appending grows scrollHeight, which
+// by itself puts the view above the bottom without the reader having moved.
+// (Answering it from the scroll event instead looked cheaper and was wrong:
+// more output landing between the auto-scroll and the event made the handler
+// read "the reader scrolled up", and the transcript stopped following for
+// good.) Asking once per FRAME rather than per write is what keeps the layout
+// out of the hot path: three reads a frame, not three per line.
 let stickToBottom = true;
 let scrollQueued = 0;
-
-out.addEventListener('scroll', () => {
-  stickToBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
-});
 
 /** Appends text in a role: 'query' | 'answer' | 'error' | 'note' | '' (engine).
  * The node lands synchronously — the transcript is always current for anything
@@ -50,18 +51,22 @@ out.addEventListener('scroll', () => {
  * per frame, since that is the part that costs a layout. */
 function emit(text, role = '') {
   if (!text) return;
+  if (!scrollQueued) {
+    // First write of this frame: measure, then schedule the one scroll that
+    // will follow everything appended until the frame ends.
+    stickToBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+    scrollQueued = requestAnimationFrame(() => {
+      scrollQueued = 0;
+      // Follow the tail only if the reader was already there — scrolling back
+      // to read something should not be undone by the next line of output.
+      if (stickToBottom) out.scrollTop = out.scrollHeight;
+    });
+  }
   const span = document.createElement('span');
   if (role) span.className = role;
   span.textContent = text;
   out.appendChild(span);
   atLineStart = text.endsWith('\n');
-  // Follow the tail only if the user was already there — scrolling back to read
-  // something should not be undone by the next line of output.
-  if (stickToBottom && !scrollQueued)
-    scrollQueued = requestAnimationFrame(() => {
-      scrollQueued = 0;
-      if (stickToBottom) out.scrollTop = out.scrollHeight;
-    });
 }
 
 /** Starts a line, unless one is already started. */
