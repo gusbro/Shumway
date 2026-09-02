@@ -18,9 +18,25 @@ public static partial class MetaBuiltins
 
     public static void EnsureRegistered()
     {
-        if (System.Threading.Interlocked.Exchange(ref _initialized, 1) != 0)
-            return;
+        // The flag goes up AFTER the registrations, not before. Claiming it
+        // first let a second caller straight through while the registry was
+        // still half-populated — it saw "already done" and then could not find
+        // a builtin the first caller had not reached yet (`call/1 is not a
+        // registered builtin`, caught in the net48 gate). Every caller now
+        // either does the work or waits for it.
+        if (System.Threading.Volatile.Read(ref _initialized) != 0) return;
+        lock (_initLock)
+        {
+            if (_initialized != 0) return;
+            RegisterAll();
+            System.Threading.Volatile.Write(ref _initialized, 1);
+        }
+    }
 
+    private static readonly object _initLock = new();
+
+    private static void RegisterAll()
+    {
         const string Control = "Control";
         const string Database = "Database";
         const string Term = "Term inspection & construction";

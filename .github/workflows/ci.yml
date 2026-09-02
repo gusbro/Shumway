@@ -97,8 +97,17 @@ jobs:
         run: dotnet test tests/Shumway.Tests.Compiler -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
       - name: IsoConformance
         run: dotnet test tests/Shumway.Tests.IsoConformance -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x86
+      - name: Fetch procdump (net48 crash dumps need it)
+        # On .NET Framework vstest hands crash-dump collection to procdump; without
+        # it --blame-crash prints "procdump64.exe could not be found" and quietly
+        # collects nothing, which is worse than not asking.
+        run: |
+          curl -sSL -o procdump.zip https://download.sysinternals.com/files/Procdump.zip
+          Expand-Archive procdump.zip -DestinationPath procdump
+          echo "PROCDUMP_PATH=$env:GITHUB_WORKSPACE\procdump" >> $env:GITHUB_ENV
+        shell: pwsh
       - name: Embedding (parallel)
-        run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release -Framework net48 -Platform x86
+        run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release -Framework net48 -Platform x86 -CrashDumps
         env:
           # Debug-family flake forensics: the in-process DAP server and
           # session log attach/detach/read-loop-end lines to stderr, so a
@@ -109,7 +118,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: parallel-logs-net48-x86
-          path: TestResults/parallel/*.log
+          # A host that CRASHES leaves a dump; without one the log says only
+          # that the process went away. (Inside `path: |` a # is literal, so
+          # the note lives out here.)
+          path: |
+            TestResults/parallel/*.log
+            **/*.dmp
+            **/Sequence_*.xml
       - name: Smoke build (32-bit)
         run: dotnet build tests/Shumway.Smoke.Net48 -c Release -p:SmokeBitness=x86 -p:ShumwayNetFx=true -t:Rebuild -v q
       # Known intermittent, roughly 1 in 100: this reported `promoted
@@ -143,8 +158,17 @@ jobs:
         run: dotnet test tests/Shumway.Tests.Compiler -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
       - name: IsoConformance
         run: dotnet test tests/Shumway.Tests.IsoConformance -c Release -f net48 -p:ShumwayNetFx=true -- RunConfiguration.TargetPlatform=x64
+      - name: Fetch procdump (net48 crash dumps need it)
+        # On .NET Framework vstest hands crash-dump collection to procdump; without
+        # it --blame-crash prints "procdump64.exe could not be found" and quietly
+        # collects nothing, which is worse than not asking.
+        run: |
+          curl -sSL -o procdump.zip https://download.sysinternals.com/files/Procdump.zip
+          Expand-Archive procdump.zip -DestinationPath procdump
+          echo "PROCDUMP_PATH=$env:GITHUB_WORKSPACE\procdump" >> $env:GITHUB_ENV
+        shell: pwsh
       - name: Embedding (parallel)
-        run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release -Framework net48 -Platform x64
+        run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release -Framework net48 -Platform x64 -CrashDumps
         env:
           # Debug-family flake forensics: the in-process DAP server and
           # session log attach/detach/read-loop-end lines to stderr, so a
@@ -155,4 +179,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: parallel-logs-net48-x64
-          path: TestResults/parallel/*.log
+          # A host that CRASHES leaves a dump; without one the log says only
+          # that the process went away. (Inside `path: |` a # is literal, so
+          # the note lives out here.)
+          path: |
+            TestResults/parallel/*.log
+            **/*.dmp
+            **/Sequence_*.xml
