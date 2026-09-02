@@ -100,7 +100,8 @@ let pending = false;
 function setPending(on) {
   pending = on;
   document.body.classList.toggle('pending', on);
-  statusEl.textContent = on ? 'more solutions?  ;  next    .  stop' : '';
+  statusEl.textContent = on
+    ? 'more solutions?  ;  next    a  all    f  five    h  keys    .  stop' : '';
 }
 
 /** Columns available for an answer, so long terms wrap where they are read. */
@@ -117,6 +118,8 @@ function answerWidth() {
 
 let aborted = false;
 let stepping = false;      // a solution is being searched for right now
+let answersShown = 0;      // answers reported for the query in progress — what
+                           // `f` counts from, so its chunks stay aligned
 
 // --- input for the running program ---------------------------------------
 // A goal may READ. The engine's read blocks the thread it is on — a pool
@@ -225,9 +228,13 @@ async function step() {
   if (aborted) { aborted = false; emit('% Execution aborted.\n\n', 'note'); setPending(false); return; }
   if (tag === session.FAILED) { emit('false.\n\n', 'answer'); setPending(false); return; }
   if (tag === session.ERROR) { emit(text + '\n\n', 'error'); setPending(false); return; }
-  if (tag === session.LAST) { emit(text + '.\n\n', 'answer'); setPending(false); return; }
+  if (tag === session.LAST) {
+    answersShown++;
+    emit(text + '.\n\n', 'answer'); setPending(false); return;
+  }
   // No newline: the answer waits on its line for the `;` or `.` that follows
   // it, exactly as a console top level leaves it.
+  answersShown++;
   emit(text + ' ', 'answer');
   setPending(true);
 }
@@ -249,6 +256,7 @@ async function run(queryText) {
   }
   const err = await session.start(queryText);
   if (err) { emit(err + '\n\n', 'error'); return; }
+  answersShown = 0;
   await step();
 }
 
@@ -331,12 +339,38 @@ queryInput.addEventListener('keydown', async (e) => {
 
   // While solutions are pending the keys mean what they mean in a top level.
   if (pending) {
-    if (e.key === ';' || e.key === ' ') {
+    if (e.key === ';' || e.key === ' ' || e.key === 'n') {
       e.preventDefault();
       // Echo the request and close the line, so the next solution starts on
       // its own — `X = 1 ;` then the next answer, as a top level reads.
       emit(';\n', 'answer');
       await step();
+      return;
+    }
+    // `a` takes every remaining solution, `f` the rest of the current group of
+    // five. Both keep asking the engine for as long as one is pending, so Stop
+    // (or a goal that runs out) ends them: step() clears `pending` on the last
+    // answer, on failure, on an error and on an abort alike.
+    if (e.key === 'a' || e.key === 'f') {
+      e.preventDefault();
+      // Not "five more": five is a chunk BOUNDARY, so `f` fills out the
+      // current group — four after one answer, five after five. Answers then
+      // arrive in aligned blocks however you got there.
+      let left = e.key === 'a' ? Infinity : 5 - (answersShown % 5);
+      while (pending && left > 0) {
+        left--;
+        emit(';\n', 'answer');
+        await step();
+      }
+      return;
+    }
+    if (e.key === 'h') {
+      e.preventDefault();
+      emit('\n;  SPACE  n   the next solution'
+         + '\na               every remaining solution'
+         + '\nf               on to the next multiple of five'
+         + '\nh               this list'
+         + '\n.  RETURN       stop here\n', 'note');
       return;
     }
     if (e.key === '.' || e.key === 'Enter' || e.key === 'Escape') {

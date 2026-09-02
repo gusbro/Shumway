@@ -243,6 +243,94 @@ public class TopLevelSessionTests
         Assert.Equal("X = 3,\n_B in 8..sup", run.Format(80));
     }
 
+    // ---- the keys offered once an answer is on screen (issue #30) ----
+
+    [Theory]
+    [InlineData(';', MoreAnswers.One)]
+    [InlineData(' ', MoreAnswers.One)]
+    [InlineData('n', MoreAnswers.One)]
+    [InlineData('a', MoreAnswers.All)]
+    [InlineData('f', MoreAnswers.Chunk)]
+    [InlineData('h', MoreAnswers.Help)]
+    [InlineData('.', MoreAnswers.Stop)]
+    [InlineData('\r', MoreAnswers.Stop)]
+    [InlineData('q', MoreAnswers.Stop)]
+    public void EachKeyMeansOneThing(char key, MoreAnswers expected)
+        => Assert.Equal(expected, AnswerPrompt.KeyMeans(key));
+
+    [Fact]
+    public void TabAsksForOneMoreWhateverItsCharacterIs()
+        => Assert.Equal(MoreAnswers.One, AnswerPrompt.KeyMeans('\t', isTab: true));
+
+    [Fact]
+    public void FFillsOutTheCurrentGroupOfFiveRatherThanAlwaysFive()
+    {
+        // Five is a BOUNDARY, so the blocks stay aligned however you got there:
+        // after one answer `f` brings four, after five it brings five.
+        Assert.Equal(4, AnswerPrompt.ChunkAfter(1));
+        Assert.Equal(3, AnswerPrompt.ChunkAfter(2));
+        Assert.Equal(1, AnswerPrompt.ChunkAfter(4));
+        Assert.Equal(5, AnswerPrompt.ChunkAfter(5));
+        Assert.Equal(5, AnswerPrompt.ChunkAfter(10));
+        Assert.Equal(2, AnswerPrompt.ChunkAfter(13));
+        // Whatever it is asked, it never asks for nothing — a key that took no
+        // answers would read as a dead keypress.
+        for (int shown = 0; shown < 40; shown++)
+        {
+            int chunk = AnswerPrompt.ChunkAfter(shown);
+            Assert.InRange(chunk, 1, 5);
+            Assert.Equal(0, (shown + chunk) % 5);   // lands on a boundary
+        }
+    }
+
+    [Fact]
+    public void PressingFShowsFourMoreAndThenAsksAgain()
+    {
+        // From one answer, `f` must land the reader on the fifth — not the
+        // fourth, and not the sixth. This is the count the console cannot be
+        // asked about in a test, so it is asked here.
+        var pacer = new AnswerPrompt.Pacer();
+        Assert.True(pacer.AskAfterShowing());                 // answer 1: ask
+        Assert.True(pacer.Accept(MoreAnswers.Chunk));         // ...they press f
+        Assert.False(pacer.AskAfterShowing());                // 2
+        Assert.False(pacer.AskAfterShowing());                // 3
+        Assert.False(pacer.AskAfterShowing());                // 4
+        Assert.True(pacer.AskAfterShowing());                 // 5: ask again
+        Assert.Equal(5, pacer.Shown);
+
+        // And from a boundary it brings a full five.
+        Assert.True(pacer.Accept(MoreAnswers.Chunk));
+        for (int i = 0; i < 4; i++) Assert.False(pacer.AskAfterShowing());
+        Assert.True(pacer.AskAfterShowing());
+        Assert.Equal(10, pacer.Shown);
+    }
+
+    [Fact]
+    public void PressingAStopsAskingAltogether()
+    {
+        var pacer = new AnswerPrompt.Pacer();
+        Assert.True(pacer.AskAfterShowing());
+        Assert.True(pacer.Accept(MoreAnswers.All));
+        for (int i = 0; i < 50; i++) Assert.False(pacer.AskAfterShowing());
+        Assert.Equal(51, pacer.Shown);
+    }
+
+    [Fact]
+    public void AnythingElseEndsTheEnumeration()
+    {
+        var pacer = new AnswerPrompt.Pacer();
+        Assert.True(pacer.AskAfterShowing());
+        Assert.False(pacer.Accept(MoreAnswers.Stop));
+    }
+
+    [Fact]
+    public void TheHelpListsEveryKeyThatDoesSomething()
+    {
+        string help = AnswerPrompt.Help;
+        foreach (string key in new[] { ";", "SPACE", "n", "a", "f", "h", "RETURN" })
+            Assert.Contains(key, help);
+    }
+
     [Fact]
     public void OutputGoesToTheWriterTheHostSupplied()
     {
