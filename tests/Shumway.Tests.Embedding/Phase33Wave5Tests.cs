@@ -235,8 +235,15 @@ public class Phase33Wave5Tests
         Assert.False(e1.LastStaticLinkWasSharedHit);   // first engine links fresh
 
         var e2 = PrologEngine.FromBundle(bundle);
-        Assert.True(e2.Query($"{pred}(c, X), X == 3.").Success);
-        Assert.True(e2.LastStaticLinkWasSharedHit);    // second engine reuses it
+        // This has failed intermittently on net48-x86 and left nothing behind
+        // but "Assert.True() Failure" — so when it fails, say what is true
+        // AROUND it. Nothing runs on the passing path.
+        if (!e2.Query($"{pred}(c, X), X == 3.").Success)
+            Assert.Fail(WhyDidTheSharedLinkNotAnswer(pred, bundle, e1, e2));
+        Assert.True(e2.LastStaticLinkWasSharedHit,     // second engine reuses it
+            "the second engine linked fresh instead of reusing the shared region"
+            + $" (e1 answers: {Answers(e1, $"{pred}(b, X), X == 2.")};"
+            + $" e2 answers: {Answers(e2, $"{pred}(c, X), X == 3.")})");
 
         // The shared LinkResult must behave identically: full solutions,
         // backtracking, and a further consult invalidates cleanly.
@@ -244,6 +251,44 @@ public class Phase33Wave5Tests
         e2.ConsultString($":- public extra9/1.\nextra9(x).\n");
         Assert.True(e2.Query("extra9(x).").Success);   // relinked static program
         Assert.True(e2.Query($"{pred}(a, X), X == 1.").Success);
+    }
+
+    /// <summary>What was true when the shared static-link region failed to
+    /// answer. Each line separates hypotheses that the bare assertion cannot:
+    /// whether the region itself is broken or only this engine's use of it,
+    /// whether the whole predicate is gone or one indexed key, and whether a
+    /// fresh engine repeats it or the failure was that one engine's alone.
+    /// Runs only on the failing path — it asks questions of its own, and asking
+    /// them earlier would change what is being tested.</summary>
+    private static string WhyDidTheSharedLinkNotAnswer(
+        string pred, Bundle bundle, PrologEngine e1, PrologEngine e2)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"the second engine could not answer {pred}(c, X), X == 3.");
+        sb.AppendLine($"  e2 took the shared region:      {e2.LastStaticLinkWasSharedHit}");
+        sb.AppendLine($"  e1 (linked fresh) answers c:    {Answers(e1, $"{pred}(c, X), X == 3.")}");
+        sb.AppendLine($"  e2 answers b (e1's key):        {Answers(e2, $"{pred}(b, X), X == 2.")}");
+        sb.AppendLine($"  e2 answers unindexed:           {Answers(e2, $"{pred}(_, _).")}");
+        sb.AppendLine($"  e2 has the predicate at all:    {Answers(e2, $"current_predicate({pred}/2).")}");
+        try
+        {
+            var e3 = PrologEngine.FromBundle(bundle);
+            sb.AppendLine($"  a THIRD engine answers c:       {Answers(e3, $"{pred}(c, X), X == 3.")}");
+            sb.AppendLine($"  ...and took the shared region:  {e3.LastStaticLinkWasSharedHit}");
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"  a THIRD engine could not even load: {ex.GetType().Name}: {ex.Message}");
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>yes / no / what it threw — a query asked for its answer, never
+    /// for its exception.</summary>
+    private static string Answers(PrologEngine engine, string goal)
+    {
+        try { return engine.Query(goal).Success ? "yes" : "no"; }
+        catch (Exception ex) { return $"threw {ex.GetType().Name}: {ex.Message}"; }
     }
 
     // ---- T6: .shmo whole-body compression (same framing as the .shum) ----
