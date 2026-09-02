@@ -257,6 +257,15 @@ public sealed partial class IlPredicateCompiler
     private static readonly MethodInfo ArithFusedCmpMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.FusedCmp))!;
+    // ADR-049 close-out: inline arithmetic is a goal boundary. The eval-stack
+    // emptiness gate for the multi-op AEval sequence (the drain runs nested
+    // arithmetic on the same static stack, so it may only flush at the start).
+    private static readonly MethodInfo ArithIsEmptyGetter =
+        typeof(Shumway.Builtins.ArithEvalStack)
+            .GetProperty(nameof(Shumway.Builtins.ArithEvalStack.IsEmpty))!.GetGetMethod()!;
+    private static readonly MethodInfo ArithOperandUnboundMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.OperandUnbound))!;
     private static readonly MethodInfo ArithCmpMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.Cmp), new[] { typeof(int) })!;

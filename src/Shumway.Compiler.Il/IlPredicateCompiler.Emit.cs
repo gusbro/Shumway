@@ -1723,6 +1723,11 @@ public sealed partial class IlPredicateCompiler
             // 0 (int32), 3 (X-reg) and 4 (Y-slot) reach here.
             if (op == Opcode.AEvalPush)
             {
+                // ADR-049: fire a pending wake before an operand variable is
+                // read — but only at the start of the expression (empty eval
+                // stack), since the drain runs nested arithmetic on this same
+                // static stack.
+                EmitArithWakeFlush(emit, failLabel);
                 int kind = BytecodeIO.ReadInt32(code, pc + 1);
                 int operand = BytecodeIO.ReadInt32(code, pc + 5);
                 if (kind == 0)
@@ -1791,6 +1796,14 @@ public sealed partial class IlPredicateCompiler
             }
             if (op == Opcode.AIntBin)
             {
+                // ADR-049 goal boundary — the fused op reads operands
+                // internally and touches no eval stack, so flush unconditionally.
+                {
+                int packedW = BytecodeIO.ReadInt32(code, pc + 1);
+                EmitArithWakeFlush(emit, failLabel,
+                    (packedW & 0xFF, BytecodeIO.ReadInt32(code, pc + 5)),
+                    ((packedW >> 8) & 0xFF, BytecodeIO.ReadInt32(code, pc + 9)));
+                }
                 // Compact encoding: packed = aKind | bKind<<8 | tKind<<16 | op<<24.
                 int packed = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
@@ -1808,6 +1821,12 @@ public sealed partial class IlPredicateCompiler
             }
             if (op == Opcode.AIntCmp)
             {
+                {
+                int packedW = BytecodeIO.ReadInt32(code, pc + 1);
+                EmitArithWakeFlush(emit, failLabel,   // ADR-049
+                    (packedW & 0xFF, BytecodeIO.ReadInt32(code, pc + 5)),
+                    ((packedW >> 8) & 0xFF, BytecodeIO.ReadInt32(code, pc + 9)));
+                }
                 // Compact encoding: packed = aKind | bKind<<8 | rel<<16.
                 int packed = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
