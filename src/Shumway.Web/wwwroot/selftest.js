@@ -81,6 +81,21 @@ export async function run(session, emit, out, editor, workspace) {
   check('engine output reaches the page',
         out.textContent.slice(before).includes('engine_output'), true);
 
+  // A BURST. Output crosses from the search thread to the page in batches —
+  // one post carrying everything written while the previous one was in flight,
+  // because posting per write left a trace-heavy goal painting for minutes
+  // after it was abandoned. Batching must not lose a line, split one, or
+  // deliver any of it out of order, and everything written before the query
+  // ends must be on the page by the time it does.
+  const burstFrom = out.textContent.length;
+  await solutions('between(1, 2000, N), write(N), nl, fail.');
+  const burst = out.textContent.slice(burstFrom);
+  const lines = burst.split('\n').filter(l => l.length > 0);
+  check('burst output is complete', lines.length, 2000);
+  check('burst output is in order',
+        lines[0] === '1' && lines[1999] === '2000'
+        && lines.every((l, i) => l === String(i + 1)), true);
+
   // Cancelling a search must stop it rather than run to completion.
   await session.start('between(1, 100000000, X), X > 99999999.');
   await session.cancel();
