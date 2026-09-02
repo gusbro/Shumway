@@ -1765,9 +1765,37 @@ public sealed partial class Activation
     /// list means the terms are already identical.</summary>
     public bool TrialUnifyCollectingBoundVars(int regA, int regB,
         out List<int> unifierVars)
+        => TrialUnifyCollectingBoundVars(
+            regA, regB, out unifierVars, out _, out _);
+
+    /// <summary>As above, and — when the unifier turns out to be a SINGLE
+    /// binding — the variable it binds and the value it binds it to.
+    ///
+    /// <para>That pair is the whole unifier, so for <c>dif/2</c> it is the
+    /// whole constraint: knowing it here means the caller does not have to
+    /// unify a second time to find it out. The value is handed back as the
+    /// CELL, captured while the binding is still live and reused as-is
+    /// afterwards — unification binds variables to terms that already exist,
+    /// so the cell still denotes the same term once the trial is unwound, with
+    /// no copying and no loss of identity. A value reaching above the trial's
+    /// heap mark is refused (<paramref name="soleVarAddr"/> stays -1): nothing
+    /// the caller may keep should point at heap the unwind takes back.</para>
+    /// </summary>
+    public bool TrialUnifyCollectingBoundVars(int regA, int regB,
+        out List<int> unifierVars, out int soleVarAddr, out Cell soleValue)
     {
+        soleVarAddr = -1;
+        soleValue = default;
         if (!BeginTrialUnify(regA, regB, out unifierVars, out var scope))
             return false;
+        if (unifierVars.Count == 1)
+        {
+            int v = unifierVars[0];
+            Cell value = GetHeap(v);
+            bool pointsIntoTheTrial = value.Tag is Tag.Ref or Tag.AttVar or Tag.Str or Tag.Lis
+                && value.AsHeapIndex >= scope.HeapTop;
+            if (!pointsIntoTheTrial) { soleVarAddr = v; soleValue = value; }
+        }
 
         // Value-side variables — walked BEFORE the unwind, while the
         // bindings are still in place. The walk appends to unifierVars.

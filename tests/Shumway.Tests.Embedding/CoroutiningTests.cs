@@ -573,6 +573,31 @@ public class CoroutiningTests
     }
 
     [Fact]
+    public void OneTrialAnswersBothQuestionsAboutADif()
+    {
+        // Whether to suspend, and what the constraint reduces to, come from the
+        // SAME trial unification: posting a dif never unifies twice. The pair
+        // names the caller's own variables — it is the cells, not a copy.
+        // Which of the two the trial happened to bind decides the order here;
+        // '$dif_canon' orients it afterwards. What matters is that both members
+        // ARE the caller's variables, not copies of them.
+        var e = Co();
+        Assert.True(e.Query(
+            @"'$dif_check'(-X, -Y, Out, Canon), Out \== none, "
+          + "Canon = (A - B), ( A == X, B == Y -> true ; A == Y, B == X ).").Success);
+
+        // Two bindings are a disjunction, so there is no single pair to give.
+        Assert.True(e.Query(
+            "'$dif_check'(f(X,Y), f(A,B), _, Canon), Canon == no.").Success);
+
+        // Terms that cannot unify decide the disequality outright.
+        Assert.True(e.Query("'$dif_check'(a, b, Out, Canon), Out == none, Canon == no.").Success);
+
+        // Identical terms make it fail, which is how dif/2 fails.
+        Assert.False(e.Query("'$dif_check'(a, a, _, _).").Success);
+    }
+
+    [Fact]
     public void CollapsingDoesNotWeakenTheConstraint()
     {
         // The point of the exercise is fewer copies, not a weaker dif: the one

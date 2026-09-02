@@ -1670,11 +1670,28 @@ public static partial class MetaBuiltins
     /// watches to re-check the disequality.</summary>
     public static bool DifCheck(Activation engine)
     {
-        if (!engine.TrialUnifyCollectingBoundVars(0, 1, out var boundVars))
+        if (!engine.TrialUnifyCollectingBoundVars(
+                0, 1, out var boundVars, out int soleVar, out Cell soleValue))
             return engine.UnifyRegisterWithCell(2,
-                Cell.Atom(AtomTable.Intern("none", permanent: true).Id));
+                Cell.Atom(AtomTable.Intern("none", permanent: true).Id))
+                && engine.UnifyRegisterWithCell(3,
+                    Cell.Atom(AtomTable.Intern("no", permanent: true).Id));
         if (boundVars.Count == 0) return false;
-        return engine.UnifyRegisterWithHeapAt(2, BuildRefList(engine, boundVars));
+        if (!engine.UnifyRegisterWithHeapAt(2, BuildRefList(engine, boundVars)))
+            return false;
+        // The canonical pair when the unifier is one binding: `V-Value`, which
+        // IS the whole constraint. `no` when it is not, and the caller keeps
+        // the terms as written. Built from the cells themselves — no copy, so
+        // the pair names the very variables the caller passed in.
+        if (soleVar < 0)
+            return engine.UnifyRegisterWithCell(3,
+                Cell.Atom(AtomTable.Intern("no", permanent: true).Id));
+        int pair = engine.AllocateHeap(3);
+        engine.SetHeap(pair, Cell.Functor(FunctorTable.Intern(
+            AtomTable.Intern("-", permanent: true).Id, 2)));
+        engine.SetHeap(pair + 1, Cell.Ref(soleVar));
+        engine.SetHeap(pair + 2, soleValue);
+        return engine.UnifyRegisterWithCell(3, Cell.Str(pair));
     }
 
     /// <summary><c>?=(X, Y)</c> — succeeds iff the (in)equality of X and Y is
