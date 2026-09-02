@@ -181,6 +181,68 @@ public class TopLevelSessionTests
         Assert.Equal(matches.Distinct().Count(), matches.Count);
     }
 
+    // ---- variables the user named with a leading underscore ----
+    // "_A" says the caller is not asking about that one, so its VALUE is not
+    // part of the answer. Every expectation here is SWI's, measured.
+
+    [Fact]
+    public void AnUnderscoreNamedVariablesBindingIsNotReported()
+    {
+        using var run = NewSession().StartQuery("_A = 5.");
+        Assert.True(run.MoveNext());
+        Assert.Equal("true", run.Format(80));
+    }
+
+    [Fact]
+    public void OnlyTheUnderscoreNamedBindingIsDropped()
+    {
+        using var run = NewSession().StartQuery("X = 1, _B = 2.");
+        Assert.True(run.MoveNext());
+        Assert.Equal("X = 1", run.Format(80));
+    }
+
+    [Fact]
+    public void ItIsTheSubjectThatDecidesNotTheValue()
+    {
+        // Naming the variable inside a value is what makes the answer readable,
+        // so an underscore name still PRINTS there — the asymmetry is SWI's:
+        // `X = _A` reports, `_A = X` does not.
+        using var reported = NewSession().StartQuery("X = f(_A).");
+        Assert.True(reported.MoveNext());
+        Assert.Equal("X = f(_A)", reported.Format(80));
+
+        using var aliasShown = NewSession().StartQuery("X = _A.");
+        Assert.True(aliasShown.MoveNext());
+        Assert.Equal("X = _A", aliasShown.Format(80));
+
+        using var aliasHidden = NewSession().StartQuery("_A = X.");
+        Assert.True(aliasHidden.MoveNext());
+        Assert.Equal("true", aliasHidden.Format(80));
+    }
+
+    [Fact]
+    public void ResidualsOfAnUnderscoreNamedVariableAreStillReported()
+    {
+        // The point of the exercise: what such a variable is CONSTRAINED to is
+        // an answer even though what it is bound to is not.
+        var engine = new PrologEngine { Out = new StringWriter() };
+        engine.UseClpfd();
+        using var run = new TopLevelSession(engine).StartQuery("_A #> 5, _A #< 10.");
+        Assert.True(run.MoveNext());
+        Assert.Equal("_A in 6..9", run.Format(80));
+    }
+
+    [Fact]
+    public void ABindingIsDroppedWhileItsNeighboursResidualSurvives()
+    {
+        var engine = new PrologEngine { Out = new StringWriter() };
+        engine.UseClpfd();
+        using var run = new TopLevelSession(engine)
+            .StartQuery("_A = 5, X = 3, _B #> 7.");
+        Assert.True(run.MoveNext());
+        Assert.Equal("X = 3,\n_B in 8..sup", run.Format(80));
+    }
+
     [Fact]
     public void OutputGoesToTheWriterTheHostSupplied()
     {
