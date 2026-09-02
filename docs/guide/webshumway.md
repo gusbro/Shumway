@@ -68,11 +68,11 @@ Files live in the browser's private storage (OPFS) and survive a reload.
 **Download** saves one file to your computer; **Export** saves the whole
 workspace as a zip.
 
-**Open** brings files from your computer into the workspace, and is also how
-you pick up an edit you made to one of them elsewhere: open it again and the
-newer text comes in. If the copy here differs, you are asked which of the two
-to keep — and whatever you were editing is saved before the picker opens, so
-choosing either one costs you nothing.
+**Open** brings files from your computer into the workspace. It is also how you
+pick up an edit you made to one of them elsewhere: open it again and the newer
+text comes in. If the copy here differs, you are asked which of the two to
+keep. Whatever you were editing is saved before the picker opens, so choosing
+either one costs you nothing.
 
 The `examples` workspace is seeded on the first visit and only then: delete it
 and it stays deleted.

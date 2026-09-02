@@ -938,7 +938,7 @@ X = 3735928564.
 
 Since integers here have no size limit, a literal can outgrow a line. After
 the underscore you may leave a space, a line break, or a comment before
-continuing with the digits — so a very long number can be written across as
+continuing with the digits, so a very long number can be written across as
 many lines as it needs:
 
 ```prolog
