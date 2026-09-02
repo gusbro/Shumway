@@ -185,6 +185,7 @@ internal static class Prelude
         :- public '$call_arrow'/3.
         :- public '$call_softarrow'/3.
         :- public '$call_neg'/1.
+        :- public '$wake_call'/1.
         % The portray/1 hook: user code adds clauses to it from anywhere, so
         % it is multifile and dynamic before anyone declares it (SWI, SICStus).
         :- multifile portray/1.
@@ -261,6 +262,12 @@ internal static class Prelude
         % the commit, so C's non-determinism drives T (each solution of C runs T).
         '$call_softarrow'(C, T, K) :- call(C), '$call'(T, K).
         '$call_neg'(G) :- ( call(G) -> fail ; true ).
+
+        % The in-engine wake runner (verify_attributes goals, frozen goals)
+        % dispatches predicates only; a control construct (;/->/*->/\+/!)
+        % arrives here instead and runs through call/1 — full semantics, own
+        % cut barrier.
+        '$wake_call'(G) :- call(G).
 
         %! forall(:Condition, :Action) | Control | Succeeds if Action holds for every solution of Condition.
         % \+ (Condition, \+ Action). Condition and Action run in the LIVE engine

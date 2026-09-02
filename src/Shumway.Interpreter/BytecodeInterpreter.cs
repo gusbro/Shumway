@@ -144,6 +144,10 @@ public sealed partial class BytecodeInterpreter
         FunctorTable.Intern(AtomTable.Intern("$call_softarrow", permanent: true).Id, 3);
     private static readonly int CallNegFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$call_neg", permanent: true).Id, 1);
+    // '$wake_call'(G) :- call(G). — how the in-engine wake runner hands a
+    // control-construct goal to the full meta-call machinery.
+    private static readonly int WakeCallFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$wake_call", permanent: true).Id, 1);
     // '$mqual'(Module, Goal) — a runtime-variable meta-goal tagged with the
     // module of the clause that meta-called it (ModuleRewrite). Unwrapped in the
     // meta-dispatch so Goal's bare functor resolves against Module's locals first.
