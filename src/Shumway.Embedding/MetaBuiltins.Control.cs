@@ -1660,6 +1660,70 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithHeapAt(1, BuildRefList(engine, attvars));
     }
 
+    /// <summary><c>'$wake_hook_goal'(+Module, +AttrVal, +Other, -HookGoal,
+    /// -Goals)</c> — ADR-049 driver support. Resolves the module's
+    /// <c>verify_attributes</c> hook (its own /3 first, then /4 with the
+    /// bare fallback, per ADR-040) and builds the hook invocation the driver
+    /// then runs through <c>call/1</c>; <c>Goals</c> is the fresh variable
+    /// the hook binds to its returned goal list. Fails for a hookless
+    /// module — the driver treats that as "nothing to run".
+    ///
+    /// <para>The /3 shape hands the hook a fresh attributed variable
+    /// carrying the value the module had on the now-bound one (snapshotted
+    /// before the bind); the /4 shape passes the snapshot directly.</para>
+    /// </summary>
+    public static bool WakeHookGoal(Activation engine)
+    {
+        Cell m = engine.GetRegister(0);
+        if (m.Tag is Tag.Ref or Tag.AttVar)
+            m = engine.GetHeap(engine.Deref(m.AsHeapIndex));
+        if (m.Tag != Tag.Atom) return false;
+        int moduleId = m.AsAtomId;
+        int v3 = engine.Verify3FunctorId(moduleId);
+        int v4 = v3 >= 0 ? -1 : engine.Verify4FunctorId(moduleId);
+        if (v3 < 0 && v4 < 0) return false;
+
+        // The attr-value argument arrives as the Ref the interrupt embedded
+        // in the batch term; the hook goal wants that heap slot, not its
+        // dereferenced value. A non-Ref (a value that reached a register
+        // directly) gets its own slot.
+        Cell attrVal = engine.GetRegister(1);
+        int attrValIdx;
+        if (attrVal.Tag is Tag.Ref or Tag.AttVar) attrValIdx = attrVal.AsHeapIndex;
+        else
+        {
+            attrValIdx = engine.AllocateHeap(1);
+            engine.SetHeap(attrValIdx, attrVal);
+        }
+        Cell other = engine.GetRegister(2);
+
+        int goalsVar = engine.AllocateHeapUnbound();
+        Cell hookGoal;
+        if (v3 >= 0)
+        {
+            int proxy = engine.AllocateHeapUnbound();
+            engine.PutAttr(proxy, moduleId, attrValIdx);
+            int f = engine.AllocateHeap(4);
+            engine.SetHeap(f,     Cell.Functor(v3));
+            engine.SetHeap(f + 1, Cell.Ref(proxy));
+            engine.SetHeap(f + 2, other);
+            engine.SetHeap(f + 3, Cell.Ref(goalsVar));
+            hookGoal = Cell.Str(f);
+        }
+        else
+        {
+            int f = engine.AllocateHeap(5);
+            engine.SetHeap(f,     Cell.Functor(v4));
+            engine.SetHeap(f + 1, Cell.Atom(moduleId));
+            engine.SetHeap(f + 2, Cell.Ref(attrValIdx));
+            engine.SetHeap(f + 3, other);
+            engine.SetHeap(f + 4, Cell.Ref(goalsVar));
+            hookGoal = Cell.Str(f);
+        }
+        return engine.UnifyRegisterWithCell(3, hookGoal)
+            && engine.UnifyRegisterWithHeapAt(4, goalsVar);
+    }
+
     /// <summary><c>'$dif_check'(X, Y, Out)</c> — the C# core of
     /// <c>dif/2</c>. Trial-unifies X and Y (fully rolled back, queued
     /// hook wakeups included):

@@ -87,6 +87,7 @@ public static partial class MetaBuiltins
             Term, "term_attvars(+Term, -Vars)",
             "Unifies Vars with the attributed variables reachable from Term.");
         BuiltinsRegistry.Register("$dif_check", 4, DifCheck);
+        BuiltinsRegistry.Register("$wake_hook_goal", 5, WakeHookGoal);
         BuiltinsRegistry.Register("$attv_snapshot", 1, AttvSnapshot);
         // call_with_timeout/2,3 live in the prelude; these carry the deadline.
         BuiltinsRegistry.Register("$timeout_push", 1, TimeoutPush);

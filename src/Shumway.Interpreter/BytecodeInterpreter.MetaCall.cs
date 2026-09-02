@@ -71,6 +71,159 @@ public sealed partial class BytecodeInterpreter
         for (int i = 0; i < regCount; i++) _engine.SetRegister(i, savedRegs[i]);
     }
 
+    // ---------- ADR-049: the wake interrupt ----------
+    //
+    // A goal boundary that finds wakeups queued no longer drains them in a
+    // nested dispatch. It saves the interrupted goal's live state in an
+    // ordinary environment frame — Allocate() itself stores E and CP, the
+    // Y slots take the argument registers, B0, the resume point and the
+    // arity — and simply continues execution at the prelude's
+    // '$wake_driver'/1 with CP set to a sentinel. The driver runs hooks and
+    // woken goals as ordinary code in this same flat machine, so their
+    // choice points are ordinary and backtracking re-enters them; when it
+    // finally proceeds into the sentinel, WakeReturn restores the frame and
+    // resumes the interrupted instruction, whose wakeup check then finds
+    // the queue empty. On a later re-entry through a wake alternative the
+    // driver proceeds into the sentinel again and the same frame — still
+    // protected by those choice points — restores again.
+
+    /// <summary>The CP value that marks "the wake driver's caller": consumed
+    /// by the CP-jump sites, which call <see cref="WakeReturn"/> instead of
+    /// jumping. Negative (never a code address), distinct from the -1
+    /// query-top and the -2 <see cref="SubroutineSentinelCp"/>.</summary>
+    public const int WakeReturnCp = -9;
+
+    private const int WakeClear = 0, WakeEntered = 1, WakeFailed = -1;
+
+    private static readonly int WakeDriverFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$wake_driver", permanent: true).Id, 1);
+    private static readonly int WakeItemFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$wake", permanent: true).Id, 3);
+    private static readonly int WakeLazyFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$wake_lazy", permanent: true).Id, 1);
+
+    // arity-by-entry-address, derived lazily from CurrentFunctorAddresses —
+    // the Call/Execute operand is an address, and the interrupt needs the
+    // callee's arity to know which registers are live. An address two
+    // functors share maps to -1 (ambiguous → the drain fallback).
+    private System.Collections.Generic.Dictionary<int, int>? _arityByAddress;
+    private object? _arityMapSource;
+
+    private int ArityOfTarget(int target)
+    {
+        var addrs = _engine.CurrentFunctorAddresses;
+        if (addrs is null) return -1;
+        if (_arityByAddress is null || !ReferenceEquals(_arityMapSource, addrs))
+        {
+            var map = new System.Collections.Generic.Dictionary<int, int>(addrs.Count);
+            foreach (var kv in addrs)
+            {
+                (_, int ar) = FunctorTable.Lookup(kv.Key);
+                map[kv.Value] = map.TryGetValue(kv.Value, out int seen) && seen != ar
+                    ? -1 : ar;
+            }
+            _arityByAddress = map;
+            _arityMapSource = addrs;
+        }
+        return _arityByAddress.TryGetValue(target, out int a) ? a : -1;
+    }
+
+    /// <summary>The interrupt. Returns <see cref="WakeClear"/> when there is
+    /// nothing to run (cleared, or the fallback drain succeeded) — the caller
+    /// proceeds; <see cref="WakeEntered"/> when P now points at the driver —
+    /// the caller breaks into the dispatch loop; <see cref="WakeFailed"/>
+    /// when the fallback drain failed — the caller backtracks. The fallback
+    /// (a query with no linked driver, or an unknowable arity) is the
+    /// pre-ADR-049 nested drain with its once-semantics.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private int WakeBoundary(ProgramView code, int arity, int resumePc)
+    {
+        Shumway.Core.Profiler.Note("wakeup_flush");
+        if (!_engine.HasAnyAttributeHook && !_engine.PendingWakeupsHaveLazy)
+        {
+            _engine.ClearPendingWakeups();
+            return WakeClear;
+        }
+        var addrs = _engine.CurrentFunctorAddresses;
+        if (arity < 0 || addrs is null
+            || !addrs.TryGetValue(WakeDriverFunctorId, out int driverAddr))
+            return FlushPendingWakeupsSlow(code) ? WakeClear : WakeFailed;
+
+        var batch = _engine.TakePendingWakeups();
+        for (int n = 0; n < batch.Count; n++)
+            Shumway.Core.Profiler.Note("wakeup_hook_run");
+
+        // Build the batch list back-to-front. Plain heap construction — no
+        // meta-call runs before the driver takes over, so no GC inhibit:
+        // once X0 holds the list every cell is reachable.
+        Cell list = Cell.Atom(AtomTable.EmptyListId);
+        for (int i = batch.Count - 1; i >= 0; i--)
+        {
+            var (moduleId, attrValueIdx, otherIdx) = batch[i];
+            Cell item;
+            if (moduleId == Shumway.Core.Activation.LazyAttrModuleId)
+            {
+                int f = _engine.AllocateHeap(2);
+                _engine.SetHeap(f, Cell.Functor(WakeLazyFunctorId));
+                _engine.SetHeap(f + 1, Cell.Ref(attrValueIdx));
+                item = Cell.Str(f);
+            }
+            else
+            {
+                int f = _engine.AllocateHeap(4);
+                _engine.SetHeap(f, Cell.Functor(WakeItemFunctorId));
+                _engine.SetHeap(f + 1, Cell.Atom(moduleId));
+                _engine.SetHeap(f + 2, Cell.Ref(attrValueIdx));
+                _engine.SetHeap(f + 3, Cell.Ref(otherIdx));
+                item = Cell.Str(f);
+            }
+            int cons = _engine.AllocateHeap(2);
+            _engine.SetHeap(cons, item);
+            _engine.SetHeap(cons + 1, list);
+            list = Cell.Lis(cons);
+        }
+
+        // The frame: Allocate() stores E and CP (the interrupted
+        // continuation); the Y slots take the live registers and the three
+        // control words. RawInt keeps the GC's Y-slot scan off them.
+        _engine.Allocate(arity + 3);
+        for (int i = 0; i < arity; i++)
+            _engine.SetY(i, _engine.GetRegister(i));
+        _engine.SetY(arity, Cell.RawInt(_engine.B0));
+        _engine.SetY(arity + 1, Cell.RawInt(resumePc));
+        _engine.SetY(arity + 2, Cell.RawInt(arity));
+
+        _engine.SetCp(WakeReturnCp);
+        _engine.SetB0(_engine.B);        // the driver's own cut barrier
+        _engine.SetRegister(0, list);
+        _engine.SetPc(driverAddr);
+        return WakeEntered;
+    }
+
+    /// <summary>The driver proceeded into the sentinel: restore the
+    /// interrupted goal's registers, barrier and continuation from the wake
+    /// frame — which is the current environment; the driver's own frames are
+    /// balanced — and resume the interrupted instruction. Deallocate does
+    /// the E/CP restore and leaves the frame's memory alone while younger
+    /// choice points protect it, which is exactly what a later re-entry
+    /// through a wake alternative needs.</summary>
+    private void WakeReturn()
+    {
+        int e = _engine.E;
+        // The frame's own N word says how many slots it has; the last one is
+        // the arity, so the layout self-describes even after a TrimEnv-free
+        // life. N is arity + 3 by construction.
+        int n = (int)_engine.GetStack(e + Shumway.Core.Activation.EnvNOffset).Data;
+        int arity = (int)_engine.GetY(e, n - 1).Data;
+        for (int i = 0; i < arity; i++)
+            _engine.SetRegister(i, _engine.GetY(e, i));
+        _engine.SetB0((int)_engine.GetY(e, arity).Data);
+        int resumePc = (int)_engine.GetY(e, arity + 1).Data;
+        _engine.Deallocate();            // restores the interrupted E and CP
+        _engine.SetPc(resumePc);
+    }
+
     /// <summary>Cold body of <see cref="FlushPendingWakeups"/> — only reached
     /// when wakeups are actually queued.</summary>
     [System.Runtime.CompilerServices.MethodImpl(

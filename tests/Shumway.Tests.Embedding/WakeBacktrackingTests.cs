@@ -1,0 +1,148 @@
+using Shumway.Embedding;
+using Xunit;
+
+namespace Shumway.Tests.Embedding;
+
+/// <summary>ADR-049 stage 1: woken goals run as ordinary code in the flat
+/// machine, so backtracking re-enters their alternatives. Issue #51's
+/// examples are the anchor pins; the rest hold the edges — cut locality,
+/// wake order, chained wakes, failure, exceptions, and the interrupted
+/// goal's registers surviving a nondeterministic wake.</summary>
+public sealed class WakeBacktrackingTests
+{
+    private static PrologEngine Co()
+    {
+        var e = new PrologEngine();
+        e.UseCoroutining();
+        return e;
+    }
+
+    [Fact]
+    public void WokenGoal_BacktracksIntoItsAlternatives()
+    {
+        // The #51 report, verbatim.
+        Assert.True(Co().Query("freeze(X, member(Y, [1,2])), X = a, Y = 2.").Success);
+        var all = Co().Query(
+            "findall(Y, (freeze(X, member(Y, [1,2,3])), X = a), L), L == [1,2,3].");
+        Assert.True(all.Success);
+    }
+
+    [Fact]
+    public void WokenDisjunction_BacktracksToo()
+    {
+        Assert.True(Co().Query("freeze(X, (Y = 1 ; Y = 2)), X = a, Y = 2.").Success);
+    }
+
+    [Fact]
+    public void TheWakeRunsBetweenTheBindingAndTheNextGoal()
+    {
+        // Deterministic wakes behave exactly as before: bound before the
+        // next goal runs, in freeze order, once each.
+        var sol = Co().Query("freeze(X, Y = woke), X = 1, Z = Y.");
+        Assert.True(sol.Success);
+        Assert.Equal("woke", sol["Z"]!.ToString());
+        Assert.True(Co().Query(
+            "freeze(X, A = 1), freeze(X, B = 2), X = q, A == 1, B == 2.").Success);
+    }
+
+    [Fact]
+    public void AFailedWakeFailsTheBinding()
+    {
+        Assert.False(Co().Query("freeze(X, fail), X = 1.").Success);
+        // ...and the failure arrives where the binding was tried, so an
+        // enclosing disjunction still has its alternative.
+        Assert.True(Co().Query(
+            "( freeze(X, fail), X = 1 ; true ).").Success);
+    }
+
+    [Fact]
+    public void CutInAWokenGoal_IsLocalToThatGoal()
+    {
+        // call/1 semantics, pinned in the #47 arc and preserved here: the
+        // cut commits the woken goal, never the caller that triggered it.
+        Assert.False(Co().Query("freeze(X, ((!, fail) ; true)), X = a.").Success);
+        Assert.True(Co().Query("( freeze(X, !), X = a, fail ; true ).").Success);
+        // With alternatives now real, the cut has something to prune:
+        // one solution, exactly as call((member(Y,[1,2]), !)).
+        Assert.True(Co().Query(
+            "findall(Y, (freeze(X, (member(Y, [1,2]), !)), X = a), L), L == [1].").Success);
+    }
+
+    [Fact]
+    public void TheInterruptedGoalResumes_WhateverTheWakeDid()
+    {
+        // The binding goal's own arguments survive a wake that clobbers
+        // every register: p(X, Y) must still see both its arguments after
+        // the wake fired mid-head-unification.
+        var e = Co();
+        Assert.True(e.Query("assertz((p(V, W) :- V == bound, W == kept)).").Success);
+        // The wake fires when p's first argument binds mid-head; a
+        // nondeterministic wake ran a full goal over every register, and
+        // p must still see BOTH its arguments on resume.
+        Assert.True(e.Query(
+            "freeze(F, member(_, [a,b,c])), F = bound, p(F, kept).").Success);
+    }
+
+    [Fact]
+    public void ChainedWakes_FireInOrder()
+    {
+        var sol = Co().Query(
+            "freeze(X, freeze(Y, Out = inner)), X = 1, Y = 2, Z = Out.");
+        Assert.True(sol.Success);
+        Assert.Equal("inner", sol["Z"]!.ToString());
+    }
+
+    [Fact]
+    public void AWokenGoalCanThrow_AndCatchStillWorks()
+    {
+        Assert.True(Co().Query(
+            "catch((freeze(X, throw(boom)), X = 1), boom, true).").Success);
+        // A catch INSIDE the woken goal recovers and the binding proceeds.
+        Assert.True(Co().Query(
+            "freeze(X, catch(throw(t), t, true)), X = 1.").Success);
+    }
+
+    [Fact]
+    public void NondeterministicWake_InterleavesWithLaterFailure()
+    {
+        // The classic shape the once-drain could never do: a later goal
+        // fails, the search comes BACK through the woken goal's choice
+        // points, and a different alternative satisfies it.
+        Assert.True(Co().Query(
+            "freeze(X, member(Y, [1,2,3])), X = go, member(Y, [2]), Y == 2.").Success);
+        var count = Co().Query(
+            "findall(Y-Z, (freeze(X, member(Y, [1,2])), X = a, member(Z, [p,q])), L), "
+          + "L == [1-p, 1-q, 2-p, 2-q].");
+        Assert.True(count.Success);
+    }
+
+    [Fact]
+    public void DifStillCanonicalAndSound()
+    {
+        // dif/2 rides the same wake path; its deterministic re-check must
+        // behave bit-identically.
+        Assert.True(Co().Query("dif(X, Y), X = 1, Y = 2.").Success);
+        Assert.False(Co().Query("dif(X, Y), X = 1, Y = 1.").Success);
+        Assert.True(Co().Query(
+            "dif(f(X, Y), f(Y, X)), X = 1, dif(X, Y), Y = 2.").Success);
+    }
+
+    [Fact]
+    public void BacktrackingPastTheBinding_RestoresTheSuspension()
+    {
+        // Leaving the wake's own alternatives is one thing; undoing the
+        // BINDING must restore the suspension, and a second binding fires
+        // the goal again.
+        Assert.True(Co().Query(
+            "freeze(X, member(Y, [1,2])), ( X = a, Y = 9 ; X = b, Y = 2 ).").Success);
+    }
+
+    [Fact]
+    public void WhenAndFrozenReporting_Unmoved()
+    {
+        Assert.True(Co().Query(
+            "when(nonvar(X), (integer(X) ; atom(X))), X = foo.").Success);
+        Assert.True(Co().Query(
+            "freeze(X, member(X, [a])), frozen(X, G), G \\== true, X = a.").Success);
+    }
+}

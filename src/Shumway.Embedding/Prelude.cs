@@ -186,6 +186,7 @@ internal static class Prelude
         :- public '$call_softarrow'/3.
         :- public '$call_neg'/1.
         :- public '$wake_call'/1.
+        :- public '$wake_driver'/1.
         % The portray/1 hook: user code adds clauses to it from anywhere, so
         % it is multifile and dynamic before anyone declares it (SWI, SICStus).
         :- multifile portray/1.
@@ -268,6 +269,31 @@ internal static class Prelude
         % arrives here instead and runs through call/1 — full semantics, own
         % cut barrier.
         '$wake_call'(G) :- call(G).
+
+        % ===== ADR-049: the wake driver =====
+        % Entered by the engine's wake interrupt with the pending batch; runs
+        % every hook and every released goal as ORDINARY code in the one flat
+        % machine — their choice points are real, so backtracking re-enters a
+        % woken goal's alternatives. Do not add a cut anywhere here: pruning
+        % is exactly what the pre-ADR-049 drain did wrong.
+        '$wake_driver'([]).
+        '$wake_driver'([W|Ws]) :- '$wake_one'(W), '$wake_driver'(Ws).
+        % '$lazy' — the attribute value IS the goal, no hook involved.
+        '$wake_one'('$wake_lazy'(G)) :- '$wake_call'(G).
+        % The HOOK runs committed — its contract is deterministic (compute
+        % Goals; fail to veto the binding), and committing also keeps a
+        % multifile verify_attributes with duplicate clauses from answering
+        % twice. The GOALS it returned run free: they are where a frozen
+        % user goal lives, and their alternatives are the point of ADR-049.
+        '$wake_one'('$wake'(M, AttrVal, Other)) :-
+            ( '$wake_hook_goal'(M, AttrVal, Other, HookGoal, Goals) ->
+                '$wake_call'(HookGoal), !,
+                '$wake_goals'(Goals)
+            ; true ).   % hookless module: the bind already happened
+        % A hook's Goals may come back unbound (none) or as a proper list.
+        '$wake_goals'(Gs) :- var(Gs), !.
+        '$wake_goals'([]).
+        '$wake_goals'([G|Gs]) :- '$wake_call'(G), '$wake_goals'(Gs).
 
         %! forall(:Condition, :Action) | Control | Succeeds if Action holds for every solution of Condition.
         % \+ (Condition, \+ Action). Condition and Action run in the LIVE engine
