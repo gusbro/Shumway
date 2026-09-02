@@ -74,8 +74,12 @@ text comes in. If the copy here differs, you are asked which of the two to
 keep. Whatever you were editing is saved before the picker opens, so choosing
 either one costs you nothing.
 
-The `examples` workspace is seeded on the first visit and only then: delete it
-and it stays deleted.
+The `examples` workspace comes back whenever it is missing, so deleting it and
+reloading the page is how you ask for a fresh copy. On later visits the
+examples you already have are left where they are, except that one you never
+edited is brought up to date if it has changed, and any example added since
+your first visit arrives. An example you edited is yours and is never written
+over.
 
 ---
 
