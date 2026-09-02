@@ -14,10 +14,24 @@ public static class StandardBuiltins
 
     public static void EnsureRegistered()
     {
-        // Cheap lock-free guard: the registry itself is thread-safe, but we
-        // don't want every call to walk all registrations.
-        if (System.Threading.Interlocked.Exchange(ref _initialized, 1) != 0)
-            return;
+        // Cheap lock-free guard on the way IN; the flag goes up on the way
+        // OUT. Claiming it first (Interlocked.Exchange) let a second caller
+        // through while the registry was still half-populated — it saw
+        // "already done" and then could not find a builtin the first caller
+        // had not reached yet. Every caller now either does the work or waits.
+        if (System.Threading.Volatile.Read(ref _initialized) != 0) return;
+        lock (_initLock)
+        {
+            if (_initialized != 0) return;
+            RegisterAll();
+            System.Threading.Volatile.Write(ref _initialized, 1);
+        }
+    }
+
+    private static readonly object _initLock = new();
+
+    private static void RegisterAll()
+    {
 
         // CLP(FD) native bound + domain primitives — the clpfd library
         // calls these.

@@ -30,7 +30,13 @@ param(
     # CI passes Release: that is the configuration that ships, and the IL
     # compiler emits DIFFERENT code in the two (the DbgCheck_* markers live
     # under `#if DEBUG`), so a Debug-only gate never sees the IL that runs.
-    [string] $Configuration = 'Debug'
+    [string] $Configuration = 'Debug',
+    # Collect a crash dump when a test HOST dies (as opposed to a test
+    # failing). The net48 lanes have done this intermittently and the logs say
+    # only that the process went away — a dump is the one artifact that says
+    # where. Off by default: dumps are large and a working tree rarely needs
+    # them; CI turns it on so an intermittent crash is not wasted.
+    [switch] $CrashDumps
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,22 +83,35 @@ Write-Host "[parallel] building ($Configuration, $Framework)..."
 dotnet build $proj -c $Configuration -f $Framework @fxProps --nologo -v q
 if ($LASTEXITCODE -ne 0) { Write-Host '[parallel] BUILD FAILED'; exit 1 }
 
+# --blame-crash makes vstest write a dump when the HOST dies. Kept as a flag
+# rather than always-on: it changes how the host is launched (a procdump-style
+# watcher attaches), and the point is to leave the ordinary gate alone.
+$crashArgs = if ($CrashDumps) { @('--blame-crash', '--blame-crash-dump-type', 'full') } else { @() }
+
 Write-Host "[parallel] launching $($buckets.Count) test processes..."
 $procs = @()
 foreach ($b in $buckets) {
     $log = Join-Path $logDir "$($b.Name).log"
+    # STDERR too, and per bucket. Unredirected it lands in the caller's own
+    # output with nothing to say which bucket it came from — and stderr is
+    # where the interesting half goes: a host that CRASHES announces it there,
+    # so a run could fail with every bucket reporting Passed and no way to tell
+    # which process died. (Two files: PowerShell refuses to point both streams
+    # at one path.)
+    $errLog = Join-Path $logDir "$($b.Name).err.log"
     $p = Start-Process -FilePath 'dotnet' -PassThru -NoNewWindow `
-        -RedirectStandardOutput $log `
+        -RedirectStandardOutput $log -RedirectStandardError $errLog `
         -ArgumentList @(
             'test', $proj, '-c', $Configuration, '-f', $Framework, '--no-build', '--nologo'
             $fxProps
             '--filter', $b.Filter,
             '--blame-hang-timeout', '300s'
+            $crashArgs
             if ($Platform -ne '') { '--', "RunConfiguration.TargetPlatform=$Platform" })
     # Cache the handle NOW: without this, .ExitCode reads $null after the
     # process exits (PS 5.1 Start-Process quirk) and $null -ne 0 is true.
     $null = $p.Handle
-    $procs += @{ Bucket = $b.Name; Proc = $p; Log = $log }
+    $procs += @{ Bucket = $b.Name; Proc = $p; Log = $log; ErrLog = $errLog }
 }
 
 $failed = $false
@@ -108,6 +127,19 @@ foreach ($e in $procs) {
         # Surface the failing test names right here.
         Get-Content $e.Log | Select-String -Pattern '^\s*Failed ' |
             ForEach-Object { Write-Host ("[parallel]   {0}" -f $_.Line.Trim()) }
+        # A bucket can pass every test and still fail the run: the host dies on
+        # its way out, after the summary. That is announced on stderr, so name
+        # the bucket and quote it — otherwise the evidence is an abort notice in
+        # the caller's output with nothing tying it to a process.
+        if (Test-Path $e.ErrLog) {
+            $crashLines = Get-Content $e.ErrLog |
+                Select-String -Pattern 'Aborted|crashed|Fatal|Unhandled'
+            if ($crashLines) {
+                Write-Host ("[parallel]   {0}: exit {1}, and its stderr says:" -f $e.Bucket, $e.Proc.ExitCode)
+                $crashLines | Select-Object -Last 5 |
+                    ForEach-Object { Write-Host ("[parallel]     {0}" -f $_.Line.Trim()) }
+            }
+        }
     }
 }
 
@@ -115,7 +147,7 @@ foreach ($e in $procs) {
 # share one xUnit collection). Runs only after every parallel bucket is done.
 $exLog = Join-Path $logDir 'exclusive.log'
 dotnet test $proj -c $Configuration -f $Framework --no-build --nologo @fxProps `
-    --filter $exclusiveFilter --blame-hang-timeout 300s `
+    --filter $exclusiveFilter --blame-hang-timeout 300s @crashArgs `
     @(if ($Platform -ne '') { @('--', "RunConfiguration.TargetPlatform=$Platform") }) *> $exLog
 $exTail = (Get-Content $exLog | Select-String -Pattern 'Passed!|Failed!' | Select-Object -Last 1)
 if ($null -eq $exTail) { $exTail = "(no summary - see $exLog)" }
