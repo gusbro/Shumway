@@ -141,6 +141,42 @@ public sealed class ConformanceArcRegressionTests
         True("number_chars(74, [C, D]), C == '7', D == '4', "
            + "\\+ number_chars(74, [_]).");
 
+    // ---- digit separators (WG17 2025-06-02: options 1, 3 and 4) ----
+
+    [Fact] public void NumberChars_DigitSeparatorSpansLayout() =>
+        // Issue #43 (UWN): a separator is an underscore followed by layout
+        // TEXT, so "0_<newline>01" is one number — the shape that lets a
+        // large integer be written across lines.
+        True("number_chars(N, ['0','_','\\n','0','1']), N == 1, "
+           + "number_chars(M, ['1','_',' ','0','0','0']), M == 1000.");
+    [Fact] public void NumberChars_DigitSeparatorSpansComment() =>
+        // Layout text includes comments, and the digits inside one are
+        // comment, not number: "1_ /*2*/ 3" is 13, never 123.
+        True("number_chars(N, ['1','_',' ','/','*','2','*','/',' ','3']), N == 13.");
+    [Fact] public void NumberChars_DigitSeparatorInRadixConstant() =>
+        True("number_chars(N, ['0','x','1','_',' ','f']), N == 31, "
+           + "number_chars(M, ['0','b','1','_','0','_','1']), M == 5.");
+    [Fact] public void NumberChars_DigitSeparatorNeedsAFollowingDigit() =>
+        // No digit after it and the underscore is not a separator at all.
+        Raises("number_chars(_, ['1','_'])", "syntax_error(_)");
+    [Fact] public void AtomNumber_ReadsTheSameSeparatedNumbers() =>
+        // atom_number/2 has its own scanner: it read `1_000` as no number at
+        // all while number_chars/2 read 1000. The two must agree.
+        True("atom_number('1_000', A), A == 1000, "
+           + "atom_number('1_ /*2*/ 3', B), B == 13, "
+           + "atom_number('0xdead_ beef', C), C == 3735928559, "
+           + "atom_number('1_1.2_5e1_1', D), D == 11.25e11, "
+           + "\\+ atom_number('1_', _), \\+ atom_number('1__0', _).");
+    [Fact] public void NumberChars_FloatsTakeDigitSeparatorsToo() =>
+        // Whether separators reach floats is open in the standard; reading
+        // `1_1.25` as anything but 11.25 would be a syntax error over a
+        // plainly intended number.
+        True("number_chars(N, ['1','_','1','.','2','5']), N == 11.25.");
+    [Fact] public void NumberChars_ExponentStartsWithADigit() =>
+        // `1.0e_5` has no exponent, so the text is 1.0 followed by more —
+        // not a number at all.
+        Raises("number_chars(_, ['1','.','0','e','_','5'])", "syntax_error(_)");
+
     // ---- setup_call_cleanup/3 ----
 
     [Fact] public void Scc_CleanupValidatedBeforeGoalRuns() =>

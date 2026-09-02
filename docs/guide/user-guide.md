@@ -923,6 +923,37 @@ E = resource_error(memory).
 uniformly — whichever operation hits it (`^`, `<<`, a multiplication) and
 whichever tier runs it.
 
+### Digit separators
+
+Long numbers are easier to read in groups, so you may put an underscore
+between two digits of an integer. It groups the digits and is not part of the
+value:
+
+```prolog
+?- X = 1_000_000.
+X = 1000000.
+?- X is 0xdead_beef + 0b1_0_1.
+X = 3735928564.
+```
+
+Since integers here have no size limit, a literal can outgrow a line. After
+the underscore you may leave a space, a line break, or a comment before
+continuing with the digits — so a very long number can be written across as
+many lines as it needs:
+
+```prolog
+big(1_
+    /* the next 40 digits */
+    2345678901234567890123456789012345678901).
+```
+
+Two rules to keep in mind:
+
+- A digit **must** follow. Where none does there is no separator: the
+  underscore begins a variable name, just as it does anywhere else.
+- They work in every number: decimal, binary, octal and hexadecimal
+  integers, and both parts of a float (`1_1.2_5e1_1`).
+
 ### Operator scope (ADR-046)
 
 Operator tables are **module-scoped**, following SWI/YAP/Ciao/Scryer:

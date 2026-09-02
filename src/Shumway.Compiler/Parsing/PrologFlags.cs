@@ -60,12 +60,12 @@ public sealed class PrologFlags
     /// <c>:</c> is accepted and ignored).</summary>
     public bool ArityCompat { get; set; }
 
-    /// <summary>Digit-group separators (<c>10_000</c>) — see
-    /// <c>Lexer.DigitSeparators</c>. ON by default: strict ISO lexes
-    /// <c>1_000</c> as the integer 1 followed by the variable <c>_000</c>,
-    /// which no term position accepts — so giving the spelling a meaning
-    /// cannot change any conforming program, and SWI, Trealla and Scryer
-    /// all read it. The separator must sit strictly between digits.</summary>
+    /// <summary>Digit separators (<c>1_000</c>, <c>1_ 000</c>,
+    /// <c>1_ /*c*/ 000</c>) — see <c>Lexer.DigitSeparators</c> for the shape.
+    /// ON by default: the older standard lexes <c>1_000</c> as the integer 1
+    /// followed by the variable <c>_000</c>, which no term position accepts,
+    /// so giving the spelling a meaning cannot change any conforming
+    /// program.</summary>
     public bool DigitSeparators { get; set; } = true;
 
     /// <summary>What a same-file predicate whose clauses are NOT adjacent

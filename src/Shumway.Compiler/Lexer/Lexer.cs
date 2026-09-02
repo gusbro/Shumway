@@ -68,13 +68,15 @@ public sealed class Lexer
     /// atom <c>=$</c>).</summary>
     public bool ArityCompat { get; set; }
 
-    /// <summary>SWI digit-group separators (<c>10_000</c>): accept <c>_</c>
-    /// inside a number when surrounded by digits, in decimal / float / radix
-    /// literals. Off by default — ISO tokenizes <c>10_000</c> as the integer
-    /// <c>10</c> followed by the variable <c>_000</c> — and enabled by the
-    /// swi dialect load scope (library sources use it; <c>10_000</c> in a term
-    /// context is a syntax error under ISO, so this only accepts programs ISO
-    /// rejects).</summary>
+    /// <summary>Digit separators (<c>10_000</c>): a <c>_</c> between two
+    /// digits of a number, optionally with layout text after it so a large
+    /// literal can span lines. WG17 accepted that shape on 2025-06-02 for
+    /// integer, binary, octal and hexadecimal constants; whether it reaches
+    /// floats is still open there, and we accept it (<c>1_1.25</c>,
+    /// <c>11.2_5</c>, <c>1.0e1_0</c>) rather than turn a plainly intended
+    /// number into a syntax error. Off by default here; the flag that turns
+    /// it on is <c>PrologFlags.DigitSeparators</c>, which defaults ON.
+    /// </summary>
     public bool DigitSeparators { get; set; }
 
     /// <summary>SWI leniency: <c>0''</c> not followed by a third quote is the
@@ -149,7 +151,7 @@ public sealed class Lexer
         char c = (raw == '\'' || raw == '"') ? raw : Convert(raw);
         SourcePosition pos = CurrentPosition();
 
-        if (char.IsDigit(c)) return ParseNumber(pos);
+        if (IsDecimalDigit(c)) return ParseNumber(pos);
         if (c == '_' || (c >= 'A' && c <= 'Z')) return ParseVariable(pos);
         if (c >= 'a' && c <= 'z') return ParseUnquotedAtom(pos);
         // Extended identifier characters (every neighbouring engine accepts
@@ -611,13 +613,7 @@ public sealed class Lexer
                     while (_offset < _source.Length)
                     {
                         char rc = _source[_offset];
-                        if (rc == '_' && DigitSeparators
-                            && IsRadixDigit(Peek(1), radix)
-                            && IsRadixDigit(_source[_offset - 1], radix))
-                        {
-                            Advance();
-                            continue;
-                        }
+                        if (rc == '_' && TryConsumeDigitSeparator(radix)) continue;
                         int d = RadixDigitValue(rc);
                         if (d < 0 || d >= radix) break;
                         acc = acc * radix + d;
@@ -633,17 +629,21 @@ public sealed class Lexer
             }
         }
 
-        // Decimal integer part.
-        ScanDecimalDigits();
+        // Decimal integer part. A separator may span layout and comments, so
+        // the digits cannot be recovered by deleting '_' from the source:
+        // `1_ /*2*/ 3` is 13, and the 2 is a comment. The scan records the
+        // spans the separators occupy; Splice cuts them back out.
+        List<(int From, int To)>? cuts = null;
+        ScanDecimalDigits(ref cuts);
 
         // Float continuation: '.' followed by a digit.
         if (_offset < _source.Length
             && _source[_offset] == '.'
             && _offset + 1 < _source.Length
-            && char.IsDigit(_source[_offset + 1]))
+            && IsDecimalDigit(_source[_offset + 1]))
         {
             Advance();   // '.'
-            ScanDecimalDigits();
+            ScanDecimalDigits(ref cuts);
 
             if (_offset < _source.Length && (_source[_offset] == 'e' || _source[_offset] == 'E'))
             {
@@ -652,7 +652,10 @@ public sealed class Lexer
                 if (_offset < _source.Length && (_source[_offset] == '+' || _source[_offset] == '-'))
                     Advance();
                 int expStart = _offset;
-                ScanDecimalDigits();
+                // The exponent starts with a DIGIT — a separator may only sit
+                // between two of them, so `1.0e_5` has no exponent at all.
+                if (_offset < _source.Length && IsDecimalDigit(_source[_offset]))
+                    ScanDecimalDigits(ref cuts);
                 if (_offset == expStart)
                 {
                     // ISO greedy-longest-VALID token: `1.0e` / `1.0e-` are the
@@ -664,7 +667,7 @@ public sealed class Lexer
                 }
             }
 
-            string floatSource = StripSeparators(_source[start.._offset]);
+            string floatSource = Splice(start, _offset, cuts);
             // .NET Framework's double.Parse THROWS OverflowException for a
             // syntactically valid literal beyond double range ("9.9e999")
             // where .NET Core returns Infinity — go through TryParse and
@@ -677,7 +680,7 @@ public sealed class Lexer
             return new Token(TokenKind.Float, pos, floatSource) { FloatValue = f };
         }
 
-        string intSource = StripSeparators(_source[start.._offset]);
+        string intSource = Splice(start, _offset, cuts);
         // Try the narrow path first (the overwhelming common case); fall back
         // to BigInteger only when the literal genuinely exceeds long range.
         if (long.TryParse(intSource, NumberStyles.Integer, CultureInfo.InvariantCulture, out long i))
@@ -686,27 +689,65 @@ public sealed class Lexer
         return new Token(TokenKind.Integer, pos, intSource) { BigValue = big, HasBigValue = true };
     }
 
-    /// <summary>Advances over decimal digits; with <see cref="DigitSeparators"/>
-    /// also over a <c>_</c> that sits strictly between two digits.</summary>
-    private void ScanDecimalDigits()
+    /// <summary>Advances over a run of decimal digits and over the digit
+    /// separators inside it, appending the span each separator occupies to
+    /// <paramref name="cuts"/>.</summary>
+    private void ScanDecimalDigits(ref List<(int From, int To)>? cuts)
     {
         while (_offset < _source.Length)
         {
             char ch = _source[_offset];
-            if (char.IsDigit(ch)) { Advance(); continue; }
-            if (ch == '_' && DigitSeparators
-                && char.IsDigit(_source[_offset - 1])
-                && _offset + 1 < _source.Length && char.IsDigit(_source[_offset + 1]))
-            {
-                Advance();
-                continue;
-            }
-            break;
+            if (IsDecimalDigit(ch)) { Advance(); continue; }
+            if (ch != '_') break;
+            int separatorAt = _offset;
+            if (!TryConsumeDigitSeparator(0)) break;
+            (cuts ??= new List<(int, int)>()).Add((separatorAt, _offset));
         }
     }
 
-    private string StripSeparators(string text) =>
-        DigitSeparators && text.Contains('_') ? text.Replace("_", "") : text;
+    /// <summary>The source between two offsets with the recorded separator
+    /// spans cut out — the digits of the number, and nothing else.</summary>
+    private string Splice(int from, int to, List<(int From, int To)>? cuts)
+    {
+        if (cuts is null) return _source[from..to];
+        var text = new StringBuilder(to - from);
+        int at = from;
+        foreach ((int cutFrom, int cutTo) in cuts)
+        {
+            text.Append(_source, at, cutFrom - at);
+            at = cutTo;
+        }
+        return text.Append(_source, at, to - at).ToString();
+    }
+
+    /// <summary>At an <c>_</c> inside a number: consumes it as a digit
+    /// separator when another digit follows, possibly across a layout text
+    /// sequence (§6.4.1) — which is what lets a large integer span lines.
+    /// WG17 accepted this shape on 2025-06-02: <c>1_000</c>, <c>1_ 000</c>
+    /// and <c>1_ /*c*/ 000</c> are all one number. The digit is REQUIRED:
+    /// without it nothing is consumed and the <c>_</c> opens the next token,
+    /// so `foo(1,_)` and `X = 1_` keep reading as they always did.</summary>
+    /// <param name="radix">0 for a decimal run, else the constant's radix.</param>
+    private bool TryConsumeDigitSeparator(int radix)
+    {
+        if (!DigitSeparators) return false;
+        int markOffset = _offset, markLine = _line, markColumn = _column;
+        Advance();                     // the '_'
+        SkipWhitespaceAndComments();
+        if (_offset < _source.Length
+            && (radix == 0 ? IsDecimalDigit(_source[_offset])
+                           : IsRadixDigit(_source[_offset], radix)))
+            return true;
+        _offset = markOffset; _line = markLine; _column = markColumn;
+        return false;
+    }
+
+    /// <summary>§6.5.2 decimal digit char: 0 to 9, and nothing else.
+    /// <c>char.IsDigit</c> also answers true for every other Unicode decimal
+    /// digit (٣, ৩, ９…), which no number production accepts and no numeric
+    /// parse understands — those used to reach BigInteger.Parse and throw a
+    /// raw FormatException straight past catch/3.</summary>
+    private static bool IsDecimalDigit(char c) => c is >= '0' and <= '9';
 
     private static bool IsRadixDigit(char c, int radix)
     {
