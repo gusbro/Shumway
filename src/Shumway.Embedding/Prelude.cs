@@ -1043,12 +1043,98 @@ internal static class Prelude
         message_queue_destroy(Q) :- retractall('$mq_msg'(Q, _)).
 
         % ===== must_be/2, print_message/2 (SWI/SICStus compat) =====
+        %
+        % §7.12.2 keeps two separate vocabularies, and which one a name belongs
+        % to decides the error: (b) a TYPE says what shape a term has, and (c) a
+        % DOMAIN picks values out of a type that already fits. So a domain is
+        % only ever reached once the type does fit, which is the order the
+        % standard's own cases take: atom_length(_, foo) is a type error and
+        % atom_length(_, -1) a domain error. A name we cannot check at all is
+        % not a verdict about the value, so it is reported against the argument
+        % that carried it.
         :- public must_be/2.
-        %! must_be(+Type, @Value) | Type checking | Throws instantiation_error if Value is unbound (unless Type is var), or type_error(Type, Value) if it is not of Type.
+        %! must_be(+Type, @Value) | Type checking | Throws instantiation_error if Value is unbound (unless Type is var), type_error(Type, Value) if Value is of the wrong type, or domain_error(Domain, Value) if Type names a domain of values (not_less_than_zero, io_mode, oneof(L), ...) and Value lies outside it.
         must_be(Type, X) :-
+            '$must_be_known'(Type, must_be/2),
             ( var(X), Type \== var -> throw(error(instantiation_error, must_be/2))
             ; '$must_be_ok'(Type, X) -> true
-            ; throw(error(type_error(Type, X), must_be/2)) ).
+            ; '$must_be_wrong'(Type, X, must_be/2) ).
+
+        %! can_be(+Type, @Term) | Type checking | Like must_be/2, but a term that could still become admissible is: an unbound term always, and a partial list where a list is wanted. Only a term already incompatible raises.
+        can_be(Type, Term) :-
+            '$must_be_known'(Type, can_be/2),
+            ( var(Term) -> true
+            ; '$can_be_ok'(Type, Term) -> true
+            ; '$must_be_wrong'(Type, Term, can_be/2) ).
+
+        % The check's NAME is validated first, whatever the value looks like: a
+        % name neither predicate knows is a programming error at the call site,
+        % and hiding it behind the value's own verdict let it pass unnoticed
+        % whenever the value happened to be admissible (or unbound).
+        '$must_be_known'(Type, Context) :-
+            ( var(Type) -> throw(error(instantiation_error, Context))
+            ; '$must_be_domain'(Type, _, _) -> true
+            ; '$must_be_type'(Type) -> true
+            ; throw(error(domain_error(must_be_type, Type), Context)) ).
+
+        % The culprit is not admissible: say so with the right error.
+        %  - "shall be a variable" gets its own error term (Corrigendum 2), not
+        %    a type error: no term IS the type "variable".
+        %  - a partial list where a list-family check failed is insufficiently
+        %    instantiated, not wrong — the §8 builtins all read it that way —
+        %    so it reports instantiation_error, but only while its known
+        %    elements are compatible; a wrong element is already refutable.
+        %  - a domain name reports type_error until the type fits, then
+        %    domain_error, in the standard's own order.
+        '$must_be_wrong'(var, X, Context) :-
+            !, throw(error(uninstantiation_error(X), Context)).
+        '$must_be_wrong'(Name, X, Context) :-
+            '$must_be_insufficient'(Name, X), !,
+            throw(error(instantiation_error, Context)).
+        '$must_be_wrong'(Name, X, Context) :-
+            '$must_be_domain'(Name, Type, Reported), !,
+            ( '$must_be_ok'(Type, X) -> throw(error(domain_error(Reported, X), Context))
+            ; throw(error(type_error(Type, X), Context)) ).
+        '$must_be_wrong'(Name, X, Context) :-
+            throw(error(type_error(Name, X), Context)).
+
+        '$must_be_insufficient'(list, X) :- '$partial_list'(X).
+        '$must_be_insufficient'(not_empty_list, X) :- '$partial_list'(X).
+        '$must_be_insufficient'(chars, X) :- '$partial_list'(X, P), '$all_chars'(P).
+        '$must_be_insufficient'(codes, X) :- '$partial_list'(X, P), '$all_codes'(P).
+        '$must_be_insufficient'(character_code_list, X) :-
+            '$partial_list'(X, P), '$all_codes'(P).
+
+        % Domains: the check's name, the type the culprit must have first, and
+        % the name the error reports. The two differ where the standard fixes a
+        % spelling we would not have picked: `nonneg` is the short name for the
+        % check, `not_less_than_zero` the one 7.12.2 gives the error.
+        '$must_be_domain'(not_less_than_zero,  integer, not_less_than_zero).
+        '$must_be_domain'(nonneg,              integer, not_less_than_zero).
+        '$must_be_domain'(positive_integer,    integer, positive_integer).
+        '$must_be_domain'(not_empty_list,      list,    not_empty_list).
+        '$must_be_domain'(character_code_list, list,    character_code_list).
+        '$must_be_domain'(operator_priority,   integer, operator_priority).
+        '$must_be_domain'(operator_specifier,  atom,    operator_specifier).
+        '$must_be_domain'(io_mode,             atom,    io_mode).
+        '$must_be_domain'(prolog_flag,         atom,    prolog_flag).
+        '$must_be_domain'(oneof(L),            any,     oneof(L)).
+
+        % Types: 7.12.2 (b), then the ones this library adds.
+        '$must_be_type'(atom).       '$must_be_type'(atomic).
+        '$must_be_type'(byte).       '$must_be_type'(callable).
+        '$must_be_type'(character).  '$must_be_type'(in_byte).
+        '$must_be_type'(in_character). '$must_be_type'(integer).
+        '$must_be_type'(list).       '$must_be_type'(number).
+        '$must_be_type'(predicate_indicator). '$must_be_type'(var).
+        '$must_be_type'(nonvar).     '$must_be_type'(ground).
+        '$must_be_type'(float).      '$must_be_type'(string).
+        '$must_be_type'(text).       '$must_be_type'(compound).
+        '$must_be_type'(acyclic).    '$must_be_type'(cyclic).
+        '$must_be_type'(boolean).    '$must_be_type'(chars).
+        '$must_be_type'(codes).      '$must_be_type'(any).
+
+        '$must_be_ok'(any, _).
         '$must_be_ok'(integer, X) :- integer(X).
         '$must_be_ok'(atom, X) :- atom(X).
         '$must_be_ok'(atomic, X) :- atomic(X).
@@ -1061,6 +1147,7 @@ internal static class Prelude
         '$must_be_ok'(ground, X) :- ground(X).
         '$must_be_ok'(positive_integer, X) :- integer(X), X > 0.
         '$must_be_ok'(nonneg, X) :- integer(X), X >= 0.
+        '$must_be_ok'(not_less_than_zero, X) :- integer(X), X >= 0.
         '$must_be_ok'(float, X) :- float(X).
         '$must_be_ok'(string, X) :- string(X).
         '$must_be_ok'(text, X) :- ( atom(X) ; string(X) ).
@@ -1068,6 +1155,48 @@ internal static class Prelude
         '$must_be_ok'(cyclic, X) :- cyclic_term(X).
         '$must_be_ok'(compound, X) :- compound(X).
         '$must_be_ok'(oneof(L), X) :- memberchk(X, L).
+        '$must_be_ok'(byte, X) :- integer(X), X >= 0, X =< 255.
+        '$must_be_ok'(in_byte, X) :- integer(X), X >= -1, X =< 255.
+        '$must_be_ok'(character, X) :- atom(X), atom_length(X, 1).
+        '$must_be_ok'(in_character, X) :- ( X == end_of_file -> true ; atom(X), atom_length(X, 1) ).
+        '$must_be_ok'(predicate_indicator, X) :- X = N/A, atom(N), integer(A), A >= 0.
+        '$must_be_ok'(chars, X) :- is_list(X), '$all_chars'(X).
+        '$must_be_ok'(codes, X) :- is_list(X), '$all_codes'(X).
+        '$must_be_ok'(not_empty_list, X) :- X \== [], is_list(X).
+        '$must_be_ok'(character_code_list, X) :- is_list(X), '$all_codes'(X).
+        '$must_be_ok'(operator_priority, X) :- integer(X), X >= 0, X =< 1200.
+        '$must_be_ok'(operator_specifier, X) :-
+            memberchk(X, [xfx, xfy, yfx, xf, yf, fx, fy]).
+        '$must_be_ok'(io_mode, X) :- memberchk(X, [read, write, append]).
+        % current_prolog_flag itself errors on an unknown flag; here that is
+        % just the answer "outside the domain", reported by OUR caller.
+        '$must_be_ok'(prolog_flag, X) :-
+            atom(X), catch(current_prolog_flag(X, _), _, fail).
+        '$all_chars'([]).
+        '$all_chars'([C|Cs]) :- atom(C), atom_length(C, 1), '$all_chars'(Cs).
+        '$all_codes'([]).
+        '$all_codes'([C|Cs]) :- integer(C), C >= 0, C =< 0x10FFFF, '$all_codes'(Cs).
+
+        % can_be's own leniency. Everything must_be accepts, can_be accepts;
+        % on top of that a partial list can still become a list, so it is not
+        % refused where a list is wanted. (97 can never become an atom, which
+        % is why this is a short list and not a rule.)
+        '$can_be_ok'(Type, X) :- '$must_be_ok'(Type, X), !.
+        '$can_be_ok'(list, X) :- '$partial_list'(X).
+        '$can_be_ok'(not_empty_list, X) :- X \== [], '$partial_list'(X).
+        '$can_be_ok'(chars, X) :- '$partial_list'(X, Prefix), '$all_chars'(Prefix).
+        '$can_be_ok'(codes, X) :- '$partial_list'(X, Prefix), '$all_codes'(Prefix).
+        '$can_be_ok'(character_code_list, X) :-
+            '$partial_list'(X, Prefix), '$all_codes'(Prefix).
+        % A list with an open tail, and the elements it has so far. Cyclic
+        % first: a spine that closes on itself has no open tail to reach, and
+        % the walk below would not come back from looking for one.
+        '$partial_list'(X) :- '$partial_list'(X, _).
+        '$partial_list'(X, Prefix) :-
+            \+ '$cyclic_spine'(X),
+            '$partial_list_'(X, Prefix).
+        '$partial_list_'(X, []) :- var(X), !.
+        '$partial_list_'([H|T], [H|Ps]) :- '$partial_list_'(T, Ps).
 
         :- public print_message/2.
         %! print_message(+Kind, +Message) | Messages | Prints a message of the given kind (error/warning/informational/silent) to user_error. A best-effort renderer (no message//1 hooks).
@@ -1176,16 +1305,6 @@ internal static class Prelude
         map_list_to_pairs(F, [X|Xs], [K-X|Ps]) :-
             call(F, X, K),
             map_list_to_pairs(F, Xs, Ps).
-
-        %! can_be(+Type, @Term) | Type checking | Like must_be/2, but an unbound Term (or one whose subterms are yet unbound enough) is still admissible: only a term already incompatible with Type raises.
-        can_be(Type, Term) :-
-            ( var(Term) -> must_be_type_ok(Type)
-            ; must_be(Type, Term)
-            ).
-        must_be_type_ok(Type) :-
-            ( var(Type) -> throw(error(instantiation_error, can_be/2))
-            ; true
-            ).
 
         % The library(si) family (Scryer/Trealla): sound type tests — an
         % unbound (or not-yet-listlike) term is an instantiation_error, a
@@ -2192,7 +2311,11 @@ internal static class Prelude
         '$skip_max_list'(Length, Max, List, Tail) :-
             '$skip_max_list_'(List, Max, 0, Length, Tail).
         '$skip_max_list_'(List, Max, N, N, List) :- integer(Max), N >= Max, !.
-        '$skip_max_list_'([H|T], Max, N0, N, Tail) :-
+        % nonvar first: an open tail is a tail to STOP at. Matching [_|T]
+        % against it instead bound it to a fresh cons and walked into the list
+        % it had just made, forever.
+        '$skip_max_list_'(List, Max, N0, N, Tail) :-
+            nonvar(List), List = [_|T],
             !, N1 is N0 + 1, '$skip_max_list_'(T, Max, N1, N, Tail).
         '$skip_max_list_'(List, _, N, N, List).
         """;

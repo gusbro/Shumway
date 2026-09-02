@@ -163,17 +163,21 @@ public static class TypeBuiltins
 
     /// <summary><c>is_list(X)</c> — X is a proper list: a cons chain
     /// terminated by the empty-list atom. An unbound tail makes it a partial
-    /// list — fails. An atom other than <c>[]</c> at the tail — fails.</summary>
+    /// list — fails. An atom other than <c>[]</c> at the tail — fails. The
+    /// walk is bounded by the heap: a proper list has no more conses than
+    /// cells, so running out means a cyclic spine — fails, never hangs.</summary>
     public static bool IsList(Activation engine)
     {
         Cell cell = engine.GetRegister(0);
-        while (true)
+        int guard = engine.HeapTop + 2;
+        while (guard-- > 0)
         {
             cell = ListCursor.Resolve(engine, cell);
             if (ListCursor.IsNil(cell)) return true;
             if (!engine.TryUnconsListLike(cell, out _, out Cell tail)) return false;
             cell = tail;
         }
+        return false;
     }
 
     /// <summary><c>ground(X)</c> — X contains no unbound variables. Walks
