@@ -540,9 +540,31 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// <summary>Nodes to materialize per displayed answer, or 0 for all of
     /// them.</summary>
     internal int AnswerMaterializeLimit =>
-        ElideAnswersForDisplay && Flags.AnswerMaxDepth > 0
+        ElideAnswersForDisplay && _displayElisionSuppress == 0
+            && Flags.AnswerMaxDepth > 0
             ? Flags.AnswerMaxDepth * 8 + 64
             : 0;
+
+    /// <summary>Non-zero while an INTERNAL query's bindings are being read as
+    /// data — the expansion hooks read term_expansion's output through a
+    /// solution's bindings, and the display limit truncated a hook's returned
+    /// clause LIST there: atts-style libraries lost their generated
+    /// predicates, and the elision marker spliced in as clauses of './2'.
+    /// The limit is for answers a person looks at, never for these.</summary>
+    private int _displayElisionSuppress;
+
+    internal readonly struct ElisionSuppressScope : System.IDisposable
+    {
+        private readonly PrologEngine _host;
+        internal ElisionSuppressScope(PrologEngine host)
+        { _host = host; host._displayElisionSuppress++; }
+        public void Dispose() => _host._displayElisionSuppress--;
+    }
+
+    /// <summary>Suppresses display-bounded materialization until disposed.
+    /// Must span the whole enumeration of the query — bindings materialize
+    /// lazily, inside MoveNext.</summary>
+    internal ElisionSuppressScope SuppressDisplayElision() => new(this);
 
     /// <summary>Heap-collector totals for this ENGINE, across every query it
     /// has run.

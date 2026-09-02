@@ -26,6 +26,27 @@ public sealed class AnswerElisionTests
     private static PrologEngine Engine() => new() { Out = new StringWriter() };
 
     [Fact]
+    public void TheDisplayLimitNeverTruncatesAnExpansionResult()
+    {
+        // The expansion hooks read term_expansion's output through a
+        // solution's bindings — the same path a displayed answer takes. With
+        // the top level's elision on, a hook returning a LIST of clauses came
+        // back cut off at the display depth: an atts-style library lost most
+        // of its generated predicates, and the elision marker itself spliced
+        // in as clauses of './2'. The limit is for answers a person looks at.
+        var e = new PrologEngine { ElideAnswersForDisplay = true };
+        e.Flags.AnswerMaxDepth = 3;                    // the tightest display
+        e.ConsultString("""
+            term_expansion(gen(N), Clauses) :-
+                findall((g(K) :- true), between(1, N, K), Clauses).
+            """);
+        e.ConsultString("gen(100).\n");
+        var s = e.Query("findall(K, g(K), L), length(L, N).");
+        Assert.True(s.Success);
+        Assert.Equal(100L, Assert.IsType<IntTerm>(s["N"]!).Value);
+    }
+
+    [Fact]
     public void ALongListIsCutOff()
     {
         var e = Engine();
