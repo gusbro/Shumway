@@ -175,7 +175,7 @@ public sealed partial class Activation
     /// <c>verify_attributes/3</c> hook to a linked functor id, or -1 if the module
     /// has none. Tries the export-qualified name <c>Module$verify_attributes/3</c>
     /// first (a `:- module(M,[..])` library mangles it), then the bare functor.</summary>
-    internal int Verify3FunctorId(int moduleId)
+    public int Verify3FunctorId(int moduleId)
     {
         var addrs = CurrentFunctorAddresses;
         if (addrs is null) return -1;
@@ -196,7 +196,7 @@ public sealed partial class Activation
     /// first, so two dialects' constraint libraries each own their own hook and
     /// coexist. Falls back to the bare-global <c>verify_attributes/4</c> — the
     /// legacy shared multifile form a single library may still declare.</summary>
-    internal int Verify4FunctorId(int moduleId)
+    public int Verify4FunctorId(int moduleId)
     {
         var addrs = CurrentFunctorAddresses;
         if (addrs is null) return -1;

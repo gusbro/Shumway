@@ -476,7 +476,17 @@ public sealed partial class BytecodeInterpreter
             // SubroutineSentinelCp, the IL dispatch path sets
             // Pc=Cp=sentinel; the next dispatch iteration sees it and
             // halts cleanly here instead of indexing into code[].
-            if (pc < 0) return InterpreterResult.Halted;
+            //
+            // ADR-049: inside that cold branch, a WakeReturnCp means an IL
+            // return or a builtin's tail return jumped to the wake driver's
+            // continuation: restore the interrupted goal and resume it. (The
+            // Proceed-family opcodes check their Cp before jumping and handle
+            // the sentinel themselves.)
+            if (pc < 0)
+            {
+                if (pc == WakeReturnCp) { WakeReturn(); inClause = false; continue; }
+                return InterpreterResult.Halted;
+            }
 
             // threaded Tier-1: a resume-marker PC means an
             // IL non-tail Call site set Cp to this address before
@@ -619,10 +629,18 @@ public sealed partial class BytecodeInterpreter
 
                 case Opcode.Proceed:
                 {
-                    if (!FlushPendingWakeups(code))
+                    // ADR-049: queued wakeups interrupt here — no argument
+                    // registers are live across a proceed, so the frame saves
+                    // none; resuming re-runs this instruction, queue empty.
+                    if (_engine.HasPendingWakeups)
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code, 0, pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     // setup_call_cleanup: run any cleanup the engine enqueued from
                     // a teardown path (external cut, etc.) at this goal boundary.
@@ -635,6 +653,7 @@ public sealed partial class BytecodeInterpreter
                         if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     }
                     int returnPc = _engine.Cp;
+                    if (returnPc == WakeReturnCp) { WakeReturn(); break; }   // ADR-049
                     if (returnPc < 0)
                         return InterpreterResult.Halted;       // returned past the top
                     _engine.SetPc(returnPc);
@@ -651,10 +670,18 @@ public sealed partial class BytecodeInterpreter
                     // jump to it as an address (the clpz cross-query crash).
                     int target = ReadI32(code, codeArr, pc + 1);
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
-                    if (!FlushPendingWakeups(code))
+                    // ADR-049: interrupt with the callee's registers saved
+                    // (arity from the static-link address); resume re-reads
+                    // the operands, so the repatch hazard above stays closed.
+                    if (_engine.HasPendingWakeups)
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code, ArityOfTarget(target), pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     target = ResolveTargetMaybeAutoPromoted(target);
                     if (target == UnknownFailTarget)   // unknown=fail
@@ -716,10 +743,16 @@ public sealed partial class BytecodeInterpreter
                 // return stub could not restore Cp.
                 case Opcode.DebugLastCall:
                 {
-                    if (!FlushPendingWakeups(code))
+                    if (_engine.HasPendingWakeups)   // ADR-049
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code,
+                            ArityOfTarget(ReadI32(code, codeArr, pc + 1)), pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     int target = ReadI32(code, codeArr, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
@@ -757,10 +790,15 @@ public sealed partial class BytecodeInterpreter
                     // Operand BEFORE the wakeup flush — same in-place
                     // Execute→ExecuteIl repatch hazard as the Call case above.
                     int target = ReadI32(code, codeArr, pc + 1);
-                    if (!FlushPendingWakeups(code))
+                    if (_engine.HasPendingWakeups)   // ADR-049
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code, ArityOfTarget(target), pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     target = ResolveTargetMaybeAutoPromoted(target);
                     if (target == UnknownFailTarget)   // unknown=fail
@@ -786,10 +824,16 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.CallIl:
                 {
                     _engine.Inferences++;   // time/1 goal-dispatch counter
-                    if (!FlushPendingWakeups(code))
+                    if (_engine.HasPendingWakeups)   // ADR-049
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        (_, int wakeAr) = FunctorTable.Lookup(ReadI32(code, codeArr, pc + 1));
+                        int w = WakeBoundary(code, wakeAr, pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     int functorId = ReadI32(code, codeArr, pc + 1);
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
@@ -851,10 +895,16 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.CallBytecode:
                 {
                     _engine.Inferences++;   // time/1 goal-dispatch counter
-                    if (!FlushPendingWakeups(code))
+                    if (_engine.HasPendingWakeups)   // ADR-049
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code,
+                            ArityOfTarget(ReadI32(code, codeArr, pc + 1)), pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     int target = ReadI32(code, codeArr, pc + 1);
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
@@ -889,10 +939,16 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.ExecuteIl:
                 {
                     _engine.Inferences++;   // time/1 goal-dispatch counter
-                    if (!FlushPendingWakeups(code))
+                    if (_engine.HasPendingWakeups)   // ADR-049
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        (_, int wakeAr) = FunctorTable.Lookup(ReadI32(code, codeArr, pc + 1));
+                        int w = WakeBoundary(code, wakeAr, pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     int functorId = ReadI32(code, codeArr, pc + 1);
                     Shumway.Core.Profiler.Call(functorId);
@@ -931,10 +987,16 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.ExecuteBytecode:
                 {
                     _engine.Inferences++;   // time/1 goal-dispatch counter
-                    if (!FlushPendingWakeups(code))
+                    if (_engine.HasPendingWakeups)   // ADR-049
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code,
+                            ArityOfTarget(ReadI32(code, codeArr, pc + 1)), pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     int target = ReadI32(code, codeArr, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
@@ -970,10 +1032,17 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.ExecuteBuiltin:
                 {
                     _engine.Inferences++;   // time/1 goal-dispatch counter
-                    if (!FlushPendingWakeups(code))
+                    if (_engine.HasPendingWakeups)   // ADR-049
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code,
+                            Shumway.Builtins.BuiltinsRegistry
+                                .GetById(ReadI32(code, codeArr, pc + 1)).Arity, pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     int builtinId = ReadI32(code, codeArr, pc + 1);
                     // Cheap throw (see CallBuiltin).
@@ -1053,18 +1122,25 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.DeallocateProceed:
                 {
                     // 2-byte layout: [op:1] [Nop:1].
-                    // Mirrors Deallocate + Proceed back-to-back: deallocate
-                    // the env frame, then proceed (FlushPendingWakeups +
-                    // SetPc(Cp), with Cp<0 → Halted).
-                    _engine.Deallocate();
-                    if (!FlushPendingWakeups(code))
+                    // Mirrors Deallocate + Proceed back-to-back. The wake
+                    // check runs BEFORE the deallocate (ADR-049): resuming
+                    // re-executes the whole instruction, and a deallocate
+                    // must not run twice.
+                    if (_engine.HasPendingWakeups)
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code, 0, pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
+                    _engine.Deallocate();
                     _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     int returnPc = _engine.Cp;
+                    if (returnPc == WakeReturnCp) { WakeReturn(); break; }   // ADR-049
                     if (returnPc < 0) return InterpreterResult.Halted;
                     _engine.SetPc(returnPc);
                     break;
@@ -1076,12 +1152,20 @@ public sealed partial class BytecodeInterpreter
                 {
                     // 6-byte layout: [op:1] [target:4] [Nop:1]. Mirrors
                     // Deallocate + Execute: trim the frame, then tail-call.
-                    _engine.Deallocate();
-                    if (!FlushPendingWakeups(code))
+                    // Wake check BEFORE the deallocate (ADR-049): resuming
+                    // re-executes the whole instruction.
+                    if (_engine.HasPendingWakeups)
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code,
+                            ArityOfTarget(ReadI32(code, codeArr, pc + 1)), pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
+                    _engine.Deallocate();
                     int target = ReadI32(code, codeArr, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
                     if (target == UnknownFailTarget)   // unknown=fail
@@ -1113,6 +1197,7 @@ public sealed partial class BytecodeInterpreter
                     _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     int retPc = _engine.Cp;
+                    if (retPc == WakeReturnCp) { WakeReturn(); break; }   // ADR-049
                     if (retPc < 0) return InterpreterResult.Halted;
                     _engine.SetPc(retPc);
                     break;
@@ -1133,6 +1218,7 @@ public sealed partial class BytecodeInterpreter
                     _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     int rpc = _engine.Cp;
+                    if (rpc == WakeReturnCp) { WakeReturn(); break; }   // ADR-049
                     if (rpc < 0) return InterpreterResult.Halted;
                     _engine.SetPc(rpc);
                     break;
@@ -2222,10 +2308,17 @@ public sealed partial class BytecodeInterpreter
                 case Opcode.CallBuiltin:
                 {
                     _engine.Inferences++;   // time/1 goal-dispatch counter
-                    if (!FlushPendingWakeups(code))
+                    if (_engine.HasPendingWakeups)   // ADR-049
                     {
-                        if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
+                        int w = WakeBoundary(code,
+                            Shumway.Builtins.BuiltinsRegistry
+                                .GetById(ReadI32(code, codeArr, pc + 1)).Arity, pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     int builtinId = ReadI32(code, codeArr, pc + 1);
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
