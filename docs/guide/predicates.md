@@ -30,7 +30,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `atomic_si(@Term)` | Sound atomic test (si family). |
 | `attvar(@Term)` | Succeeds if the argument is an attributed variable. |
 | `callable(@Term)` | Succeeds if the argument is an atom or a compound term. |
-| `can_be(+Type, @Term)` | Like must_be/2, but an unbound Term (or one whose subterms are yet unbound enough) is still admissible: only a term already incompatible with Type raises. |
+| `can_be(+Type, @Term)` | Like must_be/2, but a term that could still become admissible is: an unbound term always, and a partial list where a list is wanted. Only a term already incompatible raises. |
 | `character_si(@Term)` | Sound one-char-atom test (si family). |
 | `chars_si(@Term)` | Sound list-of-characters test (si family). |
 | `compound(@Term)` | Succeeds if the argument is a compound term. |
@@ -41,7 +41,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `integer_si(@Term)` | Sound integer test (si family). |
 | `is_list(@Term)` | Succeeds if the argument is a proper list. |
 | `list_si(@Term)` | Sound proper-list test: instantiation_error while the tail is unbound, type_error(list, Term) on a non-list tail. |
-| `must_be(+Type, @Value)` | Throws instantiation_error if Value is unbound (unless Type is var), or type_error(Type, Value) if it is not of Type. |
+| `must_be(+Type, @Value)` | Throws instantiation_error if Value is unbound (unless Type is var), type_error(Type, Value) if Value is of the wrong type, or domain_error(Domain, Value) if Type names a domain of values (not_less_than_zero, io_mode, oneof(L), ...) and Value lies outside it. |
 | `nonvar(@Term)` | Succeeds if the argument is not an unbound variable. |
 | `number(@Term)` | Succeeds if the argument is a number. |
 | `rational(@Term)` | Succeeds if the argument is a rational number (an integer is a rational with denominator 1). |
