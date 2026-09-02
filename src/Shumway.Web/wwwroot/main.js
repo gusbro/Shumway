@@ -1104,14 +1104,28 @@ document.getElementById('export-workspace').addEventListener('click', async () =
 // --- files ---------------------------------------------------------------
 
 document.getElementById('open-file').addEventListener('click', async () => {
-  const names = await workspace.openFiles();
-  if (names.length === 0) return;
+  // Saved BEFORE the picker opens, not after it returns: what you typed
+  // belongs to the file you were on whether you go on to open that same file,
+  // a different one, or nothing at all. (It ran after, and so reopening the
+  // file you were editing wrote the stale buffer back over what had just
+  // arrived — the file could only be brought in again by deleting it first.)
   await saveBuffer();               // may be a library file: it saves where it belongs
-  editingWorkspaceFile(names[0]);
+  const arrived = await workspace.openFiles(async (name) =>
+    (await askChoice(
+      `Replace “${name}” in this workspace?`,
+      'The file you picked holds different text from the copy here. '
+      + 'Replacing it discards this workspace’s own.',
+      [{ value: null, label: 'Keep mine' },
+       { value: 'replace', label: 'Replace', primary: true }])) === 'replace');
+  if (arrived.length === 0) return;
+  editingWorkspaceFile(arrived[0].name);
   await editor.setText((await workspace.read(currentFile)) ?? '');
   await workspace.persist();
   await refreshFiles();
-  emit(`% opened ${names.join(', ')}\n`, 'note');
+  const opened = arrived.filter((f) => !f.kept).map((f) => f.name);
+  const kept = arrived.filter((f) => f.kept).map((f) => f.name);
+  if (opened.length > 0) emit(`% opened ${opened.join(', ')}\n`, 'note');
+  if (kept.length > 0) emit(`% kept this workspace's ${kept.join(', ')}\n`, 'note');
 });
 
 document.getElementById('download-file').addEventListener('click', async () => {

@@ -68,6 +68,12 @@ Files live in the browser's private storage (OPFS) and survive a reload.
 **Download** saves one file to your computer; **Export** saves the whole
 workspace as a zip.
 
+**Open** brings files from your computer into the workspace, and is also how
+you pick up an edit you made to one of them elsewhere: open it again and the
+newer text comes in. If the copy here differs, you are asked which of the two
+to keep — and whatever you were editing is saved before the picker opens, so
+choosing either one costs you nothing.
+
 The `examples` workspace is seeded on the first visit and only then: delete it
 and it stays deleted.
 
@@ -294,7 +300,8 @@ Loading the page with `#selftest` runs an end-to-end check against the deployed
 app and prints the results into the transcript: consult, pulling solutions,
 failure, a syntax error, engine output, cancellation, the editor's highlighting
 over the real DOM, the workspace and Prolog's view of it, workspace separation,
-the zip, sharing both shapes, and the settings envelope. It is the only
+the zip, sharing both shapes, reopening a file that is already here, and the
+settings envelope. It is the only
 automatic test that reaches this layer: a browser-wasm project cannot be
 referenced by a normal test project.
 

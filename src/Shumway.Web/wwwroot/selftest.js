@@ -622,6 +622,114 @@ export async function run(session, emit, out, editor, workspace) {
     check('double-click restores the dock default', dock.style.flexBasis, '');
   }
 
+  // --- reopening a file the picker brought in ------------------------------
+  // The picker itself needs a human, but everything it decides does not: these
+  // hand acceptFiles the files a picker would have read. What is checked is
+  // that only a file with something to lose asks a question.
+  {
+    const name = 'selftest_reopen.pl';
+    const asked = [];
+    const answer = (yes) => async (n) => { asked.push(n); return yes; };
+
+    await workspace.remove(name);
+    let got = await workspace.acceptFiles([{ name, text: 'a(1).\n' }], answer(false));
+    check('a file that is not here yet arrives unasked',
+          JSON.stringify([got[0].kept, asked.length]), '[false,0]');
+    check('and holds what was picked', await workspace.read(name), 'a(1).\n');
+
+    got = await workspace.acceptFiles([{ name, text: 'a(1).\n' }], answer(false));
+    check('reopening the same text asks nothing', asked.length, 0);
+    check('and keeps nothing back', got[0].kept, false);
+
+    got = await workspace.acceptFiles([{ name, text: 'a(1).\r\n' }], answer(false));
+    check('line endings alone are not a difference', asked.length, 0);
+
+    got = await workspace.acceptFiles([{ name, text: 'a(2).\n' }], answer(false));
+    check('different text asks, and Keep mine keeps mine',
+          JSON.stringify([asked, got[0].kept]), `[["${name}"],true]`);
+    check('so the workspace copy is untouched', await workspace.read(name), 'a(1).\n');
+
+    got = await workspace.acceptFiles([{ name, text: 'a(2).\n' }], answer(true));
+    check('and Replace replaces', await workspace.read(name), 'a(2).\n');
+    check('reporting that nothing was kept back', got[0].kept, false);
+
+    await workspace.remove(name);
+    await workspace.persist();
+  }
+
+  // --- Open saves the buffer before it opens the picker ---------------------
+  // The reported bug: it saved AFTER the picker returned, so reopening the file
+  // you were editing wrote your stale buffer back over what had just arrived —
+  // and deleting the file first was the only way to bring it in. Driving the
+  // real button needs a picker, so one is stood in.
+  {
+    const name = 'selftest_picked.pl';
+    const realPicker = window.showOpenFilePicker;
+    const picks = (text) => async () => [{
+      getFile: async () => ({ name, text: async () => text }),
+    }];
+    const dismisses = async () => {
+      const ex = new Error('dismissed');
+      ex.name = 'AbortError';
+      throw ex;
+    };
+    const confirmDialog = document.getElementById('confirm');
+    const press = (root, label) =>
+      [...root.querySelectorAll('button')].find((b) => b.textContent === label)?.click();
+    const answer = (label) => press(document.getElementById('confirm-actions'), label);
+    const until = async (holds, ms = 5000) => {
+      const stop = performance.now() + ms;
+      do {
+        if (await holds()) return true;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      } while (performance.now() < stop);
+      return false;
+    };
+    const holds = (text) => until(async () => (await workspace.read(name)) === text);
+
+    try {
+      document.getElementById('new-file').click();
+      document.getElementById('prompt-input').value = name;
+      press(document.getElementById('prompt-dialog'), 'Create');
+      check('the file to reopen is the one open',
+            await until(() =>
+              document.querySelector('#files .file.current')?.textContent === name), true);
+
+      window.showOpenFilePicker = dismisses;
+      await editor.setText('typed(1).\n');
+      document.getElementById('open-file').click();
+      check('dismissing the picker still saves what you typed',
+            await holds('typed(1).\n'), true);
+
+      window.showOpenFilePicker = picks('picked(2).\n');
+      await editor.setText('typed(3).\n');
+      document.getElementById('open-file').click();
+      check('reopening the file being edited asks', await until(() => confirmDialog.open), true);
+      answer('Replace');
+      check('and Replace wins over the buffer that was open',
+            await holds('picked(2).\n'), true);
+      check('which is what the editor then shows',
+            await until(() => editor.getText() === 'picked(2).\n'), true);
+
+      window.showOpenFilePicker = picks('picked(4).\n');
+      await editor.setText('typed(5).\n');
+      document.getElementById('open-file').click();
+      check('the reopen asks again', await until(() => confirmDialog.open), true);
+      answer('Keep mine');
+      check('and Keep mine keeps what was typed, saved before the picker opened',
+            await until(async () => editor.getText() === 'typed(5).\n'
+                                 && (await workspace.read(name)) === 'typed(5).\n'), true);
+    } finally {
+      window.showOpenFilePicker = realPicker;
+    }
+
+    document.getElementById('delete-file').click();
+    await until(() => confirmDialog.open);
+    answer('Delete');
+    check('and the file is gone again',
+          await until(async () => !(await workspace.list()).includes(name)), true);
+  }
+
   // Persistence is reported rather than assumed: a browser may refuse storage,
   // and the session must still work when it does.
   emit(`note: origin-private storage ${workspace.persistent() ? 'available' : 'UNAVAILABLE'}`
