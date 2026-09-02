@@ -283,6 +283,7 @@ public sealed partial class PrologEngine
         long t0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         try
         {
+            using var _s = SuppressDisplayElision();
             foreach (var sol in QueryAll(goal))
             {
                 Term? t = sol["$TE6_Term"];
@@ -320,6 +321,7 @@ public sealed partial class PrologEngine
         long t0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         try
         {
+            using var _s = SuppressDisplayElision();
             foreach (var sol in QueryAll(goal))
             {
                 Term? expanded = sol["$TE_Expanded"];
@@ -354,6 +356,7 @@ public sealed partial class PrologEngine
         CollectVarNames(input, inputVars);
         var expandedVar = new VarTerm("$TE_Expanded");
         var goal = new CompoundTerm(predName, new Term[] { input, expandedVar });
+        using var _s = SuppressDisplayElision();
         foreach (var sol in QueryAll(goal))
         {
             Term? expanded = sol["$TE_Expanded"];
@@ -610,6 +613,7 @@ public sealed partial class PrologEngine
         long t0 = LoadProfEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         try
         {
+            using var _s = SuppressDisplayElision();
             foreach (var sol in QueryAll(goal))
             {
                 Term? e = sol["$GE_Expanded"];
