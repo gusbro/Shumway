@@ -340,6 +340,22 @@ public sealed partial class BytecodeInterpreter
         if (functorId == TrueFunctorId) return true;
         if (functorId == FailFunctorId) return false;
 
+        // A control construct has no predicate of its own — dispatching it
+        // below reported existence_error((;)/2) for a frozen disjunction.
+        // Route it through the prelude's '$wake_call'/1, whose body is
+        // call(G): the full meta-call machinery, which also gives the goal
+        // its own cut barrier — `!` inside a woken goal commits no further
+        // than the goal, exactly as inside call/1.
+        if (functorId == DisjFunctorId || functorId == ArrowFunctorId
+            || functorId == SoftArrowFunctorId || functorId == NegFunctorId
+            || functorId == NotFunctorId || functorId == CutFunctorId)
+        {
+            int w = _engine.AllocateHeap(2);
+            _engine.SetHeap(w, Cell.Functor(WakeCallFunctorId));
+            _engine.SetHeap(w + 1, goal);
+            return MetaCallInEngine(code, Cell.Str(w));
+        }
+
         // Plain goal: load X0..X[arity-1] from the goal's arguments.
         for (int i = 0; i < arity; i++)
             _engine.SetRegister(i, _engine.GetHeap(argBase + i));

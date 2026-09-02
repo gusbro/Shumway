@@ -59,6 +59,63 @@ public class CoroutiningTests
         Assert.True(sol.Success);
     }
 
+    // ===== control constructs in a woken goal (issue #47) =====
+    // The wake runner dispatches predicates; a frozen (A ; B) reached it as a
+    // call of the nonexistent ;/2. Any goal call/1 takes, freeze/2 takes.
+
+    [Fact]
+    public void Freeze_DisjunctionWithCut_TheIssueQuery()
+    {
+        var sol = Co().Query("freeze(X, ((integer(X), !) ; X = Y)), X = a.");
+        Assert.True(sol.Success);
+        Assert.Equal("a", sol["Y"]!.ToString());
+    }
+
+    [Fact]
+    public void Freeze_EachControlConstructWakes()
+    {
+        Assert.True(Co().Query(
+            "freeze(A, (integer(A) ; atom(A))), A = foo.").Success);
+        Assert.False(Co().Query(
+            "freeze(A, (integer(A) ; A = b)), A = a.").Success);
+        var ite = Co().Query(
+            "freeze(A, (integer(A) -> R = int ; R = other)), A = foo, atom(R).");
+        Assert.True(ite.Success);
+        Assert.Equal("other", ite["R"]!.ToString());
+        Assert.True(Co().Query(
+            "freeze(A, (integer(A) *-> R = int ; R = other)), A = foo, R == other.").Success);
+        Assert.True(Co().Query("freeze(A, \\+ integer(A)), A = foo.").Success);
+        Assert.False(Co().Query("freeze(A, \\+ atom(A)), A = foo.").Success);
+        Assert.True(Co().Query("freeze(A, not(integer(A))), A = foo.").Success);
+        Assert.True(Co().Query("freeze(A, !), A = foo.").Success);
+    }
+
+    [Fact]
+    public void Freeze_CutInWokenGoal_StaysLocalToIt()
+    {
+        // call semantics: the cut commits within the goal, no further.
+        // ((!, fail) ; true) under call/1 fails; the CALLER's alternatives
+        // survive a cut fired inside a woken goal.
+        Assert.False(Co().Query("freeze(X, ((!, fail) ; true)), X = a.").Success);
+        Assert.True(Co().Query(
+            "( freeze(X, !), X = a, fail ; true ).").Success);
+    }
+
+    [Fact]
+    public void Freeze_ControlConstructsInTheImmediateCaseToo()
+    {
+        // A bound variable runs the goal at once, through the same wrapper.
+        Assert.True(Co().Query(
+            "X = foo, freeze(X, (integer(X) ; atom(X))).").Success);
+    }
+
+    [Fact]
+    public void When_DisjunctionGoalWakes()
+    {
+        Assert.True(Co().Query(
+            "when(nonvar(X), (integer(X) ; atom(X))), X = foo.").Success);
+    }
+
     [Fact]
     public void Freeze_VarVarAliasing_MigratesTheGoal()
     {
