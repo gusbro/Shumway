@@ -118,9 +118,9 @@ internal static class Coroutining
 
         %! dif(?X, ?Y) | Coroutining | Constrains X and Y to be different: fails when they become identical, succeeds once they cannot unify.
         dif(X, Y) :-
-            '$dif_check'(X, Y, Out),
+            '$dif_check'(X, Y, Out, Canon),
             ( Out == none -> true
-            ; '$dif_canon'(X, Y, CX, CY),
+            ; '$dif_canon'(X, Y, Canon, CX, CY),
               ( '$dif_live_already'(Out, CX, CY) -> true
               ; '$dif_suspend'(CX, CY, Out)
               )
@@ -148,10 +148,13 @@ internal static class Coroutining
         % its lifetime contains the newer one's, so discarding it and keeping
         % the newcomer would drop the constraint entirely on backtracking to
         % between the two — answers, not just output, would be wrong.
-        '$dif_canon'(X, Y, CX, CY) :-
-            (   unifiable(X, Y, [A = B]) ->
-                % Orient var-var by standard order so dif(X,Y) and dif(Y,X)
-                % land on the same pair; a non-var side always sits second.
+        % The pair comes from the SAME trial unification that decided whether
+        % this dif suspends at all — '$dif_check' hands it back rather than
+        % making us unify a second time to find out. All that is left here is
+        % the orientation: var-var by standard order, so dif(X,Y) and dif(Y,X)
+        % land on the same pair; a non-var side always sits second.
+        '$dif_canon'(X, Y, Canon, CX, CY) :-
+            (   Canon = (A - B) ->
                 (   var(B), B @< A -> CX = B, CY = A
                 ;   CX = A, CY = B
                 )
@@ -188,12 +191,15 @@ internal static class Coroutining
         %   the terms are now identical -> '$dif_check' FAILS, so we fail (the
         %     binding that woke us fails, as dif demands);
         %   still undecided -> retire this incarnation and post a fresh one on
-        %     the variables that remain.
+        %     the variables that remain — in canonical form, since a binding
+        %     may have reduced what is left to a single pair.
         '$dif_wake'(dif_c(X, Y, Alive)) :-
             ( Alive == dead -> true
-            ; '$dif_check'(X, Y, Out),
+            ; '$dif_check'(X, Y, Out, Canon),
               ( Out == none -> Alive = dead
-              ; Alive = dead, '$dif_suspend'(X, Y, Out)
+              ; Alive = dead,
+                '$dif_canon'(X, Y, Canon, CX, CY),
+                '$dif_suspend'(CX, CY, Out)
               )
             ).
 
