@@ -207,6 +207,86 @@ public sealed class WakeBacktrackingTests
         Assert.True(e.Query("( freeze(X, fail), bindit(X, _) ; true ).").Success);
     }
 
+    // ===== inline arithmetic is a goal boundary (ADR-049 close-out) =====
+    // ADR-018 compiles `Z is Y+1` to a fused/inline op with no Call boundary,
+    // so a wake queued by an earlier goal that binds Y never fired before the
+    // arithmetic read Y — it read as unbound and threw instantiation_error.
+
+    [Fact]
+    public void InlineArithmeticFiresAPendingWakeFirst()
+    {
+        var e = Co();
+        var s = e.Query("freeze(X, Y = 5), X = 1, Z is Y + 1.");
+        Assert.True(s.Success);
+        Assert.Equal("6", s["Z"]!.ToString());
+    }
+
+    [Fact]
+    public void InlineComparisonFiresAPendingWakeFirst()
+    {
+        Assert.True(Co().Query("freeze(X, Y = 7), X = 1, Y > 5.").Success);
+        Assert.False(Co().Query("freeze(X, Y = 7), X = 1, Y < 5.").Success);
+    }
+
+    [Fact]
+    public void AMultiStepExpressionFiresTheWakeAtItsStart()
+    {
+        // The AEvalPush sequence (not the fused op): the flush is at the
+        // first push — draining mid-expression would clobber the shared
+        // evaluation stack.
+        var s = Co().Query("freeze(X, Y = 2), X = 1, Z is Y*Y + 1.");
+        Assert.True(s.Success);
+        Assert.Equal("5", s["Z"]!.ToString());
+        var t = Co().Query("freeze(X, Y = 3), X = 1, Z is (Y + Y) * 2.");
+        Assert.True(t.Success);
+        Assert.Equal("12", t["Z"]!.ToString());
+    }
+
+    [Fact]
+    public void AWakeThatEvaluatesArithmeticDoesNotClobberTheEvalStack()
+    {
+        // The drain during operand read runs a wake goal that ITSELF does
+        // arithmetic on the same static eval stack. A later operand of the
+        // outer expression, already pushed, must survive: nested evaluation
+        // is balanced (pushes above, pops back). Second operand unbound so
+        // the flush lands mid-expression.
+        var s = Co().Query(
+            "freeze(X, Y is 3 * 4), X = 1, Z is 100 + Y.");
+        Assert.True(s.Success);
+        Assert.Equal("112", s["Z"]!.ToString());
+    }
+
+    [Fact]
+    public void AFailedWakeFailsTheArithmeticGoal()
+    {
+        // The drain reports failure, and the inline op backtracks rather
+        // than throwing — a failed wake fails the binding that triggered it.
+        Assert.False(Co().Query("freeze(X, fail), X = 1, _ is X + 1.").Success);
+        Assert.True(Co().Query(
+            "( freeze(X, fail), X = 1, _ is X + 1 ; true ).").Success);
+    }
+
+    [Fact]
+    public void PromotedInlineArithmeticFiresAPendingWakeToo()
+    {
+        // The ADR-018 arithmetic ops are emitted in Tier-1 IL as well; the
+        // promoted body must flush a pending wake before its inline arithmetic
+        // reads the operand, exactly as Tier-0 does.
+        var e = new PrologEngine();
+        e.UseCoroutining();
+        e.IlPromotion.Threshold = 3;
+        e.ConsultString(":- public aw/3.\naw(X, Y, Z) :- X = 1, Z is Y + 1.\n");
+        for (int i = 0; i < 8; i++)
+            Assert.True(e.Query("aw(1, 4, _).").Success);
+        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        for (int i = 0; i < 3; i++)
+        {
+            var s = e.Query("freeze(X, Y = 5), aw(X, Y, Z).");
+            Assert.True(s.Success);
+            Assert.Equal("6", s["Z"]!.ToString());
+        }
+    }
+
     [Fact]
     public void WhenAndFrozenReporting_Unmoved()
     {

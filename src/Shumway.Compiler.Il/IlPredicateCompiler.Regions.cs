@@ -866,6 +866,60 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfFalse(failLabel);
     }
 
+    /// <summary>ADR-049 close-out: fire a wake pending before an inline
+    /// arithmetic goal reads its operand variables (else they read as
+    /// unbound). The drain, not the interrupt — arithmetic is deterministic
+    /// and cannot suspend mid-opcode, exactly the cut-boundary case.
+    ///
+    /// <para>The guard is layered so the common case pays almost nothing:
+    /// <c>HasPendingWakeups</c> (a field read; false for every non-attvar
+    /// program), then whether an OPERAND is actually unbound (a deref; false
+    /// for every bound operand, which is every operand a clp propagator
+    /// computes on). Only when both hold does it drain, which can fail — a
+    /// failed wake branches to <paramref name="failLabel"/>.</para>
+    ///
+    /// <para><paramref name="operands"/> are the (kind, val) pairs to test.
+    /// An empty set (the AEvalPush sequence, whose operand is only known at
+    /// each push) falls back to a flush whenever wakeups pend AND the eval
+    /// stack is empty — the mid-expression drain would clobber the shared
+    /// stack.</para></summary>
+    private static void EmitArithWakeFlush(
+        Sigil.Emit<PredicateDelegate> emit, Sigil.Label failLabel,
+        params (int Kind, int Val)[] operands)
+    {
+        var skip = emit.DefineLabel($"arith_wake_skip_{NextLabelSeq()}");
+        var doFlush = emit.DefineLabel($"arith_wake_do_{NextLabelSeq()}");
+        emit.LoadArgument(0);
+        emit.Call(EngineHasPendingWakeupsGetter);
+        emit.BranchIfFalse(skip);
+        if (operands.Length == 0)
+        {
+            // AEvalPush: operand not known here; gate on an empty eval stack
+            // (expression start) so the drain's nested arithmetic is safe.
+            emit.Call(ArithIsEmptyGetter);
+            emit.BranchIfFalse(skip);
+        }
+        else
+        {
+            // Flush only if SOME operand is unbound (a bound operand cannot be
+            // waiting on a wake). Any unbound operand → doFlush; none → skip.
+            foreach (var (kind, val) in operands)
+            {
+                emit.LoadArgument(0);
+                emit.LoadConstant(kind);
+                emit.LoadConstant(val);
+                emit.Call(ArithOperandUnboundMethod);
+                emit.BranchIfTrue(doFlush);
+            }
+            emit.Branch(skip);
+        }
+        emit.MarkLabel(doFlush);
+        emit.LoadArgument(0);
+        emit.Call(EngineFlushWakeupsForIlCutMethod);
+        emit.BranchIfFalse(failLabel);
+        emit.MarkLabel(skip);
+    }
+
     /// <summary>ADR-049 stage 2: the wake INTERRUPT at a region boundary,
     /// replacing the bool drain. The helper's verdict: 0 — nothing pending
     /// (or the drain fallback succeeded), fall through; 1 — interrupt armed

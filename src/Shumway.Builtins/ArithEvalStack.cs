@@ -40,6 +40,32 @@ public static class ArithEvalStack
     [ThreadStatic] private static bool[]? _b;
     [ThreadStatic] private static int _top;
 
+    /// <summary>The shared evaluation stack holds no partial operands — the
+    /// state between arithmetic goals. The wake drain (ADR-049) runs nested
+    /// Prolog, which may itself evaluate arithmetic on this same static stack,
+    /// so a boundary may only flush pending wakeups while this is true.</summary>
+    public static bool IsEmpty => _top == 0;
+
+    /// <summary>ADR-049: whether an inline-arithmetic operand is an unbound
+    /// variable — the ONLY case a pending wake could still bind, and so the
+    /// only case a wake flush is needed before reading it. A bound operand
+    /// (the norm, and every operand a clp propagator computes on) skips the
+    /// flush for the price of one deref.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool OperandUnbound(Activation engine, int kind, int val)
+    {
+        if (kind == 0) return false;   // int literal
+        Cell c = kind == 4 ? engine.GetY(val) : engine.GetRegister(val);
+        if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        return c.Tag is Tag.Ref or Tag.AttVar;
+    }
+
+    /// <summary>Either fused-op operand unbound (see <see cref="OperandUnbound"/>).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool AnyOperandUnbound(Activation engine,
+        int aKind, int aVal, int bKind, int bVal)
+        => OperandUnbound(engine, aKind, aVal) || OperandUnbound(engine, bKind, bVal);
+
     private static void EnsureInit()
     {
         if (_i is not null) return;
