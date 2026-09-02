@@ -194,6 +194,9 @@ public static class SolutionFormatter
         {
             if (residualsByVar.TryGetValue(name, out var rs))
             {
+                // Residuals are reported whatever the variable is called: what
+                // a `_`-named variable is still CONSTRAINED to is an answer,
+                // even though what it was bound to is not.
                 foreach (Term g in rs)
                     lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops));
                 continue;
@@ -203,16 +206,33 @@ public static class SolutionFormatter
                 continue;   // no value, or its group was already emitted
             var members = groups[key];
             for (int i = 0; i + 1 < members.Count; i++)
-                lines.Add($"{members[i]} = {members[i + 1]}");
+                AddBinding(lines, members[i], members[i + 1]);
             // The last member carries the value — unless the shared value is
             // itself an unbound variable (the chain alone says it all).
             if (solution[members[^1]] is not VarTerm)
-                lines.Add($"{members[^1]} = {key}");
+                AddBinding(lines, members[^1], key);
         }
         foreach (Term g in unattachedResiduals)
             lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops));
 
         if (lines.Count == 0) return "true";
         return string.Join(",\n", lines);
+    }
+
+    /// <summary>Adds <c>Name = Value</c> unless the variable being reported ON
+    /// is one the user named with a leading underscore.
+    ///
+    /// <para>Such a name says "I am not asking about this one", so its value is
+    /// not part of the answer — <c>?- _A = 5.</c> answers <c>true</c>. It is the
+    /// SUBJECT that decides, not the value: <c>?- X = f(_A).</c> still answers
+    /// <c>X = f(_A)</c>, because the question was about X and naming the
+    /// variable inside its value is what makes the answer readable. Residual
+    /// goals are not bindings and are never dropped — see the caller. SWI
+    /// behaves exactly this way, down to <c>?- _A = X.</c> being <c>true</c>
+    /// while <c>?- X = _A.</c> is <c>X = _A</c>.</para></summary>
+    private static void AddBinding(List<string> lines, string name, string value)
+    {
+        if (name.Length > 0 && name[0] == '_') return;
+        lines.Add($"{name} = {value}");
     }
 }
