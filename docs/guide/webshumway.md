@@ -60,7 +60,7 @@ anything to lose. The active workspace cannot be deleted: it is the current
 directory.
 
 To get a fresh engine **without** switching, enter `restart.` as a query:
-whatever was consulted or asserted is discarded and nothing is loaded — the
+whatever was consulted or asserted is discarded and nothing is loaded. The
 files and the editor stay as they are, so a consult brings the program right
 back.
 

@@ -173,8 +173,8 @@ false.
   `consult/1` accepts the same list.
 - `?- [user].` enters clauses **interactively**: each input line is read
   behind a `|: ` prompt and collected until Ctrl-D / Ctrl-Z+Enter or a
-  line reading `end_of_file.` — then the collected text is consulted like
-  a file.
+  line reading `end_of_file.`, and the collected text is then consulted
+  like a file.
 - End the session with `halt.` (or `halt(N).` to exit with an explicit
   exit code), or with Ctrl-D / Ctrl-Z+Enter (end of input).
 - `true` is printed for variable-less success, `false` for failure,
@@ -903,7 +903,7 @@ It affects everything built on the standard order: `sort/2`, `msort/2`,
 
 Integers are unbounded: arithmetic promotes past 64 bits transparently
 (`X is 2^100` answers exactly), and rationals (ADR-039) build on the same
-representation. "Unbounded" means no bound imposed by the language — the
+representation. "Unbounded" means no bound imposed by the language. The
 ceiling is the representation's, which for Shumway is .NET's
 [`System.Numerics.BigInteger`](https://learn.microsoft.com/dotnet/api/system.numerics.biginteger):
 Microsoft documents it as having "no theoretical upper or lower bounds",
@@ -920,7 +920,7 @@ At the ceiling the engine raises the ISO error
 E = resource_error(memory).
 ```
 
-uniformly — whichever operation hits it (`^`, `<<`, a multiplication) and
+uniformly, whichever operation hits it (`^`, `<<`, a multiplication) and
 whichever tier runs it.
 
 ### Digit separators
