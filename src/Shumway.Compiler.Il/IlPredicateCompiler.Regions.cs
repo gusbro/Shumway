@@ -866,6 +866,42 @@ public sealed partial class IlPredicateCompiler
         emit.BranchIfFalse(failLabel);
     }
 
+    /// <summary>ADR-049 stage 2: the wake INTERRUPT at a region boundary,
+    /// replacing the bool drain. The helper's verdict: 0 — nothing pending
+    /// (or the drain fallback succeeded), fall through; 1 — interrupt armed
+    /// (P at the driver, IlTailCallPending set), return true so the dispatch
+    /// loop runs it; 2 — the drain fallback failed, branch to fail.
+    /// <paramref name="calleeFid"/> &lt; 0 means the proceed shape (resume =
+    /// the continuation CP); otherwise the call shape (resume = the callee's
+    /// forward marker — CP must already hold the callee's continuation when
+    /// this runs).</summary>
+    private static void EmitRegionWakeBoundary(
+        Sigil.Emit<PredicateDelegate> emit, Sigil.Label failLabel, int calleeFid)
+    {
+        emit.LoadArgument(0);
+        if (calleeFid >= 0)
+        {
+            EmitFunctorId(emit, calleeFid);
+            emit.Call(EngineWakeBoundaryCallMethod);
+        }
+        else
+        {
+            emit.Call(EngineWakeBoundaryProceedMethod);
+        }
+        var verdict = emit.DeclareLocal<int>($"wake_v_{NextLabelSeq()}");
+        emit.StoreLocal(verdict);
+        emit.LoadLocal(verdict);
+        emit.LoadConstant(2);
+        emit.BranchIfEqual(failLabel);
+        var goOn = emit.DefineLabel($"wake_go_{NextLabelSeq()}");
+        emit.LoadLocal(verdict);
+        emit.LoadConstant(0);
+        emit.BranchIfEqual(goOn);
+        emit.LoadConstant(true);   // verdict 1: suspended — the loop takes P
+        emit.Return();
+        emit.MarkLabel(goOn);
+    }
+
     private static bool TryEmitRegionOpcode(
         Sigil.Emit<PredicateDelegate> emit, byte[] code, int pc, Opcode op,
         RegionEmitContext ctx, ref int pcRef)
@@ -873,14 +909,19 @@ public sealed partial class IlPredicateCompiler
         switch (op)
         {
             case Opcode.Proceed:
-                EmitRegionWakeupFlush(emit, ctx.FailLabel);
+                // ADR-049 stage 2: pending wakeups interrupt here instead of
+                // draining — CP already holds the continuation the resume
+                // will jump to.
+                EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
                 emit.Branch(ctx.RetLabel);
                 pcRef = pc + 1;
                 return true;
             case Opcode.DeallocateProceed:
                 emit.LoadArgument(0);
                 emit.Call(EngineDeallocateMethod);
-                EmitRegionWakeupFlush(emit, ctx.FailLabel);
+                // After the deallocate, so CP is the caller continuation the
+                // proceed-shape resume captures.
+                EmitRegionWakeBoundary(emit, ctx.FailLabel, calleeFid: -1);
                 emit.Branch(ctx.RetLabel);
                 pcRef = pc + OpcodeTable.Get((byte)op).Size;
                 return true;
@@ -890,10 +931,11 @@ public sealed partial class IlPredicateCompiler
                 var member = ctx.Region.Members[ctx.CurrentMemberIndex];
                 int fid = FindCallSiteFunctorId(member.CallSites, pc);
                 if (fid < 0) return false;   // malformed — let the normal path throw
-                // Flush pending wakeups at this goal boundary (the br/trampoline
-                // bypasses the dispatch loop's flush); then set the cut barrier.
-                EmitRegionWakeupFlush(emit, ctx.FailLabel);
-                // engine.SetB0(engine.B) — the cut barrier for the callee.
+                // The cut barrier for the callee — set BEFORE the wake
+                // boundary: the call-shape resume dispatches the callee by
+                // forward marker without re-running this site, and
+                // WakeReturn re-establishes B0 = B post-wake so a cut in the
+                // callee can never prune the wake's alternatives.
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
                 emit.Call(EngineBGetter);
@@ -902,11 +944,15 @@ public sealed partial class IlPredicateCompiler
                 if (op == Opcode.Call)
                 {
                     // Non-tail: register the forward continuation (Cp = a resume
-                    // marker into THIS region at the plan's cursor for this site).
+                    // marker into THIS region at the plan's cursor for this site)
+                    // BEFORE the wake boundary — the wake frame captures it as
+                    // the continuation the callee will proceed into.
                     int cursor = ctx.CursorBySite[(ctx.CurrentMemberIndex, pc)];
                     emit.LoadArgument(0);
                     EmitResumeMarker(emit, ctx.RegionFid, cursor);
                     emit.Call(EngineSetCpMethod);
+                    // ADR-049 stage 2: the interrupt in front of the call.
+                    EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);
                     if (intra)
                     {
                         // Intra-region: br to the member block; its proceed returns
@@ -935,12 +981,14 @@ public sealed partial class IlPredicateCompiler
                 {
                     // Intra-region tail call: Cp already holds this member's caller
                     // continuation, so the callee's proceed returns straight to it.
+                    EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
                     emit.Branch(ctx.MemberEntry[fid]);
                 }
                 else
                 {
                     // Cross-region tail call: tail-trampoline (Cp unchanged = the
                     // region's caller continuation; the callee's proceed returns to it).
+                    EmitRegionWakeBoundary(emit, ctx.FailLabel, fid);   // ADR-049
                     emit.LoadArgument(0);
                     EmitFunctorId(emit, fid);
                     emit.LoadConstant(0);

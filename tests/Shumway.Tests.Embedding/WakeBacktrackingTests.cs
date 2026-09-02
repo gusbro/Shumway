@@ -137,6 +137,76 @@ public sealed class WakeBacktrackingTests
             "freeze(X, member(Y, [1,2])), ( X = a, Y = 9 ; X = b, Y = 2 ).").Success);
     }
 
+    // ===== ADR-049 stage 2: the interrupt at Tier-1 region boundaries =====
+    // The predicate that BINDS the frozen variable is promoted to IL, so the
+    // wake fires from an emitted region boundary (the flush the drain used
+    // to own), suspends the IL body via the tail-call bail, runs the driver
+    // in the dispatch loop, and resumes by forward marker.
+
+    private static PrologEngine Promoted(out int rounds)
+    {
+        var e = new PrologEngine();
+        e.UseCoroutining();
+        e.IlPromotion.Threshold = 3;
+        e.ConsultString("""
+            :- public bindit/2.
+            :- public relay/2.
+            bindit(V, V2) :- relay(V, V2).
+            relay(V, V2) :- V = go, V2 = V.
+            """);
+        rounds = 8;
+        return e;
+    }
+
+    [Fact]
+    public void PromotedBinder_NondeterministicWakeBacktracks()
+    {
+        var e = Promoted(out int rounds);
+        for (int i = 0; i < rounds; i++)
+            Assert.True(e.Query(
+                "freeze(X, member(Y, [1,2,3])), bindit(X, _), Y = 3.").Success);
+        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        // Promoted now: the wake fires at the IL boundary and its
+        // alternatives must still be re-enterable.
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.True(e.Query(
+                "freeze(X, member(Y, [1,2,3])), bindit(X, _), Y = 3.").Success);
+            Assert.True(e.Query(
+                "findall(Y, (freeze(X, member(Y, [1,2])), bindit(X, _)), L), "
+              + "L == [1,2].").Success);
+        }
+    }
+
+    [Fact]
+    public void PromotedBinder_CutInWokenGoalStaysLocal()
+    {
+        var e = Promoted(out int rounds);
+        for (int i = 0; i < rounds; i++)
+            Assert.True(e.Query("bindit(go, _).").Success);
+        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.False(e.Query(
+            "freeze(X, ((!, fail) ; true)), bindit(X, _).").Success);
+        Assert.True(e.Query(
+            "( freeze(X, !), bindit(X, _), fail ; true ).").Success);
+        // A cut in the CALLEE dispatched after the wake must not prune the
+        // wake's alternatives (the resume re-establishes its barrier).
+        Assert.True(e.Query(
+            "findall(Y, (freeze(X, member(Y, [1,2])), bindit(X, _)), L), "
+          + "L == [1,2].").Success);
+    }
+
+    [Fact]
+    public void PromotedBinder_FailedWakeFailsTheBinding()
+    {
+        var e = Promoted(out int rounds);
+        for (int i = 0; i < rounds; i++)
+            Assert.True(e.Query("bindit(go, _).").Success);
+        Assert.True(e.IlPromotion.WaitForPendingPromotions());
+        Assert.False(e.Query("freeze(X, fail), bindit(X, _).").Success);
+        Assert.True(e.Query("( freeze(X, fail), bindit(X, _) ; true ).").Success);
+    }
+
     [Fact]
     public void WhenAndFrozenReporting_Unmoved()
     {

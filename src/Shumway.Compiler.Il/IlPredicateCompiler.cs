@@ -304,6 +304,11 @@ public sealed partial class IlPredicateCompiler
     // (see EmitCpFreeGuardCommit).
     private static readonly MethodInfo EngineHasPendingWakeupsGetter =
         typeof(Activation).GetProperty(nameof(Activation.HasPendingWakeups))!.GetGetMethod()!;
+    // ADR-049 stage 2 — the region-boundary wake interrupt entry points.
+    private static readonly MethodInfo EngineWakeBoundaryCallMethod =
+        typeof(Activation).GetMethod(nameof(Activation.Tier1WakeBoundaryCall))!;
+    private static readonly MethodInfo EngineWakeBoundaryProceedMethod =
+        typeof(Activation).GetMethod(nameof(Activation.Tier1WakeBoundaryProceed))!;
     // ADR-031 case B — the binding-guard snapshot/restore surface.
     private static readonly MethodInfo EngineBindingTrailTopGetter =
         typeof(Activation).GetProperty(nameof(Activation.BindingTrailTop))!.GetGetMethod()!;
