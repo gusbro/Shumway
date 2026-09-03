@@ -588,11 +588,22 @@ internal static class ReplTopLevel
             else
             {
                 string? s = Shumway.Embedding.SentenceScanner.ReadSentenceText(
-                    new System.IO.StringReader(buffered), out bool complete);
-                if (s is not null && complete)
+                    new System.IO.StringReader(buffered), out var end,
+                    allowRawControls: _session?.Engine.Flags.ArityCompat ?? false);
+                if (s is not null && end == Shumway.Embedding.SentenceEnd.Complete)
                 {
                     pending.Consume(s.Length);
                     return s.Trim();
+                }
+                if (s is not null && end == Shumway.Embedding.SentenceEnd.Poisoned)
+                {
+                    // No continuation can complete this sentence (a raw
+                    // control char sits inside a quoted token): hand it to
+                    // the parser NOW so the user sees the syntax error
+                    // instead of a continuation prompt that cannot help.
+                    // Untrimmed — the poisoning character IS the diagnosis.
+                    pending.Consume(s.Length);
+                    return s;
                 }
                 // Incomplete sentence buffered: prompt for its continuation.
             }
