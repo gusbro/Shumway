@@ -173,7 +173,7 @@ Examples:
 - `GetConstantA1`, `GetConstantA2`: specialization for arguments 1 and 2 (very common in clause heads).
 - `PutConstantA1`, `PutConstantA2`: similar for argument preparation.
 - `GetListA1`, `GetListA2`: specialization of list matching.
-- Builtin opcodes for hot builtins: `UnifyEq` (=/2), `Is` (is/2), `LessThan` (</2), `GreaterThan` (>/2), `LessEq` (=</2), `GreaterEq` (>=/2), `ArithEq` (=:=/2), `ArithNotEq` (=\=/2). These skip the general `CallBuiltin` dispatch.
+- Builtin opcodes for hot builtins. The v1 sketch reserved a per-builtin family (`UnifyEq` for =/2, `Is`, the arithmetic comparisons); none of those were ever emitted, and the encodings were reclaimed once ADR-018's arithmetic instruction set covered `is/2` and the comparisons and `=/2` inlined as unification instructions. Hot-builtin dispatch that skips `CallBuiltin` exists, but through those later designs.
 
 The full set was ~80 opcodes at Phase 1 (later ADRs appended to the dense block; see Opcode.cs for the live set).
 
