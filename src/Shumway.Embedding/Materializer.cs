@@ -84,12 +84,20 @@ public static class Materializer
         Activation engine, Term term, Dictionary<string, int> varMap)
     {
         List<(Term Term, int Dest)>? work = null;
-        Cell root = MaterializeNode(engine, term, varMap, ref work);
+        // Cycle knots (TermReader's CycleId / IsCycleBack pair): the owner
+        // registers the cell that names it as it is planted, and every
+        // back-edge variable resolves to that cell instead of a fresh
+        // unbound — rebuilding the rational tree the AST could only spell
+        // as a tree. An owner is always an ancestor of its back-edges, so
+        // registration precedes every lookup. Null on acyclic input.
+        Dictionary<string, Cell>? knots = null;
+        Cell root = MaterializeNode(engine, term, varMap, ref work, ref knots);
         while (work is { Count: > 0 })
         {
             var (pending, dest) = work[^1];
             work.RemoveAt(work.Count - 1);
-            engine.SetHeap(dest, MaterializeNode(engine, pending, varMap, ref work));
+            engine.SetHeap(dest,
+                MaterializeNode(engine, pending, varMap, ref work, ref knots));
         }
         return root;
     }
@@ -98,7 +106,7 @@ public static class Materializer
     /// <paramref name="work"/> with the heap slots they must fill.</summary>
     private static Cell MaterializeNode(
         Activation engine, Term term, Dictionary<string, int> varMap,
-        ref List<(Term Term, int Dest)>? work)
+        ref List<(Term Term, int Dest)>? work, ref Dictionary<string, Cell>? knots)
     {
         switch (term)
         {
@@ -140,6 +148,12 @@ public static class Materializer
                 return Cell.Ref(engine.MakePstr(s.Content, s.Kind));
 
             case VarTerm v:
+                // A cycle back-edge resolves to its owner's cell; the
+                // fallback (no owner registered — an elided display tree)
+                // degrades to the old fresh-variable cut rather than failing.
+                if (v.IsCycleBack && knots is not null
+                    && knots.TryGetValue(v.Name, out Cell tied))
+                    return tied;
                 if (v.Name == "_" || !varMap.TryGetValue(v.Name, out int existingIdx))
                 {
                     int freshIdx = engine.AllocateHeapUnbound();
@@ -155,10 +169,16 @@ public static class Materializer
                 // overflow on a long list. Only the (shallow) elements and
                 // the final tail recurse.
                 var heads = new List<Term>();
+                // Interior cons nodes never get their own MaterializeNode
+                // call, so a cycle owner among them must be collected here
+                // and registered once the pair addresses exist.
+                List<(int Index, string Id)>? owners = null;
                 Term cursor = term;
                 while (cursor is CompoundTerm cc
                        && cc.Functor == "." && cc.Args.Length == 2)
                 {
+                    if (cc.CycleId is { } cid)
+                        (owners ??= new List<(int, string)>()).Add((heads.Count, cid));
                     heads.Add(cc.Args[0]);
                     cursor = cc.Args[1];
                 }
@@ -166,6 +186,12 @@ public static class Materializer
                 // Reserve every pair cell up front so the indices are stable
                 // while the elements (which may extend the heap) materialise.
                 int firstPair = engine.AllocateHeap(2 * count);
+                if (owners is not null)
+                {
+                    knots ??= new Dictionary<string, Cell>();
+                    foreach (var (index, id) in owners)
+                        knots[id] = Cell.Lis(firstPair + 2 * index);
+                }
                 for (int i = 0; i + 1 < count; i++)
                     engine.SetHeap(firstPair + 2 * i + 1,
                         Cell.Lis(firstPair + 2 * (i + 1)));
@@ -202,6 +228,8 @@ public static class Materializer
                 int strBase = engine.AllocateHeap(2 + c.Args.Length);
                 engine.SetHeap(strBase, Cell.Str(strBase + 1));
                 engine.SetHeap(strBase + 1, Cell.Functor(functorId));
+                if (c.CycleId is { } cycleId)
+                    (knots ??= new Dictionary<string, Cell>())[cycleId] = Cell.Ref(strBase);
                 work ??= new List<(Term, int)>(16);
                 for (int i = c.Args.Length - 1; i >= 0; i--)
                     work.Add((c.Args[i], strBase + 2 + i));

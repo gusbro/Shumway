@@ -31,7 +31,7 @@ public static class ErrorRendering
             ex switch
             {
                 ShumwayPrologException pex =>
-                    $"error: {AstTermRenderer.RenderQuoted(pex.Term)}",
+                    $"error: {AstTermRenderer.RenderQuoted(ResidualProjection.ElideCycleMarkers(pex.Term))}",
                 PrologRuntimeException re => $"error: {FormatRuntimeError(re)}",
                 // A query whose TEXT is perfect syntax naming an
                 // unrepresentable value (a float above max_float): the ISO
@@ -77,7 +77,7 @@ public static class ErrorRendering
         else
             body = MetaBuiltins.TranslateRuntimeError(re)
                     is Shumway.Compiler.Ast.CompoundTerm { Functor: "error", Args.Length: 2 } ball
-                ? AstTermRenderer.RenderQuoted(ball.Args[0])
+                ? AstTermRenderer.RenderQuoted(ResidualProjection.ElideCycleMarkers(ball.Args[0]))
                 : string.IsNullOrEmpty(re.Detail) ? re.Kind : $"{re.Kind}({re.Detail})";
         // Pattern, not IsNullOrEmpty: net48's reference assemblies lack the
         // NotNullWhen annotation, so the indexer trips CS8602 there.

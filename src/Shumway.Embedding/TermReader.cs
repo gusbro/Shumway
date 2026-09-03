@@ -18,9 +18,12 @@ namespace Shumway.Embedding;
 /// <para>cyclic structures (built by plain <c>=/2</c>'s
 /// occurs-check-off binding, e.g. <c>X = f(X)</c>) used to overflow the C#
 /// stack here. Cycle detection substitutes a synthetic
-/// <c>VarTerm("_C{addr}")</c> at the cycle-back point — preserving identity
-/// across the multiple back-edges in a single materialise pass without
-/// recursing into an infinite tree.</para>
+/// <c>VarTerm("_C{addr}", IsCycleBack)</c> at the cycle-back point and stamps
+/// the matching <c>CycleId</c> on the owning compound — the AST stays a tree
+/// (value equality and every walker are unaffected), and
+/// <c>Materializer</c> re-ties the knot on the heap, so a cyclic term
+/// round-trips as the rational tree it is instead of losing its cycle to a
+/// fresh variable (an error ball's culprit, a thrown cyclic term).</para>
 ///
 /// <para>The whole walk is iterative — a per-compound-level C# recursion
 /// would overflow the host uncatchably at materialise time on a
@@ -129,6 +132,11 @@ public static class TermReader
         try
         {
             int consFid = -1;   // cons functor id, interned lazily on first list
+            // Addresses that received a cycle back-edge marker this walk; the
+            // owner's assemble frame stamps the matching CycleId so
+            // Materializer can re-tie the knot. Null on the (overwhelmingly
+            // common) acyclic walk.
+            HashSet<int>? knots = null;
             work.Add(Frame.Expand(heapIdx));
             while (work.Count > 0)
             {
@@ -137,7 +145,8 @@ public static class TermReader
                 switch (f.Kind)
                 {
                     case 0:   // Expand
-                        Expand(engine, f.A, work, results, active, ref consFid, ref budget);
+                        Expand(engine, f.A, work, results, active, ref consFid,
+                            ref budget, ref knots);
                         break;
 
                     case 1:   // Assemble compound from Arity results
@@ -151,7 +160,9 @@ public static class TermReader
                             results.RemoveAt(results.Count - 1);
                         }
                         active.Remove(f.A);
-                        results.Add(new CompoundTerm(f.Name!, args, f.FunctorId));
+                        results.Add(knots?.Contains(f.A) == true
+                            ? new CompoundTerm(f.Name!, args, f.FunctorId, $"_C{f.A}")
+                            : new CompoundTerm(f.Name!, args, f.FunctorId));
                         break;
                     }
 
@@ -162,7 +173,9 @@ public static class TermReader
                         Term head = results[results.Count - 1];
                         results.RemoveAt(results.Count - 1);
                         active.Remove(f.A);
-                        results.Add(new CompoundTerm(".", new[] { head, tail }, f.FunctorId));
+                        results.Add(knots?.Contains(f.A) == true
+                            ? new CompoundTerm(".", new[] { head, tail }, f.FunctorId, $"_C{f.A}")
+                            : new CompoundTerm(".", new[] { head, tail }, f.FunctorId));
                         break;
                     }
 
@@ -201,7 +214,7 @@ public static class TermReader
     /// of the explicit <paramref name="work"/> stack.</summary>
     private static void Expand(Activation engine, int heapIdx,
         List<Frame> work, List<Term> results, HashSet<int> active, ref int consFid,
-        ref int budget)
+        ref int budget, ref HashSet<int>? knots)
     {
         if (budget <= 0)
         {
@@ -295,7 +308,8 @@ public static class TermReader
                 // recursing forever.
                 if (!active.Add(functorIdx))
                 {
-                    results.Add(new VarTerm($"_C{functorIdx}"));
+                    (knots ??= new HashSet<int>()).Add(functorIdx);
+                    results.Add(new VarTerm($"_C{functorIdx}", isCycleBack: true));
                     break;
                 }
                 Cell functorCell = engine.GetHeap(functorIdx);
@@ -319,7 +333,8 @@ public static class TermReader
                 int h = cell.AsHeapIndex;
                 if (!active.Add(h))
                 {
-                    results.Add(new VarTerm($"_C{h}"));
+                    (knots ??= new HashSet<int>()).Add(h);
+                    results.Add(new VarTerm($"_C{h}", isCycleBack: true));
                     break;
                 }
                 if (consFid < 0)

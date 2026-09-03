@@ -167,6 +167,41 @@ public static class SolutionFormatter
                     (cycleNames ??= new Dictionary<string, string>())
                         .TryAdd($"_C{addr}", name);
 
+        // An INTERIOR cycle — one whose owner is not the root of any user
+        // variable's value, e.g. the culprit inside a caught
+        // `type_error(list, …)` — has no name to re-enter by. Give the owner
+        // a synthetic one and report it as its own line, the idiom a root
+        // cycle gets for free: `E = type_error(list, _S1)` plus
+        // `_S1 = ['1'|_S1]`. Explicit stack: a value tree is user data of
+        // any depth.
+        List<(string Name, Term Owner)>? interiorCycles = null;
+        {
+            List<Term>? walk = null;
+            foreach (string name in userVars)
+            {
+                Term? val = solution[name];
+                if (val is null || residualsByVar.ContainsKey(name)) continue;
+                (walk ??= new List<Term>()).Add(val);
+            }
+            int synth = 0;
+            while (walk is { Count: > 0 })
+            {
+                Term t = walk[^1];
+                walk.RemoveAt(walk.Count - 1);
+                if (t is not CompoundTerm ct) continue;
+                if (ct.CycleId is { } cid
+                    && (cycleNames is null || !cycleNames.ContainsKey(cid)))
+                {
+                    string sname;
+                    do { sname = $"_S{++synth}"; }
+                    while (userVars.Contains(sname));
+                    (cycleNames ??= new Dictionary<string, string>()).Add(cid, sname);
+                    (interiorCycles ??= new List<(string, Term)>()).Add((sname, ct));
+                }
+                foreach (Term a in ct.Args) walk.Add(a);
+            }
+        }
+
         // SWI-style binding display: user vars whose values are identical are
         // CHAINED — `A = B, B = algo` instead of `A = algo, B = algo` — and
         // two vars sharing one still-unbound variable show their aliasing
@@ -177,7 +212,12 @@ public static class SolutionFormatter
         {
             Term? val = solution[name];
             if (val is null || residualsByVar.ContainsKey(name)) continue;
-            if (cycleNames is not null) val = ResidualProjection.SubstituteVarNames(val, cycleNames);
+            if (cycleNames is not null)
+            {
+                // Owners first: SubstituteVarNames' rebuilds drop the stamp.
+                val = ResidualProjection.SubstituteCycleOwnersBelowRoot(val, cycleNames);
+                val = ResidualProjection.SubstituteVarNames(val, cycleNames);
+            }
             // A named variable occurring inside this value prints as its name.
             if (displayName.Count > 0)
                 val = ResidualProjection.SubstituteVarNames(val, displayName);
@@ -212,6 +252,16 @@ public static class SolutionFormatter
             if (solution[members[^1]] is not VarTerm)
                 AddBinding(lines, members[^1], key);
         }
+        if (interiorCycles is not null)
+            foreach (var (sname, owner) in interiorCycles)
+            {
+                Term shown = ResidualProjection.SubstituteCycleOwnersBelowRoot(owner, cycleNames!);
+                shown = ResidualProjection.SubstituteVarNames(shown, cycleNames!);
+                if (displayName.Count > 0)
+                    shown = ResidualProjection.SubstituteVarNames(shown, displayName);
+                lines.Add($"{sname} = " + AstTermRenderer.Render(
+                    Elide(shown, elide), 1200, ops, quoted: true, portrayText: true));
+            }
         foreach (Term g in unattachedResiduals)
             lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops, quoted: true, portrayText: true));
 

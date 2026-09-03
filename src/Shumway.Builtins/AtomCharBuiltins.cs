@@ -920,8 +920,11 @@ public static class AtomCharBuiltins
             int spineSteps = 0, spineCap = engine.HeapTop + 1;
             while (ListCursor.TryUncons(engine, spine, out _, out Cell spineTail))
             {
+                // Culprit is the whole (cyclic) argument — a bare throw here
+                // rendered the culprit as a fresh variable, and a variable
+                // can never be what a type_error is about.
                 if (++spineSteps > spineCap)
-                    throw new PrologRuntimeException("type_error", "list");
+                    throw new PrologRuntimeException("type_error", "list", engine, listCell);
                 spine = ListCursor.Resolve(engine, spineTail);
             }
             if (spine.Tag is Tag.Ref or Tag.AttVar || spine.Tag == Tag.AttVar)
@@ -938,7 +941,7 @@ public static class AtomCharBuiltins
         while (ListCursor.TryUncons(engine, cursor, out Cell rawHead, out Cell aTail))
         {
             if (++steps > stepCap)
-                throw new PrologRuntimeException("type_error", "list");
+                throw new PrologRuntimeException("type_error", "list", engine, listCell);
             Cell head = Resolve(engine, rawHead);
             if (head.Tag is Tag.Ref or Tag.AttVar)
             {

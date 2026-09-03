@@ -120,7 +120,22 @@ public sealed class AtomTerm : Term
 public sealed class VarTerm : Term
 {
     public string Name { get; }
+
+    /// <summary>True for a cycle back-edge produced by <c>TermReader</c>: the
+    /// variable stands for an enclosing compound (the one whose
+    /// <see cref="CompoundTerm.CycleId"/> equals <see cref="Name"/>), keeping
+    /// the AST a tree. Only <c>Materializer</c> consults it, to re-tie the
+    /// knot on the heap; a parser variable never has it, so a source variable
+    /// named <c>_C42</c> cannot be mistaken for a back-edge.</summary>
+    public bool IsCycleBack { get; }
+
     public VarTerm(string name) => Name = name;
+
+    public VarTerm(string name, bool isCycleBack)
+    {
+        Name = name;
+        IsCycleBack = isCycleBack;
+    }
 
     public override bool Equals(object? obj) => obj is VarTerm o && Name == o.Name;
     public override int GetHashCode() => HashCode.Combine(typeof(VarTerm), Name);
@@ -231,6 +246,23 @@ public sealed class CompoundTerm : Term
         Functor = functor;
         Args = args;
         _functorIdPlusOne = functorId + 1;
+    }
+
+    /// <summary>Set by <c>TermReader</c> on a compound that is the target of
+    /// one or more cycle back-edges: every descendant
+    /// <see cref="VarTerm"/> whose <c>IsCycleBack</c> name equals this id
+    /// stands for THIS node. The tree stays acyclic (value equality and
+    /// every walker are unaffected); <c>Materializer</c> uses the pair to
+    /// rebuild the rational tree on the heap. Excluded from value
+    /// equality, like the cached functor id.</summary>
+    public string? CycleId { get; }
+
+    public CompoundTerm(string functor, Term[] args, int functorId, string? cycleId)
+    {
+        Functor = functor;
+        Args = args;
+        _functorIdPlusOne = functorId + 1;
+        CycleId = cycleId;
     }
 
     /// <summary>The compound's global <c>FunctorTable</c> id,
