@@ -184,6 +184,9 @@ public sealed partial class BytecodeInterpreter
                         // cell's own address: the copy's lookup finds nothing.
                         _engine.SetHeap(idx,
                             v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v);
+                        // occurs_check flag: post-store check (see main loop).
+                        if (_engine.OccursMode != 0 && !_engine.OccursAllowsStoredCell(idx))
+                            return false;
                     }
                     else if (!_engine.UnifyRegisterWithHeapAt(src, ptr))
                     {
@@ -215,6 +218,9 @@ public sealed partial class BytecodeInterpreter
                         // cell's own address: the copy's lookup finds nothing.
                         _engine.SetHeap(idx,
                             v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v);
+                        // occurs_check flag: post-store check (see main loop).
+                        if (_engine.OccursMode != 0 && !_engine.OccursAllowsStoredCell(idx))
+                            return false;
                     }
                     else if (!_engine.UnifyPermanentWithHeapAt(src, ptr))
                     {

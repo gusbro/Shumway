@@ -336,20 +336,11 @@ public enum Opcode : byte
     // Extension escape — reserved, never dispatched.
     ReservedExtension = 0x66,
 
-    // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
-    // never emitted by the compiler and never dispatched by the
-    // interpreter; parked after ReservedExtension so the dispatched
-    // block stays hole-free.
-    UnifyEq = 0x67,
-    IsOp = 0x68,
-    LessThan = 0x69,
-    GreaterThan = 0x6A,
-    LessEq = 0x6B,
-    GreaterEq = 0x6C,
-    ArithEq = 0x6D,
-    ArithNotEq = 0x6E,
-    StructEq = 0x6F,
-    StructNotEq = 0x70,
+    // 0x67-0x70 once parked a "reserved specialised-builtin" family
+    // (unify_eq, is_op, the comparison ops) that predated ADR-018's
+    // arithmetic instruction set and the phase-26 inline `=/2`. Never
+    // emitted, never dispatched — removed rather than kept as ten wasted
+    // encodings; the table ends contiguous here.
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>

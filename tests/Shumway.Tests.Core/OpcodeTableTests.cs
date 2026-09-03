@@ -26,7 +26,7 @@ public class OpcodeTableTests
     [InlineData(Opcode.NeckCut, 1, 0, "neck_cut")]
     [InlineData(Opcode.Cut, 5, 1, "cut")]
     [InlineData(Opcode.CallBuiltin, 9, 2, "call_builtin")]
-    [InlineData(Opcode.IsOp, 1, 0, "is_op")]
+    [InlineData(Opcode.SoftCut, 5, 1, "soft_cut")]
     [InlineData(Opcode.GetConstantA1, 5, 1, "get_constant_a1")]
     [InlineData(Opcode.GetListA1, 1, 0, "get_list_a1")]
     [InlineData(Opcode.GetPstr, 9, 2, "get_pstr")]

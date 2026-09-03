@@ -914,14 +914,58 @@ public sealed partial class Activation
     /// an entry call: consumed (or found clear) before it returns.</summary>
     private bool _unifyEscalate;
 
+    /// <summary>The occurs_check flag, snapshotted at query setup:
+    /// 0 = false (the default; unification is the rational-tree kind),
+    /// 1 = true (sound unification — an occurs violation fails),
+    /// 2 = error (an occurs violation raises representation_error(term)).
+    /// Nonzero routes <see cref="Unify"/> through
+    /// <see cref="UnifyWithOccursCheck"/> and arms the write-mode slot check
+    /// in the unify-value stores.</summary>
+    public byte OccursMode { get; set; }
+
+    // True only while the FLAG (mode 2) is driving an occurs-checked
+    // unification: an occurs violation then throws instead of failing.
+    // The explicit unify_with_occurs_check/2 builtin never sets it — its
+    // ISO contract is to fail, whatever the flag says.
+    private bool _occursThrow;
+
+    private void OccursViolation()
+    {
+        if (_occursThrow)
+            throw new PrologRuntimeException("representation_error", "term");
+    }
+
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool Unify(int aIdx, int bIdx)
     {
+        if (OccursMode != 0) return UnifyOccursFlagged(aIdx, bIdx);
         if (Unify(aIdx, bIdx, 0, null)) return true;
         if (!_unifyEscalate) return false;
         _unifyEscalate = false;
         return Unify(aIdx, bIdx, 0, new HashSet<long>());
+    }
+
+    /// <summary>The occurs_check flag's route for general unification: the
+    /// sound unifier, with mode 2 raising on an occurs violation instead of
+    /// failing. The throw flag is scoped here so the explicit
+    /// <c>unify_with_occurs_check/2</c> keeps its fail-only contract.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool UnifyOccursFlagged(int aIdx, int bIdx)
+    {
+        _occursThrow = OccursMode == 2;
+        try { return UnifyWithOccursCheck(aIdx, bIdx); }
+        finally { _occursThrow = false; }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool UnifyCellsOccursFlagged(Cell ca, Cell cb)
+    {
+        _occursThrow = OccursMode == 2;
+        try { return UnifyCellsWithOccursCheck(ca, cb); }
+        finally { _occursThrow = false; }
     }
 
     /// <summary>C#-recursion depth past which plain unification escalates to
@@ -1024,6 +1068,9 @@ public sealed partial class Activation
     /// </summary>
     private bool UnifyCells(Cell ca, Cell cb)
     {
+        // occurs_check: the cell entry is the funnel for =/2 and every
+        // builtin's unification — same routing as Unify(int, int).
+        if (OccursMode != 0) return UnifyCellsOccursFlagged(ca, cb);
         var (a, aAddr) = ResolveOperand(ca);
         var (b, bAddr) = ResolveOperand(cb);
         if (aAddr >= 0 && aAddr == bAddr) return true;
@@ -1212,14 +1259,14 @@ public sealed partial class Activation
         {
             if (b.Tag == Tag.Ref) { BindVarToVar(aAddr, bAddr); return true; }
             int hb = bAddr >= 0 ? bAddr : MaterializeCell(b);
-            if (OccursIn(aAddr, hb)) return false;
+            if (OccursIn(aAddr, hb)) { OccursViolation(); return false; }
             BindVarToValue(aAddr, hb, _heap[hb]);
             return true;
         }
         if (b.Tag == Tag.Ref)            // b is an unbound variable at bAddr
         {
             int ha = aAddr >= 0 ? aAddr : MaterializeCell(a);
-            if (OccursIn(bAddr, ha)) return false;
+            if (OccursIn(bAddr, ha)) { OccursViolation(); return false; }
             BindVarToValue(bAddr, ha, _heap[ha]);
             return true;
         }
@@ -1260,15 +1307,20 @@ public sealed partial class Activation
         Cell aCell = _heap[aAddr];
         Cell bCell = _heap[bAddr];
 
-        // Attributed variables follow the same hook path as the
-        // standard unify — the occurs check is enforced before the
-        // hook fires, identical to SWI's semantics.
+        // Attributed variables: the occurs check runs BEFORE the hook path
+        // takes over — an attvar is a variable, and binding it into a term
+        // it occurs in creates the same cycle a plain Ref would. Only the
+        // attvar-vs-nonvar shapes can cycle; attvar-vs-var aliases safely.
         if (aCell.Tag == Tag.AttVar || bCell.Tag == Tag.AttVar)
         {
-            // For attvars we fall back to the regular unify path; the
-            // occurs-check still applies to any plain Ref binding the
-            // hook hasn't intercepted. (Strict ISO occurs-check over
-            // attvar hooks is not in the standard.)
+            if (aCell.Tag == Tag.AttVar
+                && bCell.Tag is not (Tag.Ref or Tag.AttVar)
+                && OccursIn(aAddr, bAddr))
+            { OccursViolation(); return false; }
+            if (bCell.Tag == Tag.AttVar
+                && aCell.Tag is not (Tag.Ref or Tag.AttVar)
+                && OccursIn(bAddr, aAddr))
+            { OccursViolation(); return false; }
             return UnifyAttVar(aAddr, aCell, bAddr, bCell);
         }
 
@@ -1280,13 +1332,13 @@ public sealed partial class Activation
                 BindVarToVar(aAddr, bAddr);
                 return true;
             }
-            if (OccursIn(aAddr, bAddr)) return false;
+            if (OccursIn(aAddr, bAddr)) { OccursViolation(); return false; }
             BindVarToValue(aAddr, bAddr, bCell);
             return true;
         }
         if (bCell.Tag == Tag.Ref)
         {
-            if (OccursIn(bAddr, aAddr)) return false;
+            if (OccursIn(bAddr, aAddr)) { OccursViolation(); return false; }
             BindVarToValue(bAddr, aAddr, aCell);
             return true;
         }
@@ -1352,6 +1404,63 @@ public sealed partial class Activation
     /// Walks the source iteratively over an explicit stack (no C#
     /// recursion) with a done set, so shared subterms are checked once and
     /// a cyclic source terminates instead of looping.</summary>
+    /// <summary>occurs_check (the flag): the write-mode value-store gate.
+    /// Writing an existing value into a structure a variable is already
+    /// bound to is where a cyclic term is born — the slot itself occurs in
+    /// the (dereferenced) value exactly when the store would close a cycle.
+    /// True = store may proceed. Mode 1 answers false (the unification
+    /// fails); mode 2 raises representation_error(term). A leaf value skips
+    /// the walk, and mode 0 costs one byte compare.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public bool OccursAllowsStore(int slotAddr, Cell value)
+    {
+        if (OccursMode == 0 || !SlotOccursInValue(slotAddr, value)) return true;
+        if (OccursMode == 2)
+            throw new PrologRuntimeException("representation_error", "term");
+        return false;
+    }
+
+    /// <summary>The post-store variant: the value already sits in the slot
+    /// (a failing verdict backtracks, and the heap above the choice point
+    /// is discarded wholesale, so nothing observes it). Callers guard on
+    /// <see cref="OccursMode"/> themselves so the mode-off cost at the
+    /// store sites is one byte test and no call.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    public bool OccursAllowsStoredCell(int slotAddr)
+        => OccursAllowsStore(slotAddr, _heap[slotAddr]);
+
+    /// <summary>Whether <paramref name="slotAddr"/> occurs in the
+    /// (dereferenced) <paramref name="value"/>. Serves both write-mode
+    /// shapes: the slot of a structure under construction (store first,
+    /// already bound), and a variable about to be bound (bind after
+    /// store).</summary>
+    internal bool SlotOccursInValue(int slotAddr, Cell value)
+    {
+        switch (value.Tag)
+        {
+            case Tag.Ref:
+            case Tag.AttVar:
+                return OccursIn(slotAddr, value.AsHeapIndex);
+            case Tag.Lis:
+                return OccursIn(slotAddr, value.AsHeapIndex)
+                    || OccursIn(slotAddr, value.AsHeapIndex + 1);
+            case Tag.Pstr:
+                return OccursIn(slotAddr, ComputePstrTailIndex(value));
+            case Tag.Str:
+            {
+                int fIdx = value.AsHeapIndex;
+                var (_, arity) = FunctorTable.Lookup(_heap[fIdx].AsFunctorId);
+                for (int i = 1; i <= arity; i++)
+                    if (OccursIn(slotAddr, fIdx + i)) return true;
+                return false;
+            }
+            default:
+                return false;
+        }
+    }
+
     private bool OccursIn(int targetAddr, int sourceAddr)
     {
         var stack = new Stack<int>();
@@ -1359,7 +1468,16 @@ public sealed partial class Activation
         stack.Push(sourceAddr);
         while (stack.Count > 0)
         {
-            int addr = Deref(stack.Pop());
+            // The raw address is compared before dereferencing, and an
+            // address at or past the heap top is skipped without a read:
+            // during an incremental write-mode build the enclosing
+            // structure's arity names arg slots that do not exist yet, and
+            // the one just allocated (the slot under test) may hold no cell
+            // at all. Matching by address needs neither.
+            int raw = stack.Pop();
+            if (raw == targetAddr) return true;
+            if (raw >= _heapTop) continue;
+            int addr = Deref(raw);
             if (addr == targetAddr) return true;
             Cell c = _heap[addr];
             switch (c.Tag)

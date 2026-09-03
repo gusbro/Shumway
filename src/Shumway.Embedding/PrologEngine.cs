@@ -36,13 +36,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// these three numbers, so they can never disagree.</summary>
     public const int VersionMajor = 0;
     public const int VersionMinor = 9;
-    public const int VersionPatch = 1;
+    public const int VersionPatch = 2;
 
     /// <summary>The version as <c>Major.Minor.Patch</c>.</summary>
     public static string VersionString =>
         $"{VersionMajor}.{VersionMinor}.{VersionPatch}";
 
-    /// <summary>The top-level greeting — <c>Shumway Prolog 0.9.1 (64
+    /// <summary>The top-level greeting — <c>Shumway Prolog 0.9.2 (64
     /// bits)</c>, in the shape GNU Prolog's banner uses. The bitness is the
     /// PROCESS's, not the machine's: a 32-bit .NET Framework host says
     /// <c>32 bits</c>, which is what a caller sizing a program to the address
