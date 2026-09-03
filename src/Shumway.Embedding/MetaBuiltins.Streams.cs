@@ -699,6 +699,8 @@ public static partial class MetaBuiltins
         catch (Exception ex) when (ex is Shumway.Compiler.Parsing.ParseException
                                     or Shumway.Compiler.Lexer.LexerException)
         {
+            if (ex is Shumway.Compiler.Parsing.ParseException { RepresentationFlaw: { } flaw })
+                throw new Shumway.Core.PrologRuntimeException("representation_error", flaw);
             throw new Shumway.Core.PrologRuntimeException("syntax_error", ex.Message);
         }
     }
@@ -736,17 +738,26 @@ public static partial class MetaBuiltins
             if (lexer.LastTokenEndOffset != chars.Length)
                 return null;                      // trailing layout/comment
         }
-        catch (Exception ex) when (ex is Shumway.Compiler.Parsing.ParseException
-                                    or Shumway.Compiler.Lexer.LexerException)
+        catch (Shumway.Compiler.Parsing.ParseException ex)
         {
+            // A perfect number that is merely above max_float must surface as
+            // representation_error(max_float) (number_chars_cont 82), not be
+            // swallowed into "not a number" → syntax_error(illegal_number).
+            if (ex.RepresentationFlaw is { } flaw)
+                throw new Shumway.Core.PrologRuntimeException("representation_error", flaw);
             return null;   // not parseable → not a number
+        }
+        catch (Shumway.Compiler.Lexer.LexerException)
+        {
+            return null;   // not tokenizable → not a number
         }
         return parsed switch
         {
             Shumway.Compiler.Ast.IntTerm it => it.Value,
             Shumway.Compiler.Ast.BigIntTerm bt => bt.Value,
-            // Never hand back an infinity: a float literal past double's range
-            // ("9.9e999") is a syntax error, not +inf (number_chars_cont 82).
+            // The parser rejects infinite float tokens before building the
+            // term, so a FloatTerm here is always finite; the guard stays as
+            // a tripwire against a future producer handing back an infinity.
             Shumway.Compiler.Ast.FloatTerm ft =>
                 double.IsFinite(ft.Value) ? (object)ft.Value : null,
             _ => null,

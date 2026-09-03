@@ -272,7 +272,10 @@ public static partial class MetaBuiltins
             catch (Exception ex) when (ex is Shumway.Compiler.Parsing.ParseException
                                         or Shumway.Compiler.Lexer.LexerException)
             {
-                // Malformed text is a catchable ISO syntax error, not a .NET crash.
+                // Malformed text is a catchable ISO syntax error, not a .NET crash;
+                // a value flaw in perfect syntax is a representation_error.
+                if (ex is Shumway.Compiler.Parsing.ParseException { RepresentationFlaw: { } flaw })
+                    throw new Shumway.Core.PrologRuntimeException("representation_error", flaw);
                 throw new Shumway.Core.PrologRuntimeException("syntax_error", ex.Message);
             }
             Cell newCell = Materializer.MaterializeAsCell(engine, parsed);

@@ -954,6 +954,25 @@ E = resource_error(memory).
 uniformly, whichever operation hits it (`^`, `<<`, a multiplication) and
 whichever tier runs it.
 
+### Float limits
+
+Floats are IEEE 754 doubles, so the largest finite value is about
+`1.797e308`. A float literal written past that range has perfect syntax but
+names a value the representation cannot hold, and that is reported as a
+representation error rather than a syntax error, wherever the literal
+enters: source text, `read_term/2`, `number_chars/2` and its family.
+
+```prolog
+?- catch(number_chars(N, "9.9e999"), error(E, _), true).
+E = representation_error(max_float).
+```
+
+A literal that underflows (`1.0e-999`) rounds to `0.0` and succeeds.
+`atom_number('9.9e999', N)` fails quietly, keeping that predicate's
+no-exceptions convention. Arithmetic that overflows at run time is a
+different animal: `X is 1.0e308 * 10` raises
+`evaluation_error(float_overflow)`.
+
 ### Digit separators
 
 Long numbers are easier to read in groups, so you may put an underscore

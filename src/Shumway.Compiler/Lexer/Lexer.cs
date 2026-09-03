@@ -673,7 +673,8 @@ public sealed class Lexer
             // where .NET Core returns Infinity — go through TryParse and
             // supply the Core value so both frameworks lex identically (the
             // literal is unsigned here, so overflow is always +Inf; the
-            // number_chars path rejects the infinity as a syntax error).
+            // parser and number_chars turn the infinity into
+            // representation_error(max_float) — a lexeme is never one).
             if (!double.TryParse(floatSource, NumberStyles.Float,
                     CultureInfo.InvariantCulture, out double f))
                 f = double.PositiveInfinity;

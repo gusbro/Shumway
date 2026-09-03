@@ -80,7 +80,8 @@ public static class IncludeExpander
                 // Re-frame so the caller's file:line diagnostics aren't
                 // silently attributed to the INCLUDING file.
                 throw new ParseException(
-                    $"in included file '{full}': {pe.Message}", pe.Position);
+                    $"in included file '{full}': {pe.Message}", pe.Position)
+                    { RepresentationFlaw = pe.RepresentationFlaw };
             }
             result.AddRange(Expand(sub, Path.GetDirectoryName(full), operators, flags, chain));
             chain.Remove(full);

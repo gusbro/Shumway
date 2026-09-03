@@ -69,7 +69,9 @@ internal sealed class ConsultPipeline
     /// The all-or-nothing outcome itself is the documented GNU model: on a
     /// failed compilation "a message is displayed and nothing is loaded".</summary>
     private static Exception AsSyntaxError(Shumway.Compiler.Parsing.ParseException ex)
-        => new Shumway.Core.PrologRuntimeException("syntax_error", ex.Message);
+        => ex.RepresentationFlaw is { } flaw
+            ? new Shumway.Core.PrologRuntimeException("representation_error", flaw)
+            : new Shumway.Core.PrologRuntimeException("syntax_error", ex.Message);
 
     /// <summary>SWI-style extension defaulting: <c>consult(algo)</c> with no
     /// extension resolves to <c>algo.pl</c> when <c>algo</c> itself does not
