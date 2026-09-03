@@ -235,15 +235,16 @@ public class CellTests
     }
 
     [Fact]
-    public void Float_NegativeZero_PreservesSignBit()
+    public void Float_NegativeZero_NormalisesToPlainZero()
     {
         // -0.0 is excluded from the Theory above because xUnit treats it as a duplicate of
-        // 0.0 (they compare equal as doubles). The point of this test is to verify the
-        // sign bit survives the round trip, which only a bit-pattern check can confirm.
+        // 0.0 (they compare equal as doubles), and only a bit-pattern check can see the
+        // sign. ISO's float value set has one zero (syntax conformity #364): the encoder
+        // drops the sign bit, so a negative-zero cell cannot exist.
         var (header, paired) = Cell.MakeFloat(-0.0, pairedHeapIdx: 42);
         double decoded = Cell.DecodeFloat(header, paired);
         Assert.Equal(
-            BitConverter.DoubleToInt64Bits(-0.0),
+            BitConverter.DoubleToInt64Bits(0.0),
             BitConverter.DoubleToInt64Bits(decoded));
     }
 

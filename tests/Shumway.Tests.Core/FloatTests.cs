@@ -49,15 +49,17 @@ public class FloatTests
     }
 
     [Fact]
-    public void MakeFloat_NegativeZero_PreservesSignBit()
+    public void MakeFloat_NegativeZero_NormalisesToPlainZero()
     {
         // -0.0 is excluded from the Theory above because xUnit treats it as a duplicate
-        // of 0.0 under Equals.
+        // of 0.0 under Equals. ISO's float value set has one zero (syntax
+        // conformity #364): the funnel drops the sign bit, so a negative-zero
+        // cell cannot exist and writeq agrees with ==/2.
         var engine = new Activation();
         int idx = engine.MakeFloat(-0.0);
         double decoded = Cell.DecodeFloat(engine.GetHeap(idx), engine.GetHeap(idx + 1));
         Assert.Equal(
-            BitConverter.DoubleToInt64Bits(-0.0),
+            BitConverter.DoubleToInt64Bits(0.0),
             BitConverter.DoubleToInt64Bits(decoded));
     }
 

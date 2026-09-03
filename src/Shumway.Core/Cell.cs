@@ -153,6 +153,12 @@ public readonly struct Cell : IEquatable<Cell>
     /// </summary>
     public static (Cell Header, Cell Paired) MakeFloat(double value, int pairedHeapIdx)
     {
+        // ISO's float value set has ONE zero: negative zero is unrepresentable
+        // as a term, so -0.0 reads, prints and sorts as 0.0 (syntax conformity
+        // #364). ==/2 and compare/3 already equate the two; this single funnel
+        // (every float cell is born here) makes writeq agree with them. The
+        // test hits exactly the -0.0 bit pattern (IEEE -0.0 == 0.0).
+        if (value == 0.0) value = 0.0;
         long bits = BitConverter.DoubleToInt64Bits(value);
         long highBits = (bits >> 60) & 0xFL;
         long lowBits = bits & PayloadMask;

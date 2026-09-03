@@ -533,12 +533,28 @@ syntax_verdict(succeeds_value(Exp), R, _, _, _) :-
     syntax_check_bindings(Exp, Vs).
 
 % output: byte-exact, or read-back equivalence under the test's operators.
+% Read-back alone is CIRCULAR for writer tests: whatever we wrote re-reads
+% as the term we meant, right or wrong. So when both sides are ground they
+% must also re-render byte-identically through writeq — that catches a
+% value miss dressed as formatting (s#364: -0.0 vs 0.0, which read-back
+% equates). Non-ground outputs keep the variant-only leniency (variable
+% names legitimately differ); an unreadable expectation skips the check.
 syntax_v_output(Exp, R, OA, G) :-
     R == succeeds,
     ( OA == Exp -> true
     ; syntax_write_arg(G, Term),
       cf_read_codes_term(OA, Back, _),
-      cf_variant(Term, Back) ).
+      cf_variant(Term, Back),
+      syntax_v_rerender(Exp, Back) ).
+
+syntax_v_rerender(Exp, Back) :-
+    ( ground(Back),
+      cf_read_codes_term(Exp, BackExp, _),
+      ground(BackExp) ->
+        cf_capture(writeq(Back), _, BO),
+        cf_capture(writeq(BackExp), _, EO),
+        BO == EO
+    ; true ).
 
 syntax_write_arg((_, B), T) :- !, syntax_write_arg(B, T).
 syntax_write_arg(write_term(T, _), T) :- !.

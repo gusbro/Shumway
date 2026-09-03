@@ -120,6 +120,24 @@ public sealed class ConformanceArcRegressionTests
             "representation_error(max_float)");
     [Fact] public void NumberChars_FloatUnderflowIsZero() =>
         True("number_chars(N, ['5','.','0','e','-','9','9','9']), N == 0.0.");
+
+    // ---- negative zero (issue #44, syntax conformity #364) ----
+    // ISO's float value set has ONE zero: -0.0 denotes 0.0 wherever a float
+    // is born (the literal, number_chars, arithmetic), so writeq finally
+    // agrees with ==/2 and compare/3, which already equated the two.
+
+    [Fact] public void NegativeZero_WriteqOfTheLiteral() =>
+        True("with_output_to(atom(A), writeq(-0.0)), A == '0.0'.");
+    [Fact] public void NegativeZero_TheLiteralDenotesPlainZero() =>
+        True("X = -0.0, X == 0.0.");
+    [Fact] public void NegativeZero_NumberCharsAndCodes() =>
+        True("number_chars(N, ['-','0','.','0']), N == 0.0, "
+           + "atom_codes('-0.0e7', Cs), number_codes(M, Cs), M == 0.0.");
+    [Fact] public void NegativeZero_ArithmeticNormalisesToo() =>
+        True("X is -(0.0), X == 0.0, Y is -1.0 * 0.0, Y == 0.0.");
+    [Fact] public void NegativeZero_SortsAsOneValue() =>
+        True("msort([-0.0, 0.0], L), "
+           + "with_output_to(atom(A), writeq(L)), A == '[0.0,0.0]'.");
     [Fact] public void NumberChars_QuotedMinusStillReads() =>
         // the term-reader fallback exists FOR this shape.
         True("number_chars(N, ['''','-','''','3']), N == -3.");
