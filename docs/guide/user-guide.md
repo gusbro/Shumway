@@ -185,9 +185,12 @@ false.
   transcript. A list of characters displays as a double-quoted string
   (`L = "abc"`, matching the default `double_quotes = chars` reading);
   a list of integer codes stays numeric.
-- An uncaught error prints the same `error/2` term that `catch/3` would
-  have received, so the message is also the catcher to write:
-  `existence_error(procedure, foo/0)`, `type_error(callable, 0.0)`.
+- An uncaught error prints the same term that `catch/3` would have
+  received. If the prompt reports
+  `% error: existence_error(procedure, foo/0)`, then
+  `catch(Goal, error(existence_error(procedure, foo/0), _), Recovery)`
+  is a catcher that matches it; the message never shows a shape the
+  catcher would miss.
 - Loading a `.shum` bundle makes its program's predicates callable from the
   prompt, just as consulting the source would. For each **bare** module (one
   *without* `:- module(Name, [Exports])`) the REPL aliases the module's
