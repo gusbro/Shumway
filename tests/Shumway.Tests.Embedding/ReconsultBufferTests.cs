@@ -64,6 +64,28 @@ public sealed class ReconsultBufferTests
     }
 
     [Fact]
+    public void DcgRulesAreReplacedToo()
+    {
+        // A DCG rule's real head is the TRANSLATED one (g//0 defines g/2);
+        // the replacement scan read the whole rule as '-->'/2, which
+        // abolished nothing — reloading a grammar buffer duplicated its
+        // rules. WebShumway's Consult button and the REPL buffer both take
+        // this path.
+        var e = new PrologEngine();
+        const string src = "g --> [a].\ng --> [b].\n";
+        e.ReconsultString(src);
+        e.ReconsultString(src);
+        e.ReconsultString(src);
+        var s = e.Query("findall(x, phrase(g, [a]), L), length(L, N).");
+        Assert.True(s.Success);
+        Assert.Equal(1L, Assert.IsType<IntTerm>(s["N"]!).Value);
+        var all = e.Query(
+            "findall(x, (member(W, [[a],[b]]), phrase(g, W)), L), length(L, N).");
+        Assert.True(all.Success);
+        Assert.Equal(2L, Assert.IsType<IntTerm>(all["N"]!).Value);
+    }
+
+    [Fact]
     public void DynamicPredicatesAreReplacedToo()
     {
         var e = new PrologEngine();

@@ -1553,11 +1553,14 @@ internal sealed class ConsultPipeline
             // this is what makes a module-less buffer behave the same way.)
             if (reconsult)
             {
+                // HeadFunctorIdOf, not TryExtractHead: a DCG rule's real head
+                // is the TRANSLATED one (g//0 defines g/2), and TryExtractHead
+                // read the whole rule as '-->'/2 — which abolished nothing, so
+                // reloading a grammar buffer duplicated its rules.
                 var redefined = new HashSet<int>();
                 foreach (var c0 in clauses)
-                    if (PrologEngine.TryExtractHead(c0, out string rn, out int ra))
-                        redefined.Add(FunctorTable.Intern(
-                            AtomTable.Intern(rn, permanent: true).Id, ra));
+                    if (c0.Kind != ClauseKind.Directive)
+                        redefined.Add(HeadFunctorIdOf(c0));
                 foreach (int fid in redefined)
                 {
                     // A `:- dynamic` in THIS source has already run; abolishing
