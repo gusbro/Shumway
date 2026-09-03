@@ -23,6 +23,66 @@ public class GrammarBuiltinsTests
         return acc;
     }
 
+    // ---------- '...'//0 and seq//1 (issue #56) ----------
+
+    [Fact]
+    public void DotsNonterminal_FindsASubsequenceAnywhere()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query("phrase((..., [1,2], ...), [9,8,1,2,3]).").Success);
+        Assert.False(e.Query("phrase((..., [7,7], ...), [9,8,1,2,3]).").Success);
+        Assert.True(e.Query("phrase(..., []).").Success);
+        // Shortest-first: the first slice found of [1,1] around [1] is at
+        // the front.
+        Assert.True(e.Query(
+            "phrase((seq(A), [1], ...), [0,1,0,1]), A == [0].").Success);
+    }
+
+    [Fact]
+    public void SeqNonterminal_DescribesAndSplits()
+    {
+        var e = new PrologEngine();
+        var s = e.Query("phrase(seq(S), [a,b,c]).");
+        Assert.True(s.Success);
+        Assert.Equal("[a, b, c]", AstTermRenderer.Render(s["S"]!, 1200, e.Operators));
+        Assert.True(e.Query(
+            "findall(A-B, phrase((seq(A), seq(B)), [1,2]), L), "
+          + "L == [[]-[1,2], [1]-[2], [1,2]-[]].").Success);
+        // The generate direction leaves the open difference list.
+        Assert.True(e.Query("phrase(seq([x,y]), Out, R), Out = [x,y|T], T == R.").Success);
+    }
+
+    [Fact]
+    public void AFileDefiningItsOwnDotsAndSeq_ShadowsCleanly()
+    {
+        // The issue's own prelude-ish block, verbatim: consulting it over
+        // the built-ins must neither clash nor duplicate answers.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- op(1105,xfy,'|').\n" +
+            "... --> [].\n" +
+            "... --> [_], ... .\n" +
+            "seq([]) --> [].\n" +
+            "seq([X|Xs]) --> [X], seq(Xs).\n");
+        Assert.True(e.Query(
+            "findall(S, phrase(seq(S), [a,b]), L), length(L, N), N == 1.").Success);
+        Assert.True(e.Query(
+            "findall(x, phrase((..., [1], ...), [1]), L), length(L, N), N == 1.").Success);
+    }
+
+    [Fact]
+    public void BarWithoutTheOp_StaysASyntaxError()
+    {
+        // Strict ISO: no bar operator in the default table (the deliberate
+        // omission the operator table documents); op/3 may register it.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(atom_to_term('(a | b)', _, _), error(syntax_error(_), _), true).").Success);
+        Assert.True(e.Query("op(1105, xfy, '|').").Success);
+        var t = e.Query("atom_to_term('(a | b)', T, _), T = (X | Y), X == a, Y == b.");
+        Assert.True(t.Success);
+    }
+
     // ---------- phrase/2 + phrase/3 ----------
 
     [Fact]

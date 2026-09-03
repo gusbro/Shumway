@@ -465,12 +465,14 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 
 | Predicate | Description |
 | --- | --- |
+| `'...'(?S0, ?S)` | The nonterminal '...'//0: matches any sequence, shortest first. phrase((..., [1,2], ...), L) asks whether [1,2] occurs anywhere in L. |
 | `phrase(:Body, ?List)` | phrase(Body, List, []): succeeds when the DCG Body derives List. |
 | `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; a variable/control-construct Body is translated at runtime and run as one goal. |
 | `phrase_from_file(:Body, +File)` | Runs the DCG Body over File's text, read lazily; the file is closed on the way out. |
 | `phrase_from_file(:Body, +File, +Options)` | As phrase_from_file/2; Options are open/4's, plus text_kind(chars) or text_kind(codes). |
 | `phrase_from_stream(:Body, +Stream)` | Runs the DCG Body over Stream's text, read lazily a block at a time, so the memory a parse costs does not grow with the stream. |
 | `phrase_from_stream(:Body, +Stream, +Kind)` | As phrase_from_stream/2, with Kind (chars or codes) choosing the list's elements. |
+| `seq(?Xs, ?S0, ?S)` | The nonterminal seq//1: describes exactly the sequence Xs. phrase((seq(A), seq(B)), L) splits L into A and B. |
 
 ## Global variables
 

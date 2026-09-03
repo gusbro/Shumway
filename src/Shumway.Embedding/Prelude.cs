@@ -151,6 +151,8 @@ internal static class Prelude
         :- public ':'/2.
         :- public phrase/2.
         :- public phrase/3.
+        :- public '...'/2.
+        :- public seq/3.
         :- public phrase_from_stream/2.
         :- public phrase_from_stream/3.
         :- public phrase_from_file/2.
@@ -1757,6 +1759,15 @@ internal static class Prelude
 
         %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []): succeeds when the DCG Body derives List.
         phrase(Body, List) :- phrase(Body, List, []).
+
+        % The classic sequence nonterminals, written pre-translated (their
+        % exact DCG expansions) so they carry doc entries like any predicate.
+        %! '...'(?S0, ?S) | Grammar | The nonterminal '...'//0: matches any sequence, shortest first. phrase((..., [1,2], ...), L) asks whether [1,2] occurs anywhere in L.
+        '...'(S, S).
+        '...'([_|S0], S) :- '...'(S0, S).
+        %! seq(?Xs, ?S0, ?S) | Grammar | The nonterminal seq//1: describes exactly the sequence Xs. phrase((seq(A), seq(B)), L) splits L into A and B.
+        seq([], S, S).
+        seq([X|Xs], [X|S0], S) :- seq(Xs, S0, S).
         %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; a variable/control-construct Body is translated at runtime and run as one goal.
         % The TS 13211-3 model, faithfully: the WHOLE body becomes one goal
         % first — validating as it goes — and runs as a single call. Two

@@ -50,15 +50,12 @@ internal static class CompatLibraries
         return source is not null;
     }
 
-    // library(dcgs) — the generic DCG helpers. phrase/2,3 live in the prelude.
+    // library(dcgs) — the generic DCG helpers. seq//1 and '...'//0 moved into
+    // the prelude (they are built-in now), joining phrase/2,3; the library
+    // stays loadable so a `:- use_module(library(dcgs)).` in existing sources
+    // resolves and is a no-op.
     private const string Dcgs = """
-        :- public seq/3.
-        seq([]) --> [].
-        seq([X|Xs]) --> [X], seq(Xs).
-
-        :- public '...'/2.
-        '...' --> [].
-        '...' --> [_], '...'.
+        % seq//1, '...'//0 and phrase/2,3 are built-in; nothing to load.
         """;
 
     // library(dif) — a non-coroutining approximation. When the arguments are
