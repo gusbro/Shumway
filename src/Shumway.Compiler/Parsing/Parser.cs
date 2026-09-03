@@ -374,7 +374,7 @@ public sealed class Parser
                 NextToken();
                 Token numTok = NextToken();
                 builtPrec = 0;
-                return new FloatTerm(-FiniteFloat(numTok, pos)) { Position = pos };
+                return new FloatTerm(-FiniteFloat(numTok, pos, negated: true)) { Position = pos };
             }
         }
 
@@ -1018,15 +1018,21 @@ public sealed class Parser
 
     /// <summary>A float literal past double range lexes as an infinity (the
     /// lexer keeps both frameworks identical); the SYNTAX is perfect, so it is
-    /// not a syntax error — it names a value above max_float, which only a
-    /// representation_error can report (Neumerkel number_chars #82 / stc #74).
+    /// not a syntax error — it names a value outside the float range, which
+    /// only a representation_error can report (Neumerkel number_chars #82 /
+    /// stc #74). The SIGN follows the syntax: a UNARY minus makes the literal
+    /// itself negative, below min_float; everywhere else the positive literal
+    /// is above max_float — so `-9.9e999` is min_float while `0-9.9e999` is
+    /// max_float (the minus there is binary and the literal is positive).
     /// The flaw rides on the exception for the ISO-error carriers to honour.</summary>
-    private static double FiniteFloat(Token tok, SourcePosition pos)
+    private static double FiniteFloat(Token tok, SourcePosition pos, bool negated = false)
         => double.IsFinite(tok.FloatValue)
             ? tok.FloatValue
             : throw new ParseException(
-                $"float literal '{tok.Text}' is above max_float.", pos)
-                { RepresentationFlaw = "max_float" };
+                negated
+                    ? $"float literal '-{tok.Text}' is below min_float."
+                    : $"float literal '{tok.Text}' is above max_float.", pos)
+                { RepresentationFlaw = negated ? "min_float" : "max_float" };
 
     private static string DescribeToken(Token tok) => tok.Kind switch
     {
