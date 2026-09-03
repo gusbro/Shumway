@@ -89,6 +89,7 @@ public static class PredicateDoc
         "Global variables",
         "Messages",
         "Time",
+        "Quad tests",
         "CLP(FD): domains",
         "CLP(FD): arithmetic constraints",
         "CLP(FD): global constraints",
@@ -105,10 +106,13 @@ public static class PredicateDoc
     /// loaded by default, and how to load it. A reader who lands on
     /// <c>#=/2</c> from a search needs to know why it does not exist yet, and
     /// the answer they need is the Prolog directive: the embedding method is
-    /// the same door from the other side, not the main one.</summary>
-    private static readonly (string Category, string Library, string Method)[] CategoryLibrary =
+    /// the same door from the other side, not the main one. A library with no
+    /// dedicated embedding method leaves it null and shows the directive
+    /// alone.</summary>
+    private static readonly (string Category, string Library, string? Method)[] CategoryLibrary =
     {
         ("Coroutining", "coroutining", "UseCoroutining"),
+        ("Quad tests", "quads", null),
         ("CLP(FD): domains", "clpfd", "UseClpfd"),
         ("CLP(FD): arithmetic constraints", "clpfd", "UseClpfd"),
         ("CLP(FD): global constraints", "clpfd", "UseClpfd"),
@@ -138,6 +142,7 @@ public static class PredicateDoc
         CollectDocComments(Clpfd.Source, entries);
         CollectDocComments(Clpr.Source, entries);
         CollectDocComments(Coroutining.Source, entries);
+        CollectDocComments(CompatLibraries.QuadsSource, entries);
         return entries;
     }
 
@@ -210,8 +215,10 @@ public static class PredicateDoc
             {
                 if (cat != category) continue;
                 sb.Append("Load with `:- use_module(library(").Append(library)
-                  .Append(")).` (embedding: `engine.").Append(method)
-                  .Append("()`).\n\n");
+                  .Append(")).`");
+                if (method is not null)
+                    sb.Append(" (embedding: `engine.").Append(method).Append("()`).");
+                sb.Append("\n\n");
                 break;
             }
             sb.Append("| Predicate | Description |\n");
