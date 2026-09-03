@@ -51,6 +51,11 @@ internal static class CompatLibraries
         return source is not null;
     }
 
+    /// <summary>The quads library source, for the predicate-reference
+    /// generator: its exports carry <c>%!</c> doc comments like the always-on
+    /// libraries do.</summary>
+    internal static string QuadsSource => Quads;
+
     // library(dcgs) — the generic DCG helpers. seq//1 and '...'//0 moved into
     // the prelude (they are built-in now), joining phrase/2,3; the library
     // stays loadable so a `:- use_module(library(dcgs)).` in existing sources
@@ -76,6 +81,11 @@ internal static class CompatLibraries
     private const string Quads = """
         :- module(quads, [run_quads/0, run_quads/1, clear_quads/0,
                           op(1200, xfx, ?-), op(1100, xfy, '|')]).
+
+        % The published suites lean on freeze/2 and dif/2; without this a
+        % freeze goal is an existence_error and its quad fails instead of
+        % running (length 29-31 caught it in the browser).
+        :- use_module(library(coroutining)).
 
         :- op(1200, xfx, ?-).
         :- op(1100, xfy, '|').
@@ -163,7 +173,9 @@ internal static class CompatLibraries
 
         % ---- running ------------------------------------------------------
 
+        %! run_quads | Quad tests | Runs every loaded quad test and prints quads: Passed/Total, listing the failing ids and any test whose expected block could not be classified.
         run_quads :- quads_run_matching(_).
+        %! run_quads(+Id) | Quad tests | Runs the single quad test with the given id and reports it the same way.
         run_quads(Id) :- quads_run_matching(Id).
 
         quads_run_matching(Filter) :-
@@ -223,6 +235,7 @@ internal static class CompatLibraries
             nonvar(B), functor(B, W, _), quads_error_word(W), !.
         quads_error_outcome(_, error(other)).
 
+        %! clear_quads | Quad tests | Forgets every loaded quad test; the next consult starts a fresh set.
         clear_quads :-
             retractall('$quad'(_, _, _, _)),
             retractall('$quad_pending'(_, _, _)),

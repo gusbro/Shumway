@@ -286,16 +286,15 @@ internal static class ReplTopLevel
                 return halted.ExitCode;
             }
         }
-        // --quad <file>, repeatable: load the quad-transcript library (plus
-        // coroutining — the published suites lean on freeze/2 and dif/2),
-        // consult each transcript, and run every loaded quad. The session
-        // stays interactive afterwards, so run_quads/1 can replay one id.
+        // --quad <file>, repeatable: load the quad-transcript library (it
+        // brings coroutining itself), consult each transcript, and run every
+        // loaded quad. The session stays interactive afterwards, so
+        // run_quads/1 can replay one id.
         if (quadFiles.Count > 0)
         {
             try
             {
-                if (!engine.Query("use_module(library(quads)).").Success
-                    || !engine.Query("use_module(library(coroutining)).").Success)
+                if (!engine.Query("use_module(library(quads)).").Success)
                     Console.Error.WriteLine("% --quad: could not load library(quads)");
                 foreach (string qf in quadFiles)
                     ConsultFile(engine, qf);
@@ -846,8 +845,8 @@ internal static class ReplTopLevel
             + "                        resolution + double_quotes (ADR-040), e.g.\n"
             + "                        -L scryer:C:/Scryer/lib. Repeatable; also read from\n"
             + "                        SHUMWAY_LIBRARY_PATH (per entry).\n"
-            + "  --quad <file>         Load library(quads) and coroutining, consult the quad\n"
-            + "                        test transcript, and run_quads. Repeatable; the\n"
+            + "  --quad <file>         Load library(quads), consult the quad test\n"
+            + "                        transcript, and run_quads. Repeatable; the\n"
             + "                        session stays interactive (run_quads(Id) replays one).\n"
             + "                        See docs/guide/quads.md for the format.\n"
             + "  --debug               Compile debuggable and open a debug session; prints\n"

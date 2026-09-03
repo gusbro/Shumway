@@ -7,7 +7,7 @@ Every predicate Shumway provides, grouped by area. Most are available to any pro
 
 Each template names its parameters and their mode: `+` bound at call, `-` an output, `?` either, `@` not modified, `:` a meta-called goal.
 
-Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(R)](#clpr)
+Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [Quad tests](#quad-tests) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(R)](#clpr)
 
 ## Unification & comparison
 
@@ -504,6 +504,16 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | --- | --- |
 | `get_time(-Time)` | Current wall-clock time in seconds since the Unix epoch (a float). |
 | `stamp_date_time(+Stamp, -DateTime, +TimeZone)` | Converts a Unix-epoch stamp to a date(Y,M,D,H,Mi,S,Off,Tz,DST) term. |
+
+## Quad tests
+
+Load with `:- use_module(library(quads)).`
+
+| Predicate | Description |
+| --- | --- |
+| `clear_quads` | Forgets every loaded quad test; the next consult starts a fresh set. |
+| `run_quads` | Runs every loaded quad test and prints quads: Passed/Total, listing the failing ids and any test whose expected block could not be classified. |
+| `run_quads(+Id)` | Runs the single quad test with the given id and reports it the same way. |
 
 ## CLP(FD): domains
 
