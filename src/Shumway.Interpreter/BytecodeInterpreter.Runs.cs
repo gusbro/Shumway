@@ -383,9 +383,13 @@ public sealed partial class BytecodeInterpreter
     private bool TryBacktrack()
     {
         Shumway.Core.Profiler.Backtrack();
-        // Wakeups belong to the computation being abandoned — drop any
-        // that a failed clause queued but never ran.
-        _engine.ClearPendingWakeups();
+        // NOT cleared here: a queued wakeup may belong to a binding that
+        // SURVIVES this backtrack (bound, then a younger choice point
+        // failed — promoted IL keeps such wakes pending across its internal
+        // retries). TakePendingWakeups drops the dead ones by checking each
+        // entry's attvar home: unwound bindings leave an attvar cell again.
+        // Blanket-clearing here silently unhooked freeze/2 after
+        // $length_enum promoted mid-enumeration.
         // Loop so that an IL retry that itself fails immediately falls
         // through to the next choice point without burning stack. The
         // floor keeps an in-engine sub-goal's backtracking

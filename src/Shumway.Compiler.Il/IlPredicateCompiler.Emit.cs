@@ -1660,6 +1660,22 @@ public sealed partial class IlPredicateCompiler
                 // marker path does.
                 if (selfTailLabel is not null && siteFunctorId == selfFunctorId)
                 {
+                    // ADR-049: the back-edge is the goal boundary the skipped
+                    // dispatch-loop round trip would have provided — it
+                    // already mirrors the loop's ADR-016 heap safe point, and
+                    // it must mirror the loop's wake check too, or a wake
+                    // queued by THIS iteration's head-match (an attributed
+                    // list argument being decomposed) never fires and the
+                    // recursion enumerates past a hook that had to stop it
+                    // (freeze/2 went silently unhooked once $length_enum
+                    // promoted). Inline count gate: one predicted branch per
+                    // iteration when no wake pends.
+                    var skipWake = emit.DefineLabel($"selftail_wake_skip_{NextLabelSeq()}");
+                    emit.LoadArgument(0);
+                    emit.Call(EngineHasPendingWakeupsGetter);
+                    emit.BranchIfFalse(skipWake);
+                    EmitRegionWakeBoundary(emit, failLabel, selfFunctorId);
+                    emit.MarkLabel(skipWake);
                     // engine.SetB0(engine.B);
                     // engine.MaybeCollectHeapAtCall(selfFunctorId);
                     emit.LoadArgument(0);

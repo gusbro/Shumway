@@ -27,11 +27,23 @@ public sealed class IlPromotionStore
     private readonly Dictionary<int, Func<Activation, bool>> _dispatchWrappers = new();
     private readonly Dictionary<int, Func<Activation, int, bool>> _resumeWrappers = new();
 
+    // SHUMWAY_TIER1_DIAG=1: log each delegate install to stderr — the
+    // forensic knob that cracked the lost-wakeups bug (which predicate had
+    // just promoted when coroutining went quiet).
+    private static readonly bool PromotionDiag =
+        Environment.GetEnvironmentVariable("SHUMWAY_TIER1_DIAG") == "1";
+
     private void InstallDelegate(int functorId, PredicateDelegate del)
     {
         _delegates[functorId] = del;
         _dispatchWrappers.Remove(functorId);
         _resumeWrappers.Remove(functorId);
+        if (PromotionDiag)
+        {
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
+            Console.Error.WriteLine(
+                $"[tier1] promoted {Shumway.Core.AtomTable.GetById(atomId)?.Name}/{arity}");
+        }
     }
 
     /// <summary>The cached <c>engine => del(engine, 0)</c> dispatch wrapper, or null
