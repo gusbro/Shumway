@@ -967,6 +967,11 @@ enters: source text, `read_term/2`, `number_chars/2` and its family.
 E = representation_error(max_float).
 ```
 
+There is a single zero: the literal `-0.0` denotes plain `0.0`, as does
+any arithmetic result that would be a negative zero, so `writeq(-0.0)`
+prints `0.0` and agrees with `==/2` and `compare/3`, which treat the two
+spellings as the same value.
+
 A literal that underflows (`1.0e-999`) rounds to `0.0` and succeeds.
 `atom_number('9.9e999', N)` fails quietly, keeping that predicate's
 no-exceptions convention. Arithmetic that overflows at run time is a

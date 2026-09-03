@@ -155,7 +155,10 @@ public sealed class BigIntTerm : Term
 public sealed class FloatTerm : Term
 {
     public double Value { get; }
-    public FloatTerm(double value) => Value = value;
+    // Negative zero folds to 0.0 at the node, mirroring Cell.MakeFloat: the
+    // ISO float value set has one zero, and AST-side renderers (listing,
+    // folding) must agree with the heap.
+    public FloatTerm(double value) => Value = value == 0.0 ? 0.0 : value;
 
     public override bool Equals(object? obj) => obj is FloatTerm o && Value == o.Value;
     public override int GetHashCode() => HashCode.Combine(typeof(FloatTerm), Value);
