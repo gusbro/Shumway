@@ -1887,6 +1887,16 @@ public sealed partial class BytecodeInterpreter
                         // cell's own address: the copy's lookup finds nothing.
                         _engine.SetHeap(idx,
                             v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v);
+                        // occurs_check flag: the store is checked AFTER the
+                        // write — a failing check backtracks, and the heap
+                        // above the choice point is discarded wholesale, so
+                        // nothing observes the stored cell. Mode off pays one
+                        // byte test.
+                        if (_engine.OccursMode != 0 && !_engine.OccursAllowsStoredCell(idx))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     else
                     {
@@ -1928,6 +1938,16 @@ public sealed partial class BytecodeInterpreter
                         // cell's own address: the copy's lookup finds nothing.
                         _engine.SetHeap(idx,
                             v.Tag == Tag.AttVar ? Cell.Ref(v.AsHeapIndex) : v);
+                        // occurs_check flag: the store is checked AFTER the
+                        // write — a failing check backtracks, and the heap
+                        // above the choice point is discarded wholesale, so
+                        // nothing observes the stored cell. Mode off pays one
+                        // byte test.
+                        if (_engine.OccursMode != 0 && !_engine.OccursAllowsStoredCell(idx))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
                     }
                     else
                     {

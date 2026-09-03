@@ -32,13 +32,13 @@ public class BytecodeInterpreterTests
     [Fact]
     public void Run_UnimplementedOpcode_Throws()
     {
-        // The specialised arithmetic / comparison opcodes (unify_eq, is_op,
-        // less_than, etc.) are reserved bytecode forms whose dispatch will
-        // land in a later chunk; for now they fall through to the
-        // default-throws branch.
+        // ReservedExtension is defined in the table but has no dispatch:
+        // it falls through to the default-throws branch, exactly as any
+        // corrupt byte would. (The old exemplar here, unify_eq, was part of
+        // a never-dispatched family since removed outright.)
         var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
-        byte[] code = { (byte)Opcode.UnifyEq };
+        byte[] code = { (byte)Opcode.ReservedExtension };
 
         var ex = Assert.Throws<NotImplementedException>(() => interp.Run(code, 0));
         Assert.Contains("not implemented", ex.Message);

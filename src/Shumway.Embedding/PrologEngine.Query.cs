@@ -1676,6 +1676,16 @@ public sealed partial class PrologEngine
             LastCallOptimisation = _flags.DebugLco,
             // ADR-039 — snapshot the prefer_rationals flag for '/' semantics.
             PreferRationals = _flags.PreferRationals,
+            // occurs_check: 0 = false (default), 1 = true (sound unification
+            // fails an occurs violation), 2 = error (raises
+            // representation_error(term)). Snapshotted per query, like the
+            // flags above.
+            OccursMode = _flags.OccursCheck switch
+            {
+                "true" => (byte)1,
+                "error" => (byte)2,
+                _ => (byte)0,
+            },
         };
         if (LoadProfEnabled)
             ProfActCtorTicks += System.Diagnostics.Stopwatch.GetTimestamp() - profAc0;

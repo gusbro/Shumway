@@ -899,6 +899,37 @@ This matches GNU Prolog, SICStus and Scryer (SWI orders numbers by value).
 It affects everything built on the standard order: `sort/2`, `msort/2`,
 `setof/3`, `keysort/2`, `@</2` and friends.
 
+### The occurs check
+
+By default unification builds rational trees: `X = f(X)` succeeds and yields
+a cyclic term, which `write/1` and `==/2` handle safely. The `occurs_check`
+flag changes what happens when a unification would bind a variable to a term
+containing that same variable:
+
+| Value | Effect |
+|---|---|
+| `false` | Default. The binding is made; the result is a cyclic term. |
+| `true` | The unification **fails** instead. |
+| `error` | The unification raises `representation_error(term)`. |
+
+```prolog
+?- set_prolog_flag(occurs_check, true), -X = X.
+false.
+?- set_prolog_flag(occurs_check, error), X = f(X).
+caught: error(representation_error(term), ...)
+```
+
+The setting covers every unification: explicit `=/2`, clause-head matching,
+the implicit unifications inside builtins, and attributed variables (so a
+frozen variable cannot be bound into a cycle either). It takes effect
+immediately, including for the remainder of the goal that set it, and on
+both execution tiers.
+
+`unify_with_occurs_check/2` keeps its own contract regardless of the flag:
+it always fails, never raises, when the check trips. Conversely, terms that
+are already cyclic remain legal values under `true`; the flag guards new
+bindings, it does not retroactively reject existing terms.
+
 ### Integer limits
 
 Integers are unbounded: arithmetic promotes past 64 bits transparently

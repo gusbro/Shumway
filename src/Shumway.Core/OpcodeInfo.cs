@@ -188,16 +188,6 @@ public static class OpcodeTable
 
         // Builtin call and specialised builtin opcodes
         Set(Opcode.CallBuiltin, 9, "call_builtin", OperandKind.BuiltinId, OperandKind.Count);
-        Set(Opcode.UnifyEq, 1, "unify_eq");
-        Set(Opcode.IsOp, 1, "is_op");
-        Set(Opcode.LessThan, 1, "less_than");
-        Set(Opcode.GreaterThan, 1, "greater_than");
-        Set(Opcode.LessEq, 1, "less_eq");
-        Set(Opcode.GreaterEq, 1, "greater_eq");
-        Set(Opcode.ArithEq, 1, "arith_eq");
-        Set(Opcode.ArithNotEq, 1, "arith_not_eq");
-        Set(Opcode.StructEq, 1, "struct_eq");
-        Set(Opcode.StructNotEq, 1, "struct_not_eq");
 
         // Consolidated patterns
         Set(Opcode.GetConstantA1, 5, "get_constant_a1", OperandKind.Atom);

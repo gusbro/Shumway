@@ -55,7 +55,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("unify_with_occurs_check", 2,
             UnifyBuiltins.UnifyWithOccursCheck,
             Cmp, "unify_with_occurs_check(?Term1, ?Term2)",
-            "Like =/2 but fails rather than building a cyclic term (ISO §8.2.2).");
+            "Like =/2 but fails when a variable would be bound to a term containing that same variable, so it never builds a cyclic term. Not affected by the occurs_check flag, which applies the same check to ordinary unification.");
 
         // Arithmetic.
         const string Arith = "Arithmetic";

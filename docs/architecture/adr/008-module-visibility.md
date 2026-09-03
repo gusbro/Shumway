@@ -106,7 +106,7 @@ When the compiler encounters a call to `goal(args)` in module M, it resolves the
 
 1. **Local predicates of M** with matching name and arity. If found, the call is resolved at compile time to the local definition.
 
-2. **Builtins** (system predicates registered at engine initialization). If found, the call may be compiled to a dedicated builtin opcode (`Is`, `UnifyEq`, etc.) or to `CallBuiltin`.
+2. **Builtins** (system predicates registered at engine initialization). If found, the call is compiled to `CallBuiltin`/`ExecuteBuiltin`, or lowered to dedicated instructions where they exist (the ADR-018 arithmetic set for `is/2` and comparisons; `=/2` inlines as unification instructions).
 
 3. **Public predicates of other already-loaded modules**. If found, the call is resolved at compile time to the global definition.
 

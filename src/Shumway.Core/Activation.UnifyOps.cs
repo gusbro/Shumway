@@ -377,6 +377,9 @@ public sealed partial class Activation
             {
                 // ADR-020: the cell is pre-reserved — write in place, then
                 // decrement / cascade-pop the write-pointer frame stack.
+                // No occurs hook here: reserved builds are put-side (head
+                // matching is never reserved), so no pre-existing variable
+                // is bound to this frame and a cycle cannot form.
                 _heap[ptr] = value;
                 _unifyPointer = ptr + 1;
                 OnReservedArgWritten();
@@ -384,6 +387,9 @@ public sealed partial class Activation
             }
             int idx = AllocateHeap(1);
             _heap[idx] = value;
+            // occurs_check flag: post-store check — a failing store
+            // backtracks and the heap above the choice point is discarded.
+            if (OccursMode != 0 && !OccursAllowsStoredCell(idx)) return false;
         }
         else
         {
@@ -649,6 +655,10 @@ public sealed partial class Activation
             {
                 // WRITE: store the value cell verbatim (unify_value_x write
                 // semantics — UnifyArgCell's write arm), tail fresh.
+                // occurs_check (the FLAG): here the BIND comes after the
+                // store, so the pre-bind test is the classic one — does the
+                // variable about to be bound occur in the head value?
+                if (!OccursAllowsStore(home, _registers[v])) return false;
                 int pair = AllocateHeap(2);
                 _heap[pair] = _registers[v];
                 _heap[pair + 1] = Cell.UnboundVar(pair + 1);

@@ -17,7 +17,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `==(@Term1, @Term2)` | Succeeds if the two terms are structurally identical. |
 | `\=(?Term1, ?Term2)` | Succeeds if the two terms do not unify. Attributed-variable hooks run: freeze fires during the trial, dif can veto it. |
 | `\==(@Term1, @Term2)` | Succeeds if the two terms are not structurally identical. |
-| `unify_with_occurs_check(?Term1, ?Term2)` | Like =/2 but fails rather than building a cyclic term (ISO §8.2.2). |
+| `unify_with_occurs_check(?Term1, ?Term2)` | Like =/2 but fails when a variable would be bound to a term containing that same variable, so it never builds a cyclic term. Not affected by the occurs_check flag, which applies the same check to ordinary unification. |
 
 ## Type checking
 

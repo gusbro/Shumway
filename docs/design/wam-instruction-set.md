@@ -13,7 +13,7 @@ operands, and bytecode encoding of each instruction it covers.
 > ADR-027/028), epilogue fusions (`deallocate_execute`,
 > `cut_deallocate_proceed`, `cut_proceed` — ADR-029), baked tier dispatch
 > (`call_il`/`execute_il`/`call_bytecode`/`execute_bytecode`,
-> `execute_builtin`), inline comparisons (`unify_eq` family), `get_level_b`,
+> `execute_builtin`), `get_level_b`,
 > and the debugger trio (`break`, `debug_lastcall`, `debug_port` — ADR-035).
 > Numeric opcode values cited below may have shifted (opcodes are renumbered to
 > keep the dense dispatch block contiguous); trust `shumway-disasm` output and
@@ -689,22 +689,13 @@ result := _builtins[builtin_id](this)
 if not result: fail
 ```
 
-### Specialized builtin opcodes (v1)
+### Specialized builtin opcodes — removed
 
-For the most frequent builtins, dedicated opcodes avoid the `call_builtin` dispatch overhead.
-
-| Opcode | Mnemonic | Operands | Description |
-|--------|----------|----------|-------------|
-| 0x91   | unify_eq | (none) | Equivalent to `=/2`. Unifies X[0] and X[1]. |
-| 0x92   | is_op | (none) | Evaluates X[1] arithmetically and unifies with X[0]. |
-| 0x93   | less_than | (none) | `<`: arithmetic less-than. |
-| 0x94   | greater_than | (none) | `>`: arithmetic greater-than. |
-| 0x95   | less_eq | (none) | `=<`: arithmetic less-or-equal. |
-| 0x96   | greater_eq | (none) | `>=`: arithmetic greater-or-equal. |
-| 0x97   | arith_eq | (none) | `=:=`: arithmetic equality. |
-| 0x98   | arith_not_eq | (none) | `=\=`: arithmetic inequality. |
-| 0x99   | struct_eq | (none) | `==`: structural equality (no unification). |
-| 0x9A   | struct_not_eq | (none) | `\==`: structural inequality. |
+A v1 sketch reserved a family of dedicated builtin opcodes (`unify_eq`,
+`is_op`, the arithmetic and structural comparisons). None were ever emitted
+or dispatched: the arithmetic instruction set (ADR-018) and the inline
+`=/2` lowering superseded the idea before it ran, and the encodings were
+removed rather than kept as reserved holes.
 
 ---
 
@@ -893,8 +884,7 @@ c2:
   put_variable_y Y[0], X[1]          ; Y[0] = N1, A2 = N1
   call length/2, 1                   ; call recursively
   put_value_y Y[0], X[0]             ; A1 = N1
-  put_integer 1, X[1]                ; A2 = 1
-  is_op                              ; X[0] = X[0] + X[1]; bound to original N
+  a_int_bin +, X[0], 1, X[0]         ; ADR-018 fused add; binds original N
   deallocate
   proceed
 ```

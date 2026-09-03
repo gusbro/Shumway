@@ -247,6 +247,15 @@ public static partial class MetaBuiltins
                 throw new ShumwayPrologException(
                     IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.OccursCheck = valueName;
+            // Applies from the NEXT unification, not the next query: the
+            // engine snapshot exists for query setup, but a program that
+            // sets the flag mid-body means it — leaving the running
+            // activation on the old mode would be the very "set it and
+            // nothing changes" the flag was reported for.
+            engine.OccursMode = valueName switch
+            {
+                "true" => 1, "error" => 2, _ => 0,
+            };
             return true;
         }
         if (flagName == "implicit_dynamic")
