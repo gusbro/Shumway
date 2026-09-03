@@ -248,10 +248,14 @@ public static class AtomCharBuiltins
             {
                 // Full Prolog number syntax (§6.4.4): radix (0x/0o/0b), char
                 // code (0'c), BigInteger-size decimals, floats, leading layout.
-                if (TryBuildPrologNumber(engine, s, out Cell numResult, out int floatIdx))
+                if (TryBuildPrologNumber(engine, s, out Cell numResult,
+                        out int floatIdx, out bool aboveMaxFloat))
                     return floatIdx >= 0
                         ? engine.UnifyRegisterWithHeapAt(0, floatIdx)
                         : engine.UnifyRegisterWithCell(0, numResult);
+                if (aboveMaxFloat)
+                    throw new PrologRuntimeException(
+                        "representation_error", "max_float");
                 // ISO §8.16.8 reads the chars as a TERM that must be a number, so
                 // `'-'1` (quoted prefix minus) is -1 and `'\n-' 3` is -3 — cases the
                 // token parser above doesn't cover. Fall back to the host's full
@@ -312,12 +316,19 @@ public static class AtomCharBuiltins
     /// (<paramref name="floatIdx"/> = −1) or <paramref name="floatIdx"/>
     /// is the heap index of a materialised float. Returns false when the
     /// text is not a number (caller raises
-    /// <c>syntax_error(illegal_number)</c>).</summary>
+    /// <c>syntax_error(illegal_number)</c>) — except a float whose SYNTAX is
+    /// perfect but whose value exceeds double range, reported through
+    /// <paramref name="aboveMaxFloat"/>: that is an implementation limit, so
+    /// the ISO-facing caller must raise <c>representation_error(max_float)</c>
+    /// (never an infinite float, never a syntax error), while
+    /// <c>atom_number/2</c> keeps its conventional fail.</summary>
     internal static bool TryBuildPrologNumber(
-        Activation engine, string s, out Cell cell, out int floatIdx)
+        Activation engine, string s, out Cell cell, out int floatIdx,
+        out bool aboveMaxFloat)
     {
         cell = default;
         floatIdx = -1;
+        aboveMaxFloat = false;
         int i = 0, n = s.Length;
         // Leading layout — whitespace AND comments (§6.4.1), so a number token
         // may be preceded by `/* */` or a `%` line comment.
@@ -414,10 +425,11 @@ public static class AtomCharBuiltins
         if (!double.TryParse(Splice(s, start, i, cuts), NumberStyles.Float,
                 CultureInfo.InvariantCulture, out double dv))
             return false;
-        // An exponent past double's range parses to Infinity in .NET —
-        // "9.9e999" must be a syntax error (number_chars_cont case 82), never
-        // an infinite float. Underflow to 0.0 stays accepted (case 80).
-        if (!double.IsFinite(dv)) return false;
+        // An exponent past double's range parses to Infinity in .NET — the
+        // syntax is valid, the VALUE is unrepresentable (number_chars_cont
+        // case 82): signal above-max_float, never hand back an infinity.
+        // Underflow to 0.0 stays accepted (case 80).
+        if (!double.IsFinite(dv)) { aboveMaxFloat = true; return false; }
         floatIdx = engine.MakeFloat(neg ? -dv : dv);
         return true;
     }
@@ -715,8 +727,11 @@ public static class AtomCharBuiltins
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
             // Full Prolog number syntax (radix, 0'c, BigInteger, floats),
-            // same parser as number_codes/2.
-            if (TryBuildPrologNumber(engine, name, out Cell numCell2, out int fIdx))
+            // same parser as number_codes/2. A float above max_float also
+            // falls out here as a plain fail (SWI-checked convention), where
+            // number_chars/2 raises representation_error(max_float).
+            if (TryBuildPrologNumber(engine, name, out Cell numCell2,
+                    out int fIdx, out bool _))
                 return fIdx >= 0
                     ? engine.UnifyRegisterWithHeapAt(1, fIdx)
                     : engine.UnifyRegisterWithCell(1, numCell2);

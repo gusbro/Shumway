@@ -374,7 +374,7 @@ public sealed class Parser
                 NextToken();
                 Token numTok = NextToken();
                 builtPrec = 0;
-                return new FloatTerm(-numTok.FloatValue) { Position = pos };
+                return new FloatTerm(-FiniteFloat(numTok, pos)) { Position = pos };
             }
         }
 
@@ -516,7 +516,7 @@ public sealed class Parser
                     : new IntTerm(tok.IntValue) { Position = pos };
 
             case TokenKind.Float:
-                return new FloatTerm(tok.FloatValue) { Position = pos };
+                return new FloatTerm(FiniteFloat(tok, pos)) { Position = pos };
 
             case TokenKind.String:
                 return BuildStringLiteral(tok.Text, pos);
@@ -1013,6 +1013,18 @@ public sealed class Parser
             or TokenKind.LParen or TokenKind.LBracket or TokenKind.LBrace => true,
         _ => false,
     };
+
+    /// <summary>A float literal past double range lexes as an infinity (the
+    /// lexer keeps both frameworks identical); the SYNTAX is perfect, so it is
+    /// not a syntax error — it names a value above max_float, which only a
+    /// representation_error can report (Neumerkel number_chars #82 / stc #74).
+    /// The flaw rides on the exception for the ISO-error carriers to honour.</summary>
+    private static double FiniteFloat(Token tok, SourcePosition pos)
+        => double.IsFinite(tok.FloatValue)
+            ? tok.FloatValue
+            : throw new ParseException(
+                $"float literal '{tok.Text}' is above max_float.", pos)
+                { RepresentationFlaw = "max_float" };
 
     private static string DescribeToken(Token tok) => tok.Kind switch
     {

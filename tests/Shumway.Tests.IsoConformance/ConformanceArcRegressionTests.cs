@@ -111,10 +111,13 @@ public sealed class ConformanceArcRegressionTests
     [Fact] public void NumberChars_ParenthesizedIsNotANumber() =>
         // the term-reader fallback once read "(1)" through to 1.
         Raises("number_chars(_, ['(','1',')'])", "syntax_error(_)");
-    [Fact] public void NumberChars_FloatOverflowIsSyntaxError() =>
+    [Fact] public void NumberChars_FloatOverflowIsAboveMaxFloat() =>
+        // Perfect syntax, unrepresentable VALUE (issue #42, number_chars #82):
+        // a representation error, not a syntax error and never an infinity.
         // Also pins the lexer's TryParse path: .NET Framework's double.Parse
-        // throws where Core returns Infinity — both must reject here.
-        Raises("number_chars(_, ['5','.','0','e','9','9','9'])", "syntax_error(_)");
+        // throws where Core returns Infinity — both must land here.
+        Raises("number_chars(_, ['5','.','0','e','9','9','9'])",
+            "representation_error(max_float)");
     [Fact] public void NumberChars_FloatUnderflowIsZero() =>
         True("number_chars(N, ['5','.','0','e','-','9','9','9']), N == 0.0.");
     [Fact] public void NumberChars_QuotedMinusStillReads() =>

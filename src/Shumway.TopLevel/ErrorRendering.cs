@@ -32,6 +32,11 @@ public static class ErrorRendering
             {
                 ShumwayPrologException pex => $"error: {pex.Term}",
                 PrologRuntimeException re => $"error: {FormatRuntimeError(re)}",
+                // A query whose TEXT is perfect syntax naming an
+                // unrepresentable value (a float above max_float): the ISO
+                // error shape, though the goal never ran so nothing catches it.
+                Shumway.Compiler.Parsing.ParseException { RepresentationFlaw: { } flaw } =>
+                    $"error: representation_error({flaw})",
                 _ => $"{ex.GetType().Name}: {ex.Message}",
             },
         };
