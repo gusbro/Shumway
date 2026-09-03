@@ -797,14 +797,22 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// <summary>One frame in <see cref="LastErrorStackTraceWithPositions"/>:
     /// the predicate's <c>Name/Arity</c> plus the source position of its
     /// first clause (or <see cref="Shumway.Compiler.Lexer.SourcePosition.Start"/>
-    /// for synthetic / blob-loaded predicates without source info).</summary>
+    /// for synthetic / blob-loaded predicates without source info).
+    ///
+    /// <para><see cref="IsInternal"/> marks a frame the user did not write —
+    /// the prelude, a bundled library, an opaque module (the ADR-035
+    /// non-debuggable set). Its <see cref="Position"/> indexes source the
+    /// user has no file for, so a diagnostic reports such a frame WITHOUT a
+    /// line number rather than quoting one that points nowhere.</para></summary>
     public readonly record struct StackFrame(
-        string Name, int Arity, Shumway.Compiler.Lexer.SourcePosition Position)
+        string Name, int Arity, Shumway.Compiler.Lexer.SourcePosition Position,
+        bool IsInternal = false)
     {
         public override string ToString()
         {
             // "name/arity at line:col" reads naturally in trace lines.
-            if (Position.Line <= 1 && Position.Column <= 1 && Position.Offset == 0)
+            if (IsInternal
+                || (Position.Line <= 1 && Position.Column <= 1 && Position.Offset == 0))
                 return $"{Name}/{Arity}";
             return $"{Name}/{Arity} at {Position}";
         }

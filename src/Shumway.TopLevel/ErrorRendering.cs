@@ -46,14 +46,40 @@ public static class ErrorRendering
         if (trace is null) return lines;
         foreach (var f in trace)
         {
-            if (f.Name.StartsWith('$')) continue;
-            bool positionless =
-                f.Position.Line <= 1 && f.Position.Column <= 1 && f.Position.Offset == 0;
+            if (FrameName(f.Name) is not { } shown) continue;
+            // A frame the user did not write (the prelude, a library) has a
+            // position into source they have no file for, so quoting a line
+            // there points nowhere. Report the predicate alone.
+            bool positionless = f.IsInternal
+                || (f.Position.Line <= 1 && f.Position.Column <= 1 && f.Position.Offset == 0);
             lines.Add(positionless
-                ? $"  at {f.Name}/{f.Arity}"
-                : $"  at {f.Name}/{f.Arity} ({f.Position})");
+                ? $"  at {shown}/{f.Arity}"
+                : $"  at {shown}/{f.Arity} ({f.Position})");
         }
         return lines;
+    }
+
+    /// <summary>How a frame's predicate is spelled in a trace, or null when
+    /// the frame is engine machinery and is dropped.
+    ///
+    /// <para>A module-local predicate is stored mangled as
+    /// <c>module$name</c>. The decision is made on the LOCAL part: a
+    /// <c>$</c>-named local is a meta-call helper or a compiler-generated
+    /// disjunction body, not a predicate anyone called by that name, so it
+    /// goes (the same rule bare <c>$</c> names already followed, which
+    /// mangling hid — <c>coroutining$$when_valid</c> does not start with
+    /// <c>$</c>). What survives shows as the standard qualified indicator,
+    /// <c>module:name</c> — bare for the default module, which every
+    /// consulted program is in and which qualifying would only clutter.</para></summary>
+    private static string? FrameName(string name)
+    {
+        int cut = name.IndexOf('$');
+        if (cut < 0) return name;
+        if (cut == 0) return null;                       // bare $helper
+        string local = name.Substring(cut + 1);
+        if (local.Length == 0 || local[0] == '$') return null;
+        string module = name.Substring(0, cut);
+        return module == PrologEngine.DefaultModuleName ? local : $"{module}:{local}";
     }
 
     /// <summary>Formats a <see cref="PrologRuntimeException"/> by rendering

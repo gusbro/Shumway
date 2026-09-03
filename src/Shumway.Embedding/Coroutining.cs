@@ -71,6 +71,10 @@ internal static class Coroutining
             ; '$when_attach'(Condition, trigger(Condition, Goal, _Fired, _Alive))
             ).
 
+        % Same trap one level down: a variable SUB-condition would unify with
+        % nonvar(_) and silently become a condition the caller never wrote.
+        % Too little instantiation to decide, so it reports as such.
+        '$when_valid'(C) :- var(C), !, throw(error(instantiation_error, when/2)).
         '$when_valid'(nonvar(_)).
         '$when_valid'(ground(_)).
         '$when_valid'(?=(_, _)).
@@ -230,6 +234,9 @@ internal static class Coroutining
         % concatenating them leaves the survivor carrying it twice and the top
         % level showing it twice. Append only what is not already there; the
         % two records are literally the same term, so == decides it.
+        '$co_merge'(Old, G, Merged) :-
+            var(G), !,
+            ( '$co_has'(Old, G) -> Merged = Old ; Merged = (Old, G) ).
         '$co_merge'(Old, (A, B), Merged) :-
             !,
             '$co_merge'(Old, A, Mid),
@@ -237,6 +244,7 @@ internal static class Coroutining
         '$co_merge'(Old, G, Merged) :-
             ( '$co_has'(Old, G) -> Merged = Old ; Merged = (Old, G) ).
 
+        '$co_has'(G0, G) :- var(G0), !, G0 == G.
         '$co_has'((A, B), G) :- !, ( '$co_has'(A, G) -> true ; '$co_has'(B, G) ).
         '$co_has'(G0, G) :- G0 == G.
 
@@ -249,6 +257,7 @@ internal static class Coroutining
         % is what releases a frozen goal, and this was not one. So
         % `when(?=(P,Q), G), P = Q` left G suspended for good.
         % Anything still undecided stays covered by the migrated suspension.
+        '$co_alias_check'(G) :- var(G), !.
         '$co_alias_check'((A, B)) :-
             !, '$co_alias_check'(A), '$co_alias_check'(B).
         '$co_alias_check'('$dif_wake'(dif_c(X, Y, Alive))) :-
@@ -271,6 +280,13 @@ internal static class Coroutining
         coroutining_attr_goals(frozen(G), V, Goals) :-
             co_project(G, V, Goals, []).
 
+        % A goal that is still a VARIABLE (freeze(X, G) with G unbound, which
+        % is legal — it raises only when it runs) must not reach the
+        % conjunction pattern below: unifying it there BINDS it to (A, B)
+        % with two fresh variables, which both corrupts the suspension and
+        % recurses forever on the fresh parts. Guard every walker.
+        co_project(G, V, Goals, Tail) :-
+            var(G), !, Goals = [freeze(V, G)|Tail].
         co_project((A, B), V, Goals, Tail) :-
             !,
             co_project(A, V, Goals, Mid),

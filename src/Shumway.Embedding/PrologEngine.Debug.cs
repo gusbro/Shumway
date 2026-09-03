@@ -2158,7 +2158,8 @@ public sealed partial class PrologEngine
             // the predicate's first-clause position when no Meta opcode is
             // present (single-clause predicates or older bundle blobs).
             SourcePosition framePos = FindClausePosition(pred, addr - entryAddr);
-            frames.Add(new StackFrame(name, arity, framePos));
+            frames.Add(new StackFrame(name, arity, framePos,
+                _nonDebuggableFunctors.Contains(pred.FunctorId)));
         }
         return (plain, frames);
     }
