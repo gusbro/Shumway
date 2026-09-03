@@ -383,6 +383,21 @@ public class TermIoConformance : IDisposable
     }
 
     [Fact]
+    public void WriteTerm_IgnoreOps_DotFunctorObeysTheQuotedDefault()
+    {
+        // Conformity rows 380/381 (issue #72): write_term defaults
+        // quoted(false), so the cons functor prints bare like any other
+        // atom — `.( ,[])` — while write_canonical (quoted) keeps the
+        // re-readable '.' form.
+        var e = new PrologEngine();
+        Assert.Equal(".", Captured(e, "write_term('.', [ignore_ops(true)])"));
+        Assert.Equal(".( ,[])", Captured(e, "write_term([' '], [ignore_ops(true)])"));
+        Assert.Equal("'.'(a,[])", Captured(e, "write_canonical([a])"));
+        Assert.Equal("'.'(a,[])",
+            Captured(e, "write_term([a], [ignore_ops(true), quoted(true)])"));
+    }
+
+    [Fact]
     public void WriteTerm3_NumbervarsOption_RendersVARCompounds()
     {
         // '$VAR'(0) renders as A, '$VAR'(1) as B, etc., when

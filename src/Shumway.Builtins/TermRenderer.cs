@@ -463,16 +463,19 @@ public static class TermRenderer
         {
             // ISO §7.10.5 canonical form (write_canonical): a list is the
             // compound '.'(H, T) and ignore_ops means FUNCTIONAL notation —
-            // `'.'(a,[])`, not `[a]` (Neumerkel #34). Iterative over the
-            // spine — don't recurse per element: a deep list overflows the
-            // C# stack (same rule as the term materializers).
+            // `'.'(a,[])`, not `[a]` (Neumerkel #34). The dot functor obeys
+            // the quoted option like any other atom (issue #72): write_term
+            // defaults quoted(false), so it prints bare — `.(a,[])`.
+            // Iterative over the spine — don't recurse per element: a deep
+            // list overflows the C# stack (same rule as the materializers).
+            string consOpen = options.Quoted ? "'.'(" : ".(";
             int depth = 0;
             Cell cur = lisCell;
             while (true)
             {
                 Resolve(engine, ref cur);
                 if (!engine.TryUnconsListLike(cur, out Cell cHead, out Cell cTail)) break;
-                output.Write("'.'(");
+                output.Write(consOpen);
                 Render(engine, cHead, output, options, 999);
                 output.Write(',');
                 depth++;
