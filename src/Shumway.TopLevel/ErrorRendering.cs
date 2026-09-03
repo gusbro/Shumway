@@ -30,7 +30,8 @@ public static class ErrorRendering
         {
             ex switch
             {
-                ShumwayPrologException pex => $"error: {pex.Term}",
+                ShumwayPrologException pex =>
+                    $"error: {AstTermRenderer.RenderQuoted(pex.Term)}",
                 PrologRuntimeException re => $"error: {FormatRuntimeError(re)}",
                 // A query whose TEXT is perfect syntax naming an
                 // unrepresentable value (a float above max_float): the ISO
@@ -55,32 +56,33 @@ public static class ErrorRendering
         return lines;
     }
 
-    /// <summary>Formats a <see cref="PrologRuntimeException"/> into the
-    /// ISO-shaped <c>kind(detail)</c> string, plus the offending
-    /// builtin's <c>Name/Arity</c> as the error context when the
-    /// interpreter stamped it.
+    /// <summary>Formats a <see cref="PrologRuntimeException"/> by rendering
+    /// the SAME ISO ball term catch/3 would unify with (issue #65 pinned
+    /// the drift: the message said <c>existence_error(inex/0)</c> while the
+    /// ball carried <c>existence_error(procedure, inex/0)</c>, and a float
+    /// culprit printed as the C# default <c>0</c> instead of <c>0.0</c>).
+    /// Quoted rendering, so the culprit is re-readable text. The offending
+    /// builtin's <c>Name/Arity</c> follows as context — unless it is a
+    /// <c>$</c>-named internal helper, which is engine machinery, not a
+    /// predicate the user called (the same rule the stack frames follow).
     ///
-    /// <para>Examples:</para>
-    /// <list type="bullet">
-    /// <item><c>{ Kind: "evaluation_error", Detail: "zero_divisor", BuiltinName: "is", BuiltinArity: 2 }</c>
-    ///   → <c>"evaluation_error(zero_divisor) in is/2"</c></item>
-    /// <item><c>{ Kind: "instantiation_error", Detail: "" }</c>
-    ///   → <c>"instantiation_error"</c></item>
-    /// </list></summary>
+    /// <para>A syntax_error's detail is a reader MESSAGE with positions,
+    /// not a term; it keeps its plain formatting.</para></summary>
     public static string FormatRuntimeError(PrologRuntimeException re)
     {
         ArgumentNullException.ThrowIfNull(re);
-        // The culprit travels in Value when the throw site captured one —
-        // print it: "type_error(evaluable)" hides exactly the term a
-        // forensic transcript needs (the cross-process bundle flake was
-        // undiagnosable until this said WHICH value reached arithmetic).
-        string body = string.IsNullOrEmpty(re.Detail)
-            ? re.Kind
-            : re.Value is { } culprit
-                ? $"{re.Kind}({re.Detail}, {culprit})"
-                : $"{re.Kind}({re.Detail})";
-        if (!string.IsNullOrEmpty(re.BuiltinName))
-            return $"{body} in {re.BuiltinName}/{re.BuiltinArity}";
+        string body;
+        if (re.Kind == "syntax_error")
+            body = $"syntax_error({re.Detail})";
+        else
+            body = MetaBuiltins.TranslateRuntimeError(re)
+                    is Shumway.Compiler.Ast.CompoundTerm { Functor: "error", Args.Length: 2 } ball
+                ? AstTermRenderer.RenderQuoted(ball.Args[0])
+                : string.IsNullOrEmpty(re.Detail) ? re.Kind : $"{re.Kind}({re.Detail})";
+        // Pattern, not IsNullOrEmpty: net48's reference assemblies lack the
+        // NotNullWhen annotation, so the indexer trips CS8602 there.
+        if (re.BuiltinName is { Length: > 0 } context && context[0] != '$')
+            return $"{body} in {context}/{re.BuiltinArity}";
         return body;
     }
 }

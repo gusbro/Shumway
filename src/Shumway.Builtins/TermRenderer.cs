@@ -655,7 +655,7 @@ public static class TermRenderer
     /// control / DEL character uses the <c>\xHH\</c> hexadecimal form — so a
     /// quoted atom carrying a newline round-trips through <c>read/1</c>
     /// instead of embedding a raw control byte.</summary>
-    private static string? EscapeQuotedChar(char c) => c switch
+    public static string? EscapeQuotedChar(char c) => c switch
     {
         '\'' => "\\'",
         '\\' => "\\\\",

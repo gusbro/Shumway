@@ -59,6 +59,18 @@ public static class AstTermRenderer
     /// showing the atom <c>'1234'</c> as bare <c>1234</c> made the round-tripped value
     /// an INTEGER. Operator occurrences stay unquoted (they re-parse as written).</summary>
     public static string Render(Term term, int maxPrec, OperatorTable ops, bool quoted)
+        => Render(term, maxPrec, ops, quoted, portrayText: false);
+
+    /// <summary>The top level's ANSWER rendering: quoted (re-readable — a raw
+    /// newline inside an atom never leaks into the transcript) and with text
+    /// portrayed: a proper list of characters shows as <c>"..."</c> with
+    /// escapes. Program text (listing, portray_clause) stays list-shaped;
+    /// this form is for a human reading answers.</summary>
+    public static string RenderAnswer(Term term, OperatorTable ops)
+        => Render(term, 1200, ops, quoted: true, portrayText: true);
+
+    public static string Render(
+        Term term, int maxPrec, OperatorTable ops, bool quoted, bool portrayText)
     {
         switch (term)
         {
@@ -67,22 +79,70 @@ public static class AstTermRenderer
             case VarTerm v: return v.Name;
             case IntTerm n: return n.Value.ToString(CultureInfo.InvariantCulture);
             case FloatTerm f: return Shumway.Builtins.Number.FormatPrologFloat(f.Value);
-            case StringTerm s: return $"\"{s.Content}\"";
+            case StringTerm s: return RenderDoubleQuoted(s.Content);
             case BigIntTerm b: return b.Value.ToString(CultureInfo.InvariantCulture);
             case CompoundTerm { Functor: ".", Args.Length: 2 } list:
-                return RenderList(list, ops, quoted);
+                return portrayText && TryRenderTextList(list, out string text)
+                    ? text
+                    : RenderList(list, ops, quoted, portrayText);
             // '{}'(X) reads back as {X} — the canonical form would re-parse
             // but is not what writeq/portray_clause emit.
             case CompoundTerm { Functor: "{}", Args.Length: 1 } curly:
-                return "{" + Render(curly.Args[0], 1200, ops, quoted) + "}";
+                return "{" + Render(curly.Args[0], 1200, ops, quoted, portrayText) + "}";
             case CompoundTerm c:
-                return RenderCompound(c, maxPrec, ops, quoted);
+                return RenderCompound(c, maxPrec, ops, quoted, portrayText);
             default:
                 return term.ToString() ?? "?";
         }
     }
 
-    private static string RenderCompound(CompoundTerm c, int maxPrec, OperatorTable ops, bool quoted)
+    /// <summary>A proper, non-empty list of single-character atoms renders as
+    /// a double-quoted string — the text reading of the default
+    /// <c>double_quotes = chars</c>. CODES stay numeric on purpose:
+    /// <c>[65, 66]</c> displaying as <c>"AB"</c> would dress arbitrary small
+    /// integers up as text (the strictest engine agrees); the cell writer's
+    /// portray-text OPTION still covers codes for callers that ask.</summary>
+    private static bool TryRenderTextList(CompoundTerm cons, out string rendered)
+    {
+        rendered = "";
+        var sb = new StringBuilder();
+        Term cursor = cons;
+        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c)
+        {
+            if (c.Args[0] is not AtomTerm a || !IsOneCodePoint(a.Name))
+                return false;
+            sb.Append(a.Name);
+            cursor = c.Args[1];
+        }
+        if (cursor is not AtomTerm { Name: "[]" } || sb.Length == 0) return false;
+        rendered = RenderDoubleQuoted(sb.ToString());
+        return true;
+    }
+
+    private static bool IsOneCodePoint(string name) =>
+        name.Length == 1
+        || (name.Length == 2 && char.IsHighSurrogate(name[0])
+            && char.IsLowSurrogate(name[1]));
+
+    /// <summary>Double-quoted text with the writeq escapes — a raw control
+    /// character in the content must never reach the transcript raw.</summary>
+    private static string RenderDoubleQuoted(string content)
+    {
+        var sb = new StringBuilder(content.Length + 2);
+        sb.Append('"');
+        foreach (char ch in content)
+        {
+            if (ch == '"') { sb.Append("\\\""); continue; }
+            string? esc = Shumway.Builtins.TermRenderer.EscapeQuotedChar(ch);
+            // The single quote is literal inside double quotes.
+            if (esc is not null && ch != '\'') sb.Append(esc);
+            else sb.Append(ch);
+        }
+        return sb.Append('"').ToString();
+    }
+
+    private static string RenderCompound(
+        CompoundTerm c, int maxPrec, OperatorTable ops, bool quoted, bool portrayText)
     {
         if (c.Args.Length == 2 && ops.TryGetInfix(c.Functor, out int iPrec, out var iType))
         {
@@ -100,8 +160,8 @@ public static class AstTermRenderer
                 _ when IsSymbolic(c.Functor) => c.Functor,
                 _ => $" {c.Functor} ",
             };
-            string leftStr = Render(c.Args[0], leftMax, ops, quoted);
-            string rightStr = Render(c.Args[1], rightMax, ops, quoted);
+            string leftStr = RenderOperand(c.Args[0], leftMax, ops, quoted, portrayText);
+            string rightStr = RenderOperand(c.Args[1], rightMax, ops, quoted, portrayText);
             // A tight symbolic operator fuses with a graphic-ending operand
             // into ONE token on re-read (`.. = ..` as `..=..`; `X = -1` as
             // `X=-1`, lexing `=-`): pad exactly where adjacency would fuse.
@@ -118,14 +178,14 @@ public static class AstTermRenderer
         if (c.Args.Length == 1 && ops.TryGetPrefix(c.Functor, out int pPrec, out var pType))
         {
             int argMax = pType == OperatorType.Fy ? pPrec : pPrec - 1;
-            string body = $"{c.Functor} {Render(c.Args[0], argMax, ops, quoted)}";
+            string body = $"{c.Functor} {RenderOperand(c.Args[0], argMax, ops, quoted, portrayText)}";
             return pPrec > maxPrec ? $"({body})" : body;
         }
         if (c.Args.Length == 1 && ops.TryGetPostfix(c.Functor, out int sPrec, out var sType))
         {
             int argMax = sType == OperatorType.Yf ? sPrec : sPrec - 1;
             string sep = IsSymbolic(c.Functor) ? c.Functor : $" {c.Functor}";
-            string operandStr = Render(c.Args[0], argMax, ops, quoted);
+            string operandStr = RenderOperand(c.Args[0], argMax, ops, quoted, portrayText);
             if (sep.Length > 0 && IsGraphicChar(sep[0])
                 && operandStr.Length > 0 && IsGraphicChar(operandStr[^1]))
                 sep = " " + sep;
@@ -140,9 +200,26 @@ public static class AstTermRenderer
         for (int i = 0; i < c.Args.Length; i++)
         {
             if (i > 0) sb.Append(", ");
-            sb.Append(Render(c.Args[i], 999, ops, quoted));
+            sb.Append(Render(c.Args[i], 999, ops, quoted, portrayText));
         }
         return sb.Append(')').ToString();
+    }
+
+    /// <summary>An OPERAND of an operator: a bare operator atom there would
+    /// not re-read (ISO 6.3.1.3, the s#378 rule the parser now enforces), so
+    /// it renders parenthesised — `(is)/2`, never `is/2`. Argument and list
+    /// positions render through plain Render and keep the bare atom, which
+    /// is exactly where ISO admits it.</summary>
+    private static string RenderOperand(
+        Term t, int maxPrec, OperatorTable ops, bool quoted, bool portrayText)
+    {
+        string s = Render(t, maxPrec, ops, quoted, portrayText);
+        return t is AtomTerm a
+               && (ops.TryGetInfix(a.Name, out _, out _)
+                   || ops.TryGetPrefix(a.Name, out _, out _)
+                   || ops.TryGetPostfix(a.Name, out _, out _))
+            ? "(" + s + ")"
+            : s;
     }
 
     private static bool IsSymbolic(string name)
@@ -159,18 +236,19 @@ public static class AstTermRenderer
     internal static bool IsGraphicChar(char ch)
         => "+-*/\\^<>=~:.?@#&$".IndexOf(ch) >= 0;
 
-    private static string RenderList(CompoundTerm cons, OperatorTable ops, bool quoted)
+    private static string RenderList(
+        CompoundTerm cons, OperatorTable ops, bool quoted, bool portrayText)
     {
         var elements = new List<string>();
         Term cursor = cons;
         while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c)
         {
-            elements.Add(Render(c.Args[0], 999, ops, quoted));
+            elements.Add(Render(c.Args[0], 999, ops, quoted, portrayText));
             cursor = c.Args[1];
         }
         if (cursor is AtomTerm { Name: "[]" })
             return "[" + string.Join(", ", elements) + "]";
         return "[" + string.Join(", ", elements) + " | "
-            + Render(cursor, 999, ops, quoted) + "]";
+            + Render(cursor, 999, ops, quoted, portrayText) + "]";
     }
 }

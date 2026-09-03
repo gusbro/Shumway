@@ -181,7 +181,7 @@ public static class SolutionFormatter
             // A named variable occurring inside this value prints as its name.
             if (displayName.Count > 0)
                 val = ResidualProjection.SubstituteVarNames(val, displayName);
-            string key = AstTermRenderer.Render(Elide(val, elide), 1200, ops);
+            string key = AstTermRenderer.Render(Elide(val, elide), 1200, ops, quoted: true, portrayText: true);
             renderedValue[name] = key;
             if (!groups.TryGetValue(key, out var members))
                 groups[key] = members = new List<string>();
@@ -198,7 +198,7 @@ public static class SolutionFormatter
                 // a `_`-named variable is still CONSTRAINED to is an answer,
                 // even though what it was bound to is not.
                 foreach (Term g in rs)
-                    lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops));
+                    lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops, quoted: true, portrayText: true));
                 continue;
             }
             if (!renderedValue.TryGetValue(name, out string? key)
@@ -213,7 +213,7 @@ public static class SolutionFormatter
                 AddBinding(lines, members[^1], key);
         }
         foreach (Term g in unattachedResiduals)
-            lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops));
+            lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops, quoted: true, portrayText: true));
 
         if (lines.Count == 0) return "true";
         return string.Join(",\n", lines);

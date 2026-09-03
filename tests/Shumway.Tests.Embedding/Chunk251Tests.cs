@@ -58,7 +58,9 @@ public class Chunk251Tests
         var re = new PrologRuntimeException("type_error", "integer");
         re.StampBuiltin("between", 3);
         re.StampBuiltin("findall", 3);    // outer dispatch — should NOT win
-        Assert.Equal("type_error(integer) in between/3",
+        // The message shows the full ISO ball shape — type_error/2, with an
+        // anonymous culprit when the throw site captured none (issue #65).
+        Assert.Equal("type_error(integer, _) in between/3",
             ErrorRendering.FormatRuntimeError(re));
     }
 }

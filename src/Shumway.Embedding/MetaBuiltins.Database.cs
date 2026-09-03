@@ -188,7 +188,12 @@ public static partial class MetaBuiltins
         new CompoundTerm("error",
             new Term[] { inner, StampedContext(re) ?? new VarTerm("_") });
 
-    internal static Term TranslateRuntimeError(PrologRuntimeException re) => re.Kind switch
+    /// <summary>Public because the top level's error renderer builds its
+    /// message from THIS term — the same one catch/3 unifies with — so the
+    /// message can never again show a shape the catcher would not match
+    /// (issue #65: <c>existence_error(inex/0)</c> printed one-arg while the
+    /// ball carried <c>existence_error(procedure, inex/0)</c>).</summary>
+    public static Term TranslateRuntimeError(PrologRuntimeException re) => re.Kind switch
     {
         "evaluation_error" => WrapWithStampedContext(
             new CompoundTerm("evaluation_error", new Term[] { new AtomTerm(re.Detail) }), re),
