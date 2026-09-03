@@ -177,15 +177,28 @@ internal static class FindallSnapshot
         var srcHeads = new List<int>();
         int cur = firstHead;
         int finalTailAddr;
+        // A cons whose tail re-enters the spine BEING walked: image slots do
+        // not exist yet, so the walk marks each head provisionally (negative
+        // = position on this spine; real slots are never negative — slot 0 is
+        // the reserved root). Without the mark, `L = [a|L]` re-walks itself
+        // until the image list overflows — an engine-killing OOM, not an
+        // error a program can see.
+        int selfCycleAt = -1;
         while (true)
         {
+            structMap[cur] = -1 - srcHeads.Count;
             srcHeads.Add(cur);
             int tailAddr = cur + 1;
             Cell tc = engine.GetHeap(engine.Deref(tailAddr));
             if (tc.Tag == Tag.Lis)
             {
                 int nextHead = tc.AsHeapIndex;
-                if (structMap.ContainsKey(nextHead)) { finalTailAddr = tailAddr; break; }
+                if (structMap.TryGetValue(nextHead, out int seen))
+                {
+                    if (seen < 0) { selfCycleAt = -1 - seen; finalTailAddr = -1; }
+                    else finalTailAddr = tailAddr;
+                    break;
+                }
                 cur = nextHead;
             }
             else { finalTailAddr = tailAddr; break; }
@@ -193,8 +206,10 @@ internal static class FindallSnapshot
         int n = srcHeads.Count;
         int firstPair = Reserve(cells, 2 * n);
         for (int i = 0; i < n; i++)
-            structMap[srcHeads[i]] = firstPair + 2 * i;
-        Cell tailCell = CopyAt(engine, finalTailAddr, cells, varMap, structMap);
+            structMap[srcHeads[i]] = firstPair + 2 * i;   // finalize the marks
+        Cell tailCell = selfCycleAt >= 0
+            ? Cell.Lis(firstPair + 2 * selfCycleAt)
+            : CopyAt(engine, finalTailAddr, cells, varMap, structMap);
         for (int i = 0; i < n; i++)
         {
             cells[firstPair + 2 * i] = CopyAt(engine, srcHeads[i], cells, varMap, structMap);
