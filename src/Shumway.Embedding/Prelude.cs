@@ -148,7 +148,7 @@ internal static class Prelude
         :- public write_term_to_chars/3.
         :- meta_predicate(call_with_limit(*, 0)).
         :- meta_predicate(call_with_offset(*, 0)).
-        :- public ':'/2.
+        :- public (':')/2.
         :- public phrase/2.
         :- public phrase/3.
         :- public '...'/2.

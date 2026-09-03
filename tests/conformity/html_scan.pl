@@ -195,6 +195,14 @@ scan_rows_([0'<, 0't, 0'r | R], AccR, [Chunk|Rows]) :-
     \+ ( R = [C|_], scan_word_char(C) ), !,
     cf_reverse(AccR, Chunk),
     scan_rows_(R, [], Rows).
+% The row ANCHOR is a boundary too: hand-edited stretches of the page open
+% a row with a bare `<td><a name=` and no `<tr>` (rows 369+), which glued
+% ten tests into their predecessor's chunk and silently dropped them. The
+% matched text stays in the NEW chunk — it is what the row parsers key on.
+scan_rows_([0'<,0't,0'd,0'>,0'<,0'a,0' ,0'n,0'a,0'm,0'e,0'=|R], AccR,
+           [Chunk|Rows]) :- !,
+    cf_reverse(AccR, Chunk),
+    scan_rows_(R, [0'=,0'e,0'm,0'a,0'n,0' ,0'a,0'<,0'>,0'd,0't,0'<], Rows).
 scan_rows_([C|T], AccR, Out) :- scan_rows_(T, [C|AccR], Out).
 
 % <!-- ... --> removal: non-greedy, never across a newline.

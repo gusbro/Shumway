@@ -42,7 +42,7 @@ public sealed class ControlConnectiveHeadTests
     {
         var e = new PrologEngine();
         Assert.True(e.Query(
-            "catch(assertz((x,y)), error(permission_error(modify, static_procedure, ','/2), _), true).")
+            "catch(assertz((x,y)), error(permission_error(modify, static_procedure, (',')/2), _), true).")
             .Success);
     }
 }

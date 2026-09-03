@@ -60,14 +60,14 @@ internal static class Clpfd
         :- op(760, yfx, #<=).
         :- op(720, yfx, ##).
 
-        :- public '#='/2.
-        :- public '#\\='/2.
-        :- public '#<'/2.
-        :- public '#>'/2.
-        :- public '#=<'/2.
-        :- public '#>='/2.
-        :- public 'in'/2.
-        :- public 'ins'/2.
+        :- public ('#=')/2.
+        :- public ('#\\=')/2.
+        :- public ('#<')/2.
+        :- public ('#>')/2.
+        :- public ('#=<')/2.
+        :- public ('#>=')/2.
+        :- public ('in')/2.
+        :- public ('ins')/2.
         :- public '$fd_lt'/2.
         :- public '$fd_le'/2.
         :- public '$fd_neq'/2.
@@ -93,12 +93,12 @@ internal static class Clpfd
         :- public indomain/1.
         :- public all_different/1.
         :- public all_distinct/1.
-        :- public '#<==>'/2.
-        :- public '#==>'/2.
-        :- public '#<=='/2.
-        :- public '#/\\'/2.
-        :- public '#\\/'/2.
-        :- public '#\\'/1.
+        :- public ('#<==>')/2.
+        :- public ('#==>')/2.
+        :- public ('#<==')/2.
+        :- public ('#/\\')/2.
+        :- public ('#\\/')/2.
+        :- public ('#\\')/1.
 
         % GNU-Prolog FD compatibility shim: the ExamplesFD corpus
         % uses GProlog's fd_* primitives, which map onto the SWI/SICStus-style
@@ -112,10 +112,10 @@ internal static class Clpfd
         :- public fd_exactly/3.
         :- public fd_only_one/1.
         :- public fd_at_most_one/1.
-        :- public '#<=>'/2.
-        :- public '#=>'/2.
-        :- public '#<='/2.
-        :- public '##'/2.
+        :- public ('#<=>')/2.
+        :- public ('#=>')/2.
+        :- public ('#<=')/2.
+        :- public ('##')/2.
 
         % the prefix-negation operator is declared after the public block:
         % once `#\` is a prefix operator, the quoted atom in `'#\\'/1`

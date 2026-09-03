@@ -23,11 +23,12 @@ public sealed class PreludeBundleParityTests
         // Registers the builtin tables.
         _ = new PrologEngine();
 
-        // The three `:- public` spellings the prelude uses: name/A,
-        // 'name'/A and (name)/A.
+        // The `:- public` spellings the prelude uses: name/A, 'name'/A,
+        // (name)/A and ('name')/A — the last is how an OPERATOR atom's
+        // indicator must be written (ISO 6.3.1.3, s#378).
         var publics = new System.Collections.Generic.HashSet<(string, int)>();
         foreach (Match m in Regex.Matches(Prelude.Source,
-            @":-\s*public\s+(?:\(\s*([^)\s]+)\s*\)|'([^']+)'|([^\s'/(]+))\s*/\s*(\d+)\s*\."))
+            @":-\s*public\s+(?:\(\s*'?([^)'\s]+)'?\s*\)|'([^']+)'|([^\s'/(]+))\s*/\s*(\d+)\s*\."))
         {
             string name = m.Groups[1].Success ? m.Groups[1].Value
                 : m.Groups[2].Success ? m.Groups[2].Value

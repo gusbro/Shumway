@@ -137,7 +137,7 @@ public class Chunk74Tests
             :- mode lookup(+, -) is semidet.
             lookup(K, V) :- table(K, V), V > 10.
             lookup(K, V) :- table(K, V).
-            :- public table/2.
+            :- public (table)/2.
             table(a, 5).
             table(a, 50).
             """);

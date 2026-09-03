@@ -121,6 +121,28 @@ public sealed class ConformanceArcRegressionTests
     [Fact] public void NumberChars_FloatUnderflowIsZero() =>
         True("number_chars(N, ['5','.','0','e','-','9','9','9']), N == 0.0.");
 
+    // ---- operator atom as an operand (issue #66, upcoming s#378) ----
+    // ISO 6.3.1.3: a bare operator atom cannot be the operand of an
+    // operator — the predicate-indicator shape included: `--> /2` reads
+    // only as `(-->)/2`. Delimited ARGUMENT positions still admit the
+    // bare atom (`f(-->)`, list elements), as does a whole term.
+
+    [Fact] public void OperatorAtom_BareIndicatorIsASyntaxError() =>
+        Raises("atom_to_term('--> /2', _, _)", "syntax_error(_)");
+    [Fact] public void OperatorAtom_AlphaOperatorSameRule() =>
+        Raises("atom_to_term('mod/2', _, _)", "syntax_error(_)");
+    [Fact] public void OperatorAtom_ParenthesisedIndicatorReads() =>
+        True("atom_to_term('(-->)/2', T, _), T =.. ['/', A, 2], A == (-->).");
+    [Fact] public void OperatorAtom_ArgumentPositionsStayLegal() =>
+        True("atom_to_term('f(-->)', T, _), arg(1, T, A), A == (-->), "
+           + "atom_to_term('[-->|-->]', L, _), L == [(-->)|(-->)], "
+           + "atom_to_term('{-->}', C, _), C == {(-->)}.");
+    [Fact] public void OperatorAtom_WriteqParenthesisesTheOperand() =>
+        True("with_output_to(atom(A), writeq((-->)/2)), A == '(-->)/2'.");
+    [Fact] public void OperatorAtom_ArityLeniencyKeepsTheBareForm() =>
+        True("set_prolog_flag(arity_compat, true), "
+           + "atom_to_term('is/2', T, _), T =.. ['/', A, 2], A == (is).");
+
     // ---- negative zero (issue #44, syntax conformity #364) ----
     // ISO's float value set has ONE zero: -0.0 denotes 0.0 wherever a float
     // is born (the literal, number_chars, arithmetic), so writeq finally

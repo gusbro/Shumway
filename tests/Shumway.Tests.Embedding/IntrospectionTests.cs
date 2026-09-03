@@ -99,7 +99,7 @@ public class IntrospectionTests
         // current_predicate/1 — §8.8.2 restricts it to user-defined
         // procedures, as GNU does. They ARE predicate_property built_in.
         Assert.True(engine.Query("\\+ current_predicate(append/3).").Success);
-        Assert.True(engine.Query("\\+ current_predicate(is/2).").Success);
+        Assert.True(engine.Query("\\+ current_predicate((is)/2).").Success);
         Assert.True(engine.Query("predicate_property(append(_,_,_), built_in).").Success);
     }
 

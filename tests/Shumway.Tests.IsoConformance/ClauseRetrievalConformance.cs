@@ -153,7 +153,7 @@ public class ClauseRetrievalConformance
         // only — GNU-verified (current_predicate(atom/1) fails there).
         // predicate_property/2 is how a program asks about a builtin.
         var e = new PrologEngine();
-        Assert.False(e.Query("current_predicate(is/2).").Success);
+        Assert.False(e.Query("current_predicate((is)/2).").Success);
         Assert.True(e.Query("predicate_property(is(_, _), built_in).").Success);
         e.ConsultString("cr_user(1).");
         Assert.True(e.Query("current_predicate(cr_user/1).").Success);

@@ -1009,6 +1009,26 @@ Two rules to keep in mind:
 - They work in every number: decimal, binary, octal and hexadecimal
   integers, and both parts of a float (`1_1.2_5e1_1`).
 
+### Operator atoms as operands
+
+An atom that is an operator cannot be the bare operand of another
+operator; write it in parentheses. This includes the predicate-indicator
+shape, so `mod/2` and `--> /2` are syntax errors and the readable forms
+are `(mod)/2` and `(-->)/2`. Delimited argument positions still take the
+bare atom: `f(-->)`, `[mod, is]` and `{-->}` all read fine, and so does
+the atom standing alone as a whole term.
+
+```prolog
+?- X = (mod)/2.
+X = (mod)/2.
+?- atom_to_term('mod/2', T, _).
+% error: syntax_error(...)
+```
+
+Sources loaded under a dialect (`library_dialect` or a dialect-tagged
+library) keep that dialect's laxer reading, as do `arity_compat`
+sources.
+
 ### Operator scope (ADR-046)
 
 Operator tables are **module-scoped**, following SWI/YAP/Ciao/Scryer:

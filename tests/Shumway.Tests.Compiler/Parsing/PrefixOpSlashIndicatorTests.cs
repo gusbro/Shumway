@@ -65,13 +65,14 @@ public class PrefixOpSlashIndicatorTests
     }
 
     [Fact]
-    public void DynamicAtomSlashArity_AsArgument_ResolvesToIndicator()
+    public void DynamicAtomSlashArity_AsArgument_IsAnOperandViolation()
     {
-        // dynamic/0 written as a bare argument — the same pattern as
-        // not/1 but with the fx-1150 directive-head operator.
-        // Wrap it in a structural compound to avoid the operator-as-
-        // clause-prefix interpretation that ":-" expects.
-        var t = Parse("p(dynamic/0).");
+        // dynamic/0 written as a bare argument: `dynamic` is the fx-1150
+        // directive-head operator, and a bare operator atom cannot be the
+        // operand of '/' (ISO 6.3.1.3, conformity s#378) — the indicator
+        // must be written (dynamic)/0.
+        Assert.Throws<ParseException>(() => Parse("p(dynamic/0)."));
+        var t = Parse("p((dynamic)/0).");
         var c = Assert.IsType<CompoundTerm>(t);
         var slash = Assert.IsType<CompoundTerm>(c.Args[0]);
         Assert.Equal("/", slash.Functor);

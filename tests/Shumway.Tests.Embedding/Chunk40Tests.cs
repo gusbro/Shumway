@@ -156,7 +156,7 @@ public class Chunk40Tests
         Assert.True(engine.Query("current_predicate(foo/1).").Success);
         // A builtin is NOT a current_predicate (§8.8.2, GNU-verified);
         // predicate_property/2 is the way to ask about one.
-        Assert.True(engine.Query("\\+ current_predicate(is/2).").Success);
+        Assert.True(engine.Query("\\+ current_predicate((is)/2).").Success);
         Assert.True(engine.Query("predicate_property(is(_, _), built_in).").Success);
     }
 

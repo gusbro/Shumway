@@ -111,22 +111,29 @@ syntax_x_emit(S, NC, Cls, E, Q) :-
 syntax_generate :-
     open('artifacts/syntax_tests.tsv', read, In),
     open('artifacts/syntax_facts.pl', write, Out),
-    syntax_g_lines(In, Out, [], [], StatsR, 0, Count),
+    syntax_g_lines(In, Out, [], [], StatsR, 0, Count, [], DroppedR),
     close(Out),
     close(In),
     cf_format('syntax generate: ~w facts~n', [Count]),
     cf_reverse(StatsR, Stats),
-    cf_report_counts(Stats).
+    cf_report_counts(Stats),
+    % No silent caps: a row the extractor cannot classify is a hole in the
+    % coverage, and the NNN/NNN summary must not read as "the whole page".
+    cf_reverse(DroppedR, Dropped),
+    ( Dropped == [] -> true
+    ; cf_format('  rows NOT generated (unclassifiable): ~w~n', [Dropped]) ).
 
-syntax_g_lines(In, Out, Last0, Acc0, Acc, C0, C) :-
+syntax_g_lines(In, Out, Last0, Acc0, Acc, C0, C, D0, D) :-
     scan_read_line(In, L),
-    ( L == end_of_file -> Acc = Acc0, C = C0
+    ( L == end_of_file -> Acc = Acc0, C = C0, D = D0
     ; ( syntax_g_split(L, NumC, _ClsC, ExpC, CodesC)
         -> syntax_g_row(Out, NumC, ExpC, CodesC, Last0, Last1, Stat),
-           ( Stat = skip(K) -> Acc1 = [skip(K)|Acc0], C1 = C0
-           ; Acc1 = [Stat|Acc0], C1 is C0 + 1 )
-        ;  Last1 = Last0, Acc1 = Acc0, C1 = C0 ),
-      syntax_g_lines(In, Out, Last1, Acc1, Acc, C1, C) ).
+           ( Stat = skip(K)
+             -> Acc1 = [skip(K)|Acc0], C1 = C0,
+                catch(number_codes(N, NumC), _, N = NumC), D1 = [N|D0]
+           ; Acc1 = [Stat|Acc0], C1 is C0 + 1, D1 = D0 )
+        ;  Last1 = Last0, Acc1 = Acc0, C1 = C0, D1 = D0 ),
+      syntax_g_lines(In, Out, Last1, Acc1, Acc, C1, C, D1, D) ).
 
 syntax_g_split(L, A, B, C, D) :-
     scan_split_first(L, 9, A, R1),
