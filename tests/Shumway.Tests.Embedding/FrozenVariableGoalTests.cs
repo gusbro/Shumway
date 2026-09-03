@@ -123,6 +123,78 @@ public class FrozenVariableGoalTests
     }
 
     [Fact]
+    public void ANestedFreezeIsJustAnotherGoal()
+    {
+        // A frozen goal is arbitrary — including another freeze, whose own
+        // goal is a variable.
+        Assert.Equal("freeze(X, freeze(Y, Z))",
+            AnswerOf("freeze(X, freeze(Y, Z))."));
+    }
+
+    [Fact]
+    public void AVariableGoalLaterBoundToAFreezeProjectsAsOne()
+    {
+        string s = AnswerOf("freeze(X, G), G = freeze(Y, true).");
+        Assert.Contains("freeze(X, freeze(Y, true))", s);
+    }
+
+    [Fact]
+    public void ANestedFreezeSuspendsOnTheInnerVariableWhenItRuns()
+    {
+        Bounded(() =>
+        {
+            var e = Coroutining();
+            // Waking X runs the inner freeze, which suspends on Y; waking
+            // Y then calls the still-unbound W.
+            Assert.True(e.Query("freeze(X, freeze(Y, _W)), X = 1.").Success);
+            var re = Assert.Throws<PrologRuntimeException>(
+                () => e.Query("freeze(X, freeze(Y, _W)), X = 1, Y = 2."));
+            Assert.Equal("instantiation_error", re.Kind);
+        });
+    }
+
+    [Fact]
+    public void TwoEqualGoalsOnAliasedVariablesBothRun()
+    {
+        // Each freeze/2 call demands ONE run. The aliasing merge deduped by
+        // ==, which is right for a dif/when record (one constraint leaves a
+        // copy in each variable it watches) and wrong for a goal: this
+        // printed once. A lost side effect is a correctness bug.
+        Bounded(() =>
+        {
+            var w = new System.IO.StringWriter();
+            var e = new PrologEngine { Out = w };
+            Assert.True(e.Query("use_module(library(coroutining)).").Success);
+            Assert.True(e.Query(
+                "freeze(X, write(a)), freeze(Y, write(a)), X = Y, X = 1.").Success);
+            Assert.Equal("aa", w.ToString());
+        });
+    }
+
+    [Fact]
+    public void OneConstraintWatchingTwoVariablesIsStillShownOnce()
+    {
+        // The dedup the merge exists for: dif's single record sits in both
+        // X and Y, and aliasing them must not double it.
+        string s = AnswerOf("dif(f(X, Y), f(a, b)), X = Y.");
+        Assert.Equal("dif(f(X, X), f(a, b))", s);
+    }
+
+    [Fact]
+    public void OneWhenWatchingTwoVariablesStillFiresOnce()
+    {
+        Bounded(() =>
+        {
+            var w = new System.IO.StringWriter();
+            var e = new PrologEngine { Out = w };
+            Assert.True(e.Query("use_module(library(coroutining)).").Success);
+            Assert.True(e.Query(
+                "when((nonvar(X), nonvar(Y)), write(both)), X = Y, X = 1.").Success);
+            Assert.Equal("both", w.ToString());
+        });
+    }
+
+    [Fact]
     public void AVariableSubConditionOfWhenIsAnInstantiationError()
     {
         // The same trap one level down: the sub-condition would have

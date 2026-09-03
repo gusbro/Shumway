@@ -230,19 +230,32 @@ internal static class Coroutining
             ; Goals = [G]
             ).
 
-        % A constraint watching BOTH variables sits in each one's goal list, so
-        % concatenating them leaves the survivor carrying it twice and the top
-        % level showing it twice. Append only what is not already there; the
-        % two records are literally the same term, so == decides it.
-        '$co_merge'(Old, G, Merged) :-
-            var(G), !,
-            ( '$co_has'(Old, G) -> Merged = Old ; Merged = (Old, G) ).
+        % A dif/when constraint watching BOTH variables sits in each one's
+        % goal list, so concatenating them leaves the survivor carrying it
+        % twice and the top level showing it twice; the two records are
+        % literally the same term, so == decides it.
+        %
+        % ONLY those records. A frozen GOAL is not shared between variables:
+        % each freeze/2 call demands one run, so dropping the second of two
+        % equal goals loses a side effect the program asked for
+        % (freeze(X,write(a)), freeze(Y,write(a)), X = Y, X = 1 must print
+        % twice). A goal is arbitrary — including another freeze, or a
+        % variable bound to one later — so nothing about its shape can say
+        % whether it was recorded once or twice.
+        '$co_merge'(Old, G, Merged) :- var(G), !, Merged = (Old, G).
         '$co_merge'(Old, (A, B), Merged) :-
             !,
             '$co_merge'(Old, A, Mid),
             '$co_merge'(Mid, B, Merged).
         '$co_merge'(Old, G, Merged) :-
-            ( '$co_has'(Old, G) -> Merged = Old ; Merged = (Old, G) ).
+            (   '$co_shared_record'(G), '$co_has'(Old, G)
+            ->  Merged = Old
+            ;   Merged = (Old, G)
+            ).
+
+        % The two records one constraint leaves in two variables.
+        '$co_shared_record'('$dif_wake'(_)).
+        '$co_shared_record'('$when_fire'(_)).
 
         '$co_has'(G0, G) :- var(G0), !, G0 == G.
         '$co_has'((A, B), G) :- !, ( '$co_has'(A, G) -> true ; '$co_has'(B, G) ).
