@@ -304,6 +304,29 @@ identical). `?=/2` (decided (in)equality), `unifiable/3` (the unifier of
 two terms as a `V=Value` list), `term_attvars/2` and `call_residue_vars/2`
 are always available and need no library.
 
+### Running quad test transcripts
+
+A quad file is a machine-readable test transcript (queries with their
+sanctioned outcomes) rather than a program, so consulting one directly
+is a syntax error. `library(quads)` makes the transcript loadable: the
+import activates the `?-` and `|` operators for your session, each quad
+is captured as it is consulted, and `run_quads/0` runs every loaded quad
+and reports a pass count with the failing ids.
+
+```prolog
+?- use_module(library(quads)).
+?- consult('length_quad.pl').
+?- run_quads.
+quads: 37/37
+```
+
+`run_quads(Id)` runs one quad, `clear_quads/0` forgets the loaded set.
+A quad whose sanctioned outcomes include looping runs under a
+15-second limit; still running then counts as the looping outcome. The
+same workflow runs in the browser build, and
+`shumway --quad file.pl` does all of it from the command line. The
+format and workflow are described in detail in [quads.md](quads.md).
+
 ### Loading third-party Prolog libraries
 
 Beyond the baked-in libraries above, you can drop your own (or third-party)
