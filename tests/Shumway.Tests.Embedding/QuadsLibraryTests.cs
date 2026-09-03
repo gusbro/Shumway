@@ -113,6 +113,26 @@ public sealed class QuadsLibraryTests
     }
 
     [Fact]
+    public void CoroutiningComesAlong()
+    {
+        // The published suites lean on freeze/2 (length 29-31); the library
+        // must bring library(coroutining) itself — the browser top level has
+        // no --quad flag to do it, and without it those goals raise
+        // existence_error instead of running.
+        var (e, w) = Loaded();
+        string f = QuadFile(
+            "1 ?- freeze(L, L = []), length(L, L).\n      false.\n" +
+            "2 ?- dif(X, a), X = a.\n      false.\n");
+        try
+        {
+            Assert.True(e.Query($"consult('{f.Replace('\\', '/')}').").Success);
+            Assert.True(e.Query("run_quads.").Success);
+            Assert.Contains("quads: 2/2", w.ToString());
+        }
+        finally { System.IO.File.Delete(f); }
+    }
+
+    [Fact]
     public void TheOperatorsAreImporterScoped()
     {
         var (e, _) = Loaded();

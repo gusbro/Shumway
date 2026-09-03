@@ -82,6 +82,11 @@ internal static class CompatLibraries
         :- module(quads, [run_quads/0, run_quads/1, clear_quads/0,
                           op(1200, xfx, ?-), op(1100, xfy, '|')]).
 
+        % The published suites lean on freeze/2 and dif/2; without this a
+        % freeze goal is an existence_error and its quad fails instead of
+        % running (length 29-31 caught it in the browser).
+        :- use_module(library(coroutining)).
+
         :- op(1200, xfx, ?-).
         :- op(1100, xfy, '|').
 

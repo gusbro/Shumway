@@ -80,8 +80,8 @@ accumulate across consults.
 - `run_quads(Id)` runs a single test by its id.
 - `clear_quads` forgets the loaded set.
 
-Goals in the published suites use `freeze/2` and `dif/2`; load
-`library(coroutining)` alongside for those.
+Goals in the published suites use `freeze/2` and `dif/2`;
+`library(quads)` loads `library(coroutining)` itself so they just work.
 
 ## Running quads from the command line
 
@@ -89,8 +89,8 @@ Goals in the published suites use `freeze/2` and `dif/2`; load
 shumway --quad length_quad.pl
 ```
 
-`--quad <file>` loads `library(quads)` and `library(coroutining)`,
-consults the transcript, and runs `run_quads`. The flag is repeatable;
+`--quad <file>` loads `library(quads)`, consults the transcript, and
+runs `run_quads`. The flag is repeatable;
 all the files' quads run as one set. The session then stays at the
 prompt, so `run_quads(Id)` can replay a failing test interactively.
 
