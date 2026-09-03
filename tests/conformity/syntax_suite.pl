@@ -315,45 +315,54 @@ syntax_g_lines_of(L, [Line|Lines]) :-
 %          '...'/"..." token — ISO 6.4.2 forbids it).
 
 syntax_scan_sentences(Codes, K, Tail) :-
-    syntax_ss(Codes, 10, n, 0, K, Tail).
+    syntax_ss(Codes, 10, 10, n, 0, K, Tail).
 
-% syntax_ss(+Codes, +Prev, +HasContent, +K0, -K, -Tail)
-syntax_ss([], _, H, K, K, T) :-
+% syntax_ss(+Codes, +Prev2, +Prev, +HasContent, +K0, -K, -Tail)
+% Prev2 (the char before Prev) decides whether a 0 before a quote is the
+% STANDALONE integer that opens a 0'c literal or a token tail (`10'`,
+% `a0'`) — `16'mod'2` and `00'+'1` are an integer followed by a
+% quoted-atom operator (s#122/#127/#130/#280), never a char literal.
+syntax_ss([], _, _, H, K, K, T) :-
     ( H == y -> T = waits ; T = none ).
 % end dot: solo '.' (prev not graphic) followed by layout / % / EOF.
-syntax_ss([0'.|R], P, _, K0, K, T) :-
+syntax_ss([0'.|R], _, P, _, K0, K, T) :-
     \+ syntax_graphic(P),
     ( R == [] ; R = [C|_], ( scan_ws(C) ; C =:= 0'% ) ), !,
     K1 is K0 + 1,
-    syntax_ss(R, 0'., n, K1, K, T).
+    syntax_ss(R, P, 0'., n, K1, K, T).
 % % line comment (does not make content).
-syntax_ss([0'%|R], _, H, K0, K, T) :- !,
+syntax_ss([0'%|R], _, _, H, K0, K, T) :- !,
     syntax_lc(R, R1),
-    syntax_ss(R1, 10, H, K0, K, T).
+    syntax_ss(R1, 10, 10, H, K0, K, T).
 % /* block comment: the '/' was consumed as content; neutralise it.
-syntax_ss([0'*|R], 0'/, H0, K0, K, T) :- !,
+syntax_ss([0'*|R], _, 0'/, H0, K0, K, T) :- !,
     ( syntax_bc(R, R1)
       -> ( H0 == y -> H = y ; H = n ),   % '/' alone was content; keep flag
-         syntax_ss(R1, 0' , H, K0, K, T)
+         syntax_ss(R1, 0' , 0' , H, K0, K, T)
       ;  K = K0, T = waits ).            % unterminated comment: reader waits
 % quoted tokens.
-syntax_ss([0'''|R], P, _, K0, K, T) :-
-    P >= 0'0, P =< 0'9, !,               % 0'c character-code literal
+syntax_ss([0'''|R], P2, 0'0, _, K0, K, T) :-
+    \+ syntax_glue(P2), !,               % standalone 0: 0'c char literal
     syntax_charlit(R, Out),
-    ( Out = normal(R1)  -> syntax_ss(R1, 0' , y, K0, K, T)
+    ( Out = normal(R1)  -> syntax_ss(R1, 0' , 0' , y, K0, K, T)
     ; Out = quote(R1)   -> syntax_quoted(R1, 0''', K0, K, T)
     ; Out == eof        -> K = K0, T = waits
     ; Out == broken     -> K = K0, T = broken ).
-syntax_ss([Q|R], _, _, K0, K, T) :-
+syntax_ss([Q|R], _, _, _, K0, K, T) :-
     ( Q =:= 0''' ; Q =:= 0'" ; Q =:= 0'` ), !,
     syntax_quoted(R, Q, K0, K, T).
-syntax_ss([C|R], _, H0, K0, K, T) :-
+syntax_ss([C|R], _, P, H0, K0, K, T) :-
     ( scan_ws(C) -> H = H0 ; H = y ),
-    syntax_ss(R, C, H, K0, K, T).
+    syntax_ss(R, P, C, H, K0, K, T).
+
+% Letter / digit / underscore: glues onto the preceding token.
+syntax_glue(C) :-
+    (  C >= 0'a, C =< 0'z ; C >= 0'A, C =< 0'Z
+    ;  C >= 0'0, C =< 0'9 ; C =:= 0'_ ).
 
 syntax_quoted(R, Q, K0, K, T) :-
     syntax_q(R, Q, Out),
-    ( Out = closed(R1) -> syntax_ss(R1, Q, y, K0, K, T)
+    ( Out = closed(R1) -> syntax_ss(R1, 0' , Q, y, K0, K, T)
     ; Out == eof       -> K = K0, T = waits
     ; Out == broken    -> K = K0, T = broken ).
 
@@ -450,16 +459,30 @@ syntax_run_unit(U0) :-
     % does — it decides waits-vs-broken for an open quote at the unit's end
     % (#206), and the reader and the scanner must judge the SAME text.
     cf_append(U0, [10], U),
-    cf_write_file_codes('artifacts/unit.tmp', U),
     syntax_scan_sentences(U, K, Tail),
+    % When that final newline is itself the poison (the unit without it is
+    % a valid prefix, with it a quoted token holds a raw newline), ISO
+    % §8.14.1.1 char-by-char reading means the error is decided AT the
+    % newline: a conforming read raises there and consumes nothing more
+    % (s#2 — the page's "waits" column marks systems that keep reading).
+    % A file's EOF hides the difference, so plant a sentinel sentence
+    % beyond the poison: a conforming reader leaves it for the next read;
+    % a waiting reader swallows it into the quoted token and the next
+    % read finds end_of_file instead.
+    ( Tail == broken, syntax_scan_sentences(U0, _, waits) ->
+        Probe = sentinel,
+        atom_codes('syntax_waits_sentinel.\n', Sent),
+        cf_append(U, Sent, U1)
+    ; Probe = none, U1 = U ),
+    cf_write_file_codes('artifacts/unit.tmp', U1),
     open('artifacts/unit.tmp', read, S),
     current_input(Old),
     set_input(S),
-    ( catch(syntax_unit_loop(S, 1, K, Tail), _, true) -> true ; true ),
+    ( catch(syntax_unit_loop(S, 1, K, Tail, Probe), _, true) -> true ; true ),
     set_input(Old),
     close(S).
 
-syntax_unit_loop(S, I, K, Tail) :-
+syntax_unit_loop(S, I, K, Tail, Probe) :-
     syntax_read_one(S, R),
     ( R == end -> true
     ; R == syntax ->
@@ -469,14 +492,30 @@ syntax_unit_loop(S, I, K, Tail) :-
         % broken tail is real, anything else is the input running out,
         % ignored once a goal has run.
         ( I =< K            -> syntax_set_result(syntax)
-        ; Tail == broken    -> syntax_set_result(syntax)
+        ; Tail == broken    -> syntax_tail_result(S, Probe)
         ; I > 1             -> true
         ; syntax_set_result(syntax) )
     ; R = goal(G, Vs) ->
-        syntax_run_goal(G, Vs),
-        I1 is I + 1,
-        syntax_unit_loop(S, I1, K, Tail)
+        % The sentinel is a probe, never a goal: if it surfaces here the
+        % scanner mis-modelled the unit (the poison never fired); skip it.
+        ( Probe == sentinel, G == syntax_waits_sentinel
+          -> I1 is I + 1, syntax_unit_loop(S, I1, K, Tail, Probe)
+          ;  syntax_run_goal(G, Vs),
+             I1 is I + 1,
+             syntax_unit_loop(S, I1, K, Tail, Probe) )
     ).
+
+% The poisoned tail raised — with a sentinel planted, it counts as a real
+% syntax error ONLY if the reader stopped at the poison and the sentinel
+% comes back whole on the next read. A reader that consumed past it (into
+% the quoted token, to EOF) waited: no verdict satisfies `waits`.
+syntax_tail_result(S, Probe) :-
+    ( Probe == sentinel ->
+        syntax_read_one(S, R2),
+        ( R2 = goal(G2, _), G2 == syntax_waits_sentinel
+          -> syntax_set_result(syntax)
+          ;  syntax_set_result(waits) )
+    ; syntax_set_result(syntax) ).
 
 syntax_read_one(S, R) :-
     catch( ( read_term(S, T, [variable_names(Vs)]),

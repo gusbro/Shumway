@@ -447,7 +447,10 @@ public static partial class MetaBuiltins
     /// <c>end_of_file</c> case).</summary>
     private static Term? ParseOneTerm(Activation engine, System.IO.TextReader reader)
     {
-        string? text = SentenceScanner.ReadSentenceText(reader, out _);
+        // The Arity exemption must match the lexer's, or the scanner would
+        // cut a sentence the lexer accepts (raw control bytes in quotes).
+        string? text = SentenceScanner.ReadSentenceText(
+            reader, out _, allowRawControls: LiveFlags(engine).ArityCompat);
         if (text is null) return null;
         // Parse with the engine's LIVE operator table, not the static
         // default: a runtime `op/3` (e.g. the classic `op(200, fy, ['#'])`
