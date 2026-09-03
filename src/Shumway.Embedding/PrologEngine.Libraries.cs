@@ -769,12 +769,15 @@ public sealed partial class PrologEngine
                             : LoadResolvedLibrary(libName, libPath);
                     }
                     // (3) built-in Scryer/Trealla compatibility table. Most
-                    // entries are bare-global (nothing to import); atts is a
-                    // REAL module with exports (the hProlog-compat wrappers
-                    // shadow the raw builtins for importers only), so its
-                    // name flows back for RecordImports.
+                    // entries are bare-global (nothing to import); the ones
+                    // that are REAL export-qualified modules (atts — the
+                    // hProlog-compat wrappers shadow the raw builtins for
+                    // importers only — and quads) flow their name back so
+                    // RecordImports activates their exports and operators.
                     if (UseCompatLibrary(libName))
-                        return libName == "atts" ? "atts" : null;
+                        return _modules.TryGetValue(libName, out var compatM)
+                               && compatM.IsExportQualified
+                            ? libName : null;
                     // (4) genuinely unknown.
                     if (throwOnUnresolved)
                         throw new Shumway.Core.PrologRuntimeException(

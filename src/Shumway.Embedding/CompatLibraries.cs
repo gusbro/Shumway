@@ -36,6 +36,7 @@ internal static class CompatLibraries
             "dcgs"   => Dcgs,
             "format" => Format,
             "dif"    => Dif,
+            "quads"  => Quads,
             "$project_atts" => ProjectAtts,
             "atts" => Atts,
             // Covered by Shumway's prelude / builtins — importing them is a
@@ -56,6 +57,185 @@ internal static class CompatLibraries
     // resolves and is a no-op.
     private const string Dcgs = """
         % seq//1, '...'//0 and phrase/2,3 are built-in; nothing to load.
+        """;
+
+    // library(quads) — Neumerkel's machine-readable test transcripts (issue
+    // #69; length_quad.pl, phrase_quad.pl). A quad file is not a program:
+    //     <id> ?- <goal>.
+    //     <expected> | <alternative> | ... .
+    // Importing this module activates `?-` (xfx) and `|` (xfy) for the
+    // importer (module-scoped ops, ADR-046 — the default table is untouched),
+    // and a user:term_expansion/2 pair turns each quad into inert facts here,
+    // so `use_module(library(quads)), consult('length_quad.pl'), run_quads.`
+    // is the whole workflow — the Trealla shape the issue asks for. The
+    // classifier and checker mirror tests/conformity/quad_suites.pl (the
+    // certified harness): each expected alternative maps to a CLASS
+    // (succeeds / fails / error(Kind) / loops / lenient) and the goal's
+    // outcome must match one. `loops` runs under time_out/3: still going at
+    // 15 s counts as looping.
+    private const string Quads = """
+        :- module(quads, [run_quads/0, run_quads/1, clear_quads/0,
+                          op(1200, xfx, ?-), op(1100, xfy, '|')]).
+
+        :- op(1200, xfx, ?-).
+        :- op(1100, xfy, '|').
+
+        :- dynamic('$quad'/4).          % '$quad'(Seq, Id, Goal, Classes)
+        :- dynamic('$quad_pending'/3).  % File, Id, Goal
+        :- dynamic('$quad_seq'/1).
+        :- dynamic('$quad_dropped'/1).
+
+        % ---- consult-time capture -----------------------------------------
+        % `Id ?- Goal` opens a test; the NEXT sentence of the same file is its
+        % expected block. Both expand to nothing, so the transcript consults
+        % without ever defining ;/2 or =/2. The pending slot is keyed by file:
+        % a stray half-quad can never swallow a clause of a later consult.
+
+        user:term_expansion((Id ?- Goal), []) :-
+            ( atom(Id) ; integer(Id) ), !,
+            quads_open(Id, Goal).
+        user:term_expansion(Block, []) :-
+            quads_take_pending(Id, Goal),
+            quads_record(Id, Goal, Block).
+
+        quads_load_file(F) :-
+            ( prolog_load_context(file, F0) -> F = F0 ; F = user ).
+
+        quads_open(Id, Goal) :-
+            quads_load_file(F),
+            retractall('$quad_pending'(F, _, _)),
+            assertz('$quad_pending'(F, Id, Goal)).
+
+        quads_take_pending(Id, Goal) :-
+            quads_load_file(F),
+            retract('$quad_pending'(F, Id, Goal)), !.
+
+        quads_record(Id, Goal, Block) :-
+            quads_alts(Block, Alts),
+            quads_classes(Alts, [], Classes),
+            (   Classes == [] ->
+                assertz('$quad_dropped'(Id))
+            ;   (   retract('$quad_seq'(N0)) -> true ; N0 = 0 ),
+                N is N0 + 1,
+                assertz('$quad_seq'(N)),
+                assertz('$quad'(N, Id, Goal, Classes))
+            ).
+
+        quads_alts(B, Alts) :-
+            ( B = '|'(A, Rest) -> Alts = [A|More], quads_alts(Rest, More)
+            ; Alts = [B] ).
+
+        quads_classes([], Acc, Classes) :- quads_reverse(Acc, Classes).
+        quads_classes([A|As], Acc, Classes) :-
+            quads_alt_class(A, C),
+            ( quads_memberchk(C, Acc) -> Acc1 = Acc ; Acc1 = [C|Acc] ),
+            quads_classes(As, Acc1, Classes).
+
+        % `sto,` prefixes mark subject-to-occurs-check runs; the class is the
+        % same either way (the engine's default is rational trees, like the
+        % systems the page's sto column tracks).
+        quads_alt_class((sto, R), C) :- !, quads_alt_class(R, C).
+        quads_alt_class(false, fails) :- !.
+        quads_alt_class(true, succeeds) :- !.
+        quads_alt_class(loops, loops) :- !.
+        quads_alt_class(E, error(W)) :-
+            nonvar(E), functor(E, W, _), quads_error_word(W), !.
+        quads_alt_class(throw(_), error(other)) :- !.
+        quads_alt_class(A, succeeds) :- quads_has_binding(A), !.
+        quads_alt_class(_, lenient).
+
+        % An answer display: any =/2 in the ,/;-chain (`L = [], N = 0 ; ...`).
+        quads_has_binding((A, B)) :- !,
+            ( quads_has_binding(A) -> true ; quads_has_binding(B) ).
+        quads_has_binding((A ; B)) :- !,
+            ( quads_has_binding(A) -> true ; quads_has_binding(B) ).
+        quads_has_binding(_ = _).
+
+        quads_error_word(instantiation_error).
+        quads_error_word(type_error).
+        quads_error_word(domain_error).
+        quads_error_word(existence_error).
+        quads_error_word(permission_error).
+        quads_error_word(representation_error).
+        quads_error_word(evaluation_error).
+        quads_error_word(resource_error).
+        quads_error_word(syntax_error).
+
+        % ---- running ------------------------------------------------------
+
+        run_quads :- quads_run_matching(_).
+        run_quads(Id) :- quads_run_matching(Id).
+
+        quads_run_matching(Filter) :-
+            findall(q(N, Id, G, K), ( '$quad'(N, Id, G, K),
+                                      ( Filter = Id -> true ; var(Filter) ) ),
+                    Qs),
+            quads_run_list(Qs, 0, Pass, 0, Total, [], FailsR),
+            quads_reverse(FailsR, Fails),
+            format('quads: ~w/~w~n', [Pass, Total]),
+            (   Fails == [] -> true
+            ;   quads_length(Fails, NF),
+                format('  failing (~w): ~w~n', [NF, Fails])
+            ),
+            (   findall(D, '$quad_dropped'(D), Ds), Ds \== []
+            ->  format('  unverifiable (no classifiable expected): ~w~n', [Ds])
+            ;   true
+            ).
+
+        quads_run_list([], P, P, T, T, F, F).
+        quads_run_list([q(_, Id, G, K)|Qs], P0, P, T0, T, F0, F) :-
+            T1 is T0 + 1,
+            ( quads_check(K, G) -> P1 is P0 + 1, F1 = F0
+            ; P1 = P0, F1 = [Id|F0] ),
+            quads_run_list(Qs, P1, P, T1, T, F1, F).
+
+        quads_check(Classes, G) :-
+            quads_outcome(G, Classes, O),
+            quads_memberchk_match(Classes, O).
+
+        quads_memberchk_match([C|_], O) :- quads_match(C, O), !.
+        quads_memberchk_match([_|T], O) :- quads_memberchk_match(T, O).
+
+        quads_match(succeeds, succeeds).
+        quads_match(fails, fails).
+        quads_match(error(W), error(W)).
+        quads_match(loops, timeout).
+        quads_match(lenient, _).
+
+        % A test that sanctions looping runs under a 15-second limit — no
+        % harness can observe an infinite loop directly, so still-running IS
+        % the loops outcome (the certified conformity harness draws the same
+        % line). Everything else runs unbounded.
+        quads_outcome(G, Classes, O) :-
+            (   quads_memberchk(loops, Classes)
+            ->  catch(quads_timed_outcome(G, O), E, quads_error_outcome(E, O))
+            ;   catch(( call(G) -> O = succeeds ; O = fails ), E,
+                      quads_error_outcome(E, O))
+            ).
+
+        quads_timed_outcome(G, O) :-
+            (   time_out(call(G), 15000, R)
+            ->  ( R == time_out -> O = timeout ; O = succeeds )
+            ;   O = fails
+            ).
+
+        quads_error_outcome(error(B, _), error(W)) :-
+            nonvar(B), functor(B, W, _), quads_error_word(W), !.
+        quads_error_outcome(_, error(other)).
+
+        clear_quads :-
+            retractall('$quad'(_, _, _, _)),
+            retractall('$quad_pending'(_, _, _)),
+            retractall('$quad_seq'(_)),
+            retractall('$quad_dropped'(_)).
+
+        quads_memberchk(X, [Y|T]) :- ( X == Y -> true ; quads_memberchk(X, T) ).
+        quads_reverse(L, R) :- quads_rev_(L, [], R).
+        quads_rev_([], A, A).
+        quads_rev_([X|T], A, R) :- quads_rev_(T, [X|A], R).
+        quads_length(L, N) :- quads_len_(L, 0, N).
+        quads_len_([], N, N).
+        quads_len_([_|T], N0, N) :- N1 is N0 + 1, quads_len_(T, N1, N).
         """;
 
     // library(dif) — a non-coroutining approximation. When the arguments are

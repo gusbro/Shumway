@@ -44,13 +44,17 @@ public sealed class BuiltinRegistrationRaceTests
     }
 
     [Fact]
-    public async Task EveryCallerThatIsToldRegistrationIsDoneSeesEveryBuiltin()
+    public void EveryCallerThatIsToldRegistrationIsDoneSeesEveryBuiltin()
     {
         // Whoever gets there first does the work; everyone else waits for it.
         // Nobody may be waved through into a half-populated registry.
+        // DEDICATED threads, not Task.Run: on a loaded 2-core CI runner the
+        // thread pool injects workers at ~1/s, and 16 queued tasks blew a
+        // 30-second timeout without ever testing the invariant. The
+        // concurrency this pins must not depend on how busy the machine is.
         var missing = new ConcurrentBag<string>();
         using var start = new ManualResetEventSlim(false);
-        var threads = Enumerable.Range(0, 16).Select(_ => Task.Run(() =>
+        var threads = Enumerable.Range(0, 16).Select(_ => new Thread(() =>
         {
             start.Wait();
             StandardBuiltins.EnsureRegistered();
@@ -59,8 +63,10 @@ public sealed class BuiltinRegistrationRaceTests
                 if (!Resolves(name, arity)) missing.Add($"{name}/{arity}");
         })).ToArray();
 
+        foreach (var t in threads) t.Start();
         start.Set();
-        await Task.WhenAll(threads).WaitAsync(TimeSpan.FromSeconds(30));
+        foreach (var t in threads)
+            Assert.True(t.Join(TimeSpan.FromSeconds(60)), "registration thread hung");
         Assert.Empty(missing.Distinct());
     }
 

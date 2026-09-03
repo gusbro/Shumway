@@ -1,0 +1,126 @@
+using Shumway.Embedding;
+using Xunit;
+
+namespace Shumway.Tests.Embedding;
+
+/// <summary>library(quads) — Neumerkel's machine-readable test transcripts
+/// (issue #69): importing the library activates `?-` (xfx) and `|` (xfy)
+/// for the importer, a stateful term_expansion turns each quad into inert
+/// facts (a transcript is not a program — its expected blocks would
+/// otherwise define ;/2), and run_quads/0 checks every loaded quad's goal
+/// outcome against its sanctioned classes. The quad text here is SYNTHETIC,
+/// mirroring the published format — the real files live outside the
+/// repo.</summary>
+public sealed class QuadsLibraryTests
+{
+    private static (PrologEngine Engine, System.IO.StringWriter Out) Loaded()
+    {
+        var w = new System.IO.StringWriter();
+        var e = new PrologEngine { Out = w };
+        Assert.True(e.Query("use_module(library(quads)).").Success);
+        return (e, w);
+    }
+
+    private static string QuadFile(string content)
+    {
+        string path = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), $"quads_pin_{System.Guid.NewGuid():N}.pl");
+        System.IO.File.WriteAllText(path, content);
+        return path;
+    }
+
+    [Fact]
+    public void TheWorkflowOfTheIssue()
+    {
+        // use_module, consult the transcript, run_quads — the whole UX.
+        var (e, w) = Loaded();
+        string f = QuadFile(
+            "% synthetic quads\n" +
+            "1 ?- atom_length(abc, L).\n" +
+            "      L = 3.\n" +
+            "2 ?- atom_length(A, N).\n" +
+            "      instantiation_error.\n" +
+            "a3 ?- atom(abc).\n" +
+            "      true.\n" +
+            "4 ?- atom(1).\n" +
+            "      false.\n");
+        try
+        {
+            Assert.True(e.Query($"consult('{f.Replace('\\', '/')}').").Success);
+            Assert.True(e.Query("run_quads.").Success);
+            Assert.Contains("quads: 4/4", w.ToString());
+        }
+        finally { System.IO.File.Delete(f); }
+    }
+
+    [Fact]
+    public void AlternativesAndFailuresReport()
+    {
+        var (e, w) = Loaded();
+        string f = QuadFile(
+            "1 ?- atom_length(abc, L).\n" +
+            "      type_error(oops, x)\n" +
+            "   |  false.\n" +          // neither matches a plain success
+            "2 ?- atom(1).\n" +
+            "      false\n" +
+            "   |  type_error(atom, 1). % lenient alternative set\n");
+        try
+        {
+            Assert.True(e.Query($"consult('{f.Replace('\\', '/')}').").Success);
+            Assert.True(e.Query("run_quads.").Success);
+            string s = w.ToString();
+            Assert.Contains("quads: 1/2", s);
+            Assert.Contains("failing (1): [1]", s);
+        }
+        finally { System.IO.File.Delete(f); }
+    }
+
+    [Fact]
+    public void ATranscriptIsNotAProgram()
+    {
+        // The expected block `L = 3.` must never define =/2 — and a normal
+        // consult AFTER a quad file stays untouched (the pending slot is
+        // keyed by file, so nothing leaks).
+        var (e, _) = Loaded();
+        string f = QuadFile("1 ?- atom_length(abc, L).\n      L = 3.\n");
+        try
+        {
+            Assert.True(e.Query($"consult('{f.Replace('\\', '/')}').").Success);
+            Assert.True(e.Query("X = 1, X == 1.").Success);   // =/2 intact
+            e.ConsultString("normal_fact(after).\n");
+            Assert.True(e.Query("normal_fact(after).").Success);
+        }
+        finally { System.IO.File.Delete(f); }
+    }
+
+    [Fact]
+    public void RunQuadsById_AndClearQuads()
+    {
+        var (e, w) = Loaded();
+        string f = QuadFile(
+            "1 ?- atom(a).\n      true.\n" +
+            "2 ?- atom(1).\n      true.\n");   // wrong on purpose
+        try
+        {
+            Assert.True(e.Query($"consult('{f.Replace('\\', '/')}').").Success);
+            Assert.True(e.Query("run_quads(1).").Success);
+            Assert.Contains("quads: 1/1", w.ToString());
+            Assert.True(e.Query("clear_quads.").Success);
+            Assert.True(e.Query("run_quads.").Success);
+            Assert.Contains("quads: 0/0", w.ToString());
+        }
+        finally { System.IO.File.Delete(f); }
+    }
+
+    [Fact]
+    public void TheOperatorsAreImporterScoped()
+    {
+        var (e, _) = Loaded();
+        Assert.True(e.Query("current_op(1200, xfx, ?-).").Success);
+        Assert.True(e.Query("current_op(1100, xfy, '|').").Success);
+        // A fresh engine without the import keeps the strict default.
+        var bare = new PrologEngine { Out = new System.IO.StringWriter() };
+        Assert.False(bare.Query("current_op(_, xfx, ?-).").Success);
+        Assert.False(bare.Query("current_op(_, _, '|').").Success);
+    }
+}
