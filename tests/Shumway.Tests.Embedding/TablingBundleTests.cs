@@ -232,8 +232,9 @@ public sealed class TablingBundleTests
             proc.WaitForExit(30000);
 
             Assert.True(proc.ExitCode == 0, $"exit {proc.ExitCode}\n{stdout}\n{stderr}");
-            Assert.True(stdout.Contains("[a, b, c, d]"),
-                $"child transcript lacks \"[a, b, c, d]\"\nstdout:\n{stdout}\nstderr:\n{stderr}\n"
+            // The top level portrays a char list as a string (issue #65).
+            Assert.True(stdout.Contains("\"abcd\""),
+                $"child transcript lacks \"abcd\"\nstdout:\n{stdout}\nstderr:\n{stderr}\n"
                 + BundleRaceDiag.CompareWithRebuild(bytes, () => Link(ShmoBuildMode.Release, il: true, stripWam: stripWam)));
         }
         finally
