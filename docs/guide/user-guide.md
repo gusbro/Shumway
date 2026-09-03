@@ -323,7 +323,9 @@ quads: 37/37
 `run_quads(Id)` runs one quad, `clear_quads/0` forgets the loaded set.
 A quad whose sanctioned outcomes include looping runs under a
 15-second limit; still running then counts as the looping outcome. The
-same workflow runs in the browser build.
+same workflow runs in the browser build, and
+`shumway --quad file.pl` does all of it from the command line. The
+format and workflow are described in detail in [quads.md](quads.md).
 
 ### Loading third-party Prolog libraries
 

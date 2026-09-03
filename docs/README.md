@@ -19,6 +19,7 @@ documentation index; start with the [user guide](guide/user-guide.md).
 | [net-framework-hosts.md](guide/net-framework-hosts.md) | Embedding in .NET Framework 4.8 apps (32-bit legacy hosts): bundles, app.config, memory limits |
 | [configuration.md](guide/configuration.md) | Runtime `SHUMWAY_*` environment variables and build-time diagnostic constants |
 | [logtalk.md](guide/logtalk.md) | Running Logtalk on Shumway |
+| [quads.md](guide/quads.md) | Quad test transcripts: the format, `library(quads)` and the `--quad` flag |
 
 ### Compatibility status
 
