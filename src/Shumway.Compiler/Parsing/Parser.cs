@@ -300,16 +300,16 @@ public sealed class Parser
         bool rightBareOp = _bareOp;
 
         // ISO §6.3.1.3: the operands of an operator may not be a bare
-        // operator-atom (`* = *` must be `(*) = (*)`) — EXCEPT the
-        // predicate-indicator `op/N` (`dynamic/1`, `not/1`), where the operator
-        // atom is the left operand of `/` and the right is a non-negative
-        // integer. Every Prolog accepts that, so it is exempt.
-        bool isIndicator = name == "/" && right is IntTerm ri && ri.Value >= 0;
+        // operator-atom (`* = *` must be `(*) = (*)`) — INCLUDING the
+        // predicate-indicator shape `op/N`: `--> /2` reads only as
+        // `(-->)/2` (conformity s#378), exactly as the strictest engines
+        // read it. SWI-style sources that write `dynamic/1` bare load
+        // under the dialect leniency below.
         // Arity sources use quoted operator atoms as plain operands
         // (Blint's `Char = '/'`) — arity_compat rides the same leniency the
         // dialect scopes get; the bare ISO default stays strict.
         bool lenientOperand = _flags.LenientBareOperatorOperands || _flags.ArityCompat;
-        if (leftBareOp && !isIndicator && !lenientOperand)
+        if (leftBareOp && !lenientOperand)
             throw new ParseException(
                 $"Operator atom cannot be the left operand of '{name}' "
                 + "without parentheses.", pos);
@@ -486,9 +486,11 @@ public sealed class Parser
             {
                 _bareOp = true;
                 // builtPrec stays 0: the bare atom's own token priority for
-                // subsequent operator application is 0 (so `dynamic/1` still
-                // lets `/` bind it). The ISO §6.3.1.3 rejection rides on
-                // _bareOp (the apply sites) and the direct priority throw below.
+                // subsequent operator application is 0, so `/` still BINDS a
+                // `dynamic/1`-shaped indicator — the apply site then rejects
+                // it via _bareOp unless a dialect leniency admits it. The ISO
+                // §6.3.1.3 rejection rides on _bareOp (the apply sites) and
+                // the direct priority throw below.
                 if (maxPrec < 999 && p > maxPrec && !_flags.LenientBareOperatorOperands)
                     throw new ParseException(
                         $"Operator '{bareAt.Name}' (priority {p}) needs parentheses "
