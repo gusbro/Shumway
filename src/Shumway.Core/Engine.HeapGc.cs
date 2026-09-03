@@ -530,10 +530,11 @@ public sealed partial class Activation
             if ((uint)home < (uint)oldTop) GcMarkCell(home);
             if ((uint)oldValue < (uint)oldTop) GcMarkCell(oldValue);
         }
-        foreach (var (_, attrValueIdx, otherIdx) in _pendingWakeups)
+        foreach (var (_, attrValueIdx, otherIdx, attvarHome) in _pendingWakeups)
         {
             if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
             if ((uint)otherIdx < (uint)oldTop) GcMarkCell(otherIdx);
+            if ((uint)attvarHome < (uint)oldTop) GcMarkCell(attvarHome);
         }
         MarkCleanupRoots();
     }
@@ -570,10 +571,11 @@ public sealed partial class Activation
 
         for (int i = 0; i < _pendingWakeups.Count; i++)
         {
-            var (module, attrValueIdx, otherIdx) = _pendingWakeups[i];
+            var (module, attrValueIdx, otherIdx, attvarHome) = _pendingWakeups[i];
             _pendingWakeups[i] = (module,
                 RelocIndex(attrValueIdx, forward),
-                RelocIndex(otherIdx, forward));
+                RelocIndex(otherIdx, forward),
+                RelocIndex(attvarHome, forward));
         }
 
         RelocateCleanupRoots(c => RelocateCell(c, forward));
@@ -681,10 +683,11 @@ public sealed partial class Activation
         }
         Drain();
         int hLog = _gcMarkCount - h0; h0 = _gcMarkCount;
-        foreach (var (_, attrValueIdx, otherIdx) in _pendingWakeups)
+        foreach (var (_, attrValueIdx, otherIdx, attvarHome) in _pendingWakeups)
         {
             if ((uint)attrValueIdx < (uint)oldTop) GcMarkCell(attrValueIdx);
             if ((uint)otherIdx < (uint)oldTop) GcMarkCell(otherIdx);
+            if ((uint)attvarHome < (uint)oldTop) GcMarkCell(attvarHome);
         }
         Drain();
         int hWake = _gcMarkCount - h0; h0 = _gcMarkCount;

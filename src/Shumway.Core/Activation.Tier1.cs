@@ -1086,7 +1086,12 @@ public sealed partial class Activation
         UnwindTrails(bindingTop, extraTop);
         _heapTop = heapTop;
         AssignHb(savedHb);
-        _pendingWakeups.Clear();
+        // NOT cleared: only the wakes THIS guard queued are dead, and the
+        // unwind above just reverted their attvar homes — TakePendingWakeups
+        // drops them by that mark. A wake belonging to an OLDER surviving
+        // binding must outlive the guard's failure (blanket-clearing here
+        // silently unhooked freeze/2 across a promoted predicate's clause
+        // retries, the same defect TryBacktrack's clear had).
     }
 
     /// <summary>ADR-031 rare path (cases B and G) — pushes the

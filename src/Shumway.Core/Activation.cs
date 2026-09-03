@@ -94,7 +94,7 @@ public sealed partial class Activation
     // failure fails the triggering unification. The queue is transient
     // — not trailed — because it is consumed before the next goal and
     // cleared outright on backtracking.
-    private readonly List<(int Module, int AttrValueIdx, int OtherIdx)> _pendingWakeups = new();
+    private readonly List<(int Module, int AttrValueIdx, int OtherIdx, int AttvarHome)> _pendingWakeups = new();
 
     // catch/3 scopes, innermost last. Pushed by '$catch_begin', deactivated
     // by '$catch_end'; both operations are recorded on the extra trail

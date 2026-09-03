@@ -1732,7 +1732,7 @@ public sealed partial class Activation
     {
         if (!_attrTable.TryGetValue(attvarHome, out var record)) return;
         foreach (var (moduleId, attrValueIdx) in record)
-            _pendingWakeups.Add((moduleId, attrValueIdx, otherIdx));
+            _pendingWakeups.Add((moduleId, attrValueIdx, otherIdx, attvarHome));
     }
 
     /// <summary>True when attribute hooks are queued and waiting to run.
@@ -1975,9 +1975,23 @@ public sealed partial class Activation
     /// <c>verify_attributes/4</c> goal per entry and meta-calling it in
     /// this (live) engine so the hooks see the real attributed
     /// variables.</summary>
+    /// <summary>Every entry whose attributed variable is STILL BOUND — the
+    /// wake's reason survived. An entry whose home cell is an attvar again
+    /// (its binding was unwound by backtracking) or lies above the heap top
+    /// (its heap segment was discarded) is dead and silently dropped: its
+    /// hook must not run against an unbound variable. This filter is what
+    /// lets backtracking leave the queue ALONE — an interposed failure of a
+    /// younger computation must not eat the wake of a binding that
+    /// survives it (the promoted-length freeze loss).</summary>
     public IReadOnlyList<(int Module, int AttrValueIdx, int OtherIdx)> TakePendingWakeups()
     {
-        var taken = _pendingWakeups.ToArray();
+        var taken = new List<(int, int, int)>(_pendingWakeups.Count);
+        for (int i = 0; i < _pendingWakeups.Count; i++)
+        {
+            var (m, v, o, home) = _pendingWakeups[i];
+            if (home < _heapTop && _heap[home].Tag != Tag.AttVar)
+                taken.Add((m, v, o));
+        }
         _pendingWakeups.Clear();
         return taken;
     }

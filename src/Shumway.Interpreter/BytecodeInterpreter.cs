@@ -485,6 +485,19 @@ public sealed partial class BytecodeInterpreter
             if (pc < 0)
             {
                 if (pc == WakeReturnCp) { WakeReturn(); inClause = false; continue; }
+                // ADR-049: the ANSWER is a goal boundary too. A wake can
+                // reach here still pending when the tail of the query ran
+                // entirely through paths with no drain of their own — a
+                // promoted chain/indexed delegate followed by operand-gated
+                // inline arithmetic was exactly that, and freeze/2 went
+                // silently unhooked. A failing wake means this was no
+                // solution: backtrack into the remaining alternatives.
+                if (_engine.HasPendingWakeups && !FlushPendingWakeups(code))
+                {
+                    if (!TryBacktrack()) return InterpreterResult.Failed;
+                    inClause = false;
+                    continue;
+                }
                 return InterpreterResult.Halted;
             }
 
@@ -503,6 +516,27 @@ public sealed partial class BytecodeInterpreter
                 // no X register is live (the caller reloads from Y slots).
                 _engine.MaybeCollectHeapAtReturn();
                 var (functorId, cursor) = Activation.DecodeResumeMarker(pc);
+                // ADR-049: a threaded IL→IL transfer is a goal boundary like
+                // any Call. The chain/indexed delegate shapes carry no
+                // in-method boundaries, so a wake their head-match queued
+                // reaches HERE — without this check it stayed pending until
+                // the answer and freeze/2 went silently unhooked after
+                // $length_enum promoted mid-enumeration. Cursor 0 is a
+                // forward call (the callee's arity bounds the live
+                // registers); a mid-body cursor has unknowable liveness and
+                // takes WakeBoundary's drain fallback.
+                if (_engine.HasPendingWakeups)
+                {
+                    int wakeAr = cursor == 0
+                        ? FunctorTable.Lookup(functorId).Arity : -1;
+                    int w = WakeBoundary(code, wakeAr, pc);
+                    if (w == WakeEntered) continue;
+                    if (w == WakeFailed)
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        continue;
+                    }
+                }
                 // Direct index into the link-time IlByFunctorId array — the same
                 // O(1) array access CallIl (bytecode→IL) uses, instead of the
                 // dispatcher's interface call + dictionary + cached wrapper. Fall
@@ -617,6 +651,28 @@ public sealed partial class BytecodeInterpreter
                         + " — bytecode corruption.");
 
                 case Opcode.Halt:
+                    // ADR-049: the ANSWER is a goal boundary too. A wake can
+                    // reach the query epilogue still pending when the tail of
+                    // the query ran entirely through drain-free paths — a
+                    // promoted chain/indexed delegate followed by
+                    // operand-gated inline arithmetic was exactly that, and
+                    // freeze/2 went silently unhooked. The INTERRUPT, not the
+                    // nested drain: the driver runs hooks as ordinary code, so
+                    // a failing hook backtracks into the remaining
+                    // alternatives like any goal (the drain's once-semantics
+                    // swallowed the failure and delivered the unsound
+                    // answer). Resume re-executes this Halt, queue empty.
+                    if (_engine.HasPendingWakeups)
+                    {
+                        int w = WakeBoundary(code, 0, pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            inClause = false;
+                            break;
+                        }
+                    }
                     return InterpreterResult.Halted;
 
                 case Opcode.Nop:
