@@ -79,8 +79,10 @@ public static class ErrorRendering
                     is Shumway.Compiler.Ast.CompoundTerm { Functor: "error", Args.Length: 2 } ball
                 ? AstTermRenderer.RenderQuoted(ball.Args[0])
                 : string.IsNullOrEmpty(re.Detail) ? re.Kind : $"{re.Kind}({re.Detail})";
-        if (!string.IsNullOrEmpty(re.BuiltinName) && re.BuiltinName[0] != '$')
-            return $"{body} in {re.BuiltinName}/{re.BuiltinArity}";
+        // Pattern, not IsNullOrEmpty: net48's reference assemblies lack the
+        // NotNullWhen annotation, so the indexer trips CS8602 there.
+        if (re.BuiltinName is { Length: > 0 } context && context[0] != '$')
+            return $"{body} in {context}/{re.BuiltinArity}";
         return body;
     }
 }
