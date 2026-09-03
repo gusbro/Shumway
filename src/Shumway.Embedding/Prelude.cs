@@ -1089,11 +1089,18 @@ internal static class Prelude
         % that carried it.
         :- public must_be/2.
         %! must_be(+Type, @Value) | Type checking | Throws instantiation_error if Value is unbound (unless Type is var), type_error(Type, Value) if Value is of the wrong type, or domain_error(Domain, Value) if Type names a domain of values (not_less_than_zero, io_mode, oneof(L), ...) and Value lies outside it.
-        must_be(Type, X) :-
-            '$must_be_known'(Type, must_be/2),
-            ( var(X), Type \== var -> throw(error(instantiation_error, must_be/2))
+        must_be(Type, X) :- '$must_be'(Type, X, must_be/2).
+
+        % The same check reporting a CALLER's indicator. A library that
+        % validates its arguments wants the error to name the predicate the
+        % user called, not the checker: instantiation_error in label/1 says
+        % where to look, instantiation_error in must_be/2 does not.
+        :- public '$must_be'/3.
+        '$must_be'(Type, X, Context) :-
+            '$must_be_known'(Type, Context),
+            ( var(X), Type \== var -> throw(error(instantiation_error, Context))
             ; '$must_be_ok'(Type, X) -> true
-            ; '$must_be_wrong'(Type, X, must_be/2) ).
+            ; '$must_be_wrong'(Type, X, Context) ).
 
         %! can_be(+Type, @Term) | Type checking | Like must_be/2, but a term that could still become admissible is: an unbound term always, and a partial list where a list is wanted. Only a term already incompatible raises.
         can_be(Type, Term) :-

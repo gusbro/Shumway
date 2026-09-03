@@ -166,6 +166,10 @@ internal static class Clpr
         clpr_zero(C) :- A is abs(C), A < 0.000000001.
 
         % ===== posting constraints =====
+        % An unbound constraint must not reach the conjunction pattern: it
+        % would BIND to (A, B) with two fresh variables and recur on them
+        % forever ({C} with C unbound never returned).
+        clpr_post(C) :- var(C), !, throw(error(instantiation_error, {}/1)).
         clpr_post((A, B)) :- !, clpr_post(A), clpr_post(B).
         clpr_post(C) :- C = (E1 =:= E2), !, clpr_post_eq(E1, E2, C).
         clpr_post(C) :- C = (E1 = E2),   !, clpr_post_eq(E1, E2, C).
@@ -364,6 +368,7 @@ internal static class Clpr
             clpr_cvars(Constraints, [], Vars),
             clpr_settle(Vars).
 
+        clpr_cvars(C, Acc, Acc) :- var(C), !.
         clpr_cvars((A, B), Acc, Out) :- !,
             clpr_cvars(A, Acc, A1), clpr_cvars(B, A1, Out).
         clpr_cvars(E1 =:= E2, Acc, Out) :- !,
@@ -419,11 +424,13 @@ internal static class Clpr
 
         %! entailed(+Constraint) | CLP(R) | True when the store already implies Constraint, without adding it. Asks whether the negation is unsatisfiable, so the store is left exactly as it was.
         :- public entailed/1.
+        entailed(C) :- var(C), !, throw(error(instantiation_error, entailed/1)).
         entailed((A, B)) :- !, entailed(A), entailed(B).
         entailed(C) :-
             clpr_negate(C, N),
             \+ '{}'(N).
 
+        clpr_negate(C, _) :- var(C), !, throw(error(instantiation_error, entailed/1)).
         clpr_negate(A =:= B, A =\= B) :- !.
         clpr_negate(A =\= B, A =:= B) :- !.
         clpr_negate(A  <  B, A >= B) :- !.
