@@ -458,7 +458,7 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | `predicate_property(+Head, ?Property)` | Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate. |
 | `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
 | `statistics` | Writes a report of runtime, walltime, heap/trail/stack use, heap-GC collections with cells reclaimed, and atom-table occupancy with atom-GC sweeps, to the current output. |
-| `statistics(?Key, ?Value)` | Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds. |
+| `statistics(?Key, ?Value)` | Timing and resource statistics. runtime, walltime, user_time, system_time and cpu_time give [Total_ms, SinceLast_ms], the second element counted from the previous call with that same key; cputime and real_time give seconds as a float; global_stack (the heap), local_stack, trail_stack and cstr_stack give [UsedBytes, FreeBytes] of the running query; atoms gives [InUse, Free]. Any other key raises domain_error(statistics_key, Key). |
 | `term_cells(@Term, -Cells)` | Heap cells the term occupies, shared substructure counted once. A diagnostic: it reports what a term costs, not how it is stored. |
 
 ## Grammar

@@ -423,7 +423,7 @@ public static partial class MetaBuiltins
             + "A diagnostic: it reports what a term costs, not how it is stored.");
         BuiltinsRegistry.Register("statistics", 2, Statistics2,
             Reflect, "statistics(?Key, ?Value)",
-            "Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds.");
+            "Timing and resource statistics. runtime, walltime, user_time, system_time and cpu_time give [Total_ms, SinceLast_ms], the second element counted from the previous call with that same key; cputime and real_time give seconds as a float; global_stack (the heap), local_stack, trail_stack and cstr_stack give [UsedBytes, FreeBytes] of the running query; atoms gives [InUse, Free]. Any other key raises domain_error(statistics_key, Key).");
         BuiltinsRegistry.Register("predicate_property", 2, PredicateProperty,
             Reflect, "predicate_property(+Head, ?Property)",
             "Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate.");
