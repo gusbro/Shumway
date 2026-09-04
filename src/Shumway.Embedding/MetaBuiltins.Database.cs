@@ -33,7 +33,8 @@ public static partial class MetaBuiltins
     {
         AtomTerm a => a.Name is "built_in" or "dynamic" or "static" or "defined"
             or "multifile" or "discontiguous" or "control_construct"
-            or "logtalk" or "foreign" or "iso" or "deterministic",
+            or "logtalk" or "foreign" or "iso" or "deterministic"
+            or "non_terminal",
         CompoundTerm { Functor: "imported_from", Args.Length: 1 } => true,
         CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } => true,
         CompoundTerm { Functor: "number_of_clauses", Args.Length: 1 } => true,
@@ -127,6 +128,9 @@ public static partial class MetaBuiltins
         // declared it — the clauses accumulate across files.
         if (props.Count > 0 && host.IsMultifileFunctor(fid))
             props.Add(new AtomTerm("multifile"));
+        // Defined by a grammar rule: the property that says so.
+        if (props.Count > 0 && host.IsNonTerminalFunctor(fid))
+            props.Add(new AtomTerm("non_terminal"));
         if (importedFrom is not null)
             props.Add(new CompoundTerm("imported_from",
                 new Term[] { new AtomTerm(importedFrom) }));

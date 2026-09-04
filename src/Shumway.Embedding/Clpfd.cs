@@ -105,6 +105,7 @@ internal static class Clpfd
         % clpfd above. Aliases so those programs run unchanged.
         :- public fd_domain/3.
         :- public fd_labeling/1.
+        :- public fd_labeling/2.
         :- public fd_labelingff/1.
         :- public fd_all_different/1.
         :- public fd_set_vector_max/1.
@@ -1051,7 +1052,7 @@ internal static class Clpfd
         % that the constraint holds.
         clpfd_reify(C, B) :- integer(C), !,
             (   ( C =:= 0 ; C =:= 1 ) -> B #= C
-            ;   throw(error(type_error(clpfd_reifiable, C), _))
+            ;   throw(error(domain_error(clpfd_reifiable_expression, C), _))
             ).
         clpfd_reify(C, B) :-
             ( clpfd_reif_cmp(C, Kind, L, R) ->
@@ -1073,7 +1074,7 @@ internal static class Clpfd
                 B #= 1 - B1 + B1 * B2
             ; C == true -> B #= 1
             ; C == false -> B #= 0
-            ; throw(error(type_error(clpfd_reifiable, C), _))
+            ; throw(error(domain_error(clpfd_reifiable_expression, C), _))
             ).
 
         clpfd_reif_cmp((L #= R),   '#=',   L, R).
@@ -1160,16 +1161,44 @@ internal static class Clpfd
             ;   is_list(Vars) -> Vars ins Lo..Hi
             ;   Vars in Lo..Hi
             ).
+        % A single FD variable is a valid argument (GNU: fd_labeling(+fd_variable)),
+        % so no var/1 guard here: a variable with a finite domain labels, and a
+        % plain one raises from the enumeration, naming this predicate.
         fd_labeling(Vars) :-
-            (   var(Vars) -> throw(error(instantiation_error, fd_labeling/1))
-            ;   is_list(Vars) -> clpfd_labeling([], Vars, fd_labeling/1)
+            (   is_list(Vars) -> clpfd_labeling([], Vars, fd_labeling/1)
             ;   clpfd_labeling([], [Vars], fd_labeling/1)
             ).
         fd_labelingff(Vars) :-
-            (   var(Vars) -> throw(error(instantiation_error, fd_labelingff/1))
-            ;   is_list(Vars) -> clpfd_labeling([ff], Vars, fd_labelingff/1)
+            (   is_list(Vars) -> clpfd_labeling([ff], Vars, fd_labelingff/1)
             ;   clpfd_labeling([ff], [Vars], fd_labelingff/1)
             ).
+
+        % fd_labeling/2 — the GNU spelling of the option list. Its
+        % variable_method/value_method wrappers map onto the strategies this
+        % solver has; a heuristic it does not implement is REFUSED rather
+        % than quietly replaced, since which solution comes first is what a
+        % labeling option is chosen for.
+        %! fd_labeling(+Vars, +Options) | CLP(FD): labeling | Assigns a value to each variable, guided by variable_method/1 and value_method/1 options.
+        fd_labeling(Vars, Options) :-
+            '$must_be'(list, Options, fd_labeling/2),
+            clpfd_gnu_opts(Options, Opts),
+            (   is_list(Vars) -> clpfd_labeling(Opts, Vars, fd_labeling/2)
+            ;   clpfd_labeling(Opts, [Vars], fd_labeling/2)
+            ).
+
+        clpfd_gnu_opts([], []).
+        clpfd_gnu_opts([O|Os], Out) :-
+            (   var(O) -> throw(error(instantiation_error, fd_labeling/2))
+            ;   clpfd_gnu_opt(O, Mapped) -> Out = [Mapped|Rest]
+            ;   throw(error(domain_error(fd_labeling_option, O), fd_labeling/2))
+            ),
+            clpfd_gnu_opts(Os, Rest).
+
+        clpfd_gnu_opt(variable_method(standard), leftmost).
+        clpfd_gnu_opt(variable_method(first_fail), ff).
+        clpfd_gnu_opt(variable_method(ff), ff).
+        clpfd_gnu_opt(value_method(min), up).
+        clpfd_gnu_opt(value_method(max), down).
         % GProlog's fd_all_different maps to pairwise all_different, not the
         % stronger all_distinct (native Hall). Even with native Hall,
         % its O(n^3) re-fire on every domain change costs more than pairwise's

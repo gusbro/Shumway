@@ -198,10 +198,14 @@ public class Chunk91Tests
     }
 
     [Fact]
-    public void Reify_UnreifiableTerm_RaisesTypeError()
+    public void Reify_UnreifiableTerm_RaisesDomainError()
     {
+        // A term that is not a constraint is outside the DOMAIN of reifiable
+        // expressions rather than of the wrong type — the reading both
+        // reference implementations report.
         Assert.True(Fd().Query(
-            "catch(B #<==> foobar, error(type_error(clpfd_reifiable, foobar), _), " +
-            "true).").Success);
+            "catch(B #<==> foobar, "
+            + "error(domain_error(clpfd_reifiable_expression, foobar), _), "
+            + "true).").Success);
     }
 }

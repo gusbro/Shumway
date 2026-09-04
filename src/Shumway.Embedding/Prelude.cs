@@ -1978,6 +1978,12 @@ internal static class Prelude
                 ( integer(Arity) -> write('/'), write(Arity) ; true ), nl
             ;   '$listing_qpis'(PIs)
             ).
+        % A non-terminal is named the way it is written: greeting//0 lists
+        % the predicate the grammar rule defines, greeting/2.
+        listing(Name//Arity) :-
+            nonvar(Name), integer(Arity), !,
+            Arity2 is Arity + 2,
+            listing(Name/Arity2).
         listing(Name/Arity) :-
             !,
             '$listable_predicates'(All),
