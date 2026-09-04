@@ -108,7 +108,7 @@ internal static class ReplTopLevel
         var foreignDlls = new List<string>();
         var nativeDlls = new List<string>();
         var libraryDirs = new List<string>();   // -L / --library-dir (ADR-038)
-        var quadFiles = new List<string>();      // --quad: test transcripts to run
+        var quadFiles = new List<string>();      // --quads: test transcripts to run
         string? startupGoalArg = null;   // --goal / -g: run after consulting, then stay
         int? dapPortArg = null;          // --dap <port>: ADR-036 VS Code endpoint
         bool dapWait = false;            // --dap-wait: hold the start until configured
@@ -117,7 +117,7 @@ internal static class ReplTopLevel
         {
             string flag = consultFiles[i];
             if (flag is not ("--foreign-dll" or "--native-dll" or "--goal" or "-g"
-                or "--dap" or "--dap-wait" or "--library-dir" or "-L" or "--quad"))
+                or "--dap" or "--dap-wait" or "--library-dir" or "-L" or "--quads"))
                 continue;
             flagArgs.Add(i);
             if (i + 1 >= consultFiles.Length)
@@ -132,7 +132,7 @@ internal static class ReplTopLevel
                 case "--native-dll": nativeDlls.Add(consultFiles[i + 1]); break;
                 case "--library-dir":
                 case "-L": libraryDirs.Add(consultFiles[i + 1]); break;
-                case "--quad": quadFiles.Add(consultFiles[i + 1]); break;
+                case "--quads": quadFiles.Add(consultFiles[i + 1]); break;
                 case "--dap":
                 case "--dap-wait":
                     if (int.TryParse(consultFiles[i + 1], out int dapPort) && dapPort >= 0)
@@ -286,7 +286,7 @@ internal static class ReplTopLevel
                 return halted.ExitCode;
             }
         }
-        // --quad <file>, repeatable: load the quad-transcript library (it
+        // --quads <file>, repeatable: load the quad-transcript library (it
         // brings coroutining itself), consult each transcript, and run every
         // loaded quad. The session stays interactive afterwards, so
         // run_quads/1 can replay one id.
@@ -295,11 +295,11 @@ internal static class ReplTopLevel
             try
             {
                 if (!engine.Query("use_module(library(quads)).").Success)
-                    Console.Error.WriteLine("% --quad: could not load library(quads)");
+                    Console.Error.WriteLine("% --quads: could not load library(quads)");
                 foreach (string qf in quadFiles)
                     ConsultFile(engine, qf);
                 if (!engine.Query("run_quads.").Success)
-                    Console.Error.WriteLine("% --quad: run_quads failed");
+                    Console.Error.WriteLine("% --quads: run_quads failed");
             }
             catch (Exception ex) { PrintError(engine, ex); }
         }
@@ -845,7 +845,7 @@ internal static class ReplTopLevel
             + "                        resolution + double_quotes (ADR-040), e.g.\n"
             + "                        -L scryer:C:/Scryer/lib. Repeatable; also read from\n"
             + "                        SHUMWAY_LIBRARY_PATH (per entry).\n"
-            + "  --quad <file>         Load library(quads), consult the quad test\n"
+            + "  --quads <file>        Load library(quads), consult the quad test\n"
             + "                        transcript, and run_quads. Repeatable; the\n"
             + "                        session stays interactive (run_quads(Id) replays one).\n"
             + "                        See docs/guide/quads.md for the format.\n"

@@ -30,12 +30,18 @@ runnable tests.
 28 ?- L = [a|L], length(L, 7).
       sto, false
    |  sto, L = [a,a,_A,_B,_C,_D,_E]. % tau
+16, "7.8.3.4#9"
+?- call((write(3), X)).
+      outputs("3"), instantiation_error.
 ```
 
 Piece by piece:
 
-- **The test line**: an id (a run of word characters: `1`, `a4`, `c7`),
-  then `?-`, then the goal, ending with a period.
+- **The test line**: an id, then `?-`, then the goal, ending with a
+  period. The id is any ground term, so a test may be named by more than
+  a number: `16, "7.8.3.4#9"` names both the test and the clause of the
+  standard it comes from. It need not share a line with its `?-`, since
+  a transcript is read as terms rather than as lines.
 - **The expected block**: the sentences that follow, up to the next test
   line. One block is a single sentence, so the period appears once, at
   its end.
@@ -56,6 +62,9 @@ Piece by piece:
 - **`sto,`** prefixes an outcome that assumes the run is subject to
   occurs-check territory (rational trees involved); the outcome after
   the prefix is what is checked.
+- **`outputs(Text),`** prefixes an outcome to say the goal writes Text
+  first. What is checked is the outcome after it; the written text
+  itself is not compared.
 - **`% name`** at the end of an alternative attributes it to the system
   that produces it; it is a comment.
 
@@ -86,10 +95,10 @@ Goals in the published suites use `freeze/2` and `dif/2`;
 ## Running quads from the command line
 
 ```text
-shumway --quad length_quad.pl
+shumway --quads length_quad.pl
 ```
 
-`--quad <file>` loads `library(quads)`, consults the transcript, and
+`--quads <file>` loads `library(quads)`, consults the transcript, and
 runs `run_quads`. The flag is repeatable;
 all the files' quads run as one set. The session then stays at the
 prompt, so `run_quads(Id)` can replay a failing test interactively.
