@@ -113,6 +113,70 @@ public sealed class QuadsLibraryTests
     }
 
     [Fact]
+    public void AnIdentifierIsAnyGroundTerm()
+    {
+        // Issue #84: the published suites key a test by whatever identifies
+        // it, up to `16, "7.8.3.4#9"` — a comma term naming the clause of the
+        // standard under test. Rejecting those did not skip the test: the
+        // transcript reached the compiler, which read the line as a clause
+        // for ,/2 and refused it, and the file scored 0/0.
+        var (e, w) = Loaded();
+        string f = QuadFile(
+            "16, \"7.8.3.4#9\" ?- atom_length(_A, _).\n      instantiation_error.\n" +
+            "f(1)-g ?- atom(a).\n      true.\n" +
+            "[1,2] ?- atom(1).\n      false.\n");
+        try
+        {
+            Assert.True(e.Query($"consult('{f.Replace('\\', '/')}').").Success);
+            Assert.True(e.Query("run_quads.").Success);
+            Assert.Contains("quads: 3/3", w.ToString());
+            // A compound id selects its own test.
+            Assert.True(e.Query("run_quads(f(1)-g).").Success);
+            Assert.Contains("quads: 1/1", w.ToString());
+        }
+        finally { System.IO.File.Delete(f); }
+    }
+
+    [Fact]
+    public void AnIdentifierSpanningLinesIsStillOneTerm()
+    {
+        // The id and its `?-` need not share a line: a transcript is read
+        // as terms, not as lines. This is how the published file writes it.
+        var (e, w) = Loaded();
+        string f = QuadFile(
+            "16, \"7.8.3.4#9\"\n?- atom_length(_A, _).\n   instantiation_error.\n");
+        try
+        {
+            Assert.True(e.Query($"consult('{f.Replace('\\', '/')}').").Success);
+            Assert.True(e.Query("run_quads.").Success);
+            Assert.Contains("quads: 1/1", w.ToString());
+        }
+        finally { System.IO.File.Delete(f); }
+    }
+
+    [Fact]
+    public void AnOutputsExpectationClassifiesByItsOutcome()
+    {
+        // `outputs(Text), Outcome` says the goal writes Text and THEN
+        // behaves as Outcome. Unclassified, such an alternative fell through
+        // to the lenient catch-all and the test passed whatever happened.
+        // The text itself is not compared; the outcome is.
+        var (e, w) = Loaded();
+        string f = QuadFile(
+            "1 ?- atom_length(_A, _).\n      outputs(\"x\"), instantiation_error.\n" +
+            "2 ?- atom(a).\n      outputs(\"x\"), type_error(evaluable, foo/0).\n");
+        try
+        {
+            Assert.True(e.Query($"consult('{f.Replace('\\', '/')}').").Success);
+            Assert.True(e.Query("run_quads.").Success);
+            // The first matches its error, the second does not — where a
+            // lenient classification passed both.
+            Assert.Contains("quads: 1/2", w.ToString());
+        }
+        finally { System.IO.File.Delete(f); }
+    }
+
+    [Fact]
     public void CoroutiningComesAlong()
     {
         // The published suites lean on freeze/2 (length 29-31); the library

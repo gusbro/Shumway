@@ -101,8 +101,14 @@ internal static class CompatLibraries
         % without ever defining ;/2 or =/2. The pending slot is keyed by file:
         % a stray half-quad can never swallow a clause of a later consult.
 
+        % The id is any GROUND term, not just a name or a number: the
+        % published suites key a test by whatever identifies it, up to
+        % `16, "7.8.3.4#9"` — a comma term whose second half is the clause
+        % of the standard being tested. Rejecting those did not skip the
+        % test, it let the transcript reach the compiler, which then read
+        % `16, "..." ?- Goal` as a clause for ,/2 and refused it.
         user:term_expansion((Id ?- Goal), []) :-
-            ( atom(Id) ; integer(Id) ), !,
+            ground(Id), !,
             quads_open(Id, Goal).
         user:term_expansion(Block, []) :-
             quads_take_pending(Id, Goal),
@@ -145,6 +151,11 @@ internal static class CompatLibraries
         % same either way (the engine's default is rational trees, like the
         % systems the page's sto column tracks).
         quads_alt_class((sto, R), C) :- !, quads_alt_class(R, C).
+        % `outputs(Text), Outcome` says the goal writes Text and THEN
+        % behaves as Outcome. The outcome is what this harness observes, so
+        % it classifies by it; the text itself is not compared, and a bare
+        % outputs/1 with no outcome after it is nothing this can check.
+        quads_alt_class((outputs(_), R), C) :- !, quads_alt_class(R, C).
         quads_alt_class(false, fails) :- !.
         quads_alt_class(true, succeeds) :- !.
         quads_alt_class(loops, loops) :- !.
