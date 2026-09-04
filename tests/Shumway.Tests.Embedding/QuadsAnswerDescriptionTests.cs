@@ -345,6 +345,65 @@ public sealed class QuadsAnswerDescriptionTests
         Assert.Contains("answers not compared (1): [z1]", report);
     }
 
+    [Theory]
+    // A transcript may write down only the parts of the output it is about,
+    // eliding the rest: `outputs(("f(_", ..., ")"))` is how a claim survives
+    // an implementation's choice of variable names.
+    [InlineData("outputs((\"f(_\", ..., \")\"))", "quads: 1/1")]
+    [InlineData("outputs((\"g(_\", ..., \")\"))", "quads: 0/1")]
+    [InlineData("outputs((\"f(_\", ..., \"]\"))", "quads: 0/1")]
+    [InlineData("outputs((\"f(\", ...))", "quads: 1/1")]
+    public void AnOutputMayBeDescribedInPieces(string description, string expected)
+        => Assert.Contains(expected, RunQuads(
+               "t1\n?- T = f(_), write_term(T, [variable_names([])]).\n   "
+               + description + ".\n"));
+
+    [Theory]
+    // A text written down whole is still matched whole: eliding is what the
+    // pieces are for, and a plain text claims the output entire.
+    [InlineData("outputs(\"ab\")", "quads: 1/1")]
+    [InlineData("outputs(\"a\")", "quads: 0/1")]
+    [InlineData("outputs(\"abc\")", "quads: 0/1")]
+    [InlineData("outputs((\"a\", ...))", "quads: 1/1")]
+    public void APlainOutputTextIsStillTheWholeOutput(string description, string expected)
+        => Assert.Contains(expected,
+                           RunQuads("t1\n?- write(ab).\n   " + description + ".\n"));
+
+    [Theory]
+    // `waits` says the goal blocks for input that never comes. What makes
+    // that observable is not the blocking, which no harness can wait out,
+    // but the READING: a goal that waits went looking for input. It runs
+    // against one character of input, and the question is whether that
+    // character is still there afterwards.
+    [InlineData("?- read(_).\n   waits.\n", "quads: 1/1")]
+    [InlineData("?- read_term(_, [singletons(1)]).\n   waits.\n", "quads: 1/1")]
+    [InlineData("?- read(T), T == end_of_file.\n   waits.\n", "quads: 1/1")]
+    // A goal that answers without reading is not waiting for anything.
+    [InlineData("?- atom(a).\n   waits.\n", "quads: 0/1")]
+    [InlineData("?- X = 1.\n   waits.\n", "quads: 0/1")]
+    public void WaitingForInputIsTheReadItAttempts(string quad, string expected)
+        => Assert.Contains(expected, RunQuads("t1\n" + quad));
+
+    [Fact]
+    public void WaitingIsCheckedBesideTheOtherAlternatives()
+    {
+        // Alongside an alternative that describes an outcome, the quad is
+        // decided by whichever one holds.
+        Assert.Contains("quads: 1/1",
+                        RunQuads("t1\n?- atom(a).\n   waits\n   |  true.\n"));
+        Assert.Contains("quads: 0/1",
+                        RunQuads("t1\n?- atom(a).\n   waits\n   |  false.\n"));
+    }
+
+    [Fact]
+    public void AGoalMayLeaveTheInputPastItsEnd()
+    {
+        // Reading once more past the end is a permission error, and asking
+        // what the goal left must not raise it back into the harness.
+        Assert.Contains("quads: 1/1",
+                        RunQuads("t1\n?- read(_), read(_).\n   waits.\n"));
+    }
+
     [Fact]
     public void OrdinaryQuadsAreUnaffected()
     {

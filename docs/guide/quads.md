@@ -77,15 +77,34 @@ Piece by piece:
   unwritten and matches whatever is in that position; the rest still has
   to agree.
 - **`false`** means the goal fails; **`true`** means it succeeds.
+- **`waits`** says the goal blocks for input that never comes. Nothing
+  this library can supply tells waiting apart from anything else, since
+  an empty input is end of file rather than a wait, so a test that
+  sanctions only this is named in the report under `not run` instead of
+  being counted as a failure.
 - **`loops`** sanctions non-termination. No harness can observe an
   infinite loop directly, so the goal runs under a 15 second limit and
   still-running counts as this outcome.
+- **`waits`** says the goal blocks for input that never comes. What can
+  be observed is not the blocking, which no harness can wait out, but the
+  reading: a goal that waits is one that went looking for input. So the
+  goal runs against an input of a single character, and this outcome
+  holds when that character is gone afterwards. A goal that answers
+  without reading leaves it there.
 - **`sto,`** prefixes an outcome that assumes the run is subject to
   occurs-check territory (rational trees involved); the outcome after
   the prefix is what is checked.
 - **`outputs(Text),`** prefixes an outcome to say the goal writes Text
   first. Both halves are checked: the text the goal writes and the
-  outcome after it.
+  outcome after it. The text may be written in pieces with `...` between
+  them, as in `outputs(("f(_", ..., ")"))`, which says the output starts
+  and ends that way and says nothing about the middle. That is how a
+  claim about output survives an implementation's choice of variable
+  names. A text written down whole claims the output entire. The text may be written in pieces with `...` between
+  them, as in `outputs(("f(_", ..., ")"))`, which says the output starts
+  and ends that way and says nothing about the middle. That is how a
+  claim about output survives an implementation's choice of variable
+  names. A text written down whole claims the output entire.
 - **`inputs(Text)` and `peeks(Text)`** say what the goal reads: it must
   consume `inputs` and leave `peeks` unread. The two are supplied to the
   goal as one input and both halves are checked. Writing the peek down

@@ -273,14 +273,22 @@ internal static class CompatLibraries
         quads_alt(A, Ctx, alt(Class, In, Pk, Out, Sanctioned)) :-
             quads_conj_list(A, Es0),
             quads_take_marker(Es0, Es1, Sanctioned),
-            quads_take_descriptors(Es1, Es2, none, In, none, Pk, none, Out),
+            quads_take_descriptors(Es1, Es2, none, In0, none, Pk, none, Out),
             (   Es2 == []
             ->  % Descriptors only: the goal has to run, and succeeding is
                 % all that is claimed.
                 Class = succeeds
             ;   quads_conj_from(Es2, Body),
                 quads_alt_class(Body, Ctx, Class)
-            ).
+            ),
+            quads_probe_input(Class, In0, In).
+
+        % A `waits` alternative that says nothing about its input is run
+        % against the probe: the goal has to reach for it.
+        quads_probe_input(Class, none, In) :- Class == waits, !, quads_wait_probe(In).
+        quads_probe_input(_, In, In).
+
+        quads_wait_probe(' ').
 
         quads_conj_list((A, B), [A|R]) :- !, quads_conj_list(B, R).
         quads_conj_list(A, [A]).
@@ -327,6 +335,13 @@ internal static class CompatLibraries
         quads_alt_class(false, _, fails) :- !.
         quads_alt_class(true, _, succeeds) :- !.
         quads_alt_class(loops, _, loops) :- !.
+        % The goal blocks for input that never comes. What makes that
+        % observable is not the blocking, which no harness can wait out, but
+        % the READING: a goal that waits is a goal that went looking for
+        % input, and one that answers without reading did not. So it runs
+        % against an input of a single character and the question is whether
+        % that character is still there afterwards.
+        quads_alt_class(waits, _, waits) :- !.
         % The class carries the error TERM, not just its kind: a description
         % naming one culprit while the goal reports another describes a
         % different system, and comparing only the kind let that pass.
@@ -525,12 +540,21 @@ internal static class CompatLibraries
             quads_want_matches(Ws, O, Left, Written).
 
         quads_want_matches([want(C, Pk, Ot)|Ws], O, Left, Written) :-
-            (   quads_match(C, O),
+            (   quads_want_holds(C, O, Left),
                 quads_peek_matches(Pk, Left),
                 quads_output_matches(Ot, Written)
             ->  true
             ;   quads_want_matches(Ws, O, Left, Written)
             ).
+
+        % `waits` is the one description that is not about the outcome. The
+        % goal ran against one character of input: consuming it is what
+        % waiting looks like from here, and leaving it is what answering
+        % without input looks like. Whatever the goal did after reading is
+        % beside the point, since with no input at all it would not have got
+        % that far.
+        quads_want_holds(waits, _, Left) :- !, Left == [].
+        quads_want_holds(C, O, _) :- quads_match(C, O).
 
         % No peek was written down, so nothing is claimed about what is left.
         quads_peek_matches(none, _) :- !.
@@ -541,7 +565,32 @@ internal static class CompatLibraries
         % while it prints another describes a different system, and used to
         % pass here because the text was taken on trust.
         quads_output_matches(none, _) :- !.
-        quads_output_matches(Ot, Written) :- quads_text_chars(Ot, Cs), Cs == Written.
+        quads_output_matches(Ot, Written) :-
+            quads_text_pattern(Ot, Ps),
+            quads_text_match(Ps, Written).
+
+        % A transcript may write down only the parts of the output it is
+        % about: `outputs(("f(_", ..., ")"))` says the text starts with one
+        % piece and ends with another, and says nothing about the middle --
+        % which is how a claim survives an implementation's choice of
+        % variable names.
+        quads_text_pattern(Ot, Ps) :-
+            quads_conj_list(Ot, Es),
+            quads_text_pieces(Es, Ps).
+        quads_text_pieces([], []).
+        quads_text_pieces([E|Es], [P|Ps]) :-
+            ( E == '...' -> P = any ; quads_text_chars(E, Cs), P = chars(Cs) ),
+            quads_text_pieces(Es, Ps).
+
+        quads_text_match([], []).
+        quads_text_match([chars(Cs)|Ps], W) :-
+            quads_append(Cs, Rest, W),
+            quads_text_match(Ps, Rest).
+        quads_text_match([any|Ps], W) :-
+            quads_suffix(W, S),
+            quads_text_match(Ps, S).
+        quads_suffix(W, W).
+        quads_suffix([_|T], S) :- quads_suffix(T, S).
 
         quads_match(succeeds, succeeds).
         quads_match(fails, fails).
@@ -675,8 +724,11 @@ internal static class CompatLibraries
         quads_group_wants_loops([_|Ws]) :- quads_group_wants_loops(Ws).
 
         % What the goal did NOT consume, as a character list.
+        % A goal may leave the stream PAST its end -- reading once more
+        % there is a permission error, and asking what is left must not
+        % raise it back into the harness.
         quads_left(Left) :-
-            (   peek_char(C), C \== end_of_file
+            (   catch(peek_char(C), _, C = end_of_file), C \== end_of_file
             ->  get_char(_), quads_left(Rest), Left = [C|Rest]
             ;   Left = []
             ).
