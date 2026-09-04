@@ -53,15 +53,29 @@ Piece by piece:
   test line. There may be more than one, and each contributes its
   alternatives to the same test.
 - **`;` continues an answer sequence**: `L = [], N = 0 ; L = [_A], N = 1`
-  is one expected outcome showing successive answers. A trailing `...`
-  means the enumeration continues.
+  is one expected outcome showing successive answers, in the order the
+  goal gives them. The answers themselves are compared, so the sequence
+  says both what each answer binds and how many there are: written out
+  in full it claims the goal answers exactly that many times. A trailing
+  `...` leaves it open, claiming only the answers shown.
+  A query and the sentences describing its answers are separate terms,
+  so it is the variable NAMES that relate them: the `L` of `L = []` is
+  the `L` of the query because they are spelled alike. A variable the
+  description does not mention is one the answer left unbound, the way a
+  top level shows nothing for it, and a name starting with an underscore
+  is not shown at all. A variable named freshly in the answer, `_A`
+  above, stands for a variable in the answer: what it is called does not
+  matter, being a variable does.
 - **`|` separates alternative outcomes**: any one of them makes the test
   pass. Systems differ within the sanctioned set; that is the point of
   listing alternatives.
 - **Error outcomes** are written as the error term the goal must raise:
   `instantiation_error`, `type_error(integer,a)`,
-  `domain_error(not_less_than_zero,-1)`, and so on. `...` inside one
-  stands for any argument.
+  `domain_error(not_less_than_zero,-1)`, and so on. The whole term is
+  compared, culprit included, so raising the right kind of error about
+  the wrong value does not pass. `...` inside one stands for a part left
+  unwritten and matches whatever is in that position; the rest still has
+  to agree.
 - **`false`** means the goal fails; **`true`** means it succeeds.
 - **`loops`** sanctions non-termination. No harness can observe an
   infinite loop directly, so the goal runs under a 15 second limit and
@@ -70,8 +84,8 @@ Piece by piece:
   occurs-check territory (rational trees involved); the outcome after
   the prefix is what is checked.
 - **`outputs(Text),`** prefixes an outcome to say the goal writes Text
-  first. What is checked is the outcome after it; the written text
-  itself is not compared.
+  first. Both halves are checked: the text the goal writes and the
+  outcome after it.
 - **`inputs(Text)` and `peeks(Text)`** say what the goal reads: it must
   consume `inputs` and leave `peeks` unread. The two are supplied to the
   goal as one input and both halves are checked. Writing the peek down
@@ -90,6 +104,12 @@ An alternative written in a vocabulary this library does not know is not
 guessed at. It is left out of the sanctioned set and named in the report
 under `not understood`, with the test it belongs to, so a transcript
 using something new reads as unchecked rather than as a pass.
+
+The variable names come from the source, which is read a second time to
+recover them. If the file is no longer there when the tests run, the
+goals still run and everything else is still checked, and the report
+lists those tests under `answers not compared` rather than counting the
+weaker check as a comparison.
 
 ## Running quads from the top level
 
@@ -135,9 +155,15 @@ WebShumway: upload the quad file to the workspace, then
 
 ## How outcomes are checked
 
-Each expected alternative is classified as one of: succeeds, fails,
-error of a given kind, loops, or lenient (an alternative the classifier
-cannot pin down matches any outcome, mirroring the intent of the
-published pages). The goal runs once and its outcome must match one
-sanctioned class. An answer-sequence block counts as succeeds: the
-checker verifies the goal's outcome class, not the printed bindings.
+Each sanctioned alternative says what the goal does: succeed, fail,
+raise a particular error, loop, or give a particular sequence of
+answers. Alternatives that read the same input are decided by one run,
+since reading is the expensive part.
+
+A goal described by its answers is run for as many answers as the
+description mentions, plus one, which is how a goal that answers more
+times than the transcript says gets caught. Every other goal is run once
+and its outcome compared. Whatever a description states is compared:
+the answers, the error term, the text written, the input left unread. An
+alternative that states less is checked as far as it goes, and one this
+library cannot read at all is reported rather than assumed to pass.

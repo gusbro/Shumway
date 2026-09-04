@@ -241,6 +241,110 @@ public sealed class QuadsAnswerDescriptionTests
             RunQuads("t1\n?- throw(hello).\n   throw(goodbye).\n"));
     }
 
+    [Theory]
+    // What the goal ANSWERS is compared, not just that it answered. The
+    // description and the query are separate terms, so the L of one is not
+    // the L of the other: only their names relate them, and the names come
+    // from the source. Without that link all a transcript could say was
+    // "the goal succeeds".
+    [InlineData("?- length(L, 0).\n   L = [].\n", "quads: 1/1")]
+    [InlineData("?- length(L, 0).\n   L = [a].\n", "quads: 0/1")]
+    [InlineData("?- X = 1.\n   X = 1.\n", "quads: 1/1")]
+    [InlineData("?- X = 1.\n   X = 2.\n", "quads: 0/1")]
+    public void TheAnswerItselfIsCompared(string quad, string expected)
+        => Assert.Contains(expected, RunQuads("t1\n" + quad));
+
+    [Theory]
+    // `;` separates SUCCESSIVE answers, in order. A sequence written down in
+    // full claims there are no further answers.
+    [InlineData("   X = a ; X = b ; X = c.\n", "quads: 1/1")]
+    [InlineData("   X = a ; X = b.\n", "quads: 0/1")]
+    [InlineData("   X = b ; X = a ; X = c.\n", "quads: 0/1")]
+    [InlineData("   X = a ; X = b ; X = c ; X = d.\n", "quads: 0/1")]
+    // ...unless it is left open, which claims only its own prefix.
+    [InlineData("   X = a ; X = b ; ... .\n", "quads: 1/1")]
+    [InlineData("   X = b ; ... .\n", "quads: 0/1")]
+    public void TheAnswersMustBeTheseOnesInThisOrder(string description, string expected)
+        => Assert.Contains(expected,
+                           RunQuads("t1\n?- member(X, [a,b,c]).\n" + description));
+
+    [Fact]
+    public void AnOpenSequenceStillWorksOnAnEndlessGoal()
+    {
+        // The reason `...` exists: the goal has infinitely many answers, so
+        // only as many as are described may be asked for.
+        Assert.Contains("quads: 1/1", RunQuads(
+            "t1\n?- length(L, N).\n"
+            + "   L = [], N = 0 ; L = [_A], N = 1 ; L = [_A,_B], N = 2 ; ... .\n"));
+        Assert.Contains("quads: 0/1", RunQuads(
+            "t1\n?- length(L, N).\n   L = [], N = 0 ; L = [_A], N = 2 ; ... .\n"));
+    }
+
+    [Fact]
+    public void AVariableTheDescriptionDoesNotMentionIsUnbound()
+    {
+        // A top level shows nothing for a variable that stayed unbound, so a
+        // description that mentions none is describing an unbound one -- not
+        // saying "whatever it is".
+        Assert.Contains("quads: 0/1", RunQuads("t1\n?- X = 1, Y = 2.\n   X = 1.\n"));
+        Assert.Contains("quads: 1/1",
+                        RunQuads("t1\n?- X = 1, Y = 2.\n   X = 1, Y = 2.\n"));
+        // A variable whose name starts with an underscore is not shown at
+        // all, so a description need not mention it.
+        Assert.Contains("quads: 1/1", RunQuads("t1\n?- X = 1, _Y = 2.\n   X = 1.\n"));
+    }
+
+    [Fact]
+    public void SharingBetweenTheAnswersVariablesIsPartOfTheAnswer()
+    {
+        // X = f(Y) says X's argument IS Y. A description that renames it
+        // describes an answer where the two are independent, which is a
+        // different answer.
+        Assert.Contains("quads: 1/1", RunQuads("t1\n?- X = f(Y).\n   X = f(Y).\n"));
+        Assert.Contains("quads: 0/1", RunQuads("t1\n?- X = f(Y).\n   X = f(Z).\n"));
+        Assert.Contains("quads: 1/1", RunQuads("t1\n?- X = Y.\n   X = Y.\n"));
+    }
+
+    [Fact]
+    public void AFreshVariableInAnAnswerMatchesByRenaming()
+    {
+        // The answer holds a variable of its own; the name the transcript
+        // gives it is not the point, its being a variable is.
+        Assert.Contains("quads: 1/1", RunQuads("t1\n?- length(L, 1).\n   L = [_A].\n"));
+        Assert.Contains("quads: 0/1", RunQuads("t1\n?- length(L, 1).\n   L = [a].\n"));
+    }
+
+    [Fact]
+    public void AnAnswerDisplayStillDecidesSuccessAndFailure()
+    {
+        // Collecting the answers replaces the plain run, so the descriptions
+        // that only say true or false keep working alongside one that lists
+        // answers.
+        Assert.Contains("quads: 1/1",
+                        RunQuads("t1\n?- member(X, [a]).\n   X = a\n   |  false.\n"));
+        Assert.Contains("quads: 1/1",
+                        RunQuads("t1\n?- member(X, []).\n   X = a\n   |  false.\n"));
+    }
+
+    [Fact]
+    public void WithoutTheSourceTheAnswersAreReportedAsUnchecked()
+    {
+        // The names live in the file. If it is gone by the time the quads
+        // run, the goal is still checked as far as it can be -- and the
+        // report says so, rather than passing the weaker check off as a
+        // comparison.
+        var (e, w) = Loaded();
+        string path = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), $"quads_ad_{System.Guid.NewGuid():N}.pl");
+        System.IO.File.WriteAllText(path, "z1\n?- length(L, 0).\n   L = [].\n");
+        Assert.True(e.Query($"consult('{path.Replace('\\', '/')}').").Success);
+        System.IO.File.Delete(path);
+        Assert.True(e.Query("run_quads.").Success);
+        string report = w.ToString();
+        Assert.Contains("quads: 1/1", report);
+        Assert.Contains("answers not compared (1): [z1]", report);
+    }
+
     [Fact]
     public void OrdinaryQuadsAreUnaffected()
     {
