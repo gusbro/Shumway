@@ -249,26 +249,49 @@ public class Chunk84Tests
         // and a caller that commits to the first one used to wait for all
         // 4,140.
         //
-        // The bound is a RATIO against running the same goal under
-        // findall/3 — the solutions, and nothing else — so it means the same
-        // thing on any machine and in either build. Grouping and one group
-        // cost about 2.5x the bare enumeration; materialising every group
-        // cost 120x.
-        var e = new PrologEngine();
+        // Measured in HEAP CELLS, not seconds. The cell counter is a pure
+        // function of the program — byte-identical across runs, machines and
+        // builds — where a wall-clock ratio is not: this test failed once in
+        // CI on a commit that had passed minutes earlier, which says
+        // something about the machine's load and nothing about the engine.
+        // The three paths separate by a wide margin (measured, x8):
+        //
+        //   findall alone                628,666 cells
+        //   setof, first group only      825,719 cells   1.3x
+        //   setof, every group           1,984,663 cells 3.2x
+        //
+        // so a 2x bound sits between "one group" and "all of them".
+        var (e, output) = TimedEngine();
         e.ConsultString("""
             base :- length(L, 8), findall(x, permutation(L, L), _).
             first :- length(L, 8), setof(t, permutation(L, L), [t]), !.
             """);
         Assert.True(e.Query("base, first.").Success);   // warm both paths
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        Assert.True(e.Query("base.").Success);
-        System.TimeSpan bare = clock.Elapsed;
-        clock.Restart();
-        Assert.True(e.Query("first.").Success);
-        System.TimeSpan grouped = clock.Elapsed;
-        // Ticks rather than `bare * 20`: TimeSpan has no multiplication
-        // operator on .NET Framework, where this project also builds.
-        Assert.True(grouped.Ticks < bare.Ticks * 20,
-            $"first witness group took {grouped}, bare enumeration {bare}");
+        long bare = HeapCellsOf(e, output, "base");
+        long grouped = HeapCellsOf(e, output, "first");
+        Assert.True(grouped < bare * 2,
+            $"first witness group allocated {grouped} cells, bare enumeration {bare}");
+    }
+
+    private static (PrologEngine Engine, System.IO.StringWriter Out) TimedEngine()
+    {
+        var w = new System.IO.StringWriter();
+        return (new PrologEngine { Out = w }, w);
+    }
+
+    /// <summary>The heap cells one call of <paramref name="goal"/> allocates,
+    /// read off time/1's own report — the counter <c>--alloc</c> benchmarking
+    /// uses, deterministic by construction.</summary>
+    private static long HeapCellsOf(
+        PrologEngine engine, System.IO.StringWriter output, string goal)
+    {
+        var before = output.GetStringBuilder().Length;
+        Assert.True(engine.Query($"time({goal}).").Success);
+        string report = output.ToString().Substring(before);
+        var m = System.Text.RegularExpressions.Regex.Match(
+            report, @"([\d,]+) heap cells");
+        Assert.True(m.Success, $"time/1 printed no cell count for {goal}: {report}");
+        return long.Parse(m.Groups[1].Value.Replace(",", ""),
+            System.Globalization.CultureInfo.InvariantCulture);
     }
 }
