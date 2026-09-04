@@ -221,7 +221,12 @@ public static class SolutionFormatter
             // A named variable occurring inside this value prints as its name.
             if (displayName.Count > 0)
                 val = ResidualProjection.SubstituteVarNames(val, displayName);
-            string key = AstTermRenderer.Render(Elide(val, elide), 1200, ops, quoted: true, portrayText: true);
+            // A binding line is the goal `Name = Value`, so the value is an
+            // argument of =/2 (700 xfx) and renders bounded by 699: without
+            // that, `X = (a,b)` printed as `X = a, b`, which reads back as
+            // two separate bindings.
+            string key = AstTermRenderer.Render(
+                Elide(val, elide), BindingValuePriority, ops, quoted: true, portrayText: true);
             renderedValue[name] = key;
             if (!groups.TryGetValue(key, out var members))
                 groups[key] = members = new List<string>();
@@ -260,7 +265,8 @@ public static class SolutionFormatter
                 if (displayName.Count > 0)
                     shown = ResidualProjection.SubstituteVarNames(shown, displayName);
                 lines.Add($"{sname} = " + AstTermRenderer.Render(
-                    Elide(shown, elide), 1200, ops, quoted: true, portrayText: true));
+                    Elide(shown, elide), BindingValuePriority, ops,
+                    quoted: true, portrayText: true));
             }
         foreach (Term g in unattachedResiduals)
             lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops, quoted: true, portrayText: true));
@@ -268,6 +274,11 @@ public static class SolutionFormatter
         if (lines.Count == 0) return "true";
         return string.Join(",\n", lines);
     }
+
+    /// <summary>The priority a binding's value renders at: an argument of
+    /// <c>=</c>/2, which is 700 xfx. A term above it takes parentheses so the
+    /// line reads back as the one goal it claims to be.</summary>
+    private const int BindingValuePriority = 699;
 
     /// <summary>Adds <c>Name = Value</c> unless the variable being reported ON
     /// is one the user named with a leading underscore.
