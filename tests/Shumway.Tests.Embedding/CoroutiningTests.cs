@@ -655,6 +655,47 @@ public class CoroutiningTests
     }
 
     [Fact]
+    public void ACutInOneFrozenGoalLeavesTheOthersAlone()
+    {
+        // Two goals frozen on the same variable are two goals. A cut in the
+        // second used to prune the first one's alternatives as well, so an
+        // answer the program had was never reported: an incompleteness, not a
+        // cosmetic difference.
+        var e = Co();
+        Assert.True(e.Query(
+            "findall(X-Y, (freeze(X, (Y = 1 ; Y = 2)), freeze(X, !), X = c ; X = end), L), "
+            + "L = [c-1, c-2, end-_].").Success);
+    }
+
+    [Fact]
+    public void ACutStillCutsInsideItsOwnFrozenGoal()
+    {
+        // The other half of the same rule: within ONE frozen goal the cut is
+        // that goal's own, so it does commit to the first alternative.
+        var e = Co();
+        Assert.True(e.Query(
+            "findall(Y, (freeze(X, ((Y = 1 ; Y = 2), !)), X = c), L), L == [1].").Success);
+        // Without the cut, both alternatives survive.
+        Assert.True(e.Query(
+            "findall(Y, (freeze(X, (Y = 1 ; Y = 2)), X = c), L), L == [1, 2].").Success);
+    }
+
+    [Fact]
+    public void HowTheGoalsAreStoredIsNotVisible()
+    {
+        // The store keeps each frozen goal apart from the next. Nothing that
+        // reads the goals back may show how.
+        var e = Co();
+        Assert.True(e.Query("freeze(X, a), freeze(X, b), frozen(X, G), G == (a, b).").Success);
+        Assert.True(e.Query("freeze(Y, (p, q)), frozen(Y, G), G == (p, q).").Success);
+        Assert.True(e.Query("freeze(X, G0), frozen(X, G), G == G0, var(G).").Success);
+        // Two frozen goals project as two freeze/2 constraints, as before.
+        Assert.True(e.Query(
+            "freeze(X, a), freeze(X, b), copy_term(X, _, As), "
+            + "As = [freeze(_, a), freeze(_, b)].").Success);
+    }
+
+    [Fact]
     public void CollapsingDoesNotWeakenTheConstraint()
     {
         // The point of the exercise is fewer copies, not a weaker dif: the one
