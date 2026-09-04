@@ -554,10 +554,10 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 
 | Predicate | Description |
 | --- | --- |
-| `fd_labeling(+Vars, +Options)` | Assigns a value to each variable, guided by variable_method/1 and value_method/1 options. |
+| `fd_labeling(+Vars, +Options)` | Assigns a value to each variable, guided by variable_method/1 (standard, first_fail, most_constrained, smallest, largest, max_regret, random), value_method/1 (min, max, middle, bisect, random) and backtracks/1. |
 | `indomain(?Var)` | Binds one variable to each value of its domain in turn, on backtracking. |
 | `label(+Vars)` | Assigns each variable in the list a value from its domain, searching by backtracking. |
-| `labeling(+Options, +Vars)` | Like label/1 with options for variable selection (leftmost, ff) and value order (up, down). |
+| `labeling(+Options, +Vars)` | Like label/1 with options for variable selection (leftmost, ff, ffc, min, max) and value order (up, down, bisect). |
 
 ## CLP(FD): reification
 

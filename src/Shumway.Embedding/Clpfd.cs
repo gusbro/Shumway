@@ -860,60 +860,133 @@ internal static class Clpfd
         %! label(+Vars) | CLP(FD): labeling | Assigns each variable in the list a value from its domain, searching by backtracking.
         label(Vars) :- clpfd_labeling([], Vars, label/1).
 
-        %! labeling(+Options, +Vars) | CLP(FD): labeling | Like label/1 with options for variable selection (leftmost, ff) and value order (up, down).
+        %! labeling(+Options, +Vars) | CLP(FD): labeling | Like label/1 with options for variable selection (leftmost, ff, ffc, min, max) and value order (up, down, bisect).
         labeling(Options, Vars) :- clpfd_labeling(Options, Vars, labeling/2).
 
         % Ctx is the indicator of the predicate the USER called, so a GNU
         % compat spelling reports itself rather than what it delegates to
         % (fd_labeling/1, not labeling/2). GNU Prolog names them this way.
         clpfd_labeling(Options, Vars, Ctx) :-
+            clpfd_labeling(Options, Vars, Ctx, no_bt).
+
+        % Bt is either no_bt or the key of a non-backtrackable counter, so
+        % counting costs one comparison per value tried when nobody asked.
+        clpfd_labeling(Options, Vars, Ctx, Bt) :-
             '$must_be'(list, Options, Ctx),
             '$must_be'(list, Vars, Ctx),
             clpfd_label_opts(Options, Sel, Ord, Ctx),
-            clpfd_label(Vars, Sel, Ord, Ctx).
+            clpfd_label(Vars, Sel, Ord, Ctx, Bt).
 
         % option list -> variable-selection and value-ordering strategy.
         % An option that is still a VARIABLE is missing, not wrong: nothing
         % about a variable places it outside the domain of options, so it
         % reports as uninstantiated (GNU Prolog and SWI both do).
+        % Strategies are named twice over: `leftmost/ff/ffc/min/max` and
+        % `up/down/bisect` follow SWI, and fd_labeling/2 maps GNU's
+        % variable_method/value_method wrappers onto the same set, so one
+        % implementation serves both spellings.
         clpfd_label_opts([], leftmost, up, _).
         clpfd_label_opts([O|Os], Sel, Ord, Ctx) :-
             clpfd_label_opts(Os, Sel0, Ord0, Ctx),
-            ( var(O)        -> throw(error(instantiation_error, Ctx))
-            ; O == leftmost -> Sel = leftmost, Ord = Ord0
-            ; O == ff       -> Sel = ff,       Ord = Ord0
-            ; O == up       -> Ord = up,       Sel = Sel0
-            ; O == down     -> Ord = down,     Sel = Sel0
+            ( var(O)          -> throw(error(instantiation_error, Ctx))
+            ; clpfd_var_sel(O) -> Sel = O,   Ord = Ord0
+            ; clpfd_val_ord(O) -> Ord = O,   Sel = Sel0
+            ; O == ffc        -> Sel = most_constrained, Ord = Ord0
+            ; O == min        -> Sel = smallest, Ord = Ord0
+            ; O == max        -> Sel = largest,  Ord = Ord0
             ; throw(error(domain_error(labeling_option, O), Ctx))
             ).
 
-        clpfd_label([], _, _, _).
-        clpfd_label([V|Vs], Sel, Ord, Ctx) :-
-            ( integer(V) -> clpfd_label(Vs, Sel, Ord, Ctx)
-            ; Sel == ff  -> clpfd_pick_ff([V|Vs], Ord, Rest, Ctx),
-                            clpfd_label(Rest, Sel, Ord, Ctx)
-            ; clpfd_pick(V, Ord, Ctx),
-              clpfd_label(Vs, Sel, Ord, Ctx)
+        clpfd_var_sel(leftmost).  clpfd_var_sel(ff).
+        clpfd_var_sel(most_constrained). clpfd_var_sel(smallest).
+        clpfd_var_sel(largest).   clpfd_var_sel(max_regret).
+        clpfd_var_sel(random_variable).
+        clpfd_val_ord(up).     clpfd_val_ord(down).   clpfd_val_ord(middle).
+        clpfd_val_ord(bisect). clpfd_val_ord(random_value).
+
+        clpfd_label([], _, _, _, _).
+        clpfd_label([V|Vs], Sel, Ord, Ctx, Bt) :-
+            (   integer(V) -> clpfd_label(Vs, Sel, Ord, Ctx, Bt)
+            ;   Sel == leftmost ->
+                    clpfd_pick(V, Ord, Ctx, Bt),
+                    clpfd_label(Vs, Sel, Ord, Ctx, Bt)
+            ;   clpfd_pick_by(Sel, [V|Vs], Ord, Rest, Ctx, Bt),
+                clpfd_label(Rest, Sel, Ord, Ctx, Bt)
             ).
 
-        % first-fail: label the unbound variable with the smallest domain.
-        clpfd_pick_ff(Vars, Ord, Rest, Ctx) :-
-            clpfd_choose_ff(Vars, Best),
+        % Every non-leftmost strategy is "choose one variable, label it, go
+        % on with the rest".
+        clpfd_pick_by(Sel, Vars, Ord, Rest, Ctx, Bt) :-
+            clpfd_choose(Sel, Vars, Best),
             clpfd_del1(Vars, Best, Rest),
-            clpfd_pick(Best, Ord, Ctx).
+            clpfd_pick(Best, Ord, Ctx, Bt).
 
-        clpfd_choose_ff([V|Vs], Best) :-
-            ( integer(V) -> clpfd_choose_ff(Vs, Best)
-            ; clpfd_var_size(V, S), clpfd_choose_ff_(Vs, V, S, Best)
+        % Selection is a minimum over a per-variable KEY, leftmost winning a
+        % tie (which is how GNU Prolog breaks one). random is the exception:
+        % no key orders it.
+        clpfd_choose(random_variable, Vars, Best) :- !,
+            clpfd_unbound(Vars, Us),
+            clpfd_length(Us, N),
+            I is random(N),
+            clpfd_nth0(I, Us, Best).
+        clpfd_choose(Sel, [V|Vs], Best) :-
+            ( integer(V) -> clpfd_choose(Sel, Vs, Best)
+            ; clpfd_sel_key(Sel, V, K), clpfd_choose_(Vs, Sel, V, K, Best)
             ).
-        clpfd_choose_ff_([], Best, _, Best).
-        clpfd_choose_ff_([V|Vs], CurBest, CurS, Best) :-
-            ( integer(V) -> clpfd_choose_ff_(Vs, CurBest, CurS, Best)
-            ; clpfd_var_size(V, S),
-              ( S < CurS -> clpfd_choose_ff_(Vs, V, S, Best)
-              ;             clpfd_choose_ff_(Vs, CurBest, CurS, Best)
+        clpfd_choose_([], _, Best, _, Best).
+        clpfd_choose_([V|Vs], Sel, CurBest, CurK, Best) :-
+            ( integer(V) -> clpfd_choose_(Vs, Sel, CurBest, CurK, Best)
+            ; clpfd_sel_key(Sel, V, K),
+              ( K @< CurK -> clpfd_choose_(Vs, Sel, V, K, Best)
+              ;              clpfd_choose_(Vs, Sel, CurBest, CurK, Best)
               )
             ).
+
+        % k(Primary, Secondary) compares in the standard order of terms,
+        % which on integers is numeric — so a key is just the pair GNU's
+        % description names. Negation turns a "largest wins" rule into the
+        % minimum this walk looks for.
+        clpfd_sel_key(ff, V, k(S, 0)) :- clpfd_var_size(V, S).
+        clpfd_sel_key(most_constrained, V, k(S, NC)) :-
+            clpfd_var_size(V, S), clpfd_var_constraints(V, C), NC is -C.
+        clpfd_sel_key(smallest, V, k(Mn, NC)) :-
+            clpfd_dom_of(V, D), clpfd_dom_min(D, Mn0), clpfd_finite_key(Mn0, Mn),
+            clpfd_var_constraints(V, C), NC is -C.
+        clpfd_sel_key(largest, V, k(NMx, NC)) :-
+            clpfd_dom_of(V, D), clpfd_dom_max(D, Mx0), clpfd_finite_key(Mx0, Mx),
+            NMx is -Mx, clpfd_var_constraints(V, C), NC is -C.
+        clpfd_sel_key(max_regret, V, k(NR, 0)) :-
+            clpfd_regret(V, R), NR is -R.
+
+        % inf/sup have no numeric key; an unbounded variable sorts last so a
+        % bounded one is preferred, and labelling it raises later anyway.
+        clpfd_finite_key(inf, K) :- !, K is -1 << 60.
+        clpfd_finite_key(sup, K) :- !, K is 1 << 60.
+        clpfd_finite_key(N, N).
+
+        % The gap between the two smallest values: what "regret" measures.
+        clpfd_regret(V, R) :-
+            clpfd_dom_of(V, D), clpfd_dom_min(D, Mn),
+            (   integer(Mn), clpfd_dom_above(D, Mn, D2), clpfd_dom_min(D2, Nx),
+                integer(Nx)
+            ->  R is Nx - Mn
+            ;   R = 0
+            ).
+
+        clpfd_var_constraints(V, N) :-
+            ( get_attr(V, clpfd, fd(_, Props)) -> clpfd_length(Props, N) ; N = 0 ).
+
+        clpfd_unbound([], []).
+        clpfd_unbound([V|Vs], Out) :-
+            ( integer(V) -> clpfd_unbound(Vs, Out)
+            ; Out = [V|Rest], clpfd_unbound(Vs, Rest)
+            ).
+        clpfd_length(L, N) :- clpfd_len_(L, 0, N).
+        clpfd_len_([], N, N).
+        clpfd_len_([_|T], N0, N) :- N1 is N0 + 1, clpfd_len_(T, N1, N).
+        clpfd_nth0(0, [X|_], X) :- !.
+        clpfd_nth0(I, [_|T], X) :- I1 is I - 1, clpfd_nth0(I1, T, X).
+
         clpfd_var_size(V, N) :- clpfd_dom_of(V, D), clpfd_dom_size(D, N).
 
         clpfd_del1([], _, []).
@@ -923,8 +996,74 @@ internal static class Clpfd
             ).
 
         % bind V to a value of its domain, on backtracking the next one.
-        clpfd_pick(V, up, Ctx)   :- clpfd_dom_of(V, D), clpfd_indomain_up(V, D, Ctx).
-        clpfd_pick(V, down, Ctx) :- clpfd_dom_of(V, D), clpfd_indomain_down(V, D, Ctx).
+        clpfd_pick(V, up, Ctx, Bt) :- !,
+            clpfd_dom_of(V, D), clpfd_dom_finite(D, Ctx),
+            '$dom_values'(D, Vals), clpfd_try_values(Vals, V, Bt).
+        clpfd_pick(V, down, Ctx, Bt) :- !,
+            clpfd_dom_of(V, D), clpfd_dom_finite(D, Ctx),
+            '$dom_values'(D, Vals), clpfd_rev(Vals, [], R),
+            clpfd_try_values(R, V, Bt).
+        % Domain splitting: the choice is a CONSTRAINT, not a value, so each
+        % step halves the domain and propagates. That is what makes a wide
+        % domain tractable, where trying values one by one is not.
+        clpfd_pick(V, bisect, Ctx, Bt) :- !, clpfd_bisect(V, Ctx, Bt).
+        clpfd_pick(V, Ord, Ctx, Bt) :-
+            clpfd_dom_of(V, D), clpfd_dom_finite(D, Ctx),
+            '$dom_values'(D, Vals), clpfd_order_values(Ord, D, Vals, Ordered),
+            clpfd_try_values(Ordered, V, Bt).
+
+        % One value per choice; re-entering here to try the next one IS the
+        % backtrack backtracks/1 counts.
+        clpfd_try_values([X|_], V, _) :- V = X.
+        clpfd_try_values([_|T], V, Bt) :- clpfd_bump(Bt), clpfd_try_values(T, V, Bt).
+
+        clpfd_bisect(V, Ctx, Bt) :-
+            (   integer(V) -> true
+            ;   clpfd_dom_of(V, D), clpfd_dom_finite(D, Ctx),
+                clpfd_dom_min(D, Lo), clpfd_dom_max(D, Hi),
+                (   Lo =:= Hi -> V = Lo
+                ;   M is (Lo + Hi) // 2,
+                    ( V #=< M ; clpfd_bump(Bt), V #> M ),
+                    clpfd_bisect(V, Ctx, Bt)
+                )
+            ).
+
+        clpfd_bump(no_bt) :- !.
+        clpfd_bump(Key) :- nb_getval(Key, N), N1 is N + 1, nb_setval(Key, N1).
+
+        % value_method(bounds) is deliberately absent: GNU documents it and
+        % its own implementation rejects it, so accepting it would mean
+        % inventing an order no reference defines.
+        %
+        % middle: by distance from the domain's midpoint, the lower value
+        % first on a tie. Doubling keeps it in integers — the midpoint of
+        % Lo..Hi falls between two values whenever the size is even. GNU
+        % Prolog's own order, measured: 1..7 gives 3 4 2 5 1 6 7.
+        clpfd_order_values(middle, D, Vals, Ordered) :-
+            clpfd_dom_min(D, Lo), clpfd_dom_max(D, Hi),
+            Mid2 is Lo + Hi - 1,
+            clpfd_key_values(Vals, Mid2, Keyed),
+            msort(Keyed, Sorted),
+            clpfd_unkey(Sorted, Ordered).
+        clpfd_order_values(random_value, _, Vals, Ordered) :-
+            clpfd_shuffle(Vals, Ordered).
+
+        clpfd_key_values([], _, []).
+        clpfd_key_values([V|Vs], Mid2, [k(Dist, V)-V|Ks]) :-
+            Dist is abs(2 * V - Mid2),
+            clpfd_key_values(Vs, Mid2, Ks).
+        clpfd_unkey([], []).
+        clpfd_unkey([_-V|T], [V|Vs]) :- clpfd_unkey(T, Vs).
+
+        % Fisher-Yates, so every value is offered exactly once.
+        clpfd_shuffle([], []).
+        clpfd_shuffle(Vals, [P|Rest]) :-
+            Vals = [_|_],
+            clpfd_length(Vals, N),
+            I is random(N),
+            clpfd_nth0(I, Vals, P),
+            clpfd_del1(Vals, P, Others),
+            clpfd_shuffle(Others, Rest).
 
         %! indomain(?Var) | CLP(FD): labeling | Binds one variable to each value of its domain in turn, on backtracking.
         indomain(X) :-
@@ -1178,27 +1317,54 @@ internal static class Clpfd
         % solver has; a heuristic it does not implement is REFUSED rather
         % than quietly replaced, since which solution comes first is what a
         % labeling option is chosen for.
-        %! fd_labeling(+Vars, +Options) | CLP(FD): labeling | Assigns a value to each variable, guided by variable_method/1 and value_method/1 options.
+        %! fd_labeling(+Vars, +Options) | CLP(FD): labeling | Assigns a value to each variable, guided by variable_method/1 (standard, first_fail, most_constrained, smallest, largest, max_regret, random), value_method/1 (min, max, middle, bisect, random) and backtracks/1.
         fd_labeling(Vars, Options) :-
             '$must_be'(list, Options, fd_labeling/2),
-            clpfd_gnu_opts(Options, Opts),
-            (   is_list(Vars) -> clpfd_labeling(Opts, Vars, fd_labeling/2)
-            ;   clpfd_labeling(Opts, [Vars], fd_labeling/2)
+            clpfd_gnu_opts(Options, Opts, Bt),
+            ( is_list(Vars) -> Vs = Vars ; Vs = [Vars] ),
+            (   Bt == none -> clpfd_labeling(Opts, Vs, fd_labeling/2)
+            ;   Bt = count(B), clpfd_labeling_counting(Opts, Vs, B)
             ).
 
-        clpfd_gnu_opts([], []).
-        clpfd_gnu_opts([O|Os], Out) :-
+        % backtracks(B): B is how many times the enumeration went back to
+        % try another value (or the upper half of a bisection). The COUNT is
+        % a property of the search this solver performs, so it is not
+        % comparable across systems — what it reports is this engine's own
+        % work. The counter is not backtrackable, and its key is fresh per
+        % call so a nested labeling cannot corrupt an outer count.
+        clpfd_labeling_counting(Opts, Vs, B) :-
+            ( nb_current('$clpfd_bt_seq', N0) -> true ; N0 = 0 ),
+            N is N0 + 1,
+            nb_setval('$clpfd_bt_seq', N),
+            number_codes(N, Cs), atom_codes(Suffix, Cs),
+            atom_concat('$clpfd_bt_', Suffix, Key),
+            nb_setval(Key, 0),
+            clpfd_labeling(Opts, Vs, fd_labeling/2, Key),
+            nb_getval(Key, B).
+
+        clpfd_gnu_opts([], [], none).
+        clpfd_gnu_opts([O|Os], Out, Bt) :-
             (   var(O) -> throw(error(instantiation_error, fd_labeling/2))
-            ;   clpfd_gnu_opt(O, Mapped) -> Out = [Mapped|Rest]
+            ;   O = backtracks(B) -> Out = Rest, Bt = count(B), Bt0 = count(B)
+            ;   clpfd_gnu_opt(O, Mapped) -> Out = [Mapped|Rest], Bt0 = none
             ;   throw(error(domain_error(fd_labeling_option, O), fd_labeling/2))
             ),
-            clpfd_gnu_opts(Os, Rest).
+            clpfd_gnu_opts(Os, Rest, Bt1),
+            ( Bt0 == none -> Bt = Bt1 ; true ).
 
         clpfd_gnu_opt(variable_method(standard), leftmost).
         clpfd_gnu_opt(variable_method(first_fail), ff).
         clpfd_gnu_opt(variable_method(ff), ff).
+        clpfd_gnu_opt(variable_method(most_constrained), most_constrained).
+        clpfd_gnu_opt(variable_method(smallest), smallest).
+        clpfd_gnu_opt(variable_method(largest), largest).
+        clpfd_gnu_opt(variable_method(max_regret), max_regret).
+        clpfd_gnu_opt(variable_method(random), random_variable).
         clpfd_gnu_opt(value_method(min), up).
         clpfd_gnu_opt(value_method(max), down).
+        clpfd_gnu_opt(value_method(middle), middle).
+        clpfd_gnu_opt(value_method(random), random_value).
+        clpfd_gnu_opt(value_method(bisect), bisect).
         % GProlog's fd_all_different maps to pairwise all_different, not the
         % stronger all_distinct (native Hall). Even with native Hall,
         % its O(n^3) re-fire on every domain change costs more than pairwise's
