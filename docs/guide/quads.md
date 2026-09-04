@@ -30,21 +30,28 @@ runnable tests.
 28 ?- L = [a|L], length(L, 7).
       sto, false
    |  sto, L = [a,a,_A,_B,_C,_D,_E]. % tau
-16, "7.8.3.4#9"
-?- call((write(3), X)).
-      outputs("3"), instantiation_error.
+12, "8.1.2.3#4"
+?- call((write(z), X)).
+      outputs("z"), instantiation_error.
+?- atom(a).
+      true.
+40 ?- read(T).
+      inputs("bar."), T = bar, unexpected.
+      inputs("bar."), peeks(" "), T = bar.
 ```
 
 Piece by piece:
 
 - **The test line**: an id, then `?-`, then the goal, ending with a
-  period. The id is any ground term, so a test may be named by more than
-  a number: `16, "7.8.3.4#9"` names both the test and the clause of the
+  period. A query is recognised by that `?-` alone, so a test that needs
+  no name is written `?- Goal.` and is reported by its position in the
+  file. The id is any ground term, so a test may be named by more than a
+  number: `12, "8.1.2.3#4"` names both the test and the clause of the
   standard it comes from. It need not share a line with its `?-`, since
   a transcript is read as terms rather than as lines.
-- **The expected block**: the sentences that follow, up to the next test
-  line. One block is a single sentence, so the period appears once, at
-  its end.
+- **The expected block**: every sentence that follows, up to the next
+  test line. There may be more than one, and each contributes its
+  alternatives to the same test.
 - **`;` continues an answer sequence**: `L = [], N = 0 ; L = [_A], N = 1`
   is one expected outcome showing successive answers. A trailing `...`
   means the enumeration continues.
@@ -65,8 +72,24 @@ Piece by piece:
 - **`outputs(Text),`** prefixes an outcome to say the goal writes Text
   first. What is checked is the outcome after it; the written text
   itself is not compared.
+- **`inputs(Text)` and `peeks(Text)`** say what the goal reads: it must
+  consume `inputs` and leave `peeks` unread. The two are supplied to the
+  goal as one input and both halves are checked. Writing the peek down
+  separately is how a claim about reading becomes testable: taking `1.`
+  off an input of exactly `1.` cannot tell that the number ended there,
+  and `inputs("1."), peeks(" ")` says the reader had to look at the
+  space to know.
+- **`unexpected`** at the end of an alternative marks it as a WRONG
+  answer, written down because some system produces it. It never makes a
+  test pass, so a test whose alternatives are all `unexpected` can only
+  fail.
 - **`% name`** at the end of an alternative attributes it to the system
   that produces it; it is a comment.
+
+An alternative written in a vocabulary this library does not know is not
+guessed at. It is left out of the sanctioned set and named in the report
+under `not understood`, with the test it belongs to, so a transcript
+using something new reads as unchecked rather than as a pass.
 
 ## Running quads from the top level
 
@@ -84,8 +107,9 @@ compile them, and consulting ordinary files is unaffected. Quads
 accumulate across consults.
 
 - `run_quads` runs every loaded quad and prints `quads: Passed/Total`,
-  with the failing ids listed when there are any, and a note for any
-  quad whose expected block could not be classified.
+  with the failing ids listed when there are any, and every answer
+  description it could not read named under `not understood` with the
+  test it belongs to.
 - `run_quads(Id)` runs a single test by its id.
 - `clear_quads` forgets the loaded set.
 
