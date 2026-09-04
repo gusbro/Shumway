@@ -120,6 +120,9 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     // load); dynamic functors are checked live against _dynStore.Functors, so
     // assert/retract need not invalidate it.
     internal HashSet<int>? _staticHeadFunctorsCache;
+    // Built by the same scan, invalidated with it: the head functors a
+    // grammar rule defines (predicate_property(H, non_terminal)).
+    internal HashSet<int>? _nonTerminalFunctorsCache;
     // Set for the duration of a RUNTIME consult (consult/1 called from within a
     // live query). When set, source-declared dynamic clauses are also pushed
     // into the live dispatch (AppendDynamicClauseIncremental) so a call later in

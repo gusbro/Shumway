@@ -2231,6 +2231,33 @@ public sealed partial class PrologEngine
         }
     }
 
+    /// <summary>The indicator of the predicate a clause DEFINES, which for a
+    /// grammar rule is not the indicator of its term: <c>greeting --&gt;
+    /// [hello]</c> is a <c>--&gt;</c>/2 term that defines <c>greeting/2</c>,
+    /// and a pushback rule <c>H, PB --&gt; B</c> defines H's. The static path
+    /// keeps the rule untranslated (the compiler applies the flag-aware
+    /// transform later), so every registry that answers "which predicates
+    /// exist" has to look through it — otherwise a non-terminal runs but is
+    /// invisible to current_predicate/1, listing/1 and
+    /// predicate_property/2.</summary>
+    internal static bool TryExtractDefinedHead(Clause clause, out string name, out int arity)
+    {
+        if (clause.Kind == ClauseKind.DcgRule
+            && clause.Term is CompoundTerm { Args.Length: 2 } rule)
+        {
+            Term head = rule.Args[0];
+            if (head is CompoundTerm { Functor: ",", Args.Length: 2 } pushback)
+                head = pushback.Args[0];
+            switch (head)
+            {
+                case AtomTerm a: name = a.Name; arity = 2; return true;
+                case CompoundTerm c: name = c.Functor; arity = c.Args.Length + 2; return true;
+                default: name = ""; arity = 0; return false;
+            }
+        }
+        return TryExtractHead(clause, out name, out arity);
+    }
+
     /// <summary>Throws if more than one module declares the same functor
     /// public — the public namespace is flat across all loaded modules.</summary>
     private void ValidatePublicUniqueness()

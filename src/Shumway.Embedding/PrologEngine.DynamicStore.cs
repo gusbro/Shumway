@@ -713,14 +713,34 @@ public sealed partial class PrologEngine
         {
             foreach (var c in manifest.Clauses)
             {
-                if (TryExtractHead(c, out string n, out int a))
+                // A grammar rule defines its TRANSLATED head, and that is the
+                // clause it contributes: clause/2 on a non-terminal reads the
+                // same body the predicate runs.
+                if (TryExtractDefinedHead(c, out string n, out int a))
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
-                    if (fid == functorId) yield return c;
+                    if (fid == functorId) yield return TranslatedForListing(c);
                 }
             }
         }
+    }
+
+    /// <summary>A grammar rule in the form it defines. Falls back to the rule
+    /// itself when the transform does not yield one ordinary clause (a
+    /// malformed body), so listing shows something rather than nothing.</summary>
+    private static Clause TranslatedForListing(Clause clause)
+    {
+        if (clause.Kind != ClauseKind.DcgRule) return clause;
+        try
+        {
+            var translated = Shumway.Compiler.Parsing.DcgTransform.Apply(
+                new[] { clause }, failFast: false);
+            if (translated.Count == 1 && translated[0].Kind != ClauseKind.DcgRule)
+                return translated[0];
+        }
+        catch (Shumway.Core.PrologRuntimeException) { }
+        return clause;
     }
 
     /// <summary>The user-defined predicates eligible for <c>listing/0,1</c>:
@@ -804,11 +824,11 @@ public sealed partial class PrologEngine
             if (IsLibraryModule(name)) continue;
             foreach (var c in manifest.Clauses)
             {
-                if (TryExtractHead(c, out string n, out int a))
+                if (TryExtractDefinedHead(c, out string n, out int a))
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
-                    if (fid == functorId) yield return c;
+                    if (fid == functorId) yield return TranslatedForListing(c);
                 }
             }
         }
@@ -823,7 +843,7 @@ public sealed partial class PrologEngine
         {
             if (IsLibraryModule(name)) continue;
             foreach (var c in manifest.Clauses)
-                if (TryExtractHead(c, out string n, out int a))
+                if (TryExtractDefinedHead(c, out string n, out int a))
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
@@ -931,13 +951,21 @@ public sealed partial class PrologEngine
     {
         if (_staticHeadFunctorsCache is not null) return _staticHeadFunctorsCache;
         var set = new HashSet<int>();
+        var nonTerminals = new HashSet<int>();
         foreach (var manifest in _modules.Values)
         {
             foreach (var c in manifest.Clauses)
             {
-                if (TryExtractHead(c, out string n, out int a))
-                    set.Add(FunctorTable.Intern(
-                        AtomTable.Intern(n, permanent: true).Id, a));
+                if (TryExtractDefinedHead(c, out string n, out int a))
+                {
+                    int hf = FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a);
+                    set.Add(hf);
+                    // Which of them a grammar rule defines, for
+                    // predicate_property(H, non_terminal): the same scan
+                    // already has the clause in hand.
+                    if (c.Kind == ClauseKind.DcgRule) nonTerminals.Add(hf);
+                }
             }
             // A `:- discontiguous` / `:- multifile` declaration makes the
             // predicate exist even with no clauses of its own.
@@ -949,8 +977,18 @@ public sealed partial class PrologEngine
         // answered predicate_property / ground current_predicate with plain
         // failure for every loaded predicate (its own program included).
         set.UnionWith(_precompiledStaticPredicates.Keys);
+        _nonTerminalFunctorsCache = nonTerminals;
         _staticHeadFunctorsCache = set;
         return set;
+    }
+
+    /// <summary>True when a grammar rule defines this predicate — the
+    /// <c>non_terminal</c> property. Shares the static-head scan and its
+    /// invalidation.</summary>
+    internal bool IsNonTerminalFunctor(int functorId)
+    {
+        StaticHeadFunctors();
+        return _nonTerminalFunctorsCache?.Contains(functorId) == true;
     }
 
     /// <summary>Functors a `:- discontiguous` / `:- multifile` directive
@@ -1649,7 +1687,7 @@ public sealed partial class PrologEngine
     {
         foreach (var c in clauses)
         {
-            if (TryExtractHead(c, out string n, out int a))
+            if (TryExtractDefinedHead(c, out string n, out int a))
             {
                 int cfid = FunctorTable.Intern(
                     AtomTable.Intern(n, permanent: true).Id, a);
@@ -1665,7 +1703,7 @@ public sealed partial class PrologEngine
         {
             foreach (var c in manifest.Clauses)
             {
-                if (TryExtractHead(c, out string n, out int a))
+                if (TryExtractDefinedHead(c, out string n, out int a))
                 {
                     int cfid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
