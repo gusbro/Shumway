@@ -112,10 +112,13 @@ public class Chunk235Tests
     [Fact]
     public void Consult_NonAtomArg_ThrowsTypeError()
     {
+        // The ball a program sees, not the host exception's text: the formal
+        // has to be the compound a catcher can match, with the culprit in it.
         var engine = new PrologEngine();
-        var ex = Assert.Throws<PrologRuntimeException>(
+        Assert.True(engine.Query(
+            "catch(consult(42), error(type_error(atom, 42), _), true).").Success);
+        Assert.Throws<PrologRuntimeException>(
             () => engine.QueryAll("consult(42).").ToList());
-        Assert.Contains("type_error(atom", ex.Message);
     }
 
     [Fact]

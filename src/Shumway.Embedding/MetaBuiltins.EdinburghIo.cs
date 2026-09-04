@@ -44,12 +44,14 @@ public static partial class MetaBuiltins
         catch (FileNotFoundException)
         {
             throw new Shumway.Core.PrologRuntimeException(
-                $"existence_error(source_sink, '{path}')");
+                "existence_error", "source_sink",
+                (object)new Shumway.Compiler.Ast.AtomTerm(path));
         }
         catch (DirectoryNotFoundException)
         {
             throw new Shumway.Core.PrologRuntimeException(
-                $"existence_error(source_sink, '{path}')");
+                "existence_error", "source_sink",
+                (object)new Shumway.Compiler.Ast.AtomTerm(path));
         }
         streams.Add(h);
         streams.SetCurrentInput(h);
@@ -105,7 +107,8 @@ public static partial class MetaBuiltins
         catch (DirectoryNotFoundException)
         {
             throw new Shumway.Core.PrologRuntimeException(
-                $"existence_error(source_sink, '{path}')");
+                "existence_error", "source_sink",
+                (object)new Shumway.Compiler.Ast.AtomTerm(path));
         }
         streams.Add(h);
         streams.SetCurrentOutput(h);
@@ -166,7 +169,7 @@ public static partial class MetaBuiltins
     {
         var h = ResolveInputStream(engine, useStreamReg);
         if (!h.IsReader)
-            throw new Shumway.Core.PrologRuntimeException("permission_error(input, stream)");
+            throw new Shumway.Core.PrologRuntimeException("permission_error", "input,stream");
         // Skip codes < 32 (ASCII control / whitespace).
         int code;
         do { code = h.Reader!.ReadCodePoint(); }
@@ -179,7 +182,7 @@ public static partial class MetaBuiltins
     {
         var h = ResolveInputStream(engine, useStreamReg);
         if (!h.IsReader)
-            throw new Shumway.Core.PrologRuntimeException("permission_error(input, stream)");
+            throw new Shumway.Core.PrologRuntimeException("permission_error", "input,stream");
         int code = h.Reader!.ReadCodePoint();
         int regOut = useStreamReg ? 1 : 0;
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(code));
@@ -189,17 +192,17 @@ public static partial class MetaBuiltins
     {
         var h = ResolveOutputStream(engine, useStreamReg);
         if (!h.IsWriter)
-            throw new Shumway.Core.PrologRuntimeException("permission_error(output, stream)");
+            throw new Shumway.Core.PrologRuntimeException("permission_error", "output,stream");
         int regCode = useStreamReg ? 1 : 0;
         Cell c = MaterializeRegisterAsCell(engine, regCode);
         if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (c.Tag != Tag.Int)
-            throw new Shumway.Core.PrologRuntimeException("type_error(integer, _)");
+            throw new Shumway.Core.PrologRuntimeException("type_error", "integer", engine, c);
         long code = c.AsInt;
         if (!Shumway.Core.Utf16Text.IsScalarValue(code))
             throw new Shumway.Core.PrologRuntimeException(
-                "representation_error(character_code)");
+                "representation_error", "character_code");
         h.Writer!.Write(Shumway.Core.Utf16Text.FromCodePoint((int)code));
         return true;
     }
@@ -208,13 +211,13 @@ public static partial class MetaBuiltins
     {
         var h = ResolveInputStream(engine, useStreamReg);
         if (!h.IsReader)
-            throw new Shumway.Core.PrologRuntimeException("permission_error(input, stream)");
+            throw new Shumway.Core.PrologRuntimeException("permission_error", "input,stream");
         int regCode = useStreamReg ? 1 : 0;
         Cell c = MaterializeRegisterAsCell(engine, regCode);
         if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (c.Tag != Tag.Int)
-            throw new Shumway.Core.PrologRuntimeException("type_error(integer, _)");
+            throw new Shumway.Core.PrologRuntimeException("type_error", "integer", engine, c);
         int target = (int)c.AsInt;
         int code;
         do { code = h.Reader!.ReadCodePoint(); }
@@ -226,12 +229,12 @@ public static partial class MetaBuiltins
     {
         var h = ResolveOutputStream(engine, fromStreamArg: true);
         if (!h.IsWriter)
-            throw new Shumway.Core.PrologRuntimeException("permission_error(output, stream)");
+            throw new Shumway.Core.PrologRuntimeException("permission_error", "output,stream");
         Cell n = MaterializeRegisterAsCell(engine, 1);
         if (n.Tag == Tag.Ref || n.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (n.Tag != Tag.Int)
-            throw new Shumway.Core.PrologRuntimeException("type_error(integer, _)");
+            throw new Shumway.Core.PrologRuntimeException("type_error", "integer", engine, n);
         long count = n.AsInt;
         for (long i = 0; i < count; i++) h.Writer!.Write(' ');
         return true;
