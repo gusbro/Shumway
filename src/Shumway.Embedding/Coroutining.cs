@@ -291,7 +291,71 @@ internal static class Coroutining
         attribute_goals(coroutining, Attr, V, Goals) :-
             coroutining_attr_goals(Attr, V, Goals).
         coroutining_attr_goals(frozen(G), V, Goals) :-
-            co_project(G, V, Goals, []).
+            co_project(G, V, Goals0, []),
+            '$dif_simplify'(Goals0, Goals).
+
+        % ===== what a residual dif/2 is SHOWN as =====
+        % The store is already right; this is about reading. Two rules, both
+        % applied only to the dif/2 goals in the projection and neither able
+        % to change an answer.
+        %
+        % (1) Show the constraint's CURRENT canonical form. A dif is the
+        %     negation of its terms' unifier, so a unifier of one pair IS a
+        %     single disequality. Posting canonicalises, but a later ALIASING
+        %     of two watched variables can collapse a disjunction to one pair
+        %     without any variable being bound to a value, and only a value
+        %     binding re-canonicalises the store. Recomputing here shows
+        %     dif(A, B) where the store still reads dif(p(A,M), p(B,M)).
+        %     Only ever a projection onto SUBTERMS of what was written: the
+        %     pair comes from the very terms the caller passed, so nothing
+        %     invented appears in an answer.
+        %
+        % (2) Drop a dif another one already forbids. Equating the two sides
+        %     of THIS constraint and finding the other one's sides identical
+        %     is exactly the test: the other holds only where this one does,
+        %     so this one adds nothing. It catches both orders — a stronger
+        %     constraint posted second still removes the weaker one posted
+        %     first — because the pass runs over the collected list rather
+        %     than at post time.
+        %
+        % Two constraints can only relate this way if they share a variable,
+        % and a dif watches every variable of its unifier, so a comparable
+        % pair always meets in one variable's goal list. The pass is
+        % therefore local by construction, not by approximation.
+        '$dif_simplify'([], []).
+        '$dif_simplify'([G|Gs], Out) :-
+            (   G = dif(_, _)
+            ->  (   '$dif_subsumed_by_any'(G, Gs)
+                ->  '$dif_simplify'(Gs, Out)
+                ;   '$dif_drop_subsumed'(G, Gs, Gs1),
+                    Out = [G|Rest],
+                    '$dif_simplify'(Gs1, Rest)
+                )
+            ;   Out = [G|Rest],
+                '$dif_simplify'(Gs, Rest)
+            ).
+
+        % Later constraints first: of two that forbid exactly the same
+        % thing, one survives, and letting the later one win keeps this a
+        % single pass.
+        '$dif_subsumed_by_any'(G, [H|Hs]) :-
+            ( '$dif_subsumes'(H, G) -> true ; '$dif_subsumed_by_any'(G, Hs) ).
+
+        '$dif_drop_subsumed'(_, [], []).
+        '$dif_drop_subsumed'(G, [H|Hs], Out) :-
+            ( '$dif_subsumes'(G, H) -> Out = Rest ; Out = [H|Rest] ),
+            '$dif_drop_subsumed'(G, Hs, Rest).
+
+        % Stronger forbids everything Weaker does. The question is about the
+        % SHAPE of the two equalities, so it is asked on a plain copy: these
+        % are live constrained variables, and unifying them where they stand
+        % would run their own hooks and fail on the very constraint being
+        % examined. copy_term/2 leaves the attributes behind, which is what
+        % makes the copy the right place to ask. One copy of the whole
+        % comparison keeps the sharing between the four terms.
+        '$dif_subsumes'(dif(A, B), dif(X, Y)) :-
+            copy_term(cmp(A, B, X, Y), cmp(A1, B1, X1, Y1)),
+            \+ \+ ( X1 = Y1, A1 == B1 ).
 
         % A goal that is still a VARIABLE (freeze(X, G) with G unbound, which
         % is legal — it raises only when it runs) must not reach the
@@ -307,7 +371,7 @@ internal static class Coroutining
         co_project('$dif_wake'(dif_c(X, Y, Alive)), V, Goals, Tail) :-
             !,
             ( Alive \== dead, '$co_owner'((X, Y), V)
-              -> Goals = [dif(X, Y)|Tail]
+              -> '$dif_shown_as'(X, Y, DX, DY), Goals = [dif(DX, DY)|Tail]
             ; Goals = Tail
             ).
         co_project('$when_fire'(trigger(Cond, Goal, Fired, Alive)), V, Goals, Tail) :-
@@ -317,6 +381,17 @@ internal static class Coroutining
             ; Goals = Tail
             ).
         co_project(G, V, [freeze(V, G)|Tail], Tail).
+
+        % The pair the constraint has become, or the terms as written when it
+        % is still a real disjunction. '$dif_check' recomputes the unifier and
+        % hands back the single pair when there is one; it FAILS only if the
+        % terms have become identical, which a live constraint never is, so
+        % the fallback is defensive.
+        '$dif_shown_as'(X, Y, DX, DY) :-
+            (   '$dif_check'(X, Y, _Out, Canon), Canon = (_ - _)
+            ->  '$dif_canon'(X, Y, Canon, DX, DY)
+            ;   DX = X, DY = Y
+            ).
 
         % V owns a constraint iff it is the first variable of the watched
         % terms — the once-only emission rule (as CLP(FD) does for propagators).
