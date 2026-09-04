@@ -98,6 +98,7 @@ internal static class CompatLibraries
         :- dynamic('$quad_open'/2).     % File, Seq — the quad being described
         :- dynamic('$quad_seq'/1).
         :- dynamic('$quad_dropped'/2).  % Id, Why
+        :- dynamic('$quad_tmp_seq'/1).
 
         % ---- consult-time capture -----------------------------------------
         % A QUERY opens a test and is recognised by its principal functor
@@ -386,13 +387,14 @@ internal static class CompatLibraries
         % Reading and writing are watched only when the description says
         % something about them: a quad that mentions neither runs exactly as
         % before, on the real streams.
+        % quads_run_reading/5 reifies the run: it binds the outcome instead
+        % of failing or throwing, which is what lets the whole thing sit
+        % inside with_output_to/2 and still report what happened.
         quads_run_watched(In, Ws, G, O, Left, Written) :-
             quads_wants_output(Ws),
             !,
-            setup_call_cleanup(
-                quads_open_output(Saved),
-                quads_run_reading(In, Ws, G, O, Left),
-                quads_close_output(Saved, Written)).
+            with_output_to(atom(A), quads_run_reading(In, Ws, G, O, Left)),
+            atom_chars(A, Written).
         quads_run_watched(In, Ws, G, O, Left, none) :-
             quads_run_reading(In, Ws, G, O, Left).
 
@@ -409,38 +411,16 @@ internal static class CompatLibraries
             quads_text_chars(In, InCs),
             quads_text_chars(Pk, PkCs),
             quads_append(InCs, PkCs, AllCs),
+            quads_input_file(Path),
             setup_call_cleanup(
-                quads_open_input(AllCs, Stream, Saved),
+                quads_open_input(Path, AllCs, Stream, Saved),
                 ( quads_outcome(G, Ws, O), quads_left(Left) ),
-                quads_close_input(Stream, Saved)).
+                quads_close_input(Path, Stream, Saved)).
 
         quads_wanted_peek([want(_, Pk, _)|Ws], Out) :-
             ( Pk == none -> quads_wanted_peek(Ws, Out) ; Out = Pk ).
         quads_wanted_peek([], none).
 
-        quads_open_output(Saved) :-
-            current_output(Saved),
-            quads_output_file(Path),
-            open(Path, write, W),
-            set_output(W).
-        quads_close_output(Saved, Written) :-
-            current_output(W),
-            set_output(Saved),
-            catch(close(W), _, true),
-            quads_output_file(Path),
-            quads_read_file_chars(Path, Written),
-            catch(delete_file(Path), _, true).
-
-        quads_read_file_chars(Path, Chars) :-
-            setup_call_cleanup(open(Path, read, R),
-                               quads_read_chars(R, Chars),
-                               close(R)).
-        quads_read_chars(R, Chars) :-
-            get_char(R, C),
-            ( C == end_of_file -> Chars = []
-            ; Chars = [C|Rest], quads_read_chars(R, Rest) ).
-
-        quads_output_file('.quads_output.tmp').
 
         quads_outcome(G, Ws, O) :-
             (   quads_group_wants_loops(Ws)
@@ -459,24 +439,39 @@ internal static class CompatLibraries
             ;   Left = []
             ).
 
-        quads_open_input(Chars, Stream, Saved) :-
+        quads_open_input(Path, Chars, Stream, Saved) :-
             current_input(Saved),
-            quads_input_file(Path),
             setup_call_cleanup(open(Path, write, W),
                                quads_put_chars(W, Chars),
                                close(W)),
             open(Path, read, Stream),
             set_input(Stream).
-        quads_close_input(Stream, Saved) :-
+        quads_close_input(Path, Stream, Saved) :-
             set_input(Saved),
             catch(close(Stream), _, true),
-            quads_input_file(Path),
             catch(delete_file(Path), _, true).
         quads_put_chars(_, []).
         quads_put_chars(W, [C|Cs]) :- put_char(W, C), quads_put_chars(W, Cs).
 
-        % One scratch file per engine, beside wherever the process runs.
-        quads_input_file('.quads_input.tmp').
+        % A scratch file needs a name nothing else will pick. A fixed one in
+        % the working directory looked harmless and was not: the test suite
+        % runs several engines at once from the same directory, and they
+        % raced over it. Process id plus a per-call counter, in the system
+        % temp directory.
+        quads_input_file(Path) :-
+            ( catch(current_prolog_flag(pid, P), _, fail) -> true ; P = 0 ),
+            ( retract('$quad_tmp_seq'(N0)) -> true ; N0 = 0 ),
+            N is N0 + 1,
+            assertz('$quad_tmp_seq'(N)),
+            quads_temp_dir(D),
+            atomic_list_concat([D, '/shumway_quads_', P, '_', N, '.tmp'], Path).
+
+        quads_temp_dir(D) :-
+            (   catch(getenv('TMPDIR', D0), _, fail) -> D = D0
+            ;   catch(getenv('TEMP', D0), _, fail) -> D = D0
+            ;   catch(getenv('TMP', D0), _, fail) -> D = D0
+            ;   D = '.'
+            ).
 
         % A text descriptor is written as a double-quoted string, so what it
         % is at runtime follows the double_quotes flag: chars, codes, or an
