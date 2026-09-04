@@ -132,6 +132,17 @@ public static partial class MetaBuiltins
                 throw new ShumwayPrologException(IsoError.TypeError("atom", nameTerm));
             if (n.Tag != Tag.Atom)
                 throw new ShumwayPrologException(IsoError.TypeError("atomic", nameTerm));
+            // '.'/2 IS the list constructor, and a cons lives in a Lis cell
+            // everywhere else in the engine (ADR-017). Building a Str here
+            // spelled a list that compared unequal to the list it spells:
+            // functor(T, '.', 2) has to give a partial list.
+            if (arity == 2 && n.AsAtomId == DotAtomId)
+            {
+                int consSlot = engine.AllocateHeap(2);
+                engine.SetHeap(consSlot,     Cell.UnboundVar(consSlot));
+                engine.SetHeap(consSlot + 1, Cell.UnboundVar(consSlot + 1));
+                return engine.UnifyRegisterWithCell(0, Cell.Lis(consSlot));
+            }
             int functorId = FunctorTable.Intern(n.AsAtomId, (int)arity);
             int strBase = engine.AllocateHeap(2 + (int)arity);
             engine.SetHeap(strBase, Cell.Str(strBase + 1));
@@ -455,6 +466,18 @@ public static partial class MetaBuiltins
             if (arity > MaxArity)
                 throw new ShumwayPrologException(
                     IsoError.RepresentationError("max_arity"));
+            // Same rule as functor/3 above: a '.'/2 term is a cons cell.
+            if (arity == 2 && first.AsAtomId == DotAtomId)
+            {
+                cur = engine.NormalizeListCell(ResolveLocal(engine, restAfterFirst));
+                engine.TryUnconsListLike(cur, out Cell consHead, out Cell afterHead);
+                cur = engine.NormalizeListCell(ResolveLocal(engine, afterHead));
+                engine.TryUnconsListLike(cur, out Cell consTail, out _);
+                int consSlot = engine.AllocateHeap(2);
+                engine.SetHeap(consSlot,     consHead);
+                engine.SetHeap(consSlot + 1, consTail);
+                return engine.UnifyRegisterWithCell(0, Cell.Lis(consSlot));
+            }
             int functorId = FunctorTable.Intern(first.AsAtomId, arity);
             // Walk the list a second time to copy args into the STR.
             int strBase = engine.AllocateHeap(2 + arity);

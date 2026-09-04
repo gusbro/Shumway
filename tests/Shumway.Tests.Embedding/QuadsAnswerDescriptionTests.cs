@@ -195,6 +195,52 @@ public sealed class QuadsAnswerDescriptionTests
         Assert.Contains("quads: 1/1", report);
     }
 
+    [Theory]
+    // An error is described by its formal, and the formal is what gets
+    // compared. Naming the right kind of error with the wrong culprit
+    // describes a different system, and used to pass because only the
+    // error's own name was looked at.
+    [InlineData("   type_error(integer, a).\n", "quads: 1/1")]
+    [InlineData("   type_error(atom, a).\n", "quads: 0/1")]
+    [InlineData("   type_error(integer, zzz).\n", "quads: 0/1")]
+    [InlineData("   domain_error(integer, a).\n", "quads: 0/1")]
+    public void AnErrorIsComparedWholeAndNotByItsKind(string description, string expected)
+        => Assert.Contains(expected, RunQuads("t1\n?- atom_length(a, a).\n" + description));
+
+    [Fact]
+    public void AnElidedPartOfAnErrorMatchesAnything()
+    {
+        // `...` stands for a part that was not written down. What IS
+        // written still has to agree: the elision is not a blanket pass.
+        Assert.Contains("quads: 1/1",
+            RunQuads("t1\n?- atom_length(a, a).\n   type_error(integer, ...).\n"));
+        Assert.Contains("quads: 0/1",
+            RunQuads("t1\n?- atom_length(a, a).\n   type_error(atom, ...).\n"));
+        Assert.Contains("quads: 0/1",
+            RunQuads("t1\n?- atom(a).\n   type_error(integer, ...).\n"));
+    }
+
+    [Fact]
+    public void AVariableInADescribedErrorIsAVariableInTheBall()
+    {
+        // A description names variables where the answer has variables. It
+        // is not a wildcard: a described variable against a concrete
+        // culprit is a different error.
+        Assert.Contains("quads: 1/1",
+            RunQuads("t1\n?- atom_length(A, _).\n   instantiation_error.\n"));
+        Assert.Contains("quads: 0/1",
+            RunQuads("t1\n?- atom_length(a, a).\n   type_error(integer, X).\n"));
+    }
+
+    [Fact]
+    public void ABallThatIsNotAnErrorIsComparedToo()
+    {
+        Assert.Contains("quads: 1/1",
+            RunQuads("t1\n?- throw(hello).\n   throw(hello).\n"));
+        Assert.Contains("quads: 0/1",
+            RunQuads("t1\n?- throw(hello).\n   throw(goodbye).\n"));
+    }
+
     [Fact]
     public void OrdinaryQuadsAreUnaffected()
     {

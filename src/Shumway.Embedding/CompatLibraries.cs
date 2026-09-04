@@ -234,9 +234,12 @@ internal static class CompatLibraries
         quads_alt_class(false, fails) :- !.
         quads_alt_class(true, succeeds) :- !.
         quads_alt_class(loops, loops) :- !.
-        quads_alt_class(E, error(W)) :-
+        % The class carries the error TERM, not just its kind: a description
+        % naming one culprit while the goal reports another describes a
+        % different system, and comparing only the kind let that pass.
+        quads_alt_class(E, error(E)) :-
             nonvar(E), functor(E, W, _), quads_error_word(W), !.
-        quads_alt_class(throw(_), error(other)) :- !.
+        quads_alt_class(throw(T), thrown(T)) :- !.
         quads_alt_class(A, succeeds) :- quads_has_binding(A), !.
         % An answer sequence cut short with `...` claims only that the goal
         % succeeds and goes on succeeding; the shown answers are not
@@ -376,9 +379,35 @@ internal static class CompatLibraries
 
         quads_match(succeeds, succeeds).
         quads_match(fails, fails).
-        quads_match(error(W), error(W)).
+        % An ISO error is described by its formal alone, so that is what is
+        % compared, up to a renaming of the variables in it. The context slot
+        % is the implementation's to fill.
+        quads_match(error(E), raised(error(F, _))) :- !, quads_term_matches(E, F).
+        quads_match(thrown(T), raised(B)) :- !, quads_term_matches(T, B).
         quads_match(loops, timeout).
         quads_match(lenient, _).
+
+        % `...` inside a described term stands for a part that was not
+        % written down, so it matches whatever is in that position and the
+        % rest still has to agree. Masking the actual term where the
+        % description elides it, and comparing the two afterwards, keeps the
+        % comparison a VARIANT one: the variables a description names are
+        % variables in the answer, not values.
+        quads_term_matches(D, A) :- quads_mask(D, A, M), D =@= M.
+
+        quads_mask(D, A, M) :-
+            (   D == '...' -> M = '...'
+            ;   var(D) -> M = A
+            ;   var(A) -> M = A
+            ;   compound(D), compound(A),
+                functor(D, F, N), functor(A, F, N)
+            ->  D =.. [F|Ds], A =.. [F|As],
+                quads_mask_list(Ds, As, Ms), M =.. [F|Ms]
+            ;   M = A
+            ).
+        quads_mask_list([], [], []).
+        quads_mask_list([D|Ds], [A|As], [M|Ms]) :-
+            quads_mask(D, A, M), quads_mask_list(Ds, As, Ms).
 
         % A test that sanctions looping runs under a 15-second limit — no
         % harness can observe an infinite loop directly, so still-running IS
@@ -490,9 +519,9 @@ internal static class CompatLibraries
             ;   O = fails
             ).
 
-        quads_error_outcome(error(B, _), error(W)) :-
-            nonvar(B), functor(B, W, _), quads_error_word(W), !.
-        quads_error_outcome(_, error(other)).
+        % The whole ball, as thrown. What of it counts is the matcher's
+        % business, not this one's.
+        quads_error_outcome(B, raised(B)).
 
         %! clear_quads | Quad tests | Forgets every loaded quad test; the next consult starts a fresh set.
         clear_quads :-
