@@ -110,6 +110,7 @@ internal static class Clpfd
         :- public fd_all_different/1.
         :- public fd_set_vector_max/1.
         :- public fd_atmost/3.
+        :- public fd_atleast/3.
         :- public fd_exactly/3.
         :- public fd_only_one/1.
         :- public fd_at_most_one/1.
@@ -860,7 +861,7 @@ internal static class Clpfd
         %! label(+Vars) | CLP(FD): labeling | Assigns each variable in the list a value from its domain, searching by backtracking.
         label(Vars) :- clpfd_labeling([], Vars, label/1).
 
-        %! labeling(+Options, +Vars) | CLP(FD): labeling | Like label/1 with options for variable selection (leftmost, ff, ffc, min, max) and value order (up, down, bisect).
+        %! labeling(+Options, +Vars) | CLP(FD): labeling | Like label/1 with options for variable selection (leftmost, ff, most_constrained, smallest, largest, max_regret, random_variable) and value order (up, down, middle, bisect, random_value); ffc, min and max are accepted as aliases of most_constrained, smallest and largest.
         labeling(Options, Vars) :- clpfd_labeling(Options, Vars, labeling/2).
 
         % Ctx is the indicator of the predicate the USER called, so a GNU
@@ -1317,7 +1318,6 @@ internal static class Clpfd
         % solver has; a heuristic it does not implement is REFUSED rather
         % than quietly replaced, since which solution comes first is what a
         % labeling option is chosen for.
-        %! fd_labeling(+Vars, +Options) | CLP(FD): labeling | Assigns a value to each variable, guided by variable_method/1 (standard, first_fail, most_constrained, smallest, largest, max_regret, random), value_method/1 (min, max, middle, bisect, random) and backtracks/1.
         fd_labeling(Vars, Options) :-
             '$must_be'(list, Options, fd_labeling/2),
             clpfd_gnu_opts(Options, Opts, Bt),
@@ -1376,12 +1376,25 @@ internal static class Clpfd
         fd_all_different(Vars) :-
             '$must_be'(list, Vars, fd_all_different/1), all_different(Vars).
         fd_set_vector_max(M) :- '$must_be'(integer, M, fd_set_vector_max/1).
-        fd_atmost(N, Vars, V) :-
-            '$must_be'(list, Vars, fd_atmost/3),
-            '$fd_count_eq'(Vars, V, C), C #=< N.
-        fd_exactly(N, Vars, V) :-
-            '$must_be'(list, Vars, fd_exactly/3),
-            '$fd_count_eq'(Vars, V, C), C #= N.
+        % How many variables of a list take one value. Kept INTERNAL: the
+        % general form's established name is SICStus's count/4, and this
+        % library is named after SWI/clpz throughout (in, ins, sum,
+        % scalar_product, all_distinct) — which have no name for this
+        % constraint at all. Taking `count` for it would be the one SICStus
+        % name here and would claim a very general word in a flat public
+        % namespace.
+        clpfd_count(Value, Vars, Rel, Count, Ctx) :-
+            '$must_be'(list, Vars, Ctx),
+            ( var(Rel) -> throw(error(instantiation_error, Ctx)) ; true ),
+            ( clpfd_rel_ok(Rel) -> true
+            ; throw(error(domain_error(clpfd_relation, Rel), Ctx))
+            ),
+            '$fd_count_eq'(Vars, Value, C),
+            clpfd_apply_rel(Rel, C, Count).
+
+        fd_atmost(N, Vars, V)  :- clpfd_count(V, Vars, #=<, N, fd_atmost/3).
+        fd_atleast(N, Vars, V) :- clpfd_count(V, Vars, #>=, N, fd_atleast/3).
+        fd_exactly(N, Vars, V) :- clpfd_count(V, Vars, #=, N, fd_exactly/3).
         fd_only_one(Bs) :- '$must_be'(list, Bs, fd_only_one/1), sum(Bs, #=, 1).
         fd_at_most_one(Bs) :-
             '$must_be'(list, Bs, fd_at_most_one/1), sum(Bs, #=<, 1).
