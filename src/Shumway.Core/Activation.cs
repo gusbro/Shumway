@@ -637,8 +637,17 @@ public sealed partial class Activation
         if (c.Tag == Tag.Lis)
         {
             int idx = c.AsHeapIndex;
+            // An ATTVAR cell names its own slot — the payload IS its key in the
+            // attribute table — so it leaves here as a REF to that slot. A
+            // caller storing the peeled cell somewhere else (append/3 rebuilding
+            // a spine, say) would otherwise plant a second cell claiming a home
+            // that is not its own address, and the next lookup through it dies
+            // on a missing record. A plain unbound REF is a self-pointer and
+            // copies harmlessly; only the attributed one has to be re-pointed.
             head = _heap[idx];
+            if (head.Tag == Tag.AttVar) head = Cell.Ref(idx);
             tail = _heap[idx + 1];
+            if (tail.Tag == Tag.AttVar) tail = Cell.Ref(idx + 1);
             return true;
         }
         if (c.Tag == Tag.Pstr && c.AsPstrLength > 0)
