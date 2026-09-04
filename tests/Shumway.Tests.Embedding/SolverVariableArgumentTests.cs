@@ -72,10 +72,6 @@ public class SolverVariableArgumentTests
     // about a variable, which no type_error ever is.
     [InlineData("X in D")]
     [InlineData("fd_domain(X, L, H)")]
-    // A reified constraint is a goal: inventing `_A #= _B` is not it.
-    [InlineData("B #<==> C")]
-    [InlineData("B #==> C")]
-    [InlineData("#\\ C")]
     // An unconstrained variable cannot be enumerated.
     [InlineData("indomain(V)")]
     [InlineData("fd_labeling(V)")]
@@ -100,6 +96,27 @@ public class SolverVariableArgumentTests
     [InlineData("_X in foo", "type_error(fd_domain, foo)")]
     public void ABoundButWrongValueKeepsItsError(string goal, string expected)
         => Assert.Equal(expected, ErrorKindOf("clpfd", goal));
+
+    [Theory]
+    // Reification is the ONE place a variable is not a missing value: a 0/1
+    // variable IS a reifiable constraint, which is what makes B1 #\/ B2 over
+    // two booleans mean what it says. Left to fall through, such a variable
+    // unified with the comparison pattern and became `_ #= _` — a constraint
+    // nobody wrote. Answers checked against the reference implementation.
+    [InlineData("B1 #/\\ B2, B1 == 1, B2 == 1")]
+    [InlineData("#\\ B, B == 0")]
+    [InlineData("B #<==> C, B = 1, C == 1")]
+    [InlineData("B1 #\\/ B2, B1 in 0..1, B2 in 0..1, B1 = 0, B2 == 1")]
+    // Equivalence is symmetric: the constraint may be written on either
+    // side. Reifying only the second argument read the first as the truth
+    // value, so this spelling never worked.
+    [InlineData("X in 1..5, (X #> 3) #<==> B, X #= 4, label([X]), B == 1")]
+    [InlineData("X in 1..2, B #<==> (X #= 1), label([X, B]), X == 1, B == 1")]
+    public void AZeroOneVariableIsAReifiableConstraint(string goal)
+    {
+        var e = WithLibrary("clpfd");
+        Assert.True(e.Query(goal + ".").Success);
+    }
 
     [Theory]
     // The solvers still solve.

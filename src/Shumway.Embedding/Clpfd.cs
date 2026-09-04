@@ -1003,8 +1003,13 @@ internal static class Clpfd
         % holds. #==>/#<== are (reverse) implication, #/\ / #\/ / #\ the
         % boolean connectives. Each is reified to a 0/1 variable and the
         % connective posted as an arithmetic constraint over those.
-        %! #<==>(?Bool, +Constraint) | CLP(FD): reification | Bool is 1 exactly when the constraint holds, 0 otherwise.
-        '#<==>'(B, C) :- clpfd_reify(C, B).
+        % Equivalence is SYMMETRIC: both sides are reifiable constraints, and
+        % a 0/1 variable is one, so `B #<==> (X #= 1)` and
+        % `(X #= 1) #<==> B` are the same statement. Reifying only the
+        % second argument read the first as the truth value, so the
+        % constraint-on-the-left spelling never worked.
+        %! #<==>(?Constraint1, ?Constraint2) | CLP(FD): reification | The two constraints hold together or fail together; a 0/1 variable counts as a constraint, so this is how a variable is made to mirror one.
+        '#<==>'(A, B) :- clpfd_reify(A, T), clpfd_reify(B, T).
         %! #==>(+Constraint1, +Constraint2) | CLP(FD): reification | Constraint1 implies Constraint2.
         '#==>'(C1, C2) :-
             clpfd_reify(C1, B1), clpfd_reify(C2, B2), B1 #=< B2.
@@ -1025,8 +1030,21 @@ internal static class Clpfd
         '#\\'(C) :- clpfd_reify(C, 0).
 
         % reify constraint expression C to the 0/1 variable B.
+        % A VARIABLE is a reifiable constraint: the 0/1 variable itself,
+        % whose truth value is its value. That is what makes B1 #\/ B2 over
+        % two boolean variables mean what it says. It must be spelled out
+        % here, though — left to fall through, it would unify with the
+        % comparison pattern below and become the constraint `_ #= _`, which
+        % nobody wrote.
+        clpfd_reify(C, B) :- var(C), !, C in 0..1, B #= C.
+        % A fixed truth value is a constraint too — the same rule with the
+        % variable already decided, which is how `1 #<==> Constraint` states
+        % that the constraint holds.
+        clpfd_reify(C, B) :- integer(C), !,
+            (   ( C =:= 0 ; C =:= 1 ) -> B #= C
+            ;   throw(error(type_error(clpfd_reifiable, C), _))
+            ).
         clpfd_reify(C, B) :-
-            ( var(C) -> throw(error(instantiation_error, (#<==>)/2)) ; true ),
             ( clpfd_reif_cmp(C, Kind, L, R) ->
                 B in 0..1,
                 clpfd_expr(L, X), clpfd_expr(R, Y),

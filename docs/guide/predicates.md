@@ -566,7 +566,7 @@ Load with `:- use_module(library(clpfd)).` (embedding: `engine.UseClpfd()`).
 | --- | --- |
 | `#/\(+Constraint1, +Constraint2)` | Both constraints hold (conjunction). |
 | `#<==(+Constraint1, +Constraint2)` | Constraint2 implies Constraint1. |
-| `#<==>(?Bool, +Constraint)` | Bool is 1 exactly when the constraint holds, 0 otherwise. |
+| `#<==>(?Constraint1, ?Constraint2)` | The two constraints hold together or fail together; a 0/1 variable counts as a constraint, so this is how a variable is made to mirror one. |
 | `#==>(+Constraint1, +Constraint2)` | Constraint1 implies Constraint2. |
 | `#\(+Constraint)` | The constraint does not hold (negation). |
 | `#\/(+Constraint1, +Constraint2)` | At least one constraint holds (disjunction). |
