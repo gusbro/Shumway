@@ -512,6 +512,7 @@ Load with `:- use_module(library(quads)).`
 | Predicate | Description |
 | --- | --- |
 | `clear_quads` | Forgets every loaded quad test; the next consult starts a fresh set. |
+| `quads_result(-Passed, -Total)` | The counts the last run of run_quads/0,1 reported. Fails when nothing has been run, so a script can tell "none run" from "none passed". |
 | `run_quads` | Runs every loaded quad test and prints quads: Passed/Total, listing the failing ids and any test whose expected block could not be classified. |
 | `run_quads(+Id)` | Runs the single quad test with the given id and reports it the same way. |
 

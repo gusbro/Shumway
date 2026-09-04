@@ -404,6 +404,62 @@ public sealed class QuadsAnswerDescriptionTests
                         RunQuads("t1\n?- read(_), read(_).\n   waits.\n"));
     }
 
+    [Theory]
+    // An answer display says what the QUERY's variables became, and says it
+    // the way a top level does. These three say something else, and each
+    // used to pass by accident.
+    // The left side of `1 = X` is not a variable, so it is not a binding.
+    [InlineData("?- X = 1.\n   1 = X.\n")]
+    // `X` is not a variable this query has.
+    [InlineData("?- true.\n   X = 1.\n")]
+    // A variable that stays unbound is not shown at all, so `X = Y` with a
+    // Y that appears nowhere else describes no answer.
+    [InlineData("?- X = X.\n   X = Y.\n")]
+    public void ADescriptionThatIsNotAnAnswerDisplayIsReported(string quad)
+    {
+        string report = RunQuads("t1\n" + quad);
+        Assert.Contains("quads: 0/1", report);
+        Assert.Contains("not understood", report);
+    }
+
+    [Theory]
+    // What those rules must NOT reject: a value that is a variable the query
+    // does have is a real claim about sharing, and a fresh variable inside a
+    // value is how an answer's own variable is written.
+    [InlineData("?- X = Y.\n   X = Y.\n", "quads: 1/1")]
+    [InlineData("?- length(L, 1).\n   L = [_A].\n", "quads: 1/1")]
+    [InlineData("?- X = f(Y), Z = Y.\n   X = f(Y), Z = Y.\n", "quads: 1/1")]
+    public void ALegitimateDisplayIsStillRead(string quad, string expected)
+        => Assert.Contains(expected, RunQuads("t1\n" + quad));
+
+    [Fact]
+    public void AQueryWhoseIdIsNotGroundIsStillAQuery()
+    {
+        // An id names a test: it is how the report calls it and how
+        // run_quads/1 asks for it, so one with a variable in it names
+        // nothing. The query is still a query, and swallowing it as a
+        // description of the previous test is how a file of five tests
+        // reported four.
+        string report = RunQuads(
+            "t1\n?- atom(a).\n   true.\nt2, X\n?- atom(a).\n   true.\n");
+        Assert.Contains("quads: 1/2", report);
+        Assert.Contains("unusable_id", report);
+    }
+
+    [Fact]
+    public void FiveTestsAreFiveTests()
+    {
+        // The whole of a transcript written to catch a harness out: every
+        // one of its descriptions is wrong, and one of its ids is unusable.
+        string report = RunQuads(
+            "1,fails\n  ?- X = 1.\n     1 = X.\n\n"
+            + "2,fails\n  ?- true.\n     X = 1.\n\n"
+            + "3,fails\n  ?- X = Y.\n     X = 1.\n\n"
+            + "4,X,fails\n  ?- true.\n  true.\n\n"
+            + "5,fails\n  ?- X = X.\n     X = Y.\n");
+        Assert.Contains("quads: 0/5", report);
+    }
+
     [Fact]
     public void OrdinaryQuadsAreUnaffected()
     {

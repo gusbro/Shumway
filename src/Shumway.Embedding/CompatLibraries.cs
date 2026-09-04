@@ -74,12 +74,13 @@ internal static class CompatLibraries
     // so `use_module(library(quads)), consult('length_quad.pl'), run_quads.`
     // is the whole workflow — the Trealla shape the issue asks for. The
     // classifier and checker mirror tests/conformity/quad_suites.pl (the
-    // certified harness): each expected alternative maps to a CLASS
-    // (succeeds / fails / error(Kind) / loops / lenient) and the goal's
-    // outcome must match one. `loops` runs under time_out/3: still going at
-    // 15 s counts as looping.
+    // certified harness): each expected alternative says what the goal does
+    // (succeeds, fails, raises a particular error, gives a particular
+    // sequence of answers, loops, waits for input) and the goal's outcome
+    // must match one. `loops` runs under time_out/3: still going at 15 s
+    // counts as looping.
     private const string Quads = """
-        :- module(quads, [run_quads/0, run_quads/1, clear_quads/0,
+        :- module(quads, [run_quads/0, run_quads/1, quads_result/2, clear_quads/0,
                           op(1200, xfx, ?-), op(1200, fx, ?-),
                           op(1100, xfy, '|')]).
 
@@ -103,6 +104,8 @@ internal static class CompatLibraries
         :- dynamic('$quad_names'/2).       % Seq, the goal's shown variable names
         :- dynamic('$quad_run'/3).         % Seq, Goal, tuple of those variables
         :- dynamic('$quad_uncompared'/1).  % Id whose answers could not be compared
+        :- dynamic('$quad_result'/2).      % the last run's Passed, Total
+        :- dynamic('$quad_bad_id'/2).      % Seq, the id that names nothing
 
         % ---- consult-time capture -----------------------------------------
         % A QUERY opens a test and is recognised by its principal functor
@@ -121,8 +124,20 @@ internal static class CompatLibraries
         % that needs no name is written `?- Goal` and reported by its
         % position in the file.
         user:term_expansion((Id ?- Goal), []) :-
-            ground(Id), !,
-            quads_open(Id, Goal).
+            !,
+            (   ground(Id)
+            ->  quads_open(Id, Goal)
+            ;   % An id names a test: it is how the report calls it and how
+                % run_quads/1 asks for it, so one with a variable in it names
+                % nothing. The query is still a query -- swallowing it as a
+                % description of the PREVIOUS test is how five tests were
+                % counted as four -- so it opens, under its position, and
+                % fails on the id alone.
+                quads_open(anon, Goal),
+                quads_open_quad(N),
+                assertz('$quad_bad_id'(N, Id)),
+                quads_note_dropped(N, unusable_id(Id))
+            ).
         user:term_expansion((?- Goal), []) :-
             !,
             quads_open(anon, Goal).
@@ -202,7 +217,7 @@ internal static class CompatLibraries
             ;   quads_reread(S, Cur, Ns)
             ).
 
-        quads_query_goal(T, G) :- nonvar(T), T = (Id ?- G0), ground(Id), !, G = G0.
+        quads_query_goal(T, G) :- nonvar(T), T = (_ ?- G0), !, G = G0.
         quads_query_goal(T, G) :- nonvar(T), T = (?- G).
 
         % The goal and the tuple of its shown variables are stored as ONE
@@ -218,7 +233,8 @@ internal static class CompatLibraries
             assertz('$quad_names'(N, Names)),
             assertz('$quad_run'(N, Goal, Tuple)),
             retractall('$quad_dropped'(Id, _)),
-            retractall('$quad_uncompared'(Id)).
+            retractall('$quad_uncompared'(Id)),
+            ( '$quad_bad_id'(N, Bad) -> quads_note_dropped(Id, unusable_id(Bad)) ; true ).
 
         quads_recover_desc(N, Block, DNames) :-
             '$quad_names'(N, Names),
@@ -410,9 +426,47 @@ internal static class CompatLibraries
             quads_conj_list(A1, Es0),
             quads_take_descriptors(Es0, Es1, none, _, none, _, none, _),
             quads_all_equations(Es1),
+            quads_shows_an_answer(Es1, DN1, Names),
             quads_call_all(Es1),
             quads_tuple_args(Names, DN1, Args),
             Exp =.. [t|Args].
+
+        % An answer display says what the QUERY's variables became, and says
+        % it the way a top level does. Three things it therefore cannot be:
+        % an equation whose left side is not a variable (`1 = X`), one whose
+        % left side is a name the query does not have (`X = 1` for `?- true.`),
+        % and one whose whole value is a variable that appears nowhere else
+        % (`X = Y`), which is what an UNBOUND variable looks like -- and an
+        % unbound variable is not shown at all. Each of those describes
+        % something that is not an answer, so it is reported rather than
+        % checked against one.
+        quads_shows_an_answer([], _, _).
+        quads_shows_an_answer([V = Val|Es], DN, Names) :-
+            var(V),
+            quads_var_name(DN, V, N),
+            quads_memberchk(N, Names),
+            quads_value_shown(Val, DN, Names, [V = Val|Es]),
+            quads_shows_an_answer(Es, DN, Names).
+
+        quads_var_name([N0=V0|Ps], V, N) :-
+            ( V0 == V -> N = N0 ; quads_var_name(Ps, V, N) ).
+
+        quads_value_shown(Val, DN, Names, All) :-
+            (   nonvar(Val) -> true
+            ;   quads_var_name(DN, Val, VN), quads_memberchk(VN, Names) -> true
+            ;   quads_var_count(All, Val, C), C > 1
+            ).
+
+        quads_var_count(T, V, N) :-
+            (   var(T) -> ( T == V -> N = 1 ; N = 0 )
+            ;   compound(T) -> T =.. [_|As], quads_var_count_list(As, V, N)
+            ;   N = 0
+            ).
+        quads_var_count_list([], _, 0).
+        quads_var_count_list([A|As], V, N) :-
+            quads_var_count(A, V, N1),
+            quads_var_count_list(As, V, N2),
+            N is N1 + N2.
 
         quads_all_equations([]).
         quads_all_equations([E|Es]) :- nonvar(E), E = (_ = _), quads_all_equations(Es).
@@ -451,6 +505,8 @@ internal static class CompatLibraries
                     Qs),
             quads_run_list(Qs, 0, Pass, 0, Total, [], FailsR),
             quads_reverse(FailsR, Fails),
+            retractall('$quad_result'(_, _)),
+            assertz('$quad_result'(Pass, Total)),
             format('quads: ~w/~w~n', [Pass, Total]),
             (   Fails == [] -> true
             ;   quads_length(Fails, NF),
@@ -492,10 +548,12 @@ internal static class CompatLibraries
         quads_runnable(_, G, run(G, none)).
 
         quads_run_list([], P, P, T, T, F, F).
-        quads_run_list([q(_, Id, G, K)|Qs], P0, P, T0, T, F0, F) :-
+        quads_run_list([q(N, Id, G, K)|Qs], P0, P, T0, T, F0, F) :-
             T1 is T0 + 1,
-            ( quads_check(K, G) -> P1 is P0 + 1, F1 = F0
-            ; P1 = P0, F1 = [Id|F0] ),
+            (   \+ '$quad_bad_id'(N, _), quads_check(K, G)
+            ->  P1 is P0 + 1, F1 = F0
+            ;   P1 = P0, F1 = [Id|F0]
+            ),
             quads_run_list(Qs, P1, P, T1, T, F1, F).
 
         % The test passes when the run matches SOME sanctioned alternative.
@@ -788,6 +846,9 @@ internal static class CompatLibraries
         % business, not this one's.
         quads_error_outcome(B, raised(B)).
 
+        %! quads_result(-Passed, -Total) | Quad tests | The counts the last run of run_quads/0,1 reported. Fails when nothing has been run, so a script can tell "none run" from "none passed".
+        quads_result(Passed, Total) :- '$quad_result'(Passed, Total).
+
         %! clear_quads | Quad tests | Forgets every loaded quad test; the next consult starts a fresh set.
         clear_quads :-
             retractall('$quad'(_, _, _, _)),
@@ -797,7 +858,9 @@ internal static class CompatLibraries
             retractall('$quad_src'(_, _)),
             retractall('$quad_names'(_, _)),
             retractall('$quad_run'(_, _, _)),
-            retractall('$quad_uncompared'(_)).
+            retractall('$quad_uncompared'(_)),
+            retractall('$quad_result'(_, _)),
+            retractall('$quad_bad_id'(_, _)).
 
         quads_memberchk(X, [Y|T]) :- ( X == Y -> true ; quads_memberchk(X, T) ).
         quads_reverse(L, R) :- quads_rev_(L, [], R).

@@ -119,6 +119,15 @@ Piece by piece:
 - **`% name`** at the end of an alternative attributes it to the system
   that produces it; it is a comment.
 
+An answer display says what the QUERY's variables became, and says it the
+way a top level does, so three things it cannot be: an equation whose
+left side is not a variable, one whose left side is a name the query does
+not have, and one whose whole value is a variable appearing nowhere else,
+which is what an unbound variable looks like and an unbound variable is
+not shown at all. A test line whose id is not ground is a test with no
+name, since the id is how the report calls it and how `run_quads/1` asks
+for it; it is still a test, and it is reported and counted as one.
+
 An alternative written in a vocabulary this library does not know is not
 guessed at. It is left out of the sanctioned set and named in the report
 under `not understood`, with the test it belongs to, so a transcript
@@ -150,6 +159,10 @@ accumulate across consults.
   description it could not read named under `not understood` with the
   test it belongs to.
 - `run_quads(Id)` runs a single test by its id.
+- `quads_result(Passed, Total)` gives back the counts the last run
+  reported, for a program that wants to act on them. It fails when
+  nothing has been run, which is how "none run" is told apart from "none
+  passed".
 - `clear_quads` forgets the loaded set.
 
 Goals in the published suites use `freeze/2` and `dif/2`;
@@ -161,10 +174,15 @@ Goals in the published suites use `freeze/2` and `dif/2`;
 shumway --quads length_quad.pl
 ```
 
-`--quads <file>` loads `library(quads)`, consults the transcript, and
-runs `run_quads`. The flag is repeatable;
-all the files' quads run as one set. The session then stays at the
-prompt, so `run_quads(Id)` can replay a failing test interactively.
+`--quads <file>` loads `library(quads)`, consults the transcript, runs
+`run_quads`, and exits. The flag is repeatable; all the files' quads run
+as one set. A transcript is a test run rather than a session, so the
+verdict is in the exit code: zero only when every quad passed, and
+non-zero when one failed or when the files held no quads at all. That
+makes it usable from a build script.
+
+To replay a single test interactively, take the three steps of the
+previous section and use `run_quads(Id)`.
 
 ## In the browser
 
