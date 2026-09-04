@@ -160,11 +160,14 @@ public sealed class QuadsLibraryTests
         // `outputs(Text), Outcome` says the goal writes Text and THEN
         // behaves as Outcome. Unclassified, such an alternative fell through
         // to the lenient catch-all and the test passed whatever happened.
-        // The text itself is not compared; the outcome is.
+        // Both halves are checked now, so both goals here really do write
+        // the text and only the OUTCOME tells the two quads apart.
         var (e, w) = Loaded();
         string f = QuadFile(
-            "1 ?- atom_length(_A, _).\n      outputs(\"x\"), instantiation_error.\n" +
-            "2 ?- atom(a).\n      outputs(\"x\"), type_error(evaluable, foo/0).\n");
+            "1 ?- put_char(x), atom_length(_A, _).\n"
+            + "      outputs(\"x\"), instantiation_error.\n"
+            + "2 ?- put_char(x), atom(a).\n"
+            + "      outputs(\"x\"), type_error(evaluable, foo/0).\n");
         try
         {
             Assert.True(e.Query($"consult('{f.Replace('\\', '/')}').").Success);
