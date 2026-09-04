@@ -88,6 +88,31 @@ public class SolverVariableArgumentTests
         => Assert.Equal("instantiation_error", ErrorKindOf("clpr", goal));
 
     [Theory]
+    // The error names the predicate the USER called, not what it delegates
+    // to internally — the convention GNU Prolog follows for this same
+    // family (error(instantiation_error, fd_domain/3)), and the reason
+    // '$must_be'/3 exists.
+    [InlineData("label(V)", "label/1")]
+    [InlineData("labeling(O, [])", "labeling/2")]
+    [InlineData("labeling([Opt], [])", "labeling/2")]
+    [InlineData("all_different(L)", "all_different/1")]
+    [InlineData("fd_all_different(L)", "fd_all_different/1")]
+    [InlineData("fd_labeling(V)", "fd_labeling/1")]
+    [InlineData("fd_labeling([X])", "fd_labeling/1")]
+    [InlineData("fd_labelingff(V)", "fd_labelingff/1")]
+    [InlineData("fd_domain(X, L, H)", "fd_domain/3")]
+    [InlineData("fd_set_vector_max(M)", "fd_set_vector_max/1")]
+    [InlineData("X in D", "(in)/2")]
+    public void TheErrorNamesTheCalledPredicate(string goal, string indicator)
+    {
+        // Compared in Prolog: an indicator read back as an AST node renders
+        // canonically (/(name, 1)), which is about the renderer, not the ball.
+        var e = WithLibrary("clpfd");
+        Assert.True(e.Query(
+            $"catch(({goal}), error(_, C), true), C == ({indicator}).").Success);
+    }
+
+    [Theory]
     // A bound-but-wrong value keeps the exact error it always raised: the
     // guards are about instantiation, and change nothing else.
     [InlineData("sum([_], foo, _)", "domain_error(clpfd_relation, foo)")]

@@ -857,40 +857,49 @@ internal static class Clpfd
         % domain, backtracking over the choices; propagation runs between
         % assignments and prunes the remaining search.
         %! label(+Vars) | CLP(FD): labeling | Assigns each variable in the list a value from its domain, searching by backtracking.
-        label(Vars) :- '$must_be'(list, Vars, label/1), labeling([], Vars).
+        label(Vars) :- clpfd_labeling([], Vars, label/1).
 
         %! labeling(+Options, +Vars) | CLP(FD): labeling | Like label/1 with options for variable selection (leftmost, ff) and value order (up, down).
-        labeling(Options, Vars) :-
-            '$must_be'(list, Options, labeling/2),
-            '$must_be'(list, Vars, labeling/2),
-            clpfd_label_opts(Options, Sel, Ord),
-            clpfd_label(Vars, Sel, Ord).
+        labeling(Options, Vars) :- clpfd_labeling(Options, Vars, labeling/2).
+
+        % Ctx is the indicator of the predicate the USER called, so a GNU
+        % compat spelling reports itself rather than what it delegates to
+        % (fd_labeling/1, not labeling/2). GNU Prolog names them this way.
+        clpfd_labeling(Options, Vars, Ctx) :-
+            '$must_be'(list, Options, Ctx),
+            '$must_be'(list, Vars, Ctx),
+            clpfd_label_opts(Options, Sel, Ord, Ctx),
+            clpfd_label(Vars, Sel, Ord, Ctx).
 
         % option list -> variable-selection and value-ordering strategy.
-        clpfd_label_opts([], leftmost, up).
-        clpfd_label_opts([O|Os], Sel, Ord) :-
-            clpfd_label_opts(Os, Sel0, Ord0),
-            ( O == leftmost -> Sel = leftmost, Ord = Ord0
+        % An option that is still a VARIABLE is missing, not wrong: nothing
+        % about a variable places it outside the domain of options, so it
+        % reports as uninstantiated (GNU Prolog and SWI both do).
+        clpfd_label_opts([], leftmost, up, _).
+        clpfd_label_opts([O|Os], Sel, Ord, Ctx) :-
+            clpfd_label_opts(Os, Sel0, Ord0, Ctx),
+            ( var(O)        -> throw(error(instantiation_error, Ctx))
+            ; O == leftmost -> Sel = leftmost, Ord = Ord0
             ; O == ff       -> Sel = ff,       Ord = Ord0
             ; O == up       -> Ord = up,       Sel = Sel0
             ; O == down     -> Ord = down,     Sel = Sel0
-            ; throw(error(domain_error(labeling_option, O), _))
+            ; throw(error(domain_error(labeling_option, O), Ctx))
             ).
 
-        clpfd_label([], _, _).
-        clpfd_label([V|Vs], Sel, Ord) :-
-            ( integer(V) -> clpfd_label(Vs, Sel, Ord)
-            ; Sel == ff  -> clpfd_pick_ff([V|Vs], Ord, Rest),
-                            clpfd_label(Rest, Sel, Ord)
-            ; clpfd_pick(V, Ord),
-              clpfd_label(Vs, Sel, Ord)
+        clpfd_label([], _, _, _).
+        clpfd_label([V|Vs], Sel, Ord, Ctx) :-
+            ( integer(V) -> clpfd_label(Vs, Sel, Ord, Ctx)
+            ; Sel == ff  -> clpfd_pick_ff([V|Vs], Ord, Rest, Ctx),
+                            clpfd_label(Rest, Sel, Ord, Ctx)
+            ; clpfd_pick(V, Ord, Ctx),
+              clpfd_label(Vs, Sel, Ord, Ctx)
             ).
 
         % first-fail: label the unbound variable with the smallest domain.
-        clpfd_pick_ff(Vars, Ord, Rest) :-
+        clpfd_pick_ff(Vars, Ord, Rest, Ctx) :-
             clpfd_choose_ff(Vars, Best),
             clpfd_del1(Vars, Best, Rest),
-            clpfd_pick(Best, Ord).
+            clpfd_pick(Best, Ord, Ctx).
 
         clpfd_choose_ff([V|Vs], Best) :-
             ( integer(V) -> clpfd_choose_ff(Vs, Best)
@@ -913,8 +922,8 @@ internal static class Clpfd
             ).
 
         % bind V to a value of its domain, on backtracking the next one.
-        clpfd_pick(V, up)   :- clpfd_dom_of(V, D), clpfd_indomain_up(V, D, labeling/2).
-        clpfd_pick(V, down) :- clpfd_dom_of(V, D), clpfd_indomain_down(V, D, labeling/2).
+        clpfd_pick(V, up, Ctx)   :- clpfd_dom_of(V, D), clpfd_indomain_up(V, D, Ctx).
+        clpfd_pick(V, down, Ctx) :- clpfd_dom_of(V, D), clpfd_indomain_down(V, D, Ctx).
 
         %! indomain(?Var) | CLP(FD): labeling | Binds one variable to each value of its domain in turn, on backtracking.
         indomain(X) :-
@@ -1152,9 +1161,15 @@ internal static class Clpfd
             ;   Vars in Lo..Hi
             ).
         fd_labeling(Vars) :-
-            ( is_list(Vars) -> label(Vars) ; label([Vars]) ).
+            (   var(Vars) -> throw(error(instantiation_error, fd_labeling/1))
+            ;   is_list(Vars) -> clpfd_labeling([], Vars, fd_labeling/1)
+            ;   clpfd_labeling([], [Vars], fd_labeling/1)
+            ).
         fd_labelingff(Vars) :-
-            ( is_list(Vars) -> labeling([ff], Vars) ; labeling([ff], [Vars]) ).
+            (   var(Vars) -> throw(error(instantiation_error, fd_labelingff/1))
+            ;   is_list(Vars) -> clpfd_labeling([ff], Vars, fd_labelingff/1)
+            ;   clpfd_labeling([ff], [Vars], fd_labelingff/1)
+            ).
         % GProlog's fd_all_different maps to pairwise all_different, not the
         % stronger all_distinct (native Hall). Even with native Hall,
         % its O(n^3) re-fire on every domain change costs more than pairwise's
@@ -1163,7 +1178,8 @@ internal static class Clpfd
         % (that is node-count-bound under interpreted control, not propagation-
         % bound). Users who want the strong global constraint call all_distinct/1
         % directly.
-        fd_all_different(Vars) :- all_different(Vars).
+        fd_all_different(Vars) :-
+            '$must_be'(list, Vars, fd_all_different/1), all_different(Vars).
         fd_set_vector_max(M) :- '$must_be'(integer, M, fd_set_vector_max/1).
         fd_atmost(N, Vars, V) :-
             '$must_be'(list, Vars, fd_atmost/3),
