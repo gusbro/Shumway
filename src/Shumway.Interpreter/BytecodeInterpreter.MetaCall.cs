@@ -378,11 +378,16 @@ public sealed partial class BytecodeInterpreter
                 break;
             case Tag.Ref:
             case Tag.AttVar:
-                throw new PrologRuntimeException("instantiation_error");
+                // Named, like every other meta-call error: the ball carried
+                // an unbound context, which tells a catcher nothing.
+                { var ie = new PrologRuntimeException("instantiation_error");
+                  ie.StampBuiltin("call", 1); throw ie; }
             default:
                 // The culprit rides along so the ISO ball reads
                 // type_error(callable, 1), not an anonymous slot.
-                throw new PrologRuntimeException("type_error", "callable", _engine, goal);
+                { var ce = new PrologRuntimeException(
+                      "type_error", "callable", _engine, goal);
+                  ce.StampBuiltin("call", 1); throw ce; }
         }
 
         if (functorId == ConjFunctorId)
@@ -546,9 +551,14 @@ public sealed partial class BytecodeInterpreter
                 break;
             case Tag.Ref:
             case Tag.AttVar:
-                throw new PrologRuntimeException("instantiation_error");
+                // Named, like every other meta-call error: the ball carried
+                // an unbound context, which tells a catcher nothing.
+                { var ie = new PrologRuntimeException("instantiation_error");
+                  ie.StampBuiltin("call", 1); throw ie; }
             default:
-                throw new PrologRuntimeException("type_error", "callable", _engine, goal);
+                { var ce2 = new PrologRuntimeException(
+                      "type_error", "callable", _engine, goal);
+                  ce2.StampBuiltin("call", 1); throw ce2; }
         }
 
         int totalArity = goalArity + extraCount;
@@ -818,7 +828,11 @@ public sealed partial class BytecodeInterpreter
             {
                 Cell qc = DerefCell(_engine.GetHeap(fidx + 1));
                 if (qc.Tag == Tag.Ref || qc.Tag == Tag.AttVar)
-                    throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+                {
+                    var qe = new Shumway.Core.PrologRuntimeException("instantiation_error");
+                    qe.StampBuiltin("call", 1);
+                    throw qe;
+                }
                 if (qc.Tag != Tag.Atom)
                     throw new Shumway.Core.PrologRuntimeException(
                         "type_error", "atom", _engine, qc);

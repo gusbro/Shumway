@@ -370,7 +370,14 @@ internal static class Clpfd
         % ===== in / ins =====
         %! in(?Var, +Domain) | CLP(FD): domains | Constrains a variable to a finite domain (e.g. X in 1..9).
         %! ins(?Vars, +Domain) | CLP(FD): domains | Constrains every variable in a list to a finite domain.
+        % An unbound Spec must NOT reach the `Spec = L..H` test: unifying
+        % there BINDS the caller's variable to a fresh interval, and the
+        % failure surfaced downstream as type_error(fd_bound, _) — about a
+        % variable, which no type_error ever is. Every argument this library
+        % inspects by shape (a domain, a relation, a list, a reified goal)
+        % rejects a variable up front instead.
         'in'(X, Spec) :-
+            ( var(Spec) -> throw(error(instantiation_error, (in)/2)) ; true ),
             ( integer(Spec) -> X #= Spec
             ; Spec = L..H ->
                 clpfd_makevar(X),
@@ -381,8 +388,9 @@ internal static class Clpfd
             ; throw(error(type_error(fd_domain, Spec), _))
             ).
 
-        'ins'([], _).
-        'ins'([X|Xs], Spec) :- 'in'(X, Spec), 'ins'(Xs, Spec).
+        'ins'(Vs, Spec) :- '$must_be'(list, Vs, (ins)/2), clpfd_ins_(Vs, Spec).
+        clpfd_ins_([], _).
+        clpfd_ins_([X|Xs], Spec) :- 'in'(X, Spec), clpfd_ins_(Xs, Spec).
 
         % ===== arithmetic expressions reduced to an FD term =====
         clpfd_expr(E, E) :- integer(E), !.
@@ -801,6 +809,8 @@ internal static class Clpfd
         % of List. Rel is one of the six arithmetic-constraint operators.
         %! sum(+Vars, +Rel, ?Total) | CLP(FD): global constraints | Total stands in relation Rel to the sum of the list of variables.
         sum(List, Rel, Total) :-
+            '$must_be'(list, List, sum/3),
+            ( var(Rel) -> throw(error(instantiation_error, sum/3)) ; true ),
             clpfd_sum_expr(List, 0, Expr),
             ( clpfd_rel_ok(Rel) -> clpfd_apply_rel(Rel, Expr, Total)
             ; throw(error(domain_error(clpfd_relation, Rel), _))
@@ -825,6 +835,11 @@ internal static class Clpfd
         % Coeffs and Vars.
         %! scalar_product(+Coeffs, +Vars, +Rel, ?Total) | CLP(FD): global constraints | Total stands in relation Rel to the dot product of the coefficient and variable lists.
         scalar_product(Coeffs, Vars, Rel, Total) :-
+            '$must_be'(list, Coeffs, scalar_product/4),
+            '$must_be'(list, Vars, scalar_product/4),
+            ( var(Rel) -> throw(error(instantiation_error, scalar_product/4))
+            ; true
+            ),
             ( clpfd_rel_ok(Rel) -> true
             ; throw(error(domain_error(clpfd_relation, Rel), _))
             ),
@@ -842,38 +857,49 @@ internal static class Clpfd
         % domain, backtracking over the choices; propagation runs between
         % assignments and prunes the remaining search.
         %! label(+Vars) | CLP(FD): labeling | Assigns each variable in the list a value from its domain, searching by backtracking.
-        label(Vars) :- labeling([], Vars).
+        label(Vars) :- clpfd_labeling([], Vars, label/1).
 
         %! labeling(+Options, +Vars) | CLP(FD): labeling | Like label/1 with options for variable selection (leftmost, ff) and value order (up, down).
-        labeling(Options, Vars) :-
-            clpfd_label_opts(Options, Sel, Ord),
-            clpfd_label(Vars, Sel, Ord).
+        labeling(Options, Vars) :- clpfd_labeling(Options, Vars, labeling/2).
+
+        % Ctx is the indicator of the predicate the USER called, so a GNU
+        % compat spelling reports itself rather than what it delegates to
+        % (fd_labeling/1, not labeling/2). GNU Prolog names them this way.
+        clpfd_labeling(Options, Vars, Ctx) :-
+            '$must_be'(list, Options, Ctx),
+            '$must_be'(list, Vars, Ctx),
+            clpfd_label_opts(Options, Sel, Ord, Ctx),
+            clpfd_label(Vars, Sel, Ord, Ctx).
 
         % option list -> variable-selection and value-ordering strategy.
-        clpfd_label_opts([], leftmost, up).
-        clpfd_label_opts([O|Os], Sel, Ord) :-
-            clpfd_label_opts(Os, Sel0, Ord0),
-            ( O == leftmost -> Sel = leftmost, Ord = Ord0
+        % An option that is still a VARIABLE is missing, not wrong: nothing
+        % about a variable places it outside the domain of options, so it
+        % reports as uninstantiated (GNU Prolog and SWI both do).
+        clpfd_label_opts([], leftmost, up, _).
+        clpfd_label_opts([O|Os], Sel, Ord, Ctx) :-
+            clpfd_label_opts(Os, Sel0, Ord0, Ctx),
+            ( var(O)        -> throw(error(instantiation_error, Ctx))
+            ; O == leftmost -> Sel = leftmost, Ord = Ord0
             ; O == ff       -> Sel = ff,       Ord = Ord0
             ; O == up       -> Ord = up,       Sel = Sel0
             ; O == down     -> Ord = down,     Sel = Sel0
-            ; throw(error(domain_error(labeling_option, O), _))
+            ; throw(error(domain_error(labeling_option, O), Ctx))
             ).
 
-        clpfd_label([], _, _).
-        clpfd_label([V|Vs], Sel, Ord) :-
-            ( integer(V) -> clpfd_label(Vs, Sel, Ord)
-            ; Sel == ff  -> clpfd_pick_ff([V|Vs], Ord, Rest),
-                            clpfd_label(Rest, Sel, Ord)
-            ; clpfd_pick(V, Ord),
-              clpfd_label(Vs, Sel, Ord)
+        clpfd_label([], _, _, _).
+        clpfd_label([V|Vs], Sel, Ord, Ctx) :-
+            ( integer(V) -> clpfd_label(Vs, Sel, Ord, Ctx)
+            ; Sel == ff  -> clpfd_pick_ff([V|Vs], Ord, Rest, Ctx),
+                            clpfd_label(Rest, Sel, Ord, Ctx)
+            ; clpfd_pick(V, Ord, Ctx),
+              clpfd_label(Vs, Sel, Ord, Ctx)
             ).
 
         % first-fail: label the unbound variable with the smallest domain.
-        clpfd_pick_ff(Vars, Ord, Rest) :-
+        clpfd_pick_ff(Vars, Ord, Rest, Ctx) :-
             clpfd_choose_ff(Vars, Best),
             clpfd_del1(Vars, Best, Rest),
-            clpfd_pick(Best, Ord).
+            clpfd_pick(Best, Ord, Ctx).
 
         clpfd_choose_ff([V|Vs], Best) :-
             ( integer(V) -> clpfd_choose_ff(Vs, Best)
@@ -896,27 +922,30 @@ internal static class Clpfd
             ).
 
         % bind V to a value of its domain, on backtracking the next one.
-        clpfd_pick(V, up)   :- clpfd_dom_of(V, D), clpfd_indomain_up(V, D).
-        clpfd_pick(V, down) :- clpfd_dom_of(V, D), clpfd_indomain_down(V, D).
+        clpfd_pick(V, up, Ctx)   :- clpfd_dom_of(V, D), clpfd_indomain_up(V, D, Ctx).
+        clpfd_pick(V, down, Ctx) :- clpfd_dom_of(V, D), clpfd_indomain_down(V, D, Ctx).
 
         %! indomain(?Var) | CLP(FD): labeling | Binds one variable to each value of its domain in turn, on backtracking.
         indomain(X) :-
             ( integer(X) -> true
-            ; clpfd_dom_of(X, D), clpfd_indomain_up(X, D)
+            ; clpfd_dom_of(X, D), clpfd_indomain_up(X, D, indomain/1)
             ).
 
         % Enumerate the domain's values (ascending for up, descending for down).
-        % An unbounded domain cannot be labelled — raise instantiation_error, as
-        % the interval-walking version did when it met inf/sup.
-        clpfd_indomain_up(V, D) :-
-            clpfd_dom_finite(D),
+        % An unbounded domain cannot be labelled — raise instantiation_error,
+        % naming the predicate the user called: the ball carried an unbound
+        % CONTEXT, which tells a catcher nothing about where to look.
+        clpfd_indomain_up(V, D, Ctx) :-
+            clpfd_dom_finite(D, Ctx),
             '$dom_values'(D, Vals), member(V, Vals).
-        clpfd_indomain_down(V, D) :-
-            clpfd_dom_finite(D),
+        clpfd_indomain_down(V, D, Ctx) :-
+            clpfd_dom_finite(D, Ctx),
             '$dom_values'(D, Vals), clpfd_rev(Vals, [], R), member(V, R).
-        clpfd_dom_finite(D) :-
+        clpfd_dom_finite(D, Ctx) :-
             '$dom_min'(D, Mn), '$dom_max'(D, Mx),
-            ( ( Mn == inf ; Mx == sup ) -> throw(error(instantiation_error, _)) ; true ).
+            ( ( Mn == inf ; Mx == sup ) -> throw(error(instantiation_error, Ctx))
+            ; true
+            ).
 
         clpfd_rev([], A, A).
         clpfd_rev([X|Xs], A, R) :- clpfd_rev(Xs, [X|A], R).
@@ -926,6 +955,7 @@ internal static class Clpfd
         % grounds, '#\='/2 prunes its value from the others.
         %! all_different(?Vars) | CLP(FD): global constraints | Every element of the list takes a distinct value (pairwise).
         all_different(List) :-
+            '$must_be'(list, List, all_different/1),
             clpfd_diff_pairs(List),
             % A projection-only marker, so the answer reads `all_different([A,B,C])`
             % instead of the n(n-1)/2 disequalities that implement it. It is a fact:
@@ -952,6 +982,7 @@ internal static class Clpfd
         % values fails immediately.
         %! all_distinct(?Vars) | CLP(FD): global constraints | Every element of the list takes a distinct value, with Hall-interval pruning.
         all_distinct(List) :-
+            '$must_be'(list, List, all_distinct/1),
             clpfd_makevars(List),
             clpfd_post('$fd_alldiff'(List), List).
 
@@ -981,8 +1012,13 @@ internal static class Clpfd
         % holds. #==>/#<== are (reverse) implication, #/\ / #\/ / #\ the
         % boolean connectives. Each is reified to a 0/1 variable and the
         % connective posted as an arithmetic constraint over those.
-        %! #<==>(?Bool, +Constraint) | CLP(FD): reification | Bool is 1 exactly when the constraint holds, 0 otherwise.
-        '#<==>'(B, C) :- clpfd_reify(C, B).
+        % Equivalence is SYMMETRIC: both sides are reifiable constraints, and
+        % a 0/1 variable is one, so `B #<==> (X #= 1)` and
+        % `(X #= 1) #<==> B` are the same statement. Reifying only the
+        % second argument read the first as the truth value, so the
+        % constraint-on-the-left spelling never worked.
+        %! #<==>(?Constraint1, ?Constraint2) | CLP(FD): reification | The two constraints hold together or fail together; a 0/1 variable counts as a constraint, so this is how a variable is made to mirror one.
+        '#<==>'(A, B) :- clpfd_reify(A, T), clpfd_reify(B, T).
         %! #==>(+Constraint1, +Constraint2) | CLP(FD): reification | Constraint1 implies Constraint2.
         '#==>'(C1, C2) :-
             clpfd_reify(C1, B1), clpfd_reify(C2, B2), B1 #=< B2.
@@ -1003,6 +1039,20 @@ internal static class Clpfd
         '#\\'(C) :- clpfd_reify(C, 0).
 
         % reify constraint expression C to the 0/1 variable B.
+        % A VARIABLE is a reifiable constraint: the 0/1 variable itself,
+        % whose truth value is its value. That is what makes B1 #\/ B2 over
+        % two boolean variables mean what it says. It must be spelled out
+        % here, though — left to fall through, it would unify with the
+        % comparison pattern below and become the constraint `_ #= _`, which
+        % nobody wrote.
+        clpfd_reify(C, B) :- var(C), !, C in 0..1, B #= C.
+        % A fixed truth value is a constraint too — the same rule with the
+        % variable already decided, which is how `1 #<==> Constraint` states
+        % that the constraint holds.
+        clpfd_reify(C, B) :- integer(C), !,
+            (   ( C =:= 0 ; C =:= 1 ) -> B #= C
+            ;   throw(error(type_error(clpfd_reifiable, C), _))
+            ).
         clpfd_reify(C, B) :-
             ( clpfd_reif_cmp(C, Kind, L, R) ->
                 B in 0..1,
@@ -1100,12 +1150,26 @@ internal static class Clpfd
         % ExamplesFD corpus runs unchanged. fd_domain/labeling/all_different are
         % direct renames; fd_atmost/exactly/only_one/at_most_one are reified
         % counts; fd_set_vector_max is a GProlog internal sizing hint (no-op).
+        % The GNU-compat spellings validate for themselves: they take the
+        % bounds apart (rather than a Lo..Hi term), so an unbound bound would
+        % reach the interval constructor and be reported as a type_error
+        % about a variable.
         fd_domain(Vars, Lo, Hi) :-
-            ( is_list(Vars) -> Vars ins Lo..Hi ; Vars in Lo..Hi ).
+            (   ( var(Lo) ; var(Hi) )
+            ->  throw(error(instantiation_error, fd_domain/3))
+            ;   is_list(Vars) -> Vars ins Lo..Hi
+            ;   Vars in Lo..Hi
+            ).
         fd_labeling(Vars) :-
-            ( is_list(Vars) -> label(Vars) ; label([Vars]) ).
+            (   var(Vars) -> throw(error(instantiation_error, fd_labeling/1))
+            ;   is_list(Vars) -> clpfd_labeling([], Vars, fd_labeling/1)
+            ;   clpfd_labeling([], [Vars], fd_labeling/1)
+            ).
         fd_labelingff(Vars) :-
-            ( is_list(Vars) -> labeling([ff], Vars) ; labeling([ff], [Vars]) ).
+            (   var(Vars) -> throw(error(instantiation_error, fd_labelingff/1))
+            ;   is_list(Vars) -> clpfd_labeling([ff], Vars, fd_labelingff/1)
+            ;   clpfd_labeling([ff], [Vars], fd_labelingff/1)
+            ).
         % GProlog's fd_all_different maps to pairwise all_different, not the
         % stronger all_distinct (native Hall). Even with native Hall,
         % its O(n^3) re-fire on every domain change costs more than pairwise's
@@ -1114,12 +1178,18 @@ internal static class Clpfd
         % (that is node-count-bound under interpreted control, not propagation-
         % bound). Users who want the strong global constraint call all_distinct/1
         % directly.
-        fd_all_different(Vars) :- all_different(Vars).
-        fd_set_vector_max(_).
-        fd_atmost(N, Vars, V) :- '$fd_count_eq'(Vars, V, C), C #=< N.
-        fd_exactly(N, Vars, V) :- '$fd_count_eq'(Vars, V, C), C #= N.
-        fd_only_one(Bs) :- sum(Bs, #=, 1).
-        fd_at_most_one(Bs) :- sum(Bs, #=<, 1).
+        fd_all_different(Vars) :-
+            '$must_be'(list, Vars, fd_all_different/1), all_different(Vars).
+        fd_set_vector_max(M) :- '$must_be'(integer, M, fd_set_vector_max/1).
+        fd_atmost(N, Vars, V) :-
+            '$must_be'(list, Vars, fd_atmost/3),
+            '$fd_count_eq'(Vars, V, C), C #=< N.
+        fd_exactly(N, Vars, V) :-
+            '$must_be'(list, Vars, fd_exactly/3),
+            '$fd_count_eq'(Vars, V, C), C #= N.
+        fd_only_one(Bs) :- '$must_be'(list, Bs, fd_only_one/1), sum(Bs, #=, 1).
+        fd_at_most_one(Bs) :-
+            '$must_be'(list, Bs, fd_at_most_one/1), sum(Bs, #=<, 1).
         '$fd_count_eq'([], _, 0).
         '$fd_count_eq'([X|Xs], V, C) :-
             B #<==> (X #= V), '$fd_count_eq'(Xs, V, C0), C #= C0 + B.
