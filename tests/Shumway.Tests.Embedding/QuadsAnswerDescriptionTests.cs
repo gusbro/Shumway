@@ -195,6 +195,271 @@ public sealed class QuadsAnswerDescriptionTests
         Assert.Contains("quads: 1/1", report);
     }
 
+    [Theory]
+    // An error is described by its formal, and the formal is what gets
+    // compared. Naming the right kind of error with the wrong culprit
+    // describes a different system, and used to pass because only the
+    // error's own name was looked at.
+    [InlineData("   type_error(integer, a).\n", "quads: 1/1")]
+    [InlineData("   type_error(atom, a).\n", "quads: 0/1")]
+    [InlineData("   type_error(integer, zzz).\n", "quads: 0/1")]
+    [InlineData("   domain_error(integer, a).\n", "quads: 0/1")]
+    public void AnErrorIsComparedWholeAndNotByItsKind(string description, string expected)
+        => Assert.Contains(expected, RunQuads("t1\n?- atom_length(a, a).\n" + description));
+
+    [Fact]
+    public void AnElidedPartOfAnErrorMatchesAnything()
+    {
+        // `...` stands for a part that was not written down. What IS
+        // written still has to agree: the elision is not a blanket pass.
+        Assert.Contains("quads: 1/1",
+            RunQuads("t1\n?- atom_length(a, a).\n   type_error(integer, ...).\n"));
+        Assert.Contains("quads: 0/1",
+            RunQuads("t1\n?- atom_length(a, a).\n   type_error(atom, ...).\n"));
+        Assert.Contains("quads: 0/1",
+            RunQuads("t1\n?- atom(a).\n   type_error(integer, ...).\n"));
+    }
+
+    [Fact]
+    public void AVariableInADescribedErrorIsAVariableInTheBall()
+    {
+        // A description names variables where the answer has variables. It
+        // is not a wildcard: a described variable against a concrete
+        // culprit is a different error.
+        Assert.Contains("quads: 1/1",
+            RunQuads("t1\n?- atom_length(A, _).\n   instantiation_error.\n"));
+        Assert.Contains("quads: 0/1",
+            RunQuads("t1\n?- atom_length(a, a).\n   type_error(integer, X).\n"));
+    }
+
+    [Fact]
+    public void ABallThatIsNotAnErrorIsComparedToo()
+    {
+        Assert.Contains("quads: 1/1",
+            RunQuads("t1\n?- throw(hello).\n   throw(hello).\n"));
+        Assert.Contains("quads: 0/1",
+            RunQuads("t1\n?- throw(hello).\n   throw(goodbye).\n"));
+    }
+
+    [Theory]
+    // What the goal ANSWERS is compared, not just that it answered. The
+    // description and the query are separate terms, so the L of one is not
+    // the L of the other: only their names relate them, and the names come
+    // from the source. Without that link all a transcript could say was
+    // "the goal succeeds".
+    [InlineData("?- length(L, 0).\n   L = [].\n", "quads: 1/1")]
+    [InlineData("?- length(L, 0).\n   L = [a].\n", "quads: 0/1")]
+    [InlineData("?- X = 1.\n   X = 1.\n", "quads: 1/1")]
+    [InlineData("?- X = 1.\n   X = 2.\n", "quads: 0/1")]
+    public void TheAnswerItselfIsCompared(string quad, string expected)
+        => Assert.Contains(expected, RunQuads("t1\n" + quad));
+
+    [Theory]
+    // `;` separates SUCCESSIVE answers, in order. A sequence written down in
+    // full claims there are no further answers.
+    [InlineData("   X = a ; X = b ; X = c.\n", "quads: 1/1")]
+    [InlineData("   X = a ; X = b.\n", "quads: 0/1")]
+    [InlineData("   X = b ; X = a ; X = c.\n", "quads: 0/1")]
+    [InlineData("   X = a ; X = b ; X = c ; X = d.\n", "quads: 0/1")]
+    // ...unless it is left open, which claims only its own prefix.
+    [InlineData("   X = a ; X = b ; ... .\n", "quads: 1/1")]
+    [InlineData("   X = b ; ... .\n", "quads: 0/1")]
+    public void TheAnswersMustBeTheseOnesInThisOrder(string description, string expected)
+        => Assert.Contains(expected,
+                           RunQuads("t1\n?- member(X, [a,b,c]).\n" + description));
+
+    [Fact]
+    public void AnOpenSequenceStillWorksOnAnEndlessGoal()
+    {
+        // The reason `...` exists: the goal has infinitely many answers, so
+        // only as many as are described may be asked for.
+        Assert.Contains("quads: 1/1", RunQuads(
+            "t1\n?- length(L, N).\n"
+            + "   L = [], N = 0 ; L = [_A], N = 1 ; L = [_A,_B], N = 2 ; ... .\n"));
+        Assert.Contains("quads: 0/1", RunQuads(
+            "t1\n?- length(L, N).\n   L = [], N = 0 ; L = [_A], N = 2 ; ... .\n"));
+    }
+
+    [Fact]
+    public void AVariableTheDescriptionDoesNotMentionIsUnbound()
+    {
+        // A top level shows nothing for a variable that stayed unbound, so a
+        // description that mentions none is describing an unbound one -- not
+        // saying "whatever it is".
+        Assert.Contains("quads: 0/1", RunQuads("t1\n?- X = 1, Y = 2.\n   X = 1.\n"));
+        Assert.Contains("quads: 1/1",
+                        RunQuads("t1\n?- X = 1, Y = 2.\n   X = 1, Y = 2.\n"));
+        // A variable whose name starts with an underscore is not shown at
+        // all, so a description need not mention it.
+        Assert.Contains("quads: 1/1", RunQuads("t1\n?- X = 1, _Y = 2.\n   X = 1.\n"));
+    }
+
+    [Fact]
+    public void SharingBetweenTheAnswersVariablesIsPartOfTheAnswer()
+    {
+        // X = f(Y) says X's argument IS Y. A description that renames it
+        // describes an answer where the two are independent, which is a
+        // different answer.
+        Assert.Contains("quads: 1/1", RunQuads("t1\n?- X = f(Y).\n   X = f(Y).\n"));
+        Assert.Contains("quads: 0/1", RunQuads("t1\n?- X = f(Y).\n   X = f(Z).\n"));
+        Assert.Contains("quads: 1/1", RunQuads("t1\n?- X = Y.\n   X = Y.\n"));
+    }
+
+    [Fact]
+    public void AFreshVariableInAnAnswerMatchesByRenaming()
+    {
+        // The answer holds a variable of its own; the name the transcript
+        // gives it is not the point, its being a variable is.
+        Assert.Contains("quads: 1/1", RunQuads("t1\n?- length(L, 1).\n   L = [_A].\n"));
+        Assert.Contains("quads: 0/1", RunQuads("t1\n?- length(L, 1).\n   L = [a].\n"));
+    }
+
+    [Fact]
+    public void AnAnswerDisplayStillDecidesSuccessAndFailure()
+    {
+        // Collecting the answers replaces the plain run, so the descriptions
+        // that only say true or false keep working alongside one that lists
+        // answers.
+        Assert.Contains("quads: 1/1",
+                        RunQuads("t1\n?- member(X, [a]).\n   X = a\n   |  false.\n"));
+        Assert.Contains("quads: 1/1",
+                        RunQuads("t1\n?- member(X, []).\n   X = a\n   |  false.\n"));
+    }
+
+    [Fact]
+    public void WithoutTheSourceTheAnswersAreReportedAsUnchecked()
+    {
+        // The names live in the file. If it is gone by the time the quads
+        // run, the goal is still checked as far as it can be -- and the
+        // report says so, rather than passing the weaker check off as a
+        // comparison.
+        var (e, w) = Loaded();
+        string path = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), $"quads_ad_{System.Guid.NewGuid():N}.pl");
+        System.IO.File.WriteAllText(path, "z1\n?- length(L, 0).\n   L = [].\n");
+        Assert.True(e.Query($"consult('{path.Replace('\\', '/')}').").Success);
+        System.IO.File.Delete(path);
+        Assert.True(e.Query("run_quads.").Success);
+        string report = w.ToString();
+        Assert.Contains("quads: 1/1", report);
+        Assert.Contains("answers not compared (1): [z1]", report);
+    }
+
+    [Theory]
+    // A transcript may write down only the parts of the output it is about,
+    // eliding the rest: `outputs(("f(_", ..., ")"))` is how a claim survives
+    // an implementation's choice of variable names.
+    [InlineData("outputs((\"f(_\", ..., \")\"))", "quads: 1/1")]
+    [InlineData("outputs((\"g(_\", ..., \")\"))", "quads: 0/1")]
+    [InlineData("outputs((\"f(_\", ..., \"]\"))", "quads: 0/1")]
+    [InlineData("outputs((\"f(\", ...))", "quads: 1/1")]
+    public void AnOutputMayBeDescribedInPieces(string description, string expected)
+        => Assert.Contains(expected, RunQuads(
+               "t1\n?- T = f(_), write_term(T, [variable_names([])]).\n   "
+               + description + ".\n"));
+
+    [Theory]
+    // A text written down whole is still matched whole: eliding is what the
+    // pieces are for, and a plain text claims the output entire.
+    [InlineData("outputs(\"ab\")", "quads: 1/1")]
+    [InlineData("outputs(\"a\")", "quads: 0/1")]
+    [InlineData("outputs(\"abc\")", "quads: 0/1")]
+    [InlineData("outputs((\"a\", ...))", "quads: 1/1")]
+    public void APlainOutputTextIsStillTheWholeOutput(string description, string expected)
+        => Assert.Contains(expected,
+                           RunQuads("t1\n?- write(ab).\n   " + description + ".\n"));
+
+    [Theory]
+    // `waits` says the goal blocks for input that never comes. What makes
+    // that observable is not the blocking, which no harness can wait out,
+    // but the READING: a goal that waits went looking for input. It runs
+    // against one character of input, and the question is whether that
+    // character is still there afterwards.
+    [InlineData("?- read(_).\n   waits.\n", "quads: 1/1")]
+    [InlineData("?- read_term(_, [singletons(1)]).\n   waits.\n", "quads: 1/1")]
+    [InlineData("?- read(T), T == end_of_file.\n   waits.\n", "quads: 1/1")]
+    // A goal that answers without reading is not waiting for anything.
+    [InlineData("?- atom(a).\n   waits.\n", "quads: 0/1")]
+    [InlineData("?- X = 1.\n   waits.\n", "quads: 0/1")]
+    public void WaitingForInputIsTheReadItAttempts(string quad, string expected)
+        => Assert.Contains(expected, RunQuads("t1\n" + quad));
+
+    [Fact]
+    public void WaitingIsCheckedBesideTheOtherAlternatives()
+    {
+        // Alongside an alternative that describes an outcome, the quad is
+        // decided by whichever one holds.
+        Assert.Contains("quads: 1/1",
+                        RunQuads("t1\n?- atom(a).\n   waits\n   |  true.\n"));
+        Assert.Contains("quads: 0/1",
+                        RunQuads("t1\n?- atom(a).\n   waits\n   |  false.\n"));
+    }
+
+    [Fact]
+    public void AGoalMayLeaveTheInputPastItsEnd()
+    {
+        // Reading once more past the end is a permission error, and asking
+        // what the goal left must not raise it back into the harness.
+        Assert.Contains("quads: 1/1",
+                        RunQuads("t1\n?- read(_), read(_).\n   waits.\n"));
+    }
+
+    [Theory]
+    // An answer display says what the QUERY's variables became, and says it
+    // the way a top level does. These three say something else, and each
+    // used to pass by accident.
+    // The left side of `1 = X` is not a variable, so it is not a binding.
+    [InlineData("?- X = 1.\n   1 = X.\n")]
+    // `X` is not a variable this query has.
+    [InlineData("?- true.\n   X = 1.\n")]
+    // A variable that stays unbound is not shown at all, so `X = Y` with a
+    // Y that appears nowhere else describes no answer.
+    [InlineData("?- X = X.\n   X = Y.\n")]
+    public void ADescriptionThatIsNotAnAnswerDisplayIsReported(string quad)
+    {
+        string report = RunQuads("t1\n" + quad);
+        Assert.Contains("quads: 0/1", report);
+        Assert.Contains("not understood", report);
+    }
+
+    [Theory]
+    // What those rules must NOT reject: a value that is a variable the query
+    // does have is a real claim about sharing, and a fresh variable inside a
+    // value is how an answer's own variable is written.
+    [InlineData("?- X = Y.\n   X = Y.\n", "quads: 1/1")]
+    [InlineData("?- length(L, 1).\n   L = [_A].\n", "quads: 1/1")]
+    [InlineData("?- X = f(Y), Z = Y.\n   X = f(Y), Z = Y.\n", "quads: 1/1")]
+    public void ALegitimateDisplayIsStillRead(string quad, string expected)
+        => Assert.Contains(expected, RunQuads("t1\n" + quad));
+
+    [Fact]
+    public void AQueryWhoseIdIsNotGroundIsStillAQuery()
+    {
+        // An id names a test: it is how the report calls it and how
+        // run_quads/1 asks for it, so one with a variable in it names
+        // nothing. The query is still a query, and swallowing it as a
+        // description of the previous test is how a file of five tests
+        // reported four.
+        string report = RunQuads(
+            "t1\n?- atom(a).\n   true.\nt2, X\n?- atom(a).\n   true.\n");
+        Assert.Contains("quads: 1/2", report);
+        Assert.Contains("unusable_id", report);
+    }
+
+    [Fact]
+    public void FiveTestsAreFiveTests()
+    {
+        // The whole of a transcript written to catch a harness out: every
+        // one of its descriptions is wrong, and one of its ids is unusable.
+        string report = RunQuads(
+            "1,fails\n  ?- X = 1.\n     1 = X.\n\n"
+            + "2,fails\n  ?- true.\n     X = 1.\n\n"
+            + "3,fails\n  ?- X = Y.\n     X = 1.\n\n"
+            + "4,X,fails\n  ?- true.\n  true.\n\n"
+            + "5,fails\n  ?- X = X.\n     X = Y.\n");
+        Assert.Contains("quads: 0/5", report);
+    }
+
     [Fact]
     public void OrdinaryQuadsAreUnaffected()
     {

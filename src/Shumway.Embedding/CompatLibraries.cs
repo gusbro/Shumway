@@ -74,12 +74,13 @@ internal static class CompatLibraries
     // so `use_module(library(quads)), consult('length_quad.pl'), run_quads.`
     // is the whole workflow — the Trealla shape the issue asks for. The
     // classifier and checker mirror tests/conformity/quad_suites.pl (the
-    // certified harness): each expected alternative maps to a CLASS
-    // (succeeds / fails / error(Kind) / loops / lenient) and the goal's
-    // outcome must match one. `loops` runs under time_out/3: still going at
-    // 15 s counts as looping.
+    // certified harness): each expected alternative says what the goal does
+    // (succeeds, fails, raises a particular error, gives a particular
+    // sequence of answers, loops, waits for input) and the goal's outcome
+    // must match one. `loops` runs under time_out/3: still going at 15 s
+    // counts as looping.
     private const string Quads = """
-        :- module(quads, [run_quads/0, run_quads/1, clear_quads/0,
+        :- module(quads, [run_quads/0, run_quads/1, quads_result/2, clear_quads/0,
                           op(1200, xfx, ?-), op(1200, fx, ?-),
                           op(1100, xfy, '|')]).
 
@@ -99,6 +100,12 @@ internal static class CompatLibraries
         :- dynamic('$quad_seq'/1).
         :- dynamic('$quad_dropped'/2).  % Id, Why
         :- dynamic('$quad_tmp_seq'/1).
+        :- dynamic('$quad_src'/2).         % Seq, File
+        :- dynamic('$quad_names'/2).       % Seq, the goal's shown variable names
+        :- dynamic('$quad_run'/3).         % Seq, Goal, tuple of those variables
+        :- dynamic('$quad_uncompared'/1).  % Id whose answers could not be compared
+        :- dynamic('$quad_result'/2).      % the last run's Passed, Total
+        :- dynamic('$quad_bad_id'/2).      % Seq, the id that names nothing
 
         % ---- consult-time capture -----------------------------------------
         % A QUERY opens a test and is recognised by its principal functor
@@ -117,8 +124,20 @@ internal static class CompatLibraries
         % that needs no name is written `?- Goal` and reported by its
         % position in the file.
         user:term_expansion((Id ?- Goal), []) :-
-            ground(Id), !,
-            quads_open(Id, Goal).
+            !,
+            (   ground(Id)
+            ->  quads_open(Id, Goal)
+            ;   % An id names a test: it is how the report calls it and how
+                % run_quads/1 asks for it, so one with a variable in it names
+                % nothing. The query is still a query -- swallowing it as a
+                % description of the PREVIOUS test is how five tests were
+                % counted as four -- so it opens, under its position, and
+                % fails on the id alone.
+                quads_open(anon, Goal),
+                quads_open_quad(N),
+                assertz('$quad_bad_id'(N, Id)),
+                quads_note_dropped(N, unusable_id(Id))
+            ).
         user:term_expansion((?- Goal), []) :-
             !,
             quads_open(anon, Goal).
@@ -141,24 +160,111 @@ internal static class CompatLibraries
             assertz('$quad_seq'(N)),
             ( IdSpec == anon -> Id = N ; Id = IdSpec ),
             assertz('$quad'(N, Id, Goal, [])),
+            assertz('$quad_src'(N, F)),
             retractall('$quad_open'(F, _)),
             assertz('$quad_open'(F, N)).
 
         % Each description sentence adds its alternatives to the open quad.
+        % No names here: the hook is handed a term whose variables have
+        % already lost them (see the recovery pass below).
         quads_describe(N, Block) :-
             quads_alts(Block, Alts),
             retract('$quad'(N, Id, Goal, Have)),
-            quads_parse_alts(Alts, Id, Have, More),
+            quads_parse_alts(Alts, Id, none, Have, More),
             assertz('$quad'(N, Id, Goal, More)).
+
+        % ---- recovering the variable names --------------------------------
+        % A query and the sentences describing its answers are separate
+        % terms, so the L of one is not the L of the other: only their NAMES
+        % relate them, and the names are in the source. Hence a second read
+        % of the file, for the names alone -- without them `?- length(L,0).`
+        % described as `L = [].` can only be checked as far as "the goal
+        % succeeds", which is no check of the answer at all.
+        quads_recover_all :-
+            findall(F, ( '$quad_src'(_, F), F \== user ), Fs0),
+            quads_dedup(Fs0, Fs),
+            quads_recover_files(Fs).
+
+        quads_dedup([], []).
+        quads_dedup([X|Xs], Out) :-
+            ( quads_memberchk(X, Xs) -> Out = R ; Out = [X|R] ),
+            quads_dedup(Xs, R).
+
+        % A source that cannot be read again leaves the quad as the consult
+        % captured it: checked, but not down to its answers.
+        quads_recover_files([]).
+        quads_recover_files([F|Fs]) :-
+            ( catch(quads_recover_file(F), _, fail) -> true ; true ),
+            quads_recover_files(Fs).
+
+        quads_recover_file(F) :-
+            findall(N, '$quad_src'(N, F), Ns),
+            setup_call_cleanup(open(F, read, S),
+                               quads_reread(S, none, Ns),
+                               close(S)).
+
+        quads_reread(S, Cur, Ns) :-
+            read_term(S, T, [variable_names(Vs)]),
+            (   T == end_of_file
+            ->  true
+            ;   quads_query_goal(T, G)
+            ->  (   Ns = [N|Rest]
+                ->  quads_recover_quad(N, G, Vs), quads_reread(S, N, Rest)
+                ;   quads_reread(S, none, Ns)
+                )
+            ;   Cur \== none
+            ->  quads_recover_desc(Cur, T, Vs), quads_reread(S, Cur, Ns)
+            ;   quads_reread(S, Cur, Ns)
+            ).
+
+        quads_query_goal(T, G) :- nonvar(T), T = (_ ?- G0), !, G = G0.
+        quads_query_goal(T, G) :- nonvar(T), T = (?- G).
+
+        % The goal and the tuple of its shown variables are stored as ONE
+        % fact: asserting them apart would copy them apart, and the tuple is
+        % only useful while it shares the goal's variables.
+        quads_recover_quad(N, Goal, GNames) :-
+            quads_shown_names(GNames, Names, Vars),
+            Tuple =.. [t|Vars],
+            retract('$quad'(N, Id, _, _)),
+            assertz('$quad'(N, Id, Goal, [])),
+            retractall('$quad_names'(N, _)),
+            retractall('$quad_run'(N, _, _)),
+            assertz('$quad_names'(N, Names)),
+            assertz('$quad_run'(N, Goal, Tuple)),
+            retractall('$quad_dropped'(Id, _)),
+            retractall('$quad_uncompared'(Id)),
+            ( '$quad_bad_id'(N, Bad) -> quads_note_dropped(Id, unusable_id(Bad)) ; true ).
+
+        quads_recover_desc(N, Block, DNames) :-
+            '$quad_names'(N, Names),
+            quads_alts(Block, Alts),
+            retract('$quad'(N, Id, Goal, Have)),
+            quads_parse_alts(Alts, Id, ctx(Names, DNames), Have, More),
+            assertz('$quad'(N, Id, Goal, More)).
+
+        quads_shown_names([], [], []).
+        quads_shown_names([Name=V|Ps], Names, Vars) :-
+            (   quads_hidden_name(Name)
+            ->  Names = Ns, Vars = Vs
+            ;   Names = [Name|Ns], Vars = [V|Vs]
+            ),
+            quads_shown_names(Ps, Ns, Vs).
+
+        % A name that starts with an underscore is not part of an answer: a
+        % top level does not show it, so a transcript does not describe it.
+        quads_hidden_name(Name) :- atom_chars(Name, ['_'|_]).
 
         quads_alts(B, Alts) :-
             ( B = '|'(A, Rest) -> Alts = [A|More], quads_alts(Rest, More)
             ; Alts = [B] ).
 
-        quads_parse_alts([], _, Acc, Acc).
-        quads_parse_alts([A|As], Id, Acc, Out) :-
-            (   quads_alt(A, Alt)
-            ->  ( quads_memberchk(Alt, Acc) -> Acc1 = Acc
+        quads_parse_alts([], _, _, Acc, Acc).
+        quads_parse_alts([A|As], Id, Ctx, Acc, Out) :-
+            (   quads_alt(A, Ctx, Alt)
+            ->  ( Ctx == none, quads_has_binding(A)
+                -> quads_note_uncompared(Id) ; true ),
+                ( quads_memberchk(Alt, Acc) -> Acc1 = Acc
                 ; quads_append(Acc, [Alt], Acc1) )
             ;   % Unreadable, or written in a vocabulary this harness does
                 % not know. Reported against its quad — the one thing the
@@ -166,10 +272,13 @@ internal static class CompatLibraries
                 quads_note_dropped(Id, A),
                 Acc1 = Acc
             ),
-            quads_parse_alts(As, Id, Acc1, Out).
+            quads_parse_alts(As, Id, Ctx, Acc1, Out).
 
         quads_note_dropped(Id, A) :-
             ( '$quad_dropped'(Id, A) -> true ; assertz('$quad_dropped'(Id, A)) ).
+
+        quads_note_uncompared(Id) :-
+            ( '$quad_uncompared'(Id) -> true ; assertz('$quad_uncompared'(Id)) ).
 
         % ---- reading one alternative --------------------------------------
         % An alternative is a comma chain of DESCRIPTORS and an outcome, and
@@ -177,17 +286,25 @@ internal static class CompatLibraries
         % wrong answer: a system producing it does not pass. Descriptors say
         % how the goal is run or what else it does; the outcome is what gets
         % checked.
-        quads_alt(A, alt(Class, In, Pk, Out, Sanctioned)) :-
+        quads_alt(A, Ctx, alt(Class, In, Pk, Out, Sanctioned)) :-
             quads_conj_list(A, Es0),
             quads_take_marker(Es0, Es1, Sanctioned),
-            quads_take_descriptors(Es1, Es2, none, In, none, Pk, none, Out),
+            quads_take_descriptors(Es1, Es2, none, In0, none, Pk, none, Out),
             (   Es2 == []
             ->  % Descriptors only: the goal has to run, and succeeding is
                 % all that is claimed.
                 Class = succeeds
             ;   quads_conj_from(Es2, Body),
-                quads_alt_class(Body, Class)
-            ).
+                quads_alt_class(Body, Ctx, Class)
+            ),
+            quads_probe_input(Class, In0, In).
+
+        % A `waits` alternative that says nothing about its input is run
+        % against the probe: the goal has to reach for it.
+        quads_probe_input(Class, none, In) :- Class == waits, !, quads_wait_probe(In).
+        quads_probe_input(_, In, In).
+
+        quads_wait_probe(' ').
 
         quads_conj_list((A, B), [A|R]) :- !, quads_conj_list(B, R).
         quads_conj_list(A, [A]).
@@ -225,23 +342,44 @@ internal static class CompatLibraries
         % `sto,` prefixes mark subject-to-occurs-check runs; the class is the
         % same either way (the engine's default is rational trees, like the
         % systems the page's sto column tracks).
-        quads_alt_class((sto, R), C) :- !, quads_alt_class(R, C).
+        quads_alt_class((sto, R), Ctx, C) :- !, quads_alt_class(R, Ctx, C).
         % `outputs(Text), Outcome` says the goal writes Text and THEN
         % behaves as Outcome. The outcome is what this harness observes, so
         % it classifies by it; the text itself is not compared, and a bare
         % outputs/1 with no outcome after it is nothing this can check.
-        quads_alt_class((outputs(_), R), C) :- !, quads_alt_class(R, C).
-        quads_alt_class(false, fails) :- !.
-        quads_alt_class(true, succeeds) :- !.
-        quads_alt_class(loops, loops) :- !.
-        quads_alt_class(E, error(W)) :-
+        quads_alt_class((outputs(_), R), Ctx, C) :- !, quads_alt_class(R, Ctx, C).
+        quads_alt_class(false, _, fails) :- !.
+        quads_alt_class(true, _, succeeds) :- !.
+        quads_alt_class(loops, _, loops) :- !.
+        % The goal blocks for input that never comes. What makes that
+        % observable is not the blocking, which no harness can wait out, but
+        % the READING: a goal that waits is a goal that went looking for
+        % input, and one that answers without reading did not. So it runs
+        % against an input of a single character and the question is whether
+        % that character is still there afterwards.
+        quads_alt_class(waits, _, waits) :- !.
+        % The class carries the error TERM, not just its kind: a description
+        % naming one culprit while the goal reports another describes a
+        % different system, and comparing only the kind let that pass.
+        quads_alt_class(E, _, error(E)) :-
             nonvar(E), functor(E, W, _), quads_error_word(W), !.
-        quads_alt_class(throw(_), error(other)) :- !.
-        quads_alt_class(A, succeeds) :- quads_has_binding(A), !.
+        quads_alt_class(throw(T), _, thrown(T)) :- !.
+        % An answer display is the answers themselves, in order: with the
+        % names recovered they are compared one by one against what the goal
+        % actually answers. `;` separates SUCCESSIVE answers here -- the bar
+        % is what separates alternative sanctioned behaviours.
+        quads_alt_class(A, ctx(Names, DNames), answers(Exps, Open)) :-
+            quads_has_binding(A), !,
+            quads_answer_list(A, Seq, Open),
+            quads_expected_list(Seq, DNames, Names, Exps).
+        % Without the names nothing links the description's L to the goal's,
+        % so all that can be checked is that the goal succeeds. Noted, so the
+        % report does not pass this off as a comparison.
+        quads_alt_class(A, none, succeeds) :- quads_has_binding(A), !.
         % An answer sequence cut short with `...` claims only that the goal
         % succeeds and goes on succeeding; the shown answers are not
         % compared, so there is nothing narrower to check.
-        quads_alt_class(A, lenient) :- quads_has_ellipsis(A), !.
+        quads_alt_class(A, _, lenient) :- quads_has_ellipsis(A), !.
         % Anything else is a description this harness cannot read. It does
         % NOT become a class that matches whatever happens: that is how a
         % test written in a vocabulary we do not know reported a pass while
@@ -259,6 +397,88 @@ internal static class CompatLibraries
         quads_has_binding((A ; B)) :- !,
             ( quads_has_binding(A) -> true ; quads_has_binding(B) ).
         quads_has_binding(_ = _).
+
+        % A trailing `...` says the answers go on; the ones written down
+        % still have to be the first ones, and nothing is claimed past them.
+        quads_answer_list(A, Seq, Open) :-
+            quads_disj_list(A, Es),
+            (   quads_append(Es0, ['...'], Es)
+            ->  Open = true, Seq = Es0
+            ;   Open = false, Seq = Es
+            ),
+            Seq \== [].
+
+        quads_disj_list((A ; B), [A|R]) :- !, quads_disj_list(B, R).
+        quads_disj_list(A, [A]).
+
+        quads_expected_list([], _, _, []).
+        quads_expected_list([A|As], DNames, Names, [E|Es]) :-
+            quads_expected(A, DNames, Names, E),
+            quads_expected_list(As, DNames, Names, Es).
+
+        % One described answer, as the goal's own variables would show it.
+        % The equations run on a COPY of the description, so one answer's
+        % bindings cannot reach the next; a variable the description does not
+        % mention stays unbound, which is what a top level showing nothing
+        % for it means.
+        quads_expected(A, DNames, Names, Exp) :-
+            copy_term(A-DNames, A1-DN1),
+            quads_conj_list(A1, Es0),
+            quads_take_descriptors(Es0, Es1, none, _, none, _, none, _),
+            quads_all_equations(Es1),
+            quads_shows_an_answer(Es1, DN1, Names),
+            quads_call_all(Es1),
+            quads_tuple_args(Names, DN1, Args),
+            Exp =.. [t|Args].
+
+        % An answer display says what the QUERY's variables became, and says
+        % it the way a top level does. Three things it therefore cannot be:
+        % an equation whose left side is not a variable (`1 = X`), one whose
+        % left side is a name the query does not have (`X = 1` for `?- true.`),
+        % and one whose whole value is a variable that appears nowhere else
+        % (`X = Y`), which is what an UNBOUND variable looks like -- and an
+        % unbound variable is not shown at all. Each of those describes
+        % something that is not an answer, so it is reported rather than
+        % checked against one.
+        quads_shows_an_answer([], _, _).
+        quads_shows_an_answer([V = Val|Es], DN, Names) :-
+            var(V),
+            quads_var_name(DN, V, N),
+            quads_memberchk(N, Names),
+            quads_value_shown(Val, DN, Names, [V = Val|Es]),
+            quads_shows_an_answer(Es, DN, Names).
+
+        quads_var_name([N0=V0|Ps], V, N) :-
+            ( V0 == V -> N = N0 ; quads_var_name(Ps, V, N) ).
+
+        quads_value_shown(Val, DN, Names, All) :-
+            (   nonvar(Val) -> true
+            ;   quads_var_name(DN, Val, VN), quads_memberchk(VN, Names) -> true
+            ;   quads_var_count(All, Val, C), C > 1
+            ).
+
+        quads_var_count(T, V, N) :-
+            (   var(T) -> ( T == V -> N = 1 ; N = 0 )
+            ;   compound(T) -> T =.. [_|As], quads_var_count_list(As, V, N)
+            ;   N = 0
+            ).
+        quads_var_count_list([], _, 0).
+        quads_var_count_list([A|As], V, N) :-
+            quads_var_count(A, V, N1),
+            quads_var_count_list(As, V, N2),
+            N is N1 + N2.
+
+        quads_all_equations([]).
+        quads_all_equations([E|Es]) :- nonvar(E), E = (_ = _), quads_all_equations(Es).
+        quads_call_all([]).
+        quads_call_all([E|Es]) :- call(E), quads_call_all(Es).
+
+        quads_tuple_args([], _, []).
+        quads_tuple_args([N|Ns], DN, [V|Vs]) :-
+            ( quads_name_var(DN, N, V0) -> V = V0 ; true ),
+            quads_tuple_args(Ns, DN, Vs).
+        quads_name_var([N0=V0|Ps], N, V) :-
+            ( N0 == N -> V = V0 ; quads_name_var(Ps, N, V) ).
 
         quads_error_word(instantiation_error).
         quads_error_word(type_error).
@@ -278,17 +498,22 @@ internal static class CompatLibraries
         run_quads(Id) :- quads_run_matching(Id).
 
         quads_run_matching(Filter) :-
-            findall(q(N, Id, G, K), ( '$quad'(N, Id, G, K),
-                                      ( Filter = Id -> true ; var(Filter) ) ),
+            quads_recover_all,
+            findall(q(N, Id, R, K), ( '$quad'(N, Id, G, K),
+                                      ( Filter = Id -> true ; var(Filter) ),
+                                      quads_runnable(N, G, R) ),
                     Qs),
             quads_run_list(Qs, 0, Pass, 0, Total, [], FailsR),
             quads_reverse(FailsR, Fails),
+            retractall('$quad_result'(_, _)),
+            assertz('$quad_result'(Pass, Total)),
             format('quads: ~w/~w~n', [Pass, Total]),
             (   Fails == [] -> true
             ;   quads_length(Fails, NF),
                 format('  failing (~w): ~w~n', [NF, Fails])
             ),
-            quads_report_dropped.
+            quads_report_dropped,
+            quads_report_uncompared.
 
         % Every answer description this harness could not read, named with
         % the quad it belongs to. A test whose descriptions were ALL
@@ -307,11 +532,28 @@ internal static class CompatLibraries
             format('    ~w: ~q~n', [Id, A]),
             quads_report_each(R).
 
+        % A quad whose answers were written down but could not be compared,
+        % because its source was not there to take the names from. It was
+        % still run; only the answer substitutions went unchecked.
+        quads_report_uncompared :-
+            (   findall(Id, '$quad_uncompared'(Id), Us), Us \== []
+            ->  quads_length(Us, NU),
+                format('  answers not compared (~w): ~w~n', [NU, Us])
+            ;   true
+            ).
+
+        % The goal as it will be run, with the tuple of its shown variables
+        % when the names were recovered.
+        quads_runnable(N, _, run(G, T)) :- '$quad_run'(N, G, T), !.
+        quads_runnable(_, G, run(G, none)).
+
         quads_run_list([], P, P, T, T, F, F).
-        quads_run_list([q(_, Id, G, K)|Qs], P0, P, T0, T, F0, F) :-
+        quads_run_list([q(N, Id, G, K)|Qs], P0, P, T0, T, F0, F) :-
             T1 is T0 + 1,
-            ( quads_check(K, G) -> P1 is P0 + 1, F1 = F0
-            ; P1 = P0, F1 = [Id|F0] ),
+            (   \+ '$quad_bad_id'(N, _), quads_check(K, G)
+            ->  P1 is P0 + 1, F1 = F0
+            ;   P1 = P0, F1 = [Id|F0]
+            ),
             quads_run_list(Qs, P1, P, T1, T, F1, F).
 
         % The test passes when the run matches SOME sanctioned alternative.
@@ -356,12 +598,21 @@ internal static class CompatLibraries
             quads_want_matches(Ws, O, Left, Written).
 
         quads_want_matches([want(C, Pk, Ot)|Ws], O, Left, Written) :-
-            (   quads_match(C, O),
+            (   quads_want_holds(C, O, Left),
                 quads_peek_matches(Pk, Left),
                 quads_output_matches(Ot, Written)
             ->  true
             ;   quads_want_matches(Ws, O, Left, Written)
             ).
+
+        % `waits` is the one description that is not about the outcome. The
+        % goal ran against one character of input: consuming it is what
+        % waiting looks like from here, and leaving it is what answering
+        % without input looks like. Whatever the goal did after reading is
+        % beside the point, since with no input at all it would not have got
+        % that far.
+        quads_want_holds(waits, _, Left) :- !, Left == [].
+        quads_want_holds(C, O, _) :- quads_match(C, O).
 
         % No peek was written down, so nothing is claimed about what is left.
         quads_peek_matches(none, _) :- !.
@@ -372,13 +623,93 @@ internal static class CompatLibraries
         % while it prints another describes a different system, and used to
         % pass here because the text was taken on trust.
         quads_output_matches(none, _) :- !.
-        quads_output_matches(Ot, Written) :- quads_text_chars(Ot, Cs), Cs == Written.
+        quads_output_matches(Ot, Written) :-
+            quads_text_pattern(Ot, Ps),
+            quads_text_match(Ps, Written).
+
+        % A transcript may write down only the parts of the output it is
+        % about: `outputs(("f(_", ..., ")"))` says the text starts with one
+        % piece and ends with another, and says nothing about the middle --
+        % which is how a claim survives an implementation's choice of
+        % variable names.
+        quads_text_pattern(Ot, Ps) :-
+            quads_conj_list(Ot, Es),
+            quads_text_pieces(Es, Ps).
+        quads_text_pieces([], []).
+        quads_text_pieces([E|Es], [P|Ps]) :-
+            ( E == '...' -> P = any ; quads_text_chars(E, Cs), P = chars(Cs) ),
+            quads_text_pieces(Es, Ps).
+
+        quads_text_match([], []).
+        quads_text_match([chars(Cs)|Ps], W) :-
+            quads_append(Cs, Rest, W),
+            quads_text_match(Ps, Rest).
+        quads_text_match([any|Ps], W) :-
+            quads_suffix(W, S),
+            quads_text_match(Ps, S).
+        quads_suffix(W, W).
+        quads_suffix([_|T], S) :- quads_suffix(T, S).
 
         quads_match(succeeds, succeeds).
         quads_match(fails, fails).
-        quads_match(error(W), error(W)).
+        % When the answers were collected, having some IS succeeding and
+        % having none IS failing, so a group that mixes an answer display
+        % with a plain true/false description is decided by one run.
+        quads_match(succeeds, answers([_|_])).
+        quads_match(fails, answers([])).
+        quads_match(answers(Exps, Open), answers(As)) :-
+            quads_answers_match(Exps, Open, As).
+        % An ISO error is described by its formal alone, so that is what is
+        % compared, up to a renaming of the variables in it. The context slot
+        % is the implementation's to fill.
+        quads_match(error(E), raised(error(F, _))) :- !, quads_term_matches(E, F).
+        quads_match(thrown(T), raised(B)) :- !, quads_term_matches(T, B).
         quads_match(loops, timeout).
         quads_match(lenient, _).
+
+        % The described answers must be the ones the goal gives, in order.
+        % A sequence left open with `...` claims only its own prefix; a
+        % closed one claims there are no further answers, so one extra
+        % answer refutes it.
+        quads_answers_match(Exps, Open, As) :-
+            (   Open == true
+            ->  quads_prefix_matches(Exps, As)
+            ;   quads_same_length(Exps, As),
+                quads_prefix_matches(Exps, As)
+            ).
+        quads_prefix_matches([], _).
+        quads_prefix_matches([E|Es], [A|As]) :-
+            quads_term_matches(E, A),
+            quads_prefix_matches(Es, As).
+        quads_same_length([], []).
+        quads_same_length([_|Xs], [_|Ys]) :- quads_same_length(Xs, Ys).
+
+        % `...` inside a described term stands for a part that was not
+        % written down, so it matches whatever is in that position and the
+        % rest still has to agree. Masking the actual term where the
+        % description elides it, and comparing the two afterwards, keeps the
+        % comparison a VARIANT one: the variables a description names are
+        % variables in the answer, not values.
+        %
+        % The walk stops as soon as one side stops being compound, so it
+        % terminates even against a rational tree: an answer is collected
+        % through findall/3, which snapshots a cyclic solution, and a
+        % description is as finite as the source it was read from.
+        quads_term_matches(D, A) :- quads_mask(D, A, M), D =@= M.
+
+        quads_mask(D, A, M) :-
+            (   D == '...' -> M = '...'
+            ;   var(D) -> M = A
+            ;   var(A) -> M = A
+            ;   compound(D), compound(A),
+                functor(D, F, N), functor(A, F, N)
+            ->  D =.. [F|Ds], A =.. [F|As],
+                quads_mask_list(Ds, As, Ms), M =.. [F|Ms]
+            ;   M = A
+            ).
+        quads_mask_list([], [], []).
+        quads_mask_list([D|Ds], [A|As], [M|Ms]) :-
+            quads_mask(D, A, M), quads_mask_list(Ds, As, Ms).
 
         % A test that sanctions looping runs under a 15-second limit — no
         % harness can observe an infinite loop directly, so still-running IS
@@ -422,19 +753,40 @@ internal static class CompatLibraries
         quads_wanted_peek([], none).
 
 
-        quads_outcome(G, Ws, O) :-
+        quads_outcome(run(G, T), Ws, O) :-
             (   quads_group_wants_loops(Ws)
             ->  catch(quads_timed_outcome(G, O), E, quads_error_outcome(E, O))
+            ;   quads_answers_wanted(Ws, T, Max)
+            ->  catch(( findall(T, call_with_limit(Max, G), As), O = answers(As) ),
+                      E, quads_error_outcome(E, O))
             ;   catch(( call(G) -> O = succeeds ; O = fails ), E,
                       quads_error_outcome(E, O))
+            ).
+
+        % Collecting answers is only for a group that describes them, and one
+        % answer past the longest description: a goal that answers more times
+        % than the transcript says has to be caught doing it.
+        quads_answers_wanted(Ws, T, Max) :-
+            T \== none,
+            quads_longest_answer(Ws, 0, Len),
+            Len > 0,
+            Max is Len + 1.
+        quads_longest_answer([], L, L).
+        quads_longest_answer([want(C, _, _)|Ws], L0, L) :-
+            (   nonvar(C), C = answers(Exps, _), quads_length(Exps, N), N > L0
+            ->  quads_longest_answer(Ws, N, L)
+            ;   quads_longest_answer(Ws, L0, L)
             ).
 
         quads_group_wants_loops([want(loops, _, _)|_]) :- !.
         quads_group_wants_loops([_|Ws]) :- quads_group_wants_loops(Ws).
 
         % What the goal did NOT consume, as a character list.
+        % A goal may leave the stream PAST its end -- reading once more
+        % there is a permission error, and asking what is left must not
+        % raise it back into the harness.
         quads_left(Left) :-
-            (   peek_char(C), C \== end_of_file
+            (   catch(peek_char(C), _, C = end_of_file), C \== end_of_file
             ->  get_char(_), quads_left(Rest), Left = [C|Rest]
             ;   Left = []
             ).
@@ -490,16 +842,25 @@ internal static class CompatLibraries
             ;   O = fails
             ).
 
-        quads_error_outcome(error(B, _), error(W)) :-
-            nonvar(B), functor(B, W, _), quads_error_word(W), !.
-        quads_error_outcome(_, error(other)).
+        % The whole ball, as thrown. What of it counts is the matcher's
+        % business, not this one's.
+        quads_error_outcome(B, raised(B)).
+
+        %! quads_result(-Passed, -Total) | Quad tests | The counts the last run of run_quads/0,1 reported. Fails when nothing has been run, so a script can tell "none run" from "none passed".
+        quads_result(Passed, Total) :- '$quad_result'(Passed, Total).
 
         %! clear_quads | Quad tests | Forgets every loaded quad test; the next consult starts a fresh set.
         clear_quads :-
             retractall('$quad'(_, _, _, _)),
             retractall('$quad_open'(_, _)),
             retractall('$quad_seq'(_)),
-            retractall('$quad_dropped'(_, _)).
+            retractall('$quad_dropped'(_, _)),
+            retractall('$quad_src'(_, _)),
+            retractall('$quad_names'(_, _)),
+            retractall('$quad_run'(_, _, _)),
+            retractall('$quad_uncompared'(_)),
+            retractall('$quad_result'(_, _)),
+            retractall('$quad_bad_id'(_, _)).
 
         quads_memberchk(X, [Y|T]) :- ( X == Y -> true ; quads_memberchk(X, T) ).
         quads_reverse(L, R) :- quads_rev_(L, [], R).

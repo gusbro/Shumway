@@ -287,21 +287,52 @@ internal static class ReplTopLevel
             }
         }
         // --quads <file>, repeatable: load the quad-transcript library (it
-        // brings coroutining itself), consult each transcript, and run every
-        // loaded quad. The session stays interactive afterwards, so
-        // run_quads/1 can replay one id.
+        // brings coroutining itself), consult each transcript, run every
+        // loaded quad, and END there. A transcript is a test run, not a
+        // session, and a run that leaves a prompt behind cannot be scripted:
+        // the exit code carries the verdict, zero only when every quad
+        // passed. An interactive session is still one `use_module`,
+        // `consult` and `run_quads` away, which is where run_quads/1 replays
+        // a single id.
         if (quadFiles.Count > 0)
         {
+            int quadExit = 0;
             try
             {
                 if (!engine.Query("use_module(library(quads)).").Success)
+                {
                     Console.Error.WriteLine("% --quads: could not load library(quads)");
+                    quadExit = 1;
+                }
                 foreach (string qf in quadFiles)
                     ConsultFile(engine, qf);
                 if (!engine.Query("run_quads.").Success)
+                {
                     Console.Error.WriteLine("% --quads: run_quads failed");
+                    quadExit = 1;
+                }
+                else
+                {
+                    var counts = engine.Query("quads_result(Passed, Total).");
+                    if (!counts.Success
+                        || counts["Passed"] is not IntTerm passed
+                        || counts["Total"] is not IntTerm total)
+                        quadExit = 1;
+                    else if (total.Value == 0)
+                    {
+                        // Nothing ran. A file that turned out to hold no
+                        // transcript is a mistake, not a clean run, and
+                        // reporting 0/0 as success is how it would be missed.
+                        Console.Error.WriteLine("% --quads: no quad tests found");
+                        quadExit = 1;
+                    }
+                    else if (passed.Value != total.Value) quadExit = 1;
+                }
             }
-            catch (Exception ex) { PrintError(engine, ex); }
+            catch (Exception ex) { PrintError(engine, ex); quadExit = 1; }
+            MaybeDumpIlStats(engine);
+            MaybeDumpProfile(engine);
+            return quadExit;
         }
         if (stopwatch is not null)
             setupMsAtGoalStart = stopwatch.ElapsedMilliseconds;
@@ -846,8 +877,8 @@ internal static class ReplTopLevel
             + "                        -L scryer:C:/Scryer/lib. Repeatable; also read from\n"
             + "                        SHUMWAY_LIBRARY_PATH (per entry).\n"
             + "  --quads <file>        Load library(quads), consult the quad test\n"
-            + "                        transcript, and run_quads. Repeatable; the\n"
-            + "                        session stays interactive (run_quads(Id) replays one).\n"
+            + "                        transcript, run_quads, and exit. Repeatable.\n"
+            + "                        The exit code is 0 only if every quad passed.\n"
             + "                        See docs/guide/quads.md for the format.\n"
             + "  --debug               Compile debuggable and open a debug session; prints\n"
             + "                        the pid so a debugger (VS + the Shumway extension)\n"
