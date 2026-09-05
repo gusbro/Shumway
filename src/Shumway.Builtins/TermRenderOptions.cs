@@ -33,6 +33,12 @@ public sealed class TermRenderOptions
     /// list and the cons list it denotes print identically.</summary>
     public bool PortrayText { get; set; } = false;
 
+    /// <summary><c>double_bar(Bool)</c>: a text list with an open tail writes
+    /// as <c>"abc"||T</c> rather than element by element, which is the form it
+    /// can also be read back in. Off by default, and only ever consulted where
+    /// <see cref="PortrayText"/> already says the list is text.</summary>
+    public bool DoubleBar { get; set; } = false;
+
     /// <summary><c>max_depth(N)</c>: compounds/list tails nested deeper
     /// than N render as <c>...</c> / <c>|...</c>. 0 = unlimited.</summary>
     public int MaxDepth { get; set; }

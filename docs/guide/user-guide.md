@@ -185,7 +185,12 @@ false.
   in a value appears as its escape, never as a raw byte in the
   transcript. A list of characters displays as a double-quoted string
   (`L = "abc"`, matching the default `double_quotes = chars` reading);
-  a list of integer codes stays numeric.
+  a list of integer codes stays numeric. A list of characters left **open**
+  displays with the double bar, `S0 = "a text"||S`, which says where the text
+  ends and the tail begins. It is read back the same way: `"abc"||T` is
+  `[a,b,c|T]`, the bars attach to the double-quoted literal itself (so
+  `("a")||T` is a syntax error), and the tail follows the same rule, which
+  makes `"a"||"b"||"c"` the list `[a,b,c]`.
 - An uncaught error prints the same term that `catch/3` would have
   received. If the prompt reports
   `% error: existence_error(procedure, foo/0)`, then
