@@ -589,14 +589,13 @@ internal static class Prelude
 
         '$length_walk'(L, N, Acc) :-
             (   var(L) ->
-                (   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
-                    % A length aliased to the open tail (length(L,L),
-                    % length([a|X],X)) enumerates like any other var-var
-                    % pair: every candidate fails and the growth ends in a
-                    % genuine, catchable resource_error(memory) — the ISO
-                    % outcome (Neumerkel length 21/22). Do NOT short-circuit
-                    % it to `false`: sound, but not among the sanctioned
-                    % answers.
+                (   % Binding the tail binds the LENGTH to a list, never an
+                    % integer: infinitely many failing candidates, and the
+                    % enumeration only reached this error with the heap full.
+                    % Not for an attributed one: freeze(L,L=[]) decides it.
+                    L == N, term_attvars(L, []) ->
+                        throw(error(resource_error(memory), length/2))
+                ;   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
                 ;   var(N) -> '$length_enum'(L, N, Acc)
                 ;   throw(error(type_error(integer, N), length/2))
                 )

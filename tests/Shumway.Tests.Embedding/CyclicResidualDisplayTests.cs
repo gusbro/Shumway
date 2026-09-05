@@ -155,6 +155,22 @@ public sealed class CyclicResidualDisplayTests
     }
 
     [Fact]
+    public void AnAttributeCanStillDecideASelfAliasedLength()
+    {
+        // length(L, L) is refused as unanswerable, but the reasoning behind
+        // that -- every candidate fails and there are infinitely many -- does
+        // not hold once L carries a constraint: frozen to be [], the second
+        // candidate is rejected by the freeze and the enumeration ends. So
+        // the shortcut must not fire for an attributed variable.
+        var e = new PrologEngine();
+        e.UseCoroutining();
+        Assert.True(e.Query("freeze(L, L = []), \\+ length(L, L).").Success);
+        // ...and without the constraint it is the resource error, at once.
+        Assert.True(e.Query(
+            "catch(length(L, L), error(resource_error(_), _), true).").Success);
+    }
+
+    [Fact]
     public void TheConstraintIsStillTheOneItShows()
     {
         // Naming is a display: the constraint the answer reports must still be

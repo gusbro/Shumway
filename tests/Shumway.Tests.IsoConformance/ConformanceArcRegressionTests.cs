@@ -50,13 +50,18 @@ public sealed class ConformanceArcRegressionTests
         Raises("length([q,w], -7)", "domain_error(not_less_than_zero, -7)");
     [Fact] public void Length_NonListFails() =>
         True("\\+ length(foo, _), \\+ length([p|q], _).");
-    [Fact] public void Length_SelfAliasedEnumerates() =>
-        // length(L, L) must ENUMERATE toward a genuine resource_error —
-        // the ISO outcome — not short-circuit to false (no fail-fast
-        // special case), and the enumeration stays interruptible at safe
-        // points. time_out bounds the pin without exhausting the heap.
-        True("time_out(length(L, L), 300, R), R == time_out, "
-           + "time_out(length([x,y|T], T), 300, S), S == time_out.");
+    [Fact] public void Length_SelfAliasedIsAResourceErrorAtOnce() =>
+        // length(L, L) cannot be answered: binding the tail binds the LENGTH
+        // to a list, never an integer, so every candidate fails and there are
+        // infinitely many. The answer is the resource error the enumeration
+        // used to reach with the heap at the ceiling, which is a sanctioned
+        // outcome where `false` is not.
+        True("catch(length(L, L), error(resource_error(_), _), true), "
+           + "catch(length([x,y|T], T), error(resource_error(_), _), true).");
+    [Fact] public void Length_OpenEnumerationStaysInterruptible() =>
+        // The genuine enumeration, two distinct variables, still runs and
+        // still stops at a safe point when asked to.
+        True("time_out(length(_L, _N), 300, R), R == time_out.");
     [Fact] public void AtomChars_CyclicListFailsInsteadOfLooping() =>
         // IsProperListCell's exhausted guard read as "proper": a cyclic list
         // took the check direction and was walked as text.
