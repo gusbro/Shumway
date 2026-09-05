@@ -26,23 +26,55 @@ public static class GlobalVarsBuiltins
     {
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         Cell value = Resolve(engine, engine.GetRegister(1));
-        // For value-carrying cells (Int / Atom / Float-paired / BigInt
-        // / Foreign) the cell itself carries the value, safe across
-        // queries. Str / Lis / Pstr cells carry a heap index and could
-        // dangle once the per-query heap unwinds — those cases would
-        // need a deep snapshot (not implemented). The accumulator /
-        // counter pattern that motivates global vars overwhelmingly
-        // uses integers, so this works in practice.
-        Globals(engine).Set(nameId, value, backtrackable: false);
+        // A non-backtrackable write has to survive the backtracking it is
+        // defined to survive, so what is stored cannot be a heap address:
+        // once the heap unwinds past the write, that address holds whatever
+        // came after it, and the read handed back another term's cells.
+        // Only a cell that IS its value (an integer, an atom) can be kept as
+        // it stands -- which is the accumulator this predicate is for, and it
+        // allocates nothing. Everything else is copied off the heap.
+        //
+        // The copy is a copy: like SICStus's blackboard, it does not carry
+        // attributes. `copy_term/3` is what carries a constraint, and
+        // `bb_put/2` uses it.
+        if (IsSelfContained(value))
+            Globals(engine).Set(nameId, value, backtrackable: false);
+        else
+            Globals(engine).SetPayload(nameId, Host(engine).SnapshotValue(engine, 1));
         return true;
     }
+
+    /// <summary>A cell that carries its whole value: nothing to relocate, no
+    /// side table, no heap address. A float pairs a second heap cell and a
+    /// bigint / rational indexes a per-activation table, so neither is one.
+    /// </summary>
+    private static bool IsSelfContained(Cell c) =>
+        c.Tag is Tag.Int or Tag.Atom or Tag.Foreign;
 
     public static bool NbGetval(Activation engine)
     {
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
-        if (!Globals(engine).TryGet(nameId, out Cell stored))
+        if (!TryRead(engine, nameId, out Cell stored))
             throw new PrologRuntimeException("existence_error", "variable");
         return engine.UnifyRegisterWithCell(1, stored);
+    }
+
+    /// <summary>The value as a cell of the CURRENT heap: a stored payload is
+    /// re-emitted, one fresh term per read, which is what makes each read
+    /// independent of the last.</summary>
+    private static bool TryRead(Activation engine, int nameId, out Cell value)
+    {
+        var store = Globals(engine);
+        if (store.IsLiveFor(nameId, engine.InstanceId)
+            && store.TryGet(nameId, out value)) return true;
+        value = default;
+        if (store.TryGetPayload(nameId, out object payload))
+        {
+            value = Host(engine).EmitValue(engine, payload);
+            return true;
+        }
+        value = default;
+        return false;
     }
 
     /// <summary><c>nb_current(?Name, ?Value)</c> — enumerates the
@@ -53,11 +85,13 @@ public static class GlobalVarsBuiltins
         Cell nameCell = Resolve(engine, engine.GetRegister(0));
         if (nameCell.Tag == Tag.Atom)
         {
-            if (!Globals(engine).TryGet(nameCell.AsAtomId, out Cell stored)) return false;
+            if (!TryRead(engine, nameCell.AsAtomId, out Cell stored)) return false;
             return engine.UnifyRegisterWithCell(1, stored);
         }
-        // Var name → enumerate. Use the standard CP-driven pattern.
-        var entries = Globals(engine).All().ToArray();
+        // Var name → enumerate. Use the standard CP-driven pattern. The names
+        // are taken once; each value is read when its turn comes, since a
+        // payload becomes a term of the heap as it is read.
+        var entries = Globals(engine).Keys.ToArray();
         int returnPc = engine.BuiltinReturnPc;
         // arity 2: the CP must restore nb_current/2's args (a backtrack-
         // clobbered result reg breaks the enumeration).
@@ -65,12 +99,11 @@ public static class GlobalVarsBuiltins
             (e, i) => NbCurrentUnify(e, entries, i));
     }
 
-    private static bool NbCurrentUnify(
-        Activation engine, (string Name, Cell Value)[] entries, int idx)
+    private static bool NbCurrentUnify(Activation engine, int[] keys, int idx)
     {
-        var (name, value) = entries[idx];
-        Cell nameCell = Cell.Atom(AtomTable.Intern(name, permanent: false).Id);
-        if (!engine.UnifyRegisterWithCell(0, nameCell)) return false;
+        int key = keys[idx];
+        if (!TryRead(engine, key, out Cell value)) return false;
+        if (!engine.UnifyRegisterWithCell(0, Cell.Atom(key))) return false;
         if (!engine.UnifyRegisterWithCell(1, value)) return false;
         return true;
     }
@@ -85,14 +118,14 @@ public static class GlobalVarsBuiltins
         // state through exactly this on labeling backtracks).
         bool had = store.TryGet(nameId, out Cell old);
         engine.TrailExternal(store, nameId, old, had);
-        store.Set(nameId, value, backtrackable: true);
+        store.Set(nameId, value, backtrackable: true, ownerId: engine.InstanceId);
         return true;
     }
 
     public static bool BGetval(Activation engine)
     {
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
-        if (!Globals(engine).TryGet(nameId, out Cell stored))
+        if (!TryRead(engine, nameId, out Cell stored))
             throw new PrologRuntimeException("existence_error", "variable");
         return engine.UnifyRegisterWithCell(1, stored);
     }
@@ -105,11 +138,20 @@ public static class GlobalVarsBuiltins
     public static bool FetchGlobalVar(Activation engine)
     {
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
-        if (!Globals(engine).TryGet(nameId, out Cell stored)) return false;
+        if (!TryRead(engine, nameId, out Cell stored)) return false;
         return engine.UnifyRegisterWithCell(1, stored);
     }
 
     // ---------- helpers ----------
+
+    private static IGlobalVarHost Host(Activation engine)
+    {
+        if (engine.Host is not IGlobalVarHost host)
+            throw new InvalidOperationException(
+                "Global variable builtins require the engine to be hosted by a "
+                + "type that exposes a GlobalVarStore.");
+        return host;
+    }
 
     private static GlobalVarStore Globals(Activation engine)
     {
@@ -147,4 +189,12 @@ public static class GlobalVarsBuiltins
 public interface IGlobalVarHost
 {
     GlobalVarStore GlobalVars { get; }
+
+    /// <summary>A heap-independent image of the value in
+    /// <paramref name="registerIndex"/>, for a store that has to outlive the
+    /// heap it was taken from. Attributes do not travel with it.</summary>
+    object SnapshotValue(Activation engine, int registerIndex);
+
+    /// <summary>The image as a term of the CURRENT heap.</summary>
+    Cell EmitValue(Activation engine, object payload);
 }

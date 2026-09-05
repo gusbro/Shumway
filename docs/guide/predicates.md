@@ -478,7 +478,7 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | Predicate | Description |
 | --- | --- |
 | `b_getval(+Key, -Value)` | Reads a backtrackable global variable; existence_error if unset. |
-| `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. |
+| `b_setval(+Key, +Value)` | Backtrackable global variable assignment: the previous value is restored on backtracking. The value is the term itself rather than a copy, and the assignment does not outlive the query that made it. |
 | `bb_b_put(+Key, +Value)` | Backtrackable blackboard assignment: the previous value is restored on backtracking. |
 | `bb_delete(+Key, -Value)` | Unifies Value with the current value and removes the entry. |
 | `bb_get(+Key, -Value)` | Reads a blackboard entry; fails when Key is unset (unlike nb_getval/2, which throws). |
@@ -488,7 +488,7 @@ Load with `:- use_module(library(coroutining)).` (embedding: `engine.UseCoroutin
 | `get_flag(+Key, -Value)` | Reads a flag's value (0 if never set). |
 | `nb_current(?Key, ?Value)` | Enumerates global variables; fails for an unset Key (no throw). |
 | `nb_getval(+Key, -Value)` | Reads a non-backtrackable global variable; existence_error if unset. |
-| `nb_setval(+Key, +Value)` | Non-backtrackable global variable assignment. |
+| `nb_setval(+Key, +Value)` | Non-backtrackable global variable assignment: a copy of Value is stored, so it survives backtracking. The copy carries no attributes; bb_put/2 is the one that keeps a constrained value. |
 | `set_flag(+Key, +Value)` | Sets a flag to Value (an arithmetic expression is evaluated), discarding the old value. |
 
 ## Messages

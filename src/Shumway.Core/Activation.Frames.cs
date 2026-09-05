@@ -39,6 +39,13 @@ public sealed partial class Activation
 
     public Activation() : this(new ActivationConfig()) { }
 
+    private static int _nextInstanceId;
+
+    /// <summary>Identifies this activation among all of them. A query runs on
+    /// its own activation, so anything holding a heap address from one can ask
+    /// whether it is still looking at the heap it came from.</summary>
+    public int InstanceId { get; } = System.Threading.Interlocked.Increment(ref _nextInstanceId);
+
     public Activation(ActivationConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);

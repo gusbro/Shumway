@@ -324,6 +324,25 @@ leaves `Y` a plain variable. The same three-argument form is what the top
 level uses to show residual constraints, and what the blackboard uses to
 store a constrained value.
 
+Everything that stores a term stores a copy, so the rule reaches further
+than `copy_term/2`: a clause you `assert`, a solution `findall/3`
+collects, an entry in the recorded database and a non-backtrackable
+global variable all hold plain variables where the term you gave them
+held constrained ones. The original is untouched, and reading a stored
+term back gives no constraint. To carry one, store the goals beside the
+value:
+
+```prolog
+?- freeze(X, foo), copy_term(X, Copy, Goals), assertz(p(Copy, Goals)).
+?- p(Y, Goals), maplist(call, Goals).
+```
+
+`bb_put/2` does exactly that for you, which is why a value put on the
+blackboard comes back constrained while the same value asserted does
+not. `b_setval/2` stores the term itself rather than a copy, so a
+constraint does survive it, but only for the duration of the query that
+set it.
+
 ### Running quad test transcripts
 
 A quad file is a machine-readable test transcript (queries with their
