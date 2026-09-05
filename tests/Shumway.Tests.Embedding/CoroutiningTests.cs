@@ -655,6 +655,93 @@ public class CoroutiningTests
     }
 
     [Fact]
+    public void ACopyCarriesNoConstraints()
+    {
+        // A copy is a copy of the TERM: an attributed variable comes out
+        // plain, so the copy of a constrained term is unconstrained. That is
+        // the whole contract of copy_term/2 here, and copy_term/3 is what
+        // exists for the other reading.
+        var e = Co();
+        Assert.True(e.Query(
+            "freeze(X, foo), copy_term(X, Y), frozen(Y, G), G == true.").Success);
+        Assert.True(e.Query(
+            "dif(A, B), copy_term(A-B, C-D), C = 1, D = 1.").Success);
+        Assert.True(e.Query(
+            "put_attr(V, m, 1), copy_term(V, W), \\+ get_attr(W, m, _).").Success);
+    }
+
+    [Fact]
+    public void TheGoalsOfCopyTermThreePutThemBack()
+    {
+        // The documented way to copy a constrained term: take the goals and
+        // run them. This is the guide's example, run.
+        var e = Co();
+        Assert.True(e.Query(
+            "freeze(X, foo), copy_term(X, Y, Goals), maplist(call, Goals), "
+            + "frozen(Y, G), G == foo.").Success);
+        // ...and the constraint on the copy is a real one, not a display.
+        Assert.True(e.Query(
+            "dif(A, B), copy_term(A-B, C-D, Goals), maplist(call, Goals), "
+            + "\\+ (C = 1, D = 1).").Success);
+    }
+
+    [Fact]
+    public void TheCompatSpellingIsTheSamePredicate()
+    {
+        // Libraries written for systems whose copy_term/2 DOES carry
+        // attributes call copy_term_nat/2 to get the copy this engine's
+        // copy_term/2 already gives. It stays callable, and it stays the
+        // same behaviour: two names for one thing must not drift into a
+        // distinction that is not there.
+        var e = Co();
+        Assert.True(e.Query(
+            "freeze(X, foo), copy_term(X, Y), copy_term_nat(X, Z), "
+            + "frozen(Y, G1), frozen(Z, G2), G1 == G2.").Success);
+        Assert.True(e.Query("copy_term_nat(g(X, X), C), C = g(1, 1).").Success);
+    }
+
+    [Fact]
+    public void ACutInOneFrozenGoalLeavesTheOthersAlone()
+    {
+        // Two goals frozen on the same variable are two goals. A cut in the
+        // second used to prune the first one's alternatives as well, so an
+        // answer the program had was never reported: an incompleteness, not a
+        // cosmetic difference.
+        var e = Co();
+        Assert.True(e.Query(
+            "findall(X-Y, (freeze(X, (Y = 1 ; Y = 2)), freeze(X, !), X = c ; X = end), L), "
+            + "L = [c-1, c-2, end-_].").Success);
+    }
+
+    [Fact]
+    public void ACutStillCutsInsideItsOwnFrozenGoal()
+    {
+        // The other half of the same rule: within ONE frozen goal the cut is
+        // that goal's own, so it does commit to the first alternative.
+        var e = Co();
+        Assert.True(e.Query(
+            "findall(Y, (freeze(X, ((Y = 1 ; Y = 2), !)), X = c), L), L == [1].").Success);
+        // Without the cut, both alternatives survive.
+        Assert.True(e.Query(
+            "findall(Y, (freeze(X, (Y = 1 ; Y = 2)), X = c), L), L == [1, 2].").Success);
+    }
+
+    [Fact]
+    public void HowTheGoalsAreStoredIsNotVisible()
+    {
+        // The store keeps each frozen goal apart from the next. Nothing that
+        // reads the goals back may show how.
+        var e = Co();
+        Assert.True(e.Query("freeze(X, a), freeze(X, b), frozen(X, G), G == (a, b).").Success);
+        Assert.True(e.Query("freeze(Y, (p, q)), frozen(Y, G), G == (p, q).").Success);
+        Assert.True(e.Query("freeze(X, G0), frozen(X, G), G == G0, var(G).").Success);
+        // Two frozen goals project as two freeze/2 constraints, as before.
+        Assert.True(e.Query(
+            "freeze(X, a), freeze(X, b), copy_term(X, _, As), "
+            + "As = [freeze(_, a), freeze(_, b)].").Success);
+    }
+
+    [Fact]
     public void CollapsingDoesNotWeakenTheConstraint()
     {
         // The point of the exercise is fewer copies, not a weaker dif: the one

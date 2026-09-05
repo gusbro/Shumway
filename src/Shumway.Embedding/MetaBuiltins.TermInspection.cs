@@ -117,7 +117,7 @@ public static partial class MetaBuiltins
             if (arity < 0)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("not_less_than_zero", arityTerm));
-            if (arity > 255)   // current_prolog_flag(max_arity, 255)
+            if (arity > MaxArity)
                 throw new ShumwayPrologException(
                     IsoError.RepresentationError("max_arity"));
             if (arity == 0)
@@ -353,10 +353,24 @@ public static partial class MetaBuiltins
         }
     }
 
-    /// <summary>The <c>max_arity</c> flag's value — the WAM register layout
-    /// caps an argument list at what fits a uint16 index, and
-    /// current_prolog_flag/2 reports the same number.</summary>
-    private const int MaxArity = 255;
+    /// <summary>The <c>max_arity</c> flag's value: the largest arity a
+    /// compound term may have, and what <c>current_prolog_flag/2</c> reports.
+    ///
+    /// <para>It is a size, not a taste. Nothing in the machine wants a small
+    /// one: a heap reference is a 32-bit index, the functor table keeps the
+    /// arity in an int, bytecode operands are ints, and the argument
+    /// registers grow by doubling with no cap. What bounds a term is what a
+    /// term COSTS, which is N+1 cells of eight bytes, against the address
+    /// space the host has -- so the number comes from
+    /// <see cref="RuntimeCaps.MaxArity"/> and is smaller in a browser.</para>
+    ///
+    /// <para>A wide term of variables is how one models an array, and a
+    /// couple of hundred arguments is nowhere near the cost of anything. The
+    /// old value was 255 with a comment blaming a uint16 register index that
+    /// does not exist, and it was not even enforced: a 300-argument predicate
+    /// consulted, compiled and ran, while functor/3 alone refused to build
+    /// one.</para></summary>
+    internal static int MaxArity => RuntimeCaps.MaxArity;
 
     public static bool Univ(Activation engine)
     {
@@ -1414,7 +1428,7 @@ public static partial class MetaBuiltins
             if (arity.Value < 0)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("not_less_than_zero", arity));
-            if (arity.Value > 255)   // current_prolog_flag(max_arity, 255)
+            if (arity.Value > MaxArity)
                 throw new ShumwayPrologException(
                     IsoError.RepresentationError("max_arity"));
             int fid = FunctorTable.Intern(

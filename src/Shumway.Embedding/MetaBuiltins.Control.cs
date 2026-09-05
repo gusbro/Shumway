@@ -272,7 +272,7 @@ public static partial class MetaBuiltins
         if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (cell.Tag != Tag.Atom)
-            throw new Shumway.Core.PrologRuntimeException("type_error(atom, _)");
+            throw new Shumway.Core.PrologRuntimeException("type_error", "atom", engine, cell);
         string source = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
         // Trealla semantics: load_text does NOT auto-import a loaded module's
         // exports (ops included) into user — unlike a direct consult. Loading
@@ -313,7 +313,8 @@ public static partial class MetaBuiltins
                 string path = ConsultPipeline.ResolveSourcePath(a.Name);   // SWI-style: consult(algo) → algo.pl
                 if (!System.IO.File.Exists(path))
                     throw new Shumway.Core.PrologRuntimeException(
-                        $"existence_error(source_sink, '{path}')");
+                        "existence_error", "source_sink",
+                        (object)new Shumway.Compiler.Ast.AtomTerm(a.Name));
                 // Runtime consult: thread the live engine so source-declared dynamic
                 // clauses become visible to a later call in the same query.
                 host.ConsultFileLive(path, engine);
@@ -324,7 +325,8 @@ public static partial class MetaBuiltins
                 ConsultSpec(host, engine, fs);
                 return;
             default:
-                throw new Shumway.Core.PrologRuntimeException("type_error(atom, _)");
+                throw new Shumway.Core.PrologRuntimeException("type_error", "atom",
+                                                              (object)spec);
         }
     }
 
@@ -401,9 +403,10 @@ public static partial class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (cell.Tag != Tag.Atom)
             throw new Shumway.Core.PrologRuntimeException(
-                "type_error(atom, _)");
+                "type_error", "atom", engine, cell);
 
-        string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        string given = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        string path = given;
         // A relative name resolves against the directory of the file being
         // loaded, as `:- include/1` does — `:- ensure_loaded(file_1)` inside
         // dir/main.pl means dir/file_1.pl, not one relative to the CWD.
@@ -419,7 +422,8 @@ public static partial class MetaBuiltins
         path = resolved;
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
-                $"existence_error(source_sink, '{path}')");
+                "existence_error", "source_sink",
+                (object)new Shumway.Compiler.Ast.AtomTerm(given));
 
         // The whole difference from consult/1.
         if (host.IsLoadedAndUnchanged(path)) return true;
@@ -452,7 +456,7 @@ public static partial class MetaBuiltins
         if (arg is not (Shumway.Compiler.Ast.AtomTerm
             or Shumway.Compiler.Ast.CompoundTerm { Functor: "library", Args.Length: 1 }))
             throw new Shumway.Core.PrologRuntimeException(
-                "type_error(atom_or_library, _)");
+                "type_error", "atom_or_library", (object)arg);
 
         // Same resolution as the consult-time directive (file search path,
         // coroutining, compat libraries), returning the loaded export-qualified
@@ -540,12 +544,14 @@ public static partial class MetaBuiltins
         string path = RequireAtomPath(engine, register: 0, builtin: "restore/1");
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
-                $"existence_error(source_sink, '{path}')");
+                "existence_error", "source_sink",
+                (object)new Shumway.Compiler.Ast.AtomTerm(path));
         try { host.RestoreDbFromFile(engine, path); }
-        catch (InvalidDataException ex)
+        catch (InvalidDataException)
         {
             throw new Shumway.Core.PrologRuntimeException(
-                $"type_error(save_file, '{path}') /* {ex.Message} */");
+                "type_error", "save_file",
+                (object)new Shumway.Compiler.Ast.AtomTerm(path));
         }
         return true;
     }
@@ -561,12 +567,14 @@ public static partial class MetaBuiltins
         string path = RequireAtomPath(engine, register: 0, builtin: "restore_state/1");
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
-                $"existence_error(source_sink, '{path}')");
+                "existence_error", "source_sink",
+                (object)new Shumway.Compiler.Ast.AtomTerm(path));
         try { host.RestoreState(path); }
-        catch (InvalidDataException ex)
+        catch (InvalidDataException)
         {
             throw new Shumway.Core.PrologRuntimeException(
-                $"type_error(save_state_file, '{path}') /* {ex.Message} */");
+                "type_error", "save_state_file",
+                (object)new Shumway.Compiler.Ast.AtomTerm(path));
         }
         return true;
     }
@@ -578,7 +586,7 @@ public static partial class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (cell.Tag != Tag.Atom)
             throw new Shumway.Core.PrologRuntimeException(
-                "type_error(atom, _)");
+                "type_error", "atom", engine, cell);
         return AtomTable.GetById(cell.AsAtomId)?.Name
             ?? throw new InvalidOperationException(
                 $"{builtin}: atom id {cell.AsAtomId} has no entry in the atom table.");
@@ -601,7 +609,7 @@ public static partial class MetaBuiltins
         }
         if (cursor is AtomTerm { Name: "[]" }) return false;
         throw new Shumway.Core.PrologRuntimeException(
-            "type_error(list, _)");
+            "type_error", "list", (object)opts);
     }
 
     /// <summary><c>reconsult(+File)</c> — classical edit-reload semantics:
@@ -620,13 +628,14 @@ public static partial class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (cell.Tag != Tag.Atom)
             throw new Shumway.Core.PrologRuntimeException(
-                "type_error(atom, _)");
+                "type_error", "atom", engine, cell);
 
-        string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
-        path = ConsultPipeline.ResolveSourcePath(path);   // SWI-style: reconsult(algo) → algo.pl
+        string given = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        string path = ConsultPipeline.ResolveSourcePath(given);   // SWI-style: reconsult(algo) → algo.pl
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
-                $"existence_error(source_sink, '{path}')");
+                "existence_error", "source_sink",
+                (object)new Shumway.Compiler.Ast.AtomTerm(given));
 
         host.ReconsultFile(path);
         return true;

@@ -25,6 +25,7 @@ reference see [`predicates.md`](predicates.md).
 9. [.NET Framework hosts](#net-framework-hosts)
 10. [Logtalk](#logtalk)
 11. [Debugging](#debugging)
+12. [Limits](#limits)
 
 Related guides outside this document: [embedded native C](embedded-native-c.md)
 (`:- c` / `{…}` blocks), [the interop guide](interop.md) (every C# ↔ Prolog
@@ -303,6 +304,20 @@ variable is bound), `frozen/2`, `when/2` (delay on a general condition:
 identical). `?=/2` (decided (in)equality), `unifiable/3` (the unifier of
 two terms as a `V=Value` list), `term_attvars/2` and `call_residue_vars/2`
 are always available and need no library.
+
+A copy does not carry constraints. `copy_term/2` copies an attributed
+variable as a plain one, so the copy of a constrained term is an
+unconstrained term. What carries them is `copy_term/3`, which hands back
+the goals that put the attributes on the copy:
+
+```prolog
+?- freeze(X, foo), copy_term(X, Y, Goals), maplist(call, Goals).
+```
+
+leaves `Y` frozen on the same goal as `X`, while `copy_term(X, Y)` alone
+leaves `Y` a plain variable. The same three-argument form is what the top
+level uses to show residual constraints, and what the blackboard uses to
+store a constrained value.
 
 ### Running quad test transcripts
 
@@ -1312,3 +1327,29 @@ of each frame, and stepping through the Prolog ports.
   variable editing, Jump to Cursor, logpoints. Works against the REPL
   (`--dap`), any embedded host (`SHUMWAY_DAP_PORT`), and linked executables
   (`--dap-port`). See [`debugger-vscode.md`](debugger-vscode.md).
+
+---
+
+## Limits
+
+Integers are unbounded; the heap, the stacks and the trails grow as a query
+needs them. Three limits are deliberate.
+
+| Limit | Value | At the limit |
+|---|---|---|
+| Arity of a compound term | the `max_arity` flag: 536,870,911, or 16,777,215 where addresses are 32 bits | `representation_error(max_arity)` |
+| Expansions of one term or goal along one path | 127 | `resource_error(expansion_depth)` |
+| Items shown of one answer | 100, the `answer_max_depth` flag; 0 shows all | the rest reads as `...` |
+
+The arity is a size: a term of arity N costs N+1 cells of eight bytes, so the
+limit is the term of 4 GiB, or of 128 MiB in a browser and on a 32-bit host,
+where the whole address space is smaller than the 64-bit figure. A wide term of
+variables is how an array is modelled, and `functor(A, array, 1000000)` builds
+one.
+
+The expansion budget counts replacements along one path, not goals in a
+clause. A hook is applied again to what it produces, so one that expands a
+goal into itself never finishes; to recurse deeper on purpose, mark what is
+already expanded with the identifier list of `term_expansion/6`.
+
+Only answers are shortened. `write/1` prints what it is given.

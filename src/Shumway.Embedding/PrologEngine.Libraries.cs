@@ -781,7 +781,8 @@ public sealed partial class PrologEngine
                     // (4) genuinely unknown.
                     if (throwOnUnresolved)
                         throw new Shumway.Core.PrologRuntimeException(
-                            $"existence_error(library, {libName})");
+                            "existence_error", "library",
+                            (object)new Shumway.Compiler.Ast.AtomTerm(libName));
                     // Name WHERE it looked. "Unknown library" alone leaves the
                     // reader guessing between a misspelling, a search path that
                     // was never added, and a file that is not where it is
@@ -810,7 +811,8 @@ public sealed partial class PrologEngine
             {
                 if (throwOnUnresolved)
                     throw new Shumway.Core.PrologRuntimeException(
-                        $"existence_error(source_sink, '{fileAtom.Name}')");
+                        "existence_error", "source_sink",
+                        (object)new Shumway.Compiler.Ast.AtomTerm(fileAtom.Name));
                 Warn(
                     $"warning: use_module/1 target '{fileAtom.Name}' not found — ignored");
                 return null;

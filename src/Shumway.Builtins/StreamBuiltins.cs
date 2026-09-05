@@ -272,6 +272,14 @@ public static class StreamBuiltins
         {
             throw new PrologRuntimeException("existence_error", "source_sink", engine, pathCell);
         }
+        catch (UnauthorizedAccessException)
+        {
+            // What the host refuses (a directory, a read-only file) is a
+            // permission error and has to arrive as one: a bare CLR exception
+            // escapes catch/3 entirely.
+            throw new PrologRuntimeException("permission_error", "open,source_sink",
+                                             engine, pathCell);
+        }
         catch (IOException ex)
         {
             throw new PrologRuntimeException("system_error", ex.Message);
@@ -547,6 +555,14 @@ public static class StreamBuiltins
         catch (DirectoryNotFoundException)
         {
             throw new PrologRuntimeException("existence_error", "source_sink", engine, pathCell);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // What the host refuses (a directory, a read-only file) is a
+            // permission error and has to arrive as one: a bare CLR exception
+            // escapes catch/3 entirely.
+            throw new PrologRuntimeException("permission_error", "open,source_sink",
+                                             engine, pathCell);
         }
         catch (IOException ex)
         {

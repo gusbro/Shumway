@@ -72,7 +72,8 @@ public static partial class MetaBuiltins
         // not a builtin — the old isolated-sub-engine builtin hid the called
         // goals' side effects. See Prelude forall/2.
         BuiltinsRegistry.Register("copy_term", 2, CopyTerm,
-            Term, "copy_term(+Term, -Copy)", "Copies a term with fresh variables.");
+            Term, "copy_term(?Term, -Copy)",
+            "Copies a term with fresh variables. An attributed variable is copied as a plain one, so the copy carries none of the original's constraints; copy_term/3 hands back the goals that put them on the copy.");
         // Scryer system builtin (iso_ext's copy_term_nat/2 wraps it): a copy
         // where attributed variables come out as fresh PLAIN variables — which
         // is exactly what HeapTermCopy-backed copy_term/2 produces.
@@ -423,7 +424,7 @@ public static partial class MetaBuiltins
             + "A diagnostic: it reports what a term costs, not how it is stored.");
         BuiltinsRegistry.Register("statistics", 2, Statistics2,
             Reflect, "statistics(?Key, ?Value)",
-            "Timing/resource statistics: runtime/walltime give [Total_ms, SinceLast_ms]; cputime gives seconds.");
+            "Timing and resource statistics. runtime, walltime, user_time, system_time and cpu_time give [Total_ms, SinceLast_ms], the second element counted from the previous call with that same key; cputime and real_time give seconds as a float; global_stack (the heap), local_stack, trail_stack and cstr_stack give [UsedBytes, FreeBytes] of the running query; atoms gives [InUse, Free]. Any other key raises domain_error(statistics_key, Key).");
         BuiltinsRegistry.Register("predicate_property", 2, PredicateProperty,
             Reflect, "predicate_property(+Head, ?Property)",
             "Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate.");

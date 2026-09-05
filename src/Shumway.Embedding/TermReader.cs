@@ -62,6 +62,8 @@ public static class TermReader
         // 1 = Assemble a compound (STR/FUNCTOR) from Arity results.
         // 2 = Assemble a cons cell from 2 results (head, tail).
         // 3 = Prepend a packed text run to 1 result (the PSTR's tail).
+        // 4 = Push the marker for a part of the term the budget did not
+        //     reach, without touching the heap for it.
         public readonly int Kind;
         // Expand: the heap index to materialize.
         // Assemble: the functor/cons address to drop from the active path set.
@@ -85,6 +87,7 @@ public static class TermReader
         // one-character atoms, a run of codes prepends integers.
         public static Frame PrependText(string text, int consFid, int exitAddr, TextKind kind)
             => new(3, exitAddr, (int)kind, text, consFid);
+        public static Frame Ellipsis() => new(4, 0, 0, null, 0);
     }
 
     /// <summary>Materializes the term reachable from <paramref name="heapIdx"/>
@@ -178,6 +181,10 @@ public static class TermReader
                             : new CompoundTerm(".", new[] { head, tail }, f.FunctorId));
                         break;
                     }
+
+                    case 4:   // the part the budget did not reach
+                        results.Add(new AtomTerm("..."));
+                        break;
 
                     default:  // case 3: prepend a PSTR's packed run to its tail
                     {
@@ -315,9 +322,26 @@ public static class TermReader
                 Cell functorCell = engine.GetHeap(functorIdx);
                 var (atomId, arity) = FunctorTable.Lookup(functorCell.AsFunctorId);
                 string name = NameOfAtom(atomId);
-                work.Add(Frame.BuildStr(name, arity, functorCell.AsFunctorId, functorIdx));
+                // A display of a WIDE term does not need the width. One frame
+                // per argument meant a million arguments cost a million
+                // ellipses and printed every one of them: the budget bounded
+                // what the answer said and not what it cost to say. Take what
+                // the budget can still reach and let one marker stand for the
+                // rest, which is what a list's tail has always done.
+                int shown = arity;
+                if (budget < arity)
+                {
+                    shown = budget > 0 ? budget : 0;
+                    work.Add(Frame.BuildStr(name, shown + 1, functorCell.AsFunctorId,
+                                            functorIdx));
+                    work.Add(Frame.Ellipsis());
+                }
+                else
+                {
+                    work.Add(Frame.BuildStr(name, arity, functorCell.AsFunctorId, functorIdx));
+                }
                 // Push args in reverse so arg 0 is popped/expanded first.
-                for (int i = arity - 1; i >= 0; i--)
+                for (int i = shown - 1; i >= 0; i--)
                     work.Add(Frame.Expand(functorIdx + 1 + i));
                 break;
             }

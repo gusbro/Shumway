@@ -483,11 +483,10 @@ public static partial class MetaBuiltins
                 return false;
 
             case "max_arity":
-                // ISO requires this be either an integer or
-                // unbounded. Shumway's WAM register layout limits
-                // arity to fit in a uint16; pick a comfortably large
-                // value here.
-                return engine.UnifyRegisterWithCell(1, Cell.Int(255));
+                // ISO allows an integer or unbounded. It is an integer here
+                // because the limit is a real one: see MaxArity, where the
+                // number is the arity whose term fills 4 GiB of heap.
+                return engine.UnifyRegisterWithCell(1, Cell.Int(MaxArity));
 
             default:
                 // §8.17.2.3: an atom that names no flag is a domain error,
@@ -550,9 +549,16 @@ public static partial class MetaBuiltins
     /// (float).</item>
     /// <item><c>real_time</c> — wall-clock seconds since the engine started
     /// (float).</item>
+    /// <item><c>user_time</c> / <c>system_time</c> / <c>cpu_time</c> —
+    /// <c>[Total_ms, SinceLast_ms]</c>, split as the host reports it.</item>
+    /// <item><c>global_stack</c> (the heap) / <c>local_stack</c> /
+    /// <c>trail_stack</c> / <c>cstr_stack</c> — <c>[UsedBytes, FreeBytes]</c>
+    /// of the running query's areas.</item>
+    /// <item><c>atoms</c> — <c>[InUse, Free]</c> of the process-wide table.</item>
     /// </list>
-    /// An unrecognised key unifies with <c>[0, 0]</c> (lenient, so a program
-    /// probing several keys keeps working).</summary>
+    /// Any other key raises <c>domain_error(statistics_key, Key)</c>, a
+    /// non-atom included: answering an unknown key with zeroes reads as a
+    /// measurement and is not one.</summary>
     /// <summary><c>'$heap_live'(-Live, -Total, -AttrRecords)</c> — runs the mark
     /// phase and reports how many heap cells are reachable plus how many
     /// attribute records the table holds, without moving anything. Answers "how
@@ -665,23 +671,32 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "statistics/2 requires the engine to be hosted by a PrologEngine.");
         Cell keyCell = ResolveLocal(engine, engine.GetRegister(0));
-        if (keyCell.Tag == Tag.Ref)
+        if (keyCell.Tag == Tag.Ref || keyCell.Tag == Tag.AttVar)
             throw new ShumwayPrologException(IsoError.InstantiationError());
-        if (keyCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(
-                IsoError.TypeError("atom", new VarTerm("_")));
-        string key = AtomTable.GetById(keyCell.AsAtomId)?.Name ?? "";
+        string key = keyCell.Tag == Tag.Atom
+            ? AtomTable.GetById(keyCell.AsAtomId)?.Name ?? "" : "";
         switch (key)
         {
             case "runtime":
+            case "cpu_time":
             {
                 long total = PrologEngine.StatsRuntimeMs();
-                return UnifyMsPair(engine, total, host.StatsTakeRuntimeDelta(total));
+                return UnifyMsPair(engine, total, host.StatsTakeDelta(key, total));
+            }
+            case "user_time":
+            {
+                long total = PrologEngine.StatsUserTimeMs();
+                return UnifyMsPair(engine, total, host.StatsTakeDelta(key, total));
+            }
+            case "system_time":
+            {
+                long total = PrologEngine.StatsSystemTimeMs();
+                return UnifyMsPair(engine, total, host.StatsTakeDelta(key, total));
             }
             case "walltime":
             {
                 long total = host.StatsWalltimeMs();
-                return UnifyMsPair(engine, total, host.StatsTakeWalltimeDelta(total));
+                return UnifyMsPair(engine, total, host.StatsTakeDelta(key, total));
             }
             case "cputime":
             case "process_cputime":
@@ -690,8 +705,35 @@ public static partial class MetaBuiltins
             case "real_time":
                 return engine.UnifyRegisterWithCell(1, Materializer.MaterializeAsCell(
                     engine, new FloatTerm(host.StatsWalltimeMs() / 1000.0)));
+            // Areas, in bytes, of the query that is asking: used and still
+            // free, which is what the GNU keys mean.
+            case "global_stack":
+                return UnifyMsPair(engine, (long)engine.HeapTop * 8,
+                                   (long)(engine.HeapCapacity - engine.HeapTop) * 8);
+            case "local_stack":
+                return UnifyMsPair(engine, (long)engine.StackTop * 8,
+                                   (long)(engine.StackCapacity - engine.StackTop) * 8);
+            case "trail_stack":
+                return UnifyMsPair(engine, (long)engine.BindingTrailTop * 8,
+                                   (long)(engine.BindingTrailCapacity
+                                          - engine.BindingTrailTop) * 8);
+            // ADR-004: the second trail is where the constraint bookkeeping
+            // (attribute records, wakeups) is undone from.
+            case "cstr_stack":
+                return UnifyMsPair(engine, (long)engine.ExtraTrailTop * 8,
+                                   (long)(engine.ExtraTrailCapacity
+                                          - engine.ExtraTrailTop) * 8);
+            case "atoms":
+                return UnifyMsPair(engine,
+                                   AtomTable.TransientCount + AtomTable.PermanentCount,
+                                   0);
             default:
-                return UnifyMsPair(engine, 0, 0);
+            {
+                Term culprit = engine.MaterializeCellToTerm is { } mat
+                    && mat(keyCell) is Term t ? t : new VarTerm("_");
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("statistics_key", culprit));
+            }
         }
     }
 

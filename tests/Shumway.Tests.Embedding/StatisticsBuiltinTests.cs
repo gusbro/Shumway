@@ -115,12 +115,75 @@ public class StatisticsBuiltinTests
     }
 
     [Fact]
-    public void UnknownKey_IsLenient()
+    public void AnUnknownKeyIsRefused()
+    {
+        // Answering an unknown key with [0, 0] reads as a measurement and is
+        // not one: a program probing several keys was told every one of them
+        // cost nothing.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(statistics(some_unknown_key, _), "
+            + "error(domain_error(statistics_key, some_unknown_key), _), true).").Success);
+        // And it no longer answers the old lie, in the loudest way available:
+        // an uncaught ball rather than a quiet [0, 0].
+        Assert.Throws<Shumway.Embedding.ShumwayPrologException>(
+            () => e.Query("statistics(some_unknown_key, [0, 0])."));
+    }
+
+    [Fact]
+    public void ANonAtomKeyNamesItselfInTheError()
+    {
+        // The culprit slot has to carry the key that was passed. An unbound
+        // variable there says nothing about what went wrong.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(statistics(1+1, _), error(domain_error(statistics_key, 1+1), _), true).")
+            .Success);
+        Assert.True(e.Query(
+            "catch(statistics(_, _), error(instantiation_error, _), true).").Success);
+    }
+
+    [Theory]
+    // The keys of the dialect this predicate comes from, answered from the
+    // running query's own areas rather than with zeroes.
+    [InlineData("user_time")]
+    [InlineData("system_time")]
+    [InlineData("cpu_time")]
+    public void TheCpuTimeKeysGiveAPair(string key)
     {
         var e = new PrologEngine();
-        // A key we do not special-case unifies with [0, 0] rather than failing,
-        // so a program probing several keys keeps working.
-        Assert.True(e.Query("statistics(some_unknown_key, [0, 0]).").Success);
+        Assert.True(e.Query(
+            $"statistics({key}, [Total, Since]), integer(Total), integer(Since).").Success);
+    }
+
+    [Fact]
+    public void TheAreaKeysReportTheRunningQuery()
+    {
+        var e = new PrologEngine();
+        // The heap of a query that has just built a term is not empty, and
+        // that is the difference between a real number and a placeholder.
+        var s = e.Query("length(L, 100), statistics(global_stack, [Used, Free]).");
+        Assert.True(s.Success);
+        Assert.True(((IntTerm)s["Used"]!).Value > 0);
+        Assert.True(((IntTerm)s["Free"]!).Value >= 0);
+        Assert.True(e.Query("statistics(local_stack, [_, _]).").Success);
+        Assert.True(e.Query("statistics(trail_stack, [_, _]).").Success);
+        Assert.True(e.Query("statistics(cstr_stack, [_, _]).").Success);
+        Assert.True(e.Query("statistics(atoms, [N, _]), N > 100.").Success);
+    }
+
+    [Fact]
+    public void EachKeyCountsItsOwnDelta()
+    {
+        // Two keys share no reference: asking runtime must not zero the
+        // walltime delta, or the classic timing idiom reports nothing when a
+        // program measures both.
+        var e = new PrologEngine();
+        Assert.True(e.Query("statistics(runtime, _), statistics(walltime, _).").Success);
+        var s = e.Query(
+            "( between(1, 200000, _), fail ; true ), statistics(walltime, [_, D]).");
+        Assert.True(s.Success);
+        Assert.True(((IntTerm)s["D"]!).Value >= 0);
     }
 
     [Fact]

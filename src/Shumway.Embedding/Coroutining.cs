@@ -40,26 +40,43 @@ internal static class Coroutining
         :- public '$co_alias_check'/1.
         :- public '$when_fire'/1.
         :- public '$dif_wake'/1.
+        :- public '$co_goal'/1.
 
-        % The attribute value is frozen(Goal) where Goal is one goal or a
-        % (G1, G2) conjunction, oldest first — waking runs them in the
-        % order they were frozen.
+        % The attribute value is frozen(Goal), where Goal is one wrapped goal
+        % or a (G1, G2) conjunction of them, oldest first: waking runs them in
+        % the order they were frozen.
+        %
+        % Each goal is stored wrapped in '$co_goal'/1 for two reasons at once.
+        % It runs the goal through call/1, so a cut inside it is that goal's
+        % own cut and cannot prune what a DIFFERENT frozen goal still had to
+        % offer. And it records where one frozen goal ends and the next
+        % begins, which a bare conjunction cannot: freeze(X, (a, b)) and
+        % freeze(X, a), freeze(X, b) would otherwise store the same term and
+        % they do not mean the same thing.
 
         %! freeze(?Var, :Goal) | Coroutining | Delays Goal until Var is bound; runs it at once when Var is already bound.
         freeze(X, Goal) :-
             ( var(X) ->
                 ( get_attr(X, coroutining, frozen(G0)) ->
-                    put_attr(X, coroutining, frozen((G0, Goal)))
-                ; put_attr(X, coroutining, frozen(Goal))
+                    put_attr(X, coroutining, frozen((G0, '$co_goal'(Goal))))
+                ; put_attr(X, coroutining, frozen('$co_goal'(Goal)))
                 )
             ; call(Goal)
             ).
 
+        '$co_goal'(G) :- call(G).
+
         %! frozen(?Var, -Goal) | Coroutining | Unifies Goal with the conjunction of goals delayed on Var (true when none).
         frozen(X, G) :-
-            ( var(X), get_attr(X, coroutining, frozen(G0)) -> G = G0
+            ( var(X), get_attr(X, coroutining, frozen(G0)) -> '$co_unwrap'(G0, G)
             ; G = true
             ).
+
+        % The goals as they were written, without the wrapper the store adds.
+        '$co_unwrap'(G, Out) :- var(G), !, Out = G.
+        '$co_unwrap'((A, B), (A1, B1)) :- !, '$co_unwrap'(A, A1), '$co_unwrap'(B, B1).
+        '$co_unwrap'('$co_goal'(G), G) :- !.
+        '$co_unwrap'(G, G).
 
         %! when(+Condition, :Goal) | Coroutining | Runs Goal as soon as Condition becomes true. Condition is nonvar(X), ground(X), ?=(X,Y), or a (,)/(;) of these.
         when(Condition, Goal) :-
@@ -172,9 +189,11 @@ internal static class Coroutining
             var(V),
             get_attr(V, coroutining, frozen(G)),
             '$dif_conj_holds'(G, A, B).
+        '$dif_conj_holds'(G, _, _) :- var(G), !, fail.
         '$dif_conj_holds'((P, Q), A, B) :-
             !,
             ( '$dif_conj_holds'(P, A, B) -> true ; '$dif_conj_holds'(Q, A, B) ).
+        '$dif_conj_holds'('$co_goal'(G), A, B) :- !, '$dif_conj_holds'(G, A, B).
         '$dif_conj_holds'('$dif_wake'(dif_c(X, Y, Alive)), A, B) :-
             Alive \== dead,
             ( X == A, Y == B -> true ; X == B, Y == A ).
@@ -254,6 +273,8 @@ internal static class Coroutining
             ).
 
         % The two records one constraint leaves in two variables.
+        '$co_shared_record'(G) :- var(G), !, fail.
+        '$co_shared_record'('$co_goal'(G)) :- !, '$co_shared_record'(G).
         '$co_shared_record'('$dif_wake'(_)).
         '$co_shared_record'('$when_fire'(_)).
 
@@ -273,6 +294,7 @@ internal static class Coroutining
         '$co_alias_check'(G) :- var(G), !.
         '$co_alias_check'((A, B)) :-
             !, '$co_alias_check'(A), '$co_alias_check'(B).
+        '$co_alias_check'('$co_goal'(G)) :- !, '$co_alias_check'(G).
         '$co_alias_check'('$dif_wake'(dif_c(X, Y, Alive))) :-
             !, ( Alive == dead -> true ; X \== Y ).
         '$co_alias_check'('$when_fire'(Trigger)) :-
@@ -368,6 +390,7 @@ internal static class Coroutining
             !,
             co_project(A, V, Goals, Mid),
             co_project(B, V, Mid, Tail).
+        co_project('$co_goal'(G), V, Goals, Tail) :- !, co_project(G, V, Goals, Tail).
         co_project('$dif_wake'(dif_c(X, Y, Alive)), V, Goals, Tail) :-
             !,
             ( Alive \== dead, '$co_owner'((X, Y), V)

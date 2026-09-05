@@ -37,9 +37,11 @@ public class UseModuleTests
     public void UseModule_UnknownLibrary_RaisesExistenceError()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<PrologRuntimeException>(
-            () => engine.Query("use_module(library(nope)).") );
-        Assert.Contains("existence_error(library, nope)", ex.Message);
+        Assert.True(engine.Query(
+            "catch(use_module(library(nope)), "
+            + "error(existence_error(library, nope), _), true).").Success);
+        Assert.Throws<PrologRuntimeException>(
+            () => engine.Query("use_module(library(nope))."));
     }
 
     [Fact]

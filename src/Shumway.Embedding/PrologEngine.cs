@@ -62,8 +62,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     // `statistics(runtime, _), Work, statistics(runtime, [_, Delta])` idiom
     // reports the elapsed time between two calls.
     private readonly long _statsWallStart = System.Diagnostics.Stopwatch.GetTimestamp();
-    private long _statsLastRuntimeMs;
-    private long _statsLastWalltimeMs;
+    private readonly System.Collections.Generic.Dictionary<string, long> _statsLast = new();
 
     /// <summary>Wall-clock milliseconds since this engine was created.</summary>
     internal long StatsWalltimeMs() =>
@@ -83,22 +82,33 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         (long)System.Environment.CpuUsage.TotalTime.TotalMilliseconds;
 #endif
 
-    /// <summary>The runtime delta since the previous <c>statistics(runtime, _)</c>
-    /// call, updating the reference.</summary>
-    internal long StatsTakeRuntimeDelta(long total)
-    {
-        long d = total - _statsLastRuntimeMs;
-        _statsLastRuntimeMs = total;
-        return d;
-    }
+    /// <summary>Process CPU milliseconds spent in user code — the GNU
+    /// <c>user_time</c> series, which is the same clock split.</summary>
+    internal static long StatsUserTimeMs() =>
+#if NETFRAMEWORK
+        (long)System.Diagnostics.Process.GetCurrentProcess()
+            .UserProcessorTime.TotalMilliseconds;
+#else
+        (long)System.Environment.CpuUsage.UserTime.TotalMilliseconds;
+#endif
 
-    /// <summary>The walltime delta since the previous
-    /// <c>statistics(walltime, _)</c> call, updating the reference.</summary>
-    internal long StatsTakeWalltimeDelta(long total)
+    /// <summary>Process CPU milliseconds spent in the kernel on this
+    /// process's behalf — the GNU <c>system_time</c> series.</summary>
+    internal static long StatsSystemTimeMs() =>
+#if NETFRAMEWORK
+        (long)System.Diagnostics.Process.GetCurrentProcess()
+            .PrivilegedProcessorTime.TotalMilliseconds;
+#else
+        (long)System.Environment.CpuUsage.PrivilegedTime.TotalMilliseconds;
+#endif
+
+    /// <summary>The delta for one statistics key since the previous call with
+    /// that key, updating the reference.</summary>
+    internal long StatsTakeDelta(string key, long total)
     {
-        long d = total - _statsLastWalltimeMs;
-        _statsLastWalltimeMs = total;
-        return d;
+        _statsLast.TryGetValue(key, out long previous);
+        _statsLast[key] = total;
+        return total - previous;
     }
 
     /// <summary>Per-engine <c>flag/3</c> store (SWI). A global,

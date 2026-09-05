@@ -193,6 +193,23 @@ public sealed partial class PrologEngine
         }
     }
 
+    // How many times a term or a goal may be REPLACED along one path before
+    // this gives up. A hook that expands its own output does not terminate,
+    // and no system bounds that for you: the ones that survive it survive by
+    // not walking user data on the machine stack, which is what the explicit
+    // stack in ExpandGoalTree is for. The budget is what turns the survivor
+    // into a report rather than a program that never finishes loading. It
+    // counts re-expansions on the current path only, so a clause with a
+    // thousand goals in it, each expanded once, is not near it.
+    internal const int ExpansionBudget = 127;
+
+    // Raised when the budget runs out. A resource error is what it is: the
+    // processor allotted a bounded number of expansions and the program asked
+    // for more. The clause and its position come from the consult report,
+    // which is where the culprit is actually looked for.
+    private static ShumwayPrologException ExpansionRunaway() =>
+        new(IsoError.ResourceError("expansion_depth"));
+
     // The Prolog term_expansion/2 hook: call the user predicate
     // `term_expansion(Input, Expanded)` in the live engine (works mid-consult) and
     // return its expansion. A term_expansion result that is a PROPER LIST is a list
@@ -203,7 +220,8 @@ public sealed partial class PrologEngine
     internal bool TryPrologTermExpansion(Term input, out List<Term> output)
     {
         output = new List<Term>();
-        return ExpandTermFixpoint(input, output, 64, new AtomTerm("[]")) && output.Count switch
+        return ExpandTermFixpoint(input, output, ExpansionBudget, new AtomTerm("[]"))
+            && output.Count switch
         {
             // The fixpoint always adds the input itself when nothing expanded;
             // report "no expansion" in that case so the caller keeps the original.
@@ -237,14 +255,15 @@ public sealed partial class PrologEngine
             var one = new List<Term>();
             if (TryPrologTermExpansionOnce(term, one)) repl = one;
         }
-        // No hook fired, or the sole result is the term unchanged, or we've hit the
-        // depth bound → this term is final.
-        if (repl is null || depth <= 0
-            || (repl.Count == 1 && repl[0].Equals(term)))
+        // No hook fired, or the sole result is the term unchanged → this term
+        // is final. Out of budget is NOT that: stopping there quietly hands
+        // the compiler a half-expanded clause nobody wrote.
+        if (repl is null || (repl.Count == 1 && repl[0].Equals(term)))
         {
             output.Add(term);
             return true;
         }
+        if (depth <= 0) throw ExpansionRunaway();
         foreach (var t in repl)
         {
             // A DIRECTIVE in a hook's output is an instruction to the compiler,
@@ -545,44 +564,102 @@ public sealed partial class PrologEngine
     /// must rewrite like any body goal).</summary>
     internal Term ExpandGoalTreeIn(Term goal) => ExpandGoalTree(goal);
 
+    // One node of the walk below: the control construct being rebuilt, the
+    // argument it is on, and the budget it had on the way in.
+    private sealed class GoalFrame
+    {
+        internal readonly CompoundTerm Node;
+        internal readonly int BudgetOnEntry;
+        internal Term[]? NewArgs;
+        internal int Index;
+        internal GoalFrame(CompoundTerm node, int budget)
+        {
+            Node = node;
+            BudgetOnEntry = budget;
+        }
+    }
+
+    // Walks the cut-transparent control constructs and applies goal_expansion
+    // (C# then Prolog) to each plain body goal.
+    //
+    // Iterative on purpose. A goal tree is user data and a hook may make it as
+    // deep as it likes, and the machine stack is not where user data gets
+    // walked: a stack overflow kills the process and no program can catch it.
+    // The budget rides the path rather than the whole tree, restored whenever
+    // a subtree is finished, so it bounds a goal that keeps expanding into
+    // itself and not a clause that simply has many goals in it.
     private Term ExpandGoalTree(Term goal)
     {
-        // A VARIABLE goal is a runtime meta-call — goal_expansion must not
-        // touch it: a hook's head pattern would UNIFY into the variable
-        // (dcgs's `goal_expansion(phrase(B,S), phrase(B,S,[]))` turned clpz's
-        // `( Repeat -> ... )` condition into an orphaned `phrase(_,_,[])`,
-        // destroying the goal). Scryer's expand_goal skips vars the same way.
-        if (goal is VarTerm) return goal;
-        if (goal is CompoundTerm c && IsGoalControl(c.Functor, c.Args.Length))
+        var stack = new List<GoalFrame>();
+        Term current = goal;
+        int budget = ExpansionBudget;
+        while (true)
         {
-            Term[]? args = null;
-            for (int i = 0; i < c.Args.Length; i++)
+            Term done;
+            while (true)
             {
-                Term ex = ExpandGoalTree(c.Args[i]);
-                if (!ReferenceEquals(ex, c.Args[i]))
-                    (args ??= (Term[])c.Args.Clone())[i] = ex;
+                // A VARIABLE goal is a runtime meta-call — goal_expansion must
+                // not touch it: a hook's head pattern would UNIFY into the
+                // variable (dcgs's `goal_expansion(phrase(B,S), phrase(B,S,[]))`
+                // turned clpz's `( Repeat -> ... )` condition into an orphaned
+                // `phrase(_,_,[])`, destroying the goal). Scryer's expand_goal
+                // skips vars the same way.
+                if (current is VarTerm) { done = current; break; }
+                if (current is CompoundTerm c && IsGoalControl(c.Functor, c.Args.Length))
+                {
+                    stack.Add(new GoalFrame(c, budget));
+                    current = c.Args[0];
+                    continue;
+                }
+                // Plain goal — expand until it stops changing. A hook that
+                // rewrites a to b and b back to a never gets there, and it is
+                // the same runaway as one that expands into itself: the same
+                // budget bounds both, and running out is reported rather than
+                // silently settling on whichever of the two came up last.
+                Term g = current;
+                while (true)
+                {
+                    Term? next = ApplyCsGoalExpansion(g)
+                        ?? (HasPrologGoalExpansion && TryPrologGoalExpansion(g, out var pe)
+                            ? pe : null);
+                    if (next is null || next.Equals(g)) break;
+                    if (--budget <= 0) throw ExpansionRunaway();
+                    g = next;
+                }
+                // The replacement may itself be a CONTROL construct whose
+                // subgoals still need expanding — clpz's own goal_expansion
+                // rewrites get_attr/3 into (var(V), get_atts(V, Access)), and
+                // that get_atts needs the atts hook that bakes the calling
+                // module in. Without the re-walk it resolved to the
+                // user-module fallback and read nothing.
+                if (!ReferenceEquals(g, current)
+                    && g is CompoundTerm gc && IsGoalControl(gc.Functor, gc.Args.Length))
+                {
+                    current = g;
+                    continue;
+                }
+                done = g;
+                break;
             }
-            return args is null ? goal
-                : new CompoundTerm(c.Functor, args) { Position = c.Position };
+            while (true)
+            {
+                if (stack.Count == 0) return done;
+                GoalFrame f = stack[stack.Count - 1];
+                if (!ReferenceEquals(done, f.Node.Args[f.Index]))
+                    (f.NewArgs ??= (Term[])f.Node.Args.Clone())[f.Index] = done;
+                f.Index++;
+                if (f.Index < f.Node.Args.Length)
+                {
+                    budget = f.BudgetOnEntry;   // a sibling starts fresh
+                    current = f.Node.Args[f.Index];
+                    break;
+                }
+                stack.RemoveAt(stack.Count - 1);
+                budget = f.BudgetOnEntry;
+                done = f.NewArgs is null ? f.Node
+                    : new CompoundTerm(f.Node.Functor, f.NewArgs) { Position = f.Node.Position };
+            }
         }
-        // Plain goal — expand (bounded fixpoint so g→g' →g'' converges).
-        Term g = goal;
-        for (int i = 0; i < 8; i++)
-        {
-            Term? next = ApplyCsGoalExpansion(g)
-                ?? (HasPrologGoalExpansion && TryPrologGoalExpansion(g, out var pe) ? pe : null);
-            if (next is null || next.Equals(g)) break;
-            g = next;
-        }
-        if (ReferenceEquals(g, goal)) return goal;
-        // The replacement may itself be a CONTROL construct whose subgoals
-        // still need expanding — clpz's own goal_expansion rewrites
-        // get_attr/3 into (var(V), get_atts(V, Access)), and that get_atts
-        // needs the atts hook that bakes the calling module in. Without the
-        // re-walk it resolved to the user-module fallback and read nothing.
-        if (g is CompoundTerm gc && IsGoalControl(gc.Functor, gc.Args.Length))
-            return ExpandGoalTree(g);
-        return g;
     }
 
     // The control constructs whose arguments are themselves goals (walked, not
