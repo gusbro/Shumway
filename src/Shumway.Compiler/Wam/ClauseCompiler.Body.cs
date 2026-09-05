@@ -120,6 +120,13 @@ public sealed partial class ClauseCompiler
                 s.Emitter.EmitGetBigInt(_bigIntLiterals.Intern(bn.Value), argSlot);
                 break;
 
+            // ADR-039: a rational reaches a clause only through assert/1 of a
+            // computed value. Its two parts intern in the integer pool.
+            case RationalTerm rt:
+                s.Emitter.EmitGetRational(
+                    _bigIntLiterals.Intern(rt.Num), _bigIntLiterals.Intern(rt.Den), argSlot);
+                break;
+
             case VarTerm v when v.Name == "_":
                 // Anonymous — no constraint, no opcode.
                 return;
@@ -245,6 +252,8 @@ public sealed partial class ClauseCompiler
             case AtomTerm a: sb.Append('\'').Append(a.Name); return true;
             case IntTerm n: sb.Append('#').Append(n.Value); return true;
             case BigIntTerm b: sb.Append('#').Append(b.Value); return true;
+            case RationalTerm r:
+                sb.Append('#').Append(r.Num).Append('/').Append(r.Den); return true;
             case CompoundTerm c:
                 if (depth >= StructuralKeyMaxDepth) return false;   // too deep to CSE
                 sb.Append(c.Functor).Append('/').Append(c.Args.Length).Append('(');
@@ -484,6 +493,11 @@ public sealed partial class ClauseCompiler
 
             case BigIntTerm bn:
                 s.Emitter.EmitUnifyBigInt(_bigIntLiterals.Intern(bn.Value));
+                break;
+
+            case RationalTerm rt:
+                s.Emitter.EmitUnifyRational(
+                    _bigIntLiterals.Intern(rt.Num), _bigIntLiterals.Intern(rt.Den));
                 break;
 
             case VarTerm v when v.Name == "_":
@@ -1036,6 +1050,11 @@ public sealed partial class ClauseCompiler
 
             case BigIntTerm bn:
                 s.Emitter.EmitPutBigInt(_bigIntLiterals.Intern(bn.Value), argSlot);
+                break;
+
+            case RationalTerm rt:
+                s.Emitter.EmitPutRational(
+                    _bigIntLiterals.Intern(rt.Num), _bigIntLiterals.Intern(rt.Den), argSlot);
                 break;
 
             case VarTerm v when v.Name == "_":

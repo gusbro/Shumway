@@ -393,6 +393,16 @@ public sealed class BytecodeEmitter
         EmitInt(argSlot);
     }
 
+    /// <summary>ADR-039: the two ids name the numerator and the denominator in
+    /// the BigInt pool.</summary>
+    public void EmitGetRational(int numLitId, int denLitId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.GetRational);
+        EmitInt(numLitId);
+        EmitInt(denLitId);
+        EmitInt(argSlot);
+    }
+
     public void EmitGetPstr(int stringLitId, int argSlot)
     {
         _bytes.Add((byte)Opcode.GetPstr);
@@ -546,6 +556,14 @@ public sealed class BytecodeEmitter
         EmitInt(argSlot);
     }
 
+    public void EmitPutRational(int numLitId, int denLitId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.PutRational);
+        EmitInt(numLitId);
+        EmitInt(denLitId);
+        EmitInt(argSlot);
+    }
+
     public void EmitPutBigInt(int bigIntLitId, int argSlot)
     {
         _bytes.Add((byte)Opcode.PutBigInt);
@@ -662,6 +680,13 @@ public sealed class BytecodeEmitter
     {
         _bytes.Add((byte)Opcode.UnifyFloat);
         EmitInt(floatLitId);
+    }
+
+    public void EmitUnifyRational(int numLitId, int denLitId)
+    {
+        _bytes.Add((byte)Opcode.UnifyRational);
+        EmitInt(numLitId);
+        EmitInt(denLitId);
     }
 
     public void EmitUnifyBigInt(int bigIntLitId)

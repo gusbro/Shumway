@@ -336,6 +336,19 @@ public enum Opcode : byte
     // Extension escape — reserved, never dispatched.
     ReservedExtension = 0x66,
 
+    // ---------- Rational literal opcodes (ADR-039) ----------
+    // A rational reaches a clause only through assert/1 of a computed value:
+    // there is no source literal for one. Each instruction carries TWO ids
+    // into the BIGINT literal pool, the numerator's and the denominator's --
+    // a rational is a pair of integers, so its parts intern where integers
+    // already do, and no fourth pool (nor a bundle table) is needed.
+    //   get_rational   <numLit:int32> <denLit:int32> <reg:int32>   13 bytes
+    //   put_rational   <numLit:int32> <denLit:int32> <reg:int32>   13 bytes
+    //   unify_rational <numLit:int32> <denLit:int32>                9 bytes
+    GetRational = 0x67,
+    PutRational = 0x68,
+    UnifyRational = 0x69,
+
     // 0x67-0x70 once parked a "reserved specialised-builtin" family
     // (unify_eq, is_op, the comparison ops) that predated ADR-018's
     // arithmetic instruction set and the phase-26 inline `=/2`. Never

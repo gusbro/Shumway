@@ -32,6 +32,10 @@ public class OpcodeTableTests
     [InlineData(Opcode.GetPstr, 9, 2, "get_pstr")]
     [InlineData(Opcode.Meta, 6, 0, "meta")]
     [InlineData(Opcode.ReservedExtension, 1, 0, "reserved_extension")]
+    // ADR-039: two literal ids, so one operand wider than their bigint twins.
+    [InlineData(Opcode.GetRational, 13, 3, "get_rational")]
+    [InlineData(Opcode.PutRational, 13, 3, "put_rational")]
+    [InlineData(Opcode.UnifyRational, 9, 2, "unify_rational")]
     public void Get_ReturnsDocumentedEntry(Opcode op, byte size, byte numOperands, string mnemonic)
     {
         var info = OpcodeTable.Get(op);
@@ -50,6 +54,18 @@ public class OpcodeTableTests
         Assert.Equal(2, info.OperandKinds!.Length);
         Assert.Equal(OperandKind.Atom, info.OperandKinds[0]);
         Assert.Equal(OperandKind.Reg, info.OperandKinds[1]);
+    }
+
+    [Fact]
+    public void RationalOperandsAreBothLiteralIds()
+    {
+        // Both name the BIGINT pool: the numerator and the denominator of a
+        // value that has no literal of its own.
+        var info = OpcodeTable.Get(Opcode.GetRational);
+        Assert.Equal(OperandKind.LiteralId, info.OperandKinds![0]);
+        Assert.Equal(OperandKind.LiteralId, info.OperandKinds[1]);
+        Assert.Equal(OperandKind.Reg, info.OperandKinds[2]);
+        Assert.Equal(2, OpcodeTable.Get(Opcode.UnifyRational).OperandKinds!.Length);
     }
 
     [Fact]

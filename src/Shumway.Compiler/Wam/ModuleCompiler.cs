@@ -294,6 +294,9 @@ public sealed class ModuleCompiler
                     or (byte)Opcode.PutFloat or (byte)Opcode.UnifyFloat
                     or (byte)Opcode.GetBigInt or (byte)Opcode.PutBigInt
                     or (byte)Opcode.UnifyBigInt
+                    // ADR-039: both ids name the same audited BigInt pool.
+                    or (byte)Opcode.GetRational or (byte)Opcode.PutRational
+                    or (byte)Opcode.UnifyRational
                     or (byte)Opcode.GetPstr or (byte)Opcode.PutPstr;
                 for (int i = 0; i < info.OperandKinds.Length; i++)
                 {
