@@ -767,6 +767,40 @@ Sets the argument register to a PSTR literal.
 
 ---
 
+## Rational instructions
+
+A rational has no source literal (ADR-039), so it reaches a clause only
+through `assert` of a computed value. Each instruction carries TWO ids into
+the BIGINT literal pool, the numerator's and the denominator's: a rational is
+a pair of integers, so its parts intern where integers already do and there is
+no fourth pool. The runtime reduces the pair when it builds the cell, so a
+pair that turns out whole yields an integer.
+
+### get_rational (0x67)
+
+Operands: `int num_literal_id`, `int den_literal_id`, `reg arg`
+Total size: 13 bytes
+
+Unifies the argument with the rational `BigIntLiterals[num] / BigIntLiterals[den]`.
+
+### put_rational (0x68)
+
+Operands: `int num_literal_id`, `int den_literal_id`, `reg arg`
+Total size: 13 bytes
+
+Sets the argument register to that rational.
+
+### unify_rational (0x69)
+
+Operands: `int num_literal_id`, `int den_literal_id`
+Total size: 9 bytes
+
+The sub-argument form: writes the rational in write mode, unifies against it
+in read mode, and lands in the reserved slot inside an ADR-020 inline build,
+exactly as `unify_bigint` does.
+
+---
+
 ## Meta opcode
 
 ### meta (0x61)

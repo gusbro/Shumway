@@ -33,6 +33,7 @@ internal static class SwiLenient
             case Tag.Atom: text = AtomTable.GetById(c.AsAtomId)?.Name ?? ""; return true;
             case Tag.Int: text = c.AsInt.ToString(System.Globalization.CultureInfo.InvariantCulture); return true;
             case Tag.BigInt: text = engine.AsBigInt(c).ToString(System.Globalization.CultureInfo.InvariantCulture); return true;
+            case Tag.Rational: text = engine.AsRational(c).ToString(); return true;
             case Tag.Float:
                 text = Number.FormatPrologFloat(
                     Cell.DecodeFloat(c, engine.GetHeap(c.FloatPairedIndex)));

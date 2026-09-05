@@ -2655,6 +2655,65 @@ public sealed partial class BytecodeInterpreter
                     break;
                 }
 
+                // ---------- Rational literal opcodes (ADR-039) ----------
+                // A rational is a pair of integers, so each instruction names
+                // two entries of the SAME BigInt pool. MakeRational reduces
+                // and collapses a whole value to an integer cell, which is
+                // what the assert that produced it did too.
+
+                case Opcode.GetRational:
+                {
+                    Cell ratCell = _engine.MakeRational(
+                        ResolveBigIntLiteral(BytecodeIO.ReadInt32(code, pc + 1)),
+                        ResolveBigIntLiteral(BytecodeIO.ReadInt32(code, pc + 5)));
+                    if (!_engine.UnifyRegisterWithCell(BytecodeIO.ReadInt32(code, pc + 9), ratCell))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.SetPc(pc + 13); inClause = true;
+                    break;
+                }
+
+                case Opcode.PutRational:
+                {
+                    _engine.SetRegister(BytecodeIO.ReadInt32(code, pc + 9),
+                        _engine.MakeRational(
+                            ResolveBigIntLiteral(BytecodeIO.ReadInt32(code, pc + 1)),
+                            ResolveBigIntLiteral(BytecodeIO.ReadInt32(code, pc + 5))));
+                    _engine.SetPc(pc + 13); inClause = true;
+                    break;
+                }
+
+                case Opcode.UnifyRational:
+                {
+                    Cell ratValue = _engine.MakeRational(
+                        ResolveBigIntLiteral(BytecodeIO.ReadInt32(code, pc + 1)),
+                        ResolveBigIntLiteral(BytecodeIO.ReadInt32(code, pc + 5)));
+                    // ADR-020, as for unify_bigint: inside a reserve-upfront
+                    // inline build the value belongs in the RESERVED slot.
+                    if (_engine.ReservedWrite)
+                    {
+                        _engine.UnifyArgCell(ratValue);
+                        _engine.SetPc(pc + 9); inClause = true;
+                        break;
+                    }
+                    int ratPtr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, ratValue);
+                    }
+                    else if (!_engine.UnifyHeapWithCell(ratPtr, ratValue))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.SetUnifyPointer(ratPtr + 1);
+                    _engine.SetPc(pc + 9); inClause = true;
+                    break;
+                }
+
                 // ---------- ADR-018 arithmetic instruction set ----------
                 // The shared evaluation stack and operator logic live in
                 // Shumway.Builtins.ArithEvalStack so Tier-0 and Tier-1 IL run

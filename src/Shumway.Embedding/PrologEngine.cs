@@ -701,6 +701,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
                     case Shumway.Core.Opcode.UnifyBigInt:
                         RemapLit(code, pc + 1, bigints, _literalPools.BigInts);
                         break;
+                    // ADR-039: both ids of a rational name the BigInt pool.
+                    case Shumway.Core.Opcode.GetRational:
+                    case Shumway.Core.Opcode.PutRational:
+                    case Shumway.Core.Opcode.UnifyRational:
+                        RemapLit(code, pc + 1, bigints, _literalPools.BigInts);
+                        RemapLit(code, pc + 5, bigints, _literalPools.BigInts);
+                        break;
                     case Shumway.Core.Opcode.GetPstr:
                     case Shumway.Core.Opcode.PutPstr:
                         RemapLit(code, pc + 1, strings, _literalPools.Strings);

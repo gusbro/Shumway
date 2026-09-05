@@ -116,6 +116,35 @@ and the `library(arithmetic)` surface it needs (`number_to_rational/2,3`,
 `rational_numerator_denominator/3`) — the last three are pure Prolog and can
 live in that library once `rdiv` evaluates.
 
+### A rational in a clause (2026-09, amendment)
+
+The checklist below said the `BigInt` sites were the coverage map, and one
+family of them was missed: the CLAUSE COMPILER. A rational reaching
+`assertz/1` had no encoding, so every path into the dynamic database --
+`assertz`, `asserta`, and through them `retract/1` and `clause/2` -- died on a
+`NotSupportedException` that `catch/3` never saw, since it is a host exception
+and not a ball.
+
+A rational is encoded like a big integer: three opcodes, `get_rational` /
+`put_rational` / `unify_rational`, resolving a literal at run time and building
+the cell. They differ in carrying TWO literal ids, the numerator's and the
+denominator's, and both name entries in the EXISTING BigInt pool. A rational is
+a pair of integers, so its parts intern where integers already do:
+
+- no fourth literal pool, and no change to `CompiledModule`, to the module
+  codec, or to the `.shmo` / `.shum` tables;
+- the id-stability rules the caches depend on are the BigInt rules, already
+  audited (`ModuleCompiler`'s stable-literal set, `PrologEngine`'s remap on
+  load, which now remaps both ids of the instruction).
+
+The opcodes take 0x67-0x69, keeping the table contiguous and the encoding
+fixed-width (13, 13 and 9 bytes).
+
+Tier-1 is unchanged: like the BigInt opcodes, the IL compiler does not
+translate these, so a predicate holding a rational stays on Tier 0. That is
+the existing treatment of a clause holding a bignum, and it is one line of the
+opcode census to revisit if a workload ever asks for it.
+
 ### What does NOT change
 
 - The integer fast lanes (`a_int_bin` / `a_int_cmp`) are emitted only when the

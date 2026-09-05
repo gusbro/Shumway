@@ -63,6 +63,9 @@ public static class OpcodeTable
         Set(Opcode.GetList, 5, "get_list", OperandKind.Reg);
         Set(Opcode.GetFloat, 9, "get_float", OperandKind.LiteralId, OperandKind.Reg);
         Set(Opcode.GetBigInt, 9, "get_bigint", OperandKind.LiteralId, OperandKind.Reg);
+        // ADR-039: two literal ids (numerator, denominator), both BigInt pool.
+        Set(Opcode.GetRational, 13, "get_rational",
+            OperandKind.LiteralId, OperandKind.LiteralId, OperandKind.Reg);
 
         // Put instructions
         Set(Opcode.PutVariableX, 9, "put_variable_x", OperandKind.Reg, OperandKind.Reg);
@@ -81,6 +84,8 @@ public static class OpcodeTable
         Set(Opcode.PutListR, 5, "put_list_r", OperandKind.Reg);
         Set(Opcode.PutFloat, 9, "put_float", OperandKind.LiteralId, OperandKind.Reg);
         Set(Opcode.PutBigInt, 9, "put_bigint", OperandKind.LiteralId, OperandKind.Reg);
+        Set(Opcode.PutRational, 13, "put_rational",
+            OperandKind.LiteralId, OperandKind.LiteralId, OperandKind.Reg);
 
         // Unify instructions
         Set(Opcode.UnifyVariableX, 5, "unify_variable_x", OperandKind.Reg);
@@ -94,6 +99,8 @@ public static class OpcodeTable
         Set(Opcode.UnifyVoid, 5, "unify_void", OperandKind.Count);
         Set(Opcode.UnifyFloat, 5, "unify_float", OperandKind.LiteralId);
         Set(Opcode.UnifyBigInt, 5, "unify_bigint", OperandKind.LiteralId);
+        Set(Opcode.UnifyRational, 9, "unify_rational",
+            OperandKind.LiteralId, OperandKind.LiteralId);
         // ADR-019: inline nested compound build/match.
         Set(Opcode.UnifyStructure, 5, "unify_structure", OperandKind.Functor);
         Set(Opcode.UnifyList, 1, "unify_list");

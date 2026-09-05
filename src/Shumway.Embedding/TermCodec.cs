@@ -25,6 +25,7 @@ namespace Shumway.Embedding;
 /// <item>4 = FloatTerm: 8-byte IEEE 754 double.</item>
 /// <item>5 = StringTerm: length-prefixed UTF-8 value.</item>
 /// <item>6 = CompoundTerm: length-prefixed functor name + uint32 arity + N encoded args.</item>
+/// <item>7 = RationalTerm: numerator then denominator, each as tag 3's payload.</item>
 /// </list>
 /// Length prefixes are unsigned 32-bit. Anonymous variables ride along as
 /// the canonical name <c>_</c>.
@@ -38,6 +39,7 @@ public static class TermCodec
     private const byte TagFloat = 4;
     private const byte TagString = 5;
     private const byte TagCompound = 6;
+    private const byte TagRational = 7;
 
     /// <summary>Writes a term. ITERATIVE over an explicit stack: a stored
     /// clause can hold a list of any length, and a recursive walk overflowed
@@ -73,9 +75,15 @@ public static class TermCodec
                 break;
             case BigIntTerm bi:
                 w.Write(TagBigInt);
-                byte[] biBytes = bi.Value.ToByteArray();
-                w.Write((uint)biBytes.Length);
-                w.Write(biBytes);
+                WriteBigInteger(w, bi.Value);
+                break;
+            // A rational never comes from source (ADR-039), but save/1
+            // writes the LIVE database, and that one holds whatever assert
+            // put there.
+            case RationalTerm rt:
+                w.Write(TagRational);
+                WriteBigInteger(w, rt.Num);
+                WriteBigInteger(w, rt.Den);
                 break;
             case FloatTerm f:
                 w.Write(TagFloat);
@@ -144,13 +152,11 @@ public static class TermCodec
             case TagInt:
                 return new IntTerm(r.ReadInt64());
             case TagBigInt:
+                return new BigIntTerm(ReadBigInteger(r));
+            case TagRational:
             {
-                int len = checked((int)r.ReadUInt32());
-                byte[] bytes = r.ReadBytes(len);
-                if (bytes.Length != len)
-                    throw new InvalidDataException(
-                        $"TermCodec: short read on BigInt payload ({bytes.Length}/{len}).");
-                return new BigIntTerm(new BigInteger(bytes));
+                BigInteger num = ReadBigInteger(r);
+                return new RationalTerm(num, ReadBigInteger(r));
             }
             case TagFloat:
                 return new FloatTerm(r.ReadDouble());
@@ -208,6 +214,23 @@ public static class TermCodec
         using var ms = new MemoryStream(bytes);
         using var br = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
         return ReadClause(br);
+    }
+
+    private static void WriteBigInteger(BinaryWriter w, BigInteger value)
+    {
+        byte[] bytes = value.ToByteArray();
+        w.Write((uint)bytes.Length);
+        w.Write(bytes);
+    }
+
+    private static BigInteger ReadBigInteger(BinaryReader r)
+    {
+        int len = checked((int)r.ReadUInt32());
+        byte[] bytes = r.ReadBytes(len);
+        if (bytes.Length != len)
+            throw new InvalidDataException(
+                $"TermCodec: short read on an integer payload ({bytes.Length}/{len}).");
+        return new BigInteger(bytes);
     }
 
     private static void WriteString(BinaryWriter w, string s)

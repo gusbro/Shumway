@@ -109,6 +109,7 @@ public static partial class MetaBuiltins
                 Tag.Int => h.AsInt,
                 Tag.Float => Cell.DecodeFloat(h, engine.GetHeap(h.FloatPairedIndex)),
                 Tag.BigInt => (double)engine.AsBigInt(h),
+                Tag.Rational => engine.AsRational(h).ToDouble(),
                 _ => throw new PrologRuntimeException(
                     "type_error", "number", engine, h),
             });

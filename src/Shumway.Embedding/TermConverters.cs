@@ -258,6 +258,7 @@ internal static class TermConverters
         FloatTerm f => f.Value,
         IntTerm n => (double)n.Value,
         BigIntTerm b => (double)b.Value,
+        RationalTerm r => (double)r.Num / (double)r.Den,
         _ => throw new InvalidCastException(
             $"Expected a numeric term, got {term.GetType().Name}."),
     };
