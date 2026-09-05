@@ -72,7 +72,8 @@ public static partial class MetaBuiltins
         // not a builtin — the old isolated-sub-engine builtin hid the called
         // goals' side effects. See Prelude forall/2.
         BuiltinsRegistry.Register("copy_term", 2, CopyTerm,
-            Term, "copy_term(+Term, -Copy)", "Copies a term with fresh variables.");
+            Term, "copy_term(?Term, -Copy)",
+            "Copies a term with fresh variables. An attributed variable is copied as a plain one, so the copy carries none of the original's constraints; copy_term/3 hands back the goals that put them on the copy.");
         // Scryer system builtin (iso_ext's copy_term_nat/2 wraps it): a copy
         // where attributed variables come out as fresh PLAIN variables — which
         // is exactly what HeapTermCopy-backed copy_term/2 produces.

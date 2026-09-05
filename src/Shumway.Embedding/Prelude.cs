@@ -922,7 +922,7 @@ internal static class Prelude
         % does the structural copy and hands back ag(Module, Attr, Var)
         % triples; attribute_goals/4 is pre-declared dynamic so user
         % clauses simply join it and a hook-less program still links.
-        %! copy_term(+Term, -Copy, -Goals) | Term inspection & construction | Copies a term with fresh variables and collects the residual attribute goals.
+        %! copy_term(?Term, -Copy, -Goals) | Term inspection & construction | Copies a term with fresh variables and hands back the goals that put the attributes back on the copy. Running them, as in copy_term(T, C, Gs), maplist(call, Gs), is how a copy keeps the constraints of the original.
         % Scryer-style projection in three phases. (1) re-attach EVERY copied
         % attribute value to its copy variable first — a module's
         % attribute_goals//1 may read a SIBLING variable's attribute (clpz's
@@ -1689,7 +1689,12 @@ internal static class Prelude
             N1 =< 1,
             '$tsing_count'(Xs, V, N1, N).
 
-        %! copy_term_nat(?Term, -Copy) | Term inspection & construction | copy_term/2 ignoring attributes.
+        % copy_term/2 by another name: here a copy never carries attributes,
+        % so there is nothing for a second predicate to do differently. It
+        % stays because libraries written for systems that DO copy them call
+        % it as a system predicate, and it is deliberately absent from the
+        % predicate reference: documenting two names for one behaviour, with
+        % two different signatures, is how it read as a distinction.
         copy_term_nat(Term, Copy) :- '$copy_term_without_attr_vars'(Term, Copy).
 
         %! bb_put(+Key, +Value) | Global variables | Blackboard store: non-backtrackable global assignment.

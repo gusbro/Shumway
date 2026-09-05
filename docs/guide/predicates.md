@@ -85,9 +85,8 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `arg(+N, +Term, ?Arg)` | Unifies Arg with the Nth argument of the compound term. |
 | `atom_to_term(+Atom, -Term, -Bindings)` | Parses an atom into a term plus its variable bindings. |
 | `compound_name_arity(?Compound, ?Name, ?Arity)` | Like functor/3 but restricted to compound terms (arity >= 1). |
-| `copy_term(+Term, -Copy)` | Copies a term with fresh variables. |
-| `copy_term(+Term, -Copy, -Goals)` | Copies a term with fresh variables and collects the residual attribute goals. |
-| `copy_term_nat(?Term, -Copy)` | copy_term/2 ignoring attributes. |
+| `copy_term(?Term, -Copy)` | Copies a term with fresh variables. An attributed variable is copied as a plain one, so the copy carries none of the original's constraints; copy_term/3 hands back the goals that put them on the copy. |
+| `copy_term(?Term, -Copy, -Goals)` | Copies a term with fresh variables and hands back the goals that put the attributes back on the copy. Running them, as in copy_term(T, C, Gs), maplist(call, Gs), is how a copy keeps the constraints of the original. |
 | `expand_term(+Term, -Expanded)` | If Term has the form Head --> Body, expands it via the DCG transformation Shumway applies internally on consult. Non-DCG terms pass through unchanged. |
 | `functor(?Term, ?Name, ?Arity)` | Relates a term to its functor name and arity. |
 | `get_seed(-Seed)` | Unifies Seed with a value that set_seed/1 can later use to reproduce exactly the random sequence that follows this call (the generator is reseeded as a side effect). |

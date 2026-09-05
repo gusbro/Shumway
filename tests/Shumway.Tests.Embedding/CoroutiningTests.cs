@@ -655,6 +655,52 @@ public class CoroutiningTests
     }
 
     [Fact]
+    public void ACopyCarriesNoConstraints()
+    {
+        // A copy is a copy of the TERM: an attributed variable comes out
+        // plain, so the copy of a constrained term is unconstrained. That is
+        // the whole contract of copy_term/2 here, and copy_term/3 is what
+        // exists for the other reading.
+        var e = Co();
+        Assert.True(e.Query(
+            "freeze(X, foo), copy_term(X, Y), frozen(Y, G), G == true.").Success);
+        Assert.True(e.Query(
+            "dif(A, B), copy_term(A-B, C-D), C = 1, D = 1.").Success);
+        Assert.True(e.Query(
+            "put_attr(V, m, 1), copy_term(V, W), \\+ get_attr(W, m, _).").Success);
+    }
+
+    [Fact]
+    public void TheGoalsOfCopyTermThreePutThemBack()
+    {
+        // The documented way to copy a constrained term: take the goals and
+        // run them. This is the guide's example, run.
+        var e = Co();
+        Assert.True(e.Query(
+            "freeze(X, foo), copy_term(X, Y, Goals), maplist(call, Goals), "
+            + "frozen(Y, G), G == foo.").Success);
+        // ...and the constraint on the copy is a real one, not a display.
+        Assert.True(e.Query(
+            "dif(A, B), copy_term(A-B, C-D, Goals), maplist(call, Goals), "
+            + "\\+ (C = 1, D = 1).").Success);
+    }
+
+    [Fact]
+    public void TheCompatSpellingIsTheSamePredicate()
+    {
+        // Libraries written for systems whose copy_term/2 DOES carry
+        // attributes call copy_term_nat/2 to get the copy this engine's
+        // copy_term/2 already gives. It stays callable, and it stays the
+        // same behaviour: two names for one thing must not drift into a
+        // distinction that is not there.
+        var e = Co();
+        Assert.True(e.Query(
+            "freeze(X, foo), copy_term(X, Y), copy_term_nat(X, Z), "
+            + "frozen(Y, G1), frozen(Z, G2), G1 == G2.").Success);
+        Assert.True(e.Query("copy_term_nat(g(X, X), C), C = g(1, 1).").Success);
+    }
+
+    [Fact]
     public void ACutInOneFrozenGoalLeavesTheOthersAlone()
     {
         // Two goals frozen on the same variable are two goals. A cut in the

@@ -304,6 +304,20 @@ identical). `?=/2` (decided (in)equality), `unifiable/3` (the unifier of
 two terms as a `V=Value` list), `term_attvars/2` and `call_residue_vars/2`
 are always available and need no library.
 
+A copy does not carry constraints. `copy_term/2` copies an attributed
+variable as a plain one, so the copy of a constrained term is an
+unconstrained term. What carries them is `copy_term/3`, which hands back
+the goals that put the attributes on the copy:
+
+```prolog
+?- freeze(X, foo), copy_term(X, Y, Goals), maplist(call, Goals).
+```
+
+leaves `Y` frozen on the same goal as `X`, while `copy_term(X, Y)` alone
+leaves `Y` a plain variable. The same three-argument form is what the top
+level uses to show residual constraints, and what the blackboard uses to
+store a constrained value.
+
 ### Running quad test transcripts
 
 A quad file is a machine-readable test transcript (queries with their
