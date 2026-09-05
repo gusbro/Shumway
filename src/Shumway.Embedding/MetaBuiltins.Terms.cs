@@ -483,11 +483,10 @@ public static partial class MetaBuiltins
                 return false;
 
             case "max_arity":
-                // ISO requires this be either an integer or
-                // unbounded. Shumway's WAM register layout limits
-                // arity to fit in a uint16; pick a comfortably large
-                // value here.
-                return engine.UnifyRegisterWithCell(1, Cell.Int(255));
+                // ISO allows an integer or unbounded. It is an integer here
+                // because the limit is a real one: see MaxArity, where the
+                // number is the arity whose term fills 4 GiB of heap.
+                return engine.UnifyRegisterWithCell(1, Cell.Int(MaxArity));
 
             default:
                 // §8.17.2.3: an atom that names no flag is a domain error,

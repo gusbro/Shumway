@@ -91,13 +91,33 @@ public class PrologFlagsExpandedTests
     }
 
     [Fact]
-    public void MaxArity_IsAnInteger()
+    public void MaxArity_IsTheArityTheAddressSpaceAllows()
     {
+        // A term of arity N costs N+1 cells of eight bytes, so the limit is a
+        // question about address space: 4 GiB where addresses are 64 bits,
+        // 128 MiB where they are 32 (a browser, or a 32-bit host). Reporting
+        // the 64-bit figure in a browser would promise a term larger than the
+        // whole space it has.
         var e = new PrologEngine();
         var sol = e.Query("current_prolog_flag(max_arity, M).");
         Assert.True(sol.Success);
         var m = Assert.IsType<IntTerm>(sol["M"]);
-        Assert.True(m.Value > 0);
+        long expected = System.IntPtr.Size >= 8 ? (1L << 29) - 1 : (1L << 24) - 1;
+        Assert.Equal(expected, m.Value);
+    }
+
+    [Fact]
+    public void MaxArity_IsWhatFunctorActuallyRefuses()
+    {
+        // The flag is only worth asking if it is the number enforced. One
+        // past it is refused; a wide term inside it is built, which is how an
+        // array gets modelled.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "current_prolog_flag(max_arity, M), Over is M + 1, "
+            + "catch(functor(_, f, Over), error(representation_error(max_arity), _), true).")
+            .Success);
+        Assert.True(e.Query("functor(A, array, 100000), arg(99999, A, X), var(X).").Success);
     }
 
     [Fact]

@@ -1332,21 +1332,24 @@ of each frame, and stepping through the Prolog ports.
 
 ## Limits
 
-Almost nothing here is capped: integers are unbounded, atoms and terms grow
-with memory, and the heap, the stacks and the trails all grow as a query needs
-them. Two limits are deliberate, and this is them.
+Integers are unbounded; the heap, the stacks and the trails grow as a query
+needs them. Three limits are deliberate.
 
-| Limit | Value | What happens at it |
+| Limit | Value | At the limit |
 |---|---|---|
-| Predicate arity | 255, readable as the `max_arity` flag | `representation_error(max_arity)` |
+| Arity of a compound term | the `max_arity` flag: 536,870,911, or 16,777,215 where addresses are 32 bits | `representation_error(max_arity)` |
 | Expansions of one term or goal along one path | 127 | `resource_error(expansion_depth)` |
+| Items shown of one answer | 100, the `answer_max_depth` flag; 0 shows all | the rest reads as `...` |
 
-The second one is worth a word. `term_expansion/2` and `goal_expansion/2` are
-applied again to what they produce, so a hook that expands a goal into
-something containing that goal never finishes, and no system can promise it
-will. The budget is what turns that into an error naming a resource instead of
-a load that never returns. It counts replacements along one path, so a clause
-with a thousand goals in it, each expanded once, is nowhere near it, and a
-chain of rewrites that does converge is free to be long. A hook that needs to
-recurse further than this should mark what it has already expanded, which is
-what the identifier list threaded through `term_expansion/6` is for.
+The arity is a size: a term of arity N costs N+1 cells of eight bytes, so the
+limit is the term of 4 GiB, or of 128 MiB in a browser and on a 32-bit host,
+where the whole address space is smaller than the 64-bit figure. A wide term of
+variables is how an array is modelled, and `functor(A, array, 1000000)` builds
+one.
+
+The expansion budget counts replacements along one path, not goals in a
+clause. A hook is applied again to what it produces, so one that expands a
+goal into itself never finishes; to recurse deeper on purpose, mark what is
+already expanded with the identifier list of `term_expansion/6`.
+
+Only answers are shortened. `write/1` prints what it is given.

@@ -42,4 +42,20 @@ public static class RuntimeCaps
         System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported
         && !OperatingSystem.IsBrowser();
 #endif
+
+    /// <summary>The largest arity a compound term may have, which is a
+    /// question about ADDRESS SPACE and so about the runtime. A term of arity
+    /// N occupies N+1 heap cells of eight bytes, so the number is whatever
+    /// term size the host can be expected to hold: 4 GiB where addresses are
+    /// 64 bits, and 128 MiB where they are 32 bits, which is a browser and a
+    /// 32-bit host. Promising the 64-bit figure everywhere would be promising
+    /// a term larger than the whole address space the browser has.
+    ///
+    /// <para>It is a limit rather than a guarantee: the term still has to fit
+    /// in memory the host will actually give. What it says is what cannot be
+    /// built at all, which is what <c>current_prolog_flag(max_arity, _)</c> is
+    /// asked for.</para></summary>
+    public static int MaxArity => System.IntPtr.Size >= 8
+        ? (1 << 29) - 1     // 4 GiB
+        : (1 << 24) - 1;    // 128 MiB
 }

@@ -68,14 +68,20 @@ public static class SolutionFormatter
                 return tail;
             }
 
-            var args = new Term[c.Args.Length];
-            for (int i = 0; i < args.Length; i++)
+            // A wide term ends the way a long list does: what is shown, then
+            // one `...` for the rest. Marking every argument left over said
+            // the same thing once per argument -- a term of a million of them
+            // printed five megabytes of ellipses.
+            var shown = new List<Term>();
+            bool more = false;
+            for (int i = 0; i < c.Args.Length; i++)
             {
-                if (budget <= 0) { args[i] = new AtomTerm("..."); continue; }
+                if (budget <= 0) { more = true; break; }
                 budget--;
-                args[i] = Walk(c.Args[i], depth - 1, limit, ref budget);
+                shown.Add(Walk(c.Args[i], depth - 1, limit, ref budget));
             }
-            return new CompoundTerm(c.Functor, args);
+            if (more) shown.Add(new AtomTerm("..."));
+            return new CompoundTerm(c.Functor, shown.ToArray());
         }
     }
 
