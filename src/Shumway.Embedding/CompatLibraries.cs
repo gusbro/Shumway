@@ -106,6 +106,7 @@ internal static class CompatLibraries
         :- dynamic('$quad_uncompared'/1).  % Id whose answers could not be compared
         :- dynamic('$quad_result'/2).      % the last run's Passed, Total
         :- dynamic('$quad_bad_id'/2).      % Seq, the id that names nothing
+        :- dynamic('$quad_unmet'/3).       % Id, a description it did not meet
 
         % ---- consult-time capture -----------------------------------------
         % A QUERY opens a test and is recognised by its principal functor
@@ -164,13 +165,22 @@ internal static class CompatLibraries
             retractall('$quad_open'(F, _)),
             assertz('$quad_open'(F, N)).
 
-        % Each description sentence adds its alternatives to the open quad.
+        % Each description sentence is a claim of its OWN, so it is stored
+        % as one: a block of several sentences describes one goal several
+        % times over, and reading them as one pool of alternatives let a
+        % transcript claiming three different answers for `X = 1` pass
+        % because the third was right.
+        %
         % No names here: the hook is handed a term whose variables have
         % already lost them (see the recovery pass below).
         quads_describe(N, Block) :-
+            quads_add_desc(N, Block, none, []).
+
+        quads_add_desc(N, Block, Ctx, Names) :-
             quads_alts(Block, Alts),
             retract('$quad'(N, Id, Goal, Have)),
-            quads_parse_alts(Alts, Id, none, Have, More),
+            quads_parse_alts(Alts, Id, Ctx, [], Parsed),
+            quads_append(Have, [desc(Parsed, Block, Names)], More),
             assertz('$quad'(N, Id, Goal, More)).
 
         % ---- recovering the variable names --------------------------------
@@ -234,14 +244,12 @@ internal static class CompatLibraries
             assertz('$quad_run'(N, Goal, Tuple)),
             retractall('$quad_dropped'(Id, _)),
             retractall('$quad_uncompared'(Id)),
+            retractall('$quad_unmet'(Id, _, _)),
             ( '$quad_bad_id'(N, Bad) -> quads_note_dropped(Id, unusable_id(Bad)) ; true ).
 
         quads_recover_desc(N, Block, DNames) :-
             '$quad_names'(N, Names),
-            quads_alts(Block, Alts),
-            retract('$quad'(N, Id, Goal, Have)),
-            quads_parse_alts(Alts, Id, ctx(Names, DNames), Have, More),
-            assertz('$quad'(N, Id, Goal, More)).
+            quads_add_desc(N, Block, ctx(Names, DNames), DNames).
 
         quads_shown_names([], [], []).
         quads_shown_names([Name=V|Ps], Names, Vars) :-
@@ -513,6 +521,7 @@ internal static class CompatLibraries
                 format('  failing (~w): ~w~n', [NF, Fails])
             ),
             quads_report_dropped,
+            quads_report_unmet,
             quads_report_uncompared.
 
         % Every answer description this harness could not read, named with
@@ -532,6 +541,24 @@ internal static class CompatLibraries
             format('    ~w: ~q~n', [Id, A]),
             quads_report_each(R).
 
+        % Every description that did not hold of its run, named with the
+        % quad it belongs to. A block of several describes one goal several
+        % times over, and saying which of them the run refutes is the
+        % difference between naming the failing quad and naming the claim.
+        quads_report_unmet :-
+            (   findall(u(Id, B, Ns), '$quad_unmet'(Id, B, Ns), Us), Us \== []
+            ->  quads_length(Us, NU),
+                format('  descriptions not met (~w):~n', [NU]),
+                quads_report_unmet_each(Us)
+            ;   true
+            ).
+        quads_report_unmet_each([]).
+        quads_report_unmet_each([u(Id, B, Ns)|Us]) :-
+            format('    ~w: ', [Id]),
+            write_term(B, [quoted(true), variable_names(Ns)]),
+            nl,
+            quads_report_unmet_each(Us).
+
         % A quad whose answers were written down but could not be compared,
         % because its source was not there to take the names from. It was
         % still run; only the answer substitutions went unchecked.
@@ -550,27 +577,70 @@ internal static class CompatLibraries
         quads_run_list([], P, P, T, T, F, F).
         quads_run_list([q(N, Id, G, K)|Qs], P0, P, T0, T, F0, F) :-
             T1 is T0 + 1,
-            (   \+ '$quad_bad_id'(N, _), quads_check(K, G)
-            ->  P1 is P0 + 1, F1 = F0
-            ;   P1 = P0, F1 = [Id|F0]
+            (   '$quad_bad_id'(N, _)
+            ->  P1 = P0, F1 = [Id|F0]
+            ;   quads_verdict(K, G, Bad),
+                (   Bad == []
+                ->  P1 is P0 + 1, F1 = F0
+                ;   P1 = P0, F1 = [Id|F0], quads_note_unmet(Id, K, Bad)
+                )
             ),
             quads_run_list(Qs, P1, P, T1, T, F1, F).
 
-        % The test passes when the run matches SOME sanctioned alternative.
-        % An alternative marked `unexpected` is not sanctioned: it is written
-        % down precisely because producing it is wrong, so it never makes a
-        % test pass, and a quad whose alternatives are all unexpected can
-        % only fail.
-        quads_check(Alts, G) :-
+        % The quad passes when EVERY description it carries holds of the
+        % run, and something in it was sanctioned at all: a block whose
+        % alternatives are all `unexpected` describes only wrong answers, so
+        % it can only fail.
+        quads_verdict(Descs, G, Bad) :-
+            (   quads_any_sanctioned(Descs)
+            ->  quads_unmet(Descs, G, Bad)
+            ;   Bad = nothing_sanctioned
+            ).
+
+        quads_any_sanctioned([desc(Alts, _, _)|Ds]) :-
+            (   quads_sanctioned(Alts, [_|_])
+            ->  true
+            ;   quads_any_sanctioned(Ds)
+            ).
+
+        quads_unmet([], _, []).
+        quads_unmet([desc(Alts, B, Ns)|Ds], G, Bad) :-
+            ( quads_desc_holds(Alts, G) -> Bad = R ; Bad = [d(B, Ns)|R] ),
+            quads_unmet(Ds, G, R).
+
+        % A description holds when the run matches one of its SANCTIONED
+        % alternatives. One with none -- every alternative marked
+        % `unexpected` -- claims nothing about THIS system: it is a note
+        % about another one, put down so the transcript is complete, and its
+        % run may not even be the same experiment (the two descriptions of a
+        % reading test differ in what they leave unread). The quad still
+        % needs a sanctioned description somewhere, so a block of nothing
+        % but wrong answers can only fail.
+        quads_desc_holds(Alts, G) :-
             quads_sanctioned(Alts, Ok),
-            Ok \== [],
-            quads_group_inputs(Ok, Groups),
-            quads_any_group_matches(Groups, G).
+            (   Ok == []
+            ->  true
+            ;   quads_group_inputs(Ok, Groups),
+                quads_any_group_matches(Groups, G)
+            ).
 
         quads_sanctioned([], []).
         quads_sanctioned([alt(C, In, Pk, Ot, S)|As], Out) :-
             ( S == true -> Out = [alt(C, In, Pk, Ot)|R] ; Out = R ),
             quads_sanctioned(As, R).
+
+        % Which description failed is only worth saying when there was more
+        % than one to choose from: with a single one the failing id already
+        % names it.
+        quads_note_unmet(Id, Descs, Bad) :-
+            (   Bad = [_|_], Descs = [_,_|_]
+            ->  quads_record_unmet(Id, Bad)
+            ;   true
+            ).
+        quads_record_unmet(_, []).
+        quads_record_unmet(Id, [d(B, Ns)|Ds]) :-
+            assertz('$quad_unmet'(Id, B, Ns)),
+            quads_record_unmet(Id, Ds).
 
         % Alternatives that read the same input are decided by ONE run of the
         % goal; the reading is the expensive part and a `loops` alternative
@@ -855,6 +925,7 @@ internal static class CompatLibraries
             retractall('$quad_open'(_, _)),
             retractall('$quad_seq'(_)),
             retractall('$quad_dropped'(_, _)),
+            retractall('$quad_unmet'(_, _, _)),
             retractall('$quad_src'(_, _)),
             retractall('$quad_names'(_, _)),
             retractall('$quad_run'(_, _, _)),

@@ -50,8 +50,11 @@ Piece by piece:
   standard it comes from. It need not share a line with its `?-`, since
   a transcript is read as terms rather than as lines.
 - **The expected block**: every sentence that follows, up to the next
-  test line. There may be more than one, and each contributes its
-  alternatives to the same test.
+  test line. There may be more than one, and each is a claim of its own:
+  they all describe the same goal, so they all have to hold. Three
+  sentences saying the goal answers `X = 2`, then `X = 1`, then `X = 3`
+  describe three different goals, and the test fails, naming the
+  sentences the run refutes.
 - **`;` continues an answer sequence**: `L = [], N = 0 ; L = [_A], N = 1`
   is one expected outcome showing successive answers, in the order the
   goal gives them. The answers themselves are compared, so the sequence
@@ -77,11 +80,6 @@ Piece by piece:
   unwritten and matches whatever is in that position; the rest still has
   to agree.
 - **`false`** means the goal fails; **`true`** means it succeeds.
-- **`waits`** says the goal blocks for input that never comes. Nothing
-  this library can supply tells waiting apart from anything else, since
-  an empty input is end of file rather than a wait, so a test that
-  sanctions only this is named in the report under `not run` instead of
-  being counted as a failure.
 - **`loops`** sanctions non-termination. No harness can observe an
   infinite loop directly, so the goal runs under a 15 second limit and
   still-running counts as this outcome.
@@ -97,10 +95,6 @@ Piece by piece:
 - **`outputs(Text),`** prefixes an outcome to say the goal writes Text
   first. Both halves are checked: the text the goal writes and the
   outcome after it. The text may be written in pieces with `...` between
-  them, as in `outputs(("f(_", ..., ")"))`, which says the output starts
-  and ends that way and says nothing about the middle. That is how a
-  claim about output survives an implementation's choice of variable
-  names. A text written down whole claims the output entire. The text may be written in pieces with `...` between
   them, as in `outputs(("f(_", ..., ")"))`, which says the output starts
   and ends that way and says nothing about the middle. That is how a
   claim about output survives an implementation's choice of variable
@@ -157,7 +151,8 @@ accumulate across consults.
 - `run_quads` runs every loaded quad and prints `quads: Passed/Total`,
   with the failing ids listed when there are any, and every answer
   description it could not read named under `not understood` with the
-  test it belongs to.
+  test it belongs to. A test described by more than one sentence also
+  lists, under `descriptions not met`, the ones its run refutes.
 - `run_quads(Id)` runs a single test by its id.
 - `quads_result(Passed, Total)` gives back the counts the last run
   reported, for a program that wants to act on them. It fails when
