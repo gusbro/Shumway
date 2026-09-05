@@ -121,9 +121,8 @@ public class ControlAndListsConformance
     [Fact]
     public void Length_AliasedNeighboursAreUndisturbed()
     {
-        // length(L, L) itself ENUMERATES toward a genuine resource_error
-        // (the ISO outcome — pinned time-bounded in
-        // ConformanceArcRegressionTests.Length_SelfAliasedEnumerates).
+        // length(L, L) itself is refused with a resource_error (the ISO
+        // outcome -- pinned in ConformanceArcRegressionTests).
         // What this pin holds: the aliased shape's NEIGHBOURS — a var
         // length that is an ELEMENT is fine, and a nonvar non-integer
         // length still errors.
