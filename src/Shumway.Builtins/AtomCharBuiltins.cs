@@ -298,6 +298,12 @@ public static class AtomCharBuiltins
             Tag.Int => numCell.AsInt.ToString(CultureInfo.InvariantCulture),
             Tag.Float => Number.FormatPrologFloat(
                 Cell.DecodeFloat(numCell, engine.GetHeap(numCell.FloatPairedIndex))),
+            // The text a rational is WRITTEN as (ADR-039). It does not read
+            // back through the number parser, which knows no rational syntax:
+            // the same asymmetry the ADR accepts for a value that has no
+            // source literal. The catch-all below would have taken it for a
+            // bignum and died on the host's cast.
+            Tag.Rational => engine.AsRational(numCell).ToString(),
             _ => engine.AsBigInt(numCell).ToString(CultureInfo.InvariantCulture),
         };
         int listIdx = asCodes
