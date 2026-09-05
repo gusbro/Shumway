@@ -108,6 +108,17 @@ public static class Materializer
         Activation engine, Term term, Dictionary<string, int> varMap,
         ref List<(Term Term, int Dest)>? work, ref Dictionary<string, Cell>? knots)
     {
+        // A cycle owner met a SECOND time is the same term, not another copy
+        // of it. copy_term/3 materialises the term and its attribute values in
+        // ONE call exactly so that what occurs in both lands on one object:
+        // variables join by the `_G<addr>` name they were read with, and this
+        // is that same join for a rational tree, which has no variable to join
+        // by. Without it the projection built the constraint over a cyclic
+        // term of its own, and one answer called the same term `X` on one line
+        // and `_C156` on the next.
+        if (term is CompoundTerm { CycleId: { } sharedId } && knots is not null
+            && knots.TryGetValue(sharedId, out Cell alreadyPlanted))
+            return alreadyPlanted;
         switch (term)
         {
             case AtomTerm a:
