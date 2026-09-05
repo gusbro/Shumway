@@ -790,6 +790,16 @@ public static class TermRenderer
     private static void RenderOperand(
         Activation engine, Cell cell, TextWriter output, TermRenderOptions options, int maxPrio)
     {
+        // An operand is a level, whatever it is: `write_term(1:2,
+        // [max_depth(1)])` is `... : ...` and not `1:2`. Only here, and not
+        // for the arguments of a canonical compound or the elements of a
+        // list, where an atom at the limit still prints -- which is the line
+        // the other systems draw and the one the conformance battery pins.
+        if (options.MaxDepth > 0 && options.CurrentDepth >= options.MaxDepth)
+        {
+            output.Write("...");
+            return;
+        }
         if (IsBareOperatorAtomCell(engine, cell, options))
         {
             output.Write('(');
