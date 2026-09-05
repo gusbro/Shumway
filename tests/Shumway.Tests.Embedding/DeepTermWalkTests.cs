@@ -212,4 +212,31 @@ public class DeepTermWalkTests
         Assert.Equal(Long, count);
         Assert.Equal("[]", Assert.IsType<AtomTerm>(b).Name);
     }
+
+    [Fact]
+    public void DifOverALongList()
+    {
+        // dif/2 unifies its two sides on trial and then walks the values it
+        // bound, looking for the variables the constraint has to watch. That
+        // walk was the recursive one left: a list long enough on the value
+        // side took the process down, and the crash was reached through an
+        // ordinary constraint over an ordinary list.
+        var e = new PrologEngine();
+        e.UseCoroutining();
+        Assert.True(e.Query($"numlist(1, {Long}, L), dif(f(_X), f(L)).").Success);
+    }
+
+    [Fact]
+    public void DifOverALongListStillConstrains()
+    {
+        // ...and it is the same constraint afterwards: the walk decides which
+        // variables it watches, so a walk that stopped early would leave a
+        // disequality that no longer refuses anything.
+        var e = new PrologEngine();
+        e.UseCoroutining();
+        Assert.False(e.Query(
+            $"numlist(1, {Long}, L), dif(f(X), f(L)), X = L.").Success);
+        Assert.True(e.Query(
+            $"numlist(1, {Long}, L), dif(f(X), f(L)), X = other.").Success);
+    }
 }

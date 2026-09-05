@@ -82,7 +82,7 @@ internal static class CompatLibraries
     private const string Quads = """
         :- module(quads, [run_quads/0, run_quads/1, quads_result/2, clear_quads/0,
                           op(1200, xfx, ?-), op(1200, fx, ?-),
-                          op(1100, xfy, '|')]).
+                          op(1100, xfy, '|'), op(700, xfx, ~~)]).
 
         % The published suites lean on freeze/2 and dif/2; without this a
         % freeze goal is an existence_error and its quad fails instead of
@@ -94,8 +94,11 @@ internal static class CompatLibraries
         :- op(1200, xfx, ?-).
         :- op(1200, fx, ?-).
         :- op(1100, xfy, '|').
+        % `V ~~ '14.2000'` reads as an answer would: at the priority of the
+        % other comparisons, so it sits in a description beside `=`.
+        :- op(700, xfx, ~~).
 
-        :- dynamic('$quad'/4).          % '$quad'(Seq, Id, Goal, Alternatives)
+        :- dynamic('$quad'/4).          % '$quad'(Seq, Id, Goal, Descriptions)
         :- dynamic('$quad_open'/2).     % File, Seq — the quad being described
         :- dynamic('$quad_seq'/1).
         :- dynamic('$quad_dropped'/2).  % Id, Why
@@ -106,6 +109,7 @@ internal static class CompatLibraries
         :- dynamic('$quad_uncompared'/1).  % Id whose answers could not be compared
         :- dynamic('$quad_result'/2).      % the last run's Passed, Total
         :- dynamic('$quad_bad_id'/2).      % Seq, the id that names nothing
+        :- dynamic('$quad_unmet'/3).       % Id, a description it did not meet
 
         % ---- consult-time capture -----------------------------------------
         % A QUERY opens a test and is recognised by its principal functor
@@ -164,13 +168,22 @@ internal static class CompatLibraries
             retractall('$quad_open'(F, _)),
             assertz('$quad_open'(F, N)).
 
-        % Each description sentence adds its alternatives to the open quad.
+        % Each description sentence is a claim of its OWN, so it is stored
+        % as one: a block of several sentences describes one goal several
+        % times over, and reading them as one pool of alternatives let a
+        % transcript claiming three different answers for `X = 1` pass
+        % because the third was right.
+        %
         % No names here: the hook is handed a term whose variables have
         % already lost them (see the recovery pass below).
         quads_describe(N, Block) :-
+            quads_add_desc(N, Block, none, []).
+
+        quads_add_desc(N, Block, Ctx, Names) :-
             quads_alts(Block, Alts),
             retract('$quad'(N, Id, Goal, Have)),
-            quads_parse_alts(Alts, Id, none, Have, More),
+            quads_parse_alts(Alts, Id, Ctx, [], Parsed),
+            quads_append(Have, [desc(Parsed, Block, Names)], More),
             assertz('$quad'(N, Id, Goal, More)).
 
         % ---- recovering the variable names --------------------------------
@@ -234,14 +247,12 @@ internal static class CompatLibraries
             assertz('$quad_run'(N, Goal, Tuple)),
             retractall('$quad_dropped'(Id, _)),
             retractall('$quad_uncompared'(Id)),
+            retractall('$quad_unmet'(Id, _, _)),
             ( '$quad_bad_id'(N, Bad) -> quads_note_dropped(Id, unusable_id(Bad)) ; true ).
 
         quads_recover_desc(N, Block, DNames) :-
             '$quad_names'(N, Names),
-            quads_alts(Block, Alts),
-            retract('$quad'(N, Id, Goal, Have)),
-            quads_parse_alts(Alts, Id, ctx(Names, DNames), Have, More),
-            assertz('$quad'(N, Id, Goal, More)).
+            quads_add_desc(N, Block, ctx(Names, DNames), DNames).
 
         quads_shown_names([], [], []).
         quads_shown_names([Name=V|Ps], Names, Vars) :-
@@ -397,6 +408,7 @@ internal static class CompatLibraries
         quads_has_binding((A ; B)) :- !,
             ( quads_has_binding(A) -> true ; quads_has_binding(B) ).
         quads_has_binding(_ = _).
+        quads_has_binding(_ ~~ _).
 
         % A trailing `...` says the answers go on; the ones written down
         % still have to be the first ones, and nothing is claimed past them.
@@ -441,6 +453,12 @@ internal static class CompatLibraries
         % something that is not an answer, so it is reported rather than
         % checked against one.
         quads_shows_an_answer([], _, _).
+        quads_shows_an_answer([V ~~ Text|Es], DN, Names) :-
+            var(V),
+            quads_var_name(DN, V, N),
+            quads_memberchk(N, Names),
+            atom(Text),
+            quads_shows_an_answer(Es, DN, Names).
         quads_shows_an_answer([V = Val|Es], DN, Names) :-
             var(V),
             quads_var_name(DN, V, N),
@@ -469,9 +487,23 @@ internal static class CompatLibraries
             N is N1 + N2.
 
         quads_all_equations([]).
-        quads_all_equations([E|Es]) :- nonvar(E), E = (_ = _), quads_all_equations(Es).
+        quads_all_equations([E|Es]) :-
+            nonvar(E),
+            ( E = (_ = _) -> true ; E = (_ ~~ _) ),
+            quads_all_equations(Es).
+
         quads_call_all([]).
-        quads_call_all([E|Es]) :- call(E), quads_call_all(Es).
+        quads_call_all([E|Es]) :- quads_bind(E), quads_call_all(Es).
+
+        % `~~` is not a goal: it says the answer is a float near the value
+        % written down, so it binds a marker the comparison knows. A spelling
+        % that describes no interval is refused here, which is what sends its
+        % alternative to the report rather than passing it off as a check.
+        quads_bind(E) :-
+            nonvar(E), E = (V ~~ Text), !,
+            quads_approx(Text, _, _),
+            V = '$quad_approx'(Text).
+        quads_bind(E) :- call(E).
 
         quads_tuple_args([], _, []).
         quads_tuple_args([N|Ns], DN, [V|Vs]) :-
@@ -479,6 +511,77 @@ internal static class CompatLibraries
             quads_tuple_args(Ns, DN, Vs).
         quads_name_var([N0=V0|Ps], N, V) :-
             ( N0 == N -> V = V0 ; quads_name_var(Ps, N, V) ).
+
+        % ---- approximately equal ------------------------------------------
+        % `V ~~ '14.2000'` says the answer is a float APPROXIMATELY equal to
+        % the decimal written down, which is how the standard's examples give
+        % a value they cannot state exactly. The expectation is an ATOM
+        % because its trailing zeroes are the claim: they say how much of the
+        % value is being pinned, so `14.2000` is 14.19995..14.20005 while
+        % `14.2` is 14.15..14.25, and reading it as a float would lose that
+        % difference. Both ends are included.
+        quads_approx(Text, Lo, Hi) :-
+            atom(Text),
+            atom_chars(Text, Cs),
+            quads_decimal(Cs, M, K, E),
+            K1 is K + 1,
+            quads_scaled(10*M - 5, K1, E, Lo),
+            quads_scaled(10*M + 5, K1, E, Hi),
+            quads_scaled(M, K, E, Mid),
+            % A precision finer than the floats can tell apart describes
+            % nothing an implementation could satisfy, so the two ends and
+            % the middle have to be three different floats.
+            catch(( FLo is float(Lo), FMid is float(Mid), FHi is float(Hi) ),
+                  _, fail),
+            FLo < FMid, FMid < FHi.
+
+        quads_scaled(NumExpr, K, E, R) :-
+            N is NumExpr,
+            D is 10^K,
+            ( E >= 0 -> R is (N * 10^E) rdiv D ; R is N rdiv (D * 10^(-E)) ).
+
+        % The float the goal answered with is taken as the rational it IS, so
+        % a bound that no float lands on is still decided the right way --
+        % converting the bound to a float first would move it. The interval
+        % is worked out here rather than kept in the marker: a description is
+        % stored as a clause, and a clause cannot hold a rational.
+        quads_approx_holds(A, Text) :-
+            float(A),
+            quads_approx(Text, Lo, Hi),
+            catch(( R is rationalize(A), R >= Lo, R =< Hi ), _, fail).
+
+        % A decimal spelling: sign, digits, point, digits, and an exponent if
+        % it has one. M is the mantissa as an integer and K how many of its
+        % digits stand behind the point, so the value is M/10^K * 10^E and
+        % the last digit written is worth 1/10^K.
+        quads_decimal(Cs, M, K, E) :-
+            quads_sign(Cs, S, Cs1),
+            quads_digits(Cs1, Int, Cs2), Int \== [],
+            Cs2 = ['.'|Cs3],
+            quads_digits(Cs3, Frac, Cs4), Frac \== [],
+            quads_exponent(Cs4, E),
+            quads_append(Int, Frac, Ds),
+            number_chars(M0, Ds),
+            M is S * M0,
+            quads_length(Frac, K).
+
+        quads_sign(['-'|Cs], -1, Cs) :- !.
+        quads_sign(['+'|Cs], 1, Cs) :- !.
+        quads_sign(Cs, 1, Cs).
+
+        quads_digits([C|Cs], [C|Ds], Rest) :-
+            quads_digit(C), !, quads_digits(Cs, Ds, Rest).
+        quads_digits(Cs, [], Cs).
+        quads_digit(C) :- C @>= '0', C @=< '9'.
+
+        quads_exponent([], 0) :- !.
+        quads_exponent([C|Cs], E) :-
+            ( C == e -> true ; C == 'E' ),
+            quads_sign(Cs, S, Cs1),
+            quads_digits(Cs1, Ds, []),
+            Ds \== [],
+            number_chars(N, Ds),
+            E is S * N.
 
         quads_error_word(instantiation_error).
         quads_error_word(type_error).
@@ -513,6 +616,7 @@ internal static class CompatLibraries
                 format('  failing (~w): ~w~n', [NF, Fails])
             ),
             quads_report_dropped,
+            quads_report_unmet,
             quads_report_uncompared.
 
         % Every answer description this harness could not read, named with
@@ -532,6 +636,24 @@ internal static class CompatLibraries
             format('    ~w: ~q~n', [Id, A]),
             quads_report_each(R).
 
+        % Every description that did not hold of its run, named with the
+        % quad it belongs to. A block of several describes one goal several
+        % times over, and saying which of them the run refutes is the
+        % difference between naming the failing quad and naming the claim.
+        quads_report_unmet :-
+            (   findall(u(Id, B, Ns), '$quad_unmet'(Id, B, Ns), Us), Us \== []
+            ->  quads_length(Us, NU),
+                format('  descriptions not met (~w):~n', [NU]),
+                quads_report_unmet_each(Us)
+            ;   true
+            ).
+        quads_report_unmet_each([]).
+        quads_report_unmet_each([u(Id, B, Ns)|Us]) :-
+            format('    ~w: ', [Id]),
+            write_term(B, [quoted(true), variable_names(Ns)]),
+            nl,
+            quads_report_unmet_each(Us).
+
         % A quad whose answers were written down but could not be compared,
         % because its source was not there to take the names from. It was
         % still run; only the answer substitutions went unchecked.
@@ -550,27 +672,70 @@ internal static class CompatLibraries
         quads_run_list([], P, P, T, T, F, F).
         quads_run_list([q(N, Id, G, K)|Qs], P0, P, T0, T, F0, F) :-
             T1 is T0 + 1,
-            (   \+ '$quad_bad_id'(N, _), quads_check(K, G)
-            ->  P1 is P0 + 1, F1 = F0
-            ;   P1 = P0, F1 = [Id|F0]
+            (   '$quad_bad_id'(N, _)
+            ->  P1 = P0, F1 = [Id|F0]
+            ;   quads_verdict(K, G, Bad),
+                (   Bad == []
+                ->  P1 is P0 + 1, F1 = F0
+                ;   P1 = P0, F1 = [Id|F0], quads_note_unmet(Id, K, Bad)
+                )
             ),
             quads_run_list(Qs, P1, P, T1, T, F1, F).
 
-        % The test passes when the run matches SOME sanctioned alternative.
-        % An alternative marked `unexpected` is not sanctioned: it is written
-        % down precisely because producing it is wrong, so it never makes a
-        % test pass, and a quad whose alternatives are all unexpected can
-        % only fail.
-        quads_check(Alts, G) :-
+        % The quad passes when EVERY description it carries holds of the
+        % run, and something in it was sanctioned at all: a block whose
+        % alternatives are all `unexpected` describes only wrong answers, so
+        % it can only fail.
+        quads_verdict(Descs, G, Bad) :-
+            (   quads_any_sanctioned(Descs)
+            ->  quads_unmet(Descs, G, Bad)
+            ;   Bad = nothing_sanctioned
+            ).
+
+        quads_any_sanctioned([desc(Alts, _, _)|Ds]) :-
+            (   quads_sanctioned(Alts, [_|_])
+            ->  true
+            ;   quads_any_sanctioned(Ds)
+            ).
+
+        quads_unmet([], _, []).
+        quads_unmet([desc(Alts, B, Ns)|Ds], G, Bad) :-
+            ( quads_desc_holds(Alts, G) -> Bad = R ; Bad = [d(B, Ns)|R] ),
+            quads_unmet(Ds, G, R).
+
+        % A description holds when the run matches one of its SANCTIONED
+        % alternatives. One with none -- every alternative marked
+        % `unexpected` -- claims nothing about THIS system: it is a note
+        % about another one, put down so the transcript is complete, and its
+        % run may not even be the same experiment (the two descriptions of a
+        % reading test differ in what they leave unread). The quad still
+        % needs a sanctioned description somewhere, so a block of nothing
+        % but wrong answers can only fail.
+        quads_desc_holds(Alts, G) :-
             quads_sanctioned(Alts, Ok),
-            Ok \== [],
-            quads_group_inputs(Ok, Groups),
-            quads_any_group_matches(Groups, G).
+            (   Ok == []
+            ->  true
+            ;   quads_group_inputs(Ok, Groups),
+                quads_any_group_matches(Groups, G)
+            ).
 
         quads_sanctioned([], []).
         quads_sanctioned([alt(C, In, Pk, Ot, S)|As], Out) :-
             ( S == true -> Out = [alt(C, In, Pk, Ot)|R] ; Out = R ),
             quads_sanctioned(As, R).
+
+        % Which description failed is only worth saying when there was more
+        % than one to choose from: with a single one the failing id already
+        % names it.
+        quads_note_unmet(Id, Descs, Bad) :-
+            (   Bad = [_|_], Descs = [_,_|_]
+            ->  quads_record_unmet(Id, Bad)
+            ;   true
+            ).
+        quads_record_unmet(_, []).
+        quads_record_unmet(Id, [d(B, Ns)|Ds]) :-
+            assertz('$quad_unmet'(Id, B, Ns)),
+            quads_record_unmet(Id, Ds).
 
         % Alternatives that read the same input are decided by ONE run of the
         % goal; the reading is the expensive part and a `loops` alternative
@@ -698,7 +863,9 @@ internal static class CompatLibraries
         quads_term_matches(D, A) :- quads_mask(D, A, M), D =@= M.
 
         quads_mask(D, A, M) :-
-            (   D == '...' -> M = '...'
+            (   nonvar(D), D = '$quad_approx'(Text)
+            ->  ( quads_approx_holds(A, Text) -> M = D ; M = A )
+            ;   D == '...' -> M = '...'
             ;   var(D) -> M = A
             ;   var(A) -> M = A
             ;   compound(D), compound(A),
@@ -855,6 +1022,7 @@ internal static class CompatLibraries
             retractall('$quad_open'(_, _)),
             retractall('$quad_seq'(_)),
             retractall('$quad_dropped'(_, _)),
+            retractall('$quad_unmet'(_, _, _)),
             retractall('$quad_src'(_, _)),
             retractall('$quad_names'(_, _)),
             retractall('$quad_run'(_, _, _)),

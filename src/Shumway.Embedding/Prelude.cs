@@ -593,8 +593,10 @@ internal static class Prelude
                     % integer: infinitely many failing candidates, and the
                     % enumeration only reached this error with the heap full.
                     % Not for an attributed one: freeze(L,L=[]) decides it.
+                    % The resource is named finite_memory because no amount
+                    % of memory would do: it is the finiteness that refuses.
                     L == N, term_attvars(L, []) ->
-                        throw(error(resource_error(memory), length/2))
+                        throw(error(resource_error(finite_memory), length/2))
                 ;   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
                 ;   var(N) -> '$length_enum'(L, N, Acc)
                 ;   throw(error(type_error(integer, N), length/2))

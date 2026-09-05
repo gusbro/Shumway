@@ -41,16 +41,21 @@ public sealed class QuadsAnswerDescriptionTests
     [Fact]
     public void EveryDescriptionSentenceBelongsToItsQuad()
     {
-        // Three sentences of description, all of them alternatives of the one
-        // query. Only the first used to be read; the other two went to the
-        // compiler as clauses for ,/2.
+        // Three sentences of description, all of them about the one query.
+        // Only the first used to be read; the other two went to the compiler
+        // as clauses for ,/2. That every one of them is read and attached to
+        // this quad is what the last two refuting it shows: a sentence
+        // nobody read refutes nothing.
         string report = RunQuads(
             "t1\n?- atom(a).\n" +
+            "   true.\n" +
             "   false.\n" +
-            "   type_error(atom, a).\n" +
-            "   true.\n");
-        Assert.Contains("quads: 1/1", report);
+            "   type_error(atom, a).\n");
+        Assert.Contains("quads: 0/1", report);
         Assert.DoesNotContain("not understood", report);
+        Assert.Contains("descriptions not met (2)", report);
+        Assert.Contains("t1: false", report);
+        Assert.Contains("t1: type_error(atom,a)", report);
     }
 
     [Fact]

@@ -1921,10 +1921,11 @@ public sealed partial class Activation
         // list-pair head slot, and sharing the set would skip that pair.
         var seen = new HashSet<int>(unifierVars);
         var visited = new HashSet<int>();
+        var pending = new Stack<Cell>();
         int boundCount = unifierVars.Count;
         for (int i = 0; i < boundCount; i++)
             CollectUnboundVars(GetHeap(unifierVars[i]), scope.HeapTop,
-                unifierVars, seen, visited);
+                unifierVars, seen, visited, pending);
 
         EndTrialUnify(scope);
         return true;
@@ -1933,40 +1934,56 @@ public sealed partial class Activation
     /// <summary>Appends to <paramref name="into"/> the distinct unbound
     /// variables (plain or attributed) reachable from <paramref name="cell"/>
     /// that live below <paramref name="heapLimit"/>. The shared visited set
-    /// also stops cyclic terms.</summary>
+    /// also stops cyclic terms.
+    ///
+    /// <para>The walk carries its own stack rather than the C# one. What it
+    /// walks is the value side of a unification, which is user data of any
+    /// length, and a frame per list element turned a long enough list into an
+    /// uncatchable crash. The stack comes from the caller, which reuses one
+    /// across the variables of a single unifier.</para></summary>
     private void CollectUnboundVars(Cell cell, int heapLimit,
-        List<int> into, HashSet<int> seen, HashSet<int> visited)
+        List<int> into, HashSet<int> seen, HashSet<int> visited, Stack<Cell> pending)
     {
-        while (cell.Tag == Tag.Ref)
+        pending.Push(cell);
+        while (pending.Count > 0)
         {
-            int addr = Deref(cell.AsHeapIndex);
-            Cell at = GetHeap(addr);
-            if (at.Tag == Tag.Ref && at.AsHeapIndex == addr)
+            Cell c = pending.Pop();
+            bool unbound = false;
+            while (c.Tag == Tag.Ref)
             {
-                if (addr < heapLimit && seen.Add(addr)) into.Add(addr);
-                return;
+                int addr = Deref(c.AsHeapIndex);
+                Cell at = GetHeap(addr);
+                if (at.Tag == Tag.Ref && at.AsHeapIndex == addr)
+                {
+                    if (addr < heapLimit && seen.Add(addr)) into.Add(addr);
+                    unbound = true;
+                    break;
+                }
+                c = at;
             }
-            cell = at;
-        }
-        switch (cell.Tag)
-        {
-            case Tag.AttVar:
-                int va = cell.AsHeapIndex;
-                if (va < heapLimit && seen.Add(va)) into.Add(va);
-                break;
-            case Tag.Str:
-                int fIdx = cell.AsHeapIndex;
-                if (!visited.Add(fIdx)) break;
-                var (_, arity) = FunctorTable.Lookup(GetHeap(fIdx).AsFunctorId);
-                for (int i = 0; i < arity; i++)
-                    CollectUnboundVars(GetHeap(fIdx + 1 + i), heapLimit, into, seen, visited);
-                break;
-            case Tag.Lis:
-                int h = cell.AsHeapIndex;
-                if (!visited.Add(h)) break;
-                CollectUnboundVars(GetHeap(h), heapLimit, into, seen, visited);
-                CollectUnboundVars(GetHeap(h + 1), heapLimit, into, seen, visited);
-                break;
+            if (unbound) continue;
+            switch (c.Tag)
+            {
+                case Tag.AttVar:
+                    int va = c.AsHeapIndex;
+                    if (va < heapLimit && seen.Add(va)) into.Add(va);
+                    break;
+                case Tag.Str:
+                    int fIdx = c.AsHeapIndex;
+                    if (!visited.Add(fIdx)) break;
+                    var (_, arity) = FunctorTable.Lookup(GetHeap(fIdx).AsFunctorId);
+                    // Pushed in reverse so popping takes the arguments left to
+                    // right, which is the order the variables are collected in.
+                    for (int i = arity - 1; i >= 0; i--)
+                        pending.Push(GetHeap(fIdx + 1 + i));
+                    break;
+                case Tag.Lis:
+                    int h = c.AsHeapIndex;
+                    if (!visited.Add(h)) break;
+                    pending.Push(GetHeap(h + 1));
+                    pending.Push(GetHeap(h));
+                    break;
+            }
         }
     }
 

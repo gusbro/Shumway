@@ -38,6 +38,8 @@ runnable tests.
 40 ?- read(T).
       inputs("bar."), T = bar, unexpected.
       inputs("bar."), peeks(" "), T = bar.
+41 ?- V is 0+(3.2+11).
+      V ~~ '14.2000'.
 ```
 
 Piece by piece:
@@ -50,8 +52,11 @@ Piece by piece:
   standard it comes from. It need not share a line with its `?-`, since
   a transcript is read as terms rather than as lines.
 - **The expected block**: every sentence that follows, up to the next
-  test line. There may be more than one, and each contributes its
-  alternatives to the same test.
+  test line. There may be more than one, and each is a claim of its own:
+  they all describe the same goal, so they all have to hold. Three
+  sentences saying the goal answers `X = 2`, then `X = 1`, then `X = 3`
+  describe three different goals, and the test fails, naming the
+  sentences the run refutes.
 - **`;` continues an answer sequence**: `L = [], N = 0 ; L = [_A], N = 1`
   is one expected outcome showing successive answers, in the order the
   goal gives them. The answers themselves are compared, so the sequence
@@ -77,11 +82,6 @@ Piece by piece:
   unwritten and matches whatever is in that position; the rest still has
   to agree.
 - **`false`** means the goal fails; **`true`** means it succeeds.
-- **`waits`** says the goal blocks for input that never comes. Nothing
-  this library can supply tells waiting apart from anything else, since
-  an empty input is end of file rather than a wait, so a test that
-  sanctions only this is named in the report under `not run` instead of
-  being counted as a failure.
 - **`loops`** sanctions non-termination. No harness can observe an
   infinite loop directly, so the goal runs under a 15 second limit and
   still-running counts as this outcome.
@@ -100,10 +100,6 @@ Piece by piece:
   them, as in `outputs(("f(_", ..., ")"))`, which says the output starts
   and ends that way and says nothing about the middle. That is how a
   claim about output survives an implementation's choice of variable
-  names. A text written down whole claims the output entire. The text may be written in pieces with `...` between
-  them, as in `outputs(("f(_", ..., ")"))`, which says the output starts
-  and ends that way and says nothing about the middle. That is how a
-  claim about output survives an implementation's choice of variable
   names. A text written down whole claims the output entire.
 - **`inputs(Text)` and `peeks(Text)`** say what the goal reads: it must
   consume `inputs` and leave `peeks` unread. The two are supplied to the
@@ -115,7 +111,22 @@ Piece by piece:
 - **`unexpected`** at the end of an alternative marks it as a WRONG
   answer, written down because some system produces it. It never makes a
   test pass, so a test whose alternatives are all `unexpected` can only
-  fail.
+  fail. A whole sentence of them, beside another sentence that is
+  sanctioned, is a note about that other system rather than a claim about
+  this one: it is not required to hold.
+- **`~~`** describes a float APPROXIMATELY: `V ~~ '14.2000'` says the
+  answer is a float within `14.19995..14.20005`, ends included. It is how
+  the standard's examples give a value they cannot state exactly, and the
+  expectation is written as a quoted atom because its trailing zeroes are
+  the claim: they say how much of the value is pinned, so `14.2` is the
+  wider `14.15..14.25`, and reading the expectation as a float would lose
+  the difference. An exponent is taken on the mantissa, `1.4200e10` being
+  `1.41995e10..1.42005e10`. The comparison is made against the decimal
+  ends themselves rather than against what they turn into as floats, and
+  what answered has to be a float: an integer is exact, and a description
+  that meant one would use `=`. A precision finer than the floats can
+  tell apart pins nothing, so it is reported under `not understood`
+  rather than checked.
 - **`% name`** at the end of an alternative attributes it to the system
   that produces it; it is a comment.
 
@@ -148,8 +159,9 @@ weaker check as a comparison.
 quads: 37/37
 ```
 
-Importing `library(quads)` activates the `?-` (xfx 1200) and `|`
-(xfy 1100) operators for your session and installs the capture: from
+Importing `library(quads)` activates the `?-` (xfx 1200), `|`
+(xfy 1100) and `~~` (xfx 700) operators for your session and installs
+the capture: from
 then on, consulting a quad file stores its tests instead of trying to
 compile them, and consulting ordinary files is unaffected. Quads
 accumulate across consults.
@@ -157,7 +169,8 @@ accumulate across consults.
 - `run_quads` runs every loaded quad and prints `quads: Passed/Total`,
   with the failing ids listed when there are any, and every answer
   description it could not read named under `not understood` with the
-  test it belongs to.
+  test it belongs to. A test described by more than one sentence also
+  lists, under `descriptions not met`, the ones its run refutes.
 - `run_quads(Id)` runs a single test by its id.
 - `quads_result(Passed, Total)` gives back the counts the last run
   reported, for a program that wants to act on them. It fails when

@@ -58,6 +58,11 @@ public sealed class ConformanceArcRegressionTests
         // outcome where `false` is not.
         True("catch(length(L, L), error(resource_error(_), _), true), "
            + "catch(length([x,y|T], T), error(resource_error(_), _), true).");
+    [Fact] public void Length_SelfAliasedNamesTheResourceItRanOutOf() =>
+        // And it names it finite_memory rather than memory: no amount of
+        // memory would answer this goal, so the reader is told what the
+        // limit is rather than left to go buying more of it.
+        True("catch(length(L, L), error(resource_error(finite_memory), _), true).");
     [Fact] public void Length_OpenEnumerationStaysInterruptible() =>
         // The genuine enumeration, two distinct variables, still runs and
         // still stops at a safe point when asked to.
