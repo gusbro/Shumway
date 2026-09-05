@@ -61,15 +61,16 @@ public class CyclicCulpritTests
     [Fact]
     public void InteriorCycleDisplaysAsANamedEquation()
     {
-        // The answer idiom a root cycle gets for free (`L = ['1'|L]`),
-        // extended to a cycle buried inside a value: the owner gets a
-        // synthetic name and its own line.
+        // The answer idiom a root cycle gets for free, extended to a cycle
+        // buried inside a value: the owner gets a synthetic name and its own
+        // line. A text list writes with the double bar, and the tail there
+        // being the term itself is what says the term is cyclic.
         using var run = NewSession().StartQuery(
             "L = ['1'|L], catch(number_chars(N, L), error(E, _), true).");
         Assert.True(run.MoveNext());
         string s = run.Format(200);
         Assert.Contains("E = type_error(list, _S1)", s);
-        Assert.Contains("_S1 = ['1' | _S1]", s);
+        Assert.Contains("_S1 = \"1\"||_S1", s);
         Assert.DoesNotContain("_C", s);
     }
 
@@ -79,7 +80,7 @@ public class CyclicCulpritTests
         using var run = NewSession().StartQuery("L = ['1'|L], E = t(L).");
         Assert.True(run.MoveNext());
         string s = run.Format(200);
-        Assert.Contains("L = ['1' | L]", s);
+        Assert.Contains("L = \"1\"||L", s);
         Assert.Contains("E = t(L)", s);
     }
 

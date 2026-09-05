@@ -487,6 +487,9 @@ public static class TermRenderer
         }
         if (options.PortrayText && TryRenderAsText(engine, lisCell, output, options))
             return;
+        if (options.PortrayText && options.DoubleBar
+            && TryRenderAsOpenText(engine, lisCell, output, options))
+            return;
 
         output.Write('[');
         bool first = true;
@@ -579,18 +582,61 @@ public static class TermRenderer
     /// terms that are <c>==</c> must print the same, so a packed list and the
     /// cons list it denotes cannot be told apart here. A mixed list of chars
     /// and codes is not text.</para></summary>
+    /// <summary>A text list left OPEN, written the way it can be read back:
+    /// <c>"abc"||T</c>. Spelling out every character is what makes the answer
+    /// to a grammar unreadable, since the tail is the whole point of the
+    /// difference list and the characters before it are the datum.</summary>
+    private static bool TryRenderAsOpenText(
+        Activation engine, Cell lisCell, TextWriter output, TermRenderOptions options)
+    {
+        if (!TryCollectText(engine, lisCell, out string text, out Cell tail)) return false;
+        Resolve(engine, ref tail);
+        // A closed one is the other renderer's business, and an empty prefix
+        // says nothing: `""||T` is just T, so print T.
+        if (tail.Tag == Tag.Atom && tail.AsAtomId == AtomTable.EmptyListId) return false;
+        if (text.Length == 0) return false;
+        WriteQuotedText(text, output);
+        output.Write("||");
+        Render(engine, tail, output, options, 0);
+        return true;
+    }
+
     private static bool TryRenderAsText(
         Activation engine, Cell lisCell, TextWriter output, TermRenderOptions options)
+    {
+        if (!TryCollectText(engine, lisCell, out string text, out Cell tail)) return false;
+        Resolve(engine, ref tail);
+        if (!(tail.Tag == Tag.Atom && tail.AsAtomId == AtomTable.EmptyListId)) return false;
+        if (text.Length == 0) return false;
+        WriteQuotedText(text, output);
+        return true;
+    }
+
+    /// <summary>Reads a list's elements as text, one-char atoms or codes but
+    /// never both, and hands back what it ended on. The verdict is on the
+    /// CONTENT (ADR-047 decision 7), so a packed list and the cons list it
+    /// denotes are read alike.</summary>
+    private static bool TryCollectText(
+        Activation engine, Cell lisCell, out string text, out Cell tail)
     {
         var sb = new System.Text.StringBuilder();
         Cell cur = lisCell;
         bool? chars = null;
         int guard = engine.HeapTop + 2;
+        text = "";
+        tail = cur;
         while (guard-- > 0)
         {
             Resolve(engine, ref cur);
             if (cur.Tag == Tag.Atom && cur.AsAtomId == AtomTable.EmptyListId) break;
-            if (!engine.TryUnconsListLike(cur, out Cell head, out Cell tail)) return false;
+            if (!engine.TryUnconsListLike(cur, out Cell head, out Cell rest))
+            {
+                // Not a cons: this is where the text stops, and what stops it
+                // is the tail.
+                text = sb.ToString();
+                tail = cur;
+                return true;
+            }
             Resolve(engine, ref head);
             if (head.Tag == Tag.Atom)
             {
@@ -611,12 +657,18 @@ public static class TermRenderer
                 sb.Append((char)c);
             }
             else return false;
-            cur = tail;
+            cur = rest;
         }
-        if (guard < 0 || sb.Length == 0) return false;
+        if (guard < 0) return false;
+        text = sb.ToString();
+        tail = cur;
+        return true;
+    }
 
+    private static void WriteQuotedText(string text, TextWriter output)
+    {
         output.Write('"');
-        foreach (char c in sb.ToString())
+        foreach (char c in text)
         {
             if (c == '"') { output.Write("\\\""); continue; }
             string? esc = EscapeQuotedChar(c);
@@ -626,7 +678,6 @@ public static class TermRenderer
             else output.Write(c);
         }
         output.Write('"');
-        return true;
     }
 
     /// <summary>Writes an atom name with quoting applied when
@@ -790,6 +841,16 @@ public static class TermRenderer
     private static void RenderOperand(
         Activation engine, Cell cell, TextWriter output, TermRenderOptions options, int maxPrio)
     {
+        // An operand is a level, whatever it is: `write_term(1:2,
+        // [max_depth(1)])` is `... : ...` and not `1:2`. Only here, and not
+        // for the arguments of a canonical compound or the elements of a
+        // list, where an atom at the limit still prints -- which is the line
+        // the other systems draw and the one the conformance battery pins.
+        if (options.MaxDepth > 0 && options.CurrentDepth >= options.MaxDepth)
+        {
+            output.Write("...");
+            return;
+        }
         if (IsBareOperatorAtomCell(engine, cell, options))
         {
             output.Write('(');

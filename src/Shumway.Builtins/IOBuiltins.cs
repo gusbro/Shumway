@@ -240,7 +240,14 @@ public static class IOBuiltins
             // Scryer/Trealla spelling of the same rendering choice: a
             // char/code list prints as "..." — decided by CONTENT
             // (ADR-047 decision 7), never by representation.
-            case "double_quotes": options.PortrayText = RequireBool(engine, valCell, optCell); break;
+            // ...and where that list is left OPEN, the same spelling writes
+            // it with the double bar, which is what a system offering this
+            // option does with it.
+            case "double_quotes":
+                options.PortrayText = RequireBool(engine, valCell, optCell);
+                options.DoubleBar = options.PortrayText;
+                break;
+            case "double_bar": options.DoubleBar = RequireBool(engine, valCell, optCell); break;
             case "max_depth":
                 if (valCell.Tag is Tag.Ref or Tag.AttVar)
                     throw new PrologRuntimeException("instantiation_error");

@@ -82,9 +82,11 @@ public static class AstTermRenderer
             case StringTerm s: return RenderDoubleQuoted(s.Content);
             case BigIntTerm b: return b.Value.ToString(CultureInfo.InvariantCulture);
             case CompoundTerm { Functor: ".", Args.Length: 2 } list:
-                return portrayText && TryRenderTextList(list, out string text)
-                    ? text
-                    : RenderList(list, ops, quoted, portrayText);
+                if (portrayText && TryRenderTextList(list, out string text)) return text;
+                if (portrayText
+                    && TryRenderOpenTextList(list, ops, quoted, portrayText, out string open))
+                    return open;
+                return RenderList(list, ops, quoted, portrayText);
             // '{}'(X) reads back as {X} — the canonical form would re-parse
             // but is not what writeq/portray_clause emit.
             case CompoundTerm { Functor: "{}", Args.Length: 1 } curly:
@@ -116,6 +118,32 @@ public static class AstTermRenderer
         }
         if (cursor is not AtomTerm { Name: "[]" } || sb.Length == 0) return false;
         rendered = RenderDoubleQuoted(sb.ToString());
+        return true;
+    }
+
+    /// <summary>The same text reading for a list left OPEN, written the way
+    /// it can be read back: `"abc"||T`. An answer to a grammar is a difference
+    /// list, and spelling out each of its characters buries the one thing the
+    /// reader is after, which is where the text ends and the tail begins.
+    /// </summary>
+    private static bool TryRenderOpenTextList(
+        CompoundTerm cons, OperatorTable ops, bool quoted, bool portrayText,
+        out string rendered)
+    {
+        rendered = "";
+        var sb = new StringBuilder();
+        Term cursor = cons;
+        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c)
+        {
+            if (c.Args[0] is not AtomTerm a || !IsOneCodePoint(a.Name)) return false;
+            sb.Append(a.Name);
+            cursor = c.Args[1];
+        }
+        // A closed one is the other reading's business, and an empty prefix
+        // prepends nothing: `""||T` is T.
+        if (cursor is AtomTerm { Name: "[]" } || sb.Length == 0) return false;
+        rendered = RenderDoubleQuoted(sb.ToString()) + "||"
+                 + Render(cursor, 0, ops, quoted, portrayText);
         return true;
     }
 

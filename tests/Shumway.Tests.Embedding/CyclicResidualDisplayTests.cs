@@ -89,7 +89,9 @@ public sealed class CyclicResidualDisplayTests
     public void ACycleWithNoConstraintOnItIsUnchanged()
     {
         var (_, answer) = Ask("X = [a, b|X].");
-        Assert.Equal("X = [a, b | X]", answer);
+        Assert.Equal("X = \"ab\"||X", answer);
+        // ...and one whose elements are not text keeps the other spelling.
+        Assert.Equal("Y = [f(a) | Y]", Ask("Y = [f(a)|Y].").Answer);
     }
 
     [Fact]

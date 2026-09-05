@@ -521,7 +521,7 @@ public sealed class Parser
                 return new FloatTerm(FiniteFloat(tok, pos)) { Position = pos };
 
             case TokenKind.String:
-                return BuildStringLiteral(tok.Text, pos);
+                return ReadDoubleBarTail(BuildStringLiteral(tok.Text, pos), pos);
 
             case TokenKind.Atom:
                 // foo(arg1, arg2, ...) — only when '(' immediately follows
@@ -731,6 +731,45 @@ public sealed class Parser
     // re-establishes its own), so `f(( a, b ))` keeps its conjunction.
     private bool _suppressComma;
     private bool _suppressBar;
+
+    /// <summary>The double bar: <c>"abc"||T</c> is the partial list
+    /// <c>[a,b,c|T]</c>, which is how a long text with an open tail is
+    /// written and read without spelling out every character.
+    ///
+    /// <para>It attaches to the double-quoted TOKEN and to nothing else, so
+    /// <c>("a")||[]</c> stays a syntax error: what precedes the bars has to be
+    /// the literal itself. Chained to the right, <c>"a"||"b"||"c"</c> is
+    /// <c>[a,b,c]</c>, since the tail is read the same way. The tail is a term
+    /// of priority 0, a primary, so the bars bind tighter than every operator
+    /// and <c>X = "ab"||T</c> needs no parentheses.</para>
+    ///
+    /// <para>Only where a double-quoted literal IS a list: under
+    /// <c>double_quotes(atom)</c> there is no list to leave open, and the bars
+    /// are read as they were before.</para></summary>
+    private Term ReadDoubleBarTail(Term literal, SourcePosition pos)
+    {
+        if (_flags.DoubleQuotes == DoubleQuotesMode.Atom) return literal;
+        if (PeekTokenAt(0).Kind != TokenKind.Bar || PeekTokenAt(1).Kind != TokenKind.Bar)
+            return literal;
+        NextToken();
+        NextToken();
+        Term tail = ReadPrimary();
+        // "" leaves the tail itself: an empty text prepends nothing.
+        if (literal is AtomTerm { Name: "[]" }) return tail;
+        if (literal is not StringTerm text) return literal;
+        Term list = tail;
+        for (int i = text.Content.Length - 1; i >= 0; i--)
+            list = new CompoundTerm(".",
+                new[] { TextElement(text.Content[i], text.Kind), list }) { Position = pos };
+        return list;
+    }
+
+    /// <summary>One element of a double-quoted literal, as its flag says it
+    /// is read: a one-char atom, or the character's code.</summary>
+    private static Term TextElement(char c, Shumway.Core.TextKind kind) =>
+        kind == Shumway.Core.TextKind.Codes
+            ? new IntTerm(c)
+            : new AtomTerm(c.ToString());
 
     private Term ReadArgTerm(bool barIsSeparator)
     {

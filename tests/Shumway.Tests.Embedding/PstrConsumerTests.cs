@@ -170,6 +170,10 @@ public class PstrConsumerTests
     {
         Assert.Equal("'.'(a,'.'(b,'.'(c,[])))", Written("write_canonical(\"abc\")"));
         Assert.Equal("[a,b|...]", Written("write_term(\"abc\", [max_depth(2)])"));
+        // The claim is that a packed list obeys them, so it must obey them
+        // the same way the cons list it denotes does.
+        Assert.Equal(Written("write_term([a,b,c], [max_depth(2)])"),
+                     Written("write_term(\"abc\", [max_depth(2)])"));
     }
 
     [Fact]
