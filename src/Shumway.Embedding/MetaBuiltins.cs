@@ -329,7 +329,9 @@ public static partial class MetaBuiltins
         const string Globals = "Global variables";
         BuiltinsRegistry.Register("nb_setval", 2, Shumway.Builtins.GlobalVarsBuiltins.NbSetval,
             Globals, "nb_setval(+Key, +Value)",
-            "Non-backtrackable global variable assignment.");
+            "Non-backtrackable global variable assignment: a copy of Value is stored, "
+            + "so it survives backtracking. The copy carries no attributes; "
+            + "bb_put/2 is the one that keeps a constrained value.");
         BuiltinsRegistry.Register("nb_getval", 2, Shumway.Builtins.GlobalVarsBuiltins.NbGetval,
             Globals, "nb_getval(+Key, -Value)",
             "Reads a non-backtrackable global variable; existence_error if unset.");
@@ -338,7 +340,9 @@ public static partial class MetaBuiltins
             "Enumerates global variables; fails for an unset Key (no throw).");
         BuiltinsRegistry.Register("b_setval", 2, Shumway.Builtins.GlobalVarsBuiltins.BSetval,
             Globals, "b_setval(+Key, +Value)",
-            "Backtrackable global variable assignment: the previous value is restored on backtracking.");
+            "Backtrackable global variable assignment: the previous value is restored on "
+            + "backtracking. The value is the term itself rather than a copy, and the "
+            + "assignment does not outlive the query that made it.");
         BuiltinsRegistry.Register("b_getval", 2, Shumway.Builtins.GlobalVarsBuiltins.BGetval,
             Globals, "b_getval(+Key, -Value)",
             "Reads a backtrackable global variable; existence_error if unset.");
