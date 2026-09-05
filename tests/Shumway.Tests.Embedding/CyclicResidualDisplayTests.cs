@@ -103,6 +103,58 @@ public sealed class CyclicResidualDisplayTests
     }
 
     [Fact]
+    public void AConstraintLeftOnANamelessVariableIsStillReported()
+    {
+        // `true` says there is nothing pending. There is: the goal will never
+        // run, since nothing can reach the variable to bind it, and that is
+        // the mistake worth seeing rather than a reason to hide it. Nobody
+        // constrains a variable they discard on purpose.
+        var (_, answer) = Ask("freeze(_, false).");
+        Assert.Contains("freeze(", answer);
+        Assert.Contains("false", answer);
+        Assert.NotEqual("true", answer);
+    }
+
+    [Theory]
+    [InlineData("dif(_, _).", "dif(")]
+    [InlineData("freeze(_, write(hello)).", "freeze(")]
+    public void SoIsAnyOtherOne(string query, string expected)
+        => Assert.Contains(expected, Ask(query).Answer);
+
+    [Fact]
+    public void AQueryWithNothingPendingStillSaysTrue()
+    {
+        Assert.Equal("true", Ask("atom(a).").Answer);
+        Assert.Equal("true", Ask("true.").Answer);
+        // ...including one that made a constraint and then discarded it by
+        // backtracking, which leaves nothing behind.
+        Assert.Equal("true", Ask("( freeze(_, false), fail ; true ).").Answer);
+    }
+
+    [Fact]
+    public void ANamedVariableStillReportsThroughItsName()
+    {
+        // The reachable case is untouched: the constraint is attached to the
+        // variable the query named, not reported loose beside it.
+        var (_, answer) = Ask("freeze(V, false).");
+        Assert.Equal("freeze(V, false)", answer);
+    }
+
+    [Fact]
+    public void ConstraintsThatLabellingSettledLeaveNothingBehind()
+    {
+        // The risk of reporting every live attributed variable is a solver's
+        // internals leaking into the answer. A finite-domain query that ends
+        // labelled says what it always said.
+        var e = new PrologEngine();
+        e.UseClpfd();
+        var session = new TopLevelSession(e);
+        using var run = session.StartQuery("X in 1..10, Y #= X + 1, label([X]).");
+        Assert.True(run.MoveNext());
+        Assert.Equal("X = 1,\nY = 2", run.Format(width: 200));
+    }
+
+    [Fact]
     public void TheConstraintIsStillTheOneItShows()
     {
         // Naming is a display: the constraint the answer reports must still be

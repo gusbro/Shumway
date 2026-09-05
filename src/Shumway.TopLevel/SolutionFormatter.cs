@@ -107,7 +107,18 @@ public static class SolutionFormatter
         var ops = engine.Operators;
         int elide = engine.Flags.AnswerMaxDepth;
         if (userVars.Count == 0)
-            return solution.Bindings.Count == 0 ? "true" : solution.ToString(width);
+        {
+            // Nothing named to report, which is not the same as nothing to
+            // report: a constraint can be left on a variable the query never
+            // named, and answering `true` there says there is none.
+            Term? onlyResiduals = solution[QueryWrapper.ResidualVarName];
+            var loose = ResidualProjection.ListElements(onlyResiduals).ToList();
+            if (loose.Count > 0)
+                return string.Join(",\n", loose.Select(g => AstTermRenderer.Render(
+                    Elide(g, elide), 1200, ops, quoted: true, portrayText: true)));
+            return onlyResiduals is not null || solution.Bindings.Count == 0
+                ? "true" : solution.ToString(width);
+        }
 
         // An unbound user variable's value is an engine variable `_Gn`; wherever
         // that same `_Gn` turns up inside ANOTHER variable's value, it is the
