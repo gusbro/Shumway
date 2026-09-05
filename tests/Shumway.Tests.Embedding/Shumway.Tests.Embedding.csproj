@@ -56,6 +56,7 @@
     <Compile Remove="Chunk170Tests.cs" />
     <Compile Remove="Chunk174Tests.cs" />
     <Compile Remove="QuadsCommandLineTests.cs" />
+    <Compile Remove="ReplStdinEncodingTests.cs" />
     <Compile Remove="LibraryEmitterTests.cs" />
     <Compile Remove="LinkGoalRefsTests.cs" />
     <Compile Remove="PePatchPrototype.cs" />
