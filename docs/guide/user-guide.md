@@ -25,6 +25,7 @@ reference see [`predicates.md`](predicates.md).
 9. [.NET Framework hosts](#net-framework-hosts)
 10. [Logtalk](#logtalk)
 11. [Debugging](#debugging)
+12. [Limits](#limits)
 
 Related guides outside this document: [embedded native C](embedded-native-c.md)
 (`:- c` / `{…}` blocks), [the interop guide](interop.md) (every C# ↔ Prolog
@@ -1326,3 +1327,26 @@ of each frame, and stepping through the Prolog ports.
   variable editing, Jump to Cursor, logpoints. Works against the REPL
   (`--dap`), any embedded host (`SHUMWAY_DAP_PORT`), and linked executables
   (`--dap-port`). See [`debugger-vscode.md`](debugger-vscode.md).
+
+---
+
+## Limits
+
+Almost nothing here is capped: integers are unbounded, atoms and terms grow
+with memory, and the heap, the stacks and the trails all grow as a query needs
+them. Two limits are deliberate, and this is them.
+
+| Limit | Value | What happens at it |
+|---|---|---|
+| Predicate arity | 255, readable as the `max_arity` flag | `representation_error(max_arity)` |
+| Expansions of one term or goal along one path | 127 | `resource_error(expansion_depth)` |
+
+The second one is worth a word. `term_expansion/2` and `goal_expansion/2` are
+applied again to what they produce, so a hook that expands a goal into
+something containing that goal never finishes, and no system can promise it
+will. The budget is what turns that into an error naming a resource instead of
+a load that never returns. It counts replacements along one path, so a clause
+with a thousand goals in it, each expanded once, is nowhere near it, and a
+chain of rewrites that does converge is free to be long. A hook that needs to
+recurse further than this should mark what it has already expanded, which is
+what the identifier list threaded through `term_expansion/6` is for.
