@@ -82,7 +82,7 @@ internal static class CompatLibraries
     private const string Quads = """
         :- module(quads, [run_quads/0, run_quads/1, quads_result/2, clear_quads/0,
                           op(1200, xfx, ?-), op(1200, fx, ?-),
-                          op(1100, xfy, '|')]).
+                          op(1100, xfy, '|'), op(700, xfx, ~~)]).
 
         % The published suites lean on freeze/2 and dif/2; without this a
         % freeze goal is an existence_error and its quad fails instead of
@@ -94,8 +94,11 @@ internal static class CompatLibraries
         :- op(1200, xfx, ?-).
         :- op(1200, fx, ?-).
         :- op(1100, xfy, '|').
+        % `V ~~ '14.2000'` reads as an answer would: at the priority of the
+        % other comparisons, so it sits in a description beside `=`.
+        :- op(700, xfx, ~~).
 
-        :- dynamic('$quad'/4).          % '$quad'(Seq, Id, Goal, Alternatives)
+        :- dynamic('$quad'/4).          % '$quad'(Seq, Id, Goal, Descriptions)
         :- dynamic('$quad_open'/2).     % File, Seq — the quad being described
         :- dynamic('$quad_seq'/1).
         :- dynamic('$quad_dropped'/2).  % Id, Why
@@ -405,6 +408,7 @@ internal static class CompatLibraries
         quads_has_binding((A ; B)) :- !,
             ( quads_has_binding(A) -> true ; quads_has_binding(B) ).
         quads_has_binding(_ = _).
+        quads_has_binding(_ ~~ _).
 
         % A trailing `...` says the answers go on; the ones written down
         % still have to be the first ones, and nothing is claimed past them.
@@ -449,6 +453,12 @@ internal static class CompatLibraries
         % something that is not an answer, so it is reported rather than
         % checked against one.
         quads_shows_an_answer([], _, _).
+        quads_shows_an_answer([V ~~ Text|Es], DN, Names) :-
+            var(V),
+            quads_var_name(DN, V, N),
+            quads_memberchk(N, Names),
+            atom(Text),
+            quads_shows_an_answer(Es, DN, Names).
         quads_shows_an_answer([V = Val|Es], DN, Names) :-
             var(V),
             quads_var_name(DN, V, N),
@@ -477,9 +487,23 @@ internal static class CompatLibraries
             N is N1 + N2.
 
         quads_all_equations([]).
-        quads_all_equations([E|Es]) :- nonvar(E), E = (_ = _), quads_all_equations(Es).
+        quads_all_equations([E|Es]) :-
+            nonvar(E),
+            ( E = (_ = _) -> true ; E = (_ ~~ _) ),
+            quads_all_equations(Es).
+
         quads_call_all([]).
-        quads_call_all([E|Es]) :- call(E), quads_call_all(Es).
+        quads_call_all([E|Es]) :- quads_bind(E), quads_call_all(Es).
+
+        % `~~` is not a goal: it says the answer is a float near the value
+        % written down, so it binds a marker the comparison knows. A spelling
+        % that describes no interval is refused here, which is what sends its
+        % alternative to the report rather than passing it off as a check.
+        quads_bind(E) :-
+            nonvar(E), E = (V ~~ Text), !,
+            quads_approx(Text, _, _),
+            V = '$quad_approx'(Text).
+        quads_bind(E) :- call(E).
 
         quads_tuple_args([], _, []).
         quads_tuple_args([N|Ns], DN, [V|Vs]) :-
@@ -487,6 +511,77 @@ internal static class CompatLibraries
             quads_tuple_args(Ns, DN, Vs).
         quads_name_var([N0=V0|Ps], N, V) :-
             ( N0 == N -> V = V0 ; quads_name_var(Ps, N, V) ).
+
+        % ---- approximately equal ------------------------------------------
+        % `V ~~ '14.2000'` says the answer is a float APPROXIMATELY equal to
+        % the decimal written down, which is how the standard's examples give
+        % a value they cannot state exactly. The expectation is an ATOM
+        % because its trailing zeroes are the claim: they say how much of the
+        % value is being pinned, so `14.2000` is 14.19995..14.20005 while
+        % `14.2` is 14.15..14.25, and reading it as a float would lose that
+        % difference. Both ends are included.
+        quads_approx(Text, Lo, Hi) :-
+            atom(Text),
+            atom_chars(Text, Cs),
+            quads_decimal(Cs, M, K, E),
+            K1 is K + 1,
+            quads_scaled(10*M - 5, K1, E, Lo),
+            quads_scaled(10*M + 5, K1, E, Hi),
+            quads_scaled(M, K, E, Mid),
+            % A precision finer than the floats can tell apart describes
+            % nothing an implementation could satisfy, so the two ends and
+            % the middle have to be three different floats.
+            catch(( FLo is float(Lo), FMid is float(Mid), FHi is float(Hi) ),
+                  _, fail),
+            FLo < FMid, FMid < FHi.
+
+        quads_scaled(NumExpr, K, E, R) :-
+            N is NumExpr,
+            D is 10^K,
+            ( E >= 0 -> R is (N * 10^E) rdiv D ; R is N rdiv (D * 10^(-E)) ).
+
+        % The float the goal answered with is taken as the rational it IS, so
+        % a bound that no float lands on is still decided the right way --
+        % converting the bound to a float first would move it. The interval
+        % is worked out here rather than kept in the marker: a description is
+        % stored as a clause, and a clause cannot hold a rational.
+        quads_approx_holds(A, Text) :-
+            float(A),
+            quads_approx(Text, Lo, Hi),
+            catch(( R is rationalize(A), R >= Lo, R =< Hi ), _, fail).
+
+        % A decimal spelling: sign, digits, point, digits, and an exponent if
+        % it has one. M is the mantissa as an integer and K how many of its
+        % digits stand behind the point, so the value is M/10^K * 10^E and
+        % the last digit written is worth 1/10^K.
+        quads_decimal(Cs, M, K, E) :-
+            quads_sign(Cs, S, Cs1),
+            quads_digits(Cs1, Int, Cs2), Int \== [],
+            Cs2 = ['.'|Cs3],
+            quads_digits(Cs3, Frac, Cs4), Frac \== [],
+            quads_exponent(Cs4, E),
+            quads_append(Int, Frac, Ds),
+            number_chars(M0, Ds),
+            M is S * M0,
+            quads_length(Frac, K).
+
+        quads_sign(['-'|Cs], -1, Cs) :- !.
+        quads_sign(['+'|Cs], 1, Cs) :- !.
+        quads_sign(Cs, 1, Cs).
+
+        quads_digits([C|Cs], [C|Ds], Rest) :-
+            quads_digit(C), !, quads_digits(Cs, Ds, Rest).
+        quads_digits(Cs, [], Cs).
+        quads_digit(C) :- C @>= '0', C @=< '9'.
+
+        quads_exponent([], 0) :- !.
+        quads_exponent([C|Cs], E) :-
+            ( C == e -> true ; C == 'E' ),
+            quads_sign(Cs, S, Cs1),
+            quads_digits(Cs1, Ds, []),
+            Ds \== [],
+            number_chars(N, Ds),
+            E is S * N.
 
         quads_error_word(instantiation_error).
         quads_error_word(type_error).
@@ -768,7 +863,9 @@ internal static class CompatLibraries
         quads_term_matches(D, A) :- quads_mask(D, A, M), D =@= M.
 
         quads_mask(D, A, M) :-
-            (   D == '...' -> M = '...'
+            (   nonvar(D), D = '$quad_approx'(Text)
+            ->  ( quads_approx_holds(A, Text) -> M = D ; M = A )
+            ;   D == '...' -> M = '...'
             ;   var(D) -> M = A
             ;   var(A) -> M = A
             ;   compound(D), compound(A),
