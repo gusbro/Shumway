@@ -175,9 +175,21 @@ public class FrozenVariableGoalTests
     public void OneConstraintWatchingTwoVariablesIsStillShownOnce()
     {
         // The dedup the merge exists for: dif's single record sits in both
-        // X and Y, and aliasing them must not double it.
+        // X and Y, and aliasing them must not double it. The pair here still
+        // HAS a unifier once X and Y are one (X = a), so the constraint is
+        // live and the question is only how many times it is shown.
+        string s = AnswerOf("dif(f(X, Y), f(a, a)), X = Y.");
+        Assert.Equal("dif(X, a)", s);
+    }
+
+    [Fact]
+    public void AConstraintTheAliasingDecidedIsNotShownAtAll()
+    {
+        // f(X, X) against f(a, b) would need X to be both a and b, so the
+        // disequality holds for good: aliasing can decide a constraint as
+        // well as violate one, and what cannot be violated is not a residual.
         string s = AnswerOf("dif(f(X, Y), f(a, b)), X = Y.");
-        Assert.Equal("dif(f(X, X), f(a, b))", s);
+        Assert.Equal("X = Y", s);
     }
 
     [Fact]

@@ -589,14 +589,13 @@ internal static class Prelude
 
         '$length_walk'(L, N, Acc) :-
             (   var(L) ->
-                (   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
-                    % A length aliased to the open tail (length(L,L),
-                    % length([a|X],X)) enumerates like any other var-var
-                    % pair: every candidate fails and the growth ends in a
-                    % genuine, catchable resource_error(memory) — the ISO
-                    % outcome (Neumerkel length 21/22). Do NOT short-circuit
-                    % it to `false`: sound, but not among the sanctioned
-                    % answers.
+                (   % Binding the tail binds the LENGTH to a list, never an
+                    % integer: infinitely many failing candidates, and the
+                    % enumeration only reached this error with the heap full.
+                    % Not for an attributed one: freeze(L,L=[]) decides it.
+                    L == N, term_attvars(L, []) ->
+                        throw(error(resource_error(memory), length/2))
+                ;   integer(N) -> M is N - Acc, M >= 0, '$make_var_list'(M, L)
                 ;   var(N) -> '$length_enum'(L, N, Acc)
                 ;   throw(error(type_error(integer, N), length/2))
                 )
@@ -1144,6 +1143,9 @@ internal static class Prelude
         '$must_be_insufficient'(not_empty_list, X) :- '$partial_list'(X).
         '$must_be_insufficient'(chars, X) :- '$partial_list'(X, P), '$all_chars'(P).
         '$must_be_insufficient'(codes, X) :- '$partial_list'(X, P), '$all_codes'(P).
+        % Reached only once the check failed, so an acyclic one here is a term
+        % that is merely not ground yet.
+        '$must_be_insufficient'(term, X) :- acyclic_term(X).
         '$must_be_insufficient'(character_code_list, X) :-
             '$partial_list'(X, P), '$all_codes'(P).
 
@@ -1175,8 +1177,20 @@ internal static class Prelude
         '$must_be_type'(acyclic).    '$must_be_type'(cyclic).
         '$must_be_type'(boolean).    '$must_be_type'(chars).
         '$must_be_type'(codes).      '$must_be_type'(any).
+        % Named by both of the systems whose must_be/2 this one answers to.
+        % `pair` has a caller here: keysort/2 reports type_error(pair, _).
+        '$must_be_type'(pair).       '$must_be_type'(term).
+        '$must_be_type'(type).
 
         '$must_be_ok'(any, _).
+        '$must_be_ok'(pair, _-_).
+        % `term` is a term that is fully KNOWN: acyclic and ground. Not "any
+        % term", which would be a check that never says no; the two are told
+        % apart below, where a term still open reads as insufficiently
+        % instantiated and a rational one as the wrong type.
+        '$must_be_ok'(term, X) :- acyclic_term(X), ground(X).
+        '$must_be_ok'(type, X) :-
+            ( '$must_be_domain'(X, _, _) -> true ; '$must_be_type'(X) ).
         '$must_be_ok'(integer, X) :- integer(X).
         '$must_be_ok'(atom, X) :- atom(X).
         '$must_be_ok'(atomic, X) :- atomic(X).
@@ -1225,6 +1239,8 @@ internal static class Prelude
         % is why this is a short list and not a rule.)
         '$can_be_ok'(Type, X) :- '$must_be_ok'(Type, X), !.
         '$can_be_ok'(list, X) :- '$partial_list'(X).
+        % must_be wants it ground; can_be only wants it able to become so.
+        '$can_be_ok'(term, X) :- acyclic_term(X).
         '$can_be_ok'(not_empty_list, X) :- X \== [], '$partial_list'(X).
         '$can_be_ok'(chars, X) :- '$partial_list'(X, Prefix), '$all_chars'(Prefix).
         '$can_be_ok'(codes, X) :- '$partial_list'(X, Prefix), '$all_codes'(Prefix).

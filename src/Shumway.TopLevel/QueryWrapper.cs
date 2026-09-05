@@ -31,19 +31,39 @@ internal static class QueryWrapper
         {
             var (goal, vars) = engine.ParseGoal(queryText);
             userVars = vars;
-            if (vars.Count == 0)
-            {
-                wrapped = goal;
-                return true;
-            }
-
+            // A query with no variables of its own still gets the residual
+            // step: `?- freeze(_, false).` has nothing to bind and something
+            // to say. The list it projects from is then empty and only the
+            // live attributed variables are left to find.
             var varsList = SolutionFormatter.MakeList(
                 vars.Select(n => (Term)new VarTerm(n)).ToArray());
             Term copies = new VarTerm(CopiesVarName);
             Term residuals = new VarTerm(ResidualVarName);
-            Term copyTerm = new CompoundTerm("copy_term", new Term[]
+            // The projection reaches what the QUERY reaches, and a constraint
+            // can be left on a variable it does not: `?- freeze(_, false).`
+            // answered `true`, which says there is nothing pending. Nobody
+            // constrains a variable they discard on purpose, so this is a
+            // mistake, and the answer is where it shows. The live attributed
+            // variables ride along with the query's own, and the copy of the
+            // query's half is what the formatter reads, unchanged.
+            Term extra = new VarTerm("_ReplLive_8a7b3c");
+            Term copyPair = new VarTerm("_ReplCopyPair_8a7b3c");
+            Term copyTerm = new CompoundTerm(",", new Term[]
             {
-                varsList, copies, residuals,
+                new CompoundTerm("$live_attvars", new[] { extra }),
+                new CompoundTerm(",", new Term[]
+                {
+                    new CompoundTerm("copy_term", new Term[]
+                    {
+                        new CompoundTerm("-", new[] { varsList, extra }),
+                        copyPair, residuals,
+                    }),
+                    new CompoundTerm("=", new Term[]
+                    {
+                        copyPair,
+                        new CompoundTerm("-", new[] { copies, new VarTerm("_") }),
+                    }),
+                }),
             });
 
             // copy_term/3 copies the WHOLE answer, on the heap, for every

@@ -296,7 +296,18 @@ internal static class Coroutining
             !, '$co_alias_check'(A), '$co_alias_check'(B).
         '$co_alias_check'('$co_goal'(G)) :- !, '$co_alias_check'(G).
         '$co_alias_check'('$dif_wake'(dif_c(X, Y, Alive))) :-
-            !, ( Alive == dead -> true ; X \== Y ).
+            !,
+            (   Alive == dead
+            ->  true
+            ;   X \== Y,
+                % An aliasing can also DECIDE the disequality outright, and not
+                % only violate it: once P and Q are one variable, P-Q against
+                % 1-2 has become P-P against 1-2, which no binding of P can ever
+                % make equal. The constraint holds for good, so it retires here
+                % rather than staying on as a residual nothing could violate.
+                '$dif_check'(X, Y, Out, _),
+                ( Out == none -> Alive = dead ; true )
+            ).
         '$co_alias_check'('$when_fire'(Trigger)) :-
             !, '$when_fire'(Trigger).
         '$co_alias_check'(_).

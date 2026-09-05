@@ -1878,6 +1878,27 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithHeapAt(1, BuildRefList(engine, fresh));
     }
 
+    /// <summary><c>'$live_attvars'(-Vars)</c> — every attributed variable
+    /// the engine holds right now, in creation order.
+    ///
+    /// <para>The top level projects residual constraints from the query's own
+    /// variables, so a constraint left on a variable the query does not reach
+    /// was invisible: <c>?- freeze(_, false).</c> answered <c>true</c>, which
+    /// says there is nothing pending. It is a mistake to leave one there and
+    /// this is how the mistake becomes visible. No snapshot and no tracking
+    /// during the goal, unlike call_residue_vars/2, which asks a different
+    /// question: this one is asked once, at the answer, and only when
+    /// <c>'$any_attvars'</c> has already said there is something to
+    /// find.</para></summary>
+    public static bool LiveAttvars(Activation engine)
+    {
+        var live = new System.Collections.Generic.List<int>();
+        foreach (int addr in engine.AttrTableKeysSnapshot())
+            if (engine.IsAttVarAt(addr)) live.Add(addr);
+        live.Sort();   // creation order: heap addresses grow
+        return engine.UnifyRegisterWithHeapAt(0, BuildRefList(engine, live));
+    }
+
     /// <summary>Builds a proper heap list whose elements are references to
     /// the given heap addresses (the real cells — unbound/attributed
     /// variables stay themselves) and returns the heap index of its

@@ -107,7 +107,18 @@ public static class SolutionFormatter
         var ops = engine.Operators;
         int elide = engine.Flags.AnswerMaxDepth;
         if (userVars.Count == 0)
-            return solution.Bindings.Count == 0 ? "true" : solution.ToString(width);
+        {
+            // Nothing named to report, which is not the same as nothing to
+            // report: a constraint can be left on a variable the query never
+            // named, and answering `true` there says there is none.
+            Term? onlyResiduals = solution[QueryWrapper.ResidualVarName];
+            var loose = ResidualProjection.ListElements(onlyResiduals).ToList();
+            if (loose.Count > 0)
+                return string.Join(",\n", loose.Select(g => AstTermRenderer.Render(
+                    Elide(g, elide), 1200, ops, quoted: true, portrayText: true)));
+            return onlyResiduals is not null || solution.Bindings.Count == 0
+                ? "true" : solution.ToString(width);
+        }
 
         // An unbound user variable's value is an engine variable `_Gn`; wherever
         // that same `_Gn` turns up inside ANOTHER variable's value, it is the
@@ -135,12 +146,18 @@ public static class SolutionFormatter
                 copyToOriginal[key] = shown;
 
         // Collect residual goals and substitute copy-vars back to originals.
+        // Both forms are kept: a substitution rebuilds compounds and a rebuild
+        // drops the cycle stamp, which is the only handle on which subterm is
+        // a rational tree.
         var residuals = new List<Term>();
+        var residualSource = new Dictionary<Term, Term>(ReferenceEqualityComparer.Instance);
         Term? resTerm = solution[QueryWrapper.ResidualVarName];
         Term resCursor = resTerm ?? new AtomTerm("[]");
         while (resCursor is CompoundTerm { Functor: ".", Args.Length: 2 } rc)
         {
-            residuals.Add(ResidualProjection.SubstituteVarNames(rc.Args[0], copyToOriginal));
+            Term named = ResidualProjection.SubstituteVarNames(rc.Args[0], copyToOriginal);
+            residuals.Add(named);
+            residualSource[named] = rc.Args[0];
             resCursor = rc.Args[1];
         }
 
@@ -239,6 +256,20 @@ public static class SolutionFormatter
             members.Add(name);
         }
 
+        // What each shown value looks like, read backwards. A residual can
+        // hold the very term a binding line already shows, and for a rational
+        // tree that reads as two ways of saying one thing: `X = - X` above and
+        // `dif(Y, - X)` below. A cyclic subterm that comes out looking exactly
+        // like some variable's value IS that variable, so it says the name.
+        // Only a rational tree is a candidate: it is the one kind of term with
+        // more than one way to spell itself, and restricting the comparison to
+        // those means two DIFFERENT terms cut short by the display limit can
+        // never come out looking alike and take each other's name.
+        Dictionary<string, string>? nameByValue = null;
+        foreach (var kv in renderedValue)
+            if (solution[kv.Key] is CompoundTerm { CycleId: not null })
+                (nameByValue ??= new Dictionary<string, string>()).TryAdd(kv.Value, kv.Key);
+
         var lines = new List<string>();
         var groupEmitted = new HashSet<string>();
         foreach (string name in userVars)
@@ -249,7 +280,8 @@ public static class SolutionFormatter
                 // a `_`-named variable is still CONSTRAINED to is an answer,
                 // even though what it was bound to is not.
                 foreach (Term g in rs)
-                    lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops, quoted: true, portrayText: true));
+                    lines.Add(RenderResidual(g, residualSource, copyToOriginal, cycleNames,
+                                             displayName, nameByValue, elide, ops));
                 continue;
             }
             if (!renderedValue.TryGetValue(name, out string? key)
@@ -275,10 +307,88 @@ public static class SolutionFormatter
                     quoted: true, portrayText: true));
             }
         foreach (Term g in unattachedResiduals)
-            lines.Add(AstTermRenderer.Render(Elide(g, elide), 1200, ops, quoted: true, portrayText: true));
+            lines.Add(RenderResidual(g, residualSource, copyToOriginal, cycleNames,
+                                     displayName, nameByValue, elide, ops));
 
         if (lines.Count == 0) return "true";
         return string.Join(",\n", lines);
+    }
+
+    /// <summary>One residual constraint, named the way the bindings beside it
+    /// are. A residual and a binding can hold the SAME term, and until this
+    /// they said so differently: `X = - X` on one line and
+    /// `dif(Y, - _C156)` on the next, where the `_C156` is the cycle marker
+    /// for the very term the line above calls X. One answer, two names for
+    /// one thing.</summary>
+    private static string RenderResidual(
+        Term g, Dictionary<Term, Term> residualSource,
+        Dictionary<string, string> copyToOriginal,
+        Dictionary<string, string>? cycleNames,
+        Dictionary<string, string> displayName, Dictionary<string, string>? nameByValue,
+        int elide, Shumway.Compiler.Parsing.OperatorTable ops)
+    {
+        // The cycle stamps only survive on the goal as it was read, so the
+        // naming runs there and the substitutions run on its result.
+        if (nameByValue is not null && residualSource.TryGetValue(g, out Term? raw))
+        {
+            Term named = NameShownCycles(raw, nameByValue, copyToOriginal, cycleNames,
+                                         displayName, elide, ops, 8);
+            if (!ReferenceEquals(named, raw))
+                g = ResidualProjection.SubstituteVarNames(named, copyToOriginal);
+        }
+        if (cycleNames is not null)
+        {
+            // Owners first: SubstituteVarNames' rebuilds drop the stamp.
+            g = ResidualProjection.SubstituteCycleOwnersBelowRoot(g, cycleNames);
+            g = ResidualProjection.SubstituteVarNames(g, cycleNames);
+        }
+        if (displayName.Count > 0)
+            g = ResidualProjection.SubstituteVarNames(g, displayName);
+        return AstTermRenderer.Render(Elide(g, elide), 1200, ops,
+                                      quoted: true, portrayText: true);
+    }
+
+    /// <summary>Replaces a cyclic subterm that looks exactly like a shown
+    /// value by the name of the variable it belongs to: `X = - X` and
+    /// `dif(Y, - X)` become `X = - X` and `dif(Y, X)`, which is the same
+    /// constraint said once. Only a cycle OWNER is a candidate, since only a
+    /// rational tree has more than one way to spell itself; depth is bounded
+    /// because this is a display and the answer beside it is the long
+    /// form.</summary>
+    private static Term NameShownCycles(
+        Term t, Dictionary<string, string> nameByValue,
+        Dictionary<string, string> copyToOriginal,
+        Dictionary<string, string>? cycleNames, Dictionary<string, string> displayName,
+        int elide, Shumway.Compiler.Parsing.OperatorTable ops, int depth)
+    {
+        if (depth <= 0 || t is not CompoundTerm c) return t;
+        if (c.CycleId is not null)
+        {
+            // Named the way the binding lines are, or the comparison is
+            // between `- X` and `- _G7` and never matches.
+            Term probe = ResidualProjection.SubstituteVarNames(c, copyToOriginal);
+            if (cycleNames is not null)
+            {
+                probe = ResidualProjection.SubstituteCycleOwnersBelowRoot(probe, cycleNames);
+                probe = ResidualProjection.SubstituteVarNames(probe, cycleNames);
+            }
+            if (displayName.Count > 0)
+                probe = ResidualProjection.SubstituteVarNames(probe, displayName);
+            string shown = AstTermRenderer.Render(
+                Elide(probe, elide), BindingValuePriority, ops,
+                quoted: true, portrayText: true);
+            if (nameByValue.TryGetValue(shown, out string? name))
+                return new VarTerm(name);
+        }
+        Term[]? args = null;
+        for (int i = 0; i < c.Args.Length; i++)
+        {
+            Term ex = NameShownCycles(c.Args[i], nameByValue, copyToOriginal, cycleNames,
+                                      displayName, elide, ops, depth - 1);
+            if (!ReferenceEquals(ex, c.Args[i]))
+                (args ??= (Term[])c.Args.Clone())[i] = ex;
+        }
+        return args is null ? t : new CompoundTerm(c.Functor, args);
     }
 
     /// <summary>The priority a binding's value renders at: an argument of

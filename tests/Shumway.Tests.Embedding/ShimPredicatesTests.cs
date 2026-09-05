@@ -64,6 +64,64 @@ public sealed class ShimPredicatesTests
     }
 
     [Fact]
+    public void MustBe_KnowsPairTermAndType()
+    {
+        // The three names both of the systems this predicate answers to have
+        // and this one did not, so a program porting a check met a
+        // domain_error about the check itself. `pair` has a caller here:
+        // keysort/2 is what reports type_error(pair, _).
+        var e = new PrologEngine();
+        Assert.True(e.Query("must_be(pair, a-b).").Success);
+        Assert.True(e.Query(
+            "catch(must_be(pair, foo), error(type_error(pair, foo), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(must_be(pair, _), error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query(
+            "catch(keysort([1/a], _), error(type_error(pair, 1/a), _), true).").Success);
+    }
+
+    [Fact]
+    public void MustBe_TermIsATermThatIsFullyKnown()
+    {
+        // Not "any term", which would never say no: a term still open is
+        // insufficiently instantiated, and a rational one is the wrong type.
+        var e = new PrologEngine();
+        Assert.True(e.Query("must_be(term, f(a, b)).").Success);
+        Assert.True(e.Query(
+            "catch(must_be(term, f(_)), error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query(
+            "X = f(X), catch(must_be(term, X), error(type_error(term, _), _), true).")
+            .Success);
+        // can_be/2 asks the weaker question, so an open term is admissible,
+        // and so is anything at all that is still unbound. What can never
+        // become a pair is refused all the same.
+        Assert.True(e.Query("can_be(term, f(_)), can_be(pair, _), can_be(pair, _-_).")
+            .Success);
+        Assert.True(e.Query(
+            "catch(can_be(pair, foo), error(type_error(pair, foo), _), true).").Success);
+        Assert.True(e.Query(
+            "X = f(X), catch(can_be(term, X), error(type_error(term, _), _), true).")
+            .Success);
+    }
+
+    [Fact]
+    public void MustBe_TypeIsANameMustBeKnows()
+    {
+        // What makes the check's own first argument checkable, which is the
+        // point of having the name at all.
+        var e = new PrologEngine();
+        Assert.True(e.Query("must_be(type, integer), must_be(type, pair).").Success);
+        Assert.True(e.Query("must_be(type, not_less_than_zero).").Success);
+        Assert.True(e.Query(
+            "catch(must_be(type, no_such_type), error(type_error(type, no_such_type), _), "
+            + "true).").Success);
+        // ...and a name it does not know is still refused wherever it appears.
+        Assert.True(e.Query(
+            "catch(must_be(no_such_type, 1), "
+            + "error(domain_error(must_be_type, no_such_type), _), true).").Success);
+    }
+
+    [Fact]
     public void MustBe_AcceptsMatchingType()
     {
         var e = new PrologEngine();

@@ -49,13 +49,16 @@ public sealed class PromotedWakeSoundnessTests
     [Fact]
     public void AbortedGrindLeavesTheEngineSound()
     {
-        // The original discovery recipe: a timed-out length(L,L) grind
-        // (promoting mid-enumeration, unwound by the timeout ball), then
-        // the freeze test in a LATER query on the same engine.
+        // The original discovery recipe: a timed-out length grind (promoting
+        // mid-enumeration, unwound by the timeout ball), then the freeze test
+        // in a LATER query on the same engine. The grind is the open
+        // enumeration driven by failure, since length(L, L) is refused at once
+        // now and grinds nothing.
         var e = new PrologEngine { Out = new System.IO.StringWriter() };
         e.IlPromotion.Threshold = 32;
         Assert.True(e.Query("use_module(library(coroutining)).").Success);
-        Assert.True(e.Query("time_out(length(L, L), 300, R), R == time_out.").Success);
+        Assert.True(e.Query(
+            "time_out((length(_L, _N), fail), 300, R), R == time_out.").Success);
         Assert.False(e.Query("freeze(X, X=[]), length(X, N), N > 3.").Success);
     }
 
