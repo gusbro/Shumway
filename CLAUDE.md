@@ -321,6 +321,8 @@ When proposing changes:
 | Module-scoped operator tables | ADR-046 |
 | A packed string is a list | ADR-047 |
 | A Prolog character is a code point | ADR-048 |
+| Backtrackable wakeups (interrupted-goal model) | ADR-049 |
+| WebAssembly Tier-1 backend | ADR-050 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |
