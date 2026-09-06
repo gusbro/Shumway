@@ -132,6 +132,34 @@ Chrome Y Firefox, con frontera ≤ 1µs por entrada.** Menos que eso en la forma
 más amiga posible = el impuesto de frontera/memoria se comió la ganancia →
 No-Go, hallazgos a `docs/benchmarks/browser-spike.md`, fin del arco.
 
+### Estado: mitad de escritorio HECHA
+
+Existen y andan, sin browser:
+
+- `src/Shumway.Compiler.Wasm/` (net10, paquete `WebAssembly` 2.1.0,
+  Apache-2.0, cero dependencias propias) con `WasmAbi` (mailbox de 16 slots de
+  64 bits + los seis veredictos), `SpikeCounterModule` (el contador armado a
+  mano) y `WasmSharedMemory`.
+- `tests/Shumway.Tests.Wasm/` — 16 tests que **ejecutan** el módulo con el
+  motor de la biblioteca contra un arnés que pone mailbox, registros y heap
+  dentro de la memoria importada. Es la misma vista que tiene el módulo en el
+  browser: sólo direcciona por offset dentro de la memoria que le dan.
+
+Qué quedó pineado: el deref de X0 leyendo la base desde el mailbox, el test de
+tag, el desempaquetado y reempaquetado de una celda entera (signo incluido),
+el `loop`/`br` como tail call, el bail por flags y por watermark en el back
+edge, y la reentrada por cursor que termina la cuenta donde la dejó.
+
+Adelantado del registro de riesgos: **el flag `shared` ya no es riesgo**. La
+biblioteca no lo emite, así que se parchea el byte de límites del import
+(0x01 → 0x03, un byte por un byte, ninguna sección se mueve) y hay tests que
+lo fijan, incluido que el módulo parcheado vuelve a leerse entero.
+
+Falta la mitad de browser, que es donde viven las tres mediciones
+obligatorias: `WasmTier.cs` + `wasmtier.js` (instanciación y `addFunction`),
+el hook `#wasmspike`, y el `calli` por índice de tabla bajo Mono interp, que
+es el que decide D1.
+
 ## Fase 1 — Backend (~3-4 semanas, condicional a Go)
 
 `WasmPredicateCompiler.Compile(CompiledPredicate, WasmIdSource) → (byte[],

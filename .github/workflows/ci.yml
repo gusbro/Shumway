@@ -59,6 +59,10 @@ jobs:
         run: dotnet test tests/Shumway.Tests.Compiler -c Release -f net10.0
       - name: IsoConformance
         run: dotnet test tests/Shumway.Tests.IsoConformance -c Release -f net10.0
+      # net10 only: the wasm backend targets the browser and the package it
+      # builds on has no net48 assets, so the netfx lanes do not carry it.
+      - name: Wasm
+        run: dotnet test tests/Shumway.Tests.Wasm -c Release -f net10.0
       - name: Embedding (parallel)
         run: powershell -File tests/test-embedding-parallel.ps1 -Configuration Release
         env:

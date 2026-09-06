@@ -6,6 +6,7 @@
     <Project Path="src/Shumway.Builtins/Shumway.Builtins.csproj" />
     <Project Path="src/Shumway.Compile/Shumway.Compile.csproj" />
     <Project Path="src/Shumway.Compiler.Il/Shumway.Compiler.Il.csproj" />
+    <Project Path="src/Shumway.Compiler.Wasm/Shumway.Compiler.Wasm.csproj" />
     <Project Path="src/Shumway.Compiler/Shumway.Compiler.csproj" />
     <Project Path="src/Shumway.Core/Shumway.Core.csproj" />
     <Project Path="src/Shumway.Dap/Shumway.Dap.csproj" />
@@ -23,6 +24,7 @@
     <Project Path="tests/Shumway.Tests.Compiler/Shumway.Tests.Compiler.csproj" />
     <Project Path="tests/Shumway.Tests.Core/Shumway.Tests.Core.csproj" />
     <Project Path="tests/Shumway.Tests.Embedding/Shumway.Tests.Embedding.csproj" />
+    <Project Path="tests/Shumway.Tests.Wasm/Shumway.Tests.Wasm.csproj" />
     <Project Path="tests/Shumway.Tests.Interpreter/Shumway.Tests.Interpreter.csproj" />
     <Project Path="tests/Shumway.Tests.IsoConformance/Shumway.Tests.IsoConformance.csproj" />
   </Folder>

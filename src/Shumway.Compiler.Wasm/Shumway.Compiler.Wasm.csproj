@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shumway.Core\Shumway.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- dotnet-webassembly (Apache-2.0, no dependencies of its own): builds and
+         validates a module in memory, and executes one without a browser,
+         which is what lets the wasm backend have desktop tests. -->
+    <PackageReference Include="WebAssembly" Version="2.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Shumway.Tests.Wasm" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- net10 only, deliberately: the backend targets browser-wasm, the
+         package has no net48 assets, and the desktop build trims this whole
+         project (the plan's D7). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
