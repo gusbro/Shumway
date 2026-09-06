@@ -132,43 +132,33 @@ Chrome Y Firefox, con frontera ≤ 1µs por entrada.** Menos que eso en la forma
 más amiga posible = el impuesto de frontera/memoria se comió la ganancia →
 No-Go, hallazgos a `docs/benchmarks/browser-spike.md`, fin del arco.
 
-### Estado: FASE 0 CERRADA — No-Go de D1
+### Estado: FASE 0 CERRADA — GO (1067x, frontera 285 ns)
 
-Lo medido esta en [browser-spike.md](../benchmarks/browser-spike.md). En una
-linea: **el codigo generado vuela, la llamada no existe**.
+Lo medido esta en [browser-spike.md](../benchmarks/browser-spike.md),
+incluido un veredicto equivocado intermedio que vale mas que los numeros:
 
-- D2 CONFIRMADO: el modulo importa la memoria del runtime (83 MB, compartida),
-  y direcciona mailbox y registros ahi adentro. La pregunta que ADR-042 dejo
-  abierta sobre el heap manejado queda contestada.
-- Codigo: el contador fiel corre a **4,21 ns por vuelta en Chrome**; en
-  escritorio, 3,60 ns contra 168 del Tier-0 y 25,7 del Tier-1 (46,7x y 7x).
-- **D1 FALLA**: un `delegate* unmanaged` construido a partir de un indice de
-  tabla NO VUELVE, ni desde el hilo del runtime ni desde un pool thread. No
-  tira excepcion: se cuelga. Probado con un modulo que no puede loopear
-  (`return param2`), asi que es la LLAMADA y no el callee.
-- El camino que el plan ya rechazaba como producto (C# -> JS -> wasm) cuesta
-  **52,4 us por llamada**, 52 veces el techo, y encima es afin a un hilo.
+- **El primer intento dio No-Go falso.** El calli colgaba porque el indice
+  venia del `addFunction` de la PAGINA: con threads cada worker tiene su
+  PROPIA WebAssembly.Table (solo la memoria se comparte), y un indice ajeno
+  o no existe (trap silencioso = el cuelgue) o nombra OTRA funcion (peor:
+  correria codigo equivocado sin fallar). Medido en las dos variantes.
+- **La vuelta**: registrar EN EL REALM DEL HILO QUE LLAMA, via `spike.c`
+  linkeado a dotnet.native.wasm (el relink ya ocurre por threads):
+  `shumway_wasm_register` (EM_JS: instancia contra la memoria compartida y
+  hace addFunction en la tabla DEL HILO) + `shumway_wasm_call` (una linea,
+  un call_indirect). Con indice local al hilo, **el calli crudo de D1
+  tambien funciona** (285 ns): el mecanismo nunca estuvo roto.
+- **Numeros en Chrome**: contador wasm 5,4-9,8 ns/vuelta contra 5.783 ns
+  del Tier-0 del browser (600-1100x; el gate pedia 2x); frontera 250-420 ns
+  (techo 1000). D2 confirmado: el modulo importa la memoria del runtime y
+  direcciona mailbox y registros adentro.
+- **Forma del producto**: bytes compilados una vez; cada pool thread
+  registra perezosamente y cachea SU indice (mapa por hilo). Firefox no se
+  midio (no esta en esta maquina); lo que fallo y se arreglo era del
+  runtime, no del browser.
 
-Firefox no se midio: no esta instalado en esta maquina. Da igual para el
-veredicto, porque lo que falla es del runtime de .NET y no del browser.
-
-Queda vivo, como arco distinto: **AOT con enlace nativo**, donde el modulo se
-linkea en el build del runtime y se llama por `DllImport` — una llamada nativa
-comun, que si funciona. Eso no admite JIT.
-
-### Lo que quedo hecho y andando
-
-- `src/Shumway.Compiler.Wasm/` (net10, paquete `WebAssembly` 2.1.0,
-  Apache-2.0): `WasmAbi` (mailbox de 16 slots + seis veredictos),
-  `SpikeCounterModule` (dos variantes: contador en memoria y en un local),
-  `EchoModule` y `WasmSharedMemory`.
-- `tests/Shumway.Tests.Wasm/` — 16 tests que ejecutan el modulo sin browser,
-  contra un arnes que pone mailbox, registros y heap dentro de la memoria
-  importada.
-- El flag `shared` dejo de ser riesgo: se parchea el byte de limites del
-  import (0x01 -> 0x03) y esta pineado.
-- `--wasm-spike` en el harness de benchmarks, y el hook `#wasmspike` en
-  WebShumway con recoleccion por `-Collect` en el servidor de desarrollo.
+Sigue la fase 1 (el backend real), con el ABI del mailbox ya pineado por los
+tests de escritorio y este mecanismo de registro como base.
 
 ### Estado: mitad de escritorio HECHA
 

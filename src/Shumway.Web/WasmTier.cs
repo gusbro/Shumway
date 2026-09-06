@@ -11,125 +11,71 @@ namespace Shumway.Web;
 /// <summary>The browser half of the wasm Tier-1 spike
 /// (docs/design/wasm-tier1-plan.md, phase 0).
 ///
-/// <para>Everything the arc rests on is decided here, and nowhere else can
-/// decide it. The module imports the RUNTIME's memory, so the engine's arrays
-/// are addressable without copying (D2). Its export goes into the runtime's
-/// function table, and a wasm function pointer IS a table index, so C# calls
-/// it through a plain function pointer with no JavaScript on the path (D1).
-/// And the counter is timed against the same counter run by Tier-0, which in
-/// the browser is an interpreter running on an interpreter -- the gap the arc
-/// is about.</para>
-///
-/// <para>The page instantiates and passes the index in: interop is affine to
-/// the runtime thread, so a design where C# had to reach JavaScript on every
-/// call would have no product in it.</para></summary>
+/// <para>With threads on, every worker has its own function table -- only the
+/// memory is shared -- so an index registered on one thread does not exist on
+/// another, and calling through it traps the worker silently. The design that
+/// follows from that: a thread REGISTERS the module bytes itself, through the
+/// C shim's EM_JS (JavaScript in the calling thread's own realm), and gets an
+/// index valid exactly where it will be used. No JavaScript instantiates
+/// anything from the page; C# holds the module bytes and the whole path is
+/// DllImport into spike.c.</para></summary>
 internal static partial class WebShumwayApp
 {
-    /// <summary>The module the page is to instantiate, base64.</summary>
-    [JSExport]
-    internal static Task<string> WasmSpikeModule(bool shared)
-        => Task.FromResult(Convert.ToBase64String(
-               SpikeCounterModule.ToBytes(shared: shared, cacheInLocal: false)));
+    /// <summary>This thread's table size (spike.c, EM_JS).</summary>
+    [DllImport("spike")]
+    private static extern int shumway_wasm_table_length();
 
-    [JSImport("wasm.callHandle", "main.js")]
-    internal static partial int WasmCallHandle(int handle, int a, int b);
-
-    /// <summary>What the rejected path costs: C# to JavaScript to wasm, per
-    /// call, on the runtime thread (the only thread that may take it).
+    /// <summary>Instantiates the module bytes against this thread's realm and
+    /// registers its entry in THIS thread's table. Returns the index, or -1.
     /// </summary>
+    [DllImport("spike")]
+    private static extern int shumway_wasm_register(int bytesPtr, int len);
+
+    /// <summary>The crossing: one call_indirect through this thread's table.
+    /// </summary>
+    [DllImport("spike")]
+    private static extern int shumway_wasm_call(int index, int mailbox, int cursor);
+
+    private static int Register(StringBuilder report, string name, byte[] module)
+    {
+        byte[] pinned = GC.AllocateArray<byte>(module.Length, pinned: true);
+        module.CopyTo(pinned, 0);
+        int at = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(pinned, 0);
+        int index = shumway_wasm_register(at, pinned.Length);
+        report.Append(name).Append(": ").Append(module.Length)
+              .Append(" bytes, registered at index ").Append(index)
+              .Append(" on thread ").Append(Environment.CurrentManagedThreadId)
+              .Append('\n');
+        if (index < 0)
+            throw new InvalidOperationException($"{name} did not register.");
+        return index;
+    }
+
+    /// <summary>The whole spike: registration, the echo proof, the boundary
+    /// and the counter, all on a pool thread -- where the engine runs.</summary>
     [JSExport]
-    internal static Task<string> WasmThunkCost(int handle, int calls)
+    internal static async Task<string> WasmProbe(int iterations, int rounds)
     {
         var report = new StringBuilder();
-        try
-        {
-            for (int i = 0; i < 1000; i++) WasmCallHandle(handle, 0, 1);
-            double best = double.MaxValue;
-            for (int r = 0; r < 3; r++)
-            {
-                var sw = Stopwatch.StartNew();
-                for (int i = 0; i < calls; i++) WasmCallHandle(handle, 0, 1);
-                sw.Stop();
-                best = Math.Min(best, sw.Elapsed.TotalMilliseconds * 1e6 / calls);
-            }
-            report.Append("thunk (C# to JS to wasm): ").Append(best.ToString("F1"))
-                  .Append(" ns per call, on the runtime thread").Append("\n");
-        }
-        catch (Exception ex)
-        {
-            report.Append("thunk STOPPED: ").Append(ex.GetType().Name)
-                  .Append(": ").Append(ex.Message).Append("\n");
-        }
-        return Task.FromResult(report.ToString());
-    }
+        report.Append("table length on the runtime thread: ")
+              .Append(shumway_wasm_table_length()).Append('\n');
 
-    /// <summary>The module that cannot loop, for telling a call that does not
-    /// work from a callee that never finishes.</summary>
-    [JSExport]
-    internal static Task<string> WasmEchoModule(bool shared)
-        => Task.FromResult(Convert.ToBase64String(EchoModule.ToBytes(shared)));
-
-    /// <summary>Calls the echo module and reports what came back. Anything at
-    /// all coming back means the call path works.</summary>
-    [JSExport]
-    internal static async Task<string> WasmEchoCall(int tableIndex, bool onPool)
-    {
-        if (!onPool) return Echo(tableIndex);
-        return await Task.Run(() => Echo(tableIndex)).ConfigureAwait(false);
-    }
-
-    private static unsafe string Echo(int tableIndex)
-    {
-        try
-        {
-            var fn = (delegate* unmanaged<int, int, int>)(void*)(nint)tableIndex;
-            int back = fn(0, 4242);
-            return $"echo on thread {Environment.CurrentManagedThreadId}: {back}" + "\n";
-        }
-        catch (Exception ex)
-        {
-            return $"echo STOPPED: {ex.GetType().Name}: {ex.Message}" + "\n";
-        }
-    }
-
-    /// <summary>Runs the spike against a module the page already put in the
-    /// runtime's table.
-    ///
-    /// <para><paramref name="iterations"/> also says how far to go, because a
-    /// hang is not an exception and the only way to find where one is is to be
-    /// able to stop before each step: -1 calls once on the RUNTIME thread,
-    /// where the index was made; 0 pins the arrays on a pool thread and calls
-    /// nothing; 1 calls once from there; anything more is the whole
-    /// measurement.</para></summary>
-    [JSExport]
-    internal static async Task<string> WasmSpike(int tableIndex, int iterations, int rounds)
-    {
-        if (iterations == -1)
-        {
-            var here = new StringBuilder();
-            here.Append("on the runtime thread (id ")
-                .Append(Environment.CurrentManagedThreadId).Append(")\n");
-            try { OneCall(here, tableIndex); }
-            catch (Exception ex)
-            {
-                here.Append("STOPPED: ").Append(ex.GetType().Name)
-                    .Append(": ").Append(ex.Message).Append('\n');
-            }
-            return here.ToString();
-        }
-
-        // Awaited, not handed over: the app's own exports do it this way, and
-        // a Task that completes on a pool thread without the runtime thread
-        // resuming it never reaches JavaScript at all.
         return await Task.Run(() =>
         {
-            var report = new StringBuilder();
-            report.Append("on a pool thread (id ")
-                  .Append(Environment.CurrentManagedThreadId).Append(")\n");
             try
             {
-                if (iterations <= 1) OneCall(report, tableIndex, call: iterations == 1);
-                else Measure(report, tableIndex, iterations, Math.Max(1, rounds));
+                report.Append("table length on this pool thread: ")
+                      .Append(shumway_wasm_table_length()).Append('\n');
+
+                // The echo cannot loop, so an answer proves the whole path:
+                // register in this thread's table, call through the shim.
+                int echo = Register(report, "echo", EchoModule.ToBytes(shared: true));
+                report.Append("echo answers: ")
+                      .Append(shumway_wasm_call(echo, 0, 4242)).Append('\n');
+
+                int counter = Register(report, "counter",
+                    SpikeCounterModule.ToBytes(shared: true, cacheInLocal: false));
+                Measure(report, counter, iterations, Math.Max(1, rounds));
             }
             catch (Exception ex)
             {
@@ -140,70 +86,145 @@ internal static partial class WebShumwayApp
         }).ConfigureAwait(false);
     }
 
-    /// <summary>Pins a mailbox and a register file, and optionally makes the
-    /// one call the whole arc depends on.</summary>
-    private static unsafe void OneCall(StringBuilder report, int index, bool call = true)
+    /// <summary>Whether the raw managed calli works once the index is valid
+    /// for the calling thread -- kept apart because a hang here must not cost
+    /// the measurements. If it does work, the first attempt's hang was never
+    /// about calli at all: it was the cross-thread index.</summary>
+    [JSExport]
+    internal static async Task<string> WasmCalliCheck()
+        => await Task.Run(() =>
+        {
+            var report = new StringBuilder();
+            try
+            {
+                int echo = Register(report, "echo", EchoModule.ToBytes(shared: true));
+                unsafe
+                {
+                    var fn = (delegate* unmanaged<int, int, int>)(void*)(nint)echo;
+                    report.Append("calli answers: ").Append(fn(0, 4242)).Append('\n');
+                }
+            }
+            catch (Exception ex)
+            {
+                report.Append("calli STOPPED: ").Append(ex.GetType().Name)
+                      .Append(": ").Append(ex.Message).Append('\n');
+            }
+            return report.ToString();
+        }).ConfigureAwait(false);
+
+    /// <summary>This thread's view of an index (spike.c): -2 when the slot
+    /// does not exist here.</summary>
+    [DllImport("spike")]
+    private static extern int shumway_wasm_probe_index(int index);
+
+    /// <summary>Registers on one pool thread and asks OTHER pool threads what
+    /// they see at that index -- without calling it, since calling through a
+    /// foreign index traps the worker with nothing to catch. The engine is
+    /// thread-agile, so the answer decides the product's shape: an index that
+    /// crosses threads needs one registration per module, one that does not
+    /// needs a per-thread cache.</summary>
+    [JSExport]
+    internal static async Task<string> WasmCrossThreadCheck()
+        => await Task.Run(async () =>
+        {
+            var report = new StringBuilder();
+            int index = Register(report, "echo", EchoModule.ToBytes(shared: true));
+            int regThread = Environment.CurrentManagedThreadId;
+
+            // Several probes held at a gate so they land on distinct threads;
+            // a pool that serializes them anyway reports itself inconclusive.
+            var gate = new bool[1];
+            var probes = Enumerable.Range(0, 3).Select(_ => Task.Run(() =>
+            {
+                var sw = Stopwatch.StartNew();
+                while (!Volatile.Read(ref gate[0]) && sw.ElapsedMilliseconds < 2000) { }
+                return (Thread: Environment.CurrentManagedThreadId,
+                        Sees: shumway_wasm_probe_index(index),
+                        Length: shumway_wasm_table_length());
+            })).ToArray();
+            await Task.Delay(300).ConfigureAwait(false);
+            Volatile.Write(ref gate[0], true);
+            var results = await Task.WhenAll(probes).ConfigureAwait(false);
+
+            bool foreignSeen = false;
+            foreach (var r in results)
+            {
+                if (r.Thread == regThread) continue;
+                foreignSeen = true;
+                report.Append("thread ").Append(r.Thread)
+                      .Append(" (table length ").Append(r.Length).Append("): ")
+                      .Append(r.Sees switch
+                      {
+                          -2 => "the slot does not exist there",
+                          0 => "the slot exists there but is empty",
+                          1 => "the slot exists there and is occupied",
+                          _ => "the probe itself failed",
+                      }).Append('\n');
+            }
+            if (!foreignSeen)
+                report.Append("every probe landed on the registering thread; inconclusive\n");
+            return report.ToString();
+        }).ConfigureAwait(false);
+
+    private static void Measure(StringBuilder report, int index, int iterations, int rounds)
     {
+        // The mailbox and the register file, pinned: their addresses go into
+        // the mailbox, and they must not move under the wasm.
         long[] mailbox = GC.AllocateArray<long>(WasmAbi.SlotCount, pinned: true);
         long[] registers = GC.AllocateArray<long>(8, pinned: true);
         int mailboxAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(mailbox, 0);
         int registersAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(registers, 0);
         mailbox[WasmAbi.RegistersBase] = registersAt;
         mailbox[WasmAbi.HeapWatermark] = long.MaxValue;
-        registers[0] = Cell.Int(3).Data;
-        report.Append("pinned: mailbox at ").Append(mailboxAt)
-              .Append(", registers at ").Append(registersAt).Append('\n');
-        if (!call) { report.Append("not calling\n"); return; }
-
-        var fn = (delegate* unmanaged<int, int, int>)(void*)(nint)index;
-        report.Append("about to call through the table index\n");
-        int verdict = fn(mailboxAt, 0);
-        Cell answer = new(registers[0]);
-        report.Append("verdict ").Append((WasmVerdict)verdict)
-              .Append(", X0 ").Append(answer.Tag).Append(' ')
-              .Append(answer.AsInt).Append('\n');
-    }
-
-    /// <summary>The measuring, on a pool thread: the index came from the
-    /// runtime thread, and whether it is callable from here is half of what
-    /// the spike asks (the engine runs on pool threads).</summary>
-    private static unsafe void Measure(
-        StringBuilder report, int index, int iterations, int rounds)
-    {
-        long[] mailbox = GC.AllocateArray<long>(WasmAbi.SlotCount, pinned: true);
-        long[] registers = GC.AllocateArray<long>(8, pinned: true);
-        int mailboxAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(mailbox, 0);
-        int registersAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(registers, 0);
-        mailbox[WasmAbi.RegistersBase] = registersAt;
-        mailbox[WasmAbi.HeapWatermark] = long.MaxValue;
-
-        var call = (delegate* unmanaged<int, int, int>)(void*)(nint)index;
 
         registers[0] = Cell.Int(3).Data;
-        int verdict = call(mailboxAt, 0);
+        int verdict = shumway_wasm_call(index, mailboxAt, 0);
         if (verdict != (int)WasmVerdict.Success || new Cell(registers[0]).AsInt != 0)
             throw new InvalidOperationException(
-                $"the counter did not answer correctly: verdict {verdict}");
+                $"the counter did not answer correctly: verdict {verdict}, "
+                + $"X0 {new Cell(registers[0]).AsInt}");
+        report.Append("counter answers through the shim\n");
 
+        // The boundary: in and out with the counter already at zero. This is
+        // what the plan's 1000 ns ceiling is about -- a DllImport into the
+        // shim plus one call_indirect, per entry.
         double boundary = double.MaxValue;
         for (int r = 0; r < rounds; r++)
         {
             registers[0] = Cell.Int(0).Data;
-            for (int i = 0; i < 10_000; i++) call(mailboxAt, 0);
+            for (int i = 0; i < 10_000; i++) shumway_wasm_call(index, mailboxAt, 0);
             var sw = Stopwatch.StartNew();
-            for (int i = 0; i < 100_000; i++) call(mailboxAt, 0);
+            for (int i = 0; i < 100_000; i++) shumway_wasm_call(index, mailboxAt, 0);
             sw.Stop();
             boundary = Math.Min(boundary, sw.Elapsed.TotalMilliseconds * 1e6 / 100_000);
         }
-        report.Append("boundary: ").Append(boundary.ToString("F1"))
+        report.Append("boundary via the shim:  ").Append(boundary.ToString("F1"))
               .Append(" ns per entry\n");
 
+        unsafe
+        {
+            var fn = (delegate* unmanaged<int, int, int>)(void*)(nint)index;
+            double calliNs = double.MaxValue;
+            for (int r = 0; r < rounds; r++)
+            {
+                registers[0] = Cell.Int(0).Data;
+                for (int i = 0; i < 10_000; i++) fn(mailboxAt, 0);
+                var sw = Stopwatch.StartNew();
+                for (int i = 0; i < 100_000; i++) fn(mailboxAt, 0);
+                sw.Stop();
+                calliNs = Math.Min(calliNs, sw.Elapsed.TotalMilliseconds * 1e6 / 100_000);
+            }
+            report.Append("boundary via calli:    ").Append(calliNs.ToString("F1"))
+                  .Append(" ns per entry\n");
+        }
+
+        // The counter, in wasm and in the engine, same shape and same count.
         double wasmNs = double.MaxValue;
         for (int r = 0; r < rounds; r++)
         {
             registers[0] = Cell.Int(iterations).Data;
             var sw = Stopwatch.StartNew();
-            int v = call(mailboxAt, 0);
+            int v = shumway_wasm_call(index, mailboxAt, 0);
             sw.Stop();
             if (v != (int)WasmVerdict.Success)
                 throw new InvalidOperationException($"the counter bailed: {(WasmVerdict)v}");

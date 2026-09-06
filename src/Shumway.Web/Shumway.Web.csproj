@@ -50,6 +50,14 @@
     <ProjectReference Include="..\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
   </ItemGroup>
 
+  <!-- spike.c: the one-line call_indirect shim the spike's DllImport reaches
+       (a managed calli through a runtime-added table index hangs; native code
+       has no such trouble). Threads already force the native relink, so this
+       only adds an object file to a link that happens anyway. -->
+  <ItemGroup>
+    <NativeFileReference Include="spike.c" />
+  </ItemGroup>
+
   <!-- The browser cannot emit IL (see RuntimeCaps), so declare it as a link-time
        constant: the trimmer folds RuntimeCaps.SupportsRuntimeCodegen to false,
        deletes every Tier-1 branch behind it, and the IL compiler and its Sigil

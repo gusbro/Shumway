@@ -2,69 +2,101 @@
 
 The plan ([wasm-tier1-plan.md](../design/wasm-tier1-plan.md)) put a numeric
 gate in front of the arc: the counter had to run at least 2.0x faster as wasm
-than on Tier-0, in two browsers, with a boundary under 1 microsecond per
-entry. This is what the spike found.
+than on Tier-0, with a boundary under 1000 ns per entry. This is what the
+spike found — including one wrong verdict on the way, kept here because the
+diagnosis is the most load-bearing fact in the file.
 
-Measured 2026-09-06 on Windows 10, .NET 10, Chrome 141 headless, WebShumway
+Measured 2026-09-06 on Windows 10, .NET 10, Chrome headless, WebShumway
 published Release with threads on and the page cross-origin isolated.
 
 ## The verdict
 
-**The code is fast. The call into it does not work.**
-
-A compiled predicate is reached, by design, through a function pointer whose
-value is a table index: JavaScript registers the module's export in the
-runtime's function table at instantiation, and C# calls it with no JavaScript
-on the path (the plan's D1). In this runtime that call **never returns** —
-neither from the runtime thread nor from a pool thread. It does not throw,
-which would be recoverable; it hangs.
-
-It is the call and not the callee. The same module runs perfectly when
-JavaScript calls it, and a second module that cannot loop at all (its whole
-body is `return param2`) hangs exactly the same way when called from C#.
-
-The path the plan pre-rejected as a product, C# to JavaScript to wasm, does
-work, and costs **52.4 microseconds per call** — 52 times the plan's ceiling,
-and thread-affine besides, so the engine (which runs on pool threads) could
-not take it without hopping threads for every crossing.
-
-By the plan's own criterion this is a **No-Go for D1 as designed**.
-
-## What did work
-
-Everything else, and it worked well.
-
-| | |
-|---|---|
-| the runtime's memory, imported | 83.689.472 bytes, shared |
-| the module, instantiated against it | yes, `run` exported |
-| mailbox and registers inside that memory | read and written by the module |
-| `addFunction` into the runtime's table | yes, index 1687 |
-| pinned arrays as bases, from a pool thread | yes: mailbox and registers pinned, addresses passed |
-
-So D2 — the memory contract, which is the question ADR-042 left open about
-the heap being a managed array — is answered: a module can address the
-engine's arrays with no copying, and the bases can be handed to it per entry.
-
-## The numbers
-
-The counter is `loop(N) :- N > 0, N1 is N - 1, loop(N1). loop(0).` — the
-friendliest shape there is, no heap and no builtins, deliberately: if the
-codegen cannot win here it cannot win anywhere.
-
-**In Chrome**, the module driven from JavaScript (the faithful variant, which
-loads X0 from the register file, tests its tag, unboxes, decrements, boxes and
-stores back on every round):
+**Go, by three orders of magnitude.** Representative full run:
 
 ```
-counter 1.000.000:  5,56 ns per iteration
-counter 20.000.000: 4,21 ns per iteration
-boundary from JS:   56,5 ns per entry
+echo answers: 4242
+boundary via the shim:  284.4 ns per entry
+boundary via calli:     285.0 ns per entry
+
+per counter iteration, 2.000.000 x3 rounds
+  Tier-0 (interpreted in the browser): 5782.88 ns
+  wasm (native, same page):               5.42 ns
+  ratio: 1067x        (the gate asked for 2.0x)
 ```
 
-**On the desktop**, where the same module runs through the emitter library's
-wasm-to-IL engine, beside the same counter run by both of our tiers, in one
-process, minimum of seven rounds:
+Run-to-run the wasm counter lands between 5.4 and 9.8 ns and the boundary
+between 250 and 420 ns; the ratio between 600x and 1100x. Every run clears
+both gates with two orders of margin. The counter is the friendliest shape
+there is (no heap, no builtins) and the ratio on real programs will be far
+smaller — but the gate was about whether the mechanism can win at all, and
+it can.
+
+Firefox was not measured (not installed on this machine); the plan's
+two-browser criterion is therefore not formally met here. What failed and was
+fixed along the way was runtime-side, not browser-side, so the remaining
+browser risk is the ordinary kind.
+
+## The wrong verdict, and what it taught
+
+The first attempt declared a No-Go: a `delegate* unmanaged` built from the
+table index **hung the runtime** — no exception, from any thread, and an echo
+module whose whole body is `return param2` hung identically. The conclusion
+"managed code cannot call a runtime-registered wasm function" was written
+down here for a day. It was wrong, and the reason matters more than the
+numbers:
+
+**With threads on, every worker has its own `WebAssembly.Table`.** Only the
+memory is shared. The module had been instantiated and `addFunction`-ed from
+the PAGE's JavaScript — the UI thread's realm — so the index it returned
+named a slot in the UI thread's table. The .NET runtime lives in a worker.
+Calling that index there is a `call_indirect` into a slot that either does
+not exist (trap, and a trap in that position takes the worker down silently:
+the observed hang) or — worse — exists and holds a **different function**,
+which would run wrong code without any fault at all. The spike measured both
+outcomes directly:
+
+```
+thread 8 registered echo at index 7873
+thread 5 (table length 7876): the slot exists there and is occupied   <- different function
+thread 9 (table length 7873): the slot does not exist there           <- trap if called
+```
+
+## The design that follows
+
+Registration must happen **in the realm of the thread that will call**, and
+the sanctioned way to be in that realm from C# is native code: `spike.c`,
+linked into `dotnet.native.wasm` (threads already force the native relink,
+so it costs nothing extra), with two `EM_JS` functions —
+`shumway_wasm_register(bytes, len)` instantiates the module against the
+shared memory and `addFunction`s its export into **the calling thread's**
+table — and a one-line `shumway_wasm_call` whose function-pointer cast is a
+single `call_indirect`.
+
+With a thread-local index, **everything** works:
+
+- the C shim path (`DllImport` + call_indirect): 284 ns per entry;
+- the **raw managed calli** — D1 exactly as the plan designed it: 285 ns.
+  The mechanism was never broken; the index was foreign.
+
+So the product shape is: compile the predicate to bytes once; each pool
+thread that dispatches it registers the bytes lazily and caches its own index
+(a per-thread map, exactly the kind of thing the engine's thread-agility
+rules already accommodate — the bytes are shared, the index is not). The
+page's JavaScript plays no part; C# holds the bytes and the whole path is
+native.
+
+## D2, confirmed on the way
+
+The module imports the runtime's own memory (shared, 80+ MB in the page) and
+addresses the mailbox and the register file inside it; the pinned-POH
+mailbox/register arrays are written and read by the module across the
+boundary. The question ADR-042 left open about the managed heap is answered:
+no copying, bases handed over per entry.
+
+## Reference numbers
+
+Desktop, same counter, one process, minimum of seven rounds (the wasm rows
+run through the emitter library's wasm-to-IL engine):
 
 | per counter iteration | ns | vs Tier-0 |
 |---|---|---|
@@ -74,42 +106,14 @@ process, minimum of seven rounds:
 | wasm, counter in a local | 1,75 | 96,4x |
 
 The two wasm rows are the two honest readings of "what the backend would
-emit". The first is a straight translation of the WAM, which is what this
-engine would produce (ADR-021 turned a register allocator down on
-measurement); the second keeps the counter in a wasm local across the loop,
-which is the ceiling of the shape.
+emit": a straight WAM translation (ADR-021 rejected a register allocator on
+measurement), and the ceiling with the counter cached in a local. In the
+browser the Tier-0 column is ~34x worse (5783 vs 168 ns: an interpreter
+running on an interpreter) while the wasm column is the same native speed —
+which is the whole reason this arc exists.
 
-Writing the counter so that first-argument indexing decides it changes
-nothing (172 ns at Tier-0, 24 ns at Tier-1): what costs, per round, is the
-call machinery, not a choice point.
-
-## What this says, and what it does not
-
-The generated code is not the problem, and it is not close to being the
-problem: on the same machine, in the same process, the shape a wasm backend
-would emit runs 46x the bytecode interpreter and 7x the IL tier. In the
-browser Tier-0 is worse still, because there the interpreter is itself
-interpreted.
-
-The problem is that .NET's wasm runtime has no way for managed code to call a
-function that was put into its table at run time. That is not a performance
-finding and no amount of tuning changes it.
-
-Two things remain possible, and neither is the arc as planned:
-
-- **Ahead of time, natively linked.** A module linked into the runtime's own
-  build and called as a `DllImport` is an ordinary native call, which does
-  work. That is build-time only: nothing can be added to the linked module
-  while the program runs, so it is an AOT story and the JIT half of the plan
-  has no path in it.
-- **Fewer, longer crossings.** 52 microseconds is affordable only if a
-  crossing buys milliseconds of work, which is not what a per-predicate-call
-  design does, and the thread affinity remains.
-
-Firefox was not measured: it is not installed on this machine. The Go
-criterion asks for two browsers, so it could not have been met here in any
-case — but D1 fails in the one browser that was measured, and the mechanism
-it fails on is the runtime's, not the browser's.
+Also measured, for the record: the pre-rejected C# → JavaScript → wasm thunk
+costs 52.4 us per call and is thread-affine; rejecting it was right.
 
 ## How to run it again
 
@@ -124,7 +128,7 @@ dotnet publish src/Shumway.Web -c Release -p:CompressionEnabled=false
 powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Port 8099 -Collect out.txt
 ```
 
-then open `http://localhost:8099/#wasmspike=-99x1`, which walks the steps in
-order and posts each one back to `out.txt` as it goes. `CompressionEnabled=false`
-is what makes the publish take 27 seconds instead of four minutes, which
-matters when the loop is publish, load, measure.
+then open `http://localhost:8099/#wasmspike=2000000x3`. The page posts each
+step back to `out.txt` as it completes, so a hang names the step that never
+answered. `CompressionEnabled=false` takes the publish from four minutes to
+under thirty seconds, which is what makes the loop bearable.
