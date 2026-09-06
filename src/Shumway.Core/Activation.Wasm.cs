@@ -17,6 +17,15 @@ public sealed partial class Activation
         int HeapLimitCells, int StackLimitCells, int TrailLimitEntries,
         long FunctorArityBase);
 
+    /// <summary>Grows the register bank to at least
+    /// <paramref name="count"/> registers, BEFORE the runner takes its view:
+    /// the compiled module stores X registers by fixed offset and an
+    /// out-of-range store would corrupt whatever lies beyond the area.</summary>
+    public void EnsureWasmRegisters(int count)
+    {
+        if (count > _registers.Length) EnsureRegisterCapacity(count);
+    }
+
     // Direct views for the wasm runner (pinning or copying). Unlike
     // Detach*Buffer these do NOT transfer ownership.
     public Cell[] WasmHeapView => _heap;

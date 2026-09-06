@@ -60,4 +60,8 @@ public sealed record WasmEntry(
     int Arity,
     /// <summary>Bytecode address to cursor id, for every re-entry point the
     /// module has. Cursor 0 is address 0, the fresh entry.</summary>
-    System.Collections.Generic.IReadOnlyDictionary<int, int> CursorByAddress);
+    System.Collections.Generic.IReadOnlyDictionary<int, int> CursorByAddress,
+    /// <summary>X registers the module addresses (highest index + 1). The
+    /// host must guarantee the register area covers this before entering --
+    /// an out-of-range wasm store corrupts whatever lies beyond.</summary>
+    int RegisterDemand);

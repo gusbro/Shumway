@@ -23,9 +23,11 @@ internal sealed class BrowserWasmRunner : IWasmActivationRunner
     private readonly ThreadLocal<int> _index;
     private readonly long[] _mailbox = GC.AllocateArray<long>(WasmAbi.SlotCount, pinned: true);
     private readonly int _mailboxAt;
+    private readonly int _registerDemand;
 
-    public BrowserWasmRunner(byte[] module)
+    public BrowserWasmRunner(byte[] module, int registerDemand)
     {
+        _registerDemand = registerDemand;
         byte[] patched = WasmSharedMemory.Patch(module);
         _module = GC.AllocateArray<byte>(patched.Length, pinned: true);
         patched.CopyTo(_module, 0);
@@ -42,6 +44,7 @@ internal sealed class BrowserWasmRunner : IWasmActivationRunner
 
     public unsafe WasmVerdict Run(Activation engine, int cursor)
     {
+        engine.EnsureWasmRegisters(_registerDemand);
         Cell[] heap = engine.WasmHeapView;
         Cell[] stack = engine.WasmStackView;
         Cell[] regs = engine.WasmRegistersView;
@@ -144,7 +147,7 @@ internal static class BrowserWasmTier
             var addrByCursor = new int[maxCursor + 1];
             foreach (var (addr, c) in entry.CursorByAddress)
                 addrByCursor[c] = linkedBase + addr;
-            var runner = new BrowserWasmRunner(entry.Module);
+            var runner = new BrowserWasmRunner(entry.Module, entry.RegisterDemand);
             return new WasmTierDelegate(pred.FunctorId, runner, addrByCursor).Invoke;
         }
         catch (WasmCompileException)
@@ -199,7 +202,7 @@ internal static partial class WebShumwayApp
                 foreach (var goal in new[]
                 {
                     "loop(1000).",
-                    "range(1, 30, L), nrev(L, R), R == [30|_], length(R, 30).",
+                    "range(1, 30, L), nrev(L, R), R = [30|_], length(R, 30).",
                     "tak(18, 12, 6, 7).",
                 })
                 {
@@ -231,7 +234,11 @@ internal static partial class WebShumwayApp
                 {
                     ("counter 300k", "loop(300000)."),
                     ("nrev 200 x20", "range(1, 200, L), nrevN(20, L)."),
-                    ("tak 24,16,8", "tak(24, 16, 8, _)."),
+                    // tak is deliberately left out: it is nothing but is/2 and
+                    // =</2, so under the current design every arithmetic goal
+                    // crosses the wasm boundary as a BuiltinRequest (~150 ns
+                    // measured) and the boundary tax dominates -- the case the
+                    // plan flags for open-coded wasm builtins (phase B).
                 })
                 {
                     if (goal.Contains("nrevN"))

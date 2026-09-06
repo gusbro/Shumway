@@ -371,20 +371,39 @@ Tests: `EngineWasmTierTests` (4) — recursion nrev/app via markers,
 cut+findall backtrackeando a CPs wasm, floats + builds reservados +
 unificador general, control engine. 92/92 del proyecto wasm en verde.
 
-Mitad browser ESCRITA (pendiente de correr en browser):
-`RuntimeCaps.SupportsWasmCodegen` (switch `Shumway.WasmCodegen`, default
-false, solo Shumway.Web lo prende); `BrowserWasmRunner` (pins con `fixed`
-sobre los arrays reales — D2: managed solo corre con el wasm bailado, asi
-que los pins duran exactamente la llamada; mailbox pinneado; indice de
-tabla cacheado POR HILO via ThreadLocal + registro sincronico por spike.c —
-el registro EM_JS es sincronico en el hilo que llama, no hace falta el
-runtime thread; bytes parcheados a shared con WasmSharedMemory);
-`BrowserWasmTier.Attach` en `BootEngine` (espejo de aridades pinneado
-process-wide, append-only); sonda `#wasmtier[=rounds]` (dos motores lado a
-lado, correctitud cruzada primero, medianas de counter/nrev/tak, POST a
-/collect). Falta: la corrida de medicion en Chrome headless con
-WebShumwayServe.ps1 -Collect. Nota: el runner de escritorio es
-engine-thread-only (un store por PrologEngine ⇒ sin compartir).
+### FASE 2 COMPLETA — corre en el browser, MEDIDA
+
+Mitad browser: `RuntimeCaps.SupportsWasmCodegen` (switch `Shumway.WasmCodegen`,
+default false, solo Shumway.Web lo prende); `BrowserWasmRunner` (pins con
+`fixed` sobre los arrays reales — D2: managed solo corre con el wasm bailado,
+los pins duran exactamente la llamada; mailbox pinneado; indice de tabla
+cacheado POR HILO via ThreadLocal + registro sincronico por spike.c — el
+registro EM_JS es sincronico en el hilo que llama, no hace falta el runtime
+thread; bytes parcheados a shared con WasmSharedMemory; demanda de registros
+por modulo — `EnsureWasmRegisters` ANTES de tomar la vista, un store fuera de
+rango corrompe lo que sigue); `BrowserWasmTier.Attach` en `BootEngine`
+(espejo de aridades pinneado process-wide, append-only). Sonda
+`#wasmtier[=rounds]` (dos motores lado a lado, correctitud cruzada primero).
+
+**Corrido en Chrome headless, medido** (docs/benchmarks/browser.md):
+- correctitud: los 3 goals (counter/nrev/tak) coinciden tier vs Tier-0;
+- **counter 300k: ~100-220x** (8-16 ms vs ~1665 ms — auto-tail se queda en
+  wasm, la unica frontera es el `is` por vuelta);
+- **nrev 200×5: 1.2-1.4x** (call+alloc heavy: cada dispatch entre functores
+  vuelve por markers, y la presion de heap deopta al watermark);
+- **tak: acotado** — puro `is`/`=<`, cada aritmetica sale por BuiltinRequest
+  (~150 ns), el peaje manda (sacado de la tabla, es el caso que motiva los
+  builtins open-coded de fase B).
+
+El spread NOMBRA las tres costuras de bail (call entre predicados, builtin,
+watermark) y ninguna es limite de correctitud (el deopt las devuelve al tier
+donde estaban). Son el trabajo de fase 3 (call directo wasm→wasm) y fase B
+(contrapartes wasm de los builtins que dominan los bails).
+
+Trampa de tests cazada: `EngineWasmTierTests` corre motores VIVOS ⇒ comparte
+AtomTable/FunctorTable globales; hay que DESACTIVAR el paralelismo in-process
+del assembly (igual que Embedding), sino otra clase interna functores bajo los
+pies de un motor corriendo.
 
 ## Fase 3 — AOT (~1,5-2 semanas)
 

@@ -56,7 +56,7 @@ public class EngineWasmTierTests
                     var addrByCursor = new int[maxCursor + 1];
                     foreach (var (addr, c) in entry.CursorByAddress)
                         addrByCursor[c] = linkedBase + addr;
-                    var runner = new DesktopWasmRunner(entry.Module);
+                    var runner = new DesktopWasmRunner(entry.Module, entry.RegisterDemand);
                     return new WasmTierDelegate(pred.FunctorId, runner, addrByCursor).Invoke;
                 }
                 catch (WasmCompileException)

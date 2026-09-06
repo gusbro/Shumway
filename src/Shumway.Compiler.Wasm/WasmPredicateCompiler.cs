@@ -37,7 +37,8 @@ public static class WasmPredicateCompiler
         c.AssignCursors();
         byte[] bytes = c.Emit();
         if (shared) bytes = WasmSharedMemory.Patch(bytes);
-        return new WasmEntry(bytes, predicate.FunctorId, predicate.Arity, c.CursorByAddress);
+        return new WasmEntry(bytes, predicate.FunctorId, predicate.Arity,
+                             c.CursorByAddress, c.RegisterDemand);
     }
 
     // ---- locals (after the two i32 params: 0 mailbox, 1 entry cursor) ----
@@ -499,11 +500,21 @@ public static class WasmPredicateCompiler
             Op(new Int64Store { Offset = (uint)(k * 8) });
         }
 
+        // Highest X register the module touches: the host must guarantee the
+        // register area covers it BEFORE entering (the bank starts small and
+        // an out-of-range wasm store corrupts whatever lies next).
+        private int _maxRegister = -1;
+        public int RegisterDemand => System.Math.Max(_maxRegister + 1, _p.Arity);
+
         private void RegLoad(int reg)
-        { Op(new LocalGet(LRegsB)); Op(new Int64Load { Offset = (uint)(reg * 8) }); }
+        {
+            if (reg > _maxRegister) _maxRegister = reg;
+            Op(new LocalGet(LRegsB)); Op(new Int64Load { Offset = (uint)(reg * 8) });
+        }
 
         private void RegStore(int reg, Action value)
         {
+            if (reg > _maxRegister) _maxRegister = reg;
             Op(new LocalGet(LRegsB));
             value();
             Op(new Int64Store { Offset = (uint)(reg * 8) });

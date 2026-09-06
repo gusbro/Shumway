@@ -1669,11 +1669,14 @@ if (persistMode) {
   // #wasmtier, or #wasmtier=<rounds>: the phase-2 measurement — a tiered
   // engine (wasm Tier-1, threshold 1) against a plain Tier-0 engine over
   // the counter, nrev and tak, correctness cross-checked first.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
   try {
     const spec = /^#wasmtier=(\d+)$/.exec(location.hash);
     const rounds = spec ? Number(spec[1]) : 5;
     emit(`--- wasm tier: x${rounds} rounds ---\n`);
+    mark('tier: starting rounds=' + rounds);
     const report = await session.exports().WasmTierProbe(rounds);
+    mark('tier: probe returned');
     emit(report);
     const pre = document.createElement('pre');
     pre.id = 'wasmtier';

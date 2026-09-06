@@ -28,11 +28,13 @@ public sealed class DesktopWasmRunner : IWasmActivationRunner
     private readonly UnmanagedMemory _memory;
     private readonly Instance<WasmRunExports> _instance;
     private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
+    private readonly int _registerDemand;
     private int _aritySynced;
     private int _arityAt = -1;
 
-    public DesktopWasmRunner(byte[] module)
+    public DesktopWasmRunner(byte[] module, int registerDemand = 0)
     {
+        _registerDemand = registerDemand;
         _memory = new UnmanagedMemory(Pages, Pages);
         using var stream = new MemoryStream(module);
         var creator = Module.ReadFromBinary(stream).Compile<WasmRunExports>();
@@ -44,6 +46,7 @@ public sealed class DesktopWasmRunner : IWasmActivationRunner
 
     public unsafe WasmVerdict Run(Activation engine, int cursor)
     {
+        engine.EnsureWasmRegisters(_registerDemand);
         Cell[] heap = engine.WasmHeapView;
         Cell[] stack = engine.WasmStackView;
         Cell[] regs = engine.WasmRegistersView;
