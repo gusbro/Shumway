@@ -41,7 +41,7 @@ public static class SpikeCounterModule
     /// memory import, which is what the browser needs (the runtime's memory is
     /// shared once threads are on) and what the desktop tests do not use.
     /// </summary>
-    public static Module Build(bool shared = false)
+    public static Module Build(bool shared = false, bool cacheInLocal = true)
     {
         var module = new Module();
 
@@ -67,7 +67,7 @@ public static class SpikeCounterModule
                 new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
                 new Local { Count = 1, Type = WebAssemblyValueType.Int32 },
             ],
-            Code = Body(),
+            Code = Body(cacheInLocal),
         });
         module.Exports.Add(new Export
         {
@@ -83,11 +83,20 @@ public static class SpikeCounterModule
         return module;
     }
 
-    /// <summary>The module as bytes, ready to instantiate.</summary>
-    public static byte[] ToBytes(bool shared = false)
+    /// <summary>The module as bytes, ready to instantiate.
+    ///
+    /// <para><paramref name="cacheInLocal"/> chooses between the two honest
+    /// readings of "what the backend would emit". With it, the counter lives
+    /// in a wasm local across the whole loop, which is what a backend WITH a
+    /// register allocator could do and is the ceiling of the shape. Without
+    /// it, every round loads X0 from the register file, tests its tag, unboxes
+    /// it, decrements, boxes it and stores it back: a straight translation of
+    /// the WAM, which is what this engine emits today (ADR-021 turned a
+    /// register allocator down on measurement).</para></summary>
+    public static byte[] ToBytes(bool shared = false, bool cacheInLocal = true)
     {
         using var stream = new MemoryStream();
-        Build().WriteToBinary(stream);
+        Build(cacheInLocal: cacheInLocal).WriteToBinary(stream);
         byte[] bytes = stream.ToArray();
         return shared ? WasmSharedMemory.Patch(bytes) : bytes;
     }
@@ -97,7 +106,7 @@ public static class SpikeCounterModule
     /// </summary>
     private const uint MaximumPages = 65536;
 
-    private static List<Instruction> Body()
+    private static List<Instruction> Body(bool cacheInLocal)
     {
         var code = new List<Instruction>();
 
@@ -107,36 +116,15 @@ public static class SpikeCounterModule
         code.Add(new Int32WrapInt64());
         code.Add(new LocalSet(LocalRegs));
 
-        // n = X0, still boxed
-        code.Add(new LocalGet(LocalRegs));
-        code.Add(new Int64Load { Offset = 0 });
-        code.Add(new LocalTee(LocalN));
-
-        // The tag test, open-coded: (cell >>> 60) & 0xF must be Tag.Int.
-        // Anything else is a shape this predicate does not handle, and the
-        // real backend would bail to the builtin path rather than fail.
-        code.Add(new Int64Constant(Cell.TagShift));
-        code.Add(new Int64ShiftRightUnsigned());
-        code.Add(new Int64Constant(0xF));
-        code.Add(new Int64And());
-        code.Add(new Int64Constant((long)Tag.Int));
-        code.Add(new Int64NotEqual());
-        code.Add(new If());
-        code.Add(new Int32Constant((int)WasmVerdict.Fail));
-        code.Add(new Return());
-        code.Add(new End());
-
-        // n = payload, sign-extended: left 4 to push the tag out, arithmetic
-        // right 4 to bring the sign back down.
-        code.Add(new LocalGet(LocalN));
-        code.Add(new Int64Constant(64 - Cell.TagShift));
-        code.Add(new Int64ShiftLeft());
-        code.Add(new Int64Constant(64 - Cell.TagShift));
-        code.Add(new Int64ShiftRightSigned());
-        code.Add(new LocalSet(LocalN));
+        if (cacheInLocal) code.AddRange(LoadAndUnboxX0());
 
         code.Add(new Block());              // depth 1: "done"
         code.Add(new Loop());               // depth 0: "again"
+
+        // Every round starts from the register file when the counter is not
+        // cached: load, test, unbox — the work a straight WAM translation
+        // does at each pass over the head.
+        if (!cacheInLocal) code.AddRange(LoadAndUnboxX0());
 
         // if n =< 0 -> leave the loop
         code.Add(new LocalGet(LocalN));
@@ -149,6 +137,9 @@ public static class SpikeCounterModule
         code.Add(new Int64Constant(1));
         code.Add(new Int64Subtract());
         code.Add(new LocalSet(LocalN));
+
+        // ...and back it goes, boxed, when there is no local to keep it in.
+        if (!cacheInLocal) code.AddRange(StoreCounterIntoX0());
 
         // The back edge is the safe point: flags pending, or the heap has
         // reached the watermark.
@@ -163,7 +154,7 @@ public static class SpikeCounterModule
         code.Add(new Int64GreaterThanOrEqualSigned());
         code.Add(new Int32Or());
         code.Add(new If());
-        code.AddRange(StoreCounterIntoX0());
+        if (cacheInLocal) code.AddRange(StoreCounterIntoX0());
         // The cursor says where to come back. This predicate keeps its whole
         // state in X0, so one resume point is all it has.
         code.Add(new LocalGet(ParamMailbox));
@@ -177,7 +168,7 @@ public static class SpikeCounterModule
         code.Add(new End());                // loop
         code.Add(new End());                // block
 
-        code.AddRange(StoreCounterIntoX0());
+        if (cacheInLocal) code.AddRange(StoreCounterIntoX0());
         code.Add(new LocalGet(ParamMailbox));
         code.Add(new Int64Constant(0));
         code.Add(new Int64Store { Offset = WasmAbi.ByteOffset(WasmAbi.Cursor) });
@@ -190,6 +181,36 @@ public static class SpikeCounterModule
     /// <summary>The cursor a safepoint leaves behind. Re-entry re-reads X0,
     /// which is where the counter was left.</summary>
     public const long ResumeCursor = 1;
+
+    /// <summary>The counter, read out of X0: deref, tag test, unbox. A cell
+    /// whose tag is not an integer leaves through <see cref="WasmVerdict.Fail"/>
+    /// -- the real backend would bail to the builtin path instead.</summary>
+    private static IEnumerable<Instruction> LoadAndUnboxX0()
+    {
+        yield return new LocalGet(LocalRegs);
+        yield return new Int64Load { Offset = 0 };
+        yield return new LocalTee(LocalN);
+
+        yield return new Int64Constant(Cell.TagShift);
+        yield return new Int64ShiftRightUnsigned();
+        yield return new Int64Constant(0xF);
+        yield return new Int64And();
+        yield return new Int64Constant((long)Tag.Int);
+        yield return new Int64NotEqual();
+        yield return new If();
+        yield return new Int32Constant((int)WasmVerdict.Fail);
+        yield return new Return();
+        yield return new End();
+
+        // Left 4 to push the tag out, arithmetic right 4 to bring the sign
+        // back down: the 60-bit payload as a full-width signed integer.
+        yield return new LocalGet(LocalN);
+        yield return new Int64Constant(64 - Cell.TagShift);
+        yield return new Int64ShiftLeft();
+        yield return new Int64Constant(64 - Cell.TagShift);
+        yield return new Int64ShiftRightSigned();
+        yield return new LocalSet(LocalN);
+    }
 
     /// <summary>X0 = the counter, boxed back into an integer cell.</summary>
     private static IEnumerable<Instruction> StoreCounterIntoX0()

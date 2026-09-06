@@ -132,6 +132,44 @@ Chrome Y Firefox, con frontera ≤ 1µs por entrada.** Menos que eso en la forma
 más amiga posible = el impuesto de frontera/memoria se comió la ganancia →
 No-Go, hallazgos a `docs/benchmarks/browser-spike.md`, fin del arco.
 
+### Estado: FASE 0 CERRADA — No-Go de D1
+
+Lo medido esta en [browser-spike.md](../benchmarks/browser-spike.md). En una
+linea: **el codigo generado vuela, la llamada no existe**.
+
+- D2 CONFIRMADO: el modulo importa la memoria del runtime (83 MB, compartida),
+  y direcciona mailbox y registros ahi adentro. La pregunta que ADR-042 dejo
+  abierta sobre el heap manejado queda contestada.
+- Codigo: el contador fiel corre a **4,21 ns por vuelta en Chrome**; en
+  escritorio, 3,60 ns contra 168 del Tier-0 y 25,7 del Tier-1 (46,7x y 7x).
+- **D1 FALLA**: un `delegate* unmanaged` construido a partir de un indice de
+  tabla NO VUELVE, ni desde el hilo del runtime ni desde un pool thread. No
+  tira excepcion: se cuelga. Probado con un modulo que no puede loopear
+  (`return param2`), asi que es la LLAMADA y no el callee.
+- El camino que el plan ya rechazaba como producto (C# -> JS -> wasm) cuesta
+  **52,4 us por llamada**, 52 veces el techo, y encima es afin a un hilo.
+
+Firefox no se midio: no esta instalado en esta maquina. Da igual para el
+veredicto, porque lo que falla es del runtime de .NET y no del browser.
+
+Queda vivo, como arco distinto: **AOT con enlace nativo**, donde el modulo se
+linkea en el build del runtime y se llama por `DllImport` — una llamada nativa
+comun, que si funciona. Eso no admite JIT.
+
+### Lo que quedo hecho y andando
+
+- `src/Shumway.Compiler.Wasm/` (net10, paquete `WebAssembly` 2.1.0,
+  Apache-2.0): `WasmAbi` (mailbox de 16 slots + seis veredictos),
+  `SpikeCounterModule` (dos variantes: contador en memoria y en un local),
+  `EchoModule` y `WasmSharedMemory`.
+- `tests/Shumway.Tests.Wasm/` — 16 tests que ejecutan el modulo sin browser,
+  contra un arnes que pone mailbox, registros y heap dentro de la memoria
+  importada.
+- El flag `shared` dejo de ser riesgo: se parchea el byte de limites del
+  import (0x01 -> 0x03) y esta pineado.
+- `--wasm-spike` en el harness de benchmarks, y el hook `#wasmspike` en
+  WebShumway con recoleccion por `-Collect` en el servidor de desarrollo.
+
 ### Estado: mitad de escritorio HECHA
 
 Existen y andan, sin browser:

@@ -46,6 +46,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
     <ProjectReference Include="..\Shumway.TopLevel\Shumway.TopLevel.csproj" />
+    <!-- The wasm Tier-1 spike (phase 0). Browser-only by nature. -->
+    <ProjectReference Include="..\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
   </ItemGroup>
 
   <!-- The browser cannot emit IL (see RuntimeCaps), so declare it as a link-time

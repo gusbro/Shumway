@@ -1630,6 +1630,65 @@ if (persistMode) {
   try {
     await (await import('./selftest.js')).persistProbe(workspace, emit, persistMode[1]);
   } catch (ex) { emitFailure('persist probe', ex); }
+} else if (location.hash.startsWith('#wasmspike')) {
+  // #wasmspike, or #wasmspike=<iterations>x<rounds>. The page instantiates the
+  // module -- that is JavaScript's job and its thread's -- and hands the engine
+  // the table index; from there the engine calls it as a function pointer,
+  // with no JavaScript on the path.
+  try {
+    const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+    mark('hook: entered');
+    const spec = /^#wasmspike=(-?\d+)x(\d+)$/.exec(location.hash);
+    const iterations = spec ? Number(spec[1]) : 3000000;
+    const rounds = spec ? Number(spec[2]) : 3;
+    emit(`--- wasm spike: ${iterations} iterations x${rounds} ---\n`);
+
+    const wasmTier = await import('./wasmtier.js');
+    mark('hook: wasmtier imported');
+    const facts = wasmTier.memoryFacts();
+    mark('hook: memory ' + facts);
+    const shared = !facts.includes('not shared');
+    const base64 = await session.exports().WasmSpikeModule(shared);
+    mark('hook: module ' + base64.length + ' base64 chars');
+    const index = wasmTier.instantiate(base64);
+    mark('hook: table index ' + index);
+    const head = `runtime memory: ${facts}\ntable index: ${index}\n`;
+
+    // Before anything that can loop: a module that cannot. If this does not
+    // come back, it is the CALL that does not work, not the callee.
+    const echo64 = await session.exports().WasmEchoModule(shared);
+    const echoIndex = wasmTier.instantiate(echo64);
+    mark('hook: echo module at table index ' + echoIndex);
+    const thunkHandle = wasmTier.instantiateForThunk(echo64);
+    mark('hook: thunk handle ' + thunkHandle);
+    mark(await session.exports().WasmThunkCost(thunkHandle, 200000));
+    mark('hook: calling echo through C# on the runtime thread');
+    mark(await session.exports().WasmEchoCall(echoIndex, false));
+    mark('hook: calling echo through C# on a pool thread');
+    mark(await session.exports().WasmEchoCall(echoIndex, true));
+
+    // The steps, in order, each reported before the next is tried: a hang
+    // shows as the step that never answered.
+    const steps = iterations === -99 ? [-2, -1, 0, 1] : [iterations];
+    let report = head;
+    for (const step of steps) {
+      mark('hook: calling WasmSpike step ' + step);
+      const piece = await session.exports().WasmSpike(index, step, rounds);
+      mark('hook: step ' + step + ' answered:' + String.fromCharCode(10) + piece);
+      report += piece;
+    }
+    mark('hook: WasmSpike returned');
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmspike';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const text = `wasm spike CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+  }
 } else if (location.hash === '#selftest') {
   try {
     await (await import('./selftest.js')).run(session, emit, out, editor, workspace);

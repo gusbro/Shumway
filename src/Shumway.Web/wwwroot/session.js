@@ -28,10 +28,18 @@ let engine = null;
 export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop) {
   const { dotnet } = await import('./_framework/dotnet.js');
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
+  // The spike's two functions ride in the same import object rather than a
+  // registration of their own: one namespace, one place to look.
+  const wasmTier = await import('./wasmtier.js');
   setModuleImports('main.js', {
     ui: {
       write: onOutput, writeError: onDiagnostic, askForInput: onAskForInput,
       debugStopped: (json) => onDebugStop?.(JSON.parse(json)),
+    },
+    wasm: {
+      instantiate: wasmTier.instantiate,
+      memoryFacts: wasmTier.memoryFacts,
+      callHandle: wasmTier.callHandle,
     },
   });
   engine = (await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp;
