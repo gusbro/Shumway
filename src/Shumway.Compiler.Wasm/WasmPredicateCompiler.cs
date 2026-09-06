@@ -59,6 +59,8 @@ public static class WasmPredicateCompiler
     private const uint LC0 = 18;      // i64 scratch (a cell)
     private const uint LC1 = 19;
     private const uint LC2 = 20;
+    private const uint LMode = 21;    // i32: unify write mode
+    private const uint LS = 22;       // i32: the unify pointer
 
     private const long RawIntTag = (long)Tag.RawInt << Cell.TagShift;
 
@@ -159,6 +161,28 @@ public static class WasmPredicateCompiler
                 case Opcode.GetNil:
                 case Opcode.Call:
                 case Opcode.Execute:
+                case Opcode.GetStructure:
+                case Opcode.GetList:
+                case Opcode.GetListA1:
+                case Opcode.GetListA2:
+                case Opcode.PutStructure:
+                case Opcode.PutList:
+                case Opcode.UnifyVariableX:
+                case Opcode.UnifyVariableY:
+                case Opcode.UnifyValueX:
+                case Opcode.UnifyValueY:
+                case Opcode.UnifyAtom:
+                case Opcode.UnifyConstant:
+                case Opcode.UnifyInteger:
+                case Opcode.UnifyNil:
+                case Opcode.UnifyVoid:
+                case Opcode.UnifyStructure:
+                case Opcode.UnifyList:
+                case Opcode.GetConstantA1:
+                case Opcode.GetConstantA2:
+                case Opcode.PutConstantA1:
+                case Opcode.PutConstantA2:
+                case Opcode.DeallocateExecute:
                     return;
                 case Opcode.AIntCmp:
                 case Opcode.Meta:
@@ -317,6 +341,7 @@ public static class WasmPredicateCompiler
                 [
                     new Local { Count = 16, Type = WebAssemblyValueType.Int32 },
                     new Local { Count = 3, Type = WebAssemblyValueType.Int64 },
+                    new Local { Count = 2, Type = WebAssemblyValueType.Int32 },
                 ],
                 Code = _code,
             });
@@ -363,6 +388,8 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.HeapBacktrack); Op(new LocalSet(LHB));
             LoadSlot32(WasmAbi.StackTop); Op(new LocalSet(LST));
             LoadSlot32(WasmAbi.ContinuationPc); Op(new LocalSet(LCP));
+            LoadSlot32(WasmAbi.WriteMode); Op(new LocalSet(LMode));
+            LoadSlot32(WasmAbi.UnifyPointer); Op(new LocalSet(LS));
         }
 
         private void EmitReturn(WasmVerdict v)
@@ -374,6 +401,8 @@ public static class WasmPredicateCompiler
             StoreSlotFromI32Local(WasmAbi.HeapBacktrack, LHB);
             StoreSlotFromI32Local(WasmAbi.StackTop, LST);
             StoreSlotFromI32Local(WasmAbi.ContinuationPc, LCP);
+            StoreSlotFromI32Local(WasmAbi.WriteMode, LMode);
+            StoreSlotFromI32Local(WasmAbi.UnifyPointer, LS);
             Op(new Int32Constant((int)v));
             Op(new Return());
         }
@@ -678,6 +707,64 @@ public static class WasmPredicateCompiler
                     return false;
                 case Opcode.AIntCmp: EmitAIntCmp(ins); return false;
                 case Opcode.Meta: return false;   // metadata; nothing runs
+                case Opcode.GetStructure: EmitGetStructure(ins.I0, ins.I1, ins.Pc); return false;
+                case Opcode.GetList: EmitGetList(ins.I0, ins.Pc); return false;
+                case Opcode.GetListA1: EmitGetList(0, ins.Pc); return false;
+                case Opcode.GetListA2: EmitGetList(1, ins.Pc); return false;
+                case Opcode.PutStructure: EmitPutStructure(ins.I0, ins.I1, ins.Pc); return false;
+                case Opcode.PutList:
+                    // The register takes a LIS pointing at the NEXT two heap
+                    // cells; the two unify_* that follow write them.
+                    RegStore(ins.I0, () =>
+                    {
+                        Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned());
+                        Op(new Int64Constant((long)Tag.Lis << Cell.TagShift));
+                        Op(new Int64Or());
+                    });
+                    Op(new Int32Constant(1)); Op(new LocalSet(LMode));
+                    Op(new LocalGet(LH)); Op(new LocalSet(LS));
+                    return false;
+                case Opcode.UnifyVariableX:
+                    EmitUnifyVariable(ins.Pc, write: () => RegStore(ins.I0, () => Op(new LocalGet(LC0))),
+                                      read: () => RegStore(ins.I0, () => Op(new LocalGet(LC0))));
+                    return false;
+                case Opcode.UnifyVariableY:
+                    EmitUnifyVariable(ins.Pc, write: () => YStore(ins.I0, () => Op(new LocalGet(LC0))),
+                                      read: () => YStore(ins.I0, () => Op(new LocalGet(LC0))));
+                    return false;
+                case Opcode.UnifyValueX:
+                    EmitUnifyValue(ins.Pc, () => RegLoad(ins.I0));
+                    return false;
+                case Opcode.UnifyValueY:
+                    EmitUnifyValue(ins.Pc, () => YLoad(ins.I0));
+                    return false;
+                case Opcode.UnifyAtom:
+                case Opcode.UnifyConstant:
+                    EmitUnifyConst(Cell.Atom(ins.I0).Data, ins.Pc); return false;
+                case Opcode.UnifyInteger:
+                    EmitUnifyConst(Cell.Int(ins.I0).Data, ins.Pc); return false;
+                case Opcode.UnifyNil:
+                    EmitUnifyConst(Cell.Atom(AtomTable.EmptyListId).Data, ins.Pc); return false;
+                case Opcode.UnifyVoid: EmitUnifyVoid(ins.I0, ins.Pc); return false;
+                case Opcode.UnifyStructure: EmitUnifyStructure(ins.I0, ins.Pc); return false;
+                case Opcode.UnifyList: EmitUnifyList(ins.Pc); return false;
+                case Opcode.GetConstantA1:
+                    RegLoad(0); Op(new LocalSet(LC0)); Deref();
+                    UnifyC0WithConst(Cell.Atom(ins.I0).Data, ins.Pc); return false;
+                case Opcode.GetConstantA2:
+                    RegLoad(1); Op(new LocalSet(LC0)); Deref();
+                    UnifyC0WithConst(Cell.Atom(ins.I0).Data, ins.Pc); return false;
+                case Opcode.PutConstantA1:
+                    RegStore(0, () => Op(new Int64Constant(Cell.Atom(ins.I0).Data)));
+                    return false;
+                case Opcode.PutConstantA2:
+                    RegStore(1, () => Op(new Int64Constant(Cell.Atom(ins.I0).Data)));
+                    return false;
+                case Opcode.DeallocateExecute:
+                    EmitFlagsCheck(ins.Pc);
+                    EmitDeallocate();
+                    EmitExecuteTail(ins.Pc);
+                    return true;
                 case Opcode.AIntBin: EmitAIntBin(ins); return false;
                 case Opcode.Call: EmitCall(ins); return true;
                 case Opcode.Execute: EmitExecute(ins); return true;
@@ -721,9 +808,14 @@ public static class WasmPredicateCompiler
 
         private void EmitExecute(Instr ins)
         {
-            if (!_callee.TryGetValue(ins.Pc, out int callee))
-                throw new WasmCompileException($"execute at {ins.Pc} has no call site");
             EmitFlagsCheck(ins.Pc);
+            EmitExecuteTail(ins.Pc);
+        }
+
+        private void EmitExecuteTail(int pc)
+        {
+            if (!_callee.TryGetValue(pc, out int callee))
+                throw new WasmCompileException($"execute at {pc} has no call site");
             if (callee == _p.FunctorId)
             {
                 // The self tail call: back to the entry dispatch, unless the
@@ -732,7 +824,7 @@ public static class WasmPredicateCompiler
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32GreaterThanOrEqualSigned());
                 OpenIf();
-                EmitDeopt(ins.Pc);
+                EmitDeopt(pc);
                 CloseNested();
                 Op(new Int32Constant(0));
                 Op(new LocalSet(LCur));
@@ -1386,5 +1478,405 @@ public static class WasmPredicateCompiler
                     break;
             }
         }
+        // ---- structures and lists (ADR-017 inline cells; ADR-019 last-arg
+        // nested builds; the RESERVED forms of ADR-020 are rejected) ----
+
+        /// <summary>Steps aside before any mutation when the next
+        /// <paramref name="cells"/> heap cells would cross the watermark.</summary>
+        private void EmitHeapGuard(int pc, int cells = 1)
+        {
+            Op(new LocalGet(LH));
+            if (cells != 1) { Op(new Int32Constant(cells - 1)); Op(new Int32Add()); }
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            OpenIf();
+            EmitDeopt(pc);
+            CloseNested();
+        }
+
+        /// <summary>heap[LDa] = value, trailed when old (the engine's Bind).</summary>
+        private void EmitBindDa(int pc, Action value)
+        {
+            CellStoreDyn(LHeapB, LDa, 0, value);
+            Op(new LocalGet(LDa));
+            Op(new LocalGet(LHB));
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            EmitTrailDa(pc);
+            CloseNested();
+        }
+
+        /// <summary>Pushes a cell of the given tag whose payload is LH plus
+        /// <paramref name="plus"/>.</summary>
+        private void PushTaggedH(Tag tag, int plus = 0)
+        {
+            Op(new LocalGet(LH));
+            if (plus != 0) { Op(new Int32Constant(plus)); Op(new Int32Add()); }
+            Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Constant((long)tag << Cell.TagShift));
+            Op(new Int64Or());
+        }
+
+        private void EmitGetStructure(int functorId, int reg, int pc)
+        {
+            long functorCell = Cell.Functor(functorId).Data;
+            RegLoad(reg); Op(new LocalSet(LC0)); Deref();
+            TagOfC0(); Op(new LocalSet(LT0));
+
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant((int)Tag.Str));
+            Op(new Int32Equal());
+            OpenIf();
+            {
+                // Match: same functor, read on through the args.
+                Op(new LocalGet(LC0)); Op(new Int32WrapInt64()); Op(new LocalSet(LT1));
+                CellLoadDyn(LHeapB, LT1);
+                Op(new Int64Constant(functorCell));
+                Op(new Int64NotEqual());
+                OpenIf();
+                GoFail();
+                CloseNested();
+                Op(new Int32Constant(0)); Op(new LocalSet(LMode));
+                Op(new LocalGet(LT1)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new LocalSet(LS));
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    // Unbound: build. The functor cell goes at H, the var
+                    // binds to STR(H), and the args will be written next.
+                    EmitHeapGuard(pc);
+                    CellStoreDyn(LHeapB, LH, 0, () => Op(new Int64Constant(functorCell)));
+                    EmitBindDa(pc, () => PushTaggedH(Tag.Str));
+                    Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                    Op(new LocalSet(LH));
+                    Op(new LocalGet(LH)); Op(new LocalSet(LS));
+                    Op(new Int32Constant(1)); Op(new LocalSet(LMode));
+                }
+                OpenElse();
+                {
+                    Op(new LocalGet(LT0));
+                    Op(new Int32Constant((int)Tag.AttVar));
+                    Op(new Int32Equal());
+                    OpenIf();
+                    EmitDeopt(pc);
+                    CloseNested();
+                    GoFail();
+                }
+                CloseNested();
+            }
+            CloseNested();
+        }
+
+        private void EmitGetList(int reg, int pc)
+        {
+            RegLoad(reg); Op(new LocalSet(LC0)); Deref();
+            TagOfC0(); Op(new LocalSet(LT0));
+
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant((int)Tag.Lis));
+            Op(new Int32Equal());
+            OpenIf();
+            {
+                Op(new Int32Constant(0)); Op(new LocalSet(LMode));
+                Op(new LocalGet(LC0)); Op(new Int32WrapInt64()); Op(new LocalSet(LS));
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    // Unbound: bind to LIS(H) -- the pair is NOT allocated
+                    // here; the two unify_* that follow write it (ADR-017's
+                    // two-cell cons).
+                    EmitBindDa(pc, () => PushTaggedH(Tag.Lis));
+                    Op(new Int32Constant(1)); Op(new LocalSet(LMode));
+                    Op(new LocalGet(LH)); Op(new LocalSet(LS));
+                }
+                OpenElse();
+                {
+                    // An attributed variable needs its hooks; a packed string
+                    // IS a cons but with its own representation. Both step
+                    // aside; everything else plainly fails.
+                    Op(new LocalGet(LT0));
+                    Op(new Int32Constant((int)Tag.AttVar));
+                    Op(new Int32Equal());
+                    Op(new LocalGet(LT0));
+                    Op(new Int32Constant((int)Tag.Pstr));
+                    Op(new Int32Equal());
+                    Op(new Int32Or());
+                    OpenIf();
+                    EmitDeopt(pc);
+                    CloseNested();
+                    GoFail();
+                }
+                CloseNested();
+            }
+            CloseNested();
+        }
+
+        private void EmitPutStructure(int functorId, int reg, int pc)
+        {
+            EmitHeapGuard(pc);
+            CellStoreDyn(LHeapB, LH, 0,
+                () => Op(new Int64Constant(Cell.Functor(functorId).Data)));
+            RegStore(reg, () => PushTaggedH(Tag.Str));
+            Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+            Op(new LocalSet(LH));
+            Op(new LocalGet(LH)); Op(new LocalSet(LS));
+            Op(new Int32Constant(1)); Op(new LocalSet(LMode));
+        }
+
+        /// <summary>unify_variable_*: in write mode a fresh heap variable, in
+        /// read mode the cell at S (a bare ATTVAR captured as a REF to its
+        /// home, never copied). The callback stores LC0 wherever the operand
+        /// says.</summary>
+        private void EmitUnifyVariable(int pc, Action write, Action read)
+        {
+            Op(new LocalGet(LMode));
+            OpenIf();
+            {
+                EmitHeapGuard(pc);
+                Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned());
+                Op(new LocalSet(LC0));
+                CellStoreDyn(LHeapB, LH, 0, () => Op(new LocalGet(LC0)));
+                Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new LocalSet(LH));
+                write();
+            }
+            OpenElse();
+            {
+                CellLoadDyn(LHeapB, LS);
+                Op(new LocalSet(LC0));
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.AttVar));
+                Op(new Int32Equal());
+                OpenIf();
+                Op(new LocalGet(LS)); Op(new Int64ExtendInt32Unsigned());
+                Op(new LocalSet(LC0));
+                CloseNested();
+                read();
+            }
+            CloseNested();
+            Op(new LocalGet(LS)); Op(new Int32Constant(1)); Op(new Int32Add());
+            Op(new LocalSet(LS));
+        }
+
+        /// <summary>unify_value_*: in write mode the operand's cell goes onto
+        /// the heap (a bare ATTVAR as a REF to its home); in read mode a full
+        /// two-cell unify against heap[S].</summary>
+        private void EmitUnifyValue(int pc, Action loadSrc)
+        {
+            Op(new LocalGet(LMode));
+            OpenIf();
+            {
+                EmitHeapGuard(pc);
+                loadSrc(); Op(new LocalSet(LC0));
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.AttVar));
+                Op(new Int32Equal());
+                OpenIf();
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(0xFFFFFFFFL));
+                Op(new Int64And());
+                Op(new LocalSet(LC0));
+                CloseNested();
+                CellStoreDyn(LHeapB, LH, 0, () => Op(new LocalGet(LC0)));
+                Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new LocalSet(LH));
+            }
+            OpenElse();
+            {
+                EmitUnifyTwo(() =>
+                {
+                    Op(new LocalGet(LS)); Op(new LocalSet(LDa));
+                    CellLoadDyn(LHeapB, LS);
+                }, loadSrc, pc);
+            }
+            CloseNested();
+            Op(new LocalGet(LS)); Op(new Int32Constant(1)); Op(new Int32Add());
+            Op(new LocalSet(LS));
+        }
+
+        private void EmitUnifyConst(long constCell, int pc)
+        {
+            Op(new LocalGet(LMode));
+            OpenIf();
+            {
+                EmitHeapGuard(pc);
+                CellStoreDyn(LHeapB, LH, 0, () => Op(new Int64Constant(constCell)));
+                Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new LocalSet(LH));
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LS)); Op(new LocalSet(LDa));
+                CellLoadDyn(LHeapB, LS);
+                Op(new LocalSet(LC0));
+                Deref();
+                UnifyC0WithConst(constCell, pc);
+            }
+            CloseNested();
+            Op(new LocalGet(LS)); Op(new Int32Constant(1)); Op(new Int32Add());
+            Op(new LocalSet(LS));
+        }
+
+        private void EmitUnifyVoid(int count, int pc)
+        {
+            Op(new LocalGet(LMode));
+            OpenIf();
+            {
+                EmitHeapGuard(pc, count);
+                for (int i = 0; i < count; i++)
+                {
+                    CellStoreDyn(LHeapB, LH, 0, () =>
+                    { Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned()); });
+                    Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                    Op(new LocalSet(LH));
+                }
+            }
+            CloseNested();
+            Op(new LocalGet(LS)); Op(new Int32Constant(count)); Op(new Int32Add());
+            Op(new LocalSet(LS));
+        }
+
+        /// <summary>ADR-019's last-argument nested build / match.</summary>
+        private void EmitUnifyStructure(int functorId, int pc)
+        {
+            long functorCell = Cell.Functor(functorId).Data;
+            Op(new LocalGet(LMode));
+            OpenIf();
+            {
+                // Building: the parent's arg slot takes STR(H+1) and the
+                // functor follows -- contiguous, because this is the LAST
+                // argument (ADR-019).
+                EmitHeapGuard(pc, 2);
+                CellStoreDyn(LHeapB, LH, 0, () => PushTaggedH(Tag.Str, 1));
+                CellStoreDyn(LHeapB, LH, 1, () => Op(new Int64Constant(functorCell)));
+                Op(new LocalGet(LH)); Op(new Int32Constant(2)); Op(new Int32Add());
+                Op(new LocalSet(LH));
+                Op(new LocalGet(LH)); Op(new LocalSet(LS));
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LS)); Op(new LocalSet(LDa));
+                CellLoadDyn(LHeapB, LS);
+                Op(new LocalSet(LC0));
+                Deref();
+                TagOfC0(); Op(new LocalSet(LT0));
+
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant((int)Tag.Str));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC0)); Op(new Int32WrapInt64()); Op(new LocalSet(LT1));
+                    CellLoadDyn(LHeapB, LT1);
+                    Op(new Int64Constant(functorCell));
+                    Op(new Int64NotEqual());
+                    OpenIf();
+                    GoFail();
+                    CloseNested();
+                    Op(new LocalGet(LT1)); Op(new Int32Constant(1)); Op(new Int32Add());
+                    Op(new LocalSet(LS));
+                }
+                OpenElse();
+                {
+                    Op(new LocalGet(LT0));
+                    Op(new Int32Constant(0));
+                    Op(new Int32Equal());
+                    OpenIf();
+                    {
+                        EmitHeapGuard(pc);
+                        CellStoreDyn(LHeapB, LH, 0, () => Op(new Int64Constant(functorCell)));
+                        EmitBindDa(pc, () => PushTaggedH(Tag.Str));
+                        Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                        Op(new LocalSet(LH));
+                        Op(new LocalGet(LH)); Op(new LocalSet(LS));
+                        Op(new Int32Constant(1)); Op(new LocalSet(LMode));
+                    }
+                    OpenElse();
+                    {
+                        Op(new LocalGet(LT0));
+                        Op(new Int32Constant((int)Tag.AttVar));
+                        Op(new Int32Equal());
+                        OpenIf();
+                        EmitDeopt(pc);
+                        CloseNested();
+                        GoFail();
+                    }
+                    CloseNested();
+                }
+                CloseNested();
+            }
+            CloseNested();
+        }
+
+        private void EmitUnifyList(int pc)
+        {
+            Op(new LocalGet(LMode));
+            OpenIf();
+            {
+                // Building: the parent's arg slot takes LIS(H+1); the cons
+                // cells themselves are written by what follows.
+                EmitHeapGuard(pc);
+                CellStoreDyn(LHeapB, LH, 0, () => PushTaggedH(Tag.Lis, 1));
+                Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new LocalSet(LH));
+                Op(new LocalGet(LH)); Op(new LocalSet(LS));
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LS)); Op(new LocalSet(LDa));
+                CellLoadDyn(LHeapB, LS);
+                Op(new LocalSet(LC0));
+                Deref();
+                TagOfC0(); Op(new LocalSet(LT0));
+
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant((int)Tag.Lis));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC0)); Op(new Int32WrapInt64()); Op(new LocalSet(LS));
+                }
+                OpenElse();
+                {
+                    Op(new LocalGet(LT0));
+                    Op(new Int32Constant(0));
+                    Op(new Int32Equal());
+                    OpenIf();
+                    {
+                        EmitBindDa(pc, () => PushTaggedH(Tag.Lis));
+                        Op(new Int32Constant(1)); Op(new LocalSet(LMode));
+                        Op(new LocalGet(LH)); Op(new LocalSet(LS));
+                    }
+                    OpenElse();
+                    {
+                        Op(new LocalGet(LT0));
+                        Op(new Int32Constant((int)Tag.AttVar));
+                        Op(new Int32Equal());
+                        Op(new LocalGet(LT0));
+                        Op(new Int32Constant((int)Tag.Pstr));
+                        Op(new Int32Equal());
+                        Op(new Int32Or());
+                        OpenIf();
+                        EmitDeopt(pc);
+                        CloseNested();
+                        GoFail();
+                    }
+                    CloseNested();
+                }
+                CloseNested();
+            }
+            CloseNested();
+        }
+
     }
 }

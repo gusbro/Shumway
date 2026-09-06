@@ -136,11 +136,12 @@ public class WasmCompilerTests
     [Fact]
     public void APredicateOutsideTheSubsetIsRefused()
     {
-        // Structures are not in this slice: the compiler refuses the
-        // predicate rather than guessing, and the refusal names the opcode.
+        // A float literal is not in this slice (two-cell encoding): the
+        // compiler refuses the predicate rather than guessing, and the
+        // refusal names the opcode.
         var ex = Assert.Throws<WasmCompileException>(
-            () => new WasmProgramHarness("p(f(X)) :- q(X).\nq(1)."));
-        Assert.Contains("GetStructure", ex.Message);
+            () => new WasmProgramHarness("p(1.5)."));
+        Assert.Contains("Float", ex.Message);
     }
 
     private static bool SolveAtom(WasmProgramHarness h, string name, int atomId)

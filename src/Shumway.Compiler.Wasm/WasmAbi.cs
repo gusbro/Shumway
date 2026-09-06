@@ -119,6 +119,12 @@ public static class WasmAbi
     public const int ViewGen = 20;
     /// <summary>B0 -- the cut barrier, saved into choice points.</summary>
     public const int CutBarrier = 21;
+    /// <summary>The unify machine's mode: non-zero while building (write),
+    /// zero while matching (read). Synced so a step-aside mid-sequence
+    /// resumes exactly.</summary>
+    public const int WriteMode = 22;
+    /// <summary>S -- the unify pointer.</summary>
+    public const int UnifyPointer = 23;
 
     public const int SlotCount = 24;
     public const int SlotSize = 8;

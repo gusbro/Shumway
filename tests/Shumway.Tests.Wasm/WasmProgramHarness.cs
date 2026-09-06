@@ -139,7 +139,157 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
         SetSlot(WasmAbi.ExtraTrailTop, 0);
         SetSlot(WasmAbi.ViewGen, 7);
         SetSlot(WasmAbi.CutBarrier, -1);
+        SetSlot(WasmAbi.WriteMode, 0);
+        SetSlot(WasmAbi.UnifyPointer, 0);
     }
+
+    // ---- building and reading terms in the image ----
+
+    private void WriteHeap(int index, Cell c)
+        => Marshal.WriteInt64(_memory.Start, HeapAt + index * 8, c.Data);
+
+    private int AllocHeap(int cells)
+    {
+        int h = (int)GetSlot(WasmAbi.HeapTop);
+        SetSlot(WasmAbi.HeapTop, h + cells);
+        return h;
+    }
+
+    /// <summary>An integer list, built the way the engine builds one:
+    /// two-cell conses (ADR-017), nil-terminated.</summary>
+    public Cell MakeIntList(params long[] items)
+    {
+        Cell tail = Cell.Atom(AtomTable.EmptyListId);
+        for (int i = items.Length - 1; i >= 0; i--)
+        {
+            int pair = AllocHeap(2);
+            WriteHeap(pair, Cell.Int(items[i]));
+            WriteHeap(pair + 1, tail);
+            tail = Cell.Lis(pair);
+        }
+        return tail;
+    }
+
+    public Cell MakeAtom(string name)
+        => Cell.Atom(AtomTable.Intern(name, permanent: true).Id);
+
+    public Cell CellInt(long v) => Cell.Int(v);
+
+    /// <summary>A partial list <c>[items... | tail]</c>.</summary>
+    public Cell MakePartialList(long[] items, Cell tail)
+    {
+        Cell t = tail;
+        for (int i = items.Length - 1; i >= 0; i--)
+        {
+            int pair = AllocHeap(2);
+            WriteHeap(pair, Cell.Int(items[i]));
+            WriteHeap(pair + 1, t);
+            t = Cell.Lis(pair);
+        }
+        return t;
+    }
+
+    /// <summary>An Int argument for SolveWith (a nullable-friendly name).</summary>
+    public Cell MakeIntNull(long v) => Cell.Int(v);
+
+    /// <summary>A structure in the image: functor cell plus args, the
+    /// ADR-017 inline layout.</summary>
+    public Cell MakeStruct(string name, params Cell[] args)
+    {
+        int fid = FunctorTable.Intern(
+            AtomTable.Intern(name, permanent: true).Id, args.Length);
+        int f = AllocHeap(args.Length + 1);
+        WriteHeap(f, Cell.Functor(fid));
+        for (int i = 0; i < args.Length; i++) WriteHeap(f + 1 + i, args[i]);
+        return Cell.Str(f);
+    }
+
+    /// <summary>A term rendered from the image, for comparing answers:
+    /// canonical-ish, no operators, unbound as <c>_</c>.</summary>
+    public string Render(Cell c)
+    {
+        c = DerefCell(c);
+        switch (c.Tag)
+        {
+            case Shumway.Core.Tag.Int: return c.AsInt.ToString();
+            case Shumway.Core.Tag.Atom:
+                return AtomTable.GetById(c.AsAtomId)?.Name ?? "<atom?>";
+            case Shumway.Core.Tag.Ref: return "_";
+            case Shumway.Core.Tag.Lis:
+            {
+                var sb = new System.Text.StringBuilder("[");
+                Cell cur = c;
+                bool first = true;
+                while (true)
+                {
+                    cur = DerefCell(cur);
+                    if (cur.Tag == Shumway.Core.Tag.Lis)
+                    {
+                        if (!first) sb.Append(',');
+                        first = false;
+                        sb.Append(Render(ReadHeap(cur.AsHeapIndex)));
+                        cur = ReadHeap(cur.AsHeapIndex + 1);
+                        continue;
+                    }
+                    if (cur.Tag == Shumway.Core.Tag.Atom
+                        && cur.AsAtomId == AtomTable.EmptyListId) break;
+                    sb.Append('|').Append(Render(cur));
+                    break;
+                }
+                return sb.Append(']').ToString();
+            }
+            case Shumway.Core.Tag.Str:
+            {
+                int f = c.AsHeapIndex;
+                var (atomId, arity) = FunctorTable.Lookup(ReadHeap(f).AsFunctorId);
+                var sb = new System.Text.StringBuilder(
+                    AtomTable.GetById(atomId)?.Name ?? "<f?>");
+                sb.Append('(');
+                for (int i = 0; i < arity; i++)
+                {
+                    if (i > 0) sb.Append(',');
+                    sb.Append(Render(ReadHeap(f + 1 + i)));
+                }
+                return sb.Append(')').ToString();
+            }
+            default: return $"<{c.Tag}>";
+        }
+    }
+
+    private Cell DerefCell(Cell c)
+    {
+        while (c.Tag == Shumway.Core.Tag.Ref)
+        {
+            Cell at = ReadHeap(c.AsHeapIndex);
+            if (at.Data == c.Data) return at;
+            c = at;
+        }
+        return c;
+    }
+
+    /// <summary>Solve with arbitrary argument cells; <c>null</c> is a fresh
+    /// variable whose home <see cref="Answer"/> reads back. Cells must have
+    /// been built through this harness (they live in the image).</summary>
+    public bool SolveWith(string name, params Cell?[] args)
+    {
+        int fid = FunctorTable.Intern(
+            AtomTable.Intern(name, permanent: true).Id, args.Length);
+        _argHomes = new int[args.Length];
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] is { } c) { SetRegister(i, c); _argHomes[i] = -1; }
+            else
+            {
+                _argHomes[i] = NewVariable();
+                SetRegister(i, Cell.Ref(_argHomes[i]));
+            }
+        }
+        return Drive(_predIndexByFunctor[fid], 0);
+    }
+
+    /// <summary>Fresh image, no goal yet: for building argument terms before
+    /// <see cref="SolveWith"/>.</summary>
+    public void Fresh() => ResetImage();
 
     // ---- the driver ----
 
