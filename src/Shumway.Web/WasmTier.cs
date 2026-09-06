@@ -36,6 +36,13 @@ internal static partial class WebShumwayApp
     [DllImport("spike")]
     private static extern int shumway_wasm_call(int index, int mailbox, int cursor);
 
+    /// <summary>The registration and the crossing, for the tier's runner
+    /// (BrowserWasmRunner): thin internal doors over the spike.c shim.</summary>
+    internal static int WasmRegister(int bytesPtr, int len)
+        => shumway_wasm_register(bytesPtr, len);
+    internal static int WasmCall(int index, int mailbox, int cursor)
+        => shumway_wasm_call(index, mailbox, cursor);
+
     private static int Register(StringBuilder report, string name, byte[] module)
     {
         byte[] pinned = GC.AllocateArray<byte>(module.Length, pinned: true);

@@ -1,3 +1,5 @@
+using Shumway.Core;
+
 namespace Shumway.Compiler.Wasm;
 
 /// <summary>A predicate the compiler refuses: an opcode outside the
@@ -41,6 +43,13 @@ public interface IWasmCompileEnv
     /// the linker makes the same decision when it rewrites Call to
     /// CallBuiltin.</summary>
     bool TryGetBuiltin(int calleeFunctorId, out int builtinId);
+
+    /// <summary>Whether the builtin can be invoked directly through the
+    /// request protocol (entry.Impl against the engine). Meta-call builtins
+    /// (call/N, the $call helpers) need the interpreter's dispatch machinery
+    /// instead: the compiled code deopts at the call site and the interpreter
+    /// re-runs it whole.</summary>
+    bool IsDirectBuiltin(int builtinId);
 }
 
 /// <summary>A compiled predicate: the module bytes plus what the installer

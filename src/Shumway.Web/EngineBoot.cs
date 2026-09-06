@@ -21,15 +21,24 @@ internal static partial class WebShumwayApp
     {
         using Stream? rs = typeof(WebShumwayApp).Assembly
             .GetManifestResourceStream(StdlibResourceName);
+        PrologEngine engine;
         if (rs is null)
         {
             // The bake target did not run. Correct, just slower — surfaced rather
             // than silent, or a build regression reads as a sluggish engine.
             WriteToPage($"% no {StdlibResourceName} embedded — compiling the prelude\n");
-            return new PrologEngine();
+            engine = new PrologEngine();
         }
-        var ms = new MemoryStream();
-        rs.CopyTo(ms);
-        return PrologEngine.FromBundle(BundleReader.FromBytes(ms.ToArray()));
+        else
+        {
+            var ms = new MemoryStream();
+            rs.CopyTo(ms);
+            engine = PrologEngine.FromBundle(BundleReader.FromBytes(ms.ToArray()));
+        }
+        // The wasm Tier-1 (plan phase 2): promotion through the ordinary
+        // dispatch machinery, execution as native wasm. No-op unless the
+        // Shumway.WasmCodegen switch is on.
+        BrowserWasmTier.Attach(engine);
+        return engine;
     }
 }

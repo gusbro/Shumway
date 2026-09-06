@@ -1,4 +1,4 @@
-namespace Shumway.Compiler.Wasm;
+namespace Shumway.Core;
 
 /// <summary>What a compiled predicate hands back when it returns. The wasm
 /// never calls managed code: when it needs something only the engine can do,

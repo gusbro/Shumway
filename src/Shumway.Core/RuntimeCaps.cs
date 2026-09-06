@@ -43,6 +43,18 @@ public static class RuntimeCaps
         && !OperatingSystem.IsBrowser();
 #endif
 
+    /// <summary>True when the engine may compile predicates to WebAssembly
+    /// modules and run them natively — the browser's Tier-1
+    /// (docs/design/wasm-tier1-plan.md), where IL emission is unavailable but
+    /// the host IS a wasm engine. Default false everywhere: only Shumway.Web
+    /// turns the switch on, and desktop builds trim the whole
+    /// Shumway.Compiler.Wasm subtree (plan D7). Same discipline as
+    /// <see cref="SupportsRuntimeCodegen"/>: consult the property, never cache
+    /// it, so the trimmer can fold it.</summary>
+    [FeatureSwitchDefinition("Shumway.WasmCodegen")]
+    public static bool SupportsWasmCodegen =>
+        AppContext.TryGetSwitch("Shumway.WasmCodegen", out bool enabled) && enabled;
+
     /// <summary>The largest arity a compound term may have, which is a
     /// question about ADDRESS SPACE and so about the runtime. A term of arity
     /// N occupies N+1 heap cells of eight bytes, so the number is whatever

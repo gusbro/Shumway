@@ -1,6 +1,8 @@
 using WebAssembly;
 using WebAssembly.Instructions;
 
+using Shumway.Core;
+
 namespace Shumway.Compiler.Wasm;
 
 /// <summary>A module that does nothing at all: it returns its second argument

@@ -322,6 +322,70 @@ real.
 Hasta que la instalación completa, el predicado sigue en Tier-0 — misma UX que
 el background compile actual.
 
+### Estado fase 2: mitad de ESCRITORIO HECHA (el tier corre en el motor real)
+
+El cableado del motor esta completo y probado en escritorio con el motor
+REAL — solo la mitad browser (pinning + calli + boot) queda pendiente:
+
+- **`WasmAbi` movido a `Shumway.Core`** (el ABI espeja estado del motor; el
+  motor no depende del compilador). `Activation.Wasm.cs`: el puente de
+  mailbox — `TryFillWasmMailbox`/`SyncFromWasmMailbox` + vistas de arrays +
+  `WasmModeCompatible` (trail-everything / occurs_check ⇒ fallback a
+  bytecode por entrada).
+- **Deopt sin tocar el interprete**: el delegate devuelve true con
+  `IlTailCallPending` + `Pc` = direccion de bytecode — el camino post-
+  delegate existente (BytecodeInterpreter 603-616) sigue en ese Pc, marker
+  o bytecode por igual. Tail call y deopt son EL MISMO mecanismo.
+- **`EngineWasmCompileEnv`**: todos los encodes son resume markers
+  interneados (`EncodeResumeMarker`) — call target = marker(callee, 0), BP
+  de CP = marker(self, retry-cursor), continuacion = marker(self, cursor);
+  deopt pc = base linkeada + offset local (los offsets del CompiledPredicate
+  pre-link coinciden 1:1 con el programa linkeado; el linker solo reescribe
+  VALORES de operandos). Builtins indirectos (IsCall/IsDollarCall) deoptan
+  en el call site; call_builtin lleva el trim de env en la mitad alta del
+  slot BuiltinId.
+- **`WasmTierDelegate`** (Embedding): el loop de veredictos como
+  `PredicateDelegate`; espeja CallBuiltin/ExecuteBuiltin del interprete
+  (TrimEnv antes del impl, `BuiltinReturnPc` = marker o Cp, StampBuiltin).
+  Fail devuelve false y el backtracking del interprete reentra por el BP
+  marker del CP wasm — probado con findall enumerando a traves de CPs wasm.
+- **`DesktopWasmRunner`** (Compiler.Wasm): imagen copy-in/copy-out sobre el
+  motor wasm→IL de la biblioteca — TODO en una celda es INDICE, nunca
+  direccion, por eso el modelo de copia es sano; los topes FINALES acotan el
+  copy-back (lo de arriba esta muerto). Espejo de aridades con `TryLookup`
+  (el espacio de ids tiene AGUJEROS por atom GC + carreras de publicacion).
+- **`WasmPromotionStore`** (Embedding, sin referencia al backend wasm — el
+  mundo inyecta `Promoter`): contadores + threshold + rechazos; instala por
+  `RegisterBoundDelegate` ⇒ markers, rewrites y EVICCION compartidos con IL.
+  Enganches: `Tier1DispatcherAdapter.OnDispatch` (antes del camino IL) e
+  `IsPermanentlyBytecodeOnly` (con wasm activo consulta el reject set wasm —
+  sin esto el linker reescribe a CallBytecode y mata el dispatch).
+- **TRAMPAS CAZADAS**: (1) los wrappers `__query__` reusan functor id con
+  cuerpo distinto por query — promover uno REPRODUCE la query vieja (la
+  exclusion del store IL ahora es compartida); (2) los markers son pares
+  interneados secuenciales, NO aritmetica base+fid*stride; (3) los functor
+  ids consultados son con scope de modulo — no adivinar fids re-internando
+  nombres en tests.
+
+Tests: `EngineWasmTierTests` (4) — recursion nrev/app via markers,
+cut+findall backtrackeando a CPs wasm, floats + builds reservados +
+unificador general, control engine. 92/92 del proyecto wasm en verde.
+
+Mitad browser ESCRITA (pendiente de correr en browser):
+`RuntimeCaps.SupportsWasmCodegen` (switch `Shumway.WasmCodegen`, default
+false, solo Shumway.Web lo prende); `BrowserWasmRunner` (pins con `fixed`
+sobre los arrays reales — D2: managed solo corre con el wasm bailado, asi
+que los pins duran exactamente la llamada; mailbox pinneado; indice de
+tabla cacheado POR HILO via ThreadLocal + registro sincronico por spike.c —
+el registro EM_JS es sincronico en el hilo que llama, no hace falta el
+runtime thread; bytes parcheados a shared con WasmSharedMemory);
+`BrowserWasmTier.Attach` en `BootEngine` (espejo de aridades pinneado
+process-wide, append-only); sonda `#wasmtier[=rounds]` (dos motores lado a
+lado, correctitud cruzada primero, medianas de counter/nrev/tak, POST a
+/collect). Falta: la corrida de medicion en Chrome headless con
+WebShumwayServe.ps1 -Collect. Nota: el runner de escritorio es
+engine-thread-only (un store por PrologEngine ⇒ sin compartir).
+
 ## Fase 3 — AOT (~1,5-2 semanas)
 
 - MODIFICAR `src/Shumway.Link/LinkCli.cs` — `--with-wasm` (compone con

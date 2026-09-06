@@ -880,16 +880,20 @@ public static class WasmPredicateCompiler
                 case Opcode.CallBuiltin:
                     // The id is the operand itself: the module compiler
                     // resolves builtins when the registry is loaded, exactly
-                    // as the linker would.
+                    // as the linker would. The env-trim count (I1) rides the
+                    // high half of the id slot; -1 is the no-trim sentinel.
                     EmitFlagsCheck(ins.Pc);
-                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(ins.I0)));
+                    if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
+                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                        (uint)ins.I0 | ((long)ins.I1 << 32))));
                     StoreSlot64(WasmAbi.Cursor,
                         () => Op(new Int64Constant(CursorOf(ins.Pc + 9))));
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
                 case Opcode.ExecuteBuiltin:
                     EmitFlagsCheck(ins.Pc);
-                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(ins.I0)));
+                    if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
+                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant((uint)ins.I0)));
                     StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;

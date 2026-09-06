@@ -66,6 +66,10 @@
   <ItemGroup>
     <RuntimeHostConfigurationOption Include="Shumway.RuntimeCodegen"
                                     Value="false" Trim="true" />
+    <!-- The wasm Tier-1 (docs/design/wasm-tier1-plan.md): promoted predicates
+         compile to WebAssembly modules and run natively. Browser only. -->
+    <RuntimeHostConfigurationOption Include="Shumway.WasmCodegen"
+        Value="true" Trim="true" />
   </ItemGroup>
 
   <!-- Bake the standard library into a bundle the app embeds, so the engine boots

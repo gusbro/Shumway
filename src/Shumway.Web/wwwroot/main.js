@@ -1665,6 +1665,26 @@ if (persistMode) {
     emit(text + '\n', 'error');
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
+} else if (location.hash.startsWith('#wasmtier')) {
+  // #wasmtier, or #wasmtier=<rounds>: the phase-2 measurement — a tiered
+  // engine (wasm Tier-1, threshold 1) against a plain Tier-0 engine over
+  // the counter, nrev and tak, correctness cross-checked first.
+  try {
+    const spec = /^#wasmtier=(\d+)$/.exec(location.hash);
+    const rounds = spec ? Number(spec[1]) : 5;
+    emit(`--- wasm tier: x${rounds} rounds ---\n`);
+    const report = await session.exports().WasmTierProbe(rounds);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmtier';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const text = `wasm tier CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+  }
 } else if (location.hash === '#selftest') {
   try {
     await (await import('./selftest.js')).run(session, emit, out, editor, workspace);

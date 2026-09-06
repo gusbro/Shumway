@@ -89,6 +89,9 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
     bool IWasmCompileEnv.TryGetBuiltin(int calleeFunctorId, out int builtinId)
         => Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(calleeFunctorId, out builtinId);
 
+    // Everything the harness emulates is direct.
+    bool IWasmCompileEnv.IsDirectBuiltin(int builtinId) => true;
+
     // ---- the memory image ----
 
     private long GetSlot(int slot)
@@ -169,10 +172,8 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
         if (ArityAt + count * 4 > 16 * 65536)
             throw new InvalidOperationException($"arity mirror overflows the image ({count} functors)");
         for (int fid = 0; fid < count; fid++)
-        {
-            var (_, arity) = FunctorTable.Lookup(fid);
-            Marshal.WriteInt32(_memory.Start, ArityAt + fid * 4, arity);
-        }
+            Marshal.WriteInt32(_memory.Start, ArityAt + fid * 4,
+                FunctorTable.TryLookup(fid, out var fe) ? fe.Arity : 0);
     }
 
     private int AllocHeap(int cells)

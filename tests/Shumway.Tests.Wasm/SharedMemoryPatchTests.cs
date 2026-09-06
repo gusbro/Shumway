@@ -1,5 +1,7 @@
 using Shumway.Compiler.Wasm;
 
+using Shumway.Core;
+
 namespace Shumway.Tests.Wasm;
 
 /// <summary>The browser will not instantiate a module whose memory import is

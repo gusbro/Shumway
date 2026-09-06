@@ -258,6 +258,11 @@ public sealed class IlPromotionStore
     /// <summary>Profile samples required before the phase-2 PGO recompile.</summary>
     public int PgoSampleThreshold { get; set; } = 32;
 
+    /// <summary>The wasm tier's promotion state, when a world wired one
+    /// (browser boot; desktop differential tests). Its delegates install into
+    /// THIS store's table, so dispatch and eviction are shared.</summary>
+    public WasmPromotionStore? Wasm { get; set; }
+
     /// <summary>The delegate bound to <paramref name="functorId"/>, or null.</summary>
     public PredicateDelegate? TryGet(int functorId)
         => _delegates.TryGetValue(functorId, out var d) ? d : null;
@@ -459,7 +464,7 @@ public sealed class IlPromotionStore
     // The synthetic __query__/N wrappers have a DIFFERENT body per query under the
     // same functor id — caching one query's IL would replay it for every later query
     // of that arity.
-    private static bool IsExcludedFromPromotion(int functorId)
+    internal static bool IsExcludedFromPromotion(int functorId)
     {
         var (atomId, _) = Shumway.Core.FunctorTable.Lookup(functorId);
         string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
@@ -554,6 +559,9 @@ public sealed class IlPromotionStore
     /// CallBytecode immediately, skipping OnDispatch per dispatch.</summary>
     public bool IsPermanentlyBytecodeOnly(int functorId, CompiledPredicate predicate)
     {
+        // An enabled wasm tier promotes through dispatch too: the static
+        // CallBytecode rewrite would starve it of the dispatches it counts.
+        if (Wasm is { Enabled: true }) return Wasm.IsUnpromotable(functorId);
         if (Threshold <= 0) return true;
         if (!DynamicCodeSupported) return true;
         if (_unpromotable.Contains(functorId)) return true;
