@@ -389,32 +389,51 @@ rango corrompe lo que sigue); `BrowserWasmTier.Attach` en `BootEngine`
 - correctitud: los 3 goals (counter/nrev/tak) coinciden tier vs Tier-0;
 - **counter 300k: ~100-220x** (8-16 ms vs ~1665 ms — auto-tail se queda en
   wasm, la unica frontera es el `is` por vuelta);
-- **nrev 200×5: 1.2-1.4x** (call+alloc heavy: cada dispatch entre functores
-  vuelve por markers, y la presion de heap deopta al watermark);
-- **tak: acotado** — puro `is`/`=<`, cada aritmetica sale por BuiltinRequest
-  (~150 ns), el peaje manda (sacado de la tabla, es el caso que motiva los
-  builtins open-coded de fase B).
+- **nrev 200×5: 1.2-1.4x** (call+alloc heavy: el handoff nrev→app por
+  elemento vuelve por markers, y la presion de heap deopta al watermark);
+- **tak: acotado** — NO por builtins (su aritmetica es open-coded:
+  `a_int_cmp`/`a_int_bin`, cero BuiltinRequest); el peaje son las 3 llamadas
+  NO-TAIL a tak por invocacion (la `execute` tail se queda en wasm), cada una
+  con dos round-trips de frontera. Desensamblado verificado.
 
-El spread NOMBRA las tres costuras de bail (call entre predicados, builtin,
-watermark) y ninguna es limite de correctitud (el deopt las devuelve al tier
-donde estaban). Son el trabajo de fase 3 (call directo wasm→wasm) y fase B
-(contrapartes wasm de los builtins que dominan los bails).
+El spread NOMBRA las tres costuras de bail y ninguna es limite de correctitud
+(el deopt las devuelve al tier donde estaban). La MEDICION reordena el plan:
+la costura dominante para tak Y nrev es la **llamada NO-TAIL entre predicados**
+(vuelve por el intérprete), NO los builtins. El lever grande es call directo
+wasm→wasm (resolver el indice del callee y llamarlo en vez de veredicto 2) —
+prioridad medida de la proxima fase. Los builtins open-coded ayudan a codigo
+builtin-denso pero la data dice que las llamadas van primero.
 
 Trampa de tests cazada: `EngineWasmTierTests` corre motores VIVOS ⇒ comparte
 AtomTable/FunctorTable globales; hay que DESACTIVAR el paralelismo in-process
 del assembly (igual que Embedding), sino otra clase interna functores bajo los
 pies de un motor corriendo.
 
-## Fase 3 — AOT (~1,5-2 semanas)
+## Fase 3 — AOT: REPLANTEADA (hornear bytes es redundante)
 
-- MODIFICAR `src/Shumway.Link/LinkCli.cs` — `--with-wasm` (compone con
-  `--with-compiled-il`; para target web, wasm reemplaza al IL persistido).
-- MODIFICAR `BundleWriter.cs`/`BundleLoader.cs` — sección nueva de bundle
-  `{module, WasmEntry[], WasmBindSite[]}` con su magic, espejo del patrón
-  `IlPersistedEntryCodec` (NUEVO `WasmPersistedCodec.cs`). Loader web: resolver
-  binds → import object → instanciar (runtime thread) →
-  `RegisterBoundDelegate` por entry, first-wins, como el binding de IL
-  persistido (`BundleLoader.cs:362`). Loaders no-web saltean la sección.
+El diseño original (hornear `.wasm` + `WasmBindSite[]` en el bundle) NO paga
+su complejidad, a diferencia del IL persistido, y por una razon concreta:
+
+- El IL persistido hornea bytes de ENSAMBLADO porque compilar IL es CARO
+  (`Reflection.Emit` + JIT); saltarlo al cargar vale la pena.
+- Generar bytes WASM es BARATO (`WasmPredicateCompiler` solo emite bytes, sin
+  JIT). El costo caro —instanciar/JIT el modulo— lo paga el browser AL CARGAR
+  de todas formas, vengan los bytes del bundle o generados al vuelo.
+- Ademas los encodings del modulo (markers) son POR PROCESO (pares interneados
+  a runtime), asi que unos bytes horneados no son portables sin globals
+  importadas (D6) que el loader computa DESDE el `CompiledPredicate` — que el
+  bundle YA lleva. O sea: los bytes horneados serian redundantes con el
+  `CompiledPredicate` ya guardado.
+
+Conclusion: para WebShumway el camino JIT (fases 1-2) YA entrega lo que AOT
+daria (predicados en Tier-1 desde la primera llamada), porque el codegen wasm
+es lo bastante barato como para que el umbral de promocion tenga warmup
+despreciable. La forma util de "AOT" seria priming ansioso al cargar (promover
+los predicados del bundle a threshold 1 al load), que reusa el path JIT entero
+sin seccion de bundle nueva — pero incluso eso es marginal.
+
+**AOT queda diferido: no aporta sobre el JIT ya medido.** Si se retoma, la
+forma correcta es priming al load, NO hornear bytes.
 
 ## Fase T — Tests (paralela a 1-3)
 
@@ -426,6 +445,32 @@ pies de un motor corriendo.
   el corpus del selftest, comparar respuestas).
 - Regresión: `Shumway.Tests.Embedding` completa verde con el switch en false
   (default) en todos lados.
+
+## Fase 3' — El call directo wasm→wasm (el lever medido, arco propio)
+
+La medicion apunta aca, no a AOT ni a builtins. El analisis de que es
+tractable y que no:
+
+- **Call NO-TAIL (tak) NO es cheaply removible.** Un `call` no-tail fija CP y
+  el callee vuelve por CP; en un JIT-de-predicados el fail de un callee
+  profundo puede desenrollar CPs muchos frames arriba, cosa que una pila de C
+  recursiva no modela. Mantener calls no-tail en wasm = mover el LOOP de
+  dispatch entero (con backtracking sobre la pila de CPs) adentro del wasm =
+  "compilar el motor a wasm", no un JIT de predicados. Arco grande aparte.
+- **Call TAIL a otro functor (nrev→app) SI es tractable.** Un tail call no
+  tiene continuacion que preservar (ES el ultimo goal, hereda CP): el modulo
+  podria `call_indirect` el `run(mailbox, 0)` del callee y devolver su
+  veredicto directo (semantica tail: el resultado del callee ES el del
+  caller). Requiere: una tabla por-hilo `functorId → indice de tabla del
+  callee` espejada en memoria lineal (el modulo lee el indice y
+  call_indirect; si es 0 = no registrado en este hilo aun, fallback a
+  veredicto 2). Ataca el handoff nrev→app (app interno ya es self-tail en
+  wasm). RIESGO: indice equivocado = corrupcion/trap silencioso; necesita el
+  fallback y tests cuidadosos. Es el punto de entrada correcto del arco.
+
+**Estado**: diferido a arco propio. El JIT medido ya prueba la tesis
+(100-220x en el caso ideal); el tail-call directo es la mejora de mayor lever
+para codigo real y merece diseño+tests dedicados, no un apuro.
 
 ## Fase B — Benchmarks + cierre (~1 semana)
 

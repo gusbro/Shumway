@@ -30,11 +30,18 @@ scheduler from run to run; the Tier-0 baseline is steady near 1665 ms, so the
 ratio lands anywhere from ~100x to ~220x across runs. Either end is two orders
 of magnitude, which is the only claim that matters.
 
-`tak` is deliberately absent from the timing table: it is nothing but `is/2`
-and `=</2`, and every arithmetic goal in the current design leaves the module
-as a `BuiltinRequest` for the host to run (~150 ns per crossing, measured in
-the phase-0 spike). For `tak(20,14,6)` that boundary traffic dominates
-outright, so it is a marker for the next optimization, not a number to quote.
+`tak` is deliberately absent from the timing table, and the reason is worth
+stating precisely because it is easy to get wrong. Its arithmetic is NOT the
+problem: `X =< Y` compiles to `a_int_cmp` and `X - 1` to `a_int_bin`, both
+open-coded in wasm, so tak makes zero builtin crossings. Its cost is the
+CALLS. tak's recursive clause makes three non-tail `call`s to tak plus one
+tail `execute`; the tail self-call stays in the module (a branch back to the
+dispatcher), but every non-tail call returns to the interpreter, which
+dispatches the callee back into wasm and, when it proceeds, re-enters the
+caller — two boundary round-trips per non-tail call. Takeuchi's call count is
+enormous and three of every four recursive calls pay that, so the round-trip
+traffic dominates. tak is the marker for the inter-predicate-call optimization
+(phase 3+), not the builtin one.
 
 ## Reading the spread
 
@@ -51,31 +58,36 @@ does not, and the gap between them is not noise:
 
 - **nrev is call-and-allocate heavy and barely moves.** It builds a great many
   cons cells (heap pressure, which trips the watermark and deopts back to the
-  interpreter to collect) and crosses functors (each `nrev`/`app` dispatch
-  round-trips through the interpreter's marker machinery rather than calling
-  the next module directly). The structure work itself is open-coded in wasm
-  and fast; what it does not yet have is a way to stay native ACROSS a
-  predicate boundary or a heap collection.
+  interpreter to collect) and crosses functors: `nrev`'s non-tail call to
+  itself and its tail call to `app` each leave the module, and while `app`'s
+  own recursion is a tail self-call that stays native, the per-element
+  `nrev`→`app` handoff round-trips the interpreter's marker machinery. The
+  structure work itself is open-coded in wasm and fast; what it does not yet
+  have is a way to stay native ACROSS a non-tail predicate boundary or a heap
+  collection.
 
 ## What the spread tells the next phase
 
 The design bails to the interpreter at three seams, and the spread names their
 cost precisely:
 
-1. **Every inter-predicate call** round-trips through the interpreter's resume
-   markers. Free for a self-tail loop, per-call for everything else. A direct
-   wasm-module-to-wasm-module call (a `call_indirect` between registered
-   modules, resolving a callee's index instead of returning verdict 2) is the
-   large lever for `nrev`-shaped code.
-2. **Every builtin** is a `BuiltinRequest`. Cheap when rare (the counter),
-   dominant when the predicate IS builtins (`tak`). Open-coded wasm
-   counterparts for the type tests, `=/2` over immediates, and the arithmetic
-   comparisons -- the plan's standing note -- close this, decided by measuring
-   which builtins actually dominate the bail counts, not before.
+1. **Every non-tail inter-predicate call** round-trips through the
+   interpreter's resume markers -- twice, once to dispatch the callee and once
+   when it proceeds back. Free for a self-tail loop (which branches inside the
+   module), per-call for everything else. This is the dominant cost for BOTH
+   `tak` (three non-tail self-calls per invocation) and `nrev` (the per-element
+   `nrev`→`app` handoff), so a direct wasm-to-wasm call -- resolving the
+   callee's table index and calling it, rather than returning verdict 2 -- is
+   the single largest lever, and the measured priority for the next phase.
+2. **Every builtin** is a `BuiltinRequest`. Cheap when rare (the counter's one
+   `is` per turn), and NOT what bounds `tak` (its arithmetic is open-coded).
+   Open-coded wasm counterparts for the type tests and `=/2` over immediates
+   help builtin-dense predicates, but the measurement says calls come first.
 3. **Every heap-watermark crossing** deopts to collect. Correct and cheap per
-   event; it caps how long an allocation-heavy predicate stays native.
+   event; it caps how long an allocation-heavy predicate (`nrev`) stays native.
 
 None of the three is a correctness limit -- the deopt path means every one of
-them is a predicate that merely runs on the tier it was already on. They are
-the phase-B and phase-3 work items, and the counter proves the ceiling worth
-reaching for.
+them is a predicate that merely runs on the tier it was already on. The
+measurement reorders the plan's next steps: the inter-predicate call boundary,
+not open-coded builtins, is where the data points, and the counter proves the
+ceiling worth reaching for.

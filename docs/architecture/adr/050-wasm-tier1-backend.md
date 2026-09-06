@@ -107,11 +107,14 @@ The tier runs in the live engine, desktop and browser, measured
 ([`docs/benchmarks/browser.md`](../../benchmarks/browser.md)). A tight
 self-tail arithmetic loop stays inside the module and wins ~100–220x over the
 interpreted Tier-0; call-and-allocate-heavy code (nrev) barely moves, and
-arithmetic-only code (tak) is dominated by the per-builtin boundary tax. Those
-last two are not correctness limits — deopt returns them to the tier they were
-on — they are the map for the next work: direct wasm-to-wasm calls (phase 3+)
-and open-coded wasm builtins for whatever the bail counts show dominates
-(phase B, decided by data, not before).
+recursion-heavy code (tak) is dominated by the non-tail-call boundary — its
+arithmetic is open-coded, so the tax is the three non-tail self-calls per
+invocation round-tripping the interpreter, not builtins. Those last two are
+not correctness limits — deopt returns them to the tier they were on — and the
+measurement points the next work at the inter-predicate call boundary: a
+direct wasm-to-wasm call that resolves the callee's table index instead of
+returning to the interpreter. Open-coded wasm builtins help builtin-dense
+predicates too, but the data puts calls first.
 
 The new dependency is permissive (Apache-2.0), executes in-process for tests,
 and is trimmed out of every non-browser build. No invariant in
