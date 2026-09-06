@@ -183,6 +183,19 @@ public static class WasmPredicateCompiler
                 case Opcode.PutConstantA1:
                 case Opcode.PutConstantA2:
                 case Opcode.DeallocateExecute:
+                case Opcode.NeckCut:
+                case Opcode.Cut:
+                case Opcode.GetLevel:
+                case Opcode.GetLevelB:
+                case Opcode.AllocateGetLevel:
+                case Opcode.CutProceed:
+                case Opcode.CutDeallocateProceed:
+                case Opcode.TryMeElse:
+                case Opcode.RetryMeElse:
+                case Opcode.TrustMe:
+                case Opcode.Jump:
+                case Opcode.CallBuiltin:
+                case Opcode.ExecuteBuiltin:
                     return;
                 case Opcode.AIntCmp:
                 case Opcode.Meta:
@@ -238,7 +251,15 @@ public static class WasmPredicateCompiler
                         _leaders.Add(ins.I0);
                         break;
                     case Opcode.Call:
+                    case Opcode.CallBuiltin:
                         _leaders.Add(ins.Pc + 9);   // the return cursor
+                        break;
+                    case Opcode.TryMeElse:
+                    case Opcode.RetryMeElse:
+                        _leaders.Add(ins.I0);       // the else chain
+                        break;
+                    case Opcode.Jump:
+                        _leaders.Add(ins.I0);
                         break;
                 }
             }
@@ -601,15 +622,17 @@ public static class WasmPredicateCompiler
             Op(new Int32WrapInt64());
             Op(new LocalSet(LT1));                          // bp
 
+            var bpCursors = new SortedSet<int>();
             foreach (var ins in _instrs)
-            {
-                int cursor;
                 switch (ins.Op)
                 {
-                    case Opcode.Try: cursor = CursorOf(ins.Pc + 9); break;
-                    case Opcode.Retry: cursor = CursorOf(ins.Pc + 5); break;
-                    default: continue;
+                    case Opcode.Try: bpCursors.Add(CursorOf(ins.Pc + 9)); break;
+                    case Opcode.Retry: bpCursors.Add(CursorOf(ins.Pc + 5)); break;
+                    case Opcode.TryMeElse:
+                    case Opcode.RetryMeElse: bpCursors.Add(CursorOf(ins.I0)); break;
                 }
+            foreach (int cursor in bpCursors)
+            {
                 Op(new LocalGet(LT1));
                 Op(new Int32Constant(_env.EncodeBp(cursor)));
                 Op(new Int32Equal());
@@ -765,6 +788,55 @@ public static class WasmPredicateCompiler
                     EmitDeallocate();
                     EmitExecuteTail(ins.Pc);
                     return true;
+                case Opcode.NeckCut:
+                    EmitFlagsCheck(ins.Pc);
+                    EmitCut(() => LoadSlot32(WasmAbi.CutBarrier));
+                    return false;
+                case Opcode.Cut:
+                    EmitFlagsCheck(ins.Pc);
+                    EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); });
+                    return false;
+                case Opcode.GetLevel:
+                    YStore(ins.I0, () => RawInt(() => LoadSlot32(WasmAbi.CutBarrier)));
+                    return false;
+                case Opcode.GetLevelB:
+                    YStore(ins.I0, () => RawInt(() => Op(new LocalGet(LB))));
+                    return false;
+                case Opcode.AllocateGetLevel:
+                    EmitAllocate(ins);   // I0 = count, same operand slot
+                    YStore(ins.I1, () => RawInt(() => LoadSlot32(WasmAbi.CutBarrier)));
+                    return false;
+                case Opcode.CutProceed:
+                    EmitFlagsCheck(ins.Pc);
+                    EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); });
+                    EmitReturn(WasmVerdict.Success);
+                    return true;
+                case Opcode.CutDeallocateProceed:
+                    EmitFlagsCheck(ins.Pc);
+                    EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); });
+                    EmitDeallocate();
+                    EmitReturn(WasmVerdict.Success);
+                    return true;
+                case Opcode.CallBuiltin:
+                    // The id is the operand itself: the module compiler
+                    // resolves builtins when the registry is loaded, exactly
+                    // as the linker would.
+                    EmitFlagsCheck(ins.Pc);
+                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(ins.I0)));
+                    StoreSlot64(WasmAbi.Cursor,
+                        () => Op(new Int64Constant(CursorOf(ins.Pc + 9))));
+                    EmitReturn(WasmVerdict.BuiltinRequest);
+                    return true;
+                case Opcode.ExecuteBuiltin:
+                    EmitFlagsCheck(ins.Pc);
+                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(ins.I0)));
+                    StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                    EmitReturn(WasmVerdict.BuiltinRequest);
+                    return true;
+                case Opcode.TryMeElse: EmitTryMeElse(ins); return false;
+                case Opcode.RetryMeElse: EmitRetryMeElse(ins); return false;
+                case Opcode.TrustMe: EmitTrustMe(ins); return false;
+                case Opcode.Jump: GoTo(ins.I0); return true;
                 case Opcode.AIntBin: EmitAIntBin(ins); return false;
                 case Opcode.Call: EmitCall(ins); return true;
                 case Opcode.Execute: EmitExecute(ins); return true;
@@ -795,6 +867,18 @@ public static class WasmPredicateCompiler
         {
             if (!_callee.TryGetValue(ins.Pc, out int callee))
                 throw new WasmCompileException($"call at {ins.Pc} has no call site");
+            if (_env.TryGetBuiltin(callee, out int builtinId))
+            {
+                // The builtin runs on the host: leave its id and the return
+                // cursor in the mailbox and step out (env trimming skipped;
+                // a CP the builtin pushes just sits a little higher).
+                EmitFlagsCheck(ins.Pc);
+                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(builtinId)));
+                StoreSlot64(WasmAbi.Cursor,
+                    () => Op(new Int64Constant(CursorOf(ins.Pc + 9))));
+                EmitReturn(WasmVerdict.BuiltinRequest);
+                return;
+            }
             EmitFlagsCheck(ins.Pc);
             // Env trimming is skipped: frames sit a little higher, results
             // are unaffected. CP becomes the marker that re-enters us at the
@@ -816,6 +900,15 @@ public static class WasmPredicateCompiler
         {
             if (!_callee.TryGetValue(pc, out int callee))
                 throw new WasmCompileException($"execute at {pc} has no call site");
+            if (_env.TryGetBuiltin(callee, out int builtinId))
+            {
+                // A builtin in tail position: run it, then proceed. Cursor -1
+                // is that convention on the wire.
+                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(builtinId)));
+                StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                EmitReturn(WasmVerdict.BuiltinRequest);
+                return;
+            }
             if (callee == _p.FunctorId)
             {
                 // The self tail call: back to the entry dispatch, unless the
@@ -917,8 +1010,13 @@ public static class WasmPredicateCompiler
         // ---- choice points (the engine's own layout, cell for cell) ----
 
         private void EmitTry(Instr ins)
+            => EmitPushChoicePoint(ins.Pc, ins.I1, CursorOf(ins.Pc + 9), gotoAddr: ins.I0);
+
+        /// <summary>The engine's PushChoicePoint, cell for cell; jumps to
+        /// <paramref name="gotoAddr"/> afterwards when one is given, else
+        /// falls through.</summary>
+        private void EmitPushChoicePoint(int pc, int arity, int bpCursor, int gotoAddr = -1)
         {
-            int arity = ins.I1;
             int size = 11 + arity;
             Op(new LocalGet(LST));
             Op(new Int32Constant(size));
@@ -926,7 +1024,7 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.StackLimit);
             Op(new Int32GreaterThanSigned());
             OpenIf();
-            EmitDeopt(ins.Pc);
+            EmitDeopt(pc);
             CloseNested();
 
             // newB = ST; the CP words exactly as PushChoicePoint writes them.
@@ -938,7 +1036,7 @@ public static class WasmPredicateCompiler
             CellStoreDyn(LStackB, LST, ctl + 1, () => RawInt(() => Op(new LocalGet(LCP))));
             CellStoreDyn(LStackB, LST, ctl + 2, () => RawInt(() => Op(new LocalGet(LB))));
             CellStoreDyn(LStackB, LST, ctl + 3, () => RawInt(() =>
-                Op(new Int32Constant(_env.EncodeBp(CursorOf(ins.Pc + 9))))));
+                Op(new Int32Constant(_env.EncodeBp(bpCursor)))));
             CellStoreDyn(LStackB, LST, ctl + 4, () => RawInt(() => Op(new LocalGet(LTR))));
             CellStoreDyn(LStackB, LST, ctl + 5, () => RawInt(() => LoadSlot32(WasmAbi.ExtraTrailTop)));
             CellStoreDyn(LStackB, LST, ctl + 6, () => RawInt(() => Op(new LocalGet(LH))));
@@ -957,7 +1055,7 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LST)); Op(new Int32Constant(size)); Op(new Int32Add());
             Op(new LocalSet(LST));
             Op(new LocalGet(LH)); Op(new LocalSet(LHB));
-            GoTo(ins.I0);
+            if (gotoAddr >= 0) GoTo(gotoAddr);
         }
 
         /// <summary>The shared restore of retry/trust: registers, E, CP, the
@@ -1876,6 +1974,61 @@ public static class WasmPredicateCompiler
                 CloseNested();
             }
             CloseNested();
+        }
+
+        // ---- cut and the me-else chain ----
+
+        /// <summary>Cut to the barrier the callback pushes: B moves down and
+        /// nothing else. The engine's Cut also fires setup_call_cleanup
+        /// handlers, prunes IL choice points and compacts the trails -- the
+        /// first two are host state the wrapper signals through the Flags
+        /// word (checked before every cut), and the compaction is a memory
+        /// optimisation the wasm skips: a redundant trail entry unwinds into
+        /// dead heap, which is harmless.</summary>
+        private void EmitCut(Action pushBarrier)
+        {
+            pushBarrier();
+            Op(new LocalSet(LT0));
+            // A stale barrier (at or above B) is a no-op, per ISO: the CP the
+            // cut meant to commit to is already gone.
+            Op(new LocalGet(LT0));
+            Op(new LocalGet(LB));
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            Op(new LocalGet(LT0));
+            Op(new LocalSet(LB));
+            CloseNested();
+        }
+
+        private void EmitTryMeElse(Instr ins)
+        {
+            // ADR-025: a body try_me_else (inline ITE / disjunction) carries a
+            // negative arity sentinel -- its CP saves no argument registers.
+            int arity = ins.I1 < 0 ? 0 : ins.I1;
+            EmitPushChoicePoint(ins.Pc, arity, CursorOf(ins.I0));
+            // ...and falls through into the first alternative.
+        }
+
+        private void EmitRetryMeElse(Instr ins)
+        {
+            EmitRestoreCommon(ins.Pc);
+            Op(new LocalGet(LH)); Op(new LocalSet(LHB));            // AssignHb(H)
+            Op(new LocalGet(LT1));
+            RawInt(() => Op(new Int32Constant(_env.EncodeBp(CursorOf(ins.I0)))));
+            Op(new Int64Store { Offset = 4 * 8 });                  // ctl[3] = BP
+            // ...and falls through into this alternative's code.
+        }
+
+        private void EmitTrustMe(Instr ins)
+        {
+            EmitRestoreCommon(ins.Pc);
+            Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 8 * 8 });
+            Op(new Int32WrapInt64()); Op(new LocalSet(LHB));        // saved HB
+            Op(new LocalGet(LB)); Op(new LocalSet(LT2));            // oldB
+            Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 3 * 8 });
+            Op(new Int32WrapInt64()); Op(new LocalSet(LB));         // previous B
+            Op(new LocalGet(LT2)); Op(new LocalSet(LST));
+            // ...and falls through.
         }
 
     }

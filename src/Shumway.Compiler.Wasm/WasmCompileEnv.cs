@@ -34,6 +34,13 @@ public interface IWasmCompileEnv
     /// <paramref name="bytecodePc"/> (predicate-local). In the engine this is
     /// the predicate's linked base plus the offset.</summary>
     int EncodeDeoptPc(int bytecodePc);
+
+    /// <summary>Whether a call site's callee is a builtin, and which. The
+    /// compiled code then requests it through
+    /// <see cref="WasmVerdict.BuiltinRequest"/> instead of dispatching it --
+    /// the linker makes the same decision when it rewrites Call to
+    /// CallBuiltin.</summary>
+    bool TryGetBuiltin(int calleeFunctorId, out int builtinId);
 }
 
 /// <summary>A compiled predicate: the module bytes plus what the installer

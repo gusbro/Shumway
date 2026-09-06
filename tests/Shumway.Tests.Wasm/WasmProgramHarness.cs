@@ -45,6 +45,11 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
 
     public WasmProgramHarness(string source)
     {
+        // The registry fills on first engine construction; the harness has no
+        // engine, and an empty registry would make every builtin look like an
+        // ordinary missing predicate.
+        Shumway.Builtins.StandardBuiltins.EnsureRegistered();
+        Shumway.Embedding.MetaBuiltins.EnsureRegistered();
         // Thirteen pages hold the whole image (heap 480 KB, stack 240 KB,
         // trail 80 KB, mailbox and registers below them).
         _memory = new UnmanagedMemory(13, 16);
@@ -77,6 +82,9 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
             : throw new InvalidOperationException(
                   $"the corpus calls functor {calleeFunctorId}, which it does not define");
     int IWasmCompileEnv.EncodeDeoptPc(int bytecodePc) => bytecodePc;
+
+    bool IWasmCompileEnv.TryGetBuiltin(int calleeFunctorId, out int builtinId)
+        => Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(calleeFunctorId, out builtinId);
 
     // ---- the memory image ----
 
@@ -354,6 +362,30 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
                 case WasmVerdict.Fail:
                     if (!TryPopForeign(out predIndex, out cursor)) return false;
                     break;
+                case WasmVerdict.BuiltinRequest:
+                {
+                    int builtinId = (int)GetSlot(WasmAbi.BuiltinId);
+                    int retCursor = (int)GetSlot(WasmAbi.Cursor);
+                    if (!RunBuiltin(builtinId))
+                    {
+                        if (!TryPopForeign(out predIndex, out cursor)) return false;
+                        break;
+                    }
+                    if (retCursor == -1)
+                    {
+                        // A tail-position builtin: proceed, exactly as a
+                        // Success would.
+                        int cp = (int)GetSlot(WasmAbi.ContinuationPc);
+                        if (cp == TopSentinel) return true;
+                        if ((cp & MarkerTag) == 0)
+                            throw new InvalidOperationException($"unmarked continuation {cp}");
+                        predIndex = (cp >> 16) & 0x1FFF;
+                        cursor = cp & 0xFFFF;
+                        break;
+                    }
+                    cursor = retCursor;             // same predicate, resumed
+                    break;
+                }
                 case WasmVerdict.Deopt:
                     throw new InvalidOperationException(
                         $"deopt at bytecode {GetSlot(WasmAbi.Pc)} -- the corpus is "
@@ -368,6 +400,56 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
     /// handled its own choice points; what reaches here is a CP belonging to
     /// ANOTHER module (or none). The CP's BP names it.</summary>
     private bool Backtrack() => TryPopForeign(out int p, out int c) && Drive(p, c);
+
+    /// <summary>A handful of builtins, emulated over the image: enough for
+    /// the corpus (type tests and =/2). The REAL integration runs the real
+    /// registry against the real engine; what this exercises is the wasm side
+    /// of the request protocol, which is identical.</summary>
+    private bool RunBuiltin(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        Cell a0 = DerefCell(GetRegister(0));
+        switch (entry.Name, entry.Arity)
+        {
+            case ("true", 0): return true;
+            case ("fail", 0) or ("false", 0): return false;
+            case ("var", 1): return a0.Tag is Shumway.Core.Tag.Ref or Shumway.Core.Tag.AttVar;
+            case ("nonvar", 1): return a0.Tag is not (Shumway.Core.Tag.Ref or Shumway.Core.Tag.AttVar);
+            case ("integer", 1): return a0.Tag is Shumway.Core.Tag.Int or Shumway.Core.Tag.BigInt;
+            case ("atom", 1): return a0.Tag == Shumway.Core.Tag.Atom;
+            case ("number", 1): return a0.Tag is Shumway.Core.Tag.Int or Shumway.Core.Tag.BigInt
+                                              or Shumway.Core.Tag.Float or Shumway.Core.Tag.Rational;
+            case ("atomic", 1): return a0.Tag is Shumway.Core.Tag.Atom or Shumway.Core.Tag.Int
+                                              or Shumway.Core.Tag.BigInt or Shumway.Core.Tag.Float
+                                              or Shumway.Core.Tag.Rational;
+            case ("=", 2):
+            {
+                Cell b = DerefCell(GetRegister(1));
+                if (a0.Data == b.Data) return true;
+                if (a0.Tag == Shumway.Core.Tag.Ref) { BindImage(a0.AsHeapIndex, b); return true; }
+                if (b.Tag == Shumway.Core.Tag.Ref) { BindImage(b.AsHeapIndex, a0); return true; }
+                if (a0.Tag is Shumway.Core.Tag.Int or Shumway.Core.Tag.Atom
+                    && b.Tag is Shumway.Core.Tag.Int or Shumway.Core.Tag.Atom) return false;
+                throw new InvalidOperationException("=/2 on shapes the harness does not emulate");
+            }
+            default:
+                throw new InvalidOperationException(
+                    $"the harness cannot emulate builtin {entry.Name}/{entry.Arity}");
+        }
+    }
+
+    /// <summary>Binds an unbound heap cell in the image, with the engine's
+    /// trail rule (below HB gets trailed).</summary>
+    private void BindImage(int addr, Cell value)
+    {
+        WriteHeap(addr, value);
+        if (addr < (int)GetSlot(WasmAbi.HeapBacktrack))
+        {
+            int tr = (int)GetSlot(WasmAbi.TrailTop);
+            Marshal.WriteInt32(_memory.Start, TrailAt + tr * 4, addr);
+            SetSlot(WasmAbi.TrailTop, tr + 1);
+        }
+    }
 
     private bool TryPopForeign(out int predIndex, out int cursor)
     {
