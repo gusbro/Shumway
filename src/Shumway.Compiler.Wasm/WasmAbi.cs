@@ -31,6 +31,15 @@ public enum WasmVerdict
     /// waiting. The wrapper collects / drains and re-enters at the cursor.
     /// </summary>
     Safepoint = 5,
+
+    /// <summary>The compiled code met something it does not handle -- an
+    /// attributed variable, an operand past the small-integer lane, a full
+    /// trail -- and stepped aside: every scalar is synced and
+    /// <see cref="WasmAbi.Pc"/> holds the BYTECODE address of the very
+    /// instruction that stepped, so the interpreter continues there as if the
+    /// predicate had never been compiled. The state is the engine's own
+    /// arrays, which is what makes deoptimising this cheap.</summary>
+    Deopt = 6,
 }
 
 /// <summary>The one contract between a compiled wasm predicate and the engine:
@@ -91,7 +100,27 @@ public static class WasmAbi
     /// asked for. Zero is a fresh entry.</summary>
     public const int Cursor = 14;
 
-    public const int SlotCount = 16;
+    // ---- the rest of the WAM scalars (the backend's working set) ----
+    /// <summary>E -- the current environment frame.</summary>
+    public const int EnvTop = 15;
+    /// <summary>CP -- the continuation (a bytecode address or a resume
+    /// marker).</summary>
+    public const int ContinuationPc = 16;
+    /// <summary>First stack index that does NOT fit: a frame or choice point
+    /// that would cross it makes the code step aside instead.</summary>
+    public const int StackLimit = 17;
+    /// <summary>First binding-trail index that does not fit.</summary>
+    public const int TrailLimit = 18;
+    /// <summary>The extra trail's top: saved into every choice point, and a
+    /// restore that would have to unwind it steps aside instead (nothing this
+    /// backend compiles pushes extra entries).</summary>
+    public const int ExtraTrailTop = 19;
+    /// <summary>The logical-update view generation, saved into choice points.</summary>
+    public const int ViewGen = 20;
+    /// <summary>B0 -- the cut barrier, saved into choice points.</summary>
+    public const int CutBarrier = 21;
+
+    public const int SlotCount = 24;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

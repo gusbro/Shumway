@@ -188,6 +188,42 @@ obligatorias: `WasmTier.cs` + `wasmtier.js` (instanciación y `addFunction`),
 el hook `#wasmspike`, y el `calli` por índice de tabla bajo Mono interp, que
 es el que decide D1.
 
+### Fase 1, primera tajada: HECHA (compilador real, corpus en verde, gate 4,7x)
+
+`WasmPredicateCompiler` compila WAM→wasm contra el estado REAL del motor:
+mismo layout de frames (CE/CP/N + Y), mismas palabras de CP (11+aridad, BP
+incluido), misma regla de trail (young-to-old, bind si addr<HB). Control =
+loop despachador con br_table sobre cursores; los cursores son TAMBIEN el
+vocabulario de reentrada (resume markers y BPs de CP nombran cursores), asi
+que el retorno de un call y un backtrack caen en el mismo dispatch.
+
+Set traducido: switch_on_term/integer/atom (+ variantes _arg de ADR-028),
+try/retry/trust ABIERTOS EN CODIGO (CP entero en wasm, restore y unwind del
+trail incluidos; el fail local compara BP contra sus propios codigos y solo
+devuelve Fail para CPs ajenos), allocate/deallocate(+proceed) con la
+recuperacion de stack fiel, get/put de constantes y registros X/Y,
+get_value_x/y (unify con disciplina young-to-old), a_int_bin/cmp en el carril
+small-int (overflow → deopt). Todo lo demas RECHAZA el predicado; todo lo
+dificil en runtime (attvar, bigint, trail lleno, watermark) es **Deopt**
+(veredicto 6): escalares sincronizados + Pc = direccion de bytecode de LA
+instruccion, y el interprete sigue como si el predicado nunca se hubiera
+compilado — la deopt es barata porque el estado ES el del motor.
+
+37 tests (`WasmCompilerTests` + gate): contador 100k, factorial con frames y
+resumes por marker, recursion mutua, enumeracion con backtracking dentro del
+wasm, indexado, acumulador por Y, rechazo. Gate medido: **4,7x sobre Tier-0**
+en escritorio con el CP-por-vuelta incluido (el gate pedia 2x); Tier-1 IL da
+8,6x aqui — en el browser el Tier-0 es ~34x peor y el wasm no, asi que el
+ratio proyectado alli es ~150x.
+
+TRAMPA de arnes anotada: los REGISTROS son estado de trabajo — los restores
+de CP los pisan; una respuesta se lee por el HOME de la variable capturado al
+armar la consulta, nunca por el registro final.
+
+Falta de la fase 1: estructuras/listas (get/put/unify_structure, ADR-017/019),
+cut, regiones ITE, el resto del carril aritmetico, y el cableado en el motor
+(fase 2: registro por hilo + WasmDelegateFactory).
+
 ## Fase 1 — Backend (~3-4 semanas, condicional a Go)
 
 `WasmPredicateCompiler.Compile(CompiledPredicate, WasmIdSource) → (byte[],

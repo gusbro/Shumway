@@ -23,6 +23,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
     <ProjectReference Include="..\..\src\Shumway.Core\Shumway.Core.csproj" />
+    <!-- The engine, for the differential half: the same programs run on
+         Tier-0 to check the answers and to anchor the timings. -->
+    <ProjectReference Include="..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
   </ItemGroup>
 
 </Project>

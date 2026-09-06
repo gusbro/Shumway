@@ -2,6 +2,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Core\Shumway.Core.csproj" />
+    <!-- The compiler consumes CompiledPredicate: bytecode, call sites,
+         switch tables. -->
+    <ProjectReference Include="..\Shumway.Compiler\Shumway.Compiler.csproj" />
   </ItemGroup>
 
   <ItemGroup>
