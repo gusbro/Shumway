@@ -29,9 +29,10 @@ namespace Shumway.Compiler.Wasm;
 public static class WasmPredicateCompiler
 {
     public static WasmEntry Compile(CompiledPredicate predicate, IWasmCompileEnv env,
-                                    bool shared = false)
+                                    bool shared = false,
+                                    IReadOnlyList<double>? floatLiterals = null)
     {
-        var c = new Compilation(predicate, env);
+        var c = new Compilation(predicate, env, floatLiterals);
         c.Decode();
         c.AssignCursors();
         byte[] bytes = c.Emit();
@@ -69,10 +70,12 @@ public static class WasmPredicateCompiler
         public int I0, I1, I2, I3, I4;
     }
 
-    private sealed class Compilation(CompiledPredicate predicate, IWasmCompileEnv env)
+    private sealed class Compilation(CompiledPredicate predicate, IWasmCompileEnv env,
+                                     IReadOnlyList<double>? floatLiterals)
     {
         private readonly CompiledPredicate _p = predicate;
         private readonly IWasmCompileEnv _env = env;
+        private readonly IReadOnlyList<double>? _floats = floatLiterals;
         private readonly List<Instr> _instrs = new();
         private readonly Dictionary<int, int> _byPc = new();
         private readonly SortedSet<int> _leaders = new();
@@ -197,8 +200,25 @@ public static class WasmPredicateCompiler
                 case Opcode.CallBuiltin:
                 case Opcode.ExecuteBuiltin:
                     return;
+                case Opcode.GetFloat:
+                case Opcode.PutFloat:
+                    if (_floats is null)
+                        throw new WasmCompileException($"{ins.Op} without a float pool at {ins.Pc}");
+                    return;
                 case Opcode.AIntCmp:
                 case Opcode.Meta:
+                    return;
+                case Opcode.PutStructureR:
+                case Opcode.PutListR:
+                    return;     // the region is validated during emission
+                case Opcode.AEvalPush:
+                case Opcode.AEvalBin:
+                case Opcode.AEvalUn:
+                case Opcode.AEvalCmp:
+                    return;     // unsupported kinds/ops become deopts, not rejects
+                case Opcode.AEvalIs:
+                    if (ins.I0 is < 3 or > 6)
+                        throw new WasmCompileException($"a_eval_is kind {ins.I0} at {ins.Pc}");
                     return;
                 case Opcode.AIntBin:
                     int binOp = (ins.I0 >> 24) & 0xFF;
@@ -326,6 +346,14 @@ public static class WasmPredicateCompiler
                 Type = new Memory(1, 65536),
             });
             module.Functions.Add(new Function { Type = 0 });
+            // Function 1: the general unifier, internal (not exported).
+            module.Types.Add(new WebAssemblyType
+            {
+                Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int64,
+                              WebAssemblyValueType.Int32],
+                Returns = [WebAssemblyValueType.Int32],
+            });
+            module.Functions.Add(new Function { Type = 1 });
             module.Exports.Add(new Export
             {
                 Kind = ExternalKind.Function, Index = 0, Name = WasmAbi.EntryExport,
@@ -363,8 +391,18 @@ public static class WasmPredicateCompiler
                     new Local { Count = 16, Type = WebAssemblyValueType.Int32 },
                     new Local { Count = 3, Type = WebAssemblyValueType.Int64 },
                     new Local { Count = 2, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = AEvalMaxDepth, Type = WebAssemblyValueType.Int64 },
                 ],
                 Code = _code,
+            });
+            module.Codes.Add(new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 12, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
+                ],
+                Code = BuildUnifierBody(),
             });
 
             using var ms = new MemoryStream();
@@ -651,17 +689,39 @@ public static class WasmPredicateCompiler
 
         private void EmitRun(int startAddr)
         {
+            _aevalDepth = 0;
             int i = _byPc[startAddr];
             while (true)
             {
                 var ins = _instrs[i];
+                if (ins.Op is Opcode.PutStructureR or Opcode.PutListR)
+                {
+                    i = EmitReservedRegion(i);
+                    if (i >= _instrs.Count)
+                        throw new WasmCompileException($"fell off the end after a reserved build at {ins.Pc}");
+                    int afterPc = _instrs[i].Pc;
+                    if (_cursorByAddr.ContainsKey(afterPc)) { GoTo(afterPc); return; }
+                    continue;
+                }
                 bool transferred = EmitInstr(ins);
-                if (transferred) return;
+                if (transferred)
+                {
+                    if (_aevalDepth != 0)
+                        throw new WasmCompileException($"a_eval sequence cut by {ins.Op} at {ins.Pc}");
+                    return;
+                }
                 i++;
                 if (i >= _instrs.Count)
                     throw new WasmCompileException($"fell off the end after {ins.Op} at {ins.Pc}");
                 int nextPc = _instrs[i].Pc;
-                if (_cursorByAddr.ContainsKey(nextPc)) { GoTo(nextPc); return; }
+                if (_cursorByAddr.ContainsKey(nextPc))
+                {
+                    // A leader is an external re-entry point: locals do not
+                    // survive it, so an open RPN sequence cannot cross one.
+                    if (_aevalDepth != 0)
+                        throw new WasmCompileException($"a_eval sequence crosses leader {nextPc}");
+                    GoTo(nextPc); return;
+                }
             }
         }
 
@@ -833,11 +893,18 @@ public static class WasmPredicateCompiler
                     StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
+                case Opcode.GetFloat: EmitGetFloat(ins.I0, ins.I1, ins.Pc); return false;
+                case Opcode.PutFloat: EmitPutFloat(ins.I0, ins.I1, ins.Pc); return false;
                 case Opcode.TryMeElse: EmitTryMeElse(ins); return false;
                 case Opcode.RetryMeElse: EmitRetryMeElse(ins); return false;
                 case Opcode.TrustMe: EmitTrustMe(ins); return false;
                 case Opcode.Jump: GoTo(ins.I0); return true;
                 case Opcode.AIntBin: EmitAIntBin(ins); return false;
+                case Opcode.AEvalPush: EmitAEvalPush(ins); return false;
+                case Opcode.AEvalBin: EmitAEvalBin(ins); return false;
+                case Opcode.AEvalUn: EmitAEvalUn(ins); return false;
+                case Opcode.AEvalIs: EmitAEvalIs(ins); return false;
+                case Opcode.AEvalCmp: EmitAEvalCmp(ins); return false;
                 case Opcode.Call: EmitCall(ins); return true;
                 case Opcode.Execute: EmitExecute(ins); return true;
                 default:
@@ -1364,7 +1431,30 @@ public static class WasmPredicateCompiler
                         OpenIf();
                         GoFail();
                         CloseNested();
+                        // Two bound non-immediates: the general unifier
+                        // (module function 1) walks them over a worklist
+                        // above the stack top. Returns 0 fail / 1 ok /
+                        // 2 deopt; TR is the only scalar it moves, and a
+                        // deopt after partial binding is sound -- the
+                        // interpreter re-unifies the already-bound prefix
+                        // idempotently.
+                        StoreSlotFromI32Local(WasmAbi.TrailTop, LTR);
+                        StoreSlotFromI32Local(WasmAbi.HeapBacktrack, LHB);
+                        StoreSlotFromI32Local(WasmAbi.StackTop, LST);
+                        Op(new LocalGet(LC2));
+                        Op(new LocalGet(LC0));
+                        Op(new LocalGet(0));
+                        Op(new WebAssembly.Instructions.Call(1));
+                        Op(new LocalSet(LT0));
+                        LoadSlot32(WasmAbi.TrailTop); Op(new LocalSet(LTR));
+                        Op(new LocalGet(LT0)); Op(new Int32Constant(0)); Op(new Int32Equal());
+                        OpenIf();
+                        GoFail();
+                        CloseNested();
+                        Op(new LocalGet(LT0)); Op(new Int32Constant(2)); Op(new Int32Equal());
+                        OpenIf();
                         EmitDeopt(ins.Pc);
+                        CloseNested();
                     }
                     CloseNested();
                 }
@@ -1458,11 +1548,19 @@ public static class WasmPredicateCompiler
         private void EmitAIntBin(Instr ins)
         {
             int packed = ins.I0;
-            int op = (packed >> 24) & 0xFF;
             EmitReadIntOperand(packed & 0xFF, ins.I1, ins.Pc);
             Op(new LocalGet(LC1)); Op(new LocalSet(LC2));           // a
             EmitReadIntOperand((packed >> 8) & 0xFF, ins.I2, ins.Pc);   // b in LC1
+            EmitIntBinCore((packed >> 24) & 0xFF, ins.Pc);
+            EmitBoxC0IntoC2();
+            EmitDeliverInt((packed >> 16) & 0xFF, ins.I3, ins.Pc);
+        }
 
+        /// <summary>LC2 op LC1 -&gt; LC0, plain i64s, mirroring TryFastBin:
+        /// anything outside the 60-bit int lane (overflow, zero divisor, a
+        /// non-fast op) deopts and the engine escalates.</summary>
+        private void EmitIntBinCore(int op, int pcDeopt)
+        {
             void FitsCheckC0(int pc)
             {
                 Op(new LocalGet(LC0)); Op(new Int64Constant(Cell.MinInt60));
@@ -1480,12 +1578,12 @@ public static class WasmPredicateCompiler
                 case 0:     // Add
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64Add());
                     Op(new LocalSet(LC0));
-                    FitsCheckC0(ins.Pc);
+                    FitsCheckC0(pcDeopt);
                     break;
                 case 1:     // Sub
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64Subtract());
                     Op(new LocalSet(LC0));
-                    FitsCheckC0(ins.Pc);
+                    FitsCheckC0(pcDeopt);
                     break;
                 case 2:     // Mul -- the 64-bit overflow probe, then the 60-bit fit
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64Multiply());
@@ -1498,24 +1596,24 @@ public static class WasmPredicateCompiler
                         Op(new LocalGet(LC0)); Op(new LocalGet(LC2)); Op(new Int64DivideSigned());
                         Op(new LocalGet(LC1)); Op(new Int64NotEqual());
                         OpenIf();
-                        EmitDeopt(ins.Pc);
+                        EmitDeopt(pcDeopt);
                         CloseNested();
                     }
                     CloseNested();
-                    FitsCheckC0(ins.Pc);
+                    FitsCheckC0(pcDeopt);
                     break;
                 case 4:     // IntDiv (truncating)
                     Op(new LocalGet(LC1)); Op(new Int64Constant(0)); Op(new Int64Equal());
                     OpenIf();
-                    EmitDeopt(ins.Pc);
+                    EmitDeopt(pcDeopt);
                     CloseNested();
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64DivideSigned());
                     Op(new LocalSet(LC0));
                     break;
-                default:    // 5 = Mod (sign of the divisor)
+                case 5:     // Mod (sign of the divisor)
                     Op(new LocalGet(LC1)); Op(new Int64Constant(0)); Op(new Int64Equal());
                     OpenIf();
-                    EmitDeopt(ins.Pc);
+                    EmitDeopt(pcDeopt);
                     CloseNested();
                     Op(new LocalGet(LC2)); Op(new LocalGet(LC1)); Op(new Int64RemainderSigned());
                     Op(new LocalSet(LC0));
@@ -1528,18 +1626,29 @@ public static class WasmPredicateCompiler
                     Op(new LocalSet(LC0));
                     CloseNested();
                     break;
+                default:
+                    EmitDeopt(pcDeopt);
+                    Op(new Int64Constant(0)); Op(new LocalSet(LC0));    // unreachable
+                    break;
             }
+        }
 
-            // Deliver: LC0 holds the result as a plain i64; box it.
+        /// <summary>Boxes the plain i64 in LC0 as an Int cell into LC2.</summary>
+        private void EmitBoxC0IntoC2()
+        {
             Op(new LocalGet(LC0));
             Op(new Int64Constant(Cell.PayloadMask));
             Op(new Int64And());
             Op(new Int64Constant((long)Tag.Int << Cell.TagShift));
             Op(new Int64Or());
-            Op(new LocalSet(LC2));                                  // the Int cell
+            Op(new LocalSet(LC2));
+        }
 
-            int tKind = (packed >> 16) & 0xFF;
-            int tVal = ins.I3;
+        /// <summary>Delivers the boxed result cell in LC2 to the target: store
+        /// kinds write it, unify kinds bind an unbound target or compare an
+        /// Int one; any other bound shape deopts.</summary>
+        private void EmitDeliverInt(int tKind, int tVal, int pcDeopt)
+        {
             switch (tKind)
             {
                 case 5: RegStore(tVal, () => Op(new LocalGet(LC2))); break;
@@ -1559,7 +1668,7 @@ public static class WasmPredicateCompiler
                             Op(new LocalGet(LDa)); Op(new LocalGet(LHB));
                             Op(new Int32LessThanSigned());
                             OpenIf();
-                            EmitTrailDa(ins.Pc);
+                            EmitTrailDa(pcDeopt);
                             CloseNested();
                         }
                         OpenElse();
@@ -1568,7 +1677,7 @@ public static class WasmPredicateCompiler
                             OpenIf();
                             GoFail();
                             CloseNested();
-                            EmitDeopt(ins.Pc);
+                            EmitDeopt(pcDeopt);
                         }
                         CloseNested();
                     }
@@ -2029,6 +2138,681 @@ public static class WasmPredicateCompiler
             Op(new Int32WrapInt64()); Op(new LocalSet(LB));         // previous B
             Op(new LocalGet(LT2)); Op(new LocalSet(LST));
             // ...and falls through.
+        }
+
+        // ---- floats: two cells, the value baked from the literal pool ----
+
+        /// <summary>Writes the float's two cells at H and pushes nothing:
+        /// header at H (its payload carries the high 4 bits and H+1), paired
+        /// at H+1. The double's bits are compile-time constants; only the
+        /// paired index is runtime.</summary>
+        private void EmitWriteFloatAtH(double value)
+        {
+            var (header, paired) = Cell.MakeFloat(value, 0);
+            CellStoreDyn(LHeapB, LH, 0, () =>
+            {
+                // header | (H+1): the baked part has a zero paired index.
+                Op(new Int64Constant(header.Data));
+                Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Or());
+            });
+            CellStoreDyn(LHeapB, LH, 1, () => Op(new Int64Constant(paired.Data)));
+        }
+
+        private void EmitGetFloat(int literalId, int reg, int pc)
+        {
+            double value = _floats![literalId];
+            long bits = System.BitConverter.DoubleToInt64Bits(value == 0.0 ? 0.0 : value);
+
+            RegLoad(reg); Op(new LocalSet(LC0)); Deref();
+            TagOfC0(); Op(new LocalSet(LT0));
+
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant((int)Tag.Float));
+            Op(new Int32Equal());
+            OpenIf();
+            {
+                // Reconstruct the bound float's bits and compare: the cells
+                // themselves differ per allocation, the double does not.
+                Op(new LocalGet(LC0)); Op(new Int32WrapInt64()); Op(new LocalSet(LT1));
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(56)); Op(new Int64ShiftRightUnsigned());
+                Op(new Int64Constant(0xF)); Op(new Int64And());
+                Op(new Int64Constant(60)); Op(new Int64ShiftLeft());
+                CellLoadDyn(LHeapB, LT1);
+                Op(new Int64Constant(Cell.PayloadMask)); Op(new Int64And());
+                Op(new Int64Or());
+                Op(new Int64Constant(bits));
+                Op(new Int64NotEqual());
+                OpenIf();
+                GoFail();
+                CloseNested();
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    EmitHeapGuard(pc, 2);
+                    EmitWriteFloatAtH(value);
+                    // Bind var -> Ref(header), as the engine's unify does.
+                    EmitBindDa(pc, () =>
+                    { Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned()); });
+                    Op(new LocalGet(LH)); Op(new Int32Constant(2)); Op(new Int32Add());
+                    Op(new LocalSet(LH));
+                }
+                OpenElse();
+                {
+                    Op(new LocalGet(LT0));
+                    Op(new Int32Constant((int)Tag.AttVar));
+                    Op(new Int32Equal());
+                    OpenIf();
+                    EmitDeopt(pc);
+                    CloseNested();
+                    GoFail();
+                }
+                CloseNested();
+            }
+            CloseNested();
+        }
+
+        private void EmitPutFloat(int literalId, int reg, int pc)
+        {
+            // The register takes a REF to the header, as the engine's
+            // put_float does.
+            EmitHeapGuard(pc, 2);
+            EmitWriteFloatAtH(_floats![literalId]);
+            RegStore(reg, () =>
+            { Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned()); });
+            Op(new LocalGet(LH)); Op(new Int32Constant(2)); Op(new Int32Add());
+            Op(new LocalSet(LH));
+        }
+
+        // ---- a_eval: the RPN stack simulated at compile time (ADR-018) ----
+        // The engine evaluates is/2 over a ThreadStatic managed stack; here
+        // the stack is DEPTH tracked while compiling and the entries live in
+        // i64 locals, so a deopt anywhere in the sequence rewinds to the
+        // FIRST push -- pushes are read-only, so the interpreter re-runs the
+        // whole sequence against its own stack and nothing is double-applied.
+
+        private const int AEvalMaxDepth = 8;
+        private int _aevalDepth;
+        private int _aevalStart;
+
+        private static uint LA(int k) => (uint)(23 + k);
+
+        private void EmitAEvalPush(Instr ins)
+        {
+            if (_aevalDepth == 0) _aevalStart = ins.Pc;
+            if (_aevalDepth >= AEvalMaxDepth)
+                throw new WasmCompileException($"a_eval deeper than {AEvalMaxDepth} at {ins.Pc}");
+            switch (ins.I0)
+            {
+                case 0:
+                    Op(new Int64Constant(ins.I1));
+                    Op(new LocalSet(LA(_aevalDepth)));
+                    break;
+                case 3:
+                case 4:
+                    EmitReadIntOperand(ins.I0, ins.I1, _aevalStart);
+                    Op(new LocalGet(LC1));
+                    Op(new LocalSet(LA(_aevalDepth)));
+                    break;
+                default:
+                    // bigint / float literal: the sequence always escalates.
+                    EmitDeopt(_aevalStart);
+                    Op(new Int64Constant(0));                       // unreachable
+                    Op(new LocalSet(LA(_aevalDepth)));
+                    break;
+            }
+            _aevalDepth++;
+        }
+
+        private void EmitAEvalBin(Instr ins)
+        {
+            if (_aevalDepth < 2)
+                throw new WasmCompileException($"a_eval_bin underflow at {ins.Pc}");
+            Op(new LocalGet(LA(_aevalDepth - 2))); Op(new LocalSet(LC2));
+            Op(new LocalGet(LA(_aevalDepth - 1))); Op(new LocalSet(LC1));
+            EmitIntBinCore(ins.I0, _aevalStart);
+            Op(new LocalGet(LC0));
+            Op(new LocalSet(LA(_aevalDepth - 2)));
+            _aevalDepth--;
+        }
+
+        private void EmitAEvalUn(Instr ins)
+        {
+            if (_aevalDepth < 1)
+                throw new WasmCompileException($"a_eval_un underflow at {ins.Pc}");
+            uint a = LA(_aevalDepth - 1);
+
+            void FitsCheck()
+            {
+                Op(new LocalGet(a)); Op(new Int64Constant(Cell.MinInt60));
+                Op(new Int64LessThanSigned());
+                Op(new LocalGet(a)); Op(new Int64Constant(Cell.MaxInt60));
+                Op(new Int64GreaterThanSigned());
+                Op(new Int32Or());
+                OpenIf();
+                EmitDeopt(_aevalStart);
+                CloseNested();
+            }
+
+            switch (ins.I0)
+            {
+                case 0:     // Neg
+                    Op(new Int64Constant(0)); Op(new LocalGet(a)); Op(new Int64Subtract());
+                    Op(new LocalSet(a));
+                    FitsCheck();
+                    break;
+                case 1:     // Pos -- identity
+                    break;
+                case 2:     // Abs
+                    Op(new LocalGet(a)); Op(new Int64Constant(0));
+                    Op(new Int64LessThanSigned());
+                    OpenIf();
+                    Op(new Int64Constant(0)); Op(new LocalGet(a)); Op(new Int64Subtract());
+                    Op(new LocalSet(a));
+                    CloseNested();
+                    FitsCheck();
+                    break;
+                case 3:     // Sign
+                    Op(new LocalGet(a)); Op(new Int64Constant(0));
+                    Op(new Int64GreaterThanSigned());
+                    Op(new LocalGet(a)); Op(new Int64Constant(0));
+                    Op(new Int64LessThanSigned());
+                    Op(new Int32Subtract());
+                    Op(new Int64ExtendInt32Signed());
+                    Op(new LocalSet(a));
+                    break;
+                case 4:     // BitNot
+                    Op(new LocalGet(a)); Op(new Int64Constant(-1)); Op(new Int64ExclusiveOr());
+                    Op(new LocalSet(a));
+                    FitsCheck();
+                    break;
+                default:    // transcendental / float-producing: escalate
+                    EmitDeopt(_aevalStart);
+                    break;
+            }
+        }
+
+        private void EmitAEvalIs(Instr ins)
+        {
+            if (_aevalDepth != 1)
+                throw new WasmCompileException($"a_eval_is at depth {_aevalDepth} at {ins.Pc}");
+            Op(new LocalGet(LA(0))); Op(new LocalSet(LC0));
+            EmitBoxC0IntoC2();
+            EmitDeliverInt(ins.I0, ins.I1, _aevalStart);
+            _aevalDepth = 0;
+        }
+
+        private void EmitAEvalCmp(Instr ins)
+        {
+            if (_aevalDepth != 2)
+                throw new WasmCompileException($"a_eval_cmp at depth {_aevalDepth} at {ins.Pc}");
+            Op(new LocalGet(LA(0)));
+            Op(new LocalGet(LA(1)));
+            Op(ins.I0 switch
+            {
+                0 => new Int64Equal(),
+                1 => new Int64NotEqual(),
+                2 => (Instruction)new Int64LessThanSigned(),
+                3 => new Int64GreaterThanSigned(),
+                4 => new Int64LessThanOrEqualSigned(),
+                _ => new Int64GreaterThanOrEqualSigned(),
+            });
+            Op(new Int32Constant(0));
+            Op(new Int32Equal());
+            OpenIf();
+            GoFail();
+            CloseNested();
+            _aevalDepth = 0;
+        }
+
+        // ---- ADR-020 reserved builds, simulated at compile time ----
+        // The engine runs put_structure_r / put_list_r with a runtime
+        // write-frame stack (PushWriteFrame / OnReservedArgWritten). The
+        // build tree is static, so the whole cascade is replayed HERE and
+        // the region flattens to one upfront heap guard plus straight
+        // stores at fixed offsets from the region base H0. Deopt-free by
+        // construction: reserved builds are pure writes, and the guard
+        // runs before any mutation, so the interpreter can re-run the
+        // region from its first instruction.
+
+        /// <summary>Emits the reserved-build region starting at
+        /// <paramref name="startIndex"/>; returns the index of the first
+        /// instruction after it.</summary>
+        private int EmitReservedRegion(int startIndex)
+        {
+            var first = _instrs[startIndex];
+            var actions = new List<Action>();
+            var frames = new List<(int Resume, int Remaining)>();
+            int total, writePos;
+
+            // H0-relative pushers.
+            void PushCellAt(int off)    // (i64) H0 + off, i.e. Ref/UnboundVar
+            {
+                Op(new LocalGet(LH));
+                if (off != 0) { Op(new Int32Constant(off)); Op(new Int32Add()); }
+                Op(new Int64ExtendInt32Unsigned());
+            }
+            void PushTagged(int off, Tag tag)
+            {
+                PushCellAt(off);
+                Op(new Int64Constant((long)tag << Cell.TagShift));
+                Op(new Int64Or());
+            }
+            void StoreConst(int off, long data)
+                => actions.Add(() => CellStoreDyn(LHeapB, LH, off, () => Op(new Int64Constant(data))));
+
+            // The engine's UnifyArgCell copy: a bare ATTVAR cell is captured
+            // as a REF to its home so its identity survives.
+            void StoreCopy(int off, Action load)
+                => actions.Add(() => CellStoreDyn(LHeapB, LH, off, () =>
+                {
+                    load(); Op(new LocalSet(LC0));
+                    TagOfC0(); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
+                    OpenIf();
+                    Op(new LocalGet(LC0));
+                    Op(new Int64Constant(Cell.PayloadMask)); Op(new Int64And());
+                    Op(new LocalSet(LC0));
+                    CloseNested();
+                    Op(new LocalGet(LC0));
+                }));
+
+            void FreshVar(int off, Action<Action> target)
+            {
+                actions.Add(() => CellStoreDyn(LHeapB, LH, off, () => PushCellAt(off)));
+                actions.Add(() => target(() => PushCellAt(off)));
+            }
+
+            // OnReservedArgWritten, replayed.
+            bool Advance()
+            {
+                writePos++;
+                var top = frames[^1];
+                frames[^1] = (top.Resume, top.Remaining - 1);
+                while (frames.Count > 0 && frames[^1].Remaining == 0)
+                {
+                    int resume = frames[^1].Resume;
+                    frames.RemoveAt(frames.Count - 1);
+                    if (frames.Count > 0) writePos = resume;
+                    else return true;                       // build complete
+                }
+                return false;
+            }
+
+            // Seed from the entry form.
+            if (first.Op == Opcode.PutStructureR)
+            {
+                int fid = first.I0, reg = first.I1 & 0xFFFFFF, argc = first.I1 >> 24;
+                StoreConst(0, Cell.Functor(fid).Data);
+                actions.Add(() => RegStore(reg, () => PushTagged(0, Tag.Str)));
+                writePos = 1; total = argc + 1;
+                frames.Add((0, argc));
+            }
+            else    // PutListR
+            {
+                int reg = first.I0;
+                actions.Add(() => RegStore(reg, () => PushTagged(0, Tag.Lis)));
+                writePos = 0; total = 2;
+                frames.Add((0, 2));
+            }
+
+            int i = startIndex + 1;
+            bool done = false;
+            while (!done)
+            {
+                if (i >= _instrs.Count)
+                    throw new WasmCompileException($"unterminated reserved build at {first.Pc}");
+                var ins = _instrs[i];
+                // A leader is an external re-entry point; a half-simulated
+                // build cannot be resumed there.
+                if (_cursorByAddr.ContainsKey(ins.Pc))
+                    throw new WasmCompileException($"leader inside reserved build at {ins.Pc}");
+                switch (ins.Op)
+                {
+                    case Opcode.UnifyAtom:
+                    case Opcode.UnifyConstant:
+                        StoreConst(writePos, Cell.Atom(ins.I0).Data); done = Advance(); break;
+                    case Opcode.UnifyInteger:
+                        StoreConst(writePos, Cell.Int(ins.I0).Data); done = Advance(); break;
+                    case Opcode.UnifyNil:
+                        StoreConst(writePos, Cell.Atom(AtomTable.EmptyListId).Data);
+                        done = Advance(); break;
+                    case Opcode.UnifyVariableX:
+                    {
+                        int slot = ins.I0;
+                        FreshVar(writePos, v => RegStore(slot, v));
+                        done = Advance(); break;
+                    }
+                    case Opcode.UnifyVariableY:
+                    {
+                        int slot = ins.I0;
+                        FreshVar(writePos, v => YStore(slot, v));
+                        done = Advance(); break;
+                    }
+                    case Opcode.UnifyValueX:
+                    {
+                        int slot = ins.I0;
+                        StoreCopy(writePos, () => RegLoad(slot));
+                        done = Advance(); break;
+                    }
+                    case Opcode.UnifyValueY:
+                    {
+                        int slot = ins.I0;
+                        StoreCopy(writePos, () => YLoad(slot));
+                        done = Advance(); break;
+                    }
+                    case Opcode.UnifyVoid:
+                        for (int k = 0; k < ins.I0; k++)
+                        {
+                            actions.Add(MakeSelfRef(writePos));
+                            done = Advance();
+                            if (done && k != ins.I0 - 1)
+                                throw new WasmCompileException($"unify_void overruns the build at {ins.Pc}");
+                        }
+                        break;
+                    case Opcode.UnifyStructure:
+                    {
+                        var (_, arity) = FunctorTable.Lookup(ins.I0);
+                        int nested = total;
+                        StoreConst(nested, Cell.Functor(ins.I0).Data);
+                        int slotOff = writePos;
+                        actions.Add(() => CellStoreDyn(LHeapB, LH, slotOff,
+                            () => PushTagged(nested, Tag.Str)));
+                        var top = frames[^1];
+                        frames[^1] = (top.Resume, top.Remaining - 1);    // no cascade here
+                        frames.Add((writePos + 1, arity));
+                        writePos = nested + 1;
+                        total += arity + 1;
+                        break;
+                    }
+                    case Opcode.UnifyList:
+                    {
+                        int pair = total;
+                        int slotOff = writePos;
+                        actions.Add(() => CellStoreDyn(LHeapB, LH, slotOff,
+                            () => PushTagged(pair, Tag.Lis)));
+                        var top = frames[^1];
+                        frames[^1] = (top.Resume, top.Remaining - 1);
+                        frames.Add((writePos + 1, 2));
+                        writePos = pair;
+                        total += 2;
+                        break;
+                    }
+                    default:
+                        throw new WasmCompileException($"{ins.Op} inside reserved build at {ins.Pc}");
+                }
+                i++;
+            }
+
+            EmitHeapGuard(first.Pc, total);
+            foreach (var a in actions) a();
+            Op(new LocalGet(LH)); Op(new Int32Constant(total)); Op(new Int32Add());
+            Op(new LocalSet(LH));
+            return i;
+
+            Action MakeSelfRef(int off) => () =>
+                CellStoreDyn(LHeapB, LH, off, () =>
+                {
+                    Op(new LocalGet(LH));
+                    if (off != 0) { Op(new Int32Constant(off)); Op(new Int32Add()); }
+                    Op(new Int64ExtendInt32Unsigned());
+                });
+        }
+
+        // ---- the general unifier: module function 1 ----
+        // (a: i64, b: i64, mailbox: i32) -> i32: 0 fail, 1 ok, 2 deopt.
+        // Iterative over a worklist of cell pairs laid above the stack top
+        // (nothing pushes frames or CPs while it runs); functor arities come
+        // from the host-mirrored table at FunctorArityBase, because the
+        // functor table is managed state. Attvars, bigints, rationals and
+        // PSTRs deopt: their unification is engine logic. A deopt after
+        // partial binding is sound -- everything bound so far was required,
+        // is trailed, and re-unifies idempotently when the interpreter
+        // re-runs the instruction.
+
+        private static List<Instruction> BuildUnifierBody()
+        {
+            const uint PA = 0, PB = 1, MB = 2;
+            const uint HEAPB = 3, TRAILB = 4, ARITYB = 5, TR = 6, HHB = 7,
+                       TRLIM = 8, WL = 9, WLBASE = 10, WLLIM = 11,
+                       DA = 12, DB = 13, K = 14;
+            const uint CA = 15, CB = 16, C1 = 17, FA = 18;
+
+            var code = new List<Instruction>();
+            int depth = 0;
+            void O(Instruction x) => code.Add(x);
+            void LG(uint n) => O(new LocalGet(n));
+            void LSet(uint n) => O(new LocalSet(n));
+            void I32(int v) => O(new Int32Constant(v));
+            void I64(long v) => O(new Int64Constant(v));
+            void OIf() { O(new If(BlockType.Empty)); depth++; }
+            void OElse() => O(new Else());
+            void OEnd() { O(new End()); depth--; }
+            void OBlock() { O(new Block(BlockType.Empty)); depth++; }
+            void OLoop() { O(new Loop(BlockType.Empty)); depth++; }
+            // br to the main loop: every label opened since it sits between.
+            void Continue() => O(new Branch((uint)(depth - 1)));
+
+            void SlotToI32(int slot, uint local)
+            {
+                LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(slot) });
+                O(new Int32WrapInt64()); LSet(local);
+            }
+            void Ret(int verdict)
+            {
+                LG(MB); LG(TR); O(new Int64ExtendInt32Signed());
+                O(new Int64Store { Offset = WasmAbi.ByteOffset(WasmAbi.TrailTop) });
+                I32(verdict); O(new Return());
+            }
+            void HeapLoad(uint idxLocal)
+            {
+                LG(HEAPB); LG(idxLocal); I32(3); O(new Int32ShiftLeft());
+                O(new Int32Add()); O(new Int64Load());
+            }
+            void TagIs(uint cel, long tag)
+            {
+                LG(cel); I64(60); O(new Int64ShiftRightUnsigned());
+                I64(tag); O(new Int64Equal());
+            }
+            void Deref(uint cel, uint home)
+            {
+                OBlock(); OLoop();
+                LG(cel); I64(60); O(new Int64ShiftRightUnsigned());
+                I64(0); O(new Int64NotEqual()); O(new BranchIf(1));
+                LG(cel); O(new Int32WrapInt64()); LSet(home);
+                HeapLoad(home); LSet(C1);
+                LG(C1); LG(cel); O(new Int64Equal()); O(new BranchIf(1));
+                LG(C1); LSet(cel); O(new Branch(0));
+                OEnd(); OEnd();
+            }
+            void HeapStore(uint addr, uint val)
+            {
+                LG(HEAPB); LG(addr); I32(3); O(new Int32ShiftLeft());
+                O(new Int32Add()); LG(val); O(new Int64Store());
+            }
+            void Bind(uint addr, uint val)
+            {
+                LG(addr); LG(HHB); O(new Int32LessThanSigned());
+                OIf();
+                {
+                    // Trail space FIRST: a heap store without its trail
+                    // entry would survive backtracking.
+                    LG(TR); LG(TRLIM); O(new Int32GreaterThanOrEqualSigned());
+                    OIf(); Ret(2); OEnd();
+                    HeapStore(addr, val);
+                    LG(TRAILB); LG(TR); I32(2); O(new Int32ShiftLeft());
+                    O(new Int32Add()); LG(addr); O(new Int32Store());
+                    LG(TR); I32(1); O(new Int32Add()); LSet(TR);
+                }
+                OElse();
+                HeapStore(addr, val);
+                OEnd();
+            }
+            void PushPairSlot(uint idxLocal, int plus, uint atOffset)
+            {
+                LG(WL);
+                LG(idxLocal);
+                if (plus != 0) { I32(plus); O(new Int32Add()); }
+                O(new Int64ExtendInt32Unsigned());
+                O(new Int64Store { Offset = atOffset });
+            }
+
+            // ---- prologue ----
+            SlotToI32(WasmAbi.HeapBase, HEAPB);
+            SlotToI32(WasmAbi.BindingTrailBase, TRAILB);
+            SlotToI32(WasmAbi.FunctorArityBase, ARITYB);
+            SlotToI32(WasmAbi.TrailTop, TR);
+            SlotToI32(WasmAbi.HeapBacktrack, HHB);
+            SlotToI32(WasmAbi.TrailLimit, TRLIM);
+            SlotToI32(WasmAbi.StackBase, DA);            // scratch
+            LG(DA);
+            LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(WasmAbi.StackTop) });
+            O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+            O(new Int32Add()); LSet(WLBASE);
+            LG(DA);
+            LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(WasmAbi.StackLimit) });
+            O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+            O(new Int32Add()); LSet(WLLIM);
+            LG(WLBASE); LSet(WL);
+            LG(WL); I32(16); O(new Int32Add()); LG(WLLIM);
+            O(new Int32GreaterThanSigned());
+            OIf(); Ret(2); OEnd();
+            LG(WL); LG(PA); O(new Int64Store());
+            LG(WL); LG(PB); O(new Int64Store { Offset = 8 });
+            LG(WL); I32(16); O(new Int32Add()); LSet(WL);
+
+            // ---- main loop ----
+            OLoop();
+            {
+                LG(WL); LG(WLBASE); O(new Int32Equal());
+                OIf(); Ret(1); OEnd();
+                LG(WL); I32(16); O(new Int32Subtract()); LSet(WL);
+                LG(WL); O(new Int64Load()); LSet(CA);
+                LG(WL); O(new Int64Load { Offset = 8 }); LSet(CB);
+                Deref(CA, DA);
+                Deref(CB, DB);
+                LG(CA); LG(CB); O(new Int64Equal());
+                OIf(); Continue(); OEnd();
+
+                TagIs(CA, (long)Tag.AttVar); TagIs(CB, (long)Tag.AttVar);
+                O(new Int32Or());
+                OIf(); Ret(2); OEnd();
+
+                TagIs(CA, 0);
+                OIf();
+                {
+                    TagIs(CB, 0);
+                    OIf();
+                    {
+                        // var-var, distinct: the YOUNGER home takes the ref.
+                        LG(DA); LG(DB); O(new Int32LessThanSigned());
+                        OIf(); Bind(DB, CA);
+                        OElse(); Bind(DA, CB);
+                        OEnd();
+                    }
+                    OElse();
+                    Bind(DA, CB);
+                    OEnd();
+                    Continue();
+                }
+                OEnd();
+                TagIs(CB, 0);
+                OIf(); Bind(DB, CA); Continue(); OEnd();
+
+                LG(CA); I64(60); O(new Int64ShiftRightUnsigned());
+                LG(CB); I64(60); O(new Int64ShiftRightUnsigned());
+                O(new Int64NotEqual());
+                OIf(); Ret(0); OEnd();
+
+                // Same immediate tag, different cells: a plain mismatch
+                // (Int and Atom cells carry their whole identity).
+                TagIs(CA, (long)Tag.Int); TagIs(CA, (long)Tag.Atom);
+                O(new Int32Or());
+                OIf(); Ret(0); OEnd();
+
+                TagIs(CA, (long)Tag.Str);
+                OIf();
+                {
+                    LG(CA); O(new Int32WrapInt64()); LSet(DA);
+                    LG(CB); O(new Int32WrapInt64()); LSet(DB);
+                    HeapLoad(DA); LSet(FA);
+                    HeapLoad(DB); LSet(C1);
+                    LG(FA); LG(C1); O(new Int64NotEqual());
+                    OIf(); Ret(0); OEnd();
+                    LG(ARITYB);
+                    LG(FA); I64(Cell.PayloadMask); O(new Int64And());
+                    O(new Int32WrapInt64()); I32(2); O(new Int32ShiftLeft());
+                    O(new Int32Add()); O(new Int32Load()); LSet(K);
+                    OBlock(); OLoop();
+                    {
+                        LG(K); I32(0); O(new Int32Equal()); O(new BranchIf(1));
+                        LG(WL); I32(16); O(new Int32Add()); LG(WLLIM);
+                        O(new Int32GreaterThanSigned());
+                        OIf(); Ret(2); OEnd();
+                        // the K-th args: base + K on both sides
+                        LG(WL); LG(DA); LG(K); O(new Int32Add());
+                        O(new Int64ExtendInt32Unsigned()); O(new Int64Store());
+                        LG(WL); LG(DB); LG(K); O(new Int32Add());
+                        O(new Int64ExtendInt32Unsigned());
+                        O(new Int64Store { Offset = 8 });
+                        LG(WL); I32(16); O(new Int32Add()); LSet(WL);
+                        LG(K); I32(1); O(new Int32Subtract()); LSet(K);
+                        O(new Branch(0));
+                    }
+                    OEnd(); OEnd();
+                    Continue();
+                }
+                OEnd();
+
+                TagIs(CA, (long)Tag.Lis);
+                OIf();
+                {
+                    LG(CA); O(new Int32WrapInt64()); LSet(DA);
+                    LG(CB); O(new Int32WrapInt64()); LSet(DB);
+                    LG(WL); I32(32); O(new Int32Add()); LG(WLLIM);
+                    O(new Int32GreaterThanSigned());
+                    OIf(); Ret(2); OEnd();
+                    PushPairSlot(DA, 0, 0);
+                    PushPairSlot(DB, 0, 8);
+                    PushPairSlot(DA, 1, 16);
+                    PushPairSlot(DB, 1, 24);
+                    LG(WL); I32(32); O(new Int32Add()); LSet(WL);
+                    Continue();
+                }
+                OEnd();
+
+                TagIs(CA, (long)Tag.Float);
+                OIf();
+                {
+                    void FloatBits(uint cel, uint outLocal)
+                    {
+                        LG(cel); I64(56); O(new Int64ShiftRightUnsigned());
+                        I64(0xF); O(new Int64And());
+                        I64(60); O(new Int64ShiftLeft());
+                        LG(cel); O(new Int32WrapInt64()); LSet(DA);
+                        HeapLoad(DA); I64(Cell.PayloadMask); O(new Int64And());
+                        O(new Int64Or()); LSet(outLocal);
+                    }
+                    FloatBits(CA, FA);
+                    FloatBits(CB, C1);
+                    LG(FA); LG(C1); O(new Int64Equal());
+                    OIf(); Continue(); OEnd();
+                    Ret(0);
+                }
+                OEnd();
+
+                Ret(2);     // BigInt / Rational / PSTR / Foreign: engine logic
+            }
+            OEnd();
+            I32(0);                      // unreachable fallthrough
+            O(new End());
+            return code;
         }
 
     }

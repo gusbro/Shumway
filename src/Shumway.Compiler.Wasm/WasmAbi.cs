@@ -125,8 +125,13 @@ public static class WasmAbi
     public const int WriteMode = 22;
     /// <summary>S -- the unify pointer.</summary>
     public const int UnifyPointer = 23;
+    /// <summary>Base of an int32 array mapping functor id to arity, mirrored
+    /// into the linear memory by the host. The general unifier needs an
+    /// arity to walk a structure's arguments, and the functor table is
+    /// managed state.</summary>
+    public const int FunctorArityBase = 24;
 
-    public const int SlotCount = 24;
+    public const int SlotCount = 32;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

@@ -224,6 +224,53 @@ Falta de la fase 1: estructuras/listas (get/put/unify_structure, ADR-017/019),
 cut, regiones ITE, el resto del carril aritmetico, y el cableado en el motor
 (fase 2: registro por hilo + WasmDelegateFactory).
 
+### Fase 1 COMPLETA (tajadas 2-4: estructuras, cut/builtins, y el cierre)
+
+Tajada 2 (estructuras/listas): get/put/unify_* con celdas inline ADR-017 y
+builds anidados last-arg ADR-019; la maquina de unify (WriteMode + S) vive en
+locals sincronizados por slots 22/23 para que una deopt a mitad de secuencia
+sea reanudable. Tajada 3 (cut/builtins): cut = B a la barrera con el no-op de
+barrera vieja (ISO); extras del motor (cleanups, IL-CPs) via palabra de Flags
+→ deopt; call_builtin/execute_builtin salen por BuiltinRequest (id + cursor;
+tail = cursor -1); ITE inline ADR-025 (try_me_else con aridad centinela +
+jump). Tajada 4, el cierre de la fase:
+
+- **Floats**: get_float/put_float con los bits del double horneados del pool
+  de literales; celda par dinamica (header | H+1); -0.0 nace 0.0 (el embudo
+  de MakeFloat). Ligado var → Ref(header), como el unify del motor.
+- **a_eval_*** (ADR-018): la pila RPN simulada en compilacion sobre 8 locals
+  i64 — una deopt en cualquier punto de la secuencia rebobina al PRIMER push
+  (los pushes son read-only ⇒ re-correr es sano). Bin {Add,Sub,Mul,IntDiv,
+  Mod} y Un {Neg,Pos,Abs,Sign,BitNot} en el carril small-int con chequeo
+  Fits60; todo lo demas (Div flotante, trascendentes, literales bigint/float)
+  deopta al inicio de secuencia. Una secuencia no puede cruzar un lider
+  (reentrada externa ⇒ locals perdidos): se rechaza el predicado.
+- **Builds reservados ADR-020**: put_structure_r/put_list_r con la cascada de
+  write-frames (PushWriteFrame/OnReservedArgWritten) REPRODUCIDA en
+  compilacion — el arbol del build es estatico, asi que la region entera se
+  aplana a UN guard de heap adelantado + stores directos a offsets fijos de
+  H0. Libre de deopts por construccion (puros writes); un lider adentro
+  rechaza.
+- **Unificador general**: funcion wasm 2 del modulo (interna, no exportada,
+  `(a i64, b i64, mailbox i32) → 0 fail / 1 ok / 2 deopt`), worklist de pares
+  ENCIMA del stack top (nada pushea frames mientras corre), aridades de
+  functor por tabla i32 espejada por el host en el slot nuevo
+  FunctorArityBase (24; SlotCount → 32). Camina Str/Lis/Float; attvar,
+  bigint, rational y PSTR deoptan (logica del motor). Deopt tras binding
+  parcial es sano: lo ligado era requerido, esta traileado, y el interprete
+  re-unifica idempotente. Llamado desde get_value/unify_value cuando ambos
+  lados son compounds ligados.
+
+89 tests en verde (WasmArithFloat + WasmReservedUnify nuevos; el pin de
+rechazo ahora es un literal bigint). Trampa cazada al armarlo: dos inmediatos
+DISTINTOS del mismo tag (Int 2 vs Int 3) caian al fallthrough de deopt del
+unificador en vez de fallar — el caso "mismo tag inmediato, celdas distintas"
+tiene que responder 0.
+
+Lo que sigue rechazando (decision v1, no correctitud): dinamicos ADR-023,
+native blocks, literales bigint/rational, dispatch indexado en formas raras.
+Con el veredicto Deopt, toda exclusion es una decision de RENDIMIENTO.
+
 ## Fase 1 — Backend (~3-4 semanas, condicional a Go)
 
 `WasmPredicateCompiler.Compile(CompiledPredicate, WasmIdSource) → (byte[],

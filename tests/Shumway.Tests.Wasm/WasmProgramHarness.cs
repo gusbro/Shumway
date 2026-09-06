@@ -31,6 +31,8 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
     private const int StackCells = 30_000;
     private const int TrailAt = StackAt + StackCells * 8;
     private const int TrailEntries = 20_000;
+    // The functor-arity mirror the general unifier reads (i32 per functor id).
+    private const int ArityAt = TrailAt + TrailEntries * 4;
 
     // Harness encodings (IWasmCompileEnv): tagged so they can never collide
     // with each other or with a small cursor.
@@ -50,9 +52,9 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
         // ordinary missing predicate.
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
         Shumway.Embedding.MetaBuiltins.EnsureRegistered();
-        // Thirteen pages hold the whole image (heap 480 KB, stack 240 KB,
-        // trail 80 KB, mailbox and registers below them).
-        _memory = new UnmanagedMemory(13, 16);
+        // Sixteen pages hold the whole image (heap 480 KB, stack 240 KB,
+        // trail 80 KB, the functor-arity mirror, mailbox and registers).
+        _memory = new UnmanagedMemory(16, 16);
         var clauses = new ClauseReader(source).ReadAll().ToList();
         var module = new ModuleCompiler().Compile(clauses);
 
@@ -61,7 +63,8 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
         foreach (var p in module.Predicates)
         {
             _compilingIndex = _predIndexByFunctor[p.FunctorId];
-            var entry = WasmPredicateCompiler.Compile(p, this);
+            var entry = WasmPredicateCompiler.Compile(p, this,
+                floatLiterals: module.FloatLiterals);
             using var stream = new MemoryStream(entry.Module);
             var creator = Module.ReadFromBinary(stream).Compile<WasmPredicateExports>();
             var instance = creator(new ImportDictionary
@@ -149,12 +152,28 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
         SetSlot(WasmAbi.CutBarrier, -1);
         SetSlot(WasmAbi.WriteMode, 0);
         SetSlot(WasmAbi.UnifyPointer, 0);
+        SetSlot(WasmAbi.FunctorArityBase, ArityAt);
+        SyncArityTable();
     }
 
     // ---- building and reading terms in the image ----
 
     private void WriteHeap(int index, Cell c)
         => Marshal.WriteInt64(_memory.Start, HeapAt + index * 8, c.Data);
+
+    /// <summary>Mirrors every functor's arity into the image. Re-run per
+    /// query setup: term builders may intern functors after construction.</summary>
+    private void SyncArityTable()
+    {
+        int count = FunctorTable.Count;
+        if (ArityAt + count * 4 > 16 * 65536)
+            throw new InvalidOperationException($"arity mirror overflows the image ({count} functors)");
+        for (int fid = 0; fid < count; fid++)
+        {
+            var (_, arity) = FunctorTable.Lookup(fid);
+            Marshal.WriteInt32(_memory.Start, ArityAt + fid * 4, arity);
+        }
+    }
 
     private int AllocHeap(int cells)
     {
@@ -311,6 +330,17 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
 
     /// <summary>The argument's value after a solution, derefed.</summary>
     public Cell Answer(int i) => Deref(ArgumentHome(i));
+
+    /// <summary>Decodes a float answer from its two heap cells.</summary>
+    public double AnswerFloat(int i)
+    {
+        Cell header = Answer(i);
+        if (header.Tag != Shumway.Core.Tag.Float)
+            throw new InvalidOperationException($"not a float: {header.Tag}");
+        long paired = Marshal.ReadInt64(
+            _memory.Start, HeapAt + header.FloatPairedIndex * 8);
+        return Cell.DecodeFloat(header, new Cell(paired));
+    }
 
     /// <summary>Starts the goal <c>name(args...)</c>: sets up a fresh image,
     /// loads the registers, and drives to the first answer. An unbound
