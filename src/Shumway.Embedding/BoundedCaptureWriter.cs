@@ -54,8 +54,11 @@ internal sealed class BoundedCaptureWriter : System.IO.StringWriter
     {
         if (value is null) return;
         int n = Allow(value.Length);
+        // Substring, not a span: the span overloads of TextWriter arrived
+        // with .NET Core, and this type is compiled for net48 too (ADR-043).
+        // Only the truncating path pays for it, and it happens once.
         if (n == value.Length) base.Write(value);
-        else if (n > 0) base.Write(value.AsSpan(0, n));
+        else if (n > 0) base.Write(value.Substring(0, n));
     }
 
     public override void Write(char[] buffer, int index, int count)
@@ -64,9 +67,11 @@ internal sealed class BoundedCaptureWriter : System.IO.StringWriter
         if (n > 0) base.Write(buffer, index, n);
     }
 
+#if !NETFRAMEWORK
     public override void Write(System.ReadOnlySpan<char> buffer)
     {
         int n = Allow(buffer.Length);
         if (n > 0) base.Write(buffer[..n]);
     }
+#endif
 }
