@@ -41,7 +41,8 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
     private const int TopSentinel = -1;
 
     private readonly UnmanagedMemory _memory;
-    private readonly List<(int FunctorId, Instance<WasmPredicateExports> Instance)> _preds = new();
+    private readonly List<(int FunctorId, Instance<WasmPredicateExports> Instance,
+        IReadOnlyDictionary<int, int> CursorByAddress)> _preds = new();
     private readonly Dictionary<int, int> _predIndexByFunctor = new();
     private int _compilingIndex;
 
@@ -71,14 +72,16 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
             {
                 { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },
             });
-            _preds.Add((p.FunctorId, instance));
+            _preds.Add((p.FunctorId, instance, entry.CursorByAddress));
         }
     }
 
     // ---- IWasmCompileEnv: the harness's own constants ----
 
-    int IWasmCompileEnv.EncodeBp(int cursor) => BpTag | (_compilingIndex << 16) | cursor;
-    int IWasmCompileEnv.EncodeReturnMarker(int cursor) => MarkerTag | (_compilingIndex << 16) | cursor;
+    int IWasmCompileEnv.EncodeBp(int functorId, int cursor)
+        => BpTag | (_predIndexByFunctor[functorId] << 16) | cursor;
+    int IWasmCompileEnv.EncodeReturnMarker(int functorId, int cursor)
+        => MarkerTag | (_predIndexByFunctor[functorId] << 16) | cursor;
     int IWasmCompileEnv.EncodeCallTarget(int calleeFunctorId)
         => _predIndexByFunctor.TryGetValue(calleeFunctorId, out int idx)
             ? idx
@@ -389,7 +392,7 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
                     if ((cp & MarkerTag) == 0)
                         throw new InvalidOperationException($"unmarked continuation {cp}");
                     predIndex = (cp >> 16) & 0x1FFF;
-                    cursor = cp & 0xFFFF;
+                    cursor = CursorOfAddress(predIndex, cp & 0xFFFF);
                     break;
                 }
                 case WasmVerdict.SuccessTailCall:
@@ -417,10 +420,11 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
                         if ((cp & MarkerTag) == 0)
                             throw new InvalidOperationException($"unmarked continuation {cp}");
                         predIndex = (cp >> 16) & 0x1FFF;
-                        cursor = cp & 0xFFFF;
+                        cursor = CursorOfAddress(predIndex, cp & 0xFFFF);
                         break;
                     }
-                    cursor = retCursor;             // same predicate, resumed
+                    // same predicate, resumed at the request's ADDRESS
+                    cursor = CursorOfAddress(predIndex, retCursor);
                     break;
                 }
                 case WasmVerdict.Deopt:
@@ -497,13 +501,20 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
         if ((bp & BpTag) == 0)
             throw new InvalidOperationException($"foreign BP {bp} is not harness-encoded");
         predIndex = (bp >> 16) & 0x1FFF;
-        cursor = bp & 0xFFFF;
+        cursor = CursorOfAddress(predIndex, bp & 0xFFFF);
         return true;
     }
 
+    /// <summary>Marker payloads carry biased bytecode ADDRESSES (stable
+    /// across group rebuilds in the engine); the module runs on cursors, so
+    /// every re-entry translates through the predicate's map. Address 0 is
+    /// the fresh-entry convention.</summary>
+    private int CursorOfAddress(int predIndex, int address)
+        => address == 0 ? 0 : _preds[predIndex].CursorByAddress[address];
+
     public void Dispose()
     {
-        foreach (var (_, inst) in _preds) inst.Dispose();
+        foreach (var (_, inst, _) in _preds) inst.Dispose();
         _memory.Dispose();
     }
 }

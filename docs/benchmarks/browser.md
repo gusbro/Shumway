@@ -22,14 +22,18 @@ untouched Tier-0. Both must agree on `loop(1000)`, `nrev` of `[1..30]`, and
 
 | case | goal | tier-1 wasm | tier-0 interp | speedup |
 |---|---|---:|---:|---:|
-| counter 300k | `loop(300000)` | 7-20 ms | ~1800 ms | **~90-250x** |
-| nrev 200 (×5) | `nrev` of a 200-element list, five times | ~11 ms | ~400 ms | **~31-39x** |
-| tak 18,12,6 | `tak(18,12,6,_)` | ~260 ms | ~890 ms | **~3.4x** |
+| counter 300k | `loop(300000)` | ~9 ms | ~1900 ms | **~208x** |
+| nrev 200 (×5) | `nrev` of a 200-element list, five times | ~5 ms | ~385 ms | **~75x** |
+| tak 18,12,6 | `tak(18,12,6,_)` | ~10 ms | ~755 ms | **~77x** |
 
 The tiered times are small and swing with the scheduler; the Tier-0 baselines
 are steady, so the ratios move run to run. The orders of magnitude do not.
+The verdict diagnostics pin the mechanism: one `nrev(200)` is 2 chain entries
+with ZERO module switches, and `tak(14,10,4)` is 37 entries (all of them
+trail-growth deopts) with zero switches and zero builtin exits -- both run
+natively end to end.
 
-## How it got there: the measurement drove three designs
+## How it got there: the measurement drove four designs
 
 The first working tier used a **per-entry model**: every entry into a module
 pinned the four engine arrays, filled the 24-slot mailbox from engine state,
@@ -69,18 +73,27 @@ than by guesswork:
    comment; the inline binds now share the one `EmitBindDa` helper). Deopts:
    14,912 to 36 -- one per actual trail growth.
 
-## Reading the spread that remains
+The chain still left tak at 3.4x and nrev at ~35x, both bounded by the
+interpreted per-switch cost (~4-15 us) of hopping between per-predicate
+modules. The fourth design removed the hops themselves: **group modules**.
+Every promoted predicate compiles into ONE module over a unified pc space
+(each member's bias is its linked base), so a cross-member call -- tail or
+NON-tail -- is an internal dispatch jump, the same mechanism the self-tail
+always used. A non-tail call bakes its resume marker as a constant and the
+callee's proceed compares Cp against the group's known markers and jumps
+straight back; backtracking across members stays native the same way (the
+shared fail case knows every member's BP markers). Markers encode (functor,
+ADDRESS) rather than cursor ordinals, so they survive the group rebuild
+that each new promotion triggers. nrev: ~35x to ~75x; tak: 3.4x to ~77x.
 
-- **The counter** stays the ceiling: one chain, everything in-module, the one
-  `is/2` per turn open-coded.
-- **nrev** is now bounded by the ~600 in-chain switches (~15 us of interpreted
-  TryChain guards each) plus its real allocation work.
-- **tak** at 3.4x is bounded the same way at larger scale: ~32k switches per
-  `tak(14,10,4)`, glue ~140 ms vs 108 ms in-wasm. The next lever, if wanted,
-  is moving the cross-functor tail hop INTO wasm (`call_indirect` through an
-  imported function table with a per-thread functor-to-index map), which
-  removes the interpreted switch entirely. That is an arc of its own -- realm
-  traps are silent -- and 3.4x already clears the plan's 2x gate.
+## Reading what remains
+
+- All three cases now sit within the same order of magnitude of the
+  counter's ceiling; what separates them is real work (nrev's allocation,
+  tak's trail-growth deopts) plus the per-chain staging, which amortises.
+- The remaining glue in the diagnostics is the chain OPEN/CLOSE around each
+  query goal and the builtin path -- both once-per-boundary costs, not
+  per-call ones.
 
 None of the remaining bounds is a correctness limit: deopt returns any
 predicate to the tier it was already on.

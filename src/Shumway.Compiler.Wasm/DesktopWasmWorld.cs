@@ -5,20 +5,20 @@ using WebAssembly.Runtime;
 
 namespace Shumway.Compiler.Wasm;
 
-/// <summary>The exports shape of a compiled predicate module. The method is
+/// <summary>The exports shape of a compiled group module. The method is
 /// spelled the way the wire is.</summary>
 public abstract class WasmRunExports
 {
     public abstract int run(int mailbox, int cursor);
 }
 
-/// <summary>The desktop execution world: every module instantiated against
-/// ONE private linear memory (the emitter library's wasm-to-IL engine), and a
-/// chain copies the engine areas into that image once, runs any number of
-/// module hops on it, and copies back at the end. Everything in a cell is an
-/// INDEX into its area, never an address, which is what makes the copy model
-/// sound. This is the differential-testing world -- the browser pins the real
-/// arrays and pays no copies. Engine-thread only.</summary>
+/// <summary>The desktop execution world: ONE group module instantiated
+/// against a private linear memory (the emitter library's wasm-to-IL
+/// engine); a chain copies the engine areas into that image once, runs any
+/// number of in-image hops, and copies back at the end. Everything in a cell
+/// is an INDEX into its area, never an address, which is what makes the copy
+/// model sound. This is the differential-testing world -- the browser pins
+/// the real arrays and pays no copies. Engine-thread only.</summary>
 public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 {
     private const int MailboxAt = 1024;
@@ -26,13 +26,24 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
     private const int Pages = 512;              // 32 MB: generous for tests
 
     private readonly UnmanagedMemory _memory = new(Pages, Pages);
-    private readonly List<(int Fid, Instance<WasmRunExports> Instance, int Demand)> _modules = new();
-    private readonly Dictionary<int, int> _handleByFid = new();
-    private int _maxDemand;
+    private Build? _current;
     private int _aritySynced;
     private int _arityAt = -1;
 
-    public int RegisterModule(int functorId, byte[] module, int registerDemand)
+    /// <summary>One installed group compile: the instance and the maps a
+    /// chain captures. Old builds stay referenced by their open chains.</summary>
+    private sealed record Build(
+        Instance<WasmRunExports> Instance,
+        IReadOnlyDictionary<int, int> EntryCursorByFid,
+        IReadOnlyDictionary<int, int> CursorByAddress,
+        IReadOnlyDictionary<int, int> EntryAddressByFid,
+        int RegisterDemand);
+
+    public void InstallGroup(byte[] module,
+        IReadOnlyDictionary<int, int> entryCursorByFid,
+        IReadOnlyDictionary<int, int> cursorByAddress,
+        IReadOnlyDictionary<int, int> entryAddressByFid,
+        int registerDemand)
     {
         using var stream = new MemoryStream(module);
         var creator = Module.ReadFromBinary(stream).Compile<WasmRunExports>();
@@ -40,25 +51,38 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         {
             { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },
         });
-        int handle = _modules.Count;
-        _modules.Add((functorId, instance, registerDemand));
-        _handleByFid[functorId] = handle;
-        if (registerDemand > _maxDemand) _maxDemand = registerDemand;
-        return handle;
+        _current = new Build(instance, entryCursorByFid, cursorByAddress,
+                             entryAddressByFid, registerDemand);
     }
 
-    public bool TryGetHandle(int functorId, out int handle)
-        => _handleByFid.TryGetValue(functorId, out handle);
+    public bool Contains(int functorId)
+        => _current?.EntryCursorByFid.ContainsKey(functorId) == true;
 
-    public int FunctorOfHandle(int handle) => _modules[handle].Fid;
+    public bool TryResolve(int functorId, int address, out int cursor)
+        => TryResolveIn(_current, functorId, address, out cursor);
 
-    public IWasmChainContext BeginChain(Activation engine) => new Chain(this, engine);
+    private static bool TryResolveIn(Build? b, int functorId, int address, out int cursor)
+    {
+        cursor = 0;
+        if (b is null) return false;
+        if (address == 0) return b.EntryCursorByFid.TryGetValue(functorId, out cursor);
+        return b.EntryCursorByFid.ContainsKey(functorId)
+            && b.CursorByAddress.TryGetValue(address, out cursor);
+    }
+
+    public int EntryAddressOf(int functorId)
+        => _current!.EntryAddressByFid[functorId];
+
+    public IWasmChainContext BeginChain(Activation engine)
+        => new Chain(this, _current ?? throw new InvalidOperationException("no group installed"),
+                     engine);
 
     public void Dispose() => _memory.Dispose();
 
     private sealed class Chain : IWasmChainContext
     {
         private readonly DesktopWasmWorld _w;
+        private readonly Build _build;
         private readonly Activation _engine;
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
         private int _heapAt, _stackAt, _trailAt, _arityAt;
@@ -66,16 +90,17 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
 
-        public Chain(DesktopWasmWorld w, Activation engine)
+        public Chain(DesktopWasmWorld w, Build build, Activation engine)
         {
             _w = w;
+            _build = build;
             _engine = engine;
             StageFromEngine();
         }
 
         private unsafe void StageFromEngine()
         {
-            _engine.EnsureWasmRegisters(_w._maxDemand);
+            _engine.EnsureWasmRegisters(_build.RegisterDemand);
             Cell[] heap = _engine.WasmHeapView;
             Cell[] stack = _engine.WasmStackView;
             Cell[] regs = _engine.WasmRegistersView;
@@ -123,8 +148,11 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _engineAuthoritative = false;
         }
 
-        public WasmVerdict Call(int handle, int cursor)
-            => (WasmVerdict)_w._modules[handle].Instance.Exports.run(MailboxAt, cursor);
+        public WasmVerdict Call(int cursor)
+            => (WasmVerdict)_build.Instance.Exports.run(MailboxAt, cursor);
+
+        public bool TryResolve(int functorId, int address, out int cursor)
+            => TryResolveIn(_build, functorId, address, out cursor);
 
         public long ReadSlot(int slot)
             => Marshal.ReadInt64(_w._memory.Start, MailboxAt + slot * WasmAbi.SlotSize);

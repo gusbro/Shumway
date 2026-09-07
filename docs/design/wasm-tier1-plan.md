@@ -539,10 +539,65 @@ what is tractable and what is not:
   RISK: a wrong index = silent corruption/trap; it needs the fallback and
   careful tests. This is the arc's correct entry point.
 
-**Status**: deferred to its own arc. The measured JIT already proves the
-thesis (100-220x in the ideal case); the direct tail call is the highest-
-leverage improvement for real code and deserves dedicated design + tests,
-not a rush.
+**Status**: superseded by the GROUP-MODULE design below before any code was
+written -- the table import never happened.
+
+### Phase 3'' — GROUP MODULES supersede the table import
+
+Re-examining the alternatives turned up a design strictly better than the
+`call_indirect` hop on every axis: **compile the whole set of promoted
+predicates into ONE wasm module**, with the LINKED addresses as the unified
+pc space (every predicate's bias is its linked base, so pcs never collide
+and a deopt pc needs no translation). Consequences:
+
+- **A cross-functor call is an internal `br_table` jump** -- the same
+  mechanism the self-tail already uses, generalised: "self" becomes "in
+  group". No table import, no per-thread functor→index map, no silent-trap
+  risk, and fully desktop-testable (the whole reason (A) lost the last
+  round evaporates).
+- **It covers NON-TAIL calls too**, which the table design could not: a
+  call site bakes `Cp = marker(self, resume-cursor)` as a constant and
+  jumps to the callee's entry; the callee's PROCEED compares Cp against
+  the group's known marker constants (collected in the cursor pass) and
+  jumps straight to the caller's resume -- the interpreter's marker path,
+  done inside wasm. tak's three non-tail calls per invocation become
+  internal jumps. A foreign Cp still returns the Success verdict.
+- **Backtracking across group members stays native**: the shared fail case
+  compares a popped BP against ALL the group's BP markers; only foreign
+  CPs return Fail to the host.
+- **Cursors go global** (one space for the whole module) and the markers
+  carry (fid, global cursor), so the interpreter's foreign re-entry path
+  needs no per-delegate translation and `addrByCursor` is the identity on
+  the biased pcs.
+- **Cost**: promotion rebuilds the group module (codegen is measured-cheap;
+  instantiation is one per promotion, amortised); the boundary guards
+  (watermark at proceed-jump, flags at calls) keep GC and interrupts
+  honest, exactly as the chain's guards do today.
+
+The chain driver stays as the OUTER loop (entry, builtins, deopt, foreign
+callees); what the group removes is the interpreted per-switch cost for
+in-group hops -- the ~4-15 us that bounds tak and nrev.
+
+**SHIPPED and MEASURED.** The pieces: `WasmPredicateCompiler.CompileGroup`
+(sections with biased pcs; `Sec/Bias/SelfFid` per instruction; the proceed
+jump table collected in the cursor pass; the shared fail case over every
+member's BP markers; the in-group branches in call/execute); markers encode
+(fid, ADDRESS) everywhere -- BPs, return markers, builtin resumes -- so
+choice points and `BuiltinReturnPc` survive group rebuilds (cursor ordinals
+renumber; addresses never move). The worlds install BUILDS (module + maps);
+an open chain keeps the build it captured, so a nested promotion cannot
+pull the module out from under it; the delegate resolves (fid, address) to
+the captured build's cursor at entry. The single-predicate `Compile` is now
+`CompileGroup` of one, which kept the whole existing suite as the guard --
+93/93 stayed green through the refactor with no semantic edits.
+
+Browser numbers (headless Chrome, best of 5): **counter ~208x, nrev ~75x,
+tak ~77x**. The diagnostics pin the contract: nrev(200) = 2 chain entries,
+ZERO switches; tak(14,10,4) = 37 entries (all trail-growth deopts), zero
+switches, zero builtin exits. tak gained a further ~27x over the chain
+model; nrev roughly doubled. A desktop test
+(`InGroupCallsNeverLeaveTheModule`) pins switches == 0 for the warmed
+group.
 
 ## Phase B — Benchmarks + close (~1 week)
 

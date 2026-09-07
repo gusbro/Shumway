@@ -10,28 +10,39 @@ using Shumway.Embedding;
 
 namespace Shumway.Web;
 
-/// <summary>The browser's wasm execution world: the engine's arrays already
-/// live inside the runtime's linear memory, so a chain pins them in place
-/// once, writes their REAL addresses plus the scalars into a pinned mailbox
-/// once, and then every module hop is a raw call through this thread's
-/// function table -- no per-entry marshalling, which matters doubly here
-/// because all C# in this file runs MONO-INTERPRETED (~150 us for the old
-/// per-entry staging against ~3 us of wasm work). With threads on every
-/// worker has its own table, so each module registers lazily per thread and
-/// caches its index per thread (the engine is thread-agile; the REALM is
-/// not).</summary>
+/// <summary>The browser's wasm execution world: ONE group module whose bytes
+/// are pinned and registered lazily per thread (with threads on, every worker
+/// has its own function table; only the memory is shared). A chain pins the
+/// engine arrays in place once, fills the pinned mailbox once, and every call
+/// is a raw hop through this thread's table -- and with group compilation the
+/// in-group calls never even leave the module. All C# here runs
+/// MONO-INTERPRETED, which is why per-entry work is hoisted into the chain
+/// open/close.</summary>
 internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 {
-    private readonly List<(int Fid, byte[] PinnedModule, int Demand, ThreadLocal<int> Index)>
-        _modules = new();
-    private readonly Dictionary<int, int> _handleByFid = new();
-    private int _maxDemand;
+    private Build? _current;
 
     // Timing split for the probe: ticks inside raw calls vs staging
     // (BeginChain + RefreshFromEngine). Process-wide diagnostics.
     internal static long DiagCallTicks, DiagStageTicks;
 
-    public int RegisterModule(int functorId, byte[] module, int registerDemand)
+    /// <summary>One installed group compile: pinned patched bytes, the
+    /// per-thread table index, and the maps a chain captures. Old builds stay
+    /// referenced by their open chains; their thread-local indices remain
+    /// valid (registered functions are never unregistered).</summary>
+    private sealed record Build(
+        byte[] PinnedModule,
+        ThreadLocal<int> Index,
+        IReadOnlyDictionary<int, int> EntryCursorByFid,
+        IReadOnlyDictionary<int, int> CursorByAddress,
+        IReadOnlyDictionary<int, int> EntryAddressByFid,
+        int RegisterDemand);
+
+    public void InstallGroup(byte[] module,
+        IReadOnlyDictionary<int, int> entryCursorByFid,
+        IReadOnlyDictionary<int, int> cursorByAddress,
+        IReadOnlyDictionary<int, int> entryAddressByFid,
+        int registerDemand)
     {
         byte[] patched = WasmSharedMemory.Patch(module);
         byte[] pinned = GC.AllocateArray<byte>(patched.Length, pinned: true);
@@ -44,23 +55,35 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 throw new InvalidOperationException("wasm module did not register");
             return i;
         });
-        int handle = _modules.Count;
-        _modules.Add((functorId, pinned, registerDemand, index));
-        _handleByFid[functorId] = handle;
-        if (registerDemand > _maxDemand) _maxDemand = registerDemand;
-        return handle;
+        _current = new Build(pinned, index, entryCursorByFid, cursorByAddress,
+                             entryAddressByFid, registerDemand);
     }
 
-    public bool TryGetHandle(int functorId, out int handle)
-        => _handleByFid.TryGetValue(functorId, out handle);
+    public bool Contains(int functorId)
+        => _current?.EntryCursorByFid.ContainsKey(functorId) == true;
 
-    public int FunctorOfHandle(int handle) => _modules[handle].Fid;
+    public bool TryResolve(int functorId, int address, out int cursor)
+        => TryResolveIn(_current, functorId, address, out cursor);
 
-    public IWasmChainContext BeginChain(Activation engine) => new Chain(this, engine);
+    private static bool TryResolveIn(Build? b, int functorId, int address, out int cursor)
+    {
+        cursor = 0;
+        if (b is null) return false;
+        if (address == 0) return b.EntryCursorByFid.TryGetValue(functorId, out cursor);
+        return b.EntryCursorByFid.ContainsKey(functorId)
+            && b.CursorByAddress.TryGetValue(address, out cursor);
+    }
+
+    public int EntryAddressOf(int functorId)
+        => _current!.EntryAddressByFid[functorId];
+
+    public IWasmChainContext BeginChain(Activation engine)
+        => new Chain(_current ?? throw new InvalidOperationException("no group installed"),
+                     engine);
 
     private sealed class Chain : IWasmChainContext
     {
-        private readonly BrowserWasmWorld _w;
+        private readonly Build _build;
         private readonly Activation _engine;
         private readonly long[] _mailbox = GC.AllocateArray<long>(WasmAbi.SlotCount, pinned: true);
         private readonly int _mailboxAt;
@@ -69,9 +92,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private int[] _trail = null!;
         private bool _engineAuthoritative;
 
-        public Chain(BrowserWasmWorld w, Activation engine)
+        public Chain(Build build, Activation engine)
         {
-            _w = w;
+            _build = build;
             _engine = engine;
             _mailboxAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_mailbox, 0);
             Stage();
@@ -85,7 +108,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private void Stage()
         {
             long t0 = Stopwatch.GetTimestamp();
-            _engine.EnsureWasmRegisters(_w._maxDemand);
+            _engine.EnsureWasmRegisters(_build.RegisterDemand);
             var heap = _engine.WasmHeapView;
             var stack = _engine.WasmStackView;
             var regs = _engine.WasmRegistersView;
@@ -123,14 +146,16 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             cached = current;
         }
 
-        public WasmVerdict Call(int handle, int cursor)
+        public WasmVerdict Call(int cursor)
         {
             long t0 = Stopwatch.GetTimestamp();
-            int v = WebShumwayApp.WasmCall(
-                _w._modules[handle].Index.Value, _mailboxAt, cursor);
+            int v = WebShumwayApp.WasmCall(_build.Index.Value, _mailboxAt, cursor);
             DiagCallTicks += Stopwatch.GetTimestamp() - t0;
             return (WasmVerdict)v;
         }
+
+        public bool TryResolve(int functorId, int address, out int cursor)
+            => TryResolveIn(_build, functorId, address, out cursor);
 
         public long ReadSlot(int slot) => _mailbox[slot];
 
@@ -159,9 +184,10 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
     }
 }
 
-/// <summary>Boot-time wiring of the wasm tier (plan phase 2): the promotion
-/// store's <c>Promoter</c> compiles a predicate, registers its module in the
-/// store's world, and wraps the chain-driving verdict loop. Gated by
+/// <summary>Boot-time wiring of the wasm tier: the promotion store's
+/// <c>Promoter</c> accumulates the promoted set, recompiles the GROUP module
+/// on each promotion (cross-member calls become internal jumps), installs
+/// the fresh build, and wraps the chain-driving verdict loop. Gated by
 /// <see cref="RuntimeCaps.SupportsWasmCodegen"/> -- only Shumway.Web turns
 /// the feature switch on.</summary>
 internal static class BrowserWasmTier
@@ -207,44 +233,53 @@ internal static class BrowserWasmTier
         if (!RuntimeCaps.SupportsWasmCodegen) return;
         var store = engine.IlPromotion;
         var world = new BrowserWasmWorld();
+        var members = new List<WasmGroupMember>();
+        var env = new EngineWasmCompileEnv();
         store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = threshold,
-            Promoter = (pred, linkedBase) => Promote(store, world, pred, linkedBase),
+            Promoter = (pred, linkedBase) =>
+                Promote(store, world, members, env, pred, linkedBase),
         };
     }
 
     private static PredicateDelegate? Promote(IlPromotionStore store,
-        BrowserWasmWorld world, CompiledPredicate pred, int linkedBase)
+        BrowserWasmWorld world, List<WasmGroupMember> members,
+        EngineWasmCompileEnv env, CompiledPredicate pred, int linkedBase)
     {
+        var candidate = new WasmGroupMember(pred, linkedBase,
+            store.FloatPoolProvider?.Invoke(pred.FunctorId));
+        members.Add(candidate);
         try
         {
-            var env = new EngineWasmCompileEnv(pred.FunctorId, linkedBase);
-            var entry = WasmPredicateCompiler.Compile(pred, env,
-                floatLiterals: store.FloatPoolProvider?.Invoke(pred.FunctorId));
-            int maxCursor = 0;
-            foreach (var (_, c) in entry.CursorByAddress)
-                if (c > maxCursor) maxCursor = c;
-            var addrByCursor = new int[maxCursor + 1];
-            foreach (var (addr, c) in entry.CursorByAddress)
-                addrByCursor[c] = linkedBase + addr;
-            WebShumwayApp.WriteToPage($"[tier] promoting fid={pred.FunctorId}\n");
-            int handle = world.RegisterModule(
-                pred.FunctorId, entry.Module, entry.RegisterDemand);
-            WebShumwayApp.WriteToPage($"[tier] promoted fid={pred.FunctorId} h={handle}\n");
-            return new WasmTierDelegate(pred.FunctorId, world, handle, addrByCursor).Invoke;
+            InstallCurrent(world, members, env);
+            return new WasmTierDelegate(pred.FunctorId, world).Invoke;
         }
         catch (WasmCompileException)
         {
+            // The candidate poisoned the group: reinstall without it.
+            members.Remove(candidate);
+            if (members.Count > 0) InstallCurrent(world, members, env);
             return null;
         }
     }
+
+    private static void InstallCurrent(BrowserWasmWorld world,
+        List<WasmGroupMember> members, EngineWasmCompileEnv env)
+    {
+        var entry = WasmPredicateCompiler.CompileGroup(members, env);
+        var entryAddr = new Dictionary<int, int>(members.Count);
+        foreach (var m in members)
+            entryAddr[m.Predicate.FunctorId] = m.Bias;
+        world.InstallGroup(entry.Module, entry.EntryCursorByFid,
+            entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+    }
 }
 
-/// <summary>The phase-2 browser measurement: two engines side by side, one
-/// with the wasm tier attached at threshold 1 and one plain Tier-0, over the
-/// counter and nrev, correctness cross-checked first. Reached via the page
-/// hash <c>#wasmtier</c>.</summary>
+/// <summary>The browser measurement: two engines side by side, one with the
+/// wasm tier attached at threshold 1 and one plain Tier-0, over the counter,
+/// nrev and tak, correctness cross-checked first. Reached via the page hash
+/// <c>#wasmtier</c>.</summary>
 internal static partial class WebShumwayApp
 {
     private const string TierProbeCorpus = """
@@ -350,7 +385,6 @@ internal static partial class WebShumwayApp
                     }
                     return best;
                 }
-                WriteToPage("[tier] correctness done, measuring\n");
                 foreach (var (name, goal) in new (string, string)[]
                 {
                     ("counter 300k", "loop(300000)."),

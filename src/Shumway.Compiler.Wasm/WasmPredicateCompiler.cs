@@ -32,13 +32,31 @@ public static class WasmPredicateCompiler
                                     bool shared = false,
                                     IReadOnlyList<double>? floatLiterals = null)
     {
-        var c = new Compilation(predicate, env, floatLiterals);
+        var g = CompileGroup(
+            new[] { new WasmGroupMember(predicate, 0, floatLiterals) }, env, shared);
+        return new WasmEntry(g.Module, predicate.FunctorId, predicate.Arity,
+                             g.CursorByAddress, g.RegisterDemand);
+    }
+
+    /// <summary>Compiles a GROUP of predicates into one module over a unified
+    /// pc space: each member's bias (its linked base in the engine) offsets
+    /// its bytecode addresses, so pcs never collide, a deopt pc needs no
+    /// translation, and a cross-member call is an internal dispatch jump --
+    /// the self-tail mechanism generalised. Cursors are global to the module;
+    /// markers carry (fid, global cursor).</summary>
+    public static WasmGroupEntry CompileGroup(IReadOnlyList<WasmGroupMember> members,
+                                              IWasmCompileEnv env, bool shared = false)
+    {
+        var c = new Compilation(members, env);
         c.Decode();
         c.AssignCursors();
         byte[] bytes = c.Emit();
         if (shared) bytes = WasmSharedMemory.Patch(bytes);
-        return new WasmEntry(bytes, predicate.FunctorId, predicate.Arity,
-                             c.CursorByAddress, c.RegisterDemand);
+        var entryCursors = new Dictionary<int, int>(members.Count);
+        foreach (var m in members)
+            entryCursors[m.Predicate.FunctorId] = c.CursorByAddress[m.Bias];
+        return new WasmGroupEntry(bytes, entryCursors, c.CursorByAddress,
+                                  c.RegisterDemand);
     }
 
     // ---- locals (after the two i32 params: 0 mailbox, 1 entry cursor) ----
@@ -66,22 +84,30 @@ public static class WasmPredicateCompiler
 
     private const long RawIntTag = (long)Tag.RawInt << Cell.TagShift;
 
-    private sealed record Instr(int Pc, Opcode Op, int Size)
+    private sealed record Instr(int Pc, Opcode Op, int Size, int Section)
     {
         public int I0, I1, I2, I3, I4;
     }
 
-    private sealed class Compilation(CompiledPredicate predicate, IWasmCompileEnv env,
-                                     IReadOnlyList<double>? floatLiterals)
+    private sealed class Compilation(IReadOnlyList<WasmGroupMember> members,
+                                     IWasmCompileEnv env)
     {
-        private readonly CompiledPredicate _p = predicate;
+        private readonly IReadOnlyList<WasmGroupMember> _members = members;
         private readonly IWasmCompileEnv _env = env;
-        private readonly IReadOnlyList<double>? _floats = floatLiterals;
         private readonly List<Instr> _instrs = new();
         private readonly Dictionary<int, int> _byPc = new();
         private readonly SortedSet<int> _leaders = new();
         private readonly Dictionary<int, int> _cursorByAddr = new();
         private readonly Dictionary<int, int> _callee = new();   // call-site pc -> functor
+        // fid -> entry address (the member's bias): the in-group call map.
+        private readonly Dictionary<int, int> _entryByFid = new();
+        // (baked Cp marker value, resume address): the PROCEED jump table
+        // for in-group non-tail calls, collected in the cursor pass.
+        private readonly List<(int Marker, int Addr)> _proceedTargets = new();
+
+        private WasmGroupMember Sec(Instr ins) => _members[ins.Section];
+        private int Bias(Instr ins) => _members[ins.Section].Bias;
+        private int SelfFid(Instr ins) => _members[ins.Section].Predicate.FunctorId;
 
         public IReadOnlyDictionary<int, int> CursorByAddress => _cursorByAddr;
         private int _failCase;      // the internal FAIL cursor (not re-enterable)
@@ -93,10 +119,23 @@ public static class WasmPredicateCompiler
 
         public void Decode()
         {
-            byte[] code = _p.Bytecode;
-            foreach (var site in _p.CallSites)
-                _callee[site.OpcodeOffset] = site.CalleeFunctorId;
+            for (int sec = 0; sec < _members.Count; sec++)
+            {
+                var m = _members[sec];
+                _entryByFid[m.Predicate.FunctorId] = m.Bias;
+                foreach (var site in m.Predicate.CallSites)
+                    _callee[m.Bias + site.OpcodeOffset] = site.CalleeFunctorId;
+                DecodeSection(sec);
+            }
+        }
 
+        // Instruction pcs are BIASED (linked-absolute); operand addresses
+        // stay predicate-local and are biased at their use sites.
+        private void DecodeSection(int sec)
+        {
+            var member = _members[sec];
+            byte[] code = member.Predicate.Bytecode;
+            int bias = member.Bias;
             int pc = 0;
             while (pc < code.Length)
             {
@@ -107,8 +146,8 @@ public static class WasmPredicateCompiler
                 {
                     if (code[pc + 1] != 0)
                         throw new WasmCompileException($"meta sub-opcode {code[pc + 1]} at {pc}");
-                    var meta = new Instr(pc, op, 6);
-                    _byPc[pc] = _instrs.Count;
+                    var meta = new Instr(bias + pc, op, 6, sec);
+                    _byPc[bias + pc] = _instrs.Count;
                     _instrs.Add(meta);
                     pc += 6;
                     continue;
@@ -116,13 +155,13 @@ public static class WasmPredicateCompiler
                 var info = OpcodeTable.Get(code[pc]);
                 if (!info.IsDefined || info.Size <= 0)
                     throw new WasmCompileException($"undecodable opcode 0x{code[pc]:X2} at {pc}");
-                var ins = new Instr(pc, op, info.Size);
+                var ins = new Instr(bias + pc, op, info.Size, sec);
                 if (info.Size >= 5) ins.I0 = BytecodeIO.ReadInt32(code, pc + 1);
                 if (info.Size >= 9) ins.I1 = BytecodeIO.ReadInt32(code, pc + 5);
                 if (info.Size >= 13) ins.I2 = BytecodeIO.ReadInt32(code, pc + 9);
                 if (info.Size >= 17) ins.I3 = BytecodeIO.ReadInt32(code, pc + 13);
                 if (info.Size >= 21) ins.I4 = BytecodeIO.ReadInt32(code, pc + 17);
-                _byPc[pc] = _instrs.Count;
+                _byPc[bias + pc] = _instrs.Count;
                 _instrs.Add(ins);
                 Census(ins);
                 pc += info.Size;
@@ -203,7 +242,7 @@ public static class WasmPredicateCompiler
                     return;
                 case Opcode.GetFloat:
                 case Opcode.PutFloat:
-                    if (_floats is null)
+                    if (Sec(ins).FloatLiterals is null)
                         throw new WasmCompileException($"{ins.Op} without a float pool at {ins.Pc}");
                     return;
                 case Opcode.AIntCmp:
@@ -237,18 +276,21 @@ public static class WasmPredicateCompiler
 
         public void AssignCursors()
         {
-            _leaders.Add(0);
+            // Every member's entry is a leader (its bias); operand addresses
+            // are member-local, so they are biased here at collection.
+            foreach (var m in _members) _leaders.Add(m.Bias);
             foreach (var ins in _instrs)
             {
+                int b = Bias(ins);
                 switch (ins.Op)
                 {
                     case Opcode.SwitchOnTerm:
-                        _leaders.Add(ins.I0); _leaders.Add(ins.I1);
-                        _leaders.Add(ins.I2); _leaders.Add(ins.I3);
+                        _leaders.Add(b + ins.I0); _leaders.Add(b + ins.I1);
+                        _leaders.Add(b + ins.I2); _leaders.Add(b + ins.I3);
                         break;
                     case Opcode.SwitchOnArg:
-                        _leaders.Add(ins.I1); _leaders.Add(ins.I2);
-                        _leaders.Add(ins.I3); _leaders.Add(ins.I4);
+                        _leaders.Add(b + ins.I1); _leaders.Add(b + ins.I2);
+                        _leaders.Add(b + ins.I3); _leaders.Add(b + ins.I4);
                         break;
                     case Opcode.SwitchOnInteger:
                     case Opcode.SwitchOnAtom:
@@ -257,19 +299,19 @@ public static class WasmPredicateCompiler
                     {
                         int tableId = ins.Op is Opcode.SwitchOnInteger or Opcode.SwitchOnAtom
                             ? ins.I0 : ins.I1;
-                        var table = _p.SwitchTables[tableId];
-                        foreach (int v in table.Values) _leaders.Add(v);
-                        _leaders.Add(table.DefaultAddress);
+                        var table = Sec(ins).Predicate.SwitchTables[tableId];
+                        foreach (int v in table.Values) _leaders.Add(b + v);
+                        _leaders.Add(b + table.DefaultAddress);
                         break;
                     }
                     case Opcode.Try:
-                        _leaders.Add(ins.I0); _leaders.Add(ins.Pc + 9);
+                        _leaders.Add(b + ins.I0); _leaders.Add(ins.Pc + 9);
                         break;
                     case Opcode.Retry:
-                        _leaders.Add(ins.I0); _leaders.Add(ins.Pc + 5);
+                        _leaders.Add(b + ins.I0); _leaders.Add(ins.Pc + 5);
                         break;
                     case Opcode.Trust:
-                        _leaders.Add(ins.I0);
+                        _leaders.Add(b + ins.I0);
                         break;
                     case Opcode.Call:
                     case Opcode.CallBuiltin:
@@ -277,10 +319,10 @@ public static class WasmPredicateCompiler
                         break;
                     case Opcode.TryMeElse:
                     case Opcode.RetryMeElse:
-                        _leaders.Add(ins.I0);       // the else chain
+                        _leaders.Add(b + ins.I0);   // the else chain
                         break;
                     case Opcode.Jump:
-                        _leaders.Add(ins.I0);
+                        _leaders.Add(b + ins.I0);
                         break;
                 }
             }
@@ -295,6 +337,21 @@ public static class WasmPredicateCompiler
                 _cursorByAddr[addr] = next++;
             _failCase = next;
             _caseCount = next + 1;
+
+            // The PROCEED jump table: every in-group non-tail call bakes
+            // Cp = marker(callerFid, resume cursor) as a constant; a proceed
+            // whose Cp matches jumps straight to the caller's resume instead
+            // of returning Success -- the interpreter's marker path, inside
+            // the module. Foreign Cp values still return the verdict.
+            foreach (var ins in _instrs)
+            {
+                if (ins.Op != Opcode.Call) continue;
+                if (!_callee.TryGetValue(ins.Pc, out int callee)) continue;
+                if (_env.TryGetBuiltin(callee, out _)) continue;
+                if (!_entryByFid.ContainsKey(callee)) continue;
+                int marker = _env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9);
+                _proceedTargets.Add((marker, ins.Pc + 9));
+            }
         }
 
         private int CursorOf(int addr) => _cursorByAddr[addr];
@@ -504,7 +561,16 @@ public static class WasmPredicateCompiler
         // register area covers it BEFORE entering (the bank starts small and
         // an out-of-range wasm store corrupts whatever lies next).
         private int _maxRegister = -1;
-        public int RegisterDemand => System.Math.Max(_maxRegister + 1, _p.Arity);
+        public int RegisterDemand
+        {
+            get
+            {
+                int d = _maxRegister + 1;
+                foreach (var m in _members)
+                    if (m.Predicate.Arity > d) d = m.Predicate.Arity;
+                return d;
+            }
+        }
 
         private void RegLoad(int reg)
         {
@@ -663,19 +729,31 @@ public static class WasmPredicateCompiler
             Op(new Int32WrapInt64());
             Op(new LocalSet(LT1));                          // bp
 
-            var bpCursors = new SortedSet<int>();
+            // One shared fail case for the whole group: BP values bake the
+            // site's OWN fid, so the pairs map value -> cursor across every
+            // member; only a CP no member pushed returns Fail to the host.
+            var bpPairs = new SortedDictionary<int, int>();
             foreach (var ins in _instrs)
                 switch (ins.Op)
                 {
-                    case Opcode.Try: bpCursors.Add(CursorOf(ins.Pc + 9)); break;
-                    case Opcode.Retry: bpCursors.Add(CursorOf(ins.Pc + 5)); break;
+                    case Opcode.Try:
+                        bpPairs[_env.EncodeBp(SelfFid(ins), ins.Pc + 9)]
+                            = CursorOf(ins.Pc + 9);
+                        break;
+                    case Opcode.Retry:
+                        bpPairs[_env.EncodeBp(SelfFid(ins), ins.Pc + 5)]
+                            = CursorOf(ins.Pc + 5);
+                        break;
                     case Opcode.TryMeElse:
-                    case Opcode.RetryMeElse: bpCursors.Add(CursorOf(ins.I0)); break;
+                    case Opcode.RetryMeElse:
+                        bpPairs[_env.EncodeBp(SelfFid(ins), Bias(ins) + ins.I0)]
+                            = CursorOf(Bias(ins) + ins.I0);
+                        break;
                 }
-            foreach (int cursor in bpCursors)
+            foreach (var (bpValue, cursor) in bpPairs)
             {
                 Op(new LocalGet(LT1));
-                Op(new Int32Constant(_env.EncodeBp(cursor)));
+                Op(new Int32Constant(bpValue));
                 Op(new Int32Equal());
                 OpenIf();
                 Op(new Int32Constant(cursor));
@@ -734,15 +812,23 @@ public static class WasmPredicateCompiler
             switch (ins.Op)
             {
                 case Opcode.SwitchOnTerm:
-                    EmitSwitchOnTerm(ins.Pc, 0, ins.I0, ins.I1, ins.I2, ins.I3);
+                {
+                    int b = Bias(ins);
+                    EmitSwitchOnTerm(ins.Pc, 0,
+                        b + ins.I0, b + ins.I1, b + ins.I2, b + ins.I3);
                     return true;
+                }
                 case Opcode.SwitchOnArg:
-                    EmitSwitchOnTerm(ins.Pc, ins.I0, ins.I1, ins.I2, ins.I3, ins.I4);
+                {
+                    int b = Bias(ins);
+                    EmitSwitchOnTerm(ins.Pc, ins.I0,
+                        b + ins.I1, b + ins.I2, b + ins.I3, b + ins.I4);
                     return true;
-                case Opcode.SwitchOnInteger: EmitSwitchOnInteger(0, ins.I0); return true;
-                case Opcode.SwitchOnIntegerArg: EmitSwitchOnInteger(ins.I0, ins.I1); return true;
-                case Opcode.SwitchOnAtom: EmitSwitchOnAtom(0, ins.I0); return true;
-                case Opcode.SwitchOnAtomArg: EmitSwitchOnAtom(ins.I0, ins.I1); return true;
+                }
+                case Opcode.SwitchOnInteger: EmitSwitchOnInteger(ins, 0, ins.I0); return true;
+                case Opcode.SwitchOnIntegerArg: EmitSwitchOnInteger(ins, ins.I0, ins.I1); return true;
+                case Opcode.SwitchOnAtom: EmitSwitchOnAtom(ins, 0, ins.I0); return true;
+                case Opcode.SwitchOnAtomArg: EmitSwitchOnAtom(ins, ins.I0, ins.I1); return true;
                 case Opcode.Try: EmitTry(ins); return true;
                 case Opcode.Retry: EmitRetry(ins); return true;
                 case Opcode.Trust: EmitTrust(ins); return true;
@@ -751,7 +837,7 @@ public static class WasmPredicateCompiler
                 case Opcode.DeallocateProceed:
                     EmitFlagsCheck(ins.Pc);
                     EmitDeallocate();
-                    EmitReturn(WasmVerdict.Success);
+                    EmitProceedReturn();
                     return true;
                 case Opcode.Proceed: EmitProceed(ins); return true;
                 case Opcode.GetVariableY:
@@ -872,13 +958,13 @@ public static class WasmPredicateCompiler
                 case Opcode.CutProceed:
                     EmitFlagsCheck(ins.Pc);
                     EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); });
-                    EmitReturn(WasmVerdict.Success);
+                    EmitProceedReturn();
                     return true;
                 case Opcode.CutDeallocateProceed:
                     EmitFlagsCheck(ins.Pc);
                     EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); });
                     EmitDeallocate();
-                    EmitReturn(WasmVerdict.Success);
+                    EmitProceedReturn();
                     return true;
                 case Opcode.CallBuiltin:
                     // The id is the operand itself: the module compiler
@@ -891,14 +977,14 @@ public static class WasmPredicateCompiler
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
                         (uint)ins.I0 | ((long)ins.I1 << 32))));
                     StoreSlot64(WasmAbi.Cursor,
-                        () => Op(new Int64Constant(CursorOf(ins.Pc + 9))));
+                        () => Op(new Int64Constant(ins.Pc + 9)));
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
                 case Opcode.ExecuteBuiltin:
                     if (_env.IsInlineUnify(ins.I0))
                     {
                         EmitInlineUnify(ins.Pc);
-                        EmitReturn(WasmVerdict.Success);
+                        EmitProceedReturn();
                         return true;
                     }
                     EmitFlagsCheck(ins.Pc);
@@ -907,12 +993,12 @@ public static class WasmPredicateCompiler
                     StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
-                case Opcode.GetFloat: EmitGetFloat(ins.I0, ins.I1, ins.Pc); return false;
-                case Opcode.PutFloat: EmitPutFloat(ins.I0, ins.I1, ins.Pc); return false;
+                case Opcode.GetFloat: EmitGetFloat(ins); return false;
+                case Opcode.PutFloat: EmitPutFloat(ins); return false;
                 case Opcode.TryMeElse: EmitTryMeElse(ins); return false;
                 case Opcode.RetryMeElse: EmitRetryMeElse(ins); return false;
                 case Opcode.TrustMe: EmitTrustMe(ins); return false;
-                case Opcode.Jump: GoTo(ins.I0); return true;
+                case Opcode.Jump: GoTo(Bias(ins) + ins.I0); return true;
                 case Opcode.AIntBin: EmitAIntBin(ins); return false;
                 case Opcode.AEvalPush: EmitAEvalPush(ins); return false;
                 case Opcode.AEvalBin: EmitAEvalBin(ins); return false;
@@ -941,6 +1027,34 @@ public static class WasmPredicateCompiler
         private void EmitProceed(Instr ins)
         {
             EmitFlagsCheck(ins.Pc);
+            EmitProceedReturn();
+        }
+
+        /// <summary>Proceed semantics: if Cp matches an in-group call's baked
+        /// marker, jump straight to that caller's resume cursor -- the
+        /// interpreter's marker path, done inside the module. The watermark
+        /// guard hands the interpreter its GC boundary exactly where the
+        /// marker path would have collected. A foreign Cp (an IL caller's
+        /// marker, a bytecode address) returns the Success verdict.</summary>
+        private void EmitProceedReturn()
+        {
+            if (_proceedTargets.Count > 0)
+            {
+                Op(new LocalGet(LH));
+                LoadSlot32(WasmAbi.HeapWatermark);
+                Op(new Int32LessThanSigned());
+                OpenIf();
+                foreach (var (marker, addr) in _proceedTargets)
+                {
+                    Op(new LocalGet(LCP));
+                    Op(new Int32Constant(marker));
+                    Op(new Int32Equal());
+                    OpenIf();
+                    GoTo(addr);
+                    CloseNested();
+                }
+                CloseNested();
+            }
             EmitReturn(WasmVerdict.Success);
         }
 
@@ -961,7 +1075,7 @@ public static class WasmPredicateCompiler
                 EmitFlagsCheck(ins.Pc);
                 StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(builtinId)));
                 StoreSlot64(WasmAbi.Cursor,
-                    () => Op(new Int64Constant(CursorOf(ins.Pc + 9))));
+                    () => Op(new Int64Constant(ins.Pc + 9)));
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return true;
             }
@@ -971,8 +1085,24 @@ public static class WasmPredicateCompiler
             // return cursor. The callee enters a new procedure: refresh its
             // cut barrier (the interpreter's SetB0(B) before every call).
             StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
-            Op(new Int32Constant(_env.EncodeReturnMarker(CursorOf(ins.Pc + 9))));
+            Op(new Int32Constant(_env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9)));
             Op(new LocalSet(LCP));
+            if (_entryByFid.TryGetValue(callee, out int calleeEntry))
+            {
+                // In-group non-tail call: jump straight to the callee's
+                // entry; its proceed will match the Cp marker just staged
+                // and jump back to our resume cursor -- no host round-trip.
+                // The watermark guard gives the interpreter its GC boundary
+                // exactly where the marker path would have taken it.
+                Op(new LocalGet(LH));
+                LoadSlot32(WasmAbi.HeapWatermark);
+                Op(new Int32GreaterThanOrEqualSigned());
+                OpenIf();
+                EmitDeopt(ins.Pc);
+                CloseNested();
+                GoTo(calleeEntry);
+                return true;
+            }
             StoreSlot64(WasmAbi.Pc,
                 () => Op(new Int64Constant(_env.EncodeCallTarget(callee))));
             EmitReturn(WasmVerdict.SuccessTailCall);
@@ -1004,7 +1134,7 @@ public static class WasmPredicateCompiler
                 {
                     // Tail =/2: unify, then proceed at Cp.
                     EmitInlineUnify(pc);
-                    EmitReturn(WasmVerdict.Success);
+                    EmitProceedReturn();
                     return;
                 }
                 // A builtin in tail position: run it, then proceed. Cursor -1
@@ -1014,10 +1144,11 @@ public static class WasmPredicateCompiler
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return;
             }
-            if (callee == _p.FunctorId)
+            if (_entryByFid.TryGetValue(callee, out int calleeEntry))
             {
-                // The self tail call: back to the entry dispatch, unless the
-                // heap has crossed the watermark (the engine collects there).
+                // An in-group tail call (self included): back to the
+                // dispatch at the callee's entry, unless the heap crossed
+                // the watermark (the engine collects there).
                 Op(new LocalGet(LH));
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32GreaterThanOrEqualSigned());
@@ -1029,9 +1160,7 @@ public static class WasmPredicateCompiler
                 // the barrier the original entry came in with -- a body that
                 // left choice points would be over-cut (SetB0(B) parity).
                 StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
-                Op(new Int32Constant(0));
-                Op(new LocalSet(LCur));
-                BrDispatch();
+                GoTo(calleeEntry);
                 return;
             }
             StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
@@ -1073,15 +1202,16 @@ public static class WasmPredicateCompiler
             GoTo(varA);
         }
 
-        private void EmitSwitchOnInteger(int reg, int tableId)
+        private void EmitSwitchOnInteger(Instr ins, int reg, int tableId)
         {
-            var table = _p.SwitchTables[tableId];
+            int b = Bias(ins);
+            var table = Sec(ins).Predicate.SwitchTables[tableId];
             RegLoad(reg); Op(new LocalSet(LC0)); Deref();
             TagOfC0();
             Op(new Int32Constant((int)Tag.Int));
             Op(new Int32NotEqual());
             OpenIf();
-            GoTo(table.DefaultAddress);
+            GoTo(b + table.DefaultAddress);
             CloseNested();
             // The payload, sign-extended from 60 bits.
             Op(new LocalGet(LC0));
@@ -1096,15 +1226,16 @@ public static class WasmPredicateCompiler
                 Op(new Int64Constant(table.Keys[k]));
                 Op(new Int64Equal());
                 OpenIf();
-                GoTo(table.Values[k]);
+                GoTo(b + table.Values[k]);
                 CloseNested();
             }
-            GoTo(table.DefaultAddress);
+            GoTo(b + table.DefaultAddress);
         }
 
-        private void EmitSwitchOnAtom(int reg, int tableId)
+        private void EmitSwitchOnAtom(Instr ins, int reg, int tableId)
         {
-            var table = _p.SwitchTables[tableId];
+            int b = Bias(ins);
+            var table = Sec(ins).Predicate.SwitchTables[tableId];
             RegLoad(reg); Op(new LocalSet(LC0)); Deref();
             for (int k = 0; k < table.Count; k++)
             {
@@ -1112,21 +1243,23 @@ public static class WasmPredicateCompiler
                 Op(new Int64Constant(Cell.Atom(table.Keys[k]).Data));
                 Op(new Int64Equal());
                 OpenIf();
-                GoTo(table.Values[k]);
+                GoTo(b + table.Values[k]);
                 CloseNested();
             }
-            GoTo(table.DefaultAddress);
+            GoTo(b + table.DefaultAddress);
         }
 
         // ---- choice points (the engine's own layout, cell for cell) ----
 
         private void EmitTry(Instr ins)
-            => EmitPushChoicePoint(ins.Pc, ins.I1, CursorOf(ins.Pc + 9), gotoAddr: ins.I0);
+            => EmitPushChoicePoint(ins.Pc, SelfFid(ins), ins.I1,
+                                   bpAddress: ins.Pc + 9, gotoAddr: Bias(ins) + ins.I0);
 
         /// <summary>The engine's PushChoicePoint, cell for cell; jumps to
         /// <paramref name="gotoAddr"/> afterwards when one is given, else
         /// falls through.</summary>
-        private void EmitPushChoicePoint(int pc, int arity, int bpCursor, int gotoAddr = -1)
+        private void EmitPushChoicePoint(int pc, int fid, int arity, int bpAddress,
+                                         int gotoAddr = -1)
         {
             int size = 11 + arity;
             Op(new LocalGet(LST));
@@ -1147,7 +1280,7 @@ public static class WasmPredicateCompiler
             CellStoreDyn(LStackB, LST, ctl + 1, () => RawInt(() => Op(new LocalGet(LCP))));
             CellStoreDyn(LStackB, LST, ctl + 2, () => RawInt(() => Op(new LocalGet(LB))));
             CellStoreDyn(LStackB, LST, ctl + 3, () => RawInt(() =>
-                Op(new Int32Constant(_env.EncodeBp(bpCursor)))));
+                Op(new Int32Constant(_env.EncodeBp(fid, bpAddress)))));
             CellStoreDyn(LStackB, LST, ctl + 4, () => RawInt(() => Op(new LocalGet(LTR))));
             CellStoreDyn(LStackB, LST, ctl + 5, () => RawInt(() => LoadSlot32(WasmAbi.ExtraTrailTop)));
             CellStoreDyn(LStackB, LST, ctl + 6, () => RawInt(() => Op(new LocalGet(LH))));
@@ -1265,9 +1398,10 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LH)); Op(new LocalSet(LHB));            // AssignHb(H)
             // The CP's BP moves to the next alternative.
             Op(new LocalGet(LT1));
-            RawInt(() => Op(new Int32Constant(_env.EncodeBp(CursorOf(ins.Pc + 5)))));
+            RawInt(() => Op(new Int32Constant(
+                _env.EncodeBp(SelfFid(ins), ins.Pc + 5))));
             Op(new Int64Store { Offset = 4 * 8 });                  // ctl[3]
-            GoTo(ins.I0);
+            GoTo(Bias(ins) + ins.I0);
         }
 
         private void EmitTrust(Instr ins)
@@ -1280,7 +1414,7 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 3 * 8 });
             Op(new Int32WrapInt64()); Op(new LocalSet(LB));         // ctl[2]
             Op(new LocalGet(LT2)); Op(new LocalSet(LST));
-            GoTo(ins.I0);
+            GoTo(Bias(ins) + ins.I0);
         }
 
         // ---- frames ----
@@ -1368,7 +1502,7 @@ public static class WasmPredicateCompiler
         {
             // Unifies two cells (get_value_y / get_value_x). Both sides
             // derefed; the general shapes step aside.
-            var ins = new Instr(pc, Opcode.GetValueY, 0);   // pc carrier for the emits below
+            var ins = new Instr(pc, Opcode.GetValueY, 0, 0);   // pc carrier for the emits below
             loadLeft(); Op(new LocalSet(LC0)); Deref();
             Op(new LocalGet(LC0)); Op(new LocalSet(LC2));
             Op(new LocalGet(LDa)); Op(new LocalSet(LT2));           // left-side home
@@ -2138,7 +2272,8 @@ public static class WasmPredicateCompiler
             // ADR-025: a body try_me_else (inline ITE / disjunction) carries a
             // negative arity sentinel -- its CP saves no argument registers.
             int arity = ins.I1 < 0 ? 0 : ins.I1;
-            EmitPushChoicePoint(ins.Pc, arity, CursorOf(ins.I0));
+            EmitPushChoicePoint(ins.Pc, SelfFid(ins), arity,
+                                bpAddress: Bias(ins) + ins.I0);
             // ...and falls through into the first alternative.
         }
 
@@ -2147,7 +2282,8 @@ public static class WasmPredicateCompiler
             EmitRestoreCommon(ins.Pc);
             Op(new LocalGet(LH)); Op(new LocalSet(LHB));            // AssignHb(H)
             Op(new LocalGet(LT1));
-            RawInt(() => Op(new Int32Constant(_env.EncodeBp(CursorOf(ins.I0)))));
+            RawInt(() => Op(new Int32Constant(
+                _env.EncodeBp(SelfFid(ins), Bias(ins) + ins.I0))));
             Op(new Int64Store { Offset = 4 * 8 });                  // ctl[3] = BP
             // ...and falls through into this alternative's code.
         }
@@ -2184,9 +2320,10 @@ public static class WasmPredicateCompiler
             CellStoreDyn(LHeapB, LH, 1, () => Op(new Int64Constant(paired.Data)));
         }
 
-        private void EmitGetFloat(int literalId, int reg, int pc)
+        private void EmitGetFloat(Instr fins)
         {
-            double value = _floats![literalId];
+            int literalId = fins.I0, reg = fins.I1, pc = fins.Pc;
+            double value = Sec(fins).FloatLiterals![literalId];
             long bits = System.BitConverter.DoubleToInt64Bits(value == 0.0 ? 0.0 : value);
 
             RegLoad(reg); Op(new LocalSet(LC0)); Deref();
@@ -2243,12 +2380,13 @@ public static class WasmPredicateCompiler
             CloseNested();
         }
 
-        private void EmitPutFloat(int literalId, int reg, int pc)
+        private void EmitPutFloat(Instr fins)
         {
+            int literalId = fins.I0, reg = fins.I1, pc = fins.Pc;
             // The register takes a REF to the header, as the engine's
             // put_float does.
             EmitHeapGuard(pc, 2);
-            EmitWriteFloatAtH(_floats![literalId]);
+            EmitWriteFloatAtH(Sec(fins).FloatLiterals![literalId]);
             RegStore(reg, () =>
             { Op(new LocalGet(LH)); Op(new Int64ExtendInt32Unsigned()); });
             Op(new LocalGet(LH)); Op(new Int32Constant(2)); Op(new Int32Add());

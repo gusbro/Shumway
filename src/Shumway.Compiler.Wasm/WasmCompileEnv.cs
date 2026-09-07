@@ -1,5 +1,7 @@
 using Shumway.Core;
 
+using Shumway.Compiler.Wam;
+
 namespace Shumway.Compiler.Wasm;
 
 /// <summary>A predicate the compiler refuses: an opcode outside the
@@ -16,17 +18,25 @@ public sealed class WasmCompileException(string reason) : Exception(reason);
 /// </summary>
 public interface IWasmCompileEnv
 {
-    /// <summary>The BP field of a choice point whose alternatives continue at
-    /// <paramref name="cursor"/>. The compiled fail path compares BP against
-    /// each of its own encodings to backtrack locally; anything else returns
+    /// <summary>The BP field of a choice point pushed by
+    /// <paramref name="functorId"/> whose alternatives continue at the
+    /// biased bytecode <paramref name="address"/>. ADDRESSES, not cursor
+    /// ordinals: a promotion rebuilds the group and renumbers cursors, but
+    /// addresses never move, so choice points outlive the build that pushed
+    /// them. The compiled fail path compares BP against each of the group's
+    /// own encodings to backtrack locally; anything else returns
     /// <see cref="WasmVerdict.Fail"/> for the host to handle.</summary>
-    int EncodeBp(int cursor);
+    int EncodeBp(int functorId, int address);
 
-    /// <summary>The continuation (CP) a call site leaves behind, so that the
-    /// callee's proceed re-enters this predicate at
-    /// <paramref name="cursor"/>. In the engine this is an interned resume
-    /// marker.</summary>
-    int EncodeReturnMarker(int cursor);
+    /// <summary>The continuation (CP) a call site of
+    /// <paramref name="functorId"/> leaves behind, so that the callee's
+    /// proceed re-enters it at the biased bytecode
+    /// <paramref name="address"/> (same rebuild-stability rule as
+    /// <see cref="EncodeBp"/>). In the engine this is an interned resume
+    /// marker; in a group the value is ALSO baked into the proceed jump
+    /// table, so an in-group callee returns without leaving the
+    /// module.</summary>
+    int EncodeReturnMarker(int functorId, int address);
 
     /// <summary>The Pc value that dispatches <paramref name="calleeFunctorId"/>
     /// (a linked address in the engine; an index in the harness).</summary>
@@ -72,4 +82,26 @@ public sealed record WasmEntry(
     /// <summary>X registers the module addresses (highest index + 1). The
     /// host must guarantee the register area covers this before entering --
     /// an out-of-range wasm store corrupts whatever lies beyond.</summary>
+    int RegisterDemand);
+
+/// <summary>One predicate of a group compile: its compiled form, the BIAS
+/// that offsets its bytecode addresses into the group's unified pc space
+/// (the linked base in the engine, so a deopt pc needs no translation), and
+/// its float-literal pool.</summary>
+public sealed record WasmGroupMember(
+    CompiledPredicate Predicate,
+    int Bias,
+    System.Collections.Generic.IReadOnlyList<double>? FloatLiterals);
+
+/// <summary>A compiled GROUP module: one dispatcher over every member's
+/// code, global cursors, cross-member calls as internal jumps.</summary>
+public sealed record WasmGroupEntry(
+    byte[] Module,
+    /// <summary>Each member functor's fresh-entry cursor.</summary>
+    System.Collections.Generic.IReadOnlyDictionary<int, int> EntryCursorByFid,
+    /// <summary>Biased bytecode address to cursor id, for every re-entry
+    /// point the module has.</summary>
+    System.Collections.Generic.IReadOnlyDictionary<int, int> CursorByAddress,
+    /// <summary>X registers the module addresses (highest index + 1),
+    /// across all members.</summary>
     int RegisterDemand);

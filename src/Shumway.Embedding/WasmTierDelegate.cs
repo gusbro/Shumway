@@ -2,37 +2,27 @@ using Shumway.Core;
 
 namespace Shumway.Embedding;
 
-/// <summary>The wasm tier's <c>PredicateDelegate</c>: a CHAIN driver over a
-/// compiled-module world. One chain stages the engine areas once (pin or
-/// copy, fill the mailbox) and then hops module-to-module on the mailbox the
-/// wasm keeps synced -- a cross-functor tail call or a callee's proceed into
-/// a wasm caller is a dictionary probe and a raw call, not a round-trip
-/// through the interpreter's dispatch plus a full re-marshal. That matters
-/// because in the browser every line of C# here is MONO-INTERPRETED: the old
-/// per-entry marshalling cost ~150 us against ~3 us of wasm work.
+/// <summary>The wasm tier's <c>PredicateDelegate</c>: a CHAIN driver over the
+/// store's group module. One chain stages the engine areas once (pin or
+/// copy, fill the mailbox) and runs; in-group calls never leave the module
+/// (group compilation turned them into internal jumps), so what remains here
+/// is the entry itself, builtins, deopt, and hops to OUT-of-group callees.
 ///
 /// The interpreter contract is unchanged at the edges: Success leaves Cp for
-/// the caller; a tail call to a NON-wasm callee or a deopt sets Pc +
+/// the caller; a tail call to a non-wasm callee or a deopt sets Pc +
 /// <see cref="Activation.IlTailCallPending"/> and returns true; Fail returns
 /// false and backtracking re-enters wasm choice points through their marker
-/// BPs. The chain simply keeps hops between wasm-promoted functors
-/// in-house.</summary>
+/// BPs. Marker payloads are (functor, ADDRESS) -- stable across group
+/// rebuilds -- and the world translates them to the current build's cursors.</summary>
 public sealed class WasmTierDelegate
 {
     private readonly int _functorId;
     private readonly IWasmExecutionWorld _world;
-    private readonly int _handle;
-    // cursor -> linked bytecode address, for the mode-incompatible fallback
-    // (trail-everything / occurs_check): run the entry on the interpreter.
-    private readonly int[] _linkedAddressByCursor;
 
-    public WasmTierDelegate(int functorId, IWasmExecutionWorld world, int handle,
-                            int[] linkedAddressByCursor)
+    public WasmTierDelegate(int functorId, IWasmExecutionWorld world)
     {
         _functorId = functorId;
         _world = world;
-        _handle = handle;
-        _linkedAddressByCursor = linkedAddressByCursor;
     }
 
     /// <summary>Diagnostic tallies (all delegates, process-wide): chain
@@ -63,29 +53,39 @@ public sealed class WasmTierDelegate
         }
     }
 
-    public bool Invoke(Activation engine, int cursor)
+    /// <summary>The delegate entry. <paramref name="address"/> is a marker
+    /// payload: 0 for a fresh call, a biased bytecode address for a resume
+    /// or a retry.</summary>
+    public bool Invoke(Activation engine, int address)
     {
         if (!engine.WasmModeCompatible || engine.HasPendingWakeups)
         {
-            engine.SetPc(_linkedAddressByCursor[cursor]);
+            engine.SetPc(address == 0 ? _world.EntryAddressOf(_functorId) : address);
             engine.IlTailCallPending = true;
             return true;
         }
         DiagEntries++;
-        int handle = _handle;
         int currentFid = _functorId;
         bool result;
         int pendingPc = int.MinValue;
         using (var cx = _world.BeginChain(engine))
         {
+            if (!cx.TryResolve(currentFid, address, out int cursor))
+            {
+                // The captured build predates this functor (a nested rebuild
+                // raced the entry): run its bytecode this once.
+                engine.SetPc(address == 0 ? _world.EntryAddressOf(_functorId) : address);
+                engine.IlTailCallPending = true;
+                return true;
+            }
             while (true)
             {
-                WasmVerdict v = cx.Call(handle, cursor);
+                WasmVerdict v = cx.Call(cursor);
                 if (v == WasmVerdict.Success)
                 {
                     int cp = (int)cx.ReadSlot(WasmAbi.ContinuationPc);
                     if (Activation.IsResumeMarker(cp)
-                        && TryChain(cx, engine, cp, ref handle, ref currentFid, ref cursor))
+                        && TryChain(cx, engine, cp, ref currentFid, ref cursor))
                         continue;
                     result = true;      // the interpreter proceeds at Cp
                     break;
@@ -94,7 +94,7 @@ public sealed class WasmTierDelegate
                 {
                     int pc = (int)cx.ReadSlot(WasmAbi.Pc);
                     if (Activation.IsResumeMarker(pc)
-                        && TryChain(cx, engine, pc, ref handle, ref currentFid, ref cursor))
+                        && TryChain(cx, engine, pc, ref currentFid, ref cursor))
                         continue;
                     DiagTailExits++;
                     pendingPc = pc;     // non-wasm callee: the interpreter dispatches
@@ -168,7 +168,9 @@ public sealed class WasmTierDelegate
                     break;
                 }
                 cx.RefreshFromEngine();
-                cursor = ret;
+                if (!cx.TryResolve(currentFid, ret, out cursor))
+                    throw new System.InvalidOperationException(
+                        $"builtin resume address {ret} unknown to the build");
             }
         }
         if (pendingPc != int.MinValue)
@@ -180,22 +182,21 @@ public sealed class WasmTierDelegate
     }
 
     /// <summary>Whether the marker can be followed inside the chain: the
-    /// functor is wasm-promoted in this world AND the chain guards hold. The
-    /// guards are the boundary work the interpreter would have done: heap
-    /// watermark (collect at a return boundary), cancellation, and pending
-    /// wakeups (only a builtin can queue them mid-chain; they must drain at
-    /// the next goal boundary, which the interpreter owns).</summary>
-    private bool TryChain(IWasmChainContext cx, Activation engine, int marker,
-                          ref int handle, ref int currentFid, ref int cursor)
+    /// functor is in the build THIS chain captured AND the chain guards
+    /// hold. The guards are the boundary work the interpreter would have
+    /// done: heap watermark (collect at a return boundary), cancellation,
+    /// and pending wakeups (only a builtin can queue them mid-chain; they
+    /// must drain at the next goal boundary, which the interpreter owns).</summary>
+    private static bool TryChain(IWasmChainContext cx, Activation engine, int marker,
+                                 ref int currentFid, ref int cursor)
     {
-        var (fid, cur) = Activation.DecodeResumeMarker(marker);
-        if (!_world.TryGetHandle(fid, out int h)) return false;
+        var (fid, address) = Activation.DecodeResumeMarker(marker);
+        if (!cx.TryResolve(fid, address, out int c)) return false;
         if (cx.ReadSlot(WasmAbi.HeapTop) >= cx.ReadSlot(WasmAbi.HeapWatermark)) return false;
         if (engine.IsCancellationRequested || engine.HasPendingWakeups) return false;
         DiagSwitches++;
-        handle = h;
         currentFid = fid;
-        cursor = cur;
+        cursor = c;
         return true;
     }
 }
