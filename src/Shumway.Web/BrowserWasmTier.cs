@@ -214,6 +214,16 @@ internal static partial class WebShumwayApp
                 }
                 int promoted = tiered.IlPromotion.PromotedFunctorIds().Count();
                 report.Append("promoted predicates: ").Append(promoted).Append('\n');
+
+                // Attribute a slow case: run nrev once with the verdict tally
+                // reset, so a high deopt-to-entry ratio names the watermark as
+                // the cost rather than the boundary.
+                WasmTierDelegate.ResetDiag();
+                tiered.Query("range(1, 200, L), nrev(L, _).");
+                report.Append($"nrev diag: entries={WasmTierDelegate.DiagEntries} "
+                    + $"tailcalls={WasmTierDelegate.DiagTailCalls} "
+                    + $"deopts={WasmTierDelegate.DiagDeopts} "
+                    + $"builtins={WasmTierDelegate.DiagBuiltins}\n");
                 if (promoted == 0)
                     report.Append("NOTE: nothing promoted; the measurement below is Tier-0 vs Tier-0\n");
 

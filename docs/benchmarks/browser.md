@@ -56,29 +56,37 @@ does not, and the gap between them is not noise:
   interpreter is the arc's thesis made concrete: native wasm against Mono's
   wasm interpreter is a different order of speed.
 
-- **nrev is call-and-allocate heavy and barely moves.** It builds a great many
-  cons cells (heap pressure, which trips the watermark and deopts back to the
-  interpreter to collect) and crosses functors: `nrev`'s non-tail call to
-  itself and its tail call to `app` each leave the module, and while `app`'s
-  own recursion is a tail self-call that stays native, the per-element
-  `nrev`→`app` handoff round-trips the interpreter's marker machinery. The
-  structure work itself is open-coded in wasm and fast; what it does not yet
-  have is a way to stay native ACROSS a non-tail predicate boundary or a heap
-  collection.
+- **nrev is entry-count bound, and the diagnostic says so precisely.** A
+  verdict tally over one `nrev(200)` reads `entries=602, tailcalls=400,
+  deopts=0, builtins=0`: nrev runs entirely in wasm (no deopt to the
+  interpreter, no builtin crossing), and `app`'s own recursion is a tail
+  self-call that stays native. So neither the watermark nor a builtin tax is
+  the cost -- both hypotheses are refuted by the zeros. What remains is the
+  ENTRY COUNT. Every non-tail `nrev` call and every cross-functor tail call
+  (`nrev`→`app`) leaves the module and re-enters it, and each entry pays the
+  runner's per-call setup: pin the four arrays, fill the 24 mailbox slots from
+  engine state, call, sync the scalars back. The boundary crossings themselves
+  are cheap (~1000 of them, ~0.3 ms), but the per-entry marshalling across
+  ~3000 entries in the timed run is what keeps nrev near Tier-0. The lever is
+  therefore to REDUCE the entry count -- a direct wasm-to-wasm tail call would
+  fold the `nrev`→`app` handoff and every cross-functor tail into one native
+  call, not a bounce -- not to speed up the structure work, which is already
+  native.
 
 ## What the spread tells the next phase
 
 The design bails to the interpreter at three seams, and the spread names their
 cost precisely:
 
-1. **Every non-tail inter-predicate call** round-trips through the
-   interpreter's resume markers -- twice, once to dispatch the callee and once
-   when it proceeds back. Free for a self-tail loop (which branches inside the
-   module), per-call for everything else. This is the dominant cost for BOTH
-   `tak` (three non-tail self-calls per invocation) and `nrev` (the per-element
-   `nrev`→`app` handoff), so a direct wasm-to-wasm call -- resolving the
-   callee's table index and calling it, rather than returning verdict 2 -- is
-   the single largest lever, and the measured priority for the next phase.
+1. **Every module entry pays the runner's marshalling**, and the entry count
+   is driven by inter-predicate calls: a non-tail call and a cross-functor
+   tail call each leave and re-enter the module. Free for a self-tail loop
+   (which branches inside the module), per-call for everything else. The
+   `nrev` diagnostic (602 entries, 0 deopts) pins this as its cost, and `tak`'s
+   three non-tail self-calls per invocation are the same shape. A direct
+   wasm-to-wasm call -- resolving the callee's table index and calling it,
+   rather than bouncing out and back -- collapses those entries, and is the
+   single largest lever and the measured priority for the next phase.
 2. **Every builtin** is a `BuiltinRequest`. Cheap when rare (the counter's one
    `is` per turn), and NOT what bounds `tak` (its arithmetic is open-coded).
    Open-coded wasm counterparts for the type tests and `=/2` over immediates

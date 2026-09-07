@@ -27,6 +27,15 @@ public sealed class WasmTierDelegate
         _linkedAddressByCursor = linkedAddressByCursor;
     }
 
+    /// <summary>Diagnostic verdict tallies (all delegates, process-wide):
+    /// entries, deopts, builtin requests. A probe reads these to attribute a
+    /// slow case -- a high deopt count means the predicate keeps stepping
+    /// aside (watermark, attvar) rather than running native. Not on any hot
+    /// path decision; plain longs, last-writer-wins is fine for a counter.</summary>
+    public static long DiagEntries, DiagDeopts, DiagBuiltins, DiagTailCalls;
+
+    public static void ResetDiag() { DiagEntries = DiagDeopts = DiagBuiltins = DiagTailCalls = 0; }
+
     public bool Invoke(Activation engine, int cursor)
     {
         if (!engine.WasmModeCompatible)
@@ -35,6 +44,7 @@ public sealed class WasmTierDelegate
             engine.IlTailCallPending = true;
             return true;
         }
+        DiagEntries++;
         while (true)
         {
             WasmVerdict v = _runner.Run(engine, cursor);
@@ -44,6 +54,7 @@ public sealed class WasmTierDelegate
                     return true;
                 case WasmVerdict.SuccessTailCall:
                 case WasmVerdict.Deopt:
+                    if (v == WasmVerdict.Deopt) DiagDeopts++; else DiagTailCalls++;
                     engine.SetPc((int)_runner.ReadSlot(WasmAbi.Pc));
                     engine.IlTailCallPending = true;
                     return true;
@@ -51,6 +62,7 @@ public sealed class WasmTierDelegate
                     return false;
                 case WasmVerdict.BuiltinRequest:
                 {
+                    DiagBuiltins++;
                     long req = _runner.ReadSlot(WasmAbi.BuiltinId);
                     int builtinId = (int)(uint)req;
                     int trim = (int)(req >> 32);
