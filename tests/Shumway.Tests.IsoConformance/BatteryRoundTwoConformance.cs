@@ -234,13 +234,12 @@ public class BatteryRoundTwoConformance
         Succeeds("catch(functor(_, foo, -1), "
             + "error(domain_error(not_less_than_zero, -1), _), true).");
         // An arity past the limit raises. The battery writes 300 for it,
-        // which assumes a limit of the WAM-era 255; here a term of 300
-        // arguments is a term of 300 arguments, and the limit is the arity
-        // whose term would fill 4 GiB. So the test is asked the way it means
-        // to be asked, from the flag itself.
-        Succeeds("current_prolog_flag(max_arity, M), Over is M + 1, "
-            + "catch(functor(_, foo, Over), "
-            + "error(representation_error(max_arity), _), true).");
+        // which assumes a limit of the WAM-era 255; here the FLAG is
+        // unbounded (issue #106) and what remains is address-space
+        // capacity, answered as a resource error. So the test is asked
+        // the way it means to be asked, against that capacity.
+        Succeeds("catch(functor(_, foo, 536870912), "
+            + "error(resource_error(finite_memory), _), true).");
         Succeeds("functor(T, foo, 300), functor(T, foo, 300).");
         Succeeds("functor(T, foo, 2), T = foo(_, _).");
     }

@@ -43,19 +43,29 @@ public static class RuntimeCaps
         && !OperatingSystem.IsBrowser();
 #endif
 
-    /// <summary>The largest arity a compound term may have, which is a
-    /// question about ADDRESS SPACE and so about the runtime. A term of arity
-    /// N occupies N+1 heap cells of eight bytes, so the number is whatever
-    /// term size the host can be expected to hold: 4 GiB where addresses are
-    /// 64 bits, and 128 MiB where they are 32 bits, which is a browser and a
-    /// 32-bit host. Promising the 64-bit figure everywhere would be promising
-    /// a term larger than the whole address space the browser has.
+    /// <summary>The largest arity a compound TERM can be represented with —
+    /// an ADDRESS-SPACE capacity, not the <c>max_arity</c> flag. A term of
+    /// arity N occupies N+1 heap cells of eight bytes, so the cap is the
+    /// arity whose term fills 4 GiB where addresses are 64 bits and 128 MiB
+    /// where they are 32 (a browser, a 32-bit host).
     ///
-    /// <para>It is a limit rather than a guarantee: the term still has to fit
-    /// in memory the host will actually give. What it says is what cannot be
-    /// built at all, which is what <c>current_prolog_flag(max_arity, _)</c> is
-    /// asked for.</para></summary>
+    /// <para>The FLAG reports <c>unbounded</c> (issue #106, following
+    /// SICStus): terms have no arity limit of their own, only capacity.
+    /// Asking past this cap is answered with
+    /// <c>resource_error(finite_memory)</c> — checked BEFORE any allocation,
+    /// so <c>functor(T, f, 2^29)</c> errors instead of thrashing the host
+    /// toward the very limit it is probing.</para></summary>
     public static int MaxArity => System.IntPtr.Size >= 8
         ? (1 << 29) - 1     // 4 GiB
         : (1 << 24) - 1;    // 128 MiB
+
+    /// <summary>The largest arity a PREDICATE (procedure) may be defined
+    /// with — the <c>max_procedure_arity</c> flag of stc#70, defined exactly
+    /// for processors whose <c>max_arity</c> is <c>unbounded</c>. Terms stay
+    /// unbounded; defining a clause, asserting one, or naming an indicator
+    /// past this raises
+    /// <c>representation_error(max_procedure_arity)</c>. 1023 is generous
+    /// (the survey's common value is 255) and costs nothing; it also bounds
+    /// the register bank a head can demand.</summary>
+    public const int MaxProcedureArity = 1023;
 }

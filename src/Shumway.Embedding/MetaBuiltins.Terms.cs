@@ -106,6 +106,7 @@ public static partial class MetaBuiltins
             case "min_integer":
             case "integer_rounding_function":
             case "max_arity":
+            case "max_procedure_arity":
             case "dialect":
             case "argv":
                 throw new ShumwayPrologException(IsoError.PermissionError(
@@ -335,7 +336,7 @@ public static partial class MetaBuiltins
     /// <item><c>integer_rounding_function</c> — <c>toward_zero</c>.</item>
     /// <item><c>unknown</c>, <c>occurs_check</c> — informational
     /// flag state (engine doesn't yet vary behaviour on them).</item>
-    /// <item><c>max_arity</c> — large integer constant.</item>
+    /// <item><c>max_arity</c> — <c>unbounded</c>; <c>max_procedure_arity</c> — 1023 (stc#70).</item>
     /// <item><c>version_data</c> — <c>shumway(Major, Minor, Patch, [])</c>,
     /// the engine version (the GProlog/SWI convention consumers like the
     /// Logtalk adapter query).</item>
@@ -483,10 +484,19 @@ public static partial class MetaBuiltins
                 return false;
 
             case "max_arity":
-                // ISO allows an integer or unbounded. It is an integer here
-                // because the limit is a real one: see MaxArity, where the
-                // number is the arity whose term fills 4 GiB of heap.
-                return engine.UnifyRegisterWithCell(1, Cell.Int(MaxArity));
+                // ISO allows an integer or unbounded, and unbounded is the
+                // truth here (issue #106): a term's arity is limited only
+                // by address space, and running into THAT capacity answers
+                // resource_error(finite_memory), not a flag-derived
+                // representation_error. SICStus reports the same.
+                return UnifyAtom(engine, 1, "unbounded");
+
+            case "max_procedure_arity":
+                // stc#70: with max_arity unbounded, PROCEDURES may still be
+                // capped. Terms of any width are fine; defining a predicate
+                // past this raises representation_error(max_procedure_arity).
+                return engine.UnifyRegisterWithCell(
+                    1, Cell.Int(Shumway.Core.RuntimeCaps.MaxProcedureArity));
 
             default:
                 // §8.17.2.3: an atom that names no flag is a domain error,
@@ -501,7 +511,7 @@ public static partial class MetaBuiltins
     /// the value is produced by the same bound-name switch.</summary>
     private static readonly string[] EnumerableFlags =
     {
-        "bounded", "max_arity",
+        "bounded", "max_arity", "max_procedure_arity",
         "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
         "debug", "dialect", "library_dialect", "version_data", "argv", "pid",

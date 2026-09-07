@@ -1361,15 +1361,18 @@ needs them. Three limits are deliberate.
 
 | Limit | Value | At the limit |
 |---|---|---|
-| Arity of a compound term | the `max_arity` flag: 536,870,911, or 16,777,215 where addresses are 32 bits | `representation_error(max_arity)` |
+| Arity of a compound term | none: the `max_arity` flag is `unbounded` | past address-space capacity, `resource_error(finite_memory)` |
+| Arity of a predicate | 1023, the `max_procedure_arity` flag | `representation_error(max_procedure_arity)` when a clause is defined or an indicator names one |
 | Expansions of one term or goal along one path | 127 | `resource_error(expansion_depth)` |
 | Items shown of one answer | 100, the `answer_max_depth` flag; 0 shows all | the rest reads as `...` |
 
-The arity is a size: a term of arity N costs N+1 cells of eight bytes, so the
-limit is the term of 4 GiB, or of 128 MiB in a browser and on a 32-bit host,
-where the whole address space is smaller than the 64-bit figure. A wide term of
-variables is how an array is modelled, and `functor(A, array, 1000000)` builds
-one.
+A term's arity has no limit of its own, only cost: arity N is N+1 cells of
+eight bytes, and what refuses an absurd request is the address space (the
+refusal comes before any allocation, so probing it returns at once). A wide
+term of variables is how an array is modelled, and
+`functor(A, array, 1000000)` builds one. Predicates are different: a clause
+head wider than 1023 arguments cannot be defined, by `assertz/1` or by a
+consulted file alike.
 
 The expansion budget counts replacements along one path, not goals in a
 clause. A hook is applied again to what it produces, so one that expands a
