@@ -19,7 +19,17 @@ public static class RecursionGuard
     /// program's data decides.</summary>
     public static void EnsureRoom()
     {
+#if NETFRAMEWORK
+        // .NET Framework has only the throwing probe (the Try form arrived
+        // with .NET Core); an untaken try block costs nothing to enter.
+        try { System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack(); }
+        catch (InsufficientExecutionStackException)
+        {
+            throw new PrologRuntimeException("resource_error", "term_nesting");
+        }
+#else
         if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
             throw new PrologRuntimeException("resource_error", "term_nesting");
+#endif
     }
 }
