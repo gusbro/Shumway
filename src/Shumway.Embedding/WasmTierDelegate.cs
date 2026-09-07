@@ -30,6 +30,10 @@ public sealed class WasmTierDelegate
     /// to the interpreter for tail calls it must dispatch. Not on any hot
     /// path decision; plain longs.</summary>
     public static long DiagEntries, DiagSwitches, DiagDeopts, DiagBuiltins, DiagTailExits;
+    /// <summary>Requests per builtin id — which builtins actually cost a
+    /// chain exit, to decide what earns open-coding. Diagnostic only.</summary>
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
+        DiagBuiltinTally = new();
     /// <summary>The first few distinct deopt PCs, for attribution: a deopt
     /// storm names its instruction. -1 = unused slot.</summary>
     public static readonly long[] DiagDeoptPcs = new long[8];
@@ -40,6 +44,7 @@ public sealed class WasmTierDelegate
     public static void ResetDiag()
     {
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
+        DiagBuiltinTally.Clear();
         for (int i = 0; i < DiagDeoptPcs.Length; i++) DiagDeoptPcs[i] = -1;
         DiagFirstDeoptSlots = null;
     }
@@ -68,6 +73,7 @@ public sealed class WasmTierDelegate
         int currentFid = _functorId;
         bool result;
         int pendingPc = int.MinValue;
+        bool growTrail = false, growStack = false;
         using (var cx = _world.BeginChain(engine))
         {
             if (!cx.TryResolve(currentFid, address, out int cursor))
@@ -106,6 +112,15 @@ public sealed class WasmTierDelegate
                     DiagDeopts++;
                     pendingPc = (int)cx.ReadSlot(WasmAbi.Pc);
                     NoteDeoptPc(pendingPc);
+                    // A deopt AT an area's limit is a capacity signal, not a
+                    // semantic one. The wasm limit sits a margin below the
+                    // real array, so the interpreter completes the step
+                    // INSIDE that margin and never grows the area — leaving
+                    // every later chain to deopt at the same spot (measured:
+                    // 108 of tak's 114 entries, all at one pc). Note it here;
+                    // the growth runs after the chain closes.
+                    growTrail = cx.ReadSlot(WasmAbi.TrailTop) >= cx.ReadSlot(WasmAbi.TrailLimit);
+                    growStack = cx.ReadSlot(WasmAbi.StackTop) >= cx.ReadSlot(WasmAbi.StackLimit);
                     if (DiagFirstDeoptSlots is null)
                         DiagFirstDeoptSlots = new[]
                         {
@@ -132,6 +147,7 @@ public sealed class WasmTierDelegate
                 DiagBuiltins++;
                 long req = cx.ReadSlot(WasmAbi.BuiltinId);
                 int builtinId = (int)(uint)req;
+                DiagBuiltinTally.AddOrUpdate(builtinId, 1, (_, n) => n + 1);
                 int trim = (int)(req >> 32);
                 int ret = (int)cx.ReadSlot(WasmAbi.Cursor);
                 // The builtin runs against the ENGINE: adopt the mailbox
@@ -173,6 +189,11 @@ public sealed class WasmTierDelegate
                         $"builtin resume address {ret} unknown to the build");
             }
         }
+        // After the chain closed (the engine is authoritative again): give
+        // the area the room the wasm ran out of, so the next chain stages a
+        // bigger image instead of deopting at the same spot.
+        if (growTrail) engine.GrowWasmBindingTrail();
+        if (growStack) engine.GrowWasmStack();
         if (pendingPc != int.MinValue)
         {
             engine.SetPc(pendingPc);

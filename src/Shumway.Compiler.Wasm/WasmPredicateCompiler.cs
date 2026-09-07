@@ -181,6 +181,8 @@ public static class WasmPredicateCompiler
                 case Opcode.SwitchOnArg:
                 case Opcode.SwitchOnIntegerArg:
                 case Opcode.SwitchOnAtomArg:
+                case Opcode.SwitchOnStructure:
+                case Opcode.SwitchOnStructureArg:
                 case Opcode.Try:
                 case Opcode.Retry:
                 case Opcode.Trust:
@@ -294,10 +296,13 @@ public static class WasmPredicateCompiler
                         break;
                     case Opcode.SwitchOnInteger:
                     case Opcode.SwitchOnAtom:
+                    case Opcode.SwitchOnStructure:
                     case Opcode.SwitchOnIntegerArg:
                     case Opcode.SwitchOnAtomArg:
+                    case Opcode.SwitchOnStructureArg:
                     {
                         int tableId = ins.Op is Opcode.SwitchOnInteger or Opcode.SwitchOnAtom
+                                or Opcode.SwitchOnStructure
                             ? ins.I0 : ins.I1;
                         var table = Sec(ins).Predicate.SwitchTables[tableId];
                         foreach (int v in table.Values) _leaders.Add(b + v);
@@ -829,6 +834,8 @@ public static class WasmPredicateCompiler
                 case Opcode.SwitchOnIntegerArg: EmitSwitchOnInteger(ins, ins.I0, ins.I1); return true;
                 case Opcode.SwitchOnAtom: EmitSwitchOnAtom(ins, 0, ins.I0); return true;
                 case Opcode.SwitchOnAtomArg: EmitSwitchOnAtom(ins, ins.I0, ins.I1); return true;
+                case Opcode.SwitchOnStructure: EmitSwitchOnStructure(ins, 0, ins.I0); return true;
+                case Opcode.SwitchOnStructureArg: EmitSwitchOnStructure(ins, ins.I0, ins.I1); return true;
                 case Opcode.Try: EmitTry(ins); return true;
                 case Opcode.Retry: EmitRetry(ins); return true;
                 case Opcode.Trust: EmitTrust(ins); return true;
@@ -1241,6 +1248,35 @@ public static class WasmPredicateCompiler
             {
                 Op(new LocalGet(LC0));
                 Op(new Int64Constant(Cell.Atom(table.Keys[k]).Data));
+                Op(new Int64Equal());
+                OpenIf();
+                GoTo(b + table.Values[k]);
+                CloseNested();
+            }
+            GoTo(b + table.DefaultAddress);
+        }
+
+        /// <summary>Structure dispatch, the interpreter's semantics exactly:
+        /// a Str cell's FUNCTOR CELL (heap[index]) decides the branch; any
+        /// other tag falls to the default chain (a Lis was routed by the term
+        /// switch already; a mismatch belongs to the default's own tests).</summary>
+        private void EmitSwitchOnStructure(Instr ins, int reg, int tableId)
+        {
+            int b = Bias(ins);
+            var table = Sec(ins).Predicate.SwitchTables[tableId];
+            RegLoad(reg); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Str));
+            Op(new Int32NotEqual());
+            OpenIf();
+            GoTo(b + table.DefaultAddress);
+            CloseNested();
+            // The functor cell at the Str payload's heap index.
+            Op(new LocalGet(LC0)); Op(new Int32WrapInt64()); Op(new LocalSet(LT1));
+            for (int k = 0; k < table.Count; k++)
+            {
+                CellLoadDyn(LHeapB, LT1);
+                Op(new Int64Constant(Cell.Functor(table.Keys[k]).Data));
                 Op(new Int64Equal());
                 OpenIf();
                 GoTo(b + table.Values[k]);

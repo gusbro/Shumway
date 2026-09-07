@@ -33,6 +33,18 @@ public sealed partial class Activation
     public Cell[] WasmRegistersView => _registers;
     public int[] WasmBindingTrailView => _bindingTrail;
 
+    /// <summary>Grows the binding trail past its current length. For the wasm
+    /// tier after a chain deopted AT the trail limit: the wasm limit reserves
+    /// a safety margin below the real array, so the interpreter completes the
+    /// step inside that margin and the engine never grows the area on its own
+    /// -- every later chain would deopt at the same spot, forever.</summary>
+    public void GrowWasmBindingTrail()
+        => EnsureBindingTrailCapacity(_bindingTrail.Length - _bindingTrailTop + 1);
+
+    /// <summary>Stack counterpart of <see cref="GrowWasmBindingTrail"/>.</summary>
+    public void GrowWasmStack()
+        => EnsureStackCapacity(_stack.Length - _stackTop + 1);
+
     /// <summary>False when the activation is in a mode the compiled code does
     /// not honour (trail-everything, occurs_check) -- the tier delegate then
     /// falls back to the predicate's bytecode for the entry.</summary>

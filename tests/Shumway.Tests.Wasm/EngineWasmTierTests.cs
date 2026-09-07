@@ -32,6 +32,17 @@ public class EngineWasmTierTests
         rt(X, A, B) :- wrap(X, T), unwrap(T, A, B).
         same(X, X).
         poly(X, R) :- R is X*X + 3*X.
+        area(circle(R), A) :- A is R*R*3.
+        area(square(S), A) :- A is S*S.
+        area(rect(W, H), A) :- A is W*H.
+        area(tri(B, H), A) :- A is B*H//2.
+        area(point, 0).
+        tak(X, Y, Z, A) :- X =< Y, !, Z = A.
+        tak(X, Y, Z, A) :-
+            X1 is X - 1, tak(X1, Y, Z, A1),
+            Y1 is Y - 1, tak(Y1, Z, X, A2),
+            Z1 is Z - 1, tak(Z1, X, Y, A3),
+            tak(A1, A2, A3, A).
         """;
 
     private static PrologEngine WasmEngine()
@@ -143,6 +154,45 @@ public class EngineWasmTierTests
     }
 
     [Fact]
+    public void StructureKeyedDispatch_CompilesAndAnswers()
+    {
+        // area/2's clauses are keyed by DISTINCT structure functors, which is
+        // what makes the compiler emit switch_on_structure — an opcode that
+        // used to reject the predicate out of the group. Compiling it is half
+        // the pin; answering like the interpreter is the other half.
+        var e = WasmEngine();
+        Assert.True(e.Query("area(circle(2), 12).").Success);
+        Assert.True(e.Query("area(square(3), 9), area(rect(4, 5), 20), area(tri(6, 4), 12).").Success);
+        Assert.True(e.Query("area(point, 0).").Success);
+        Assert.False(e.Query("area(circle(2), 13).").Success);
+        // An unkeyed shape falls to the default chain and fails cleanly.
+        Assert.False(e.Query("area(hexagon(1), _).").Success);
+        // The atom-keyed clause coexists with the structure table (the term
+        // switch routes constants around it).
+        Assert.True(e.Query("area(point, A), A == 0.").Success);
+        Assert.True(e.IlPromotion.PromotedFunctorIds().Any(),
+            "area/2 was rejected from the group");
+    }
+
+    [Fact]
+    public void ATrailLimitDeopt_GrowsTheArea_InsteadOfRepeating()
+    {
+        // tak fills the binding trail. The wasm limit sits a margin below the
+        // real array, and the interpreter finishes the deopted step INSIDE
+        // that margin — so without growth the engine keeps the same trail
+        // forever and every chain deopts at the same pc (measured: 108 of 114
+        // entries). With growth each limit deopt doubles the area: a handful
+        // on the first run, none once the trail fits.
+        var e = WasmEngine();
+        Assert.True(e.Query("tak(1, 0, 0, _).").Success);             // promote
+        WasmTierDelegate.ResetDiag();
+        Assert.True(e.Query("tak(14, 10, 4, A), A == 5.").Success);
+        // Geometric, not linear: a fresh trail doubles its way up in a few
+        // deopts. Without growth this run measured in the hundreds.
+        Assert.InRange(WasmTierDelegate.DiagDeopts, 0, 16);
+    }
+
+    [Fact]
     public void AControlEngineAgreesOnEverything()
     {
         var control = new PrologEngine();
@@ -153,6 +203,9 @@ public class EngineWasmTierTests
             "poly(5, 40)",
             "findall(X, mem(X, [1,2,3]), [1,2,3])",
             "rt(7, 7, 7)",
+            "area(circle(2), 12)",
+            "area(point, 0)",
+            "tak(14, 10, 4, 5)",
         })
             Assert.True(control.Query(goal + ".").Success);
     }
