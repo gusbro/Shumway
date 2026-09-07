@@ -225,6 +225,14 @@ public sealed partial class Activation
     {
         ArgumentNullException.ThrowIfNull(value);
         int codeUnits = value.Length;
+        // Text longer than a PSTR header can measure. The length is the
+        // ENCODING's limit, so this is a capacity refusal a program can
+        // catch -- and it must be raised here, where the text arrives, not
+        // discovered inside Cell.Pstr, whose range check guards a cell
+        // layout and reaches a user as a .NET exception nothing can handle
+        // (issue #112: capturing the output of a looping goal).
+        if (codeUnits > Cell.MaxPstrLength)
+            throw new PrologRuntimeException("resource_error", "text_length");
         int bufferCellCount = (codeUnits + Cell.PstrCodeUnitsPerBuffer - 1) / Cell.PstrCodeUnitsPerBuffer;
         int totalCells = 1 + bufferCellCount + 1;
 
