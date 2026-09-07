@@ -91,33 +91,65 @@ public class PrologFlagsExpandedTests
     }
 
     [Fact]
-    public void MaxArity_IsTheArityTheAddressSpaceAllows()
+    public void MaxArity_IsUnbounded()
     {
-        // A term of arity N costs N+1 cells of eight bytes, so the limit is a
-        // question about address space: 4 GiB where addresses are 64 bits,
-        // 128 MiB where they are 32 (a browser, or a 32-bit host). Reporting
-        // the 64-bit figure in a browser would promise a term larger than the
-        // whole space it has.
+        // Issue #106 (Neumerkel): a term's arity has no limit of its own,
+        // only address-space capacity, so the flag says so -- as SICStus
+        // does. The old numeric value (2^29-1) also INVITED the freeze: a
+        // probe of the number it reported tried to allocate the 4 GiB term
+        // before any check could refuse it.
         var e = new PrologEngine();
         var sol = e.Query("current_prolog_flag(max_arity, M).");
         Assert.True(sol.Success);
-        var m = Assert.IsType<IntTerm>(sol["M"]);
-        long expected = System.IntPtr.Size >= 8 ? (1L << 29) - 1 : (1L << 24) - 1;
-        Assert.Equal(expected, m.Value);
+        Assert.Equal(new AtomTerm("unbounded"), sol["M"]);
     }
 
     [Fact]
-    public void MaxArity_IsWhatFunctorActuallyRefuses()
+    public void MaxProcedureArity_IsReportedAndUnmodifiable()
     {
-        // The flag is only worth asking if it is the number enforced. One
-        // past it is refused; a wide term inside it is built, which is how an
-        // array gets modelled.
+        // stc#70: the flag exists exactly when max_arity is unbounded and
+        // procedures are still capped. 1023, read-only.
+        var e = new PrologEngine();
+        var sol = e.Query("current_prolog_flag(max_procedure_arity, M).");
+        Assert.True(sol.Success);
+        Assert.Equal(1023L, Assert.IsType<IntTerm>(sol["M"]).Value);
+        Assert.True(e.Query(
+            "catch(set_prolog_flag(max_procedure_arity, 5), "
+            + "error(permission_error(modify, flag, max_procedure_arity), _), true).").Success);
+    }
+
+    [Fact]
+    public void PastTheCapacityIsAResourceError()
+    {
+        // With the flag unbounded there is no flag-derived
+        // representation_error; running into what the address space can
+        // represent is a RESOURCE answer -- checked before any allocation,
+        // so the query returns instead of thrashing (the reporter's laptop
+        // froze probing one past the old flag value).
         var e = new PrologEngine();
         Assert.True(e.Query(
-            "current_prolog_flag(max_arity, M), Over is M + 1, "
-            + "catch(functor(_, f, Over), error(representation_error(max_arity), _), true).")
+            "catch(functor(_, f, 536870912), error(resource_error(finite_memory), _), true).")
             .Success);
         Assert.True(e.Query("functor(A, array, 100000), arg(99999, A, X), var(X).").Success);
+    }
+
+    [Fact]
+    public void ProceduresAreCappedAtDefinitionTime()
+    {
+        // stc#70's own example: build a functor one past the procedure cap
+        // and try to assert it. Terms of that width are fine; DEFINING one
+        // is refused. 1023 itself defines and runs.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "functor(T, p, 1024), "
+            + "catch(asserta(T), error(representation_error(max_procedure_arity), _), true).")
+            .Success);
+        Assert.True(e.Query(
+            "functor(T, q, 1023), asserta(T), functor(G, q, 1023), call(G), retract(T).")
+            .Success);
+        Assert.True(e.Query(
+            "catch(abolish(r/2000), error(representation_error(max_procedure_arity), _), true).")
+            .Success);
     }
 
     [Fact]

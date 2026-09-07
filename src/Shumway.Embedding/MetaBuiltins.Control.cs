@@ -684,6 +684,12 @@ public static partial class MetaBuiltins
                 "modify", "static_procedure",
                 new CompoundTerm("/", new Term[] { new AtomTerm(hn), new IntTerm(harity) }),
                 engine));
+        // stc#70: terms are unbounded, PROCEDURES are not — asserting a
+        // head wider than the cap is refused (the proposal's own example
+        // is exactly functor/3 one past the cap followed by asserta/1).
+        if (harity > Shumway.Core.RuntimeCaps.MaxProcedureArity)
+            throw new ShumwayPrologException(
+                IsoError.RepresentationError("max_procedure_arity"));
         if (body is not null) ValidateGoalTerm(body, engine);
     }
 

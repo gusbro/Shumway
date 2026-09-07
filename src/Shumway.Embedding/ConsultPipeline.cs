@@ -1149,6 +1149,7 @@ internal sealed class ConsultPipeline
                 // stays global regardless).
                 if (TryStripHookHead(clause, out Clause stripped))
                     clause = stripped;
+                CheckProcedureArity(clause);
                 clauses.Add(clause);
                 if (!sawInFileHook && IsHookClauseHead(clause)) sawInFileHook = true;
                 if (!debuggableHere && TryReadClauseHead(clause, out var headSpec))
@@ -2713,6 +2714,24 @@ internal sealed class ConsultPipeline
         }
         name = "";
         return false;
+    }
+
+    /// <summary>stc#70 -- terms are unbounded, procedures are not: a clause
+    /// whose head is wider than <see cref="Shumway.Core.RuntimeCaps.MaxProcedureArity"/>
+    /// cannot be defined (a DCG head gains its two hidden arguments in the
+    /// translation, so they count). Raised per clause, so the consult reports
+    /// it the way it reports any bad clause and carries on.</summary>
+    private static void CheckProcedureArity(Clause clause)
+    {
+        Term head = clause.Term;
+        if (clause.Kind is ClauseKind.Rule or ClauseKind.DcgRule or ClauseKind.SsuRule
+            && head is CompoundTerm { Args.Length: 2 } wrap)
+            head = wrap.Args[0];
+        int arity = head is CompoundTerm hc ? hc.Args.Length : 0;
+        if (clause.Kind == ClauseKind.DcgRule) arity += 2;
+        if (arity > Shumway.Core.RuntimeCaps.MaxProcedureArity)
+            throw new ShumwayPrologException(
+                IsoError.RepresentationError("max_procedure_arity"));
     }
 
     private static bool TryReadDynamicDirective(
