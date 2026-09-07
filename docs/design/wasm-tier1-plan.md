@@ -446,6 +446,35 @@ forma correcta es priming al load, NO hornear bytes.
 - Regresión: `Shumway.Tests.Embedding` completa verde con el switch en false
   (default) en todos lados.
 
+### DECISION de la ronda de performance — opciones evaluadas
+
+Con el diagnostico en mano (el costo era ~150 us de C# INTERPRETADO por Mono
+en cada entrada al modulo, no las fronteras ~0,3 us ni el wasm ~3 us), se
+evaluaron tres caminos:
+
+- **(A) Hop dentro del wasm** (`call_indirect` por tabla de funciones
+  importada + mapa functor→indice por hilo en memoria lineal): cero C# por
+  hop, el techo teorico. EN CONTRA: solo testeable en browser, un indice
+  ajeno al realm trapea el worker EN SILENCIO (la leccion de fase 0), y
+  requiere mecanica wasm nueva (import de tabla, mapa por hilo).
+- **(B) CADENA a nivel C# con mailbox compartido**: pin + fill UNA vez por
+  invocacion del delegate; entre modulos encadenados el mailbox ya tiene los
+  escalares que el propio wasm sincronizo al retornar, asi que el hop es
+  decode de marker + probe de diccionario + call crudo (~4-15 us
+  interpretados vs ~150 us). A FAVOR: sin mecanica wasm nueva, testeable
+  entero en escritorio (mundo de copia), y captura ~90% del beneficio.
+- **(C) Abaratar el marshalling por entrada** (cachear pins, fill parcial):
+  descartada — el fill de 24 slots ES el costo bajo interprete; no hay
+  version barata de "C# por entrada".
+
+**TOMADA: (B), con (A) anotada como palanca residual.** El criterio: maxima
+ganancia medible con riesgo minimo y tests de escritorio; (A) solo se
+justifica si un corpus real muestra que el switch interpretado residual
+domina (hoy acota tak en 3,4x — ya sobre el gate de 2x). De yapa, implementar
+(B) destapo dos bugs de correctitud (sobre-corte por B0 stale; bind sin
+trailear que sobrevivia al backtracking) que (A) habria enterrado bajo una
+capa mas opaca.
+
 ### Ronda de performance POST-medicion: CADENAS + =/2 inline + trail-first
 
 La medicion fina (split wall/inWasm/stage) revelo que el enemigo real era el
