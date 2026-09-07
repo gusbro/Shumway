@@ -65,7 +65,11 @@ public static class ShmoViaConsult
         string? dialect = null,
         System.IO.TextWriter? warnings = null)
     {
-        var e = new PrologEngine();
+        // Strict: consult mode is how the TOOLCHAIN compiles sources, so a
+        // clause that does not parse fails the build (the object it would
+        // land in is what everything downstream links), where the same file
+        // loaded into a live engine reports it and carries on.
+        var e = new PrologEngine { StrictConsultSyntax = true };
         if (warnings is not null) e.Warnings = warnings;
         // ADR-040: a library collection may be a non-shumway dialect. An
         // explicit dialect applies to every dir; otherwise each dir spec may

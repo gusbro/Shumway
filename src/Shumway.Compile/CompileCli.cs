@@ -44,7 +44,12 @@ internal static class CompileCli
     private const int ExitCompileError = 1;
     private const int ExitUsageError = 3;
 
+    // On a deep stack: reading and transforming a clause descend the term as
+    // written, and a default 1 MB thread runs out a few hundred levels in.
     public static int Main(string[] args)
+        => Shumway.Embedding.DeepStackHost.Run(() => MainCore(args));
+
+    private static int MainCore(string[] args)
     {
         var opts = ParseArgs(args);
         if (opts is null) return ExitUsageError;
@@ -104,6 +109,12 @@ internal static class CompileCli
             + $"[{opts.BuildMode.ToString().ToLowerInvariant()}]");
         var errors = new List<ShmoCompileError>();
         List<(string ModuleName, ShmoObject Object, DateTime SourceTimeUtc, bool IsRoot)> objects;
+        // Output is a directory: each module is named by its module name (a
+        // single -o filename would collide root over deps). -o <dir> when
+        // given (already created in Main); else the first input's directory.
+        string dir = !string.IsNullOrEmpty(opts.OutputPath)
+            ? opts.OutputPath
+            : System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(inputs[0])) ?? ".";
         try
         {
             objects = ShmoViaConsult.CompileMany(inputs, opts.LibraryDirs, opts.BuildMode, errors);
@@ -111,6 +122,7 @@ internal static class CompileCli
         catch (Exception ex)
         {
             Console.Error.WriteLine($"shumway-compile: consult failed: {ex.Message}");
+            RemoveStaleRootOutputs(inputs, dir);
             return ExitCompileError;
         }
         foreach (var err in errors)
@@ -119,14 +131,9 @@ internal static class CompileCli
         {
             Console.Error.WriteLine(
                 $"shumway-compile: {Math.Max(errors.Count, 1)} error(s) (consult mode).");
+            RemoveStaleRootOutputs(inputs, dir);
             return ExitCompileError;
         }
-        // Output is a directory: each module is named by its module name (a
-        // single -o filename would collide root over deps). -o <dir> when
-        // given (already created in Main); else the first input's directory.
-        string dir = !string.IsNullOrEmpty(opts.OutputPath)
-            ? opts.OutputPath
-            : System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(inputs[0])) ?? ".";
         try { System.IO.Directory.CreateDirectory(dir); }
         catch (System.IO.IOException) { /* surfaced by the write below */ }
         foreach (var (moduleName, obj, srcTime, isRoot) in objects)
@@ -304,6 +311,44 @@ internal static class CompileCli
             Console.Error.WriteLine($"shumway-compile: error: {ex.Message}");
             RemoveStaleOutput(output);
             return ExitCompileError;
+        }
+    }
+
+    /// <summary>The consult-mode counterpart: the objects this run was ASKED to
+    /// produce are the ones named after its inputs, so a failure removes those.
+    /// A dependency's object is left alone — its own source still compiled, and
+    /// it was up to date before this run.</summary>
+    private static void RemoveStaleRootOutputs(IReadOnlyList<string> inputs, string dir)
+    {
+        foreach (string input in inputs)
+        {
+            // The object is named after the MODULE, which is the file's base
+            // name unless the source declares one — and after a failed consult
+            // there is no loaded module to ask, so both candidates go.
+            string name = System.IO.Path.GetFileNameWithoutExtension(input);
+            if (!string.IsNullOrEmpty(name))
+                RemoveStaleOutput(
+                    System.IO.Path.Combine(dir, SanitizeFileName(name) + ".shmo"));
+            if (DeclaredModuleName(input) is { } declared)
+                RemoveStaleOutput(
+                    System.IO.Path.Combine(dir, SanitizeFileName(declared) + ".shmo"));
+        }
+    }
+
+    /// <summary>The name in a <c>:- module(Name, ...)</c> directive, or null.
+    /// Read from the TEXT because the consult that would have told us failed.</summary>
+    private static string? DeclaredModuleName(string input)
+    {
+        try
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(
+                File.ReadAllText(input),
+                @"(^|\n)\s*:-\s*module\(\s*'?([A-Za-z_][A-Za-z0-9_]*)'?");
+            return m.Success ? m.Groups[2].Value : null;
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

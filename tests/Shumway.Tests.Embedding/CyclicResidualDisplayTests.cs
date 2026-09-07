@@ -173,6 +173,66 @@ public sealed class CyclicResidualDisplayTests
     }
 
     [Fact]
+    public void ACyclicListsLengthIsARefusalNotAFailure()
+    {
+        // Issue #108 (Neumerkel's length#26): a rational-tree processor may
+        // not quietly FAIL length(Cyclic, N) -- the classical definition
+        // loops there, so the conforming shortcut is the same refusal
+        // length(L, L) gives: resource_error(finite_memory), because no
+        // amount of memory produces a finite length for an infinite list.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "X = [a|X], catch(length(X, _), "
+            + "error(resource_error(finite_memory), length/2), true).").Success);
+        // A CONCRETE candidate length still fails -- the classical bound
+        // walk ends after N steps, uniformly across implementations
+        // (length#27: length(Cyclic, 0) is false).
+        Assert.False(e.Query("X = [a|X], length(X, 0).").Success);
+        Assert.False(e.Query("X = [a|X], length(X, 7).").Success);
+        // A non-integer length keeps the walk's own type discipline.
+        Assert.True(e.Query(
+            "X = [a|X], catch(length(X, foo), "
+            + "error(type_error(integer, foo), _), true).").Success);
+        // The refusal reaches redo too (the survey's shape:
+        // `L = [a|L], ( true ; length(L, N) )`) -- the inner fail forces
+        // backtracking into the length branch, or the first `true` answer
+        // would satisfy the query without running it.
+        Assert.True(e.Query(
+            "L = [a|L], catch((( true ; length(L, _) ), fail), "
+            + "error(resource_error(finite_memory), _), true).").Success);
+    }
+
+    [Fact]
+    public void ATailACoroutineMakesCyclicIsRefusedToo()
+    {
+        // The same refusal when the cycle appears DURING the enumeration:
+        // freeze(L, L = [_|L]) makes every candidate list cyclic, so each
+        // step of length(L, N) wakes a goal that binds the open tail back
+        // onto itself. Walking that spins in CONSTANT memory -- nothing
+        // allocates, so no limit would ever refuse it -- and the query used
+        // to hang where the already-cyclic L = [_|L] raised at once.
+        var e = new PrologEngine();
+        e.UseCoroutining();
+        Assert.True(e.Query(
+            "freeze(L, L = [_|L]), catch(length(L, _), "
+            + "error(resource_error(finite_memory), length/2), true).").Success);
+        // One level deeper: the coroutine on the TAIL closes the cycle.
+        Assert.True(e.Query(
+            "freeze(L, (L = [_|T], freeze(T, T = [_|T]))), catch(length(L, _), "
+            + "error(resource_error(finite_memory), length/2), true).").Success);
+        // A concrete length still just fails: the bound walk ends.
+        Assert.False(e.Query("freeze(L, L = [_|L]), length(L, 3).").Success);
+        // And a coroutine that binds the tail to something FINITE is not
+        // refused -- it is answered, counting what the wake left behind.
+        Assert.True(e.Query("freeze(L, L = [x,y]), length(L, N), N == 2.").Success);
+        Assert.True(e.Query("freeze(L, L = [a|_]), length(L, N), N == 1.").Success);
+        // The enumeration still walks PAST a woken bind: growing candidates
+        // keep coming, with what the coroutine wrote in place.
+        Assert.True(e.Query(
+            "freeze(L, L = [a|_]), length(L, N), N == 3, L = [a,_,_].").Success);
+    }
+
+    [Fact]
     public void TheConstraintIsStillTheOneItShows()
     {
         // Naming is a display: the constraint the answer reports must still be

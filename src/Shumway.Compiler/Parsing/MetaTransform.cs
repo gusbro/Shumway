@@ -141,6 +141,11 @@ public static class MetaTransform
     private static Term TransformGoal(Term goal, ref int counter, List<Clause> helpers,
         string? cutK = null)
     {
+        // Each `;` becomes a helper predicate whose body is transformed in
+        // turn, so a disjunction nested as deep as the program wrote it
+        // recurses here. That depth is bounded by the stack, and running out
+        // of stack is fatal — refuse first.
+        Shumway.Core.RecursionGuard.EnsureRoom();
         // ISO §7.6.2: converting a control construct to a body fails when any
         // goal position inside it holds a number, and the conversion happens
         // BEFORE the body runs — `\+ (fail,1)` raises, it does not succeed on
@@ -158,12 +163,27 @@ public static class MetaTransform
             return WithPosition(BodyConversionThrow(culprit), goal.Position);
         }
 
-        // Conjunction: recurse into both halves.
+        // Conjunction: transform every conjunct. Along the RIGHT spine — which
+        // is the shape a body is written in, and can be as long as the program
+        // likes — iteratively; a frame per conjunct overflowed the C# stack,
+        // taking the process with it. Conjuncts are still transformed left to
+        // right (helper numbering depends on it) and rebuilt into the same
+        // right-nested tree, positions included.
         if (goal is CompoundTerm { Functor: "," } conj && conj.Args.Length == 2)
         {
-            Term lhs = TransformGoal(conj.Args[0], ref counter, helpers, cutK);
-            Term rhs = TransformGoal(conj.Args[1], ref counter, helpers, cutK);
-            return new CompoundTerm(",", new[] { lhs, rhs }) { Position = goal.Position };
+            var lefts = new List<Term>();
+            var positions = new List<SourcePosition>();
+            Term rest = goal;
+            while (rest is CompoundTerm { Functor: ",", Args.Length: 2 } spine)
+            {
+                lefts.Add(TransformGoal(spine.Args[0], ref counter, helpers, cutK));
+                positions.Add(rest.Position);
+                rest = spine.Args[1];
+            }
+            Term acc = TransformGoal(rest, ref counter, helpers, cutK);
+            for (int i = lefts.Count - 1; i >= 0; i--)
+                acc = new CompoundTerm(",", new[] { lefts[i], acc }) { Position = positions[i] };
+            return acc;
         }
 
         // Standalone if-then `(A -> B)` without an else branch. ISO
@@ -521,36 +541,68 @@ public static class MetaTransform
     /// (a condition, <c>\+</c>, meta-goal arguments) do not count.</summary>
     private static bool HasTransparentBranchCut(Term body)
     {
-        static bool InsideBranch(Term t) => t switch
+        // Both walks carry their pending work in a list rather than on the C#
+        // stack: a body is a conjunction as long as the program wrote it, and
+        // a frame per conjunct overflows (killing the process, not the goal).
+        // Work is pushed right to left so the leftmost subterm is examined
+        // first -- the short-circuit order the boolean recursion had.
+        static bool InsideBranch(Term start)
         {
-            AtomTerm { Name: "!" } => true,
-            CompoundTerm { Functor: ",", Args.Length: 2 } c
-                => InsideBranch(c.Args[0]) || InsideBranch(c.Args[1]),
-            CompoundTerm { Functor: ";", Args.Length: 2 } c
-                => (c.Args[0] is CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } ite
-                        ? InsideBranch(ite.Args[1])          // then (cond is opaque)
-                        : InsideBranch(c.Args[0]))
-                   || InsideBranch(c.Args[1]),
-            CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } c
-                => InsideBranch(c.Args[1]),                  // then (cond is opaque)
-            _ => false,
-        };
+            var work = new List<Term>(32) { start };
+            while (work.Count > 0)
+            {
+                Term t = work[^1];
+                work.RemoveAt(work.Count - 1);
+                switch (t)
+                {
+                    case AtomTerm { Name: "!" }:
+                        return true;
+                    case CompoundTerm { Functor: ",", Args.Length: 2 } c:
+                        work.Add(c.Args[1]);
+                        work.Add(c.Args[0]);
+                        break;
+                    case CompoundTerm { Functor: ";", Args.Length: 2 } c:
+                        work.Add(c.Args[1]);
+                        work.Add(c.Args[0] is CompoundTerm
+                                 { Functor: "->" or "*->", Args.Length: 2 } ite
+                            ? ite.Args[1]                        // then (cond is opaque)
+                            : c.Args[0]);
+                        break;
+                    case CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } c:
+                        work.Add(c.Args[1]);                     // then (cond is opaque)
+                        break;
+                }
+            }
+            return false;
+        }
         // At the TOP level of the body we are not inside a branch yet: descend
         // through conjunction; a ;/->/*-> here means its branches are branch
         // positions (handled by InsideBranch).
-        return body switch
+        var top = new List<Term>(32) { body };
+        while (top.Count > 0)
         {
-            CompoundTerm { Functor: ",", Args.Length: 2 } c
-                => HasTransparentBranchCut(c.Args[0]) || HasTransparentBranchCut(c.Args[1]),
-            CompoundTerm { Functor: ";", Args.Length: 2 } c
-                => (c.Args[0] is CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } ite
-                        ? InsideBranch(ite.Args[1])
-                        : InsideBranch(c.Args[0]))
-                   || InsideBranch(c.Args[1]),
-            CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } c
-                => InsideBranch(c.Args[1]),
-            _ => false,
-        };
+            Term t = top[^1];
+            top.RemoveAt(top.Count - 1);
+            switch (t)
+            {
+                case CompoundTerm { Functor: ",", Args.Length: 2 } c:
+                    top.Add(c.Args[1]);
+                    top.Add(c.Args[0]);
+                    break;
+                case CompoundTerm { Functor: ";", Args.Length: 2 } c:
+                    if (InsideBranch(c.Args[0] is CompoundTerm
+                                     { Functor: "->" or "*->", Args.Length: 2 } ite
+                            ? ite.Args[1]
+                            : c.Args[0])
+                        || InsideBranch(c.Args[1]))
+                        return true;
+                    break;
+                case CompoundTerm { Functor: "->" or "*->", Args.Length: 2 } c:
+                    if (InsideBranch(c.Args[1])) return true;
+                    break;
+            }
+        }
+        return false;
     }
 
     /// <summary>Rewrites every cut-transparent <c>!</c> in a branch term into
@@ -567,6 +619,25 @@ public static class MetaTransform
     /// <c>'$call'(!, K)</c>, not a bare <c>!</c>, so it does not re-wrap it.</para></summary>
     private static Term ReplaceTransparentCuts(Term branch, string cutK)
     {
+        // The conjunction spine is walked iteratively for the same reason the
+        // rest of the pipeline walks it iteratively: it is as long as the
+        // program wrote it. Rebuild2 still returns the original node when
+        // nothing under it changed, so unchanged structure stays shared.
+        if (branch is CompoundTerm { Functor: ",", Args.Length: 2 })
+        {
+            var nodes = new List<CompoundTerm>();
+            Term cur = branch;
+            while (cur is CompoundTerm { Functor: ",", Args.Length: 2 } spine)
+            {
+                nodes.Add(spine);
+                cur = spine.Args[1];
+            }
+            Term acc = ReplaceTransparentCuts(cur, cutK);
+            for (int i = nodes.Count - 1; i >= 0; i--)
+                acc = Rebuild2(nodes[i], ",",
+                    ReplaceTransparentCuts(nodes[i].Args[0], cutK), acc);
+            return acc;
+        }
         switch (branch)
         {
             case AtomTerm { Name: "!" }:
@@ -575,10 +646,6 @@ public static class MetaTransform
                     new AtomTerm("!"),
                     new VarTerm(cutK),
                 });
-            case CompoundTerm { Functor: ",", Args.Length: 2 } c:
-                return Rebuild2(c, ",",
-                    ReplaceTransparentCuts(c.Args[0], cutK),
-                    ReplaceTransparentCuts(c.Args[1], cutK));
             case CompoundTerm { Functor: ";", Args.Length: 2 } c:
             {
                 // Left arm: a ( Cond -> Then ) / ( Cond *-> Then ) keeps Cond
@@ -685,14 +752,25 @@ public static class MetaTransform
     /// goal position (`(fail,1)`) is not convertible.</summary>
     private static bool HasNumberInGoalPosition(Term t)
     {
-        if (t is CompoundTerm { Functor: ":" or "$mqual", Args.Length: 2 } q)
-            t = q.Args[1];
-        if (t is IntTerm or FloatTerm or BigIntTerm or RationalTerm) return true;
-        if (t is CompoundTerm { Functor: "," or ";" or "->" or "*->", Args.Length: 2 } c)
-            return HasNumberInGoalPosition(c.Args[0])
-                || HasNumberInGoalPosition(c.Args[1]);
-        if (t is CompoundTerm { Functor: "\\+" or "not", Args.Length: 1 } n)
-            return HasNumberInGoalPosition(n.Args[0]);
+        // Iterative: the construct examined here is a whole clause body, so
+        // its conjunction spine is as long as the program wrote it. Pushed
+        // right to left, so the leftmost goal decides first.
+        var work = new List<Term>(32) { t };
+        while (work.Count > 0)
+        {
+            Term g = work[^1];
+            work.RemoveAt(work.Count - 1);
+            if (g is CompoundTerm { Functor: ":" or "$mqual", Args.Length: 2 } q)
+                g = q.Args[1];
+            if (g is IntTerm or FloatTerm or BigIntTerm or RationalTerm) return true;
+            if (g is CompoundTerm { Functor: "," or ";" or "->" or "*->", Args.Length: 2 } c)
+            {
+                work.Add(c.Args[1]);
+                work.Add(c.Args[0]);
+            }
+            else if (g is CompoundTerm { Functor: "\\+" or "not", Args.Length: 1 } n)
+                work.Add(n.Args[0]);
+        }
         return false;
     }
 
@@ -1162,16 +1240,26 @@ public static class MetaTransform
         return Invoke(goalName, allVars);
     }
 
+    /// <summary>The named variables of a term, in first-appearance order.
+    /// Iterative: this walks whole clause bodies, whose spine is as long as
+    /// the program wrote it (arguments pushed right to left, so the visit
+    /// order — which IS the result order — is unchanged).</summary>
     private static void CollectNamedVars(Term t, List<string> order, HashSet<string> seen)
     {
-        switch (t)
+        var work = new List<Term>(32) { t };
+        while (work.Count > 0)
         {
-            case VarTerm v when v.Name != "_":
-                if (seen.Add(v.Name)) order.Add(v.Name);
-                break;
-            case CompoundTerm c:
-                foreach (var arg in c.Args) CollectNamedVars(arg, order, seen);
-                break;
+            Term next = work[^1];
+            work.RemoveAt(work.Count - 1);
+            switch (next)
+            {
+                case VarTerm v when v.Name != "_":
+                    if (seen.Add(v.Name)) order.Add(v.Name);
+                    break;
+                case CompoundTerm c:
+                    for (int i = c.Args.Length - 1; i >= 0; i--) work.Add(c.Args[i]);
+                    break;
+            }
         }
     }
 }

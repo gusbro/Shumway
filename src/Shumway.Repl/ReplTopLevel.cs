@@ -22,7 +22,10 @@ internal static class ReplTopLevel
 {
     private static int Main(string[] args)
     {
-        try { return MainCore(args); }
+        // On a stack deep enough for the programs people load: reading and
+        // transforming a clause descend the term as written, and a default
+        // 1 MB thread runs out of room a few hundred levels in.
+        try { return Shumway.Embedding.DeepStackHost.Run(() => MainCore(args)); }
         finally { Shumway.Embedding.PrologEngine.PrintLoadProfile(); }
     }
 

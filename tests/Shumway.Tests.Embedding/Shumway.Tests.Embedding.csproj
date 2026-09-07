@@ -63,6 +63,7 @@
     <Compile Remove="PePatchEndToEnd.cs" />
     <Compile Remove="PreludeIlBakeTests.cs" />
     <Compile Remove="TablingBundleTests.cs" />
+    <Compile Remove="ToolchainStaleOutputTests.cs" />
   </ItemGroup>
 
 </Project>

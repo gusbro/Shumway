@@ -721,7 +721,9 @@ public static class BundleWriter
         foreach (var entry in bundle.Entries)
         {
             if (entry.CompiledBytecode is not null) continue;
-            engine ??= new PrologEngine();
+            // Strict: this is a BUILD. A clause that does not parse must fail
+            // it, not be skipped with a diagnostic the way a load recovers.
+            engine ??= new PrologEngine { StrictConsultSyntax = true };
             engine.ConsultString(entry.Source);
         }
         // Tickle the compile-once-per-query path so unresolved references

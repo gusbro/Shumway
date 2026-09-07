@@ -105,6 +105,63 @@ public class DeepNestingParseTests
     }
 
     [Fact]
+    public void AnOperatorRunOfAnyLength_IsReadIteratively()
+    {
+        // A clause body is a run of the xfy `,`, and reading the right operand
+        // recursively spent a frame per goal: a body of about a thousand goals
+        // overflowed the stack, killing the process mid-consult. The run is
+        // read in a loop and folded right, which must give the SAME tree.
+        var sb = new StringBuilder();
+        for (int i = 0; i < Deep; i++) sb.Append("g(").Append(i).Append("), ");
+        sb.Append("last");
+        Term t = Parse(sb.ToString());
+        int count = 0;
+        while (t is CompoundTerm { Functor: ",", Args.Length: 2 } c)
+        {
+            var goal = Assert.IsType<CompoundTerm>(c.Args[0]);
+            Assert.Equal("g", goal.Functor);
+            Assert.Equal(count, ((IntTerm)goal.Args[0]).Value);
+            t = c.Args[1];
+            count++;
+        }
+        Assert.Equal(Deep, count);
+        Assert.Equal("last", Assert.IsType<AtomTerm>(t).Name);
+    }
+
+    [Fact]
+    public void AnOperatorRun_EndsWhereADifferentOperatorTakesOver()
+    {
+        // The run stops at the first token that is not the same operator, and
+        // what follows still binds up to the operator's own priority: `a, b ; c`
+        // is `;( ','(a,b), c )`, and the same at depth.
+        var sb = new StringBuilder();
+        for (int i = 0; i < Deep; i++) sb.Append("g(").Append(i).Append("), ");
+        sb.Append("tail ; alternative");
+        Term t = Parse(sb.ToString());
+        var disj = Assert.IsType<CompoundTerm>(t);
+        Assert.Equal(";", disj.Functor);
+        Assert.Equal("alternative", ((AtomTerm)disj.Args[1]).Name);
+        int count = 0;
+        Term conj = disj.Args[0];
+        while (conj is CompoundTerm { Functor: ",", Args.Length: 2 } c) { conj = c.Args[1]; count++; }
+        Assert.Equal(Deep, count);
+        Assert.Equal("tail", Assert.IsType<AtomTerm>(conj).Name);
+    }
+
+    [Fact]
+    public void AnOperatorRun_KeepsTheOperandRulesAndPositions()
+    {
+        // Shape and diagnostics must not depend on which loop read the run:
+        // an operator atom is still refused as an operand, and every node
+        // still carries the position of the operator that built it.
+        Assert.Throws<ParseException>(() => Parse("a, *, c"));
+        var t = Assert.IsType<CompoundTerm>(Parse("a,\nb,\nc"));
+        Assert.Equal(1, t.Position.Line);          // the first comma
+        var inner = Assert.IsType<CompoundTerm>(t.Args[1]);
+        Assert.Equal(2, inner.Position.Line);      // the second
+    }
+
+    [Fact]
     public void ZeroArgumentCompound_StillRejected()
     {
         var ex = Assert.Throws<ParseException>(() => Parse("f()"));

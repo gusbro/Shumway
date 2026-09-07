@@ -567,18 +567,29 @@ internal static class Prelude
         '$check_qualified_indicator'(_, Spec) :-
             throw(error(type_error(predicate_indicator, Spec), _)).
 
-        %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A term that is not a partial list, a cyclic list included, fails.
+        %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A cyclic list with the length unconstrained raises resource_error(finite_memory); against a concrete length it fails. A term that is not a partial list fails.
         % Proper lists take the native '$list_length' fast path (cycle-safe:
         % it fails a looping spine rather than spinning). A cyclic list has no
-        % finite length — fail, before the Prolog walk would recurse into it
-        % forever. An improper tail also FAILS rather than raising
+        % finite length; what that MEANS depends on the second argument
+        % (issue #108, Neumerkel's length#26): with N unconstrained the
+        % classical definition loops forever, so the conforming shortcut is
+        % resource_error(finite_memory) — the same refusal length(L, L) gives,
+        % because no amount of memory produces the answer. With N a concrete
+        % integer the classical walk FAILS after N steps (uniform across
+        % implementations: length#27's length(Cyclic, 0) is false), so fail
+        % is kept there. An improper tail also FAILS rather than raising
         % type_error(list, _): the de-facto standard behavior (Neumerkel's
         % length cases 4-7 — length(2,0) is false).
         length(L, N) :-
             integer(N), N < 0, !,
             throw(error(domain_error(not_less_than_zero, N), length/2)).
-        length(L, _) :-
-            nonvar(L), '$cyclic_spine'(L), !, fail.
+        length(L, N) :-
+            nonvar(L), '$cyclic_spine'(L), !,
+            (   integer(N) -> fail
+            ;   var(N) ->
+                throw(error(resource_error(finite_memory), length/2))
+            ;   throw(error(type_error(integer, N), length/2))
+            ).
         length(L, N) :-
             nonvar(L), '$list_length'(L, M), !,
             (   integer(N) -> N = M
@@ -608,7 +619,18 @@ internal static class Prelude
         '$length_enum'([], N, N).
         '$length_enum'([_|T], N, Acc) :-
             Acc1 is Acc + 1,
-            '$length_enum'(T, N, Acc1).
+            (   var(T) -> '$length_enum'(T, N, Acc1)
+            ;   % The step above BOUND the tail: extending the list woke a
+                % coroutine that had something to say about it
+                % (freeze(L, L=[_|L]) makes every candidate cyclic). What is
+                % there now is no longer an open end to enumerate, so ask
+                % length/2 about it -- which refuses a cyclic list rather
+                % than walking one forever. Walking it here would spin in
+                % CONSTANT memory: no allocation, so nothing would ever
+                % refuse it. Asking once, at the transition, also keeps a
+                % woken proper tail linear.
+                length(T, M), N is Acc1 + M
+            ).
 
         %! sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom) | Atoms & strings | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom.
         % '$sub_atom_enum' yields each decomposition lazily (a backtrackable

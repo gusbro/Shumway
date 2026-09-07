@@ -41,8 +41,14 @@ public sealed class ConformanceArcRegressionTests
 
     // ---- length/2: tortoise-hare spine walk, no type_error on non-lists --
 
-    [Fact] public void Length_CyclicSpine_FailsInsteadOfHanging() =>
-        False("X = [x,y|X], length(X, _).");
+    [Fact] public void Length_CyclicSpine_IsARefusalNotAHangNorAFailure() =>
+        // Issue #108 (length#26): quiet failure was declaratively cute but
+        // non-conforming -- the classical definition loops here, and the
+        // conforming shortcut is the length(L, L) refusal. A CONCRETE
+        // candidate length still fails (length#27, uniform).
+        True("X = [x,y|X], catch(length(X, _), "
+            + "error(resource_error(finite_memory), _), true), "
+            + "\\+ length(X, 0), \\+ length(X, 5).");
     [Fact] public void Length_ShortProperList_NoFalseCyclePositive() =>
         // the first hare compared while resting on nil — [x] read as cyclic.
         True("length([x], N), N == 1, length([x,y,z], M), M == 3.");

@@ -163,6 +163,10 @@ public sealed class Parser
 
     private Term ReadTermInternal(int maxPrec, out int builtPrec)
     {
+        // Nesting through parentheses, prefix operators and argument lists is
+        // still read recursively — how deep is the source's decision, so the
+        // stack is checked here rather than discovered exhausted.
+        Shumway.Core.RecursionGuard.EnsureRoom();
         Term left = ReadPrefixOrPrimary(maxPrec, out builtPrec);
         return ContinueTerm(left, maxPrec, ref builtPrec);
     }
@@ -293,9 +297,21 @@ public sealed class Parser
         int leftMax = opType == OperatorType.Yfx ? opPrec : opPrec - 1;
         if (builtPrec > leftMax) return false;
 
+        // An xfy operator nests to the RIGHT, so a chain of them —
+        // a clause body's commas, a long disjunction — costs one level of
+        // recursion per element in the naive reader. Read it in a loop
+        // instead; the fold at the end builds the same tree.
+        if (opType == OperatorType.Xfy)
+        {
+            left = ReadXfyChain(name, opPrec, left, leftBareOp);
+            builtPrec = opPrec;
+            leftBareOp = false;
+            return true;
+        }
+
         SourcePosition pos = PeekToken().Position;
         NextToken();
-        int rightMax = opType == OperatorType.Xfy ? opPrec : opPrec - 1;
+        int rightMax = opPrec - 1;
         Term right = ReadTermInternal(rightMax, out _);
         bool rightBareOp = _bareOp;
 
@@ -322,6 +338,88 @@ public sealed class Parser
         builtPrec = opPrec;
         leftBareOp = false;   // `left` is now a compound
         return true;
+    }
+
+    /// <summary>The whole right-nested run of one xfy operator, read ITERATIVELY.
+    /// A clause body is such a run — `a, b, c, ...` is `','(a, ','(b, ...))` — and
+    /// reading each element by recursing for the right operand spent C# stack per
+    /// GOAL: a body of about a thousand goals overflowed it, which kills the
+    /// process and cannot be caught or reported.
+    ///
+    /// <para>Elements are read at the operator's own left maximum (an xfy's left
+    /// operand is strictly below it) and collected; the run ends at the first
+    /// token that is not this same operator, and whatever follows THERE binds up
+    /// to the operator's own priority, which is what the right operand allows —
+    /// so the last element finishes through <see cref="ContinueTerm"/> once,
+    /// however deep the run was. Folding right at the end builds exactly the tree
+    /// the recursion built, node positions included.</para></summary>
+    private Term ReadXfyChain(string name, int opPrec, Term first, bool firstBareOp)
+    {
+        // elems[0] is the operator's LEFT operand; elems[i] the i-th right one,
+        // preceded by the operator token at opPositions[i].
+        var elems = new List<Term> { first };
+        var bare = new List<bool> { firstBareOp };
+        var opPositions = new List<SourcePosition> { default };
+
+        while (true)
+        {
+            opPositions.Add(PeekToken().Position);
+            NextToken();                       // the operator itself
+            Term operand = ReadTermInternal(opPrec - 1, out int operandPrec);
+            if (PeeksSameXfy(name, opPrec))
+            {
+                elems.Add(operand);
+                bare.Add(_bareOp);
+                continue;
+            }
+            // Not this operator: the tail may still carry anything up to the
+            // operator's own priority (`a, b = c`, `a, b ; c`).
+            elems.Add(ContinueTerm(operand, opPrec, ref operandPrec));
+            bare.Add(_bareOp);
+            break;
+        }
+
+        // ISO §6.3.1.3 — same rejection the two-operand path applies, in the
+        // order the recursion applied it: the innermost operator first (its
+        // left operand, then its right), then outwards to the left.
+        bool lenientOperand = _flags.LenientBareOperatorOperands || _flags.ArityCompat;
+        if (!lenientOperand)
+        {
+            int n = elems.Count;
+            if (bare[n - 2])
+                throw new ParseException(
+                    $"Operator atom cannot be the left operand of '{name}' "
+                    + "without parentheses.", opPositions[n - 1]);
+            if (bare[n - 1])
+                throw new ParseException(
+                    $"Operator atom cannot be the right operand of '{name}' "
+                    + "without parentheses.", opPositions[n - 1]);
+            for (int i = n - 3; i >= 0; i--)
+                if (bare[i])
+                    throw new ParseException(
+                        $"Operator atom cannot be the left operand of '{name}' "
+                        + "without parentheses.", opPositions[i + 1]);
+        }
+
+        Term acc = elems[^1];
+        for (int i = elems.Count - 1; i >= 1; i--)
+            acc = new CompoundTerm(name, new[] { elems[i - 1], acc })
+            { Position = opPositions[i] };
+        return acc;
+    }
+
+    /// <summary>Whether the next token continues a run of the SAME xfy operator.
+    /// The comma is its own token kind; `|` is deliberately absent — the
+    /// conditions that let a bar act as an operator at all live in
+    /// <see cref="ContinueTerm"/>, so a bar run takes the ordinary path.</summary>
+    private bool PeeksSameXfy(string name, int opPrec)
+    {
+        Token t = PeekToken();
+        if (name == ",")
+            return t.Kind == TokenKind.Comma && !_suppressComma;
+        return t.Kind == TokenKind.Atom && t.Text == name
+            && _operators.TryGetInfix(name, out int p, out OperatorType ty)
+            && p == opPrec && ty == OperatorType.Xfy;
     }
 
     private bool TryApplyPostfix(
