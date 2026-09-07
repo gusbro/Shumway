@@ -173,6 +173,36 @@ public sealed class CyclicResidualDisplayTests
     }
 
     [Fact]
+    public void ACyclicListsLengthIsARefusalNotAFailure()
+    {
+        // Issue #108 (Neumerkel's length#26): a rational-tree processor may
+        // not quietly FAIL length(Cyclic, N) -- the classical definition
+        // loops there, so the conforming shortcut is the same refusal
+        // length(L, L) gives: resource_error(finite_memory), because no
+        // amount of memory produces a finite length for an infinite list.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "X = [a|X], catch(length(X, _), "
+            + "error(resource_error(finite_memory), length/2), true).").Success);
+        // A CONCRETE candidate length still fails -- the classical bound
+        // walk ends after N steps, uniformly across implementations
+        // (length#27: length(Cyclic, 0) is false).
+        Assert.False(e.Query("X = [a|X], length(X, 0).").Success);
+        Assert.False(e.Query("X = [a|X], length(X, 7).").Success);
+        // A non-integer length keeps the walk's own type discipline.
+        Assert.True(e.Query(
+            "X = [a|X], catch(length(X, foo), "
+            + "error(type_error(integer, foo), _), true).").Success);
+        // The refusal reaches redo too (the survey's shape:
+        // `L = [a|L], ( true ; length(L, N) )`) -- the inner fail forces
+        // backtracking into the length branch, or the first `true` answer
+        // would satisfy the query without running it.
+        Assert.True(e.Query(
+            "L = [a|L], catch((( true ; length(L, _) ), fail), "
+            + "error(resource_error(finite_memory), _), true).").Success);
+    }
+
+    [Fact]
     public void TheConstraintIsStillTheOneItShows()
     {
         // Naming is a display: the constraint the answer reports must still be
