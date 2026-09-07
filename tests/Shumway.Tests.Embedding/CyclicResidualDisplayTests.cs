@@ -203,6 +203,36 @@ public sealed class CyclicResidualDisplayTests
     }
 
     [Fact]
+    public void ATailACoroutineMakesCyclicIsRefusedToo()
+    {
+        // The same refusal when the cycle appears DURING the enumeration:
+        // freeze(L, L = [_|L]) makes every candidate list cyclic, so each
+        // step of length(L, N) wakes a goal that binds the open tail back
+        // onto itself. Walking that spins in CONSTANT memory -- nothing
+        // allocates, so no limit would ever refuse it -- and the query used
+        // to hang where the already-cyclic L = [_|L] raised at once.
+        var e = new PrologEngine();
+        e.UseCoroutining();
+        Assert.True(e.Query(
+            "freeze(L, L = [_|L]), catch(length(L, _), "
+            + "error(resource_error(finite_memory), length/2), true).").Success);
+        // One level deeper: the coroutine on the TAIL closes the cycle.
+        Assert.True(e.Query(
+            "freeze(L, (L = [_|T], freeze(T, T = [_|T]))), catch(length(L, _), "
+            + "error(resource_error(finite_memory), length/2), true).").Success);
+        // A concrete length still just fails: the bound walk ends.
+        Assert.False(e.Query("freeze(L, L = [_|L]), length(L, 3).").Success);
+        // And a coroutine that binds the tail to something FINITE is not
+        // refused -- it is answered, counting what the wake left behind.
+        Assert.True(e.Query("freeze(L, L = [x,y]), length(L, N), N == 2.").Success);
+        Assert.True(e.Query("freeze(L, L = [a|_]), length(L, N), N == 1.").Success);
+        // The enumeration still walks PAST a woken bind: growing candidates
+        // keep coming, with what the coroutine wrote in place.
+        Assert.True(e.Query(
+            "freeze(L, L = [a|_]), length(L, N), N == 3, L = [a,_,_].").Success);
+    }
+
+    [Fact]
     public void TheConstraintIsStillTheOneItShows()
     {
         // Naming is a display: the constraint the answer reports must still be

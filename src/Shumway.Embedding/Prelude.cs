@@ -619,7 +619,18 @@ internal static class Prelude
         '$length_enum'([], N, N).
         '$length_enum'([_|T], N, Acc) :-
             Acc1 is Acc + 1,
-            '$length_enum'(T, N, Acc1).
+            (   var(T) -> '$length_enum'(T, N, Acc1)
+            ;   % The step above BOUND the tail: extending the list woke a
+                % coroutine that had something to say about it
+                % (freeze(L, L=[_|L]) makes every candidate cyclic). What is
+                % there now is no longer an open end to enumerate, so ask
+                % length/2 about it -- which refuses a cyclic list rather
+                % than walking one forever. Walking it here would spin in
+                % CONSTANT memory: no allocation, so nothing would ever
+                % refuse it. Asking once, at the transition, also keeps a
+                % woken proper tail linear.
+                length(T, M), N is Acc1 + M
+            ).
 
         %! sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom) | Atoms & strings | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom.
         % '$sub_atom_enum' yields each decomposition lazily (a backtrackable
