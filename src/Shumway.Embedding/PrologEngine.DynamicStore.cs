@@ -1658,10 +1658,18 @@ public sealed partial class PrologEngine
         }
     }
 
+    /// <summary>Collects the heads a clause body asserts. Iterative: the body
+    /// it scans is whatever the program wrote, and a frame per conjunct
+    /// overflowed the C# stack around a few thousand goals -- which kills the
+    /// process, mid-consult, with nothing to report.</summary>
     private static void ScanForAssertHeads(Term goal, HashSet<int> sink)
     {
-        if (goal is CompoundTerm c)
+        var pending = new List<Term>(32) { goal };
+        while (pending.Count > 0)
         {
+            Term next = pending[^1];
+            pending.RemoveAt(pending.Count - 1);
+            if (next is not CompoundTerm c) continue;
             if ((c.Functor == "assertz" || c.Functor == "asserta" || c.Functor == "assert")
                 && c.Args.Length == 1)
             {
@@ -1675,11 +1683,12 @@ public sealed partial class PrologEngine
                 else if (arg is CompoundTerm cc)
                     sink.Add(FunctorTable.Intern(
                         AtomTable.Intern(cc.Functor, permanent: true).Id, cc.Args.Length));
-                return;
+                continue;
             }
-            // Recurse into control constructs and any compound — a
-            // nested `( ... ; assertz(p) ; ... )` should still register p.
-            foreach (var sub in c.Args) ScanForAssertHeads(sub, sink);
+            // Down through control constructs and any compound — a nested
+            // `( ... ; assertz(p) ; ... )` should still register p. Pushed
+            // right to left so arguments are still visited left to right.
+            for (int i = c.Args.Length - 1; i >= 0; i--) pending.Add(c.Args[i]);
         }
     }
 

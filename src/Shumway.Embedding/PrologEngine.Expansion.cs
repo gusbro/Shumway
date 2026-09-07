@@ -208,7 +208,7 @@ public sealed partial class PrologEngine
     // for more. The clause and its position come from the consult report,
     // which is where the culprit is actually looked for.
     private static ShumwayPrologException ExpansionRunaway() =>
-        new(IsoError.ResourceError("expansion_depth"));
+        new(IsoError.ResourceError("expansion_depth")) { EngineStackIsStale = true };
 
     // The Prolog term_expansion/2 hook: call the user predicate
     // `term_expansion(Input, Expanded)` in the live engine (works mid-consult) and

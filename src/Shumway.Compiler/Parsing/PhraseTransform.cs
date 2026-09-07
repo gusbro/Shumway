@@ -49,30 +49,18 @@ public static class PhraseTransform
         return result;
     }
 
+    // Down through the control-flow constructors that group goals — the
+    // constructors themselves stay, only their sub-goals get rewritten. The
+    // walk is iterative: a body is a run of ,/2 as long as the program cares
+    // to write (GoalTreeRewrite).
     private static Term RewriteGoal(Term goal)
+        => GoalTreeRewrite.Apply(goal,
+            c => IsControlFlow(c.Functor, c.Args.Length), RewritePlainGoal);
+
+    private static Term RewritePlainGoal(Term goal)
     {
-        // Recurse through the control-flow constructors that group goals — the
-        // constructors themselves stay, only their sub-goals get rewritten.
         if (goal is CompoundTerm c)
         {
-            if (IsControlFlow(c.Functor, c.Args.Length))
-            {
-                Term[]? newArgs = null;
-                for (int i = 0; i < c.Args.Length; i++)
-                {
-                    Term orig = c.Args[i];
-                    Term rew = RewriteGoal(orig);
-                    if (!ReferenceEquals(rew, orig))
-                    {
-                        newArgs ??= (Term[])c.Args.Clone();
-                        newArgs[i] = rew;
-                    }
-                }
-                return newArgs is null
-                    ? goal
-                    : new CompoundTerm(c.Functor, newArgs) { Position = c.Position };
-            }
-
             if (c.Functor == "phrase" && c.Args.Length == 2)
             {
                 Term? expanded = ExpandPhrase(c.Args[0], c.Args[1], new AtomTerm("[]"), c);

@@ -68,7 +68,7 @@ public sealed partial class PrologEngine
             int baseB = engine.B;
             try { result = host.RunCatching(interp, program, engine, () => interp.Run(program, 0)); }
             catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; result = InterpreterResult.Failed; }
-            catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
+            catch (ShumwayPrologException pex) { if (pex.EngineStackIsStale) { host.LastErrorStackTrace = Array.Empty<(string, int)>(); host.LastErrorStackTraceWithPositions = Array.Empty<PrologEngine.StackFrame>(); } else { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; } throw; }
             catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
 
             while (!halted && result == InterpreterResult.Halted)
@@ -85,7 +85,7 @@ public sealed partial class PrologEngine
                 if (isLast) break;
                 try { result = host.RunCatching(interp, program, engine, () => interp.Backtrack(program)); }
                 catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; break; }
-                catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
+                catch (ShumwayPrologException pex) { if (pex.EngineStackIsStale) { host.LastErrorStackTrace = Array.Empty<(string, int)>(); host.LastErrorStackTraceWithPositions = Array.Empty<PrologEngine.StackFrame>(); } else { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; } throw; }
                 catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
             }
         }

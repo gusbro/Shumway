@@ -93,7 +93,7 @@ public static partial class MetaBuiltins
         if (t.Tag == Tag.Ref)
         {
             // Construct mode (§8.5.1.3): Name and Arity must be ground,
-            // Arity a non-negative integer within max_arity, and Name an
+            // Arity a non-negative integer the address space can hold, Name an
             // atom unless Arity is 0. Every error carries its culprit.
             Cell n = ResolveLocal(engine, engine.GetRegister(1));
             Cell a = ResolveLocal(engine, engine.GetRegister(2));
@@ -103,12 +103,14 @@ public static partial class MetaBuiltins
             Term arityTerm = MaterializeRegister(engine, 2);
             if (a.Tag == Tag.BigInt)
             {
-                // A bignum IS an integer: negative is a domain error, positive
-                // is simply past max_arity.
+                // A bignum IS an integer: negative is a domain error;
+                // positive is past what the address space can represent —
+                // with max_arity unbounded that is a RESOURCE answer
+                // (issue #106), not a flag-derived representation error.
                 throw new ShumwayPrologException(
                     engine.AsBigInt(a).Sign < 0
                         ? IsoError.DomainError("not_less_than_zero", arityTerm)
-                        : IsoError.RepresentationError("max_arity"));
+                        : IsoError.ResourceError("finite_memory"));
             }
             if (a.Tag != Tag.Int)
                 throw new ShumwayPrologException(
@@ -117,9 +119,11 @@ public static partial class MetaBuiltins
             if (arity < 0)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("not_less_than_zero", arityTerm));
+            // Checked BEFORE any allocation: the probe one past capacity
+            // must error, not thrash 4 GiB of heap into being (issue #106).
             if (arity > MaxArity)
                 throw new ShumwayPrologException(
-                    IsoError.RepresentationError("max_arity"));
+                    IsoError.ResourceError("finite_memory"));
             if (arity == 0)
             {
                 // T becomes Name itself (atomic).
@@ -353,8 +357,10 @@ public static partial class MetaBuiltins
         }
     }
 
-    /// <summary>The <c>max_arity</c> flag's value: the largest arity a
-    /// compound term may have, and what <c>current_prolog_flag/2</c> reports.
+    /// <summary>The largest arity a compound term can be REPRESENTED with —
+    /// address-space capacity, not the <c>max_arity</c> flag (which reports
+    /// <c>unbounded</c>; hitting this capacity answers
+    /// <c>resource_error(finite_memory)</c> — issue #106).
     ///
     /// <para>It is a size, not a taste. Nothing in the machine wants a small
     /// one: a heap reference is a 32-bit index, the functor table keeps the
@@ -476,10 +482,11 @@ public static partial class MetaBuiltins
             if (first.Tag != Tag.Atom)
                 throw new ShumwayPrologException(IsoError.TypeError("atom", firstTerm));
             int arity = count - 1;
-            // §8.5.3.3: past the max_arity flag the term cannot be built.
+            // Past address-space capacity the term cannot be built; with
+            // max_arity unbounded that is a resource error (issue #106).
             if (arity > MaxArity)
                 throw new ShumwayPrologException(
-                    IsoError.RepresentationError("max_arity"));
+                    IsoError.ResourceError("finite_memory"));
             // Same rule as functor/3 above: a '.'/2 term is a cons cell.
             if (arity == 2 && first.AsAtomId == DotAtomId)
             {
@@ -1423,14 +1430,16 @@ public static partial class MetaBuiltins
             if (c.Args[1] is BigIntTerm big)
                 throw new ShumwayPrologException(big.Value.Sign < 0
                     ? IsoError.DomainError("not_less_than_zero", big)
-                    : IsoError.RepresentationError("max_arity"));
+                    : IsoError.RepresentationError("max_procedure_arity"));
             var arity = (IntTerm)c.Args[1];
             if (arity.Value < 0)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("not_less_than_zero", arity));
-            if (arity.Value > MaxArity)
+            // An indicator past the PROCEDURE cap names nothing definable
+            // (stc#70): terms are unbounded, predicates are not.
+            if (arity.Value > Shumway.Core.RuntimeCaps.MaxProcedureArity)
                 throw new ShumwayPrologException(
-                    IsoError.RepresentationError("max_arity"));
+                    IsoError.RepresentationError("max_procedure_arity"));
             int fid = FunctorTable.Intern(
                 AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
             // Dynamic → abolish; builtin/static → permission_error (thrown

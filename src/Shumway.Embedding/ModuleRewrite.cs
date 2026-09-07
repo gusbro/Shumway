@@ -131,7 +131,15 @@ public static class ModuleRewrite
         _ => head,
     };
 
+    // Control-flow constructors are syntactic, not callable predicates: the
+    // walk descends through them and never mangles the constructor itself.
+    // Iteratively (GoalTreeRewrite) -- a body is a run of ,/2 as long as the
+    // program cares to write, and a frame per conjunct overflowed the stack.
     private static Term RewriteGoal(Term goal, Context ctx)
+        => Shumway.Compiler.Parsing.GoalTreeRewrite.Apply(goal,
+            c => IsControlFlow(c.Functor, c.Args.Length), g => RewritePlainGoal(g, ctx));
+
+    private static Term RewritePlainGoal(Term goal, Context ctx)
     {
         // A variable in a goal position (a clause body, a control-flow sub-goal)
         // is a runtime meta-call. Wrap it call('$mqual'(Module, Var)) so the
@@ -211,26 +219,6 @@ public static class ModuleRewrite
                 return goal;   // control construct / unknown module → runtime ':'/2
             }
 
-            // Control-flow constructors are syntactic, not callable predicates;
-            // recurse into their sub-goals but never mangle the constructor
-            // itself.
-            if (IsControlFlow(c.Functor, c.Args.Length))
-            {
-                Term[]? newArgs = null;
-                for (int i = 0; i < c.Args.Length; i++)
-                {
-                    Term original = c.Args[i];
-                    Term rewritten = RewriteGoal(original, ctx);
-                    if (!ReferenceEquals(rewritten, original))
-                    {
-                        newArgs ??= (Term[])c.Args.Clone();
-                        newArgs[i] = rewritten;
-                    }
-                }
-                return newArgs is null
-                    ? goal
-                    : new CompoundTerm(c.Functor, newArgs) { Position = c.Position };
-            }
             // Meta-predicate with a VARIABLE goal argument (a callable goal was
             // already inlined + mangled by MetaTransform): tag the variable with
             // the compile-time module so a runtime meta-call (findall/call/…)

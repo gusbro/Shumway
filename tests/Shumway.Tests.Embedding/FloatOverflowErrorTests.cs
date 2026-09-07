@@ -120,15 +120,16 @@ public sealed class FloatOverflowErrorTests
     }
 
     [Fact]
-    public void ConsultingAnOverflowingLiteralRaises_NothingLoads()
+    public void ConsultingAnOverflowingLiteralIsADiagnostic_TheRestLoads()
     {
-        var e = new PrologEngine();
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
-            () => e.ConsultString("x(9.9e999).\ny(1).\n"));
-        Assert.Equal("representation_error", ex.Kind);
-        Assert.Equal("max_float", ex.Detail);
-        // All-or-nothing: the good clause after the bad one did not load.
-        Assert.True(e.Query(
-            "catch(y(_), error(existence_error(_, _), _), true).").Success);
+        // Issue #109 recovery: the unrepresentable literal is a per-clause
+        // diagnostic naming max_float; the clause holding it is skipped and
+        // the good clause after it loads.
+        var warnings = new System.IO.StringWriter();
+        var e = new PrologEngine { Warnings = warnings };
+        e.ConsultString("x(9.9e999).\ny(1).\n");
+        Assert.Contains("max_float", warnings.ToString());
+        Assert.True(e.Query("y(1).").Success);
+        Assert.False(e.Query("catch(x(_), error(existence_error(_, _), _), fail).").Success);
     }
 }

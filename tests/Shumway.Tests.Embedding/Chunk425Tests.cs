@@ -35,9 +35,14 @@ public class Chunk425Tests
     [Fact]
     public void DollarAtoms_OffByDefault()
     {
-        var e = new PrologEngine();
-        Assert.ThrowsAny<System.Exception>(() =>
-            e.ConsultString("p($oops$)."));
+        // Rejected without the flag: a diagnostic and no clause (issue #109
+        // made a consult recover rather than abort — the rejection is the
+        // point, not how it is reported).
+        var warnings = new System.IO.StringWriter();
+        var e = new PrologEngine { Warnings = warnings };
+        e.ConsultString("p($oops$).");
+        Assert.NotEqual("", warnings.ToString());
+        Assert.True(e.Query("catch(p(_), error(existence_error(_, _), _), true).").Success);
     }
 
     [Fact]

@@ -42,6 +42,11 @@ public static class ErrorRendering
             },
         };
 
+        // A host-raised error (the expansion processor) does not come from
+        // running goals: whatever the engine last captured belongs to some
+        // earlier, unrelated error, and showing it names a bogus culprit
+        // (issue #97: `at bb_delete/2` under expansion_depth).
+        if (ex is ShumwayPrologException { EngineStackIsStale: true }) return lines;
         var trace = engine.LastErrorStackTraceWithPositions;
         if (trace is null) return lines;
         foreach (var f in trace)

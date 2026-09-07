@@ -66,8 +66,8 @@ internal sealed class ConsultPipeline
     /// <c>syntax_error</c> ball (the position rides in the message), so the
     /// top level reports it as an error and <c>catch/3</c> can take it — it
     /// used to escape as the raw .NET exception, uncatchable from Prolog.
-    /// The all-or-nothing outcome itself is the documented GNU model: on a
-    /// failed compilation "a message is displayed and nothing is loaded".</summary>
+    /// Only STRICT consults (compile-time tooling) let one out at all; a
+    /// runtime consult recovers per clause — see <see cref="ReadRecovering"/>.</summary>
     private static Exception AsSyntaxError(Shumway.Compiler.Parsing.ParseException ex)
         => ex.RepresentationFlaw is { } flaw
             ? new Shumway.Core.PrologRuntimeException("representation_error", flaw)
@@ -841,13 +841,21 @@ internal sealed class ConsultPipeline
             var parseOps = preludeSource
                 ? Shumway.Compiler.Parsing.OperatorTable.Default()
                 : E._operators;
-            var list = new ClauseReader(
+            var reader = new ClauseReader(
                 new Lexer(source, !preludeSource && E._flags.CharConversionEnabled
                         ? E._flags.CharConversion : null)
                 { FileId = E._debugFileId },
                 parseOps, parseFlags)
-            { ModuleLayerProvider = preludeSource ? null : E.ModuleOperatorLayer }
-                .ReadAll().ToList();
+            { ModuleLayerProvider = preludeSource ? null : E.ModuleOperatorLayer };
+            // A user file recovers per clause here too, so carrying an
+            // `:- include` does not change how its own bad clauses read. The
+            // prelude and the libraries do NOT: they are engine-internal
+            // sources, and one silently short of a clause is a broken engine.
+            // (Text pulled in BY an include still aborts the load — the
+            // expander parses it in one go.)
+            var list = (preludeSource || librarySource
+                ? reader.ReadAll()
+                : ReadRecovering(reader, E)).ToList();
             if (preludeSource)
                 System.Threading.Volatile.Write(ref s_preludeClauses, list);
             // ISO 7.4.2.7 `:- include(File)` — textual inclusion.
@@ -864,7 +872,7 @@ internal sealed class ConsultPipeline
                 E._operators, E._flags)
             { ModuleLayerProvider = E.ModuleOperatorLayer };
             liveReader = lazyReader;
-            rawClauses = lazyReader.ReadAll();
+            rawClauses = ReadRecovering(lazyReader, E);
         }
 
         // Record the prelude's predicates so predicate_property/2 reports them as
@@ -1149,6 +1157,7 @@ internal sealed class ConsultPipeline
                 // stays global regardless).
                 if (TryStripHookHead(clause, out Clause stripped))
                     clause = stripped;
+                CheckProcedureArity(clause);
                 clauses.Add(clause);
                 if (!sawInFileHook && IsHookClauseHead(clause)) sawInFileHook = true;
                 if (!debuggableHere && TryReadClauseHead(clause, out var headSpec))
@@ -2094,6 +2103,39 @@ internal sealed class ConsultPipeline
         System.Text.RegularExpressions.Regex.IsMatch(
             source, @"(^|\n)\s*:-\s*include\s*\(");
 
+    /// <summary>Consult with parse-error recovery (issue #109): a clause that
+    /// does not parse is a per-clause diagnostic on the warning sink, not the
+    /// end of the load — the reader resyncs to the next terminator dot and the
+    /// clauses after the bad one still load. Same entries the compile
+    /// toolchain collects as compile errors (ShmoCompiler); the load
+    /// predicates of Edinburgh descent report and continue the same way.
+    ///
+    /// <para><see cref="PrologEngine.StrictConsultSyntax"/> restores the
+    /// all-or-nothing outcome for callers that COMPILE rather than load (the
+    /// bundle writer validating hand-built sources): there a clause that does
+    /// not parse must fail the build, never bake a module quietly missing
+    /// it.</para></summary>
+    private static IEnumerable<Clause> ReadRecovering(ClauseReader reader, PrologEngine E)
+    {
+        string where = E._currentLoadFile is { } f ? $"{f}:" : "";
+        foreach (var entry in reader.ReadAllCollectingErrors())
+        {
+            if (entry.IsError)
+            {
+                if (E.StrictConsultSyntax)
+                    throw entry.ResourceDetail is { } culprit
+                        ? new Shumway.Core.PrologRuntimeException("resource_error", culprit)
+                        : new Shumway.Core.PrologRuntimeException(
+                            "syntax_error", $"{where}{entry.ErrorMessage}");
+                E.Warn(entry.IsResourceLimit
+                    ? $"error: {where}clause skipped: {entry.ErrorMessage}"
+                    : $"syntax error: {where}{entry.ErrorMessage}");
+            }
+            else if (entry.Clause is not null)
+                yield return entry.Clause;
+        }
+    }
+
     private static Term QualifyGoalForModule(Term goal, string moduleName)
         => moduleName == PrologEngine.DefaultModuleName
             ? goal
@@ -2713,6 +2755,24 @@ internal sealed class ConsultPipeline
         }
         name = "";
         return false;
+    }
+
+    /// <summary>stc#70 -- terms are unbounded, procedures are not: a clause
+    /// whose head is wider than <see cref="Shumway.Core.RuntimeCaps.MaxProcedureArity"/>
+    /// cannot be defined (a DCG head gains its two hidden arguments in the
+    /// translation, so they count). Raised per clause, so the consult reports
+    /// it the way it reports any bad clause and carries on.</summary>
+    private static void CheckProcedureArity(Clause clause)
+    {
+        Term head = clause.Term;
+        if (clause.Kind is ClauseKind.Rule or ClauseKind.DcgRule or ClauseKind.SsuRule
+            && head is CompoundTerm { Args.Length: 2 } wrap)
+            head = wrap.Args[0];
+        int arity = head is CompoundTerm hc ? hc.Args.Length : 0;
+        if (clause.Kind == ClauseKind.DcgRule) arity += 2;
+        if (arity > Shumway.Core.RuntimeCaps.MaxProcedureArity)
+            throw new ShumwayPrologException(
+                IsoError.RepresentationError("max_procedure_arity"));
     }
 
     private static bool TryReadDynamicDirective(

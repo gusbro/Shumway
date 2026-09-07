@@ -16,23 +16,14 @@ public static class ClauseBodyConversion
     /// nothing changed (no allocation for the overwhelmingly common case of a
     /// body with no variable goals).</summary>
     public static Term Convert(Term body)
-    {
-        switch (body)
-        {
-            case VarTerm:
-                return new CompoundTerm("call", new[] { body }) { Position = body.Position };
-            case CompoundTerm { Functor: "," or ";" or "->", Args.Length: 2 } c:
-            {
-                Term a = Convert(c.Args[0]);
-                Term b = Convert(c.Args[1]);
-                return ReferenceEquals(a, c.Args[0]) && ReferenceEquals(b, c.Args[1])
-                    ? body
-                    : new CompoundTerm(c.Functor, new[] { a, b }) { Position = c.Position };
-            }
-            default:
-                return body;
-        }
-    }
+        => Parsing.GoalTreeRewrite.Apply(body,
+            c => c.Args.Length == 2 && c.Functor is "," or ";" or "->",
+            ConvertGoal);
+
+    private static Term ConvertGoal(Term goal)
+        => goal is VarTerm
+            ? new CompoundTerm("call", new[] { goal }) { Position = goal.Position }
+            : goal;
 
     /// <summary>The clause with its body converted. Facts and bodies that need
     /// no conversion are returned unchanged.</summary>

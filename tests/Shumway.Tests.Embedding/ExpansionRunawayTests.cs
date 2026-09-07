@@ -35,6 +35,27 @@ public sealed class ExpansionRunawayTests
     }
 
     [Fact]
+    public void TheReportNamesNoBogusCulprit()
+    {
+        // Issue #97, the follow-up: the runaway is raised by HOST machinery
+        // between goals, so the engine's captured stack belongs to whatever
+        // errored earlier -- the report showed `at bb_delete/2` (or `at ./2`)
+        // under an expansion error that had nothing to do with either. The
+        // exception declares its stack stale and the renderer must show the
+        // error alone.
+        var e = new PrologEngine();
+        // Seed a stale capture the way the original report did: an earlier,
+        // unrelated error whose trace the engine remembers.
+        Assert.False(e.Query("catch(bb_delete(nosuch, _), _, fail).").Success);
+        var ex = Assert.Throws<ShumwayPrologException>(() => e.ConsultString(
+            "b((_, p(_))). goal_expansion(p(B), (B)) :- b(B). p :- p(_)."));
+        Assert.True(ex.EngineStackIsStale);
+        var lines = Shumway.TopLevel.ErrorRendering.Describe(e, ex);
+        Assert.Contains("resource_error(expansion_depth)", lines[0].Replace(" ", ""));
+        Assert.All(lines, l => Assert.DoesNotContain("  at ", l));
+    }
+
+    [Fact]
     public void TheEngineIsStillThereAfterwards()
     {
         // The point of the exercise. A stack overflow ends the process; this
