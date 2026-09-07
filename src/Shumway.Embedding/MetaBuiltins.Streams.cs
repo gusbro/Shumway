@@ -824,6 +824,28 @@ public static partial class MetaBuiltins
     /// sub-engine, and every side effect the goal made (an <c>op/3</c>, an
     /// <c>assertz</c>, a flag) silently vanished with it.</summary>
     public static bool WotBegin(Activation engine)
+        => WotBeginWithLimit(engine, Shumway.Core.Cell.MaxPstrLength);
+
+    /// <summary><c>'$wot_begin'(+Sink, +MaxChars)</c> — a capture with a
+    /// SMALLER ceiling than what a term can hold. For a caller that only
+    /// needs to compare the text against something it already has (the quad
+    /// harness): past its own longest pattern the text can only be "more
+    /// than that", so accumulating megabytes of it buys nothing.</summary>
+    public static bool WotBeginBounded(Activation engine)
+    {
+        Cell limitCell = ResolveLocal(engine, engine.GetRegister(1));
+        if (limitCell.Tag != Tag.Int)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("integer", new VarTerm("_")));
+        long limit = limitCell.AsInt;
+        if (limit < 1) limit = 1;
+        return WotBeginWithLimit(engine,
+            (int)System.Math.Min(limit, Shumway.Core.Cell.MaxPstrLength),
+            truncate: true);
+    }
+
+    private static bool WotBeginWithLimit(Activation engine, int limit,
+        bool truncate = false)
     {
         ReadSink(engine, out _, out _);   // validate before touching anything
         var reg = engine.Streams
@@ -833,7 +855,12 @@ public static partial class MetaBuiltins
         // must contribute "\n" to the captured atom (GNU/SWI behaviour —
         // sub_atom(Captured, _, _, _, '\n') patterns rely on it), while file
         // streams keep the platform newline.
-        var sw = new System.IO.StringWriter { NewLine = "\n" };
+        // Bounded: a goal that never stops writing must not be accumulated
+        // until the process runs out of room. The ceiling is where the text
+        // stops being representable as a term, and reaching it raises
+        // resource_error(text_length) -- catchable, unlike the .NET range
+        // check the giant text used to trip on its way to the heap.
+        var sw = new BoundedCaptureWriter(limit, truncate);
         var handle = reg.Add(new StreamHandle(
             reg.NextId(), sw, "write", filename: null, alias: null));
         var stack = WotStackOf(engine);
