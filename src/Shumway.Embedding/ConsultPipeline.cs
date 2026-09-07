@@ -162,20 +162,21 @@ internal sealed class ConsultPipeline
         }
     }
 
-    /// <summary>Rejects clauses whose head functor is a control connective
-    /// (see the call site). Reported through the warnings channel and dropped,
-    /// so the rest of the file still loads — the SWI-style file behavior of
-    /// the error assertz/1 raises for the same head.</summary>
-    private List<Clause> DropControlConnectiveHeads(List<Clause> clauses)
+    /// <summary>Rejects clauses whose head is a procedure of the PROCESSOR
+    /// (see the call site): a control connective always; a builtin or prelude
+    /// predicate when the clause would land in the GLOBAL module — inside a
+    /// named module the same head is an ADR-008 local that shadows the
+    /// builtin for that module only, which stays legal. Reported through the
+    /// warnings channel and dropped, so the rest of the file still loads —
+    /// the SWI-style file behavior of the error assertz/1 raises for the
+    /// same head.</summary>
+    private List<Clause> DropProtectedHeads(List<Clause> clauses, bool globalModule)
     {
         List<Clause>? kept = null;
         for (int i = 0; i < clauses.Count; i++)
         {
-            bool bad = TryReadClauseHead(clauses[i], out var spec) && spec switch
-            {
-                (",", 2) or (";", 2) or ("->", 2) or ("*->", 2) or ("!", 0) => true,
-                _ => false,
-            };
+            bool bad = TryReadClauseHead(clauses[i], out var spec)
+                && IsProtectedHead(spec, globalModule);
             if (bad)
             {
                 kept ??= new List<Clause>(clauses.GetRange(0, i));
@@ -185,6 +186,31 @@ internal sealed class ConsultPipeline
             else kept?.Add(clauses[i]);
         }
         return kept ?? clauses;
+    }
+
+    private bool IsProtectedHead((string Name, int Arity) spec, bool globalModule)
+    {
+        // Control connectives can never be dispatched (the compiler lowers
+        // them inline unconditionally) — rejected in ANY module.
+        if (spec is (",", 2) or (";", 2) or ("->", 2) or ("*->", 2) or ("!", 0))
+            return true;
+        if (!globalModule) return false;
+        int fid = FunctorTable.Intern(
+            AtomTable.Intern(spec.Name, permanent: true).Id, spec.Arity);
+        // The global hooks are DESIGNED to be defined by user code.
+        if (PrologEngine.IsGlobalHookFunctor(fid)) return false;
+        // A predicate the user already made dynamic is theirs (a preceding
+        // `:- dynamic` on a protected name raised its own error).
+        if (E._dynStore.IsDynamic(fid)) return false;
+        // ISO 7.5.2 makes every built-in static, and the REGISTRY's native
+        // ones are protected here. The prelude's Prolog-defined library
+        // predicates are deliberately NOT: defining append/3 or member/2 in
+        // a plain file is ordinary Prolog (every tutorial does it), and the
+        // user's definition shadows the library's — the same line SWI draws
+        // between locked system predicates and redefinable library ones.
+        // assertz/1 still refuses BOTH kinds: mutating a loaded library
+        // predicate at runtime is a different act from loading your own.
+        return Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _);
     }
 
     /// <summary>A clause with a module-qualified head <c>M:Head</c> (a bound atom
@@ -1479,15 +1505,20 @@ internal sealed class ConsultPipeline
                     $"warning: redefinition of builtin {name}/{arity} ignored (arity_compat)");
         }
 
-        // A clause whose head is a control CONNECTIVE — `a,b.` reads as a
-        // clause for ','/2 — can never be dispatched: the compiler lowers
-        // these functors inline unconditionally, so the stored clauses are
-        // unreachable dead weight that listing/0 shows and nothing can call.
-        // assertz/1 already refuses them (permission_error, §8.9.2.3); consult
-        // now reports the same and drops the clause, loading on. Deliberately
-        // NOT the full builtin set: catch/3, call/N and friends are real
-        // prelude predicates consulted through this very pipeline.
-        clauses = DropControlConnectiveHeads(clauses);
+        // A clause whose head is a procedure of the PROCESSOR: a control
+        // connective (`a,b.` reads as a clause for ','/2, which the compiler
+        // lowers inline — the stored clause could never be dispatched), or —
+        // in the GLOBAL module — a builtin or prelude predicate (ISO 7.5.2:
+        // all built-in predicates are static; `write(hello).` in a plain
+        // file used to shadow write/1 silently and leave the engine mute).
+        // assertz/1 already refuses all of these (permission_error,
+        // §8.9.2.3); consult reports the same and drops the clause, loading
+        // on. The prelude and the libraries are exempt — they DEFINE these
+        // predicates through this very pipeline — and a named module's
+        // clause is an ADR-008 local shadow, which stays legal.
+        clauses = DropProtectedHeads(clauses,
+            globalModule: !preludeSource && !librarySource
+                && moduleName == PrologEngine.DefaultModuleName);
 
         // In-file term_expansion hooks defined this consult: their unexpanded
         // clauses (a grammar operator like clpz's `++>`, all sharing one head

@@ -221,9 +221,9 @@ public class ExportQualifiedModuleTests
         var e = EngineWith(libs);
         e.ConsultString("""
             :- use_module(library(top)).
-            get(X) :- val(X).
+            fetch(X) :- val(X).
             """);
-        Assert.Equal("deep", e.QueryFirst<string>("get(X).", "X"));
+        Assert.Equal("deep", e.QueryFirst<string>("fetch(X).", "X"));
     }
 
     [Fact]
@@ -236,16 +236,16 @@ public class ExportQualifiedModuleTests
         var ea = EngineWith(libs);
         ea.ConsultString("""
             :- use_module(library(liba)).
-            get(X) :- foo(X).
+            fetch(X) :- foo(X).
             """);
-        Assert.Equal("from_a", ea.QueryFirst<string>("get(X).", "X"));
+        Assert.Equal("from_a", ea.QueryFirst<string>("fetch(X).", "X"));
 
         var eb = EngineWith(libs);
         eb.ConsultString("""
             :- use_module(library(libb)).
-            get(X) :- foo(X).
+            fetch(X) :- foo(X).
             """);
-        Assert.Equal("from_b", eb.QueryFirst<string>("get(X).", "X"));
+        Assert.Equal("from_b", eb.QueryFirst<string>("fetch(X).", "X"));
     }
 
     [Fact]
@@ -260,10 +260,10 @@ public class ExportQualifiedModuleTests
         e.ConsultString("""
             :- use_module(library(liba)).
             :- use_module(library(libb)).
-            get(X) :- foo(X).
+            fetch(X) :- foo(X).
             """);
         // liba was imported first; foo resolves to liba$foo.
-        Assert.Equal("from_a", e.QueryFirst<string>("get(X).", "X"));
+        Assert.Equal("from_a", e.QueryFirst<string>("fetch(X).", "X"));
     }
 
     [Fact]
