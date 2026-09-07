@@ -42,8 +42,13 @@ internal sealed class BrowserWasmRunner : IWasmActivationRunner
         _mailboxAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_mailbox, 0);
     }
 
+    // Timing split for the probe: ticks inside the raw call vs the whole
+    // Run (the difference is the per-entry marshalling). Process-wide.
+    internal static long DiagCallTicks, DiagRunTicks;
+
     public unsafe WasmVerdict Run(Activation engine, int cursor)
     {
+        long t0 = Stopwatch.GetTimestamp();
         engine.EnsureWasmRegisters(_registerDemand);
         Cell[] heap = engine.WasmHeapView;
         Cell[] stack = engine.WasmStackView;
@@ -69,8 +74,11 @@ internal sealed class BrowserWasmRunner : IWasmActivationRunner
             // Byte addresses vs cell indexing: the module computes
             // base + index*8, so bases go in as raw byte addresses. They ARE
             // i32-sized here (browser linear memory).
+            long t1 = Stopwatch.GetTimestamp();
             int verdict = WebShumwayApp.WasmCall(_index.Value, _mailboxAt, cursor);
+            DiagCallTicks += Stopwatch.GetTimestamp() - t1;
             engine.SyncFromWasmMailbox(_mailbox);
+            DiagRunTicks += Stopwatch.GetTimestamp() - t0;
             return (WasmVerdict)verdict;
         }
     }
@@ -216,14 +224,24 @@ internal static partial class WebShumwayApp
                 report.Append("promoted predicates: ").Append(promoted).Append('\n');
 
                 // Attribute a slow case: run nrev once with the verdict tally
-                // reset, so a high deopt-to-entry ratio names the watermark as
-                // the cost rather than the boundary.
+                // reset, plus a wall/call/marshal time split, so the report
+                // separates wasm-execution time from per-entry marshalling
+                // from interpreter glue.
                 WasmTierDelegate.ResetDiag();
+                BrowserWasmRunner.DiagCallTicks = 0;
+                BrowserWasmRunner.DiagRunTicks = 0;
+                var dsw = Stopwatch.StartNew();
                 tiered.Query("range(1, 200, L), nrev(L, _).");
+                dsw.Stop();
+                double callMs = BrowserWasmRunner.DiagCallTicks * 1000.0 / Stopwatch.Frequency;
+                double runMs = BrowserWasmRunner.DiagRunTicks * 1000.0 / Stopwatch.Frequency;
                 report.Append($"nrev diag: entries={WasmTierDelegate.DiagEntries} "
                     + $"tailcalls={WasmTierDelegate.DiagTailCalls} "
                     + $"deopts={WasmTierDelegate.DiagDeopts} "
                     + $"builtins={WasmTierDelegate.DiagBuiltins}\n");
+                report.Append($"nrev time: wall={dsw.Elapsed.TotalMilliseconds:F1} ms, "
+                    + $"inWasm={callMs:F1} ms, marshal={runMs - callMs:F1} ms, "
+                    + $"glue={dsw.Elapsed.TotalMilliseconds - runMs:F1} ms\n");
                 if (promoted == 0)
                     report.Append("NOTE: nothing promoted; the measurement below is Tier-0 vs Tier-0\n");
 

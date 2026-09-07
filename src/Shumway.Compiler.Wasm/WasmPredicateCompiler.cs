@@ -964,7 +964,9 @@ public static class WasmPredicateCompiler
             EmitFlagsCheck(ins.Pc);
             // Env trimming is skipped: frames sit a little higher, results
             // are unaffected. CP becomes the marker that re-enters us at the
-            // return cursor.
+            // return cursor. The callee enters a new procedure: refresh its
+            // cut barrier (the interpreter's SetB0(B) before every call).
+            StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
             Op(new Int32Constant(_env.EncodeReturnMarker(CursorOf(ins.Pc + 9))));
             Op(new LocalSet(LCP));
             StoreSlot64(WasmAbi.Pc,
@@ -1001,11 +1003,17 @@ public static class WasmPredicateCompiler
                 OpenIf();
                 EmitDeopt(pc);
                 CloseNested();
+                // A tail call still enters a new procedure: the next
+                // iteration's neck_cut must see B as of THIS dispatch, not
+                // the barrier the original entry came in with -- a body that
+                // left choice points would be over-cut (SetB0(B) parity).
+                StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
                 Op(new Int32Constant(0));
                 Op(new LocalSet(LCur));
                 BrDispatch();
                 return;
             }
+            StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
             StoreSlot64(WasmAbi.Pc,
                 () => Op(new Int64Constant(_env.EncodeCallTarget(callee))));
             EmitReturn(WasmVerdict.SuccessTailCall);

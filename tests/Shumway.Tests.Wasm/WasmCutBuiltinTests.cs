@@ -30,6 +30,11 @@ public class WasmCutBuiltinTests
         classify(_, pos).
 
         sign(X, R) :- ( X > 0 -> R = pos ; R = neg ).
+
+        d(1).
+        d(2).
+        w(0, []) :- !.
+        w(N, [X|T]) :- d(X), N1 is N - 1, w(N1, T).
         """;
 
     private static WasmProgramHarness Harness() => new(Corpus);
@@ -137,6 +142,22 @@ public class WasmCutBuiltinTests
     }
 
     [Fact]
+    public void ACutAfterRecursionCutsOnlyItsOwnLevel()
+    {
+        // w/2 leaves a d/1 choice point per level BEFORE tail-calling itself;
+        // the base case's ! must cut only ITS OWN clause selection, not the
+        // accumulated d CPs. The cut barrier (B0) must therefore be refreshed
+        // at EVERY dispatch -- the interpreter's SetB0(B) before call/execute,
+        // including the in-module self-tail. A stale barrier from the original
+        // entry over-cuts and collapses 4 solutions to 1.
+        using var h = Harness();
+        Assert.True(h.Solve("w", 2, null));
+        int count = 1;
+        while (h.NextSolution()) count++;
+        Assert.Equal(4, count);
+    }
+
+    [Fact]
     public void TheEngineAgrees()
     {
         var engine = new Shumway.Embedding.PrologEngine();
@@ -144,5 +165,6 @@ public class WasmCutBuiltinTests
         Assert.True(engine.Query("max(3, 5, 5), classify(-2, neg), sign(0, neg).").Success);
         Assert.True(engine.Query("findall(X, om(X, [1,2,3]), [1]).").Success);
         Assert.False(engine.Query("tv(5).").Success);
+        Assert.True(engine.Query("findall(L, w(2, L), Ls), length(Ls, 4).").Success);
     }
 }
