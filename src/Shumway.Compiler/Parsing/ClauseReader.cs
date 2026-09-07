@@ -366,6 +366,16 @@ public sealed class ClauseReader
                 errorEntry = ClauseOrError.Error(ex.Message, ex.Position);
                 _parser.SkipToClauseTerminator();
             }
+            catch (Shumway.Core.PrologRuntimeException ex)
+                when (ex.Kind == "resource_error")
+            {
+                // A term nested deeper than the reader can descend
+                // (RecursionGuard). Nothing is wrong with the TEXT, so this
+                // is not a syntax error — but it is still one clause the
+                // reader steps over to get on with the file.
+                errorEntry = ClauseOrError.ResourceLimit(ex.Detail, default);
+                _parser.SkipToClauseTerminator();
+            }
             if (atEnd) yield break;
 
             if (errorEntry is not null)

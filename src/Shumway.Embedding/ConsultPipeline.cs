@@ -2123,9 +2123,13 @@ internal sealed class ConsultPipeline
             if (entry.IsError)
             {
                 if (E.StrictConsultSyntax)
-                    throw new Shumway.Core.PrologRuntimeException(
-                        "syntax_error", $"{where}{entry.ErrorMessage}");
-                E.Warn($"syntax error: {where}{entry.ErrorMessage}");
+                    throw entry.ResourceDetail is { } culprit
+                        ? new Shumway.Core.PrologRuntimeException("resource_error", culprit)
+                        : new Shumway.Core.PrologRuntimeException(
+                            "syntax_error", $"{where}{entry.ErrorMessage}");
+                E.Warn(entry.IsResourceLimit
+                    ? $"error: {where}clause skipped: {entry.ErrorMessage}"
+                    : $"syntax error: {where}{entry.ErrorMessage}");
             }
             else if (entry.Clause is not null)
                 yield return entry.Clause;
