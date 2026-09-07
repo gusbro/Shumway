@@ -99,26 +99,27 @@ public sealed class EdinburghConsultTests
     }
 
     [Fact]
-    public void SyntaxError_IsACatchableIsoBall_AndNothingLoads()
+    public void SyntaxError_IsReportedPerClause_AndTheRestLoads()
     {
-        // The GNU-documented model: on a failed compilation a message is
-        // displayed and NOTHING is loaded. The message crosses into Prolog as
-        // a proper syntax_error ball (it used to escape as the raw .NET parse
-        // exception, uncatchable from Prolog).
+        // Issue #109 replaced the all-or-nothing model: a clause that does not
+        // parse is a per-clause diagnostic on the warning sink and the reader
+        // resyncs to the next terminator dot, so the clauses around it load.
         string f = WriteTemp("bad.pl", "buena(a).\nrota(b :- .\nbuena2(c).\n");
-        var e = new PrologEngine();
-        Assert.True(e.Query(
-            $"catch(consult('{f}'), error(syntax_error(_), _), true).").Success);
-        Assert.False(e.Query("catch(buena(_), _, fail).").Success);
+        var warnings = new StringWriter();
+        var e = new PrologEngine { Warnings = warnings };
+        Assert.True(e.Query($"consult('{f}').").Success);
+        Assert.True(e.Query("buena(a).").Success);
+        Assert.True(e.Query("buena2(c).").Success);
+        Assert.Contains("syntax error", warnings.ToString());
 
         var e2 = new PrologEngine
         {
             In = new StringReader("ok(1).\nrota(b :- .\nend_of_file.\n"),
             Out = new StringWriter(),
+            Warnings = new StringWriter(),
         };
-        Assert.True(e2.Query(
-            "catch([user], error(syntax_error(_), _), true).").Success);
-        Assert.False(e2.Query("catch(ok(_), _, fail).").Success);
+        Assert.True(e2.Query("[user].").Success);
+        Assert.True(e2.Query("ok(1).").Success);
     }
 
     [Fact]

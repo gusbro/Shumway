@@ -578,6 +578,15 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// elision's decision and never this one's.</para></summary>
     public bool ElideAnswersForDisplay { get; set; }
 
+    /// <summary>Whether a clause that does not parse ABORTS the consult that
+    /// met it (raising <c>syntax_error</c>) instead of being reported through
+    /// <see cref="Warnings"/> and skipped. Off by default: loading a program
+    /// reports the bad clause and carries on, so one broken clause does not
+    /// cost a file. A host that COMPILES rather than loads — the bundle
+    /// writer validating hand-built sources — turns it on, because a module
+    /// baked quietly missing a clause is worse than a failed build.</summary>
+    public bool StrictConsultSyntax { get; set; }
+
     /// <summary>Nodes to materialize per displayed answer, or 0 for all of
     /// them.</summary>
     internal int AnswerMaterializeLimit =>

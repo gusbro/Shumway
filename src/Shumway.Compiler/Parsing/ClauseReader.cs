@@ -454,12 +454,16 @@ public sealed class ClauseReader
 
     private void ApplySetPrologFlagDirective(Term[] args, SourcePosition pos)
     {
-        if (args[0] is not AtomTerm flagName)
-            throw new ParseException(
-                "set_prolog_flag/2 directive: first argument must be an atom.", pos);
-        if (args[1] is not AtomTerm valueName)
-            throw new ParseException(
-                "set_prolog_flag/2 directive: second argument must be an atom.", pos);
+        // The reader's ONLY business here is the eager parse-time effect of
+        // the two flags that gate the lexer/reader itself. Anything it
+        // cannot apply -- a variable argument, a wrong value -- is NOT a
+        // syntax error: the directive is a runtime goal that will raise its
+        // own ISO error (instantiation_error, domain_error) when it
+        // executes, and in a quad transcript the very point of the line may
+        // be asserting that error (issue #109: a reader-side rejection
+        // aborted the whole consult before the test was even captured).
+        if (args[0] is not AtomTerm flagName) return;
+        if (args[1] is not AtomTerm valueName) return;
         if (flagName.Name == "double_quotes")
         {
             _flags.DoubleQuotes = valueName.Name switch
@@ -468,9 +472,7 @@ public sealed class ClauseReader
                 "chars"  => DoubleQuotesMode.Chars,
                 "atom"   => DoubleQuotesMode.Atom,
                 "string" => DoubleQuotesMode.String,
-                _ => throw new ParseException(
-                    $"set_prolog_flag/2 directive: unknown double_quotes value '{valueName.Name}' "
-                    + "(expected codes / chars / atom / string).", pos),
+                _ => _flags.DoubleQuotes,   // bogus value: runtime domain_error
             };
         }
         else if (flagName.Name == "arity_compat")
@@ -478,14 +480,9 @@ public sealed class ClauseReader
             // Must take effect during LEXING (it gates the
             // $...$ atom syntax and #line markers), so flip the live
             // lexer too, like char_conversion does via its shared map.
-            bool on = valueName.Name switch
-            {
-                "true" => true,
-                "false" => false,
-                _ => throw new ParseException(
-                    $"set_prolog_flag/2 directive: unknown arity_compat value "
-                    + $"'{valueName.Name}' (expected true / false).", pos),
-            };
+            if (valueName.Name is not ("true" or "false"))
+                return;                     // bogus value: runtime domain_error
+            bool on = valueName.Name == "true";
             _flags.ArityCompat = on;
             _lexer.ArityCompat = on;
             if (on) DefineArityCompatOperators(_operators);

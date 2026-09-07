@@ -84,7 +84,7 @@ public static partial class MetaBuiltins
         Cell flagCell = ResolveLocal(engine, engine.GetRegister(0));
         Cell valueCell = ResolveLocal(engine, engine.GetRegister(1));
         if (flagCell.Tag == Tag.Ref || valueCell.Tag == Tag.Ref)
-            throw new ShumwayPrologException(IsoError.InstantiationError());
+            throw new ShumwayPrologException(IsoError.InstantiationError(engine));
         Term flagTerm = MaterializeRegister(engine, 0);
         Term valueTerm = MaterializeRegister(engine, 1);
         // §8.17.1.3: the flag-value domain error's culprit is the PAIR
@@ -92,7 +92,7 @@ public static partial class MetaBuiltins
         Term FlagValuePair() =>
             new CompoundTerm("+", new[] { flagTerm, valueTerm });
         if (flagCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(IsoError.TypeError("atom", flagTerm));
+            throw new ShumwayPrologException(IsoError.TypeError("atom", flagTerm, engine));
 
         string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
 
@@ -110,7 +110,7 @@ public static partial class MetaBuiltins
             case "dialect":
             case "argv":
                 throw new ShumwayPrologException(IsoError.PermissionError(
-                    "modify", "flag", new AtomTerm(flagName)));
+                    "modify", "flag", new AtomTerm(flagName), engine));
         }
 
         // Checked before the atom rule below, which every other flag follows.
@@ -118,17 +118,18 @@ public static partial class MetaBuiltins
         {
             if (valueCell.Tag != Tag.Int)
                 throw new ShumwayPrologException(
-                    IsoError.TypeError("integer", valueTerm));
+                    IsoError.TypeError("integer", valueTerm, engine));
             if (valueCell.AsInt < 0)
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("not_less_than_zero", new IntTerm(valueCell.AsInt)));
+                    IsoError.DomainError("not_less_than_zero",
+                        new IntTerm(valueCell.AsInt), engine));
             host.Flags.AnswerMaxDepth = (int)System.Math.Min(valueCell.AsInt, int.MaxValue);
             return true;
         }
 
         if (valueCell.Tag != Tag.Atom)
             throw new ShumwayPrologException(
-                IsoError.TypeError("atom", valueTerm));
+                IsoError.TypeError("atom", valueTerm, engine));
 
         string valueName = AtomTable.GetById(valueCell.AsAtomId)?.Name ?? "";
 
@@ -141,7 +142,7 @@ public static partial class MetaBuiltins
                 "atom"   => Shumway.Compiler.Parsing.DoubleQuotesMode.Atom,
                 "string" => Shumway.Compiler.Parsing.DoubleQuotesMode.String,
                 _ => throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair())),
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine)),
             };
             return true;
         }
@@ -154,7 +155,7 @@ public static partial class MetaBuiltins
             catch (System.ArgumentException)
             {
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             }
             return true;
         }
@@ -162,7 +163,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "error" && valueName != "fail" && valueName != "warning")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.Unknown = valueName;
             // take effect mid-query: dispatch reads the
             // live engine's OnUnknown, not the host flags.
@@ -182,7 +183,7 @@ public static partial class MetaBuiltins
             string? norm = Shumway.Core.TextEncodings.DirectiveNameToEngineName(valueName);
             if (norm is null)
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.DefaultTextEncoding = norm;
             if (engine.Streams is { } reg) reg.DefaultEncodingName = norm;
             return true;
@@ -195,7 +196,7 @@ public static partial class MetaBuiltins
             // Logtalk adapter sets it, matching the reference backend.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.LenientEscapes = valueName == "true";
             return true;
         }
@@ -203,7 +204,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "error" && valueName != "warning")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.DiscontiguousCheck = valueName;
             return true;
         }
@@ -215,7 +216,7 @@ public static partial class MetaBuiltins
             // handles a mid-file flip.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.ArityCompat = valueName == "true";
             if (valueName == "true")
             {
@@ -246,7 +247,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "false" && valueName != "true" && valueName != "error")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.OccursCheck = valueName;
             // Applies from the NEXT unification, not the next query: the
             // engine snapshot exists for query setup, but a program that
@@ -263,7 +264,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.ImplicitDynamic = valueName == "true";
             return true;
         }
@@ -274,7 +275,7 @@ public static partial class MetaBuiltins
             // within one query.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.PreferRationals = engine.PreferRationals = valueName == "true";
             return true;
         }
@@ -282,7 +283,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "debug" && valueName != "release")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.EmitDebugInfo = host.Flags.DebugCodegen = valueName == "debug";
             return true;
         }
@@ -294,7 +295,7 @@ public static partial class MetaBuiltins
             // the Immediate window mid-session).
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.DebugLco = valueName == "on";
             engine.LastCallOptimisation = host.Flags.DebugLco;
             return true;
@@ -305,7 +306,7 @@ public static partial class MetaBuiltins
             // (the table) is applied.
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.CharConversionEnabled = valueName == "on";
             return true;
         }
@@ -315,13 +316,13 @@ public static partial class MetaBuiltins
             // the flag itself is required; accepted and stored.
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair()));
+                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
             host.Flags.Debug = valueName == "on";
             return true;
         }
 
         throw new ShumwayPrologException(
-            IsoError.DomainError("prolog_flag", new AtomTerm(flagName)));
+            IsoError.DomainError("prolog_flag", new AtomTerm(flagName), engine));
     }
 
     /// <summary><c>current_prolog_flag(Flag, Value)</c> — reads a flag's
