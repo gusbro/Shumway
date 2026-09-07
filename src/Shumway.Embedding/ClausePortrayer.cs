@@ -47,6 +47,7 @@ public static class ClausePortrayer
     public static void Print(TextWriter output, Term clauseTerm)
     {
         Term t = DemangleTerm(clauseTerm);
+        t = StripHookOrderGuard(t);
         t = RenameSyntheticVars(t);
 
         if (t is CompoundTerm rule && rule.Functor == ":-" && rule.Args.Length == 2)
@@ -76,6 +77,26 @@ public static class ClausePortrayer
         }
         output.WriteLine(Terminated(AstTermRenderer.RenderQuoted(t)));
     }
+
+    /// <summary>Drops the order guard the loader wraps an in-file
+    /// <c>term_expansion</c> / <c>goal_expansion</c> clause with —
+    /// <c>Head :- '$te_after'(N), Body</c>, or <c>Head :- '$te_after'(N)</c>
+    /// where the hook was a fact. It is the loader's bookkeeping (which
+    /// clauses a hook defined mid-file may expand), not something the program
+    /// wrote, so what is listed is the clause as written.</summary>
+    private static Term StripHookOrderGuard(Term t)
+    {
+        if (t is not CompoundTerm { Functor: ":-", Args: [var head, var body] } rule)
+            return t;
+        if (IsHookOrderGuard(body)) return head;
+        if (body is CompoundTerm { Functor: ",", Args: [var first, var rest] }
+            && IsHookOrderGuard(first))
+            return new CompoundTerm(":-", new[] { head, rest }) { Position = rule.Position };
+        return t;
+    }
+
+    private static bool IsHookOrderGuard(Term goal)
+        => goal is CompoundTerm { Functor: "$te_after", Args.Length: 1 };
 
     /// <summary>Appends the terminating period, with a separating space when
     /// the text ends in a graphic char — `.. = ..` must print as
