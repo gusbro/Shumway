@@ -82,7 +82,7 @@ internal static class CompatLibraries
     private const string Quads = """
         :- module(quads, [run_quads/0, run_quads/1, quads_result/2, clear_quads/0,
                           op(1200, xfx, ?-), op(1200, fx, ?-),
-                          op(1100, xfy, '|'), op(700, xfx, ~~)]).
+                          op(1105, xfy, '|'), op(700, xfx, ~~)]).
 
         % The published suites lean on freeze/2 and dif/2; without this a
         % freeze goal is an existence_error and its quad fails instead of
@@ -93,7 +93,12 @@ internal static class CompatLibraries
         % two: `Id ?- Goal` and, for a test that needs no name, `?- Goal`.
         :- op(1200, xfx, ?-).
         :- op(1200, fx, ?-).
-        :- op(1100, xfy, '|').
+        % Above `;` (1100), as the standard's Cor.2 allows and SWI does:
+        % `A ; B | C` is then two ALTERNATIVES, the sequence `A ; B` and the
+        % alternative `C`, which is how a transcript writes them. At 1100 the
+        % bar bound tighter than the answer separator and swallowed the last
+        % answer instead.
+        :- op(1105, xfy, '|').
         % `V ~~ '14.2000'` reads as an answer would: at the priority of the
         % other comparisons, so it sits in a description beside `=`.
         :- op(700, xfx, ~~).
@@ -182,7 +187,8 @@ internal static class CompatLibraries
         quads_add_desc(N, Block, Ctx, Names) :-
             quads_alts(Block, Alts),
             retract('$quad'(N, Id, Goal, Have)),
-            quads_parse_alts(Alts, Id, Ctx, [], Parsed),
+            quads_parse_alts(Alts, Id, Ctx, [], Parsed0),
+            quads_apply_other_sequence(Parsed0, Parsed),
             quads_append(Have, [desc(Parsed, Block, Names)], More),
             assertz('$quad'(N, Id, Goal, More)).
 
@@ -267,8 +273,35 @@ internal static class CompatLibraries
         quads_hidden_name(Name) :- atom_chars(Name, ['_'|_]).
 
         quads_alts(B, Alts) :-
-            ( B = '|'(A, Rest) -> Alts = [A|More], quads_alts(Rest, More)
+            ( nonvar(B), B = '|'(A, Rest) -> Alts = [A|More], quads_alts(Rest, More)
             ; Alts = [B] ).
+
+        % `| other_answer_sequence.` says the order of the answers is not
+        % what is being claimed: the sequence written beside it is ONE
+        % permutation and the others are sanctioned too. Setof's free
+        % variables enumerate in whatever order a system likes (8.10.3.4#7),
+        % and a transcript that has to pick one order would otherwise be
+        % claiming that order. It is not an alternative of its own -- it
+        % modifies the sequences beside it -- so it is taken out of the list
+        % and its effect put on them.
+        quads_apply_other_sequence(Alts0, Alts) :-
+            (   quads_take_other_sequence(Alts0, Rest)
+            ->  quads_permute_answers(Rest, Alts)
+            ;   Alts = Alts0
+            ).
+
+        quads_take_other_sequence([alt(C, _, _, _, _)|As], As) :- C == other_sequence, !.
+        quads_take_other_sequence([A|As], [A|R]) :- quads_take_other_sequence(As, R).
+
+        % Only the SANCTIONED sequences: a negative claim names the exact
+        % wrong continuation, which is a claim about order.
+        quads_permute_answers([], []).
+        quads_permute_answers([alt(C, In, Pk, Ot, S)|As], [alt(C1, In, Pk, Ot, S)|Rs]) :-
+            (   S == true, nonvar(C), C = answers(E, O, Sp)
+            ->  C1 = answers_perm(E, O, Sp)
+            ;   C1 = C
+            ),
+            quads_permute_answers(As, Rs).
 
         quads_parse_alts([], _, _, Acc, Acc).
         quads_parse_alts([A|As], Id, Ctx, Acc, Out) :-
@@ -299,7 +332,7 @@ internal static class CompatLibraries
         % checked.
         quads_alt(A, Ctx, alt(Class, In, Pk, Out, Sanctioned)) :-
             quads_conj_list(A, Es0),
-            quads_take_marker(Es0, Es1, Sanctioned),
+            quads_take_marker(Es0, Es1, Sanctioned0),
             quads_take_descriptors(Es1, Es2, none, In0, none, Pk, none, Out),
             (   Es2 == []
             ->  % Descriptors only: the goal has to run, and succeeding is
@@ -308,15 +341,33 @@ internal static class CompatLibraries
             ;   quads_conj_from(Es2, Body),
                 quads_alt_class(Body, Ctx, Class)
             ),
-            quads_probe_input(Class, In0, In).
+            % An answer sequence whose LAST answer carries the marker --
+            % `X = a ; X = c, unexpected` -- is a negative claim: it
+            % transcribes a WRONG continuation, so it never sanctions a
+            % behaviour and is instead checked as one (see
+            % quads_desc_holds).
+            (   Class = answers(_, _, exp(_))
+            ->  Sanctioned = negative
+            ;   Sanctioned = Sanctioned0
+            ),
+            quads_input_for(Class, In0, Pk, In).
 
-        % A `waits` alternative that says nothing about its input is run
-        % against the probe: the goal has to reach for it.
-        quads_probe_input(Class, none, In) :- Class == waits, !, quads_wait_probe(In).
-        quads_probe_input(_, In, In).
+        % A `waits` alternative is run against the probe: nothing to read but
+        % the sentinel, so reaching for input is what shows.
+        quads_input_for(Class, _, _, In) :- Class == waits, !, quads_wait_probe(In).
+        % A peek with no input of its own still has to READ: the peek text IS
+        % the input then, and without opening a stream for it nothing could
+        % be peeked at all.
+        quads_input_for(_, none, Pk, '') :- Pk \== none, !.
+        quads_input_for(_, In, _, In).
 
-        quads_wait_probe(' ').
+        quads_wait_probe('').
 
+        % A VARIABLE is one element, never a conjunction: unifying it with
+        % `(A, B)` builds a comma term out of nothing and recurses into the
+        % fresh tail, walking until memory runs out. That is what reading
+        % `outputs(_)` did (issue #112).
+        quads_conj_list(A, [A]) :- var(A), !.
         quads_conj_list((A, B), [A|R]) :- !, quads_conj_list(B, R).
         quads_conj_list(A, [A]).
         quads_conj_from([X], X) :- !.
@@ -341,7 +392,13 @@ internal static class CompatLibraries
             ->  Rest = Rest1, In1 = T, Pk1 = Pk0, Out1 = Out0
             ;   nonvar(E), E = peeks(T)
             ->  Rest = Rest1, In1 = In0, Pk1 = T, Out1 = Out0
-            ;   nonvar(E), E = outputs(T)
+                % An output claim has to BE a text pattern: a variable
+                % (`outputs(_)`) claims nothing and cannot be compared, and
+                % taking it on trust meant capturing the whole output of a
+                % goal that never stops writing before discovering there was
+                % nothing to compare it to (issue #112). Refused here, so
+                % the description is reported and its goal never runs.
+            ;   nonvar(E), E = outputs(T), quads_text_pattern(T, _)
             ->  Rest = Rest1, In1 = In0, Pk1 = Pk0, Out1 = T
             ;   Rest = [E|Rest1], In1 = In0, Pk1 = Pk0, Out1 = Out0
             ),
@@ -358,9 +415,19 @@ internal static class CompatLibraries
         % behaves as Outcome. The outcome is what this harness observes, so
         % it classifies by it; the text itself is not compared, and a bare
         % outputs/1 with no outcome after it is nothing this can check.
-        quads_alt_class((outputs(_), R), Ctx, C) :- !, quads_alt_class(R, Ctx, C).
+        % ...only when the text IS one: an unreadable output claim must reach
+        % the report, not be skipped on the way to the outcome.
+        quads_alt_class((outputs(T), R), Ctx, C) :-
+            quads_text_pattern(T, _), !, quads_alt_class(R, Ctx, C).
         quads_alt_class(false, _, fails) :- !.
         quads_alt_class(true, _, succeeds) :- !.
+        % `maybe` STANDING ALONE: the goal succeeds with constraints
+        % pending, and no substitution is shown. Beside an answer it belongs
+        % to that answer instead, and quads_expected takes it there.
+        quads_alt_class(maybe, _, succeeds) :- !.
+        % Not an outcome: the marker that frees the order of the sequences
+        % beside it (quads_apply_other_sequence takes it from the list).
+        quads_alt_class(other_answer_sequence, _, other_sequence) :- !.
         quads_alt_class(loops, _, loops) :- !.
         % The goal blocks for input that never comes. What makes that
         % observable is not the blocking, which no harness can wait out, but
@@ -378,10 +445,22 @@ internal static class CompatLibraries
         % An answer display is the answers themselves, in order: with the
         % names recovered they are compared one by one against what the goal
         % actually answers. `;` separates SUCCESSIVE answers here -- the bar
-        % is what separates alternative sanctioned behaviours.
-        quads_alt_class(A, ctx(Names, DNames), answers(Exps, Open)) :-
+        % is what separates alternative sanctioned behaviours. The last
+        % answer may carry `, unexpected` (issue-format: `X = a ; X = c,
+        % unexpected`): the sequence then transcribes a WRONG continuation
+        % -- the answers before the marker arrive as stated, and the marked
+        % one is what a buggy system gives NEXT. The class carries it as
+        % exp(E), and matching is the refutation: a system reproducing that
+        % transcript exhibits the documented bug.
+        quads_alt_class(A, ctx(Names, DNames), answers(Exps, Open, Surprise)) :-
             quads_has_binding(A), !,
-            quads_answer_list(A, Seq, Open),
+            quads_answer_list(A, Seq0, Open),
+            (   quads_append(Seq, [Last], Seq0),
+                quads_split_surprise(Last, SurpriseAnswer)
+            ->  quads_expected(SurpriseAnswer, DNames, Names, E),
+                Surprise = exp(E)
+            ;   Seq = Seq0, Surprise = none
+            ),
             quads_expected_list(Seq, DNames, Names, Exps).
         % Without the names nothing links the description's L to the goal's,
         % so all that can be checked is that the goal succeeds. Noted, so the
@@ -395,6 +474,15 @@ internal static class CompatLibraries
         % NOT become a class that matches whatever happens: that is how a
         % test written in a vocabulary we do not know reported a pass while
         % checking nothing at all. Failing here sends it to the report.
+
+        % `(X = c, unexpected)` -- the marker is the last conjunct of the
+        % last answer. A bare `unexpected` with no answer before it is not
+        % an answer display and stays unread.
+        quads_split_surprise(Last, Answer) :-
+            quads_conj_list(Last, Es),
+            quads_append(Es1, [unexpected], Es),
+            Es1 \== [],
+            quads_conj_from(Es1, Answer).
 
         quads_has_ellipsis((A, B)) :- !,
             ( quads_has_ellipsis(A) -> true ; quads_has_ellipsis(B) ).
@@ -420,6 +508,7 @@ internal static class CompatLibraries
             ),
             Seq \== [].
 
+        quads_disj_list(A, [A]) :- var(A), !.
         quads_disj_list((A ; B), [A|R]) :- !, quads_disj_list(B, R).
         quads_disj_list(A, [A]).
 
@@ -433,15 +522,31 @@ internal static class CompatLibraries
         % bindings cannot reach the next; a variable the description does not
         % mention stays unbound, which is what a top level showing nothing
         % for it means.
-        quads_expected(A, DNames, Names, Exp) :-
+        % `maybe` says the answer still carries CONSTRAINTS -- residual goals
+        % the answer is conditional on, whatever they are. Its absence is a
+        % claim too: an answer written without it is an answer that stands on
+        % its own, which is why `X = a` alone is a wrong description of
+        % `dif(X,Y), X = a` (issue-format 37). So each described answer is a
+        % substitution AND whether constraints remain.
+        quads_expected(A, DNames, Names, e(Exp, Resid)) :-
             copy_term(A-DNames, A1-DN1),
             quads_conj_list(A1, Es0),
-            quads_take_descriptors(Es0, Es1, none, _, none, _, none, _),
-            quads_all_equations(Es1),
-            quads_shows_an_answer(Es1, DN1, Names),
-            quads_call_all(Es1),
+            quads_take_maybe(Es0, Es1, Resid),
+            quads_take_descriptors(Es1, Es2, none, _, none, _, none, _),
+            quads_all_equations(Es2),
+            quads_shows_an_answer(Es2, DN1, Names),
+            quads_call_all(Es2),
             quads_tuple_args(Names, DN1, Args),
             Exp =.. [t|Args].
+
+        quads_take_maybe(Es0, Es, Resid) :-
+            (   quads_select(maybe, Es0, Es1)
+            ->  Resid = true, Es = Es1
+            ;   Resid = false, Es = Es0
+            ).
+
+        quads_select(X, [Y|Ys], Ys) :- X == Y, !.
+        quads_select(X, [Y|Ys], [Y|R]) :- quads_select(X, Ys, R).
 
         % An answer display says what the QUERY's variables became, and says
         % it the way a top level does. Three things it therefore cannot be:
@@ -712,6 +817,8 @@ internal static class CompatLibraries
         % needs a sanctioned description somewhere, so a block of nothing
         % but wrong answers can only fail.
         quads_desc_holds(Alts, G) :-
+            quads_negative(Alts, Neg),
+            quads_all_negative_hold(Neg, G),
             quads_sanctioned(Alts, Ok),
             (   Ok == []
             ->  true
@@ -723,6 +830,20 @@ internal static class CompatLibraries
         quads_sanctioned([alt(C, In, Pk, Ot, S)|As], Out) :-
             ( S == true -> Out = [alt(C, In, Pk, Ot)|R] ; Out = R ),
             quads_sanctioned(As, R).
+
+        % The negative claims -- answer sequences ending `, unexpected` --
+        % are conjunctive: every one must hold of the run (the documented
+        % bug must be ABSENT), where the sanctioned ones are disjunctive
+        % (the run matches one of the allowed behaviours).
+        quads_negative([], []).
+        quads_negative([alt(C, In, Pk, Ot, S)|As], Out) :-
+            ( S == negative -> Out = [alt(C, In, Pk, Ot)|R] ; Out = R ),
+            quads_negative(As, R).
+
+        quads_all_negative_hold([], _).
+        quads_all_negative_hold([alt(C, In, Pk, Ot)|As], G) :-
+            quads_run_group(In, [want(C, Pk, Ot)], G),
+            quads_all_negative_hold(As, G).
 
         % Which description failed is only worth saying when there was more
         % than one to choose from: with a single one the failing id already
@@ -776,8 +897,16 @@ internal static class CompatLibraries
         % without input looks like. Whatever the goal did after reading is
         % beside the point, since with no input at all it would not have got
         % that far.
-        quads_want_holds(waits, _, Left) :- !, Left == [].
+        % Waiting is REACHING for input, which the sentinel makes visible: a
+        % goal that reads (or peeks) where there is nothing but the
+        % unreadable byte raises representation_error(character), and one
+        % that answers without reading never sees it. Peeking counts --
+        % `peek_char(C)` waits though it consumes nothing, which is why
+        % "did it consume the character?" was the wrong question.
+        quads_want_holds(waits, O, _) :- !, quads_reached_for_input(O).
         quads_want_holds(C, O, _) :- quads_match(C, O).
+
+        quads_reached_for_input(raised(error(representation_error(character), _))).
 
         % No peek was written down, so nothing is claimed about what is left.
         quads_peek_matches(none, _) :- !.
@@ -822,8 +951,14 @@ internal static class CompatLibraries
         % with a plain true/false description is decided by one run.
         quads_match(succeeds, answers([_|_])).
         quads_match(fails, answers([])).
-        quads_match(answers(Exps, Open), answers(As)) :-
+        quads_match(answers(Exps, Open, none), answers(As)) :-
             quads_answers_match(Exps, Open, As).
+        % The negative claim: the transcript documents answers Exps followed
+        % by the WRONG answer S. It holds of a system that does NOT
+        % reproduce it -- a different answer at any point, or no further
+        % answer where S was to appear. Only the exact bug refutes it.
+        quads_match(answers(Exps, _, exp(S)), answers(As)) :-
+            \+ quads_surprise_reproduced(Exps, S, As).
         % An ISO error is described by its formal alone, so that is what is
         % compared, up to a renaming of the variables in it. The context slot
         % is the implementation's to fill.
@@ -831,6 +966,27 @@ internal static class CompatLibraries
         quads_match(thrown(T), raised(B)) :- !, quads_term_matches(T, B).
         quads_match(loops, timeout).
         quads_match(lenient, _).
+        % Order freed by `| other_answer_sequence`: the SAME answers, in any
+        % order. A closed sequence still claims there are no others (same
+        % length); one left open with `...` claims only that each written
+        % answer is somewhere among them.
+        quads_match(answers_perm(Exps, Open, none), answers(As)) :-
+            ( Open == true -> true ; quads_same_length(Exps, As) ),
+            quads_perm_cover(Exps, As).
+
+        quads_perm_cover([], _).
+        quads_perm_cover([E|Es], As) :-
+            quads_take_matching(E, As, Rest),
+            quads_perm_cover(Es, Rest).
+
+        quads_take_matching(E, [A|As], As) :- quads_answer_matches(E, A).
+        quads_take_matching(E, [A|As], [A|R]) :- quads_take_matching(E, As, R).
+
+        quads_surprise_reproduced([], S, [A|_]) :-
+            quads_answer_matches(S, A).
+        quads_surprise_reproduced([E|Es], S, [A|As]) :-
+            quads_answer_matches(E, A),
+            quads_surprise_reproduced(Es, S, As).
 
         % The described answers must be the ones the goal gives, in order.
         % A sequence left open with `...` claims only its own prefix; a
@@ -844,8 +1000,15 @@ internal static class CompatLibraries
             ).
         quads_prefix_matches([], _).
         quads_prefix_matches([E|Es], [A|As]) :-
-            quads_term_matches(E, A),
+            quads_answer_matches(E, A),
             quads_prefix_matches(Es, As).
+
+        % An answer is its substitution AND whether constraints remain: a
+        % description without `maybe` describes an answer that stands on its
+        % own, and one that still constrains its variables is a different
+        % answer (issue-format 37: `X = a` and `X = a, maybe` describe two
+        % different systems).
+        quads_answer_matches(e(E, R), e(A, R)) :- quads_term_matches(E, A).
         quads_same_length([], []).
         quads_same_length([_|Xs], [_|Ys]) :- quads_same_length(Xs, Ys).
 
@@ -888,16 +1051,27 @@ internal static class CompatLibraries
         % quads_run_reading/5 reifies the run: it binds the outcome instead
         % of failing or throwing, which is what lets the whole thing sit
         % inside with_output_to/2 and still report what happened.
+        % ALWAYS captured, whether or not a description asks about the text:
+        % a quad is a test being run, and its goal's output belongs to the
+        % harness, not to whoever is watching the report. A goal that writes
+        % without end used to reach the terminal by the megabyte.
+        %
+        % The capture is bounded (BoundedCaptureWriter), and reaching the
+        % bound is itself an observation: a goal still writing where no term
+        % could hold the text has not terminated, so `loops` holds of it,
+        % while any claim about WHAT it wrote is refuted -- there is no text
+        % to compare, only more of it.
+        % A hundred thousand characters is past any claim a transcript makes,
+        % and the capture TRUNCATES there rather than refusing: the goal
+        % keeps running, so a looping one still reaches the time limit that
+        % decides it loops, while its output stops piling up. Past the
+        % ceiling the text can only be "more than any pattern", which is the
+        % same answer the whole text would have given.
         quads_run_watched(In, Ws, G, O, Left, Written) :-
-            quads_wants_output(Ws),
-            !,
-            with_output_to(atom(A), quads_run_reading(In, Ws, G, O, Left)),
+            setup_call_cleanup('$wot_begin'(atom(A), 100000),
+                               quads_run_reading(In, Ws, G, O, Left),
+                               '$wot_end'(atom(A))),
             atom_chars(A, Written).
-        quads_run_watched(In, Ws, G, O, Left, none) :-
-            quads_run_reading(In, Ws, G, O, Left).
-
-        quads_wants_output([want(_, _, Ot)|Ws]) :-
-            ( Ot == none -> quads_wants_output(Ws) ; true ).
 
         quads_run_reading(none, Ws, G, O, []) :- !,
             quads_outcome(G, Ws, O).
@@ -924,11 +1098,25 @@ internal static class CompatLibraries
             (   quads_group_wants_loops(Ws)
             ->  catch(quads_timed_outcome(G, O), E, quads_error_outcome(E, O))
             ;   quads_answers_wanted(Ws, T, Max)
-            ->  catch(( findall(T, call_with_limit(Max, G), As), O = answers(As) ),
+                % Whether an answer still carries constraints is asked HERE,
+                % inside the collection: a copy does not carry attributes, so
+                % asking afterwards would report every answer as
+                % unconstrained.
+            ->  catch(( findall(e(T, R),
+                                ( call_with_limit(Max, G), quads_residual(T, R) ),
+                                As),
+                        O = answers(As) ),
                       E, quads_error_outcome(E, O))
             ;   catch(( call(G) -> O = succeeds ; O = fails ), E,
                       quads_error_outcome(E, O))
             ).
+
+        % Does this answer still stand on a constraint? copy_term/3 hands
+        % back the residual goals of the answer's own variables, which is
+        % what a top level shows beside the substitution.
+        quads_residual(T, R) :-
+            copy_term(T, _, Gs),
+            ( Gs == [] -> R = false ; R = true ).
 
         % Collecting answers is only for a group that describes them, and one
         % answer past the longest description: a goal that answers more times
@@ -940,10 +1128,18 @@ internal static class CompatLibraries
             Max is Len + 1.
         quads_longest_answer([], L, L).
         quads_longest_answer([want(C, _, _)|Ws], L0, L) :-
-            (   nonvar(C), C = answers(Exps, _), quads_length(Exps, N), N > L0
+            (   nonvar(C), quads_answer_class(C, Exps, Surprise),
+                quads_length(Exps, N0),
+                % The surprise sits one past the written answers, so the
+                % collector must reach its position.
+                ( Surprise = exp(_) -> N is N0 + 1 ; N = N0 ),
+                N > L0
             ->  quads_longest_answer(Ws, N, L)
             ;   quads_longest_answer(Ws, L0, L)
             ).
+
+        quads_answer_class(answers(E, _, S), E, S).
+        quads_answer_class(answers_perm(E, _, S), E, S).
 
         quads_group_wants_loops([want(loops, _, _)|_]) :- !.
         quads_group_wants_loops([_|Ws]) :- quads_group_wants_loops(Ws).
@@ -963,8 +1159,22 @@ internal static class CompatLibraries
             setup_call_cleanup(open(Path, write, W),
                                quads_put_chars(W, Chars),
                                close(W)),
+            quads_seal_input(Path),
             open(Path, read, Stream),
             set_input(Stream).
+
+        % The sentinel behind the input: a byte no character can be read
+        % from. Anything the goal reads PAST what the description sanctioned
+        % -- a get, or the peek a reader does to find where a term ends --
+        % raises representation_error(character) rather than quietly seeing
+        % end_of_file, so a description that did not sanction the look is not
+        % met. It is how a transcript says "this much input, and no looking
+        % behind it", and it is what makes `waits` observable at all.
+        quads_seal_input(Path) :-
+            catch(setup_call_cleanup(open(Path, append, W, [type(binary)]),
+                                     put_byte(W, 255),
+                                     close(W)),
+                  _, true).
         quads_close_input(Path, Stream, Saved) :-
             set_input(Saved),
             catch(close(Stream), _, true),
@@ -995,10 +1205,25 @@ internal static class CompatLibraries
         % A text descriptor is written as a double-quoted string, so what it
         % is at runtime follows the double_quotes flag: chars, codes, or an
         % atom. All three have to answer the same question here.
+        % A text is an atom or a proper list of characters -- whose ELEMENTS
+        % may be variables, since `[_]` in a DCG body is one arbitrary
+        % character. A VARIABLE is not a text: taking one for a text made
+        % `outputs(_)` a pattern that matched whatever the goal wrote, and
+        % (worse) generating one on backtracking walked ever longer lists
+        % until memory ran out (issue #112). Deterministic and total by
+        % construction: it decides, it never enumerates -- and the refusal
+        % comes FIRST, before any clause a variable could unify with.
+        quads_text_chars(T, _) :- var(T), !, fail.
         quads_text_chars(none, []) :- !.
         quads_text_chars(T, Cs) :- atom(T), !, atom_chars(T, Cs).
-        quads_text_chars(T, Cs) :- quads_codes_to_chars(T, Cs), !.
-        quads_text_chars(T, T).
+        quads_text_chars(T, Cs) :- quads_proper_list(T), !, quads_text_list(T, Cs).
+
+        quads_text_list(T, Cs) :- quads_codes_to_chars(T, Cs), !.
+        quads_text_list(T, T).
+
+        quads_proper_list(T) :-
+            nonvar(T),
+            ( T == [] -> true ; T = [_|R], quads_proper_list(R) ).
         quads_codes_to_chars([], []).
         quads_codes_to_chars([C|Cs], [Ch|Chs]) :-
             integer(C), char_code(Ch, C), quads_codes_to_chars(Cs, Chs).

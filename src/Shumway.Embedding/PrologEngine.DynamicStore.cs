@@ -1084,7 +1084,7 @@ public sealed partial class PrologEngine
     internal bool IsRetractAllModifiable(int fid)
     {
         if (_dynStore.IsDynamic(fid)) return true;
-        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _) || HasStaticClauses(fid))
+        if (HasStaticDefinition(fid))
             throw StaticProcedureError(fid);
         return false;   // undefined → retractall is a no-op
     }
@@ -1095,7 +1095,7 @@ public sealed partial class PrologEngine
     internal bool IsAbolishModifiable(int fid)
     {
         if (_dynStore.IsDynamic(fid)) return true;
-        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _) || HasStaticClauses(fid))
+        if (HasStaticDefinition(fid))
         {
             var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
             throw new ShumwayPrologException(IsoError.PermissionError(
@@ -1131,9 +1131,7 @@ public sealed partial class PrologEngine
         // to live" — a registered builtin or a predicate with static
         // clauses still raises permission_error regardless of the
         // flag, matching ISO §7.12.2.h.
-        if (_flags.ImplicitDynamic
-            && !Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)
-            && !HasStaticClauses(fid))
+        if (_flags.ImplicitDynamic && !HasStaticDefinition(fid))
         {
             _dynStore.MarkDynamic(fid);
             if (!_dynStore.HasClauses(fid))
@@ -1705,6 +1703,17 @@ public sealed partial class PrologEngine
         }
         return false;
     }
+
+    /// <summary>Whether <paramref name="fid"/> has a STATIC definition the
+    /// modify guards must protect: a registered builtin, clauses in a module
+    /// manifest (live consult), or a bundle's bytecode-only Defined entry —
+    /// the case the clause scan cannot see (a linked bundle carries no
+    /// clauses, which is how a bundle-booted engine let assertz shadow
+    /// length/2).</summary>
+    private bool HasStaticDefinition(int fid)
+        => Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)
+        || _precompiledStaticPredicates.ContainsKey(fid)
+        || HasStaticClauses(fid);
 
     private bool HasStaticClauses(int fid)
     {

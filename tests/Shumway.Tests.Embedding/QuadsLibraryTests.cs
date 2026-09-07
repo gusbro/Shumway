@@ -204,7 +204,10 @@ public sealed class QuadsLibraryTests
     {
         var (e, _) = Loaded();
         Assert.True(e.Query("current_op(1200, xfx, ?-).").Success);
-        Assert.True(e.Query("current_op(1100, xfy, '|').").Success);
+        // The bar sits ABOVE `;` so `A ; B | C` is a sequence and an
+        // alternative, not an answer swallowed by the bar (SWI's priority,
+        // and what a transcript's alternatives need).
+        Assert.True(e.Query("current_op(1105, xfy, '|').").Success);
         // A fresh engine without the import keeps the strict default.
         var bare = new PrologEngine { Out = new System.IO.StringWriter() };
         Assert.False(bare.Query("current_op(_, xfx, ?-).").Success);
