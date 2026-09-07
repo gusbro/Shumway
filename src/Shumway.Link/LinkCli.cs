@@ -35,7 +35,12 @@ internal static class LinkCli
     private const int ExitLinkError = 1;
     private const int ExitUsageError = 3;
 
+    // On a deep stack: reading and transforming a clause descend the term as
+    // written, and a default 1 MB thread runs out a few hundred levels in.
     public static int Main(string[] args)
+        => Shumway.Embedding.DeepStackHost.Run(() => MainCore(args));
+
+    private static int MainCore(string[] args)
     {
         var opts = ParseArgs(args);
         if (opts is null) return ExitUsageError;
@@ -61,6 +66,7 @@ internal static class LinkCli
                             $"shumway-link: library '{path}' is a linked bundle, not a "
                             + "librarian archive — it has no objects to link against. "
                             + "Build a library with shumway-lib.");
+                        RemoveStaleOutputs(opts);
                         return ExitLinkError;
                     }
                     var members = new List<ShmoObject>(lib.ArchiveMembers.Count);
@@ -82,6 +88,7 @@ internal static class LinkCli
             catch (Exception ex) when (ex is InvalidDataException || ex is IOException)
             {
                 Console.Error.WriteLine($"shumway-link: error reading '{path}': {ex.Message}");
+                RemoveStaleOutputs(opts);
                 return ExitLinkError;
             }
         }
@@ -104,6 +111,7 @@ internal static class LinkCli
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"shumway-link: consult failed: {ex.Message}");
+                    RemoveStaleOutputs(opts);
                     return ExitLinkError;
                 }
                 foreach (var e in errors)
@@ -112,6 +120,7 @@ internal static class LinkCli
                 {
                     Console.Error.WriteLine(
                         $"shumway-link: {Math.Max(errors.Count, 1)} error(s) compiling sources (consult mode).");
+                    RemoveStaleOutputs(opts);
                     return ExitLinkError;
                 }
                 foreach (var (_, obj, _, _) in compiled) objects.Add(obj);
@@ -133,6 +142,7 @@ internal static class LinkCli
                             Console.Error.WriteLine(
                                 $"{path}:{e.Line}:{e.Column}: error: {e.Message}");
                         MaybeHintConsult(path);
+                        RemoveStaleOutputs(opts);
                         return ExitLinkError;
                     }
                     MaybeHintConsult(path);
@@ -246,7 +256,7 @@ internal static class LinkCli
             // A failed link must not leave a stale bundle behind — a later run /
             // --exe would silently pick it up and mask the error (what a C linker
             // does on failure).
-            RemoveStaleOutput(opts.OutputPath);
+            RemoveStaleOutputs(opts);
             return ExitLinkError;
         }
 
@@ -319,7 +329,7 @@ internal static class LinkCli
                     ? Console.Error : Console.Out;
                 stream.WriteLine($"shumway-link: {d.Severity.ToString().ToLowerInvariant()}: {d.Message}");
             }
-            if (!exeResult.Success) return ExitLinkError;
+            if (!exeResult.Success) { RemoveStaleOutputs(opts); return ExitLinkError; }
             if (!opts.Verbose)
                 Console.Error.WriteLine($"shumway-link: wrote {exeResult.OutputPath}.");
         }
@@ -339,7 +349,7 @@ internal static class LinkCli
                 var stream = d.Severity == LinkSeverity.Error ? Console.Error : Console.Out;
                 stream.WriteLine($"shumway-link: {d.Severity.ToString().ToLowerInvariant()}: {d.Message}");
             }
-            if (!dllResult.Success) return ExitLinkError;
+            if (!dllResult.Success) { RemoveStaleOutputs(opts); return ExitLinkError; }
             Console.Error.WriteLine(
                 $"shumway-link: wrote {dllResult.OutputPath} "
                 + $"(factory {dllResult.FactoryTypeName}.CreateEngine()).");
@@ -803,6 +813,17 @@ internal static class LinkCli
     private static void AddIfExists(List<string> dirs, string dir)
     {
         if (System.IO.Directory.Exists(dir)) dirs.Add(dir);
+    }
+
+    /// <summary>Every artifact this run was asked to produce. A failure ANYWHERE
+    /// — reading an input, compiling a source, the link itself — must leave none
+    /// of them behind: a stale bundle beside a failed build is the one a later
+    /// run picks up, and it looks like a success.</summary>
+    private static void RemoveStaleOutputs(Options opts)
+    {
+        RemoveStaleOutput(opts.OutputPath);
+        RemoveStaleOutput(opts.ExePath);
+        RemoveStaleOutput(opts.DllPath);
     }
 
     /// <summary>A failed link must not leave a stale bundle behind, so remove any
