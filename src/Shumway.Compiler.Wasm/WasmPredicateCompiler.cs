@@ -596,15 +596,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32Constant(0));
                 Op(new Int32Equal());
                 OpenIf();                                   // unbound: bind it
-                {
-                    CellStoreDyn(LHeapB, LDa, 0, () => Op(new Int64Constant(constCell)));
-                    Op(new LocalGet(LDa));
-                    Op(new LocalGet(LHB));
-                    Op(new Int32LessThanSigned());
-                    OpenIf();
-                    EmitTrailDa(pcForDeopt);
-                    CloseNested();
-                }
+                EmitBindDa(pcForDeopt, () => Op(new Int64Constant(constCell)));
                 OpenElse();
                 {
                     TagOfC0();
@@ -893,6 +885,7 @@ public static class WasmPredicateCompiler
                     // resolves builtins when the registry is loaded, exactly
                     // as the linker would. The env-trim count (I1) rides the
                     // high half of the id slot; -1 is the no-trim sentinel.
+                    if (_env.IsInlineUnify(ins.I0)) { EmitInlineUnify(ins.Pc); return false; }
                     EmitFlagsCheck(ins.Pc);
                     if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
@@ -902,6 +895,12 @@ public static class WasmPredicateCompiler
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
                 case Opcode.ExecuteBuiltin:
+                    if (_env.IsInlineUnify(ins.I0))
+                    {
+                        EmitInlineUnify(ins.Pc);
+                        EmitReturn(WasmVerdict.Success);
+                        return true;
+                    }
                     EmitFlagsCheck(ins.Pc);
                     if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant((uint)ins.I0)));
@@ -920,7 +919,7 @@ public static class WasmPredicateCompiler
                 case Opcode.AEvalUn: EmitAEvalUn(ins); return false;
                 case Opcode.AEvalIs: EmitAEvalIs(ins); return false;
                 case Opcode.AEvalCmp: EmitAEvalCmp(ins); return false;
-                case Opcode.Call: EmitCall(ins); return true;
+                case Opcode.Call: return EmitCall(ins);
                 case Opcode.Execute: EmitExecute(ins); return true;
                 default:
                     throw new WasmCompileException($"emit: {ins.Op} at {ins.Pc}");
@@ -945,12 +944,17 @@ public static class WasmPredicateCompiler
             EmitReturn(WasmVerdict.Success);
         }
 
-        private void EmitCall(Instr ins)
+        private bool EmitCall(Instr ins)
         {
             if (!_callee.TryGetValue(ins.Pc, out int callee))
                 throw new WasmCompileException($"call at {ins.Pc} has no call site");
             if (_env.TryGetBuiltin(callee, out int builtinId))
             {
+                if (_env.IsInlineUnify(builtinId))
+                {
+                    EmitInlineUnify(ins.Pc);
+                    return false;               // falls through to the next goal
+                }
                 // The builtin runs on the host: leave its id and the return
                 // cursor in the mailbox and step out (env trimming skipped;
                 // a CP the builtin pushes just sits a little higher).
@@ -959,7 +963,7 @@ public static class WasmPredicateCompiler
                 StoreSlot64(WasmAbi.Cursor,
                     () => Op(new Int64Constant(CursorOf(ins.Pc + 9))));
                 EmitReturn(WasmVerdict.BuiltinRequest);
-                return;
+                return true;
             }
             EmitFlagsCheck(ins.Pc);
             // Env trimming is skipped: frames sit a little higher, results
@@ -972,6 +976,16 @@ public static class WasmPredicateCompiler
             StoreSlot64(WasmAbi.Pc,
                 () => Op(new Int64Constant(_env.EncodeCallTarget(callee))));
             EmitReturn(WasmVerdict.SuccessTailCall);
+            return true;
+        }
+
+        /// <summary>=/2 open-coded: X0 against X1 through the same two-cell
+        /// unify every get_value uses (immediates inline, compounds through
+        /// the general unifier, attvars deopt). No host round-trip.</summary>
+        private void EmitInlineUnify(int pc)
+        {
+            EmitFlagsCheck(pc);
+            EmitUnifyTwo(() => RegLoad(0), () => RegLoad(1), pc);
         }
 
         private void EmitExecute(Instr ins)
@@ -986,6 +1000,13 @@ public static class WasmPredicateCompiler
                 throw new WasmCompileException($"execute at {pc} has no call site");
             if (_env.TryGetBuiltin(callee, out int builtinId))
             {
+                if (_env.IsInlineUnify(builtinId))
+                {
+                    // Tail =/2: unify, then proceed at Cp.
+                    EmitInlineUnify(pc);
+                    EmitReturn(WasmVerdict.Success);
+                    return;
+                }
                 // A builtin in tail position: run it, then proceed. Cursor -1
                 // is that convention on the wire.
                 StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(builtinId)));
@@ -1391,23 +1412,11 @@ public static class WasmPredicateCompiler
                         Op(new LocalGet(LDa));  // scratch: LDa reused below
                         Op(new LocalSet(LT2));
                         Op(new LocalGet(LT0)); Op(new LocalSet(LDa));
-                        CellStoreDyn(LHeapB, LDa, 0, () =>
+                        EmitBindDa(ins.Pc, () =>
                         { Op(new LocalGet(LT1)); Op(new Int64ExtendInt32Unsigned()); });
-                        Op(new LocalGet(LDa)); Op(new LocalGet(LHB));
-                        Op(new Int32LessThanSigned());
-                        OpenIf();
-                        EmitTrailDa(ins.Pc);
-                        CloseNested();
                     }
                     OpenElse();
-                    {
-                        CellStoreDyn(LHeapB, LDa, 0, () => Op(new LocalGet(LC2)));
-                        Op(new LocalGet(LDa)); Op(new LocalGet(LHB));
-                        Op(new Int32LessThanSigned());
-                        OpenIf();
-                        EmitTrailDa(ins.Pc);
-                        CloseNested();
-                    }
+                    EmitBindDa(ins.Pc, () => Op(new LocalGet(LC2)));
                     CloseNested();
                 }
                 OpenElse();
@@ -1420,12 +1429,7 @@ public static class WasmPredicateCompiler
                     OpenIf();
                     {
                         Op(new LocalGet(LT2)); Op(new LocalSet(LDa));
-                        CellStoreDyn(LHeapB, LDa, 0, () => Op(new LocalGet(LC0)));
-                        Op(new LocalGet(LDa)); Op(new LocalGet(LHB));
-                        Op(new Int32LessThanSigned());
-                        OpenIf();
-                        EmitTrailDa(ins.Pc);
-                        CloseNested();
+                        EmitBindDa(ins.Pc, () => Op(new LocalGet(LC0)));
                     }
                     OpenElse();
                     {
@@ -1686,14 +1690,7 @@ public static class WasmPredicateCompiler
                     {
                         TagOfC0(); Op(new Int32Constant(0)); Op(new Int32Equal());
                         OpenIf();
-                        {
-                            CellStoreDyn(LHeapB, LDa, 0, () => Op(new LocalGet(LC2)));
-                            Op(new LocalGet(LDa)); Op(new LocalGet(LHB));
-                            Op(new Int32LessThanSigned());
-                            OpenIf();
-                            EmitTrailDa(pcDeopt);
-                            CloseNested();
-                        }
+                        EmitBindDa(pcDeopt, () => Op(new LocalGet(LC2)));
                         OpenElse();
                         {
                             TagOfC0(); Op(new Int32Constant((int)Tag.Int)); Op(new Int32Equal());
@@ -1724,16 +1721,20 @@ public static class WasmPredicateCompiler
             CloseNested();
         }
 
-        /// <summary>heap[LDa] = value, trailed when old (the engine's Bind).</summary>
+        /// <summary>heap[LDa] = value, trailed when old (the engine's Bind).
+        /// Trail FIRST: its full-trail deopt must fire before any mutation --
+        /// a stored bind without its trail entry would survive backtracking,
+        /// and the interpreter's re-run would find the var already bound and
+        /// never grow the trail (a deopt storm, measured on tak).</summary>
         private void EmitBindDa(int pc, Action value)
         {
-            CellStoreDyn(LHeapB, LDa, 0, value);
             Op(new LocalGet(LDa));
             Op(new LocalGet(LHB));
             Op(new Int32LessThanSigned());
             OpenIf();
             EmitTrailDa(pc);
             CloseNested();
+            CellStoreDyn(LHeapB, LDa, 0, value);
         }
 
         /// <summary>Pushes a cell of the given tag whose payload is LH plus

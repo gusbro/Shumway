@@ -28,4 +28,10 @@ public sealed class EngineWasmCompileEnv(int selfFunctorId, int linkedBase) : IW
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
         return entry is { IsCall: false, IsDollarCall: false };
     }
+
+    public bool IsInlineUnify(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "=" && entry.Arity == 2;
+    }
 }

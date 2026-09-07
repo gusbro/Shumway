@@ -4,7 +4,7 @@ The browser runs the engine on Mono's wasm interpreter (no `Reflection.Emit`,
 so no IL Tier-1). The wasm Tier-1 (`docs/design/wasm-tier1-plan.md`) compiles
 a hot predicate to a WebAssembly module and runs it natively, keeping the
 engine's own heap, stack, trail and registers as its working memory. This page
-is the phase-2 measurement: a tiered engine against a plain Tier-0 engine in
+is the tier's measurement: a tiered engine against a plain Tier-0 engine in
 the same browser, correctness cross-checked first.
 
 Reached at `#wasmtier` (or `#wasmtier=<rounds>`) on a published site; each
@@ -13,7 +13,7 @@ noise). Chrome, threads on, one desktop machine. These are wall-clock ratios
 in one browser, not the deterministic `--alloc` metric the desktop harness
 uses.
 
-## What it runs
+## Current numbers
 
 Two engines consult the same corpus. The tiered one has the wasm store
 attached at threshold 1 (promote on first dispatch); the plain one is
@@ -22,80 +22,65 @@ untouched Tier-0. Both must agree on `loop(1000)`, `nrev` of `[1..30]`, and
 
 | case | goal | tier-1 wasm | tier-0 interp | speedup |
 |---|---|---:|---:|---:|
-| counter 300k | `loop(300000)` | 8-16 ms | ~1665 ms | **100-220x** |
-| nrev 200 (×5) | `nrev` of a 200-element list, five times | 270-320 ms | ~385 ms | **1.2-1.4x** |
+| counter 300k | `loop(300000)` | 7-20 ms | ~1800 ms | **~90-250x** |
+| nrev 200 (×5) | `nrev` of a 200-element list, five times | ~11 ms | ~400 ms | **~31-39x** |
+| tak 18,12,6 | `tak(18,12,6,_)` | ~260 ms | ~890 ms | **~3.4x** |
 
-The counter's tiered time is a handful of milliseconds and swings with the
-scheduler from run to run; the Tier-0 baseline is steady near 1665 ms, so the
-ratio lands anywhere from ~100x to ~220x across runs. Either end is two orders
-of magnitude, which is the only claim that matters.
+The tiered times are small and swing with the scheduler; the Tier-0 baselines
+are steady, so the ratios move run to run. The orders of magnitude do not.
 
-`tak` is deliberately absent from the timing table, and the reason is worth
-stating precisely because it is easy to get wrong. Its arithmetic is NOT the
-problem: `X =< Y` compiles to `a_int_cmp` and `X - 1` to `a_int_bin`, both
-open-coded in wasm, so tak makes zero builtin crossings. Its cost is the
-CALLS. tak's recursive clause makes three non-tail `call`s to tak plus one
-tail `execute`; the tail self-call stays in the module (a branch back to the
-dispatcher), but every non-tail call returns to the interpreter, which
-dispatches the callee back into wasm and, when it proceeds, re-enters the
-caller — two boundary round-trips per non-tail call. Takeuchi's call count is
-enormous and three of every four recursive calls pay that, so the round-trip
-traffic dominates. tak is the marker for the inter-predicate-call optimization
-(phase 3+), not the builtin one.
+## How it got there: the measurement drove three designs
 
-## Reading the spread
+The first working tier used a **per-entry model**: every entry into a module
+pinned the four engine arrays, filled the 24-slot mailbox from engine state,
+called, and synced back. Its numbers were counter ~200x but nrev 1.3x and tak
+unrunnable -- and a verdict-tally + time-split diagnostic attributed the cost
+precisely: nrev ran ENTIRELY in wasm (zero deopts, zero builtin crossings,
+2 ms of wasm execution) while the per-entry staging cost 90 ms, about 150 us
+per entry. The reason is specific to the browser: all of that staging is C#
+executed by Mono's interpreter, roughly 100x slower than the same code JITted.
+The enemy was not the boundary crossing (~0.3 us) but every LINE of
+interpreted C# on the per-entry path.
 
-The two results are the whole story of where this design wins and where it
-does not, and the gap between them is not noise:
+That dictated the **chain model** that replaced it. A `PredicateDelegate`
+invocation now opens a CHAIN: stage once (pin + fill), then hop
+module-to-module on the mailbox the wasm itself keeps synced -- a cross-functor
+tail call or a callee's proceed into a wasm caller is a marker decode, a
+dictionary probe and a raw call. One `nrev(200)` is 2 chains and 600 in-chain
+switches; staging fell from 90 ms to 0.2 ms and nrev went from 1.3x to ~35x.
 
-- **The counter is the best case and it is enormous.** A tight
-  `N>0, N1 is N-1, loop(N1)` self-tail-recurses, so it stays inside the wasm
-  module across every iteration -- the self-tail-call compiles to a branch back
-  to the dispatcher, never a boundary crossing -- and the one arithmetic
-  builtin per turn is the only host trip. 222x over an interpreter-on-an-
-  interpreter is the arc's thesis made concrete: native wasm against Mono's
-  wasm interpreter is a different order of speed.
+tak then exposed two more layers, each caught by the same diagnostic rather
+than by guesswork:
 
-- **nrev is entry-count bound, and the diagnostic says so precisely.** A
-  verdict tally over one `nrev(200)` reads `entries=602, tailcalls=400,
-  deopts=0, builtins=0`: nrev runs entirely in wasm (no deopt to the
-  interpreter, no builtin crossing), and `app`'s own recursion is a tail
-  self-call that stays native. So neither the watermark nor a builtin tax is
-  the cost -- both hypotheses are refuted by the zeros. What remains is the
-  ENTRY COUNT. Every non-tail `nrev` call and every cross-functor tail call
-  (`nrev`→`app`) leaves the module and re-enters it, and each entry pays the
-  runner's per-call setup: pin the four arrays, fill the 24 mailbox slots from
-  engine state, call, sync the scalars back. The boundary crossings themselves
-  are cheap (~1000 of them, ~0.3 ms), but the per-entry marshalling across
-  ~3000 entries in the timed run is what keeps nrev near Tier-0. The lever is
-  therefore to REDUCE the entry count -- a direct wasm-to-wasm tail call would
-  fold the `nrev`→`app` handoff and every cross-functor tail into one native
-  call, not a bounce -- not to speed up the structure work, which is already
-  native.
+1. **Builtin exits.** tak's arithmetic is open-coded (`a_int_cmp`,
+   `a_int_bin`), but its leaf clause ends in `A = Z`, and =/2 was a host
+   builtin: one exit-plus-restage per leaf, ~16k of them. Fix: **=/2 is now
+   open-coded in the module** (the same two-cell unify every `get_value` uses,
+   compounds through the general unifier, attvars still deopt), at all four
+   call-site shapes (call/execute, pre- and post-linker).
+2. **A deopt storm that was also a soundness bug.** With =/2 inline, every tak
+   leaf DEOPTED: the trail had hit its guard limit and stayed there. The bind
+   emission stored the heap cell BEFORE checking trail space, so the full-trail
+   deopt left an untrailed bind behind; the interpreter's re-run found the
+   variable already bound, never trailed, never grew the trail, and the next
+   leaf deopted again -- 14,912 times. An untrailed bind that survives
+   backtracking is unsound, independent of the storm. Fix: **trail-first
+   ordering at every bind site** (the general unifier already had it, with the
+   comment; the inline binds now share the one `EmitBindDa` helper). Deopts:
+   14,912 to 36 -- one per actual trail growth.
 
-## What the spread tells the next phase
+## Reading the spread that remains
 
-The design bails to the interpreter at three seams, and the spread names their
-cost precisely:
+- **The counter** stays the ceiling: one chain, everything in-module, the one
+  `is/2` per turn open-coded.
+- **nrev** is now bounded by the ~600 in-chain switches (~15 us of interpreted
+  TryChain guards each) plus its real allocation work.
+- **tak** at 3.4x is bounded the same way at larger scale: ~32k switches per
+  `tak(14,10,4)`, glue ~140 ms vs 108 ms in-wasm. The next lever, if wanted,
+  is moving the cross-functor tail hop INTO wasm (`call_indirect` through an
+  imported function table with a per-thread functor-to-index map), which
+  removes the interpreted switch entirely. That is an arc of its own -- realm
+  traps are silent -- and 3.4x already clears the plan's 2x gate.
 
-1. **Every module entry pays the runner's marshalling**, and the entry count
-   is driven by inter-predicate calls: a non-tail call and a cross-functor
-   tail call each leave and re-enter the module. Free for a self-tail loop
-   (which branches inside the module), per-call for everything else. The
-   `nrev` diagnostic (602 entries, 0 deopts) pins this as its cost, and `tak`'s
-   three non-tail self-calls per invocation are the same shape. A direct
-   wasm-to-wasm call -- resolving the callee's table index and calling it,
-   rather than bouncing out and back -- collapses those entries, and is the
-   single largest lever and the measured priority for the next phase.
-2. **Every builtin** is a `BuiltinRequest`. Cheap when rare (the counter's one
-   `is` per turn), and NOT what bounds `tak` (its arithmetic is open-coded).
-   Open-coded wasm counterparts for the type tests and `=/2` over immediates
-   help builtin-dense predicates, but the measurement says calls come first.
-3. **Every heap-watermark crossing** deopts to collect. Correct and cheap per
-   event; it caps how long an allocation-heavy predicate (`nrev`) stays native.
-
-None of the three is a correctness limit -- the deopt path means every one of
-them is a predicate that merely runs on the tier it was already on. The
-measurement reorders the plan's next steps: the inter-predicate call boundary,
-not open-coded builtins, is where the data points, and the counter proves the
-ceiling worth reaching for.
+None of the remaining bounds is a correctness limit: deopt returns any
+predicate to the tier it was already on.

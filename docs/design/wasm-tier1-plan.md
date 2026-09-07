@@ -446,6 +446,45 @@ forma correcta es priming al load, NO hornear bytes.
 - Regresión: `Shumway.Tests.Embedding` completa verde con el switch en false
   (default) en todos lados.
 
+### Ronda de performance POST-medicion: CADENAS + =/2 inline + trail-first
+
+La medicion fina (split wall/inWasm/stage) revelo que el enemigo real era el
+C# INTERPRETADO por entrada (~150 us de staging vs ~3 us de wasm — Mono
+interpreta todo el runner en browser). Tres disenios en cascada, cada uno
+dictado por el diagnostico de veredictos (nunca por hipotesis — dos hipotesis
+previas, watermark y builtins-de-tak, MURIERON contra el diag):
+
+1. **Modelo de CADENA** (reemplaza el per-entry): `IWasmExecutionWorld` +
+   `IWasmChainContext` en Core; un delegate abre UNA cadena (pin + fill una
+   vez) y salta modulo-a-modulo sobre el mailbox que el propio wasm mantiene
+   sincronizado. El switch = decode marker + dict + call crudo. Guards por
+   switch: watermark, cancelacion, wakeups (solo builtins los encolan
+   mid-chain). Builtin = SyncEngine → impl → RefreshFromEngine (los arrays
+   pueden haber sido REEMPLAZADOS por crecimiento). Mundos:
+   `DesktopWasmWorld` (una imagen, copy-in/out POR CADENA) y
+   `BrowserWasmWorld` (pins GCHandle por cadena, mailbox pinneado por
+   contexto — el anidamiento por sub-engines/reentrant-solve funciona porque
+   el camino builtin re-sincroniza alrededor). nrev: 1.3x → ~35x.
+2. **=/2 open-coded** (`IsInlineUnify` en el env): el `A = Z` de las hojas de
+   tak era UN exit de host por hoja (~16k). Ahora es el mismo unify de dos
+   celdas de get_value, en los 4 shapes de call site. builtins de tak: 16k→0.
+3. **BUG DE SOLIDEZ cazado por el diag: trail-first en los binds.** El bind
+   emitia STORE antes del check de trail; con trail lleno el deopt dejaba un
+   bind SIN TRAILEAR (sobrevive al backtracking = unsound) y el re-run del
+   interprete veia la var ya ligada → no traileaba → el trail nunca crecia →
+   TORMENTA de deopts (14.912, uno por hoja, TR clavado en el limite). El
+   unificador general ya hacia trail-first CON comentario; los binds inline
+   no. Todos canalizados por UN `EmitBindDa` trail-first. Deopts: 14.912→36.
+
+Tambien: fix de sobre-corte previo (SetB0 parity — el slot CutBarrier se
+refresca en CADA dispatch, incl. self-tail; regresion `w/2` con `d/1` CPs
+por nivel: 4 soluciones, no 1).
+
+Numeros finales browser: counter ~90-250x, nrev ~31-39x, tak ~3.4x (gate 2x
+superado en los tres). Lo que queda en tak/nrev: el switch interpretado
+(~4-15 us); la palanca siguiente es el hop tail EN wasm (call_indirect +
+tabla importada), arco propio.
+
 ## Fase 3' — El call directo wasm→wasm (el lever medido, arco propio)
 
 La medicion apunta aca, no a AOT ni a builtins. El analisis de que es

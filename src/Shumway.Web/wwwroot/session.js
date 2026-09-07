@@ -30,7 +30,8 @@ export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop) {
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
   setModuleImports('main.js', {
     ui: {
-      write: onOutput, writeError: onDiagnostic, askForInput: onAskForInput,
+      write: (t) => { if (typeof t === 'string' && t.startsWith('[tier]')) { try { fetch('/collect', { method: 'POST', body: t }); } catch {} } return onOutput(t); },
+      writeError: onDiagnostic, askForInput: onAskForInput,
       debugStopped: (json) => onDebugStop?.(JSON.parse(json)),
     },
   });

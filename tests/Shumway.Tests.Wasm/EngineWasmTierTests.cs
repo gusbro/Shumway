@@ -40,6 +40,7 @@ public class EngineWasmTierTests
         engine.ConsultString(Corpus);
         var store = engine.IlPromotion;
         store.Threshold = 0;                     // the IL tier stands aside
+        var world = new DesktopWasmWorld();
         store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = 1,                       // promote on first dispatch
@@ -56,8 +57,10 @@ public class EngineWasmTierTests
                     var addrByCursor = new int[maxCursor + 1];
                     foreach (var (addr, c) in entry.CursorByAddress)
                         addrByCursor[c] = linkedBase + addr;
-                    var runner = new DesktopWasmRunner(entry.Module, entry.RegisterDemand);
-                    return new WasmTierDelegate(pred.FunctorId, runner, addrByCursor).Invoke;
+                    int handle = world.RegisterModule(
+                        pred.FunctorId, entry.Module, entry.RegisterDemand);
+                    return new WasmTierDelegate(
+                        pred.FunctorId, world, handle, addrByCursor).Invoke;
                 }
                 catch (WasmCompileException)
                 {

@@ -50,6 +50,14 @@ public interface IWasmCompileEnv
     /// instead: the compiled code deopts at the call site and the interpreter
     /// re-runs it whole.</summary>
     bool IsDirectBuiltin(int builtinId);
+
+    /// <summary>Whether the builtin is =/2, which the compiled code
+    /// open-codes as its own unifier instead of stepping out: measured, a
+    /// leaf clause ending in a unification (tak's <c>A = Z</c>) otherwise
+    /// pays a host round-trip PER LEAF, and in the browser the host side is
+    /// interpreted C#. Attvars and exotic shapes still deopt inside the
+    /// unifier, so semantics are the engine's.</summary>
+    bool IsInlineUnify(int builtinId);
 }
 
 /// <summary>A compiled predicate: the module bytes plus what the installer

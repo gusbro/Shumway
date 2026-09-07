@@ -92,6 +92,12 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
     // Everything the harness emulates is direct.
     bool IWasmCompileEnv.IsDirectBuiltin(int builtinId) => true;
 
+    bool IWasmCompileEnv.IsInlineUnify(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "=" && entry.Arity == 2;
+    }
+
     // ---- the memory image ----
 
     private long GetSlot(int slot)
