@@ -391,6 +391,11 @@ internal static class BrowserWasmTier
     /// console.</summary>
     internal static string BakedInstallNote = "no asset";
 
+    /// <summary>The baked prelude's members: status folds these into one
+    /// count so the promoted list shows the USER's predicates, not five
+    /// hundred prelude internals burying them.</summary>
+    internal static readonly HashSet<int> BakedFids = new();
+
     internal static bool TryInstallBaked(PrologEngine engine, byte[] asset,
         out string reason)
     {
@@ -426,8 +431,11 @@ internal static class BrowserWasmTier
         }
         catch (WasmRegisterException e) { reason = e.Message; return false; }
         foreach (var m in baked.Members)
+        {
             store.RegisterBoundDelegate(m.FunctorId,
                 new WasmTierDelegate(m.FunctorId, world).Invoke);
+            BakedFids.Add(m.FunctorId);
+        }
         reason = $"{baked.Members.Count} predicates";
         return true;
     }
@@ -764,11 +772,20 @@ internal static partial class WebShumwayApp
                     var (aid, ar) = Shumway.Core.FunctorTable.Lookup(f);
                     return $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}";
                 }
-                var promoted = store.PromotedFunctorIds().Select(Name).ToList();
+                // The baked prelude's members fold into their count: listing
+                // five hundred prelude internals buries the user's own
+                // predicates, which are what status is read for.
+                var allPromoted = store.PromotedFunctorIds().ToList();
+                var promoted = allPromoted
+                    .Where(f => !BrowserWasmTier.BakedFids.Contains(f))
+                    .Select(Name).ToList();
+                int baked = allPromoted.Count - promoted.Count;
                 var refused = w.UnpromotableFunctorIds().Select(Name).ToList();
                 return $"% wasm_compile: threshold={w.Threshold}\n"
                     + $"%   baked prelude: {BrowserWasmTier.BakedInstallNote}\n"
-                    + $"%   promoted ({promoted.Count}): {string.Join(" ", promoted)}\n"
+                    + $"%   promoted ({promoted.Count}"
+                    + (baked > 0 ? $" + {baked} baked prelude" : "")
+                    + $"): {string.Join(" ", promoted)}\n"
                     + $"%   refused ({refused.Count}): {string.Join(" ", refused)}\n"
                     + $"%   chains={WasmTierDelegate.DiagEntries} "
                     + $"switches={WasmTierDelegate.DiagSwitches} "
