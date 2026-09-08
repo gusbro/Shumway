@@ -1764,6 +1764,12 @@ if (persistMode) {
     const err3 = await session.start('later(500).');
     if (err3) lines.push('later start error: ' + err3 + '\n');
     else lines.push('later: ' + JSON.stringify(await session.next(80)) + '\n');
+    // A library load under `all` promotes its whole module (clpfd is
+    // hundreds of predicates): status must fold it into a count, not bury
+    // the user's own predicates under it.
+    mark('clpfd');
+    await session.consult(':- use_module(library(clpfd)).  b(X) :- X in 1..3, X #> 1.');
+    lines.push('clpfd tick: ' + await session.exports().WasmCompileAllTick() + '\n');
     mark('final status');
     lines.push(await session.exports().WasmCompileControl('status'));
     // A fresh engine (restart.): the baked prelude must reinstall — interning

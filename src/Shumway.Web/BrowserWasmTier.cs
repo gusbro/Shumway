@@ -772,19 +772,51 @@ internal static partial class WebShumwayApp
                     var (aid, ar) = Shumway.Core.FunctorTable.Lookup(f);
                     return $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}";
                 }
-                // The baked prelude's members fold into their count: listing
-                // five hundred prelude internals buries the user's own
-                // predicates, which are what status is read for.
+                // Status is read to find the USER's predicates. Everything
+                // else folds into counts: the baked prelude's members, and
+                // library modules (a use_module(library(clpfd)) promotes
+                // hundreds of clpfd$... internals under `all`). A name's
+                // module is its prefix up to the scope '$' — one more '$'
+                // along when it starts with '$' ($q$..., $prelude$$...).
+                static string PrefixModuleOf(string name)
+                {
+                    int at = name.IndexOf('$', name.StartsWith('$') ? 1 : 0);
+                    if (at <= 0) return "";
+                    int scope = name.StartsWith('$') ? name.IndexOf('$', at + 1) : at;
+                    return scope > 0 ? name[..at] : "";
+                }
+                // A library's EXPORTS carry no module prefix (clpfd's in/2,
+                // #=/2, label/1 look exactly like user predicates), so the
+                // qualified-name rule alone leaves dozens of them in the
+                // list. The engine's module manifests name them.
+                var exporter = new Dictionary<int, string>();
+                foreach (var (modName, manifest) in engine.Modules)
+                    foreach (int pf in manifest.PublicFunctors)
+                        exporter[pf] = modName;
                 var allPromoted = store.PromotedFunctorIds().ToList();
-                var promoted = allPromoted
-                    .Where(f => !BrowserWasmTier.BakedFids.Contains(f))
-                    .Select(Name).ToList();
-                int baked = allPromoted.Count - promoted.Count;
+                var promoted = new List<string>();
+                var byModule = new SortedDictionary<string, int>();
+                int baked = 0;
+                foreach (int f in allPromoted)
+                {
+                    if (BrowserWasmTier.BakedFids.Contains(f)) { baked++; continue; }
+                    string name = Name(f);
+                    string mod = PrefixModuleOf(name);
+                    if (mod is "" && exporter.TryGetValue(f, out string? owner)) mod = owner;
+                    // Compiler-generated helpers ($disj_N, $neg_N, the $q$
+                    // query wrappers) are nobody's source predicate: they
+                    // belong to whatever clause spawned them.
+                    if (mod is "" or "user" && name.StartsWith('$')) mod = "generated";
+                    if (mod is "" or "user") promoted.Add(name);
+                    else byModule[mod] = byModule.GetValueOrDefault(mod) + 1;
+                }
+                var folded = byModule.Select(kv => $"{kv.Value} {kv.Key}").ToList();
+                if (baked > 0) folded.Add($"{baked} baked prelude");
                 var refused = w.UnpromotableFunctorIds().Select(Name).ToList();
                 return $"% wasm_compile: threshold={w.Threshold}\n"
                     + $"%   baked prelude: {BrowserWasmTier.BakedInstallNote}\n"
                     + $"%   promoted ({promoted.Count}"
-                    + (baked > 0 ? $" + {baked} baked prelude" : "")
+                    + (folded.Count > 0 ? " + " + string.Join(" + ", folded) : "")
                     + $"): {string.Join(" ", promoted)}\n"
                     + $"%   refused ({refused.Count}): {string.Join(" ", refused)}\n"
                     + $"%   chains={WasmTierDelegate.DiagEntries} "
