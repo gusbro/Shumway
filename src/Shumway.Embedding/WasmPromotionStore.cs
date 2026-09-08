@@ -63,6 +63,18 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         return System.Math.Max(0, PromoteAllStatics(engine));
     }
 
+    /// <summary>The linked static predicates, (address, predicate) — what
+    /// <see cref="PromoteAllStatics"/> feeds the batch. Public for the size
+    /// diagnostics that decide the group-partitioning question.</summary>
+    public static IEnumerable<(int Addr, CompiledPredicate Pred)>
+        StaticPredicatesOf(PrologEngine engine)
+    {
+        var link = engine._staticLink;
+        if (link is null) yield break;
+        foreach (var (addr, pred) in link.PredicatesByAddress)
+            yield return (addr, pred);
+    }
+
     /// <summary>Every static predicate of <paramref name="engine"/>'s linked
     /// program through <see cref="BatchPromoter"/> in one build: the
     /// wasm_compile(all) path. Skips what is already promoted, already

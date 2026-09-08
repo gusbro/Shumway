@@ -59,6 +59,10 @@ public static class WasmPredicateCompiler
                                   c.RegisterDemand);
     }
 
+    /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
+    /// dispatcher (see the guard at the loop top). Off in production.</summary>
+    public static bool DebugLoopGuard;
+
     // ---- locals (after the two i32 params: 0 mailbox, 1 entry cursor) ----
     private const uint LCur = 2;      // current cursor
     private const uint LHeapB = 3;    // byte base of the heap
@@ -427,6 +431,32 @@ public static class WasmPredicateCompiler
             // The dispatcher: loop, one block per case, br_table.
             OpenLoop();                                     // never popped via CloseNested
             _extraDepth--;                                  // accounted in BrDispatch instead
+            if (DebugLoopGuard)
+            {
+                // DIAGNOSTIC (off by default): every dispatch bumps a
+                // counter in the Cursor slot and records the cursor in the
+                // BuiltinId slot; past 10M dispatches the run returns the
+                // impossible verdict 99, turning an in-module infinite loop
+                // into a readable report instead of a hang.
+                StoreSlot64(WasmAbi.BuiltinId, () =>
+                {
+                    Op(new LocalGet(LCur));
+                    Op(new Int64ExtendInt32Signed());
+                });
+                StoreSlot64(WasmAbi.Cursor, () =>
+                {
+                    LoadSlot64(WasmAbi.Cursor);
+                    Op(new Int64Constant(1));
+                    Op(new Int64Add());
+                });
+                LoadSlot64(WasmAbi.Cursor);
+                Op(new Int64Constant(10_000_000));
+                Op(new Int64GreaterThanSigned());
+                OpenIf();
+                Op(new Int32Constant(99));
+                Op(new Return());
+                CloseNested();
+            }
             for (int k = _caseCount - 1; k >= 0; k--) Op(new Block(BlockType.Empty));
             Op(new LocalGet(LCur));
             var labels = new uint[_caseCount];

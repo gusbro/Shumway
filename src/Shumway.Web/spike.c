@@ -29,9 +29,16 @@ EM_JS(int, shumway_wasm_table_length, (void), {
  * Returns the table index, or -1 with the reason on the console. */
 EM_JS(int, shumway_wasm_register, (int bytesPtr, int len), {
     try {
+        /* >>> 0: the pointer crosses as a SIGNED int32, and a buffer above
+         * 2 GB (a grown heap pins big modules high) arrives negative — the
+         * slice then reads garbage and the compile fails as CompileError.
+         * Unseen with small modules, found by wasm_compile(all)'s 5.5 MB
+         * group. */
+        var at = bytesPtr >>> 0;
+        var n = len >>> 0;
         /* slice, not subarray: a view over shared memory cannot be compiled
          * from directly, and the copy detaches the bytes from the heap. */
-        var bytes = HEAPU8.slice(bytesPtr, bytesPtr + len);
+        var bytes = HEAPU8.slice(at, at + n);
         var mod = new WebAssembly.Module(bytes);
         var inst = new WebAssembly.Instance(mod, { env: { memory: wasmMemory } });
         return addFunction(inst.exports.run, 'iii');

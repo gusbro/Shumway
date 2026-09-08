@@ -1715,29 +1715,35 @@ if (persistMode) {
   // The wasm_compile pseudo-goal's export, end to end on the live session
   // engine: attach at threshold 1, run something hot through the REPL path,
   // and status must show the promotion (plus the compile-time tally).
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: 'mark: ' + t }); } catch { } };
   try {
     const lines = [];
+    mark('attach 1');
     lines.push(await session.exports().WasmCompileControl('1'));
     await session.consult('wloop(0).  wloop(N) :- N > 0, N1 is N - 1, wloop(N1).');
+    mark('wloop query');
     const err = await session.start('wloop(50000).');
     if (err) lines.push('start error: ' + err);
     else lines.push('wloop: ' + JSON.stringify(await session.next(80)));
     lines.push(await session.exports().WasmCompileControl('status'));
     // wasm_compile(all): the batch runs NOW and again after a consult —
     // status must show the new predicate promoted without any query
-    // having dispatched it.
+    // having dispatched it. Registration is EAGER at install, so a module
+    // the browser refuses fails the batch here, cleanly.
+    mark('all');
     lines.push(await session.exports().WasmCompileControl('all'));
-    // Run THROUGH the giant group: registration is lazy per thread, so only
-    // a real call exercises it — the user's first query found it broken
-    // (wasm module did not register) while a batch with no query passed.
+    mark('post-all query');
     const err2 = await session.start('numlist(1, 20, L), msort(L, S), length(S, 20), wloop(1000).');
     if (err2) lines.push('post-all start error: ' + err2 + '\n');
     else lines.push('post-all: ' + JSON.stringify(await session.next(80)) + '\n');
+    mark('consult later');
     await session.consult('later(0).  later(N) :- N > 0, N1 is N - 1, later(N1).');
     lines.push('tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    mark('later query');
     const err3 = await session.start('later(500).');
     if (err3) lines.push('later start error: ' + err3 + '\n');
     else lines.push('later: ' + JSON.stringify(await session.next(80)) + '\n');
+    mark('final status');
     lines.push(await session.exports().WasmCompileControl('status'));
     lines.push(await session.exports().WasmCompileControl('off'));
     const report = lines.join('');

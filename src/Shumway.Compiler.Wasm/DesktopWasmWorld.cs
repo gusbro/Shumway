@@ -79,6 +79,12 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 
     public void Dispose() => _memory.Dispose();
 
+    /// <summary>Diagnostic: read a mailbox slot from outside the chain — the
+    /// only way to see where a hung module got to.</summary>
+    public long DebugReadSlot(int slot)
+        => System.Runtime.InteropServices.Marshal.ReadInt64(
+            _memory.Start, MailboxAt + slot * 8);
+
     private sealed class Chain : IWasmChainContext
     {
         private readonly DesktopWasmWorld _w;
