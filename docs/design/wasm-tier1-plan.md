@@ -620,6 +620,29 @@ produced two builtin requests total, nothing to inline.
 ADR-050 records D1–D7 (satisfies the decision policy: new backend + new
 dependency ⇒ ADR).
 
+## Group partitioning — one module, K functions under the JIT cliff
+
+`wasm_compile(all)`'s 529-member group exposed a limit no validator
+enforces: a single `run()` body of ~640k instructions crosses the JIT's
+compilation cliff (RyuJIT on the desktop world, Liftoff bailing to
+TurboFan in the browser) and takes minutes to enter — while 634k takes
+seconds. The module is therefore emitted as: function 0, the exported
+dispatcher (routes a cursor to its partition by range, loops on
+continue-cursors — a partition returns `cursor + 0x100` for "not mine,
+continue there"); functions 1..K, partitions cut at member boundaries
+under a budget of ~2,500 WAM instructions (~100k emitted each); function
+K+1, the fail/proceed resolver holding the only full BP→retry-cursor and
+Cp-marker→resume-cursor chains (partitions chain just their local
+subsets — self-backtracking and recursive returns — and hand a miss over
+via the FAIL/PROCEED pseudo-cursors); function K+2, the general unifier.
+In-partition jumps, the overwhelming majority, remain internal branches;
+a cross-partition transfer spills the mailbox scalars and re-enters
+through the dispatcher, tens of native instructions. Moving the
+group-wide chains into the resolver also removed the quadratic term
+every Proceed site paid (the 529-member module shrank 5.5 MB → 2.9 MB).
+Nothing outside the compiler changed: same export, same mailbox
+contract, same global cursors and markers.
+
 ## Risk register
 
 | Risk | Exposure | Mitigation / kill switch |
