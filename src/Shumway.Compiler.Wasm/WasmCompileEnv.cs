@@ -8,7 +8,7 @@ namespace Shumway.Compiler.Wasm;
 /// translatable set, or a shape the backend does not do yet. Refusal is the
 /// normal outcome for most predicates -- they stay on the tier they were on.
 /// </summary>
-public sealed class WasmCompileException(string reason) : Exception(reason);
+public class WasmCompileException(string reason) : Exception(reason);
 
 /// <summary>What the emitted code bakes in wherever it has to name something
 /// outside itself. The values differ by world -- the engine bakes interned

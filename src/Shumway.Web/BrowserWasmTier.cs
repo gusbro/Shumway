@@ -50,14 +50,29 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         var index = new ThreadLocal<int>(() =>
         {
             int at = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(pinned, 0);
+            long t0 = Stopwatch.GetTimestamp();
             int i = WebShumwayApp.WasmRegister(at, pinned.Length);
+            DiagRegisterTicks += Stopwatch.GetTimestamp() - t0;
             if (i < 0)
-                throw new InvalidOperationException("wasm module did not register");
+                throw new WasmRegisterException(
+                    $"the group module ({pinned.Length} bytes) did not register"
+                    + " — see the browser console for the engine's reason");
             return i;
         });
+        // EAGERLY on the installing thread: a module the browser refuses (a
+        // V8 size limit, say — a giant wasm_compile(all) group) must fail
+        // HERE, where the caller can fall back to bytecode and report,
+        // never inside some later user query's first chain call. Every pool
+        // thread is the same kind of worker, so this thread's verdict
+        // stands for the others.
+        _ = index.Value;
         _current = new Build(pinned, index, entryCursorByFid, cursorByAddress,
                              entryAddressByFid, registerDemand);
     }
+
+    /// <summary>Wall time inside the per-thread module registration
+    /// (compile + instantiate + addFunction). Diagnostic.</summary>
+    internal static long DiagRegisterTicks;
 
     public bool Contains(int functorId)
         => _current?.EntryCursorByFid.ContainsKey(functorId) == true;
@@ -240,10 +255,109 @@ internal static class BrowserWasmTier
             Threshold = threshold,
             Promoter = (pred, linkedBase) =>
                 Promote(store, world, members, env, pred, linkedBase),
+            BatchPromoter = candidates =>
+                PromoteBatch(store, world, members, env, candidates),
         };
     }
 
+    /// <summary>The wasm_compile(all) path: the whole candidate set in ONE
+    /// group build — O(n), where promoting the same set one dispatch at a
+    /// time rebuilds the group per member. A candidate the compiler refuses
+    /// must not take the batch down: on a failed build each candidate is
+    /// test-compiled alone (still O(n): builds of one) and the refusals are
+    /// marked unpromotable; the survivors build together.</summary>
+    private static int PromoteBatch(IlPromotionStore store, BrowserWasmWorld world,
+        List<WasmGroupMember> members, EngineWasmCompileEnv env,
+        List<(CompiledPredicate Pred, int Addr)> candidates)
+    {
+        long t0 = Stopwatch.GetTimestamp();
+        try
+        {
+            var added = new List<WasmGroupMember>();
+            foreach (var (pred, addr) in candidates)
+                added.Add(new WasmGroupMember(pred, addr,
+                    store.FloatPoolProvider?.Invoke(pred.FunctorId)));
+            members.AddRange(added);
+            try
+            {
+                InstallCurrent(world, members, env);
+            }
+            catch (WasmRegisterException)
+            {
+                // The BROWSER refused the module — too big, most likely.
+                // The members are individually fine; back the whole batch
+                // out and reinstall what worked before.
+                members.RemoveRange(members.Count - added.Count, added.Count);
+                if (members.Count > 0) InstallCurrent(world, members, env);
+                return 0;
+            }
+            catch (WasmCompileException)
+            {
+                // Sort the poisoners out one by one, then build the rest.
+                members.RemoveRange(members.Count - added.Count, added.Count);
+                var good = new List<WasmGroupMember>();
+                foreach (var m in added)
+                {
+                    try
+                    {
+                        WasmPredicateCompiler.CompileGroup(
+                            new List<WasmGroupMember> { m }, env);
+                        good.Add(m);
+                    }
+                    catch (WasmCompileException)
+                    {
+                        store.Wasm?.MarkUnpromotable(m.Predicate.FunctorId);
+                    }
+                }
+                if (good.Count == 0) return 0;
+                members.AddRange(good);
+                try { InstallCurrent(world, members, env); }
+                catch (WasmCompileException)
+                {
+                    // Individually fine but jointly refused — should not
+                    // happen; back out rather than leave a broken group.
+                    members.RemoveRange(members.Count - good.Count, good.Count);
+                    if (members.Count > 0) InstallCurrent(world, members, env);
+                    return 0;
+                }
+                added = good;
+            }
+            foreach (var m in added)
+                store.RegisterBoundDelegate(m.Predicate.FunctorId,
+                    new WasmTierDelegate(m.Predicate.FunctorId, world).Invoke);
+            return added.Count;
+        }
+        finally
+        {
+            DiagCompileTicks += Stopwatch.GetTimestamp() - t0;
+            DiagCompileBuilds++;
+        }
+    }
+
+    /// <summary>Wall time spent COMPILING group modules (each promotion
+    /// rebuilds the whole group), and how many builds — the cost side of the
+    /// tier, reported by wasm_compile(status). Mono-interpreted C#, so this
+    /// is the dominant promotion cost in the browser.</summary>
+    internal static long DiagCompileTicks;
+    internal static int DiagCompileBuilds;
+
     private static PredicateDelegate? Promote(IlPromotionStore store,
+        BrowserWasmWorld world, List<WasmGroupMember> members,
+        EngineWasmCompileEnv env, CompiledPredicate pred, int linkedBase)
+    {
+        long t0 = Stopwatch.GetTimestamp();
+        try
+        {
+            return PromoteCore(store, world, members, env, pred, linkedBase);
+        }
+        finally
+        {
+            DiagCompileTicks += Stopwatch.GetTimestamp() - t0;
+            DiagCompileBuilds++;
+        }
+    }
+
+    private static PredicateDelegate? PromoteCore(IlPromotionStore store,
         BrowserWasmWorld world, List<WasmGroupMember> members,
         EngineWasmCompileEnv env, CompiledPredicate pred, int linkedBase)
     {
@@ -409,3 +523,272 @@ internal static partial class WebShumwayApp
             return report.ToString();
         }).ConfigureAwait(false);
 }
+
+/// <summary>Phase B of the wasm-tier plan: the benchmark page. Five programs
+/// — the three of the tier probe plus crypt and zebra from the Van Roy suite
+/// — each in its OWN pair of engines (the group module is the program's), a
+/// correctness cross-check first, then best-of-rounds wall time for tiered
+/// against plain Tier-0 and the geometric mean over the set. Reached via the
+/// page hash <c>#wasmbench</c>; the report feeds
+/// docs/benchmarks/browser.md.</summary>
+internal static partial class WebShumwayApp
+{
+    private const string CryptSource = """
+        crypt([O, N, E, T, W]) :-
+            digit(O), O > 0,
+            digit(N), N \== O,
+            digit(E), E \== O, E \== N,
+            digit(T), T > 0, T \== O, T \== N, T \== E,
+            digit(W), W \== O, W \== N, W \== E, W \== T,
+            100*O + 10*N + E
+          + 100*O + 10*N + E
+          =:= 100*T + 10*W + O.
+        digit(0). digit(1). digit(2). digit(3). digit(4).
+        digit(5). digit(6). digit(7). digit(8). digit(9).
+        cbench(0) :- !.
+        cbench(N) :- crypt(_), !, N1 is N - 1, cbench(N1).
+        """;
+
+    private const string ZebraSource = """
+        zebra(Houses, Zebra, Water) :-
+            Houses = [house(_, _, _, _, _), house(_, _, _, _, _),
+                      house(_, _, _, _, _), house(_, _, _, _, _),
+                      house(_, _, _, _, _)],
+            member_(house(red, english, _, _, _), Houses),
+            member_(house(_, spanish, dog, _, _), Houses),
+            member_(house(green, _, _, coffee, _), Houses),
+            member_(house(_, ukrainian, _, tea, _), Houses),
+            right_of(house(green, _, _, _, _), house(ivory, _, _, _, _), Houses),
+            member_(house(_, _, snails, _, winston), Houses),
+            member_(house(yellow, _, _, _, kools), Houses),
+            middle(house(_, _, _, milk, _), Houses),
+            first(house(_, norwegian, _, _, _), Houses),
+            next_to(house(_, _, _, _, chesterfield), house(_, _, fox, _, _), Houses),
+            next_to(house(_, _, _, _, kools), house(_, _, horse, _, _), Houses),
+            member_(house(_, _, _, orange_juice, lucky_strike), Houses),
+            member_(house(_, japanese, _, _, parliaments), Houses),
+            next_to(house(_, norwegian, _, _, _), house(blue, _, _, _, _), Houses),
+            member_(house(_, Zebra, zebra, _, _), Houses),
+            member_(house(_, Water, _, water, _), Houses).
+        member_(X, [X|_]).
+        member_(X, [_|T]) :- member_(X, T).
+        right_of(A, B, [B, A | _]).
+        right_of(A, B, [_|T]) :- right_of(A, B, T).
+        next_to(A, B, [A, B | _]).
+        next_to(A, B, [B, A | _]).
+        next_to(A, B, [_|T]) :- next_to(A, B, T).
+        first(X, [X|_]).
+        middle(X, [_, _, X, _, _]).
+        zbench(0) :- !.
+        zbench(N) :- zebra(_, _, _), !, N1 is N - 1, zbench(N1).
+        """;
+
+    private sealed record BenchProgram(
+        string Name, string Source, string CheckGoal, string BenchGoal);
+
+    private static readonly BenchProgram[] BenchPrograms =
+    {
+        new("counter 300k", TierProbeCorpus,
+            "loop(1000).", "loop(300000)."),
+        new("nrev 200 x5", TierProbeCorpus,
+            "range(1, 30, L), nrev(L, R), R = [30|_], length(R, 30).",
+            "range(1, 200, L), nrev(L, _), nrev(L, _), nrev(L, _), nrev(L, _), nrev(L, _)."),
+        new("tak 18,12,6", TierProbeCorpus,
+            "tak(18, 12, 6, 7).", "tak(18, 12, 6, _)."),
+        new("crypt x10", CryptSource,
+            "crypt([O, N, E, T, W]), 200*O + 20*N + 2*E =:= 100*T + 10*W + O.",
+            "cbench(10)."),
+        new("zebra x10", ZebraSource,
+            "zebra(_, Z, W), Z == japanese, W == norwegian.",
+            "zbench(10)."),
+    };
+
+    [JSExport]
+    internal static async Task<string> WasmBenchProbe(int rounds)
+        => await Task.Run(() =>
+        {
+            var report = new StringBuilder();
+            rounds = Math.Max(1, rounds);
+            var speedups = new List<double>();
+            try
+            {
+                foreach (var prog in BenchPrograms)
+                {
+                    WriteToPage($"[bench] {prog.Name}: engines up\n");
+                    var tiered = new PrologEngine();
+                    tiered.ConsultString(prog.Source);
+                    tiered.IlPromotion.Threshold = 0;
+                    BrowserWasmTier.Attach(tiered, threshold: 1);
+                    if (tiered.IlPromotion.Wasm is null)
+                        return "wasm tier NOT attached: the capability is off\n";
+                    var plain = new PrologEngine();
+                    plain.ConsultString(prog.Source);
+
+                    // Correctness on both, and it doubles as the warmup that
+                    // promotes the tiered engine's group.
+                    bool a = tiered.Query(prog.CheckGoal).Success;
+                    bool b = plain.Query(prog.CheckGoal).Success;
+                    if (!a || !b)
+                    {
+                        report.Append($"MISMATCH {prog.Name}: tier={a} plain={b} "
+                            + prog.CheckGoal).Append('\n');
+                        continue;
+                    }
+
+                    WasmTierDelegate.ResetDiag();
+                    double tt = BenchMedian(tiered, prog.BenchGoal, rounds);
+                    long entries = WasmTierDelegate.DiagEntries;
+                    long deopts = WasmTierDelegate.DiagDeopts;
+                    long builtins = WasmTierDelegate.DiagBuiltins;
+                    long tails = WasmTierDelegate.DiagTailExits;
+                    double pp = BenchMedian(plain, prog.BenchGoal, rounds);
+                    int promoted = tiered.IlPromotion.PromotedFunctorIds().Count();
+                    double speedup = pp / tt;
+                    speedups.Add(speedup);
+                    string line = $"{prog.Name}: tier {tt:F1} ms, tier0 {pp:F1} ms, "
+                        + $"{speedup:F1}x  (promoted={promoted} entries={entries} "
+                        + $"deopts={deopts} builtinExits={builtins} tailExits={tails})";
+                    WriteToPage($"[bench] {line}\n");
+                    report.Append(line).Append('\n');
+                }
+                if (speedups.Count > 0)
+                {
+                    double geo = Math.Exp(speedups.Sum(Math.Log) / speedups.Count);
+                    report.Append($"geomean over {speedups.Count}: {geo:F1}x\n");
+                }
+            }
+            catch (Exception ex)
+            {
+                report.Append("STOPPED: ").Append(ex.GetType().Name)
+                      .Append(": ").Append(ex.Message).Append('\n')
+                      .Append(ex.StackTrace).Append('\n');
+            }
+            return report.ToString();
+        }).ConfigureAwait(false);
+
+    private static double BenchMedian(PrologEngine e, string goal, int rounds)
+    {
+        double best = double.MaxValue;
+        for (int r = 0; r < rounds; r++)
+        {
+            var sw = Stopwatch.StartNew();
+            if (!e.Query(goal).Success) throw new InvalidOperationException(goal);
+            sw.Stop();
+            best = Math.Min(best, sw.Elapsed.TotalMilliseconds);
+            if (best > 20_000) break;   // one slow round is answer enough
+        }
+        return best;
+    }
+}
+
+/// <summary>The REPL's runtime switch for the wasm tier: the page answers the
+/// pseudo-goal <c>wasm_compile.</c> (and its variants) by calling here, the
+/// way <c>restart.</c> is answered by the page. Attaching to the LIVE engine
+/// is safe between queries — nothing already running changes, the next
+/// dispatches start counting. "off" stops further promotion; what already
+/// promoted keeps running as wasm (detaching delegates under a live wasm
+/// choice point would break its redo), and <c>restart.</c> is the full off:
+/// a fresh engine has no tier attached.</summary>
+internal static partial class WebShumwayApp
+{
+    [JSExport]
+    internal static Task<string> WasmCompileControl(string command)
+        => OnEngine(() =>
+        {
+            if (!Shumway.Core.RuntimeCaps.SupportsWasmCodegen)
+                return "% wasm_compile: the capability is off in this build\n";
+            var engine = _session?.Engine;
+            if (engine is null) return "% wasm_compile: no engine\n";
+            var store = engine.IlPromotion;
+
+            if (command == "status")
+            {
+                if (store.Wasm is not { } w)
+                    return "% wasm_compile: not attached (wasm_compile. to attach)\n";
+                string Name(int f)
+                {
+                    var (aid, ar) = Shumway.Core.FunctorTable.Lookup(f);
+                    return $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}";
+                }
+                var promoted = store.PromotedFunctorIds().Select(Name).ToList();
+                var refused = w.UnpromotableFunctorIds().Select(Name).ToList();
+                return $"% wasm_compile: threshold={w.Threshold}\n"
+                    + $"%   promoted ({promoted.Count}): {string.Join(" ", promoted)}\n"
+                    + $"%   refused ({refused.Count}): {string.Join(" ", refused)}\n"
+                    + $"%   chains={WasmTierDelegate.DiagEntries} "
+                    + $"switches={WasmTierDelegate.DiagSwitches} "
+                    + $"deopts={WasmTierDelegate.DiagDeopts} "
+                    + $"builtinExits={WasmTierDelegate.DiagBuiltins} "
+                    + $"tailExits={WasmTierDelegate.DiagTailExits}\n"
+                    + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} group builds, "
+                    + $"{BrowserWasmTier.DiagCompileTicks * 1000.0 / Stopwatch.Frequency:F0} ms total\n";
+            }
+            if (command == "off")
+            {
+                if (store.Wasm is { } w)
+                {
+                    w.Threshold = 0;
+                    w.CompileAllOnConsult = false;
+                }
+                return "% wasm_compile: promotion off — already-promoted "
+                    + "predicates keep running as wasm (restart. for a clean engine)\n";
+            }
+            if (command == "all")
+            {
+                // Compile the whole static program NOW and again after every
+                // consult — never on the user's first real query, which would
+                // otherwise be billed for all of it at once.
+                if (store.Wasm is null) BrowserWasmTier.Attach(engine, threshold: 16);
+                if (store.Wasm is not { } wa)
+                    return "% wasm_compile: could not attach\n";
+                wa.CompileAllOnConsult = true;
+                long b0 = Stopwatch.GetTimestamp();
+                int batched = wa.CompileAllTick(engine);
+                double ms = (Stopwatch.GetTimestamp() - b0) * 1000.0 / Stopwatch.Frequency;
+                return $"% wasm_compile: all — {batched} predicates compiled now "
+                    + $"({ms:F0} ms); every consult recompiles the new ones\n"
+                    + "% (experimental: a group this size can exceed browser "
+                    + "module limits — if queries misbehave, restart. and use "
+                    + "wasm_compile(1). instead)\n";
+            }
+            // "on", or a numeric threshold. Attach once; afterwards only the
+            // threshold moves (re-attaching would abandon the group's members
+            // while their delegates live on).
+            int threshold = command == "on" ? 16
+                : int.TryParse(command, out int n) && n > 0 ? n : -1;
+            if (threshold < 0)
+                return "% wasm_compile: on | off | status | <threshold>\n";
+            if (store.Wasm is { } existing)
+            {
+                existing.Threshold = threshold;
+                return $"% wasm_compile: threshold={threshold}\n";
+            }
+            BrowserWasmTier.Attach(engine, threshold);
+            return store.Wasm is null
+                ? "% wasm_compile: could not attach\n"
+                : $"% wasm_compile: attached, threshold={threshold} — hot "
+                  + "predicates now compile to WebAssembly\n";
+        });
+
+    /// <summary>Called by the page after a consult and after each completed
+    /// query: under wasm_compile(all) it re-runs the batch when the program
+    /// changed — a consult mid-query included — so the compile always lands
+    /// here, on the boundary, never inside the user's next real query. One
+    /// int compare when nothing changed.</summary>
+    [JSExport]
+    internal static Task<int> WasmCompileAllTick()
+        => OnEngine(() =>
+        {
+            var engine = _session?.Engine;
+            if (engine?.IlPromotion.Wasm is not { CompileAllOnConsult: true } w)
+                return 0;
+            return w.CompileAllTick(engine);
+        });
+}
+
+/// <summary>The BROWSER refused the compiled group module (a V8 limit, an
+/// instantiation failure) — the members are individually fine, so retrying
+/// them one by one, as a compile refusal warrants, would burn minutes to
+/// learn nothing. Callers back the group out instead.</summary>
+internal sealed class WasmRegisterException(string message)
+    : WasmCompileException(message);
