@@ -68,6 +68,18 @@ public interface IWasmCompileEnv
     /// interpreted C#. Attvars and exotic shapes still deopt inside the
     /// unifier, so semantics are the engine's.</summary>
     bool IsInlineUnify(int builtinId);
+
+    /// <summary>Whether the builtin is <c>==/2</c> (negated=false) or
+    /// <c>\==/2</c> (negated=true) — term identity, whose ATOMIC fast path
+    /// the module open-codes: two dereferenced atomic cells are identical
+    /// exactly when they are the same cell. Anything non-atomic falls back
+    /// to the builtin exit. Measured: crypt's \== chains cost 183k chain
+    /// exits per run in the browser, a 31x SLOWDOWN over Tier-0.</summary>
+    bool IsInlineCompare(int builtinId, out bool negated)
+    {
+        negated = false;
+        return false;
+    }
 }
 
 /// <summary>A compiled predicate: the module bytes plus what the installer

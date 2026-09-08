@@ -100,6 +100,16 @@ public class WasmBuiltinTallyDiagnostic
             long entries = WasmTierDelegate.DiagEntries;
             foreach (var (pred, why) in rejections.DistinctBy(r => r.Pred))
                 _out.WriteLine($"   [{name}] REJECT {pred,-18} {why}");
+            string PredName(int f)
+            {
+                var (aid, ar) = Shumway.Core.FunctorTable.Lookup(f);
+                return $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}";
+            }
+            _out.WriteLine($"   [{name}] promoted: "
+                + string.Join(" ", e.IlPromotion.PromotedFunctorIds().Select(PredName)));
+            if (e.IlPromotion.Wasm is { } ws)
+                _out.WriteLine($"   [{name}] unpromotable: "
+                    + string.Join(" ", ws.UnpromotableFunctorIds().Select(PredName)));
             if (deopts > 0)
             {
                 _out.WriteLine($"   [{name}] deopt pcs: " + string.Join(", ",

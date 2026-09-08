@@ -561,6 +561,30 @@ public sealed partial class BytecodeInterpreter
                             && addrMap.TryGetValue(functorId, out int addr)
                             && !Shumway.Core.CallTarget.IsUnresolved(addr))
                         {
+                            // A forward call is a DISPATCH and must count as
+                            // one: entering the callee's bytecode directly
+                            // starved the promotion counters, so a predicate
+                            // reached only from promoted callers never
+                            // promoted itself and every one of its redos
+                            // crossed the tier boundary (crypt/5, zebra/3 —
+                            // 283k boundary re-entries per browser bench
+                            // run). OnDispatch is one cached probe on a path
+                            // that already probed the address map.
+                            if (Tier1Dispatcher?.OnDispatch(addr) is { } fwd)
+                            {
+                                _engine.MaybeCollectHeapAtDispatch(addr);
+                                if (!fwd(_engine))
+                                {
+                                    if (!TryBacktrack())
+                                        return InterpreterResult.Failed;
+                                    continue;
+                                }
+                                if (_engine.IlTailCallPending)
+                                    _engine.IlTailCallPending = false;
+                                else
+                                    _engine.SetPc(_engine.Cp);
+                                continue;
+                            }
                             _engine.SetPc(addr);   // run the callee's bytecode
                             continue;
                         }

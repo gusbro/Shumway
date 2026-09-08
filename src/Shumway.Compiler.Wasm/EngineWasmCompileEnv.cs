@@ -36,4 +36,11 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
         return entry.Name == "=" && entry.Arity == 2;
     }
+
+    public bool IsInlineCompare(int builtinId, out bool negated)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        negated = entry.Name == "\\==";
+        return entry.Arity == 2 && entry.Name is "==" or "\\==";
+    }
 }

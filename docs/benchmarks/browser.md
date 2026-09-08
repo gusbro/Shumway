@@ -7,31 +7,62 @@ engine's own heap, stack, trail and registers as its working memory. This page
 is the tier's measurement: a tiered engine against a plain Tier-0 engine in
 the same browser, correctness cross-checked first.
 
-Reached at `#wasmtier` (or `#wasmtier=<rounds>`) on a published site; each
-figure is the best of five runs (a min, the standard defence against scheduler
-noise). Chrome, threads on, one desktop machine. These are wall-clock ratios
-in one browser, not the deterministic `--alloc` metric the desktop harness
-uses.
+Reached at `#wasmbench` (or `#wasmbench=<rounds>`; `#wasmtier` keeps the
+older three-program probe with its time-split diagnostics). Each figure is
+the best of five runs (a min, the standard defence against scheduler noise).
+Chrome, threads on, one desktop machine. These are wall-clock ratios in one
+browser, not the deterministic `--alloc` metric the desktop harness uses.
 
-## Current numbers
+## The benchmark: five programs
 
-Two engines consult the same corpus. The tiered one has the wasm store
-attached at threshold 1 (promote on first dispatch); the plain one is
-untouched Tier-0. Both must agree on `loop(1000)`, `nrev` of `[1..30]`, and
-`tak(18,12,6,7)` before any timing runs. Six predicates promote.
+Each program gets its OWN pair of engines (so its group module is its own):
+the tiered one has the wasm store attached at threshold 1, the plain one is
+untouched Tier-0. A correctness cross-check runs first on both -- it doubles
+as the warmup that promotes the group. counter, nrev and tak are the tier
+probe's originals; crypt and zebra are the Van Roy suite's, chosen for what
+the first three don't have: builtin-heavy inner loops and deep
+generate-and-test backtracking.
 
-| case | goal | tier-1 wasm | tier-0 interp | speedup |
-|---|---|---:|---:|---:|
-| counter 300k | `loop(300000)` | ~9 ms | ~1900 ms | **~208x** |
-| nrev 200 (×5) | `nrev` of a 200-element list, five times | ~5 ms | ~385 ms | **~75x** |
-| tak 18,12,6 | `tak(18,12,6,_)` | ~10 ms | ~755 ms | **~77x** |
+| case | tier-1 wasm | tier-0 interp | speedup | diagnostics |
+|---|---:|---:|---:|---|
+| counter 300k | 6.3 ms | 1504 ms | **240x** | 5 entries, clean |
+| nrev 200 (×5) | 5.5 ms | 407 ms | **74x** | 10 trail-growth deopts |
+| tak 18,12,6 | 8.4 ms | 630 ms | **75x** | 30 trail-growth deopts |
+| crypt (×10) | 8.2 ms | 960 ms | **117x** | 5 entries, clean |
+| zebra (×10) | 20.4 ms | 1154 ms | **56x** | 5 entries, clean |
 
-The tiered times are small and swing with the scheduler; the Tier-0 baselines
-are steady, so the ratios move run to run. The orders of magnitude do not.
-The verdict diagnostics pin the mechanism: one `nrev(200)` is 2 chain entries
-with ZERO module switches, and `tak(14,10,4)` is 37 entries (all of them
-trail-growth deopts) with zero switches and zero builtin exits -- both run
-natively end to end.
+**Geometric mean: ~97x.** The plan's gate for turning the tier on by default
+on web was a geomean of 2x; it is cleared by a factor of ~50. The tiered
+times are small and swing with the scheduler; the Tier-0 baselines are
+steady, so the ratios move run to run. The orders of magnitude do not.
+
+crypt and zebra did not start there. The first run of this page measured
+crypt at **0.03x** -- thirty-one times SLOWER than the interpreter -- and
+zebra at 0.9x, and the per-program diagnostics attributed both on the spot:
+
+1. **crypt: 182,990 builtin exits.** Every `\==/2` in its digit-picking
+   chains left the chain for the host, at ~0.18 ms per exit in the browser.
+   Fix: **==/2 and \==/2 are open-coded for ATOMIC cells** -- two
+   dereferenced Atom/Int cells are identical exactly when they are the same
+   cell, so the test is one 64-bit compare inside the module. Floats stay
+   out (a float is boxed, equal values live in different cells) and anything
+   non-atomic still exits to the real builtin. Exits: 182,990 to zero.
+2. **Then crypt still lost (0.1x), and zebra with it -- 283k and 61k chain
+   RE-ENTRIES with zero exits.** The diagnostics showed crypt/5 and zebra/3
+   never promoted at all: each was reached only through its promoted caller,
+   and a wasm caller's forward call to an out-of-group callee entered the
+   callee's bytecode directly, so the dispatch was never COUNTED and the
+   promotion counters starved. Every backtracking step then crossed the
+   tier boundary. Fix: the interpreter's forward-marker fallback now routes
+   through the same `OnDispatch` a plain call uses -- one cached probe on a
+   path that already probes the address map -- so the callee is counted,
+   promotes, and its whole generate-and-test loop stays inside the module.
+   crypt: 283k entries to 5; zebra: 61k to 5.
+
+The verdict diagnostics pin the mechanism for the originals too: one
+`nrev(200)` is 2 chain entries with ZERO module switches, and `tak(14,10,4)`
+is 37 entries (all of them trail-growth deopts) with zero switches and zero
+builtin exits -- both run natively end to end.
 
 ## How it got there: the measurement drove four designs
 

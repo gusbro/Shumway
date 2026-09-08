@@ -37,6 +37,10 @@ public class EngineWasmTierTests
         area(rect(W, H), A) :- A is W*H.
         area(tri(B, H), A) :- A is B*H//2.
         area(point, 0).
+        idc(X, Y, same) :- X == Y, !.
+        idc(_, _, diff).
+        alldiff(_, []).
+        alldiff(X, [H|T]) :- X \== H, alldiff(X, T).
         tak(X, Y, Z, A) :- X =< Y, !, Z = A.
         tak(X, Y, Z, A) :-
             X1 is X - 1, tak(X1, Y, Z, A1),
@@ -193,6 +197,35 @@ public class EngineWasmTierTests
     }
 
     [Fact]
+    public void TermIdentityIsOpenCoded_ForAtomicCells()
+    {
+        // ==/2 and \==/2 on dereferenced Atom/Int cells decide INSIDE the
+        // module: identity is cell identity there. crypt's \== chains used
+        // to cost one chain exit each — 183k per browser run, a 31x
+        // slowdown. Everything non-atomic still exits to the real builtin.
+        var e = WasmEngine();
+        Assert.True(e.Query("idc(a, a, R), R == same.").Success);
+        Assert.True(e.Query("idc(a, b, R), R == diff.").Success);
+        Assert.True(e.Query("idc(7, 7, same), idc(7, 8, diff), idc(7, a, diff).").Success);
+        Assert.True(e.Query("alldiff(3, [1, 2, 4, 5]).").Success);
+        Assert.False(e.Query("alldiff(3, [1, 3]).").Success);
+
+        // The atomic path leaves the chain ZERO times.
+        WasmTierDelegate.ResetDiag();
+        Assert.True(e.Query("alldiff(0, [1,2,3,4,5,6,7,8,9,10]).").Success);
+        Assert.Equal(0, WasmTierDelegate.DiagBuiltins);
+
+        // Non-atomic operands fall back to the builtin — same answers,
+        // through the exit.
+        Assert.True(e.Query("idc(f(a), f(a), same), idc(f(a), f(b), diff).").Success);
+        Assert.True(e.Query("idc(X, X, same), idc(X, Y, diff).").Success);
+        WasmTierDelegate.ResetDiag();
+        Assert.True(e.Query("idc(f(a), f(a), same).").Success);
+        Assert.True(WasmTierDelegate.DiagBuiltins > 0,
+            "a compound comparison must exit to the real builtin");
+    }
+
+    [Fact]
     public void AControlEngineAgreesOnEverything()
     {
         var control = new PrologEngine();
@@ -206,6 +239,8 @@ public class EngineWasmTierTests
             "area(circle(2), 12)",
             "area(point, 0)",
             "tak(14, 10, 4, 5)",
+            "idc(a, a, same)",
+            "alldiff(3, [1, 2, 4])",
         })
             Assert.True(control.Query(goal + ".").Success);
     }

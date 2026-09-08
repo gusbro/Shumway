@@ -599,15 +599,26 @@ model; nrev roughly doubled. A desktop test
 (`InGroupCallsNeverLeaveTheModule`) pins switches == 0 for the warmed
 group.
 
-## Phase B — Benchmarks + close (~1 week)
+## Phase B — Benchmarks + close (~1 week) — DONE, gate cleared ~50x over
 
-A `#bench` page (NEW `wwwroot/wasmbench.js`): counter, tak, nrev, crypt,
-zebra; interpreted Tier-0 vs wasm Tier-1, median of N with warmup (the
-`docs/benchmarks/analysis.md` methodology); report to
-`docs/benchmarks/browser.md` with the desktop reference table. **Gate for
-"on by default on web": geomean ≥ 2x on the subset.** A new ADR
-`docs/architecture/adr/050-wasm-tier1-backend.md` recording D1–D7 (satisfies
-the decision policy: new backend + new dependency ⇒ ADR).
+The `#wasmbench[=rounds]` page runs the five programs (counter, tak, nrev,
+crypt, zebra), each in its own engine pair, best-of-rounds, against plain
+Tier-0. Result (headless Chrome, best of 5): counter 240x, nrev 74x, tak
+75x, crypt 117x, zebra 56x — **geomean ~97x** against the 2x gate. Report
+with the full attribution story in `docs/benchmarks/browser.md`.
+
+The round's two findings, both caught by the per-program diagnostics rather
+than by guesswork: crypt's `\==` chains cost 183k builtin exits (fix:
+==/2 and \==/2 open-coded for atomic cells — one 64-bit compare; crypt
+went from 31x SLOWER to 117x faster), and crypt/5 / zebra/3 never promoted
+at all because a wasm caller's forward call entered the callee's bytecode
+without being counted as a dispatch (fix: the forward-marker fallback routes
+through OnDispatch; 283k chain re-entries became 5). The type-test tally
+question the plan left open is answered: NO — the whole Van Roy corpus
+produced two builtin requests total, nothing to inline.
+
+ADR-050 records D1–D7 (satisfies the decision policy: new backend + new
+dependency ⇒ ADR).
 
 ## Risk register
 

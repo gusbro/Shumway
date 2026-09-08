@@ -979,6 +979,18 @@ public static class WasmPredicateCompiler
                     // as the linker would. The env-trim count (I1) rides the
                     // high half of the id slot; -1 is the no-trim sentinel.
                     if (_env.IsInlineUnify(ins.I0)) { EmitInlineUnify(ins.Pc); return false; }
+                    if (_env.IsInlineCompare(ins.I0, out bool cbNeg))
+                    {
+                        EmitInlineCompare(ins.Pc, cbNeg, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                (uint)ins.I0 | ((long)ins.I1 << 32))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(ins.Pc + 9)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     EmitFlagsCheck(ins.Pc);
                     if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
@@ -991,6 +1003,18 @@ public static class WasmPredicateCompiler
                     if (_env.IsInlineUnify(ins.I0))
                     {
                         EmitInlineUnify(ins.Pc);
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineCompare(ins.I0, out bool ebNeg))
+                    {
+                        EmitInlineCompare(ins.Pc, ebNeg, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant((uint)ins.I0)));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
                         EmitProceedReturn();
                         return true;
                     }
@@ -1076,6 +1100,18 @@ public static class WasmPredicateCompiler
                     EmitInlineUnify(ins.Pc);
                     return false;               // falls through to the next goal
                 }
+                if (_env.IsInlineCompare(builtinId, out bool cNeg))
+                {
+                    EmitInlineCompare(ins.Pc, cNeg, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(builtinId)));
+                        StoreSlot64(WasmAbi.Cursor,
+                            () => Op(new Int64Constant(ins.Pc + 9)));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
+                    return false;               // falls through to the next goal
+                }
                 // The builtin runs on the host: leave its id and the return
                 // cursor in the mailbox and step out (env trimming skipped;
                 // a CP the builtin pushes just sits a little higher).
@@ -1125,6 +1161,52 @@ public static class WasmPredicateCompiler
             EmitUnifyTwo(() => RegLoad(0), () => RegLoad(1), pc);
         }
 
+        /// <summary>Term identity (<c>==/2</c> / <c>\==/2</c>), atomic fast
+        /// path: two dereferenced cells whose tags are Atom or Int are
+        /// identical exactly when they are the same cell. Floats are NOT in
+        /// the fast path — a float is boxed on the heap, so equal values live
+        /// in different cells — and anything else (compounds, attvars,
+        /// strings) falls back to the builtin exit
+        /// <paramref name="emitBuiltinExit"/> emits. The exit is what this
+        /// path erases: crypt's \== chains cost 183k of them per browser
+        /// run, a 31x slowdown over Tier-0.</summary>
+        private void EmitInlineCompare(int pc, bool negated, Action emitBuiltinExit)
+        {
+            EmitFlagsCheck(pc);
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            Op(new LocalGet(LC0)); Op(new LocalSet(LC2));
+            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            // atomic(t) == (uint)(t - Atom) <= (Int - Atom), Atom/Int adjacent.
+            void BrSlowUnlessAtomic(uint cellLocal)
+            {
+                Op(new LocalGet(cellLocal));
+                Op(new Int64Constant(60));
+                Op(new Int64ShiftRightUnsigned());
+                Op(new Int32WrapInt64());
+                Op(new Int32Constant((int)Tag.Atom));
+                Op(new Int32Subtract());
+                Op(new Int32Constant((int)Tag.Int - (int)Tag.Atom));
+                Op(new Int32GreaterThanUnsigned());
+                Op(new BranchIf(0));                        // -> $slow
+            }
+            BrSlowUnlessAtomic(LC2);
+            BrSlowUnlessAtomic(LC0);
+            Op(new LocalGet(LC2));
+            Op(new LocalGet(LC0));
+            if (negated) Op(new Int64Equal());              // \==: identical -> fail
+            else Op(new Int64NotEqual());                   // ==: different -> fail
+            OpenIf();
+            GoFail();
+            CloseNested();
+            Op(new Branch(1));                              // decided -> $done
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
         private void EmitExecute(Instr ins)
         {
             EmitFlagsCheck(ins.Pc);
@@ -1141,6 +1223,18 @@ public static class WasmPredicateCompiler
                 {
                     // Tail =/2: unify, then proceed at Cp.
                     EmitInlineUnify(pc);
+                    EmitProceedReturn();
+                    return;
+                }
+                if (_env.IsInlineCompare(builtinId, out bool tNeg))
+                {
+                    EmitInlineCompare(pc, tNeg, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(builtinId)));
+                        StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
                     EmitProceedReturn();
                     return;
                 }
