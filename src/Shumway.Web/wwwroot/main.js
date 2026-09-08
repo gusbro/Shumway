@@ -118,6 +118,8 @@ function answerWidth() {
 
 let aborted = false;
 let stepping = false;      // a solution is being searched for right now
+let autoAdvancing = false; // an a/f advance loop is draining solutions
+let autoStop = false;      // `.` during that loop: stop after the current step
 let answersShown = 0;      // answers reported for the query in progress — what
                            // `f` counts from, so its chunks stay aligned
 
@@ -361,8 +363,15 @@ queryInput.addEventListener('keydown', async (e) => {
 
   // While solutions are pending the keys mean what they mean in a top level.
   if (pending) {
+    // A key landing while the NEXT solution is still computing (step() in
+    // flight, or an a/f advance loop running) must not start a second
+    // concurrent step — two session.next() in flight interleave answers and
+    // double the ';' echoes. `.` below still ends an advance loop; Stop
+    // still aborts the in-flight search.
+    const busy = stepping || autoAdvancing;
     if (e.key === ';' || e.key === ' ' || e.key === 'n') {
       e.preventDefault();
+      if (busy) return;
       // Echo the request and close the line, so the next solution starts on
       // its own — `X = 1 ;` then the next answer, as a top level reads.
       emit(';\n', 'answer');
@@ -375,15 +384,20 @@ queryInput.addEventListener('keydown', async (e) => {
     // answer, on failure, on an error and on an abort alike.
     if (e.key === 'a' || e.key === 'f') {
       e.preventDefault();
+      if (busy) return;
       // Not "five more": five is a chunk BOUNDARY, so `f` fills out the
       // current group — four after one answer, five after five. Answers then
       // arrive in aligned blocks however you got there.
       let left = e.key === 'a' ? Infinity : 5 - (answersShown % 5);
-      while (pending && left > 0) {
-        left--;
-        emit(';\n', 'answer');
-        await step();
-      }
+      autoAdvancing = true;
+      autoStop = false;
+      try {
+        while (pending && left > 0 && !autoStop) {
+          left--;
+          emit(';\n', 'answer');
+          await step();
+        }
+      } finally { autoAdvancing = false; }
       return;
     }
     if (e.key === 'h') {
@@ -397,6 +411,10 @@ queryInput.addEventListener('keydown', async (e) => {
     }
     if (e.key === '.' || e.key === 'Enter' || e.key === 'Escape') {
       e.preventDefault();
+      // During an a/f advance the `.` means "stop taking more": let the
+      // in-flight step finish and the loop end — no second cancel path.
+      if (autoAdvancing) { autoStop = true; return; }
+      if (stepping) return;         // computing: Stop is the abort
       emit('.\n\n', 'answer');
       await session.cancel();
       setPending(false);
@@ -1170,6 +1188,9 @@ addEventListener('keydown', async (e) => {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
   if (e.key === 'Enter') {
     e.preventDefault();
+    // Focus the query box FIRST: consulting is always followed by querying,
+    // and moving focus after the await can lose to an editor refocus.
+    queryInput.focus();
     await consultBuffer('% consulted.\n');
     return;
   }
