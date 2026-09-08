@@ -884,6 +884,20 @@ public static partial class MetaBuiltins
         return host.WotStack ??= new();
     }
 
+    /// <summary><c>'$wot_mark'(-Chars)</c> — how much the innermost active
+    /// capture has taken so far, in characters. It is the only way to say
+    /// WHEN something was written relative to what a goal was doing: the
+    /// quad harness reads a mark as each answer arrives, and the marks cut
+    /// the captured text into the piece each answer wrote. Zero when no
+    /// capture is active, so a caller outside one gets an answer rather than
+    /// an error.</summary>
+    public static bool WotMark(Activation engine)
+    {
+        var stack = WotStackOf(engine);
+        int at = stack.Count == 0 ? 0 : stack.Peek().Sw.ToString().Length;
+        return engine.UnifyRegisterWithCell(0, Shumway.Core.Cell.Int(at));
+    }
+
     /// <summary><c>'$wot_end'(Sink)</c> — pops the redirection installed by
     /// <c>'$wot_begin'</c> and unifies the sink's argument with the captured
     /// text (atom or string per the sink functor). Runs whether or not the

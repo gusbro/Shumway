@@ -101,6 +101,18 @@ Piece by piece:
   and ends that way and says nothing about the middle. That is how a
   claim about output survives an implementation's choice of variable
   names. A text written down whole claims the output entire.
+  Several `outputs` claims in one description continue one another:
+  `outputs("hello "), outputs("hello ")` says the goal writes one and
+  then the other, the same claim as `outputs("hello hello ")`.
+  Where the goal answers more than once, a claim per answer is a claim
+  about that answer: the run is cut where the answers arrived, and the
+  claims are matched against those pieces one for one. So
+  `outputs("1"), outputs("2"), X = 1 ; X = 2` says the goal writes `1`
+  before its first answer and `2` between the first and the second, and
+  a goal writing both before the first answer does not have it. Claims
+  past the last answer describe what came after it, where the pieces
+  simply continue one another. A single claim, as most transcripts have,
+  speaks for the whole run whatever the answers did.
 - **`inputs(Text)` and `peeks(Text)`** say what the goal reads: it must
   consume `inputs` and leave `peeks` unread. The two are supplied to the
   goal as one input and both halves are checked. Writing the peek down
