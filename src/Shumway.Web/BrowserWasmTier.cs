@@ -817,8 +817,15 @@ internal static partial class WebShumwayApp
                 long b0 = Stopwatch.GetTimestamp();
                 int batched = wa.CompileAllTick(engine);
                 double ms = (Stopwatch.GetTimestamp() - b0) * 1000.0 / Stopwatch.Frequency;
+                // Compiling the whole prelude here means the baked group is
+                // NOT carrying it — say why right where the cost shows up,
+                // not only in status.
+                string bakedNote = BrowserWasmTier.BakedFids.Count == 0 && batched > 100
+                    ? $"% (the baked prelude is not installed — {BrowserWasmTier.BakedInstallNote})\n"
+                    : "";
                 return $"% wasm_compile: all — {batched} predicates compiled now "
                     + $"({ms:F0} ms); every consult recompiles the new ones\n"
+                    + bakedNote
                     + "% (experimental)\n";
             }
             // "on", or a numeric threshold. Attach once; afterwards only the

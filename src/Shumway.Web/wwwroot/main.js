@@ -1766,6 +1766,15 @@ if (persistMode) {
     else lines.push('later: ' + JSON.stringify(await session.next(80)) + '\n');
     mark('final status');
     lines.push(await session.exports().WasmCompileControl('status'));
+    // A fresh engine (restart.): the baked prelude must reinstall — interning
+    // is idempotent, so the replay validation passes again — and `all` must
+    // still find nothing of the prelude to compile.
+    mark('restart');
+    await session.resetEngine();
+    lines.push('after restart:\n');
+    lines.push(await session.exports().WasmCompileControl('status'));
+    mark('post-restart all');
+    lines.push(await session.exports().WasmCompileControl('all'));
     lines.push(await session.exports().WasmCompileControl('off'));
     const report = lines.join('');
     emit(report);
