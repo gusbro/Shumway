@@ -331,7 +331,8 @@ internal static class CompatLibraries
         % how the goal is run or what else it does; the outcome is what gets
         % checked.
         quads_alt(A, Ctx, alt(Class, In, Pk, Out, Sanctioned)) :-
-            quads_conj_list(A, Es0),
+            quads_hoist_descriptors(A, A1),
+            quads_conj_list(A1, Es0),
             quads_take_marker(Es0, Es1, Sanctioned0),
             quads_take_descriptors(Es1, Es2, none, In0, none, Pk, none, Out),
             (   Es2 == []
@@ -362,6 +363,36 @@ internal static class CompatLibraries
         quads_input_for(_, In, _, In).
 
         quads_wait_probe('').
+
+        % `;` binds looser than `,`, so a description that opens with
+        % descriptors and goes on to an answer SEQUENCE parses with the
+        % descriptors buried inside the first answer:
+        % `outputs("1"), X = 1 ; X = 2` is `(outputs("1"), X = 1) ; (X = 2)`.
+        % Read that way the descriptors were never seen -- the claim about
+        % what the goal writes was silently not checked, which is the same
+        % kind of silence issue #114 is about. They are lifted to the front
+        % of the whole description here, where they say what they mean: they
+        % describe the RUN, and the answers are what follows.
+        quads_hoist_descriptors(A0, A) :-
+            (   nonvar(A0), A0 = (L ; R),
+                quads_conj_list(L, Ls),
+                quads_leading_descriptors(Ls, Ds, Rest),
+                Ds \== [], Rest \== []
+            ->  quads_conj_from(Rest, L1),
+                quads_append(Ds, [(L1 ; R)], Es),
+                quads_conj_from(Es, A)
+            ;   A = A0
+            ).
+
+        quads_leading_descriptors([E|Es], [E|Ds], Rest) :-
+            quads_is_descriptor(E), !,
+            quads_leading_descriptors(Es, Ds, Rest).
+        quads_leading_descriptors(Es, [], Es).
+
+        quads_is_descriptor(E) :- E == sto, !.
+        quads_is_descriptor(E) :-
+            nonvar(E),
+            ( E = outputs(_) -> true ; E = inputs(_) -> true ; E = peeks(_) ).
 
         % A VARIABLE is one element, never a conjunction: unifying it with
         % `(A, B)` builds a comma term out of nothing and recurses into the
@@ -398,8 +429,17 @@ internal static class CompatLibraries
                 % goal that never stops writing before discovering there was
                 % nothing to compare it to (issue #112). Refused here, so
                 % the description is reported and its goal never runs.
+                % Output claims are kept SEPARATE, in order: successive
+                % ones continue each other, and where the goal answers more
+                % than once each claim is about the answer it sits beside
+                % (quads_output_matches cuts the text at the answers). One
+                % claim, the shape most transcripts have, still speaks for
+                % the whole run. Overwriting instead made the second claim
+                % the whole claim, and a transcript written in two ran its
+                % goal to the limit and then failed (issue #114).
             ;   nonvar(E), E = outputs(T), quads_text_pattern(T, _)
-            ->  Rest = Rest1, In1 = In0, Pk1 = Pk0, Out1 = T
+            ->  Rest = Rest1, In1 = In0, Pk1 = Pk0,
+                ( Out0 == none -> Out1 = [T] ; quads_append(Out0, [T], Out1) )
             ;   Rest = [E|Rest1], In1 = In0, Pk1 = Pk0, Out1 = Out0
             ),
             quads_take_descriptors(Es, Rest1, In1, In, Pk1, Pk, Out1, Out).
@@ -880,15 +920,15 @@ internal static class CompatLibraries
             ).
 
         quads_run_group(In, Ws, G) :-
-            quads_run_watched(In, Ws, G, O, Left, Written),
-            quads_want_matches(Ws, O, Left, Written).
+            quads_run_watched(In, Ws, G, O, Left, Written, Marks),
+            quads_want_matches(Ws, O, Left, Written, Marks).
 
-        quads_want_matches([want(C, Pk, Ot)|Ws], O, Left, Written) :-
+        quads_want_matches([want(C, Pk, Ot)|Ws], O, Left, Written, Marks) :-
             (   quads_want_holds(C, O, Left),
                 quads_peek_matches(Pk, Left),
-                quads_output_matches(Ot, Written)
+                quads_output_matches(Ot, Written, Marks)
             ->  true
-            ;   quads_want_matches(Ws, O, Left, Written)
+            ;   quads_want_matches(Ws, O, Left, Written, Marks)
             ).
 
         % `waits` is the one description that is not about the outcome. The
@@ -916,10 +956,66 @@ internal static class CompatLibraries
         % down is compared: a description claiming the goal prints one thing
         % while it prints another describes a different system, and used to
         % pass here because the text was taken on trust.
-        quads_output_matches(none, _) :- !.
-        quads_output_matches(Ot, Written) :-
+        quads_output_matches(none, _, _) :- !.
+        % ONE claim speaks for the whole run — every published transcript is
+        % of this shape, and a goal's output is one text.
+        quads_output_matches([Ot], Written, _) :- !,
             quads_text_pattern(Ot, Ps),
             quads_text_match(Ps, Written).
+        % SEVERAL claims beside SEVERAL answers: each claim is about the
+        % answer it sits beside. The marks cut the text where the answers
+        % arrived, and claim i is matched against the piece answer i wrote.
+        % Claims past the last answer describe what came after it, and there
+        % the pieces simply continue one another — the run has no further
+        % boundary to cut at.
+        quads_output_matches(Ots, Written, Marks) :-
+            Marks = [_|_], !,
+            quads_cut_at_marks(Marks, 0, Written, Segments, Tail),
+            quads_match_segments(Ots, Segments, Rest),
+            quads_join_claims(Rest, Joined),
+            (   Joined == none
+            ->  Tail == []
+            ;   quads_text_pattern(Joined, Ps), quads_text_match(Ps, Tail)
+            ).
+        % Several claims and no answers to cut at (a goal that loops, fails,
+        % raises): they continue one another over the one text.
+        quads_output_matches(Ots, Written, _) :-
+            quads_join_claims(Ots, Joined), Joined \== none,
+            quads_text_pattern(Joined, Ps),
+            quads_text_match(Ps, Written).
+
+        % The text each answer wrote: mark N is how much had been written
+        % when answer N arrived, so the pieces are the gaps between marks,
+        % and what follows the last mark is the tail.
+        quads_cut_at_marks([], _, Tail, [], Tail).
+        quads_cut_at_marks([M|Ms], At, W, [Seg|Segs], Tail) :-
+            Take is M - At,
+            quads_take_chars(Take, W, Seg, Rest),
+            quads_cut_at_marks(Ms, M, Rest, Segs, Tail).
+
+        quads_take_chars(N, W, [], W) :- N =< 0, !.
+        quads_take_chars(_, [], [], []) :- !.
+        quads_take_chars(N, [C|Cs], [C|Seg], Rest) :-
+            N1 is N - 1,
+            quads_take_chars(N1, Cs, Seg, Rest).
+
+        % Claim against segment, one for one, for as far as both go. Claims
+        % left over are the caller's to place; segments left over must be
+        % empty, or the goal wrote beside an answer the description says
+        % nothing about.
+        quads_match_segments([], Segs, []) :- !, quads_all_empty(Segs).
+        quads_match_segments(Ots, [], Ots) :- !.
+        quads_match_segments([Ot|Ots], [Seg|Segs], Rest) :-
+            quads_text_pattern(Ot, Ps),
+            quads_text_match(Ps, Seg),
+            quads_match_segments(Ots, Segs, Rest).
+
+        quads_all_empty([]).
+        quads_all_empty([[]|Ss]) :- quads_all_empty(Ss).
+
+        quads_join_claims([], none).
+        quads_join_claims([T], T) :- !.
+        quads_join_claims([T|Ts], (T, R)) :- quads_join_claims(Ts, R).
 
         % A transcript may write down only the parts of the output it is
         % about: `outputs(("f(_", ..., ")"))` says the text starts with one
@@ -1067,15 +1163,15 @@ internal static class CompatLibraries
         % decides it loops, while its output stops piling up. Past the
         % ceiling the text can only be "more than any pattern", which is the
         % same answer the whole text would have given.
-        quads_run_watched(In, Ws, G, O, Left, Written) :-
+        quads_run_watched(In, Ws, G, O, Left, Written, Marks) :-
             setup_call_cleanup('$wot_begin'(atom(A), 100000),
-                               quads_run_reading(In, Ws, G, O, Left),
+                               quads_run_reading(In, Ws, G, O, Left, Marks),
                                '$wot_end'(atom(A))),
             atom_chars(A, Written).
 
-        quads_run_reading(none, Ws, G, O, []) :- !,
-            quads_outcome(G, Ws, O).
-        quads_run_reading(In, Ws, G, O, Left) :-
+        quads_run_reading(none, Ws, G, O, [], Marks) :- !,
+            quads_outcome(G, Ws, O, Marks).
+        quads_run_reading(In, Ws, G, O, Left, Marks) :-
             % inputs ++ peeks IS the text the goal reads from: the goal has
             % to consume the first part and leave the second, and what it
             % left is read back here rather than assumed.
@@ -1086,7 +1182,7 @@ internal static class CompatLibraries
             quads_input_file(Path),
             setup_call_cleanup(
                 quads_open_input(Path, AllCs, Stream, Saved),
-                ( quads_outcome(G, Ws, O), quads_left(Left) ),
+                ( quads_outcome(G, Ws, O, Marks), quads_left(Left) ),
                 quads_close_input(Path, Stream, Saved)).
 
         quads_wanted_peek([want(_, Pk, _)|Ws], Out) :-
@@ -1094,22 +1190,37 @@ internal static class CompatLibraries
         quads_wanted_peek([], none).
 
 
-        quads_outcome(run(G, T), Ws, O) :-
+        quads_outcome(run(G, T), Ws, O, Marks) :-
             (   quads_group_wants_loops(Ws)
-            ->  catch(quads_timed_outcome(G, O), E, quads_error_outcome(E, O))
+            ->  Marks = [],
+                catch(quads_timed_outcome(G, O), E, quads_error_outcome(E, O))
             ;   quads_answers_wanted(Ws, T, Max)
                 % Whether an answer still carries constraints is asked HERE,
                 % inside the collection: a copy does not carry attributes, so
                 % asking afterwards would report every answer as
                 % unconstrained.
-            ->  catch(( findall(e(T, R),
-                                ( call_with_limit(Max, G), quads_residual(T, R) ),
-                                As),
+                % The MARK beside each answer is how much the goal had
+                % written by the time that answer arrived. It is what lets a
+                % description with one output claim per answer be checked
+                % against the answer it names instead of against the run's
+                % whole text (issue #114 follow-up).
+            ->  catch(( findall(e(T, R, Mk),
+                                ( call_with_limit(Max, G), quads_residual(T, R),
+                                  '$wot_mark'(Mk) ),
+                                As0),
+                        quads_split_marks(As0, As, Marks),
                         O = answers(As) ),
                       E, quads_error_outcome(E, O))
-            ;   catch(( call(G) -> O = succeeds ; O = fails ), E,
+            ;   Marks = [],
+                catch(( call(G) -> O = succeeds ; O = fails ), E,
                       quads_error_outcome(E, O))
             ).
+
+        % The answers, and beside them how much the goal had written by the
+        % time each arrived.
+        quads_split_marks([], [], []).
+        quads_split_marks([e(T, R, M)|As], [e(T, R)|Es], [M|Ms]) :-
+            quads_split_marks(As, Es, Ms).
 
         % Does this answer still stand on a constraint? copy_term/3 hands
         % back the residual goals of the answer's own variables, which is

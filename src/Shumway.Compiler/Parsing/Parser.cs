@@ -365,6 +365,24 @@ public sealed class Parser
         {
             opPositions.Add(PeekToken().Position);
             NextToken();                       // the operator itself
+            // The chain reads its operands at opPrec - 1 because every one
+            // but the last is the LEFT operand of the next nesting, and xfy
+            // takes x there. The LAST is the right operand, where y allows
+            // the operator's own priority — and the only term that can START
+            // at exactly that priority is a prefix operator of it. Reading
+            // that at opPrec - 1 rejected `1 p p 2` for `op(9, fy, p)` +
+            // `op(9, xfy, p)`, which is p(1, p(2)) (Neumerkel syntax #163).
+            // Such an operand can only be the last: at priority opPrec it
+            // does not fit the x position a further chain link would need.
+            Token ahead = PeekToken();
+            if (ahead.Kind == TokenKind.Atom && !ahead.WasQuoted
+                && _operators.TryGetPrefix(ahead.Text, out int aheadPrec, out _)
+                && aheadPrec == opPrec)
+            {
+                elems.Add(ReadTermInternal(opPrec, out _));
+                bare.Add(_bareOp);
+                break;
+            }
             Term operand = ReadTermInternal(opPrec - 1, out int operandPrec);
             if (PeeksSameXfy(name, opPrec))
             {
