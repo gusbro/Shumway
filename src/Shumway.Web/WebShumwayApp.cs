@@ -91,6 +91,15 @@ internal static partial class WebShumwayApp
         // one. Set here rather than at the call site: nothing this build
         // produces can be compressed.
         BundleFormat.DisableCompression = true;
+
+        // Intern the whole builtin block HERE, while this is provably the
+        // only thread (exports are not callable until Main returns). Boot()
+        // runs on a pool thread concurrently with page exports, and a stray
+        // intern from, say, an early highlight landing mid-registration gives
+        // atom/functor ids a per-boot shuffle — which is exactly what the
+        // baked prelude group's validation would reject (its module bakes
+        // this process's ids). shumway-wasmbake mirrors this call.
+        Shumway.Builtins.StandardBuiltins.EnsureRegistered();
     }
 
     /// <summary>Creates the engine. Returns a short description of what booted,

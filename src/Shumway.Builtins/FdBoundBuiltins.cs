@@ -20,8 +20,9 @@ public static class FdBoundBuiltins
     private const long Inf = long.MinValue;
     private const long Sup = long.MaxValue;
 
-    private static readonly int InfAtom = AtomTable.Intern("inf", permanent: true).Id;
-    private static readonly int SupAtom = AtomTable.Intern("sup", permanent: true).Id;
+    // Interned in Register(), not in field initializers — see the note in
+    // ClpfdDomainBuiltins: beforefieldinit timing differs per runtime.
+    private static int InfAtom, SupAtom;
 
     /// <summary>Reads argument <paramref name="reg"/> as a bound: an integer, or
     /// the atoms inf/sup mapped to the long sentinels.</summary>
@@ -163,6 +164,8 @@ public static class FdBoundBuiltins
     /// <summary>Registers the bound primitives. Called once at builtin setup.</summary>
     public static void Register()
     {
+        InfAtom = AtomTable.Intern("inf", permanent: true).Id;
+        SupAtom = AtomTable.Intern("sup", permanent: true).Id;
         BuiltinsRegistry.Register("clpfd_ble", 2, Ble);
         BuiltinsRegistry.Register("clpfd_blt", 2, Blt);
         BuiltinsRegistry.Register("clpfd_bmin", 3, Bmin);

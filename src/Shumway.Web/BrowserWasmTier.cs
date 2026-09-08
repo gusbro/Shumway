@@ -378,6 +378,60 @@ internal static class BrowserWasmTier
         }
     }
 
+    /// <summary>Installs the build-time-baked prelude group without
+    /// compiling anything, after replaying the bake's evidence against this
+    /// process (see <see cref="WasmBakedGroup.Validate"/>). The baked group
+    /// lives in its OWN world, frozen: later promotions build a second,
+    /// user-code group from empty — extending the baked one would make the
+    /// first lazy promotion recompile the whole prelude. A call between the
+    /// two groups is an ordinary chain switch. On any mismatch nothing is
+    /// installed and the tier compiles as before.</summary>
+    /// <summary>What became of the baked prelude at boot — surfaced by
+    /// wasm_compile(status), because boot-time page writes predate the
+    /// console.</summary>
+    internal static string BakedInstallNote = "no asset";
+
+    internal static bool TryInstallBaked(PrologEngine engine, byte[] asset,
+        out string reason)
+    {
+        var store = engine.IlPromotion;
+        if (store.Wasm is null) { reason = "tier not attached"; return false; }
+        WasmBakedGroup baked;
+        try { baked = WasmBakedGroup.Read(new MemoryStream(asset)); }
+        catch (Exception e) { reason = $"unreadable asset: {e.Message}"; return false; }
+        // The same throwaway goal the bake ran to materialise the static
+        // link — intern parity with the bake.
+        engine.Query("true.");
+        var byAddress = new Dictionary<int, CompiledPredicate>();
+        foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
+            byAddress[addr] = pred;
+        if (byAddress.Count == 0) { reason = "no static link"; return false; }
+        if (!baked.Validate(new EngineWasmCompileEnv(), byAddress,
+                fid => store.FloatPoolProvider?.Invoke(fid), out reason))
+            return false;
+        var world = new BrowserWasmWorld();
+        var entryCursors = new Dictionary<int, int>(baked.Members.Count);
+        var entryAddr = new Dictionary<int, int>(baked.Members.Count);
+        foreach (var m in baked.Members)
+        {
+            entryCursors[m.FunctorId] = m.EntryCursor;
+            entryAddr[m.FunctorId] = m.Bias;
+        }
+        var cursorByAddress = new Dictionary<int, int>(baked.CursorByAddress.Count);
+        foreach (var kv in baked.CursorByAddress) cursorByAddress[kv.Key] = kv.Value;
+        try
+        {
+            world.InstallGroup(baked.Module, entryCursors, cursorByAddress,
+                entryAddr, baked.RegisterDemand);
+        }
+        catch (WasmRegisterException e) { reason = e.Message; return false; }
+        foreach (var m in baked.Members)
+            store.RegisterBoundDelegate(m.FunctorId,
+                new WasmTierDelegate(m.FunctorId, world).Invoke);
+        reason = $"{baked.Members.Count} predicates";
+        return true;
+    }
+
     private static void InstallCurrent(BrowserWasmWorld world,
         List<WasmGroupMember> members, EngineWasmCompileEnv env)
     {
@@ -713,6 +767,7 @@ internal static partial class WebShumwayApp
                 var promoted = store.PromotedFunctorIds().Select(Name).ToList();
                 var refused = w.UnpromotableFunctorIds().Select(Name).ToList();
                 return $"% wasm_compile: threshold={w.Threshold}\n"
+                    + $"%   baked prelude: {BrowserWasmTier.BakedInstallNote}\n"
                     + $"%   promoted ({promoted.Count}): {string.Join(" ", promoted)}\n"
                     + $"%   refused ({refused.Count}): {string.Join(" ", refused)}\n"
                     + $"%   chains={WasmTierDelegate.DiagEntries} "

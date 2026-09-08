@@ -114,4 +114,39 @@
     <EmbeddedResource Include="$(StdlibBundle)" LogicalName="stdlib.shum" Visible="false" />
   </ItemGroup>
 
+  <!-- Bake the prelude's wasm Tier-1 group ahead of time, so the engine boots
+       with the whole stdlib already native — wasm_compile(all)'s ~6 s browser
+       compile paid once at build time instead. The asset embeds validation
+       evidence and the boot rejects it (falling back to lazy compilation)
+       whenever this process would not reproduce the bake's intern state, so
+       staleness degrades to slowness, never to wrong code. Rebakes when the
+       stdlib bundle or the wasm compiler changes. -->
+  <PropertyGroup>
+    <WasmGroupAsset>$(StdlibDir)prelude.wasmgroup</WasmGroupAsset>
+    <ShumwayWasmBakeDll>..\Shumway.WasmBake\bin\$(Configuration)\net10.0\shumway-wasmbake.dll</ShumwayWasmBakeDll>
+  </PropertyGroup>
+
+  <!-- Two targets: the tool build runs unconditionally (MSBuild's own
+       up-to-date check makes it cheap), so the SECOND target's incremental
+       decision sees the FRESH tool dll — one target doing both would compare
+       against the stale dll and skip a needed rebake until the next build. -->
+  <Target Name="BuildWasmBakeTool"
+          BeforeTargets="PrepareForBuild"
+          DependsOnTargets="BakeStdlibBundle">
+    <MSBuild Projects="..\Shumway.WasmBake\Shumway.WasmBake.csproj"
+             Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <Target Name="BakeWasmGroup"
+          BeforeTargets="PrepareForBuild"
+          DependsOnTargets="BuildWasmBakeTool"
+          Inputs="$(StdlibBundle);$(ShumwayWasmBakeDll)"
+          Outputs="$(WasmGroupAsset)">
+    <Exec Command="dotnet &quot;$(ShumwayWasmBakeDll)&quot; &quot;$(StdlibBundle)&quot; -o &quot;$(WasmGroupAsset)&quot;" />
+  </Target>
+
+  <ItemGroup>
+    <EmbeddedResource Include="$(WasmGroupAsset)" LogicalName="prelude.wasmgroup" Visible="false" />
+  </ItemGroup>
+
 </Project>

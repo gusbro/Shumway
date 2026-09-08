@@ -39,6 +39,40 @@ internal static partial class WebShumwayApp
         // dispatch machinery, execution as native wasm. No-op unless the
         // Shumway.WasmCodegen switch is on.
         BrowserWasmTier.Attach(engine);
+        InstallBakedPrelude(engine);
         return engine;
+    }
+
+    private const string WasmGroupResourceName = "prelude.wasmgroup";
+
+    /// <summary>The build-time-baked prelude wasm group: installed here,
+    /// FIRST — the validation replays the bake's marker interns against a
+    /// pool nothing else has touched yet. A rejected asset just means the
+    /// tier compiles lazily, as it would without the bake.</summary>
+    private static void InstallBakedPrelude(PrologEngine engine)
+    {
+        if (!Shumway.Core.RuntimeCaps.SupportsWasmCodegen) return;
+        using Stream? rs = typeof(WebShumwayApp).Assembly
+            .GetManifestResourceStream(WasmGroupResourceName);
+        if (rs is null) return;
+        var ms = new MemoryStream();
+        rs.CopyTo(ms);
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            if (BrowserWasmTier.TryInstallBaked(engine, ms.ToArray(), out string reason))
+            {
+                double msTaken = (System.Diagnostics.Stopwatch.GetTimestamp() - t0)
+                    * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                BrowserWasmTier.BakedInstallNote = $"installed ({reason}, {msTaken:F0} ms)";
+            }
+            else
+                BrowserWasmTier.BakedInstallNote = $"rejected: {reason}";
+        }
+        catch (Exception e)
+        {
+            BrowserWasmTier.BakedInstallNote = $"failed: {e.GetType().Name}: {e.Message}";
+        }
+        WriteToPage($"% prelude wasm group: {BrowserWasmTier.BakedInstallNote}\n");
     }
 }

@@ -643,6 +643,40 @@ every Proceed site paid (the 529-member module shrank 5.5 MB → 2.9 MB).
 Nothing outside the compiler changed: same export, same mailbox
 contract, same global cursors and markers.
 
+## The prebaked prelude — bake at build time, replay-validate at boot
+
+`shumway-wasmbake` compiles the stdlib bundle's whole static program into
+one group module at build time; the web build embeds the asset
+(`prelude.wasmgroup`, ~3 MB) and the boot installs it in ~400 ms — the
+~7 s browser-side compile of `wasm_compile(all)` paid once per build
+instead of per session, and `all` itself drops to milliseconds (nothing
+left to compile but user code).
+
+The module bakes process-local values — interned resume markers, linked
+addresses, builtin ids, id-bearing bytecode operands — so the bytes are
+only valid in a process that reproduces the bake's intern history. That
+is asserted, not assumed: the bake records evidence (the full functor
+table; per member the functor, linked address, a bytecode+call-sites
+hash, and the float pool; every marker in first-intern order; every
+builtin decision) and the boot REPLAYS it against the live process.
+Replaying the marker log both re-interns and verifies — a virgin pool
+assigns the same values in the same order or the comparison fails. Any
+mismatch names the first divergence and the boot falls back to lazy
+compilation: staleness degrades to slowness, never to wrong code.
+
+The baked group is installed in its own frozen world; later promotions
+build a second, user-code group from empty (extending the baked one
+would make the first lazy promotion recompile the whole prelude), and a
+call between the two groups is an ordinary chain switch.
+
+Two intern-order hazards were found and fixed on the way: the tool
+mirrors the web Main's early `StandardBuiltins.EnsureRegistered()` (the
+browser boots concurrently with page exports, so the builtin block must
+be interned before any other thread can run), and the clpfd builtin
+classes interned atoms in static field initializers — beforefieldinit
+cctor timing differs between Mono and CoreCLR, shuffling early ids per
+platform. Interning now happens inside Register().
+
 ## Risk register
 
 | Risk | Exposure | Mitigation / kill switch |
