@@ -747,9 +747,7 @@ internal static partial class WebShumwayApp
                 double ms = (Stopwatch.GetTimestamp() - b0) * 1000.0 / Stopwatch.Frequency;
                 return $"% wasm_compile: all — {batched} predicates compiled now "
                     + $"({ms:F0} ms); every consult recompiles the new ones\n"
-                    + "% (experimental: a group this size can exceed browser "
-                    + "module limits — if queries misbehave, restart. and use "
-                    + "wasm_compile(1). instead)\n";
+                    + "% (experimental)\n";
             }
             // "on", or a numeric threshold. Attach once; afterwards only the
             // threshold moves (re-attaching would abandon the group's members

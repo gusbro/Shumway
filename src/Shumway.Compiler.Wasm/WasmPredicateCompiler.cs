@@ -114,8 +114,31 @@ public static class WasmPredicateCompiler
         private int SelfFid(Instr ins) => _members[ins.Section].Predicate.FunctorId;
 
         public IReadOnlyDictionary<int, int> CursorByAddress => _cursorByAddr;
-        private int _failCase;      // the internal FAIL cursor (not re-enterable)
-        private int _caseCount;
+        private int _failCase;      // pseudo-cursor: backtrack (not re-enterable)
+        private int _proceedCase;   // pseudo-cursor: full proceed resolution
+        private int _caseCount;     // per PARTITION while its body is emitted
+
+        // Partitions of the cursor space, cut at member boundaries. One
+        // function per partition: a single function holding the whole group
+        // is over the JIT cliff (both RyuJIT and Liftoff) far below wasm's
+        // validation limits — a 643k-instruction body compiles for MINUTES
+        // where 634k takes seconds. Cursors are contiguous per member
+        // (leaders are addresses, members' address ranges are disjoint), so
+        // a partition is a cursor range [Lo, Hi).
+        private readonly List<(int Lo, int Hi)> _parts = new();
+        private (int Lo, int Hi) _curPart;
+
+        /// <summary>Partition budget in DECODED WAM instructions (~40 wasm
+        /// instructions each): ~100k emitted per function, far under the
+        /// ~640k cliff.</summary>
+        private const int PartitionBudgetWamInstrs = 2500;
+
+        /// <summary>Partition-function returns below this are verdicts; at or
+        /// above, (value - base) is the cursor to continue at. Must stay
+        /// above every <see cref="WasmVerdict"/> and the loop guard's 99.</summary>
+        private const int ContinueBase = 0x100;
+
+        private int UnifierIndex => _parts.Count + 2;   // 0 run, 1..K parts, K+1 resolver
 
         // ------------------------------------------------------------------
         // Decode + census
@@ -345,7 +368,25 @@ public static class WasmPredicateCompiler
             foreach (int addr in _leaders)
                 _cursorByAddr[addr] = next++;
             _failCase = next;
-            _caseCount = next + 1;
+            _proceedCase = next + 1;
+
+            // Cut partitions: accumulate whole members until the budget is
+            // crossed. A member above the budget alone still gets exactly one
+            // partition (it fit in a single function before grouping existed).
+            var instrsPerSec = new int[_members.Count];
+            foreach (var ins in _instrs) instrsPerSec[ins.Section]++;
+            var addrs = new List<int>(_leaders);
+            int start = 0; long cost = 0; int prevSec = -1;
+            for (int i = 0; i < addrs.Count; i++)
+            {
+                int sec = _instrs[_byPc[addrs[i]]].Section;
+                if (sec == prevSec) continue;
+                if (cost >= PartitionBudgetWamInstrs && i > start)
+                { _parts.Add((start, i)); start = i; cost = 0; }
+                cost += instrsPerSec[sec];
+                prevSec = sec;
+            }
+            _parts.Add((start, addrs.Count));
 
             // The PROCEED jump table: every in-group non-tail call bakes
             // Cp = marker(callerFid, resume cursor) as a constant; a proceed
@@ -369,7 +410,7 @@ public static class WasmPredicateCompiler
         // Emission
         // ------------------------------------------------------------------
 
-        private readonly List<Instruction> _code = new();
+        private List<Instruction> _code = new();
         private int _extraDepth;    // If/Block/Loop opened inside the current case
         private int _caseIndex;     // which case body is being emitted
 
@@ -412,23 +453,131 @@ public static class WasmPredicateCompiler
                 Field = WasmAbi.MemoryField,
                 Type = new Memory(1, 65536),
             });
-            module.Functions.Add(new Function { Type = 0 });
-            // Function 1: the general unifier, internal (not exported).
             module.Types.Add(new WebAssemblyType
             {
                 Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int64,
                               WebAssemblyValueType.Int32],
                 Returns = [WebAssemblyValueType.Int32],
             });
+            // 0: run (the exported dispatcher); 1..K: partitions; K+1: the
+            // fail/proceed resolver; K+2: the general unifier. All internal
+            // but run.
+            int k = _parts.Count;
+            for (int f = 0; f <= k + 1; f++) module.Functions.Add(new Function { Type = 0 });
             module.Functions.Add(new Function { Type = 1 });
             module.Exports.Add(new Export
             {
                 Kind = ExternalKind.Function, Index = 0, Name = WasmAbi.EntryExport,
             });
 
-            EmitPrologue();
+            module.Codes.Add(BuildDispatcherBody());
+            var addrsInOrder = new List<int>(_leaders);
+            foreach (var part in _parts)
+                module.Codes.Add(BuildPartitionBody(part, addrsInOrder));
+            module.Codes.Add(BuildResolverBody());
+            module.Codes.Add(new FunctionBody
+            {
+                Locals =
+                [
+                    new Local { Count = 12, Type = WebAssemblyValueType.Int32 },
+                    new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
+                ],
+                Code = BuildUnifierBody(),
+            });
 
-            // The dispatcher: loop, one block per case, br_table.
+            using var ms = new MemoryStream();
+            module.WriteToBinary(ms);
+            return ms.ToArray();
+        }
+
+        /// <summary>run(mailbox, cursor): pick the partition owning the
+        /// cursor (ranges are ascending, so a chain of upper-bound tests; a
+        /// pseudo-cursor goes to the resolver), call it, loop while it
+        /// returns a continue-cursor, hand any verdict to the host. State
+        /// lives in the mailbox across partition calls — this function has
+        /// no engine state of its own.</summary>
+        private FunctionBody BuildDispatcherBody()
+        {
+            const uint lCur = 2, lR = 3;
+            _code = new List<Instruction>();
+            Op(new LocalGet(1)); Op(new LocalSet(lCur));
+            Op(new Loop(BlockType.Empty));
+            Op(new Block(BlockType.Empty));                 // $called
+            Op(new LocalGet(lCur));
+            Op(new Int32Constant(_failCase));
+            Op(new Int32GreaterThanOrEqualSigned());
+            OpenIf();
+            {
+                Op(new LocalGet(0)); Op(new LocalGet(lCur));
+                Op(new WebAssembly.Instructions.Call((uint)(_parts.Count + 1)));
+                Op(new LocalSet(lR));
+                Op(new Branch(1));                          // $called
+            }
+            CloseNested();
+            for (int p = 0; p < _parts.Count - 1; p++)
+            {
+                Op(new LocalGet(lCur));
+                Op(new Int32Constant(_parts[p].Hi));
+                Op(new Int32LessThanSigned());
+                OpenIf();
+                {
+                    Op(new LocalGet(0)); Op(new LocalGet(lCur));
+                    Op(new WebAssembly.Instructions.Call((uint)(1 + p)));
+                    Op(new LocalSet(lR));
+                    Op(new Branch(1));                      // $called
+                }
+                CloseNested();
+            }
+            Op(new LocalGet(0)); Op(new LocalGet(lCur));
+            Op(new WebAssembly.Instructions.Call((uint)_parts.Count));
+            Op(new LocalSet(lR));
+            Op(new End());                                  // $called
+            Op(new LocalGet(lR));
+            Op(new Int32Constant(ContinueBase));
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            Op(new LocalGet(lR));
+            Op(new Return());
+            CloseNested();
+            Op(new LocalGet(lR));
+            Op(new Int32Constant(ContinueBase));
+            Op(new Int32Subtract());
+            Op(new LocalSet(lCur));
+            Op(new Branch(0));                              // the loop
+            Op(new End());                                  // the loop
+            Op(new Int32Constant((int)WasmVerdict.Fail));   // unreachable
+            Op(new End());                                  // the function
+            var body = new FunctionBody
+            {
+                Locals = [new Local { Count = 2, Type = WebAssemblyValueType.Int32 }],
+                Code = _code,
+            };
+            _extraDepth = 0;
+            return body;
+        }
+
+        private static Local[] EngineLocals() =>
+        [
+            new Local { Count = 16, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = 3, Type = WebAssemblyValueType.Int64 },
+            new Local { Count = 2, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = AEvalMaxDepth, Type = WebAssemblyValueType.Int64 },
+        ];
+
+        /// <summary>One partition: prologue, dispatch loop, br_table over the
+        /// partition's own cursors, a LOCAL fail case (this partition's CP
+        /// sites only), and an $out case that spills the scalars and returns
+        /// the cursor for the dispatcher to route — how a jump reaches
+        /// another partition. In-partition jumps stay internal branches.</summary>
+        private FunctionBody BuildPartitionBody((int Lo, int Hi) part,
+                                                List<int> addrsInOrder)
+        {
+            _code = new List<Instruction>();
+            _curPart = part;
+            int n = part.Hi - part.Lo;
+            _caseCount = n + 2;                             // + $fail + $out
+
+            EmitPrologue();
             OpenLoop();                                     // never popped via CloseNested
             _extraDepth--;                                  // accounted in BrDispatch instead
             if (DebugLoopGuard)
@@ -457,50 +606,123 @@ public static class WasmPredicateCompiler
                 Op(new Return());
                 CloseNested();
             }
-            for (int k = _caseCount - 1; k >= 0; k--) Op(new Block(BlockType.Empty));
+            for (int j = _caseCount - 1; j >= 0; j--) Op(new Block(BlockType.Empty));
+            // Route: FAIL pseudo-cursor -> local $fail; anything outside
+            // [Lo, Hi) (the PROCEED pseudo-cursor included) -> $out; a local
+            // cursor -> its case via br_table. Depths at this point,
+            // innermost first: cases 0..n-1, $fail = n, $out = n+1 (+1
+            // inside an If).
             Op(new LocalGet(LCur));
-            var labels = new uint[_caseCount];
-            for (uint k = 0; k < _caseCount; k++) labels[k] = k;
-            Op(new BranchTable((uint)_failCase, labels));
+            Op(new Int32Constant(_failCase));
+            Op(new Int32Equal());
+            OpenIf();
+            Op(new Branch((uint)(n + 1)));                  // $fail
+            CloseNested();
+            Op(new LocalGet(LCur));
+            Op(new Int32Constant(part.Lo));
+            Op(new Int32Subtract());
+            Op(new LocalTee(LT0));
+            Op(new Int32Constant(n));
+            Op(new Int32GreaterThanOrEqualUnsigned());      // negative wraps huge
+            OpenIf();
+            Op(new Branch((uint)(n + 2)));                  // $out
+            CloseNested();
+            Op(new LocalGet(LT0));
+            var labels = new uint[n];
+            for (uint j = 0; j < n; j++) labels[j] = j;
+            Op(new BranchTable((uint)(n + 1), labels));     // default unreachable
 
-            // Case bodies, in cursor order; each preceded by the End that
-            // closes its landing block.
-            var addrsInOrder = new List<int>(_leaders);
-            for (int k = 0; k < _caseCount; k++)
+            for (int j = 0; j < n; j++)
             {
                 Op(new End());
-                _caseIndex = k;
-                if (k == _failCase) EmitFailCase();
-                else EmitRun(addrsInOrder[k]);
+                _caseIndex = j;
+                EmitRun(addrsInOrder[part.Lo + j]);
             }
+            Op(new End());
+            _caseIndex = n;
+            EmitFailCase(fullChain: false);
+            Op(new End());                                  // $out
+            _caseIndex = n + 1;
+            EmitContinueReturn();
             Op(new End());                                  // the loop
             EmitReturn(WasmVerdict.Fail);                   // unreachable fallback
             Op(new End());                                  // the function
+            var body = new FunctionBody { Locals = EngineLocals(), Code = _code };
+            _extraDepth = 0;
+            return body;
+        }
 
-            module.Codes.Add(new FunctionBody
-            {
-                Locals =
-                [
-                    new Local { Count = 16, Type = WebAssemblyValueType.Int32 },
-                    new Local { Count = 3, Type = WebAssemblyValueType.Int64 },
-                    new Local { Count = 2, Type = WebAssemblyValueType.Int32 },
-                    new Local { Count = AEvalMaxDepth, Type = WebAssemblyValueType.Int64 },
-                ],
-                Code = _code,
-            });
-            module.Codes.Add(new FunctionBody
-            {
-                Locals =
-                [
-                    new Local { Count = 12, Type = WebAssemblyValueType.Int32 },
-                    new Local { Count = 4, Type = WebAssemblyValueType.Int64 },
-                ],
-                Code = BuildUnifierBody(),
-            });
+        /// <summary>The shared resolver: the ONLY full copies of the
+        /// group-wide fail chain (BP -> retry cursor) and proceed chain
+        /// (Cp marker -> resume cursor). Partitions keep local subsets and
+        /// hand a miss here — without this, every partition would carry both
+        /// full chains and every Proceed site would grow with the group.</summary>
+        private FunctionBody BuildResolverBody()
+        {
+            _code = new List<Instruction>();
+            _curPart = (0, 0);
+            _caseCount = 3;                                 // $proceed, $fail, $out
 
-            using var ms = new MemoryStream();
-            module.WriteToBinary(ms);
-            return ms.ToArray();
+            EmitPrologue();
+            OpenLoop();
+            _extraDepth--;
+            Op(new Block(BlockType.Empty));                 // $out
+            Op(new Block(BlockType.Empty));                 // $fail
+            Op(new Block(BlockType.Empty));                 // $proceed
+            Op(new LocalGet(LCur));
+            Op(new Int32Constant(_failCase));
+            Op(new Int32Equal());
+            OpenIf();
+            Op(new Branch(2));                              // $fail
+            CloseNested();
+            Op(new LocalGet(LCur));
+            Op(new Int32Constant(_proceedCase));
+            Op(new Int32Equal());
+            OpenIf();
+            Op(new Branch(1));                              // $proceed
+            CloseNested();
+            Op(new Branch(2));                              // $out (a resolved cursor)
+            Op(new End());                                  // $proceed
+            _caseIndex = 0;
+            EmitProceedResolve();
+            Op(new End());                                  // $fail
+            _caseIndex = 1;
+            EmitFailCase(fullChain: true);
+            Op(new End());                                  // $out
+            _caseIndex = 2;
+            EmitContinueReturn();
+            Op(new End());                                  // the loop
+            EmitReturn(WasmVerdict.Fail);                   // unreachable fallback
+            Op(new End());                                  // the function
+            var body = new FunctionBody { Locals = EngineLocals(), Code = _code };
+            _extraDepth = 0;
+            return body;
+        }
+
+        /// <summary>The resolver's $proceed: the full marker chain. A hit
+        /// jumps (via $out) to the resume cursor's partition; a miss is a
+        /// genuinely foreign Cp — Success to the host, exactly the
+        /// single-function module's answer.</summary>
+        private void EmitProceedResolve()
+        {
+            if (_proceedTargets.Count > 0)
+            {
+                Op(new LocalGet(LH));
+                LoadSlot32(WasmAbi.HeapWatermark);
+                Op(new Int32LessThanSigned());
+                OpenIf();
+                foreach (var (marker, addr) in _proceedTargets)
+                {
+                    Op(new LocalGet(LCP));
+                    Op(new Int32Constant(marker));
+                    Op(new Int32Equal());
+                    OpenIf();
+                    GoTo(addr);
+                    CloseNested();
+                }
+                CloseNested();
+            }
+            EmitReturn(WasmVerdict.Success);
         }
 
         // ---- mailbox access ----
@@ -544,7 +766,7 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.UnifyPointer); Op(new LocalSet(LS));
         }
 
-        private void EmitReturn(WasmVerdict v)
+        private void StoreScalars()
         {
             StoreSlotFromI32Local(WasmAbi.HeapTop, LH);
             StoreSlotFromI32Local(WasmAbi.TrailTop, LTR);
@@ -555,7 +777,25 @@ public static class WasmPredicateCompiler
             StoreSlotFromI32Local(WasmAbi.ContinuationPc, LCP);
             StoreSlotFromI32Local(WasmAbi.WriteMode, LMode);
             StoreSlotFromI32Local(WasmAbi.UnifyPointer, LS);
+        }
+
+        private void EmitReturn(WasmVerdict v)
+        {
+            StoreScalars();
             Op(new Int32Constant((int)v));
+            Op(new Return());
+        }
+
+        /// <summary>Spill the scalars and return LCur + <see
+        /// cref="ContinueBase"/>: "not mine, continue at this cursor" — the
+        /// cross-partition transfer. The next partition's prologue reloads
+        /// what this stored.</summary>
+        private void EmitContinueReturn()
+        {
+            StoreScalars();
+            Op(new LocalGet(LCur));
+            Op(new Int32Constant(ContinueBase));
+            Op(new Int32Add());
             Op(new Return());
         }
 
@@ -742,7 +982,7 @@ public static class WasmPredicateCompiler
         /// one of ours means its BP names a retry/trust cursor and the
         /// restore there does the rest. BP values are compared against this
         /// module's own encodings -- anything else is foreign.</summary>
-        private void EmitFailCase()
+        private void EmitFailCase(bool fullChain)
         {
             Op(new LocalGet(LB));
             Op(new Int32Constant(0));
@@ -764,9 +1004,11 @@ public static class WasmPredicateCompiler
             Op(new Int32WrapInt64());
             Op(new LocalSet(LT1));                          // bp
 
-            // One shared fail case for the whole group: BP values bake the
-            // site's OWN fid, so the pairs map value -> cursor across every
-            // member; only a CP no member pushed returns Fail to the host.
+            // BP values bake the site's OWN fid, so the pairs map value ->
+            // cursor across every member. A partition chains only the pairs
+            // whose retry cursor is local (self-backtracking, the hot case)
+            // and hands a miss to the resolver; the resolver chains them ALL
+            // and only a CP no member pushed returns Fail to the host.
             var bpPairs = new SortedDictionary<int, int>();
             foreach (var ins in _instrs)
                 switch (ins.Op)
@@ -787,6 +1029,8 @@ public static class WasmPredicateCompiler
                 }
             foreach (var (bpValue, cursor) in bpPairs)
             {
+                if (!fullChain && (cursor < _curPart.Lo || cursor >= _curPart.Hi))
+                    continue;
                 Op(new LocalGet(LT1));
                 Op(new Int32Constant(bpValue));
                 Op(new Int32Equal());
@@ -796,7 +1040,8 @@ public static class WasmPredicateCompiler
                 BrDispatch();
                 CloseNested();
             }
-            EmitReturn(WasmVerdict.Fail);                   // a foreign CP
+            if (fullChain) EmitReturn(WasmVerdict.Fail);    // a foreign CP
+            else EmitContinueReturn();                      // LCur is still FAIL
         }
 
         // ------------------------------------------------------------------
@@ -1099,13 +1344,29 @@ public static class WasmPredicateCompiler
         /// marker, a bytecode address) returns the Success verdict.</summary>
         private void EmitProceedReturn()
         {
-            if (_proceedTargets.Count > 0)
+            if (_proceedTargets.Count == 0)
+            {
+                EmitReturn(WasmVerdict.Success);
+                return;
+            }
+            // Chain only the targets that resume in THIS partition (a
+            // recursive call's return, the hot case, is one of these); a
+            // miss hands the full chain to the resolver via the PROCEED
+            // pseudo-cursor. Chaining every group target at every Proceed
+            // site is what made the single-function module's size quadratic.
+            var local = new List<(int Marker, int Addr)>();
+            foreach (var t in _proceedTargets)
+            {
+                int cursor = CursorOf(t.Addr);
+                if (cursor >= _curPart.Lo && cursor < _curPart.Hi) local.Add(t);
+            }
+            if (local.Count > 0)
             {
                 Op(new LocalGet(LH));
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32LessThanSigned());
                 OpenIf();
-                foreach (var (marker, addr) in _proceedTargets)
+                foreach (var (marker, addr) in local)
                 {
                     Op(new LocalGet(LCP));
                     Op(new Int32Constant(marker));
@@ -1116,7 +1377,9 @@ public static class WasmPredicateCompiler
                 }
                 CloseNested();
             }
-            EmitReturn(WasmVerdict.Success);
+            Op(new Int32Constant(_proceedCase));
+            Op(new LocalSet(LCur));
+            EmitContinueReturn();
         }
 
         private bool EmitCall(Instr ins)
@@ -1765,7 +2028,7 @@ public static class WasmPredicateCompiler
                         Op(new LocalGet(LC2));
                         Op(new LocalGet(LC0));
                         Op(new LocalGet(0));
-                        Op(new WebAssembly.Instructions.Call(1));
+                        Op(new WebAssembly.Instructions.Call((uint)UnifierIndex));
                         Op(new LocalSet(LT0));
                         LoadSlot32(WasmAbi.TrailTop); Op(new LocalSet(LTR));
                         Op(new LocalGet(LT0)); Op(new Int32Constant(0)); Op(new Int32Equal());
