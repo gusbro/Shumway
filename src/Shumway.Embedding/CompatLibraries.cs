@@ -398,8 +398,17 @@ internal static class CompatLibraries
                 % goal that never stops writing before discovering there was
                 % nothing to compare it to (issue #112). Refused here, so
                 % the description is reported and its goal never runs.
+                % Successive output claims CONTINUE one another: writing
+                % `outputs("hello "), outputs("hello ")` says the goal writes
+                % one and then the other, which is the same claim as
+                % `outputs("hello hello ")`. Joining them as a pattern
+                % sequence is exactly that, since the pieces of a pattern
+                % match consecutively. Overwriting instead made the second
+                % the whole claim, and a transcript written the first way
+                % ran to its limit and then failed (issue #114).
             ;   nonvar(E), E = outputs(T), quads_text_pattern(T, _)
-            ->  Rest = Rest1, In1 = In0, Pk1 = Pk0, Out1 = T
+            ->  Rest = Rest1, In1 = In0, Pk1 = Pk0,
+                ( Out0 == none -> Out1 = T ; Out1 = (Out0, T) )
             ;   Rest = [E|Rest1], In1 = In0, Pk1 = Pk0, Out1 = Out0
             ),
             quads_take_descriptors(Es, Rest1, In1, In, Pk1, Pk, Out1, Out).
