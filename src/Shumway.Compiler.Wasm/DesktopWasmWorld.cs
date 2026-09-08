@@ -37,7 +37,22 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         IReadOnlyDictionary<int, int> EntryCursorByFid,
         IReadOnlyDictionary<int, int> CursorByAddress,
         IReadOnlyDictionary<int, int> EntryAddressByFid,
-        int RegisterDemand);
+        int RegisterDemand,
+        Shumway.Core.WasmBuildAddressIndex AddrIndex);
+
+    // (fid -> live linked address) after a relink; null until one happens.
+    // Reference-swapped at a boundary tick, read lock-free by chains.
+    private volatile IReadOnlyDictionary<int, int>? _liveByFid;
+
+    public void RefreshLiveAddresses(IReadOnlyDictionary<int, int> liveByFid)
+        => _liveByFid = liveByFid;
+
+    public int LiveEntryAddressOf(int functorId)
+        => _liveByFid is { } live && live.TryGetValue(functorId, out int at)
+            ? at : EntryAddressOf(functorId);
+
+    public long TranslatePcToLive(long buildPc)
+        => _current is { } b ? b.AddrIndex.Translate(buildPc, _liveByFid) : buildPc;
 
     public void InstallGroup(byte[] module,
         IReadOnlyDictionary<int, int> entryCursorByFid,
@@ -52,7 +67,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },
         });
         _current = new Build(instance, entryCursorByFid, cursorByAddress,
-                             entryAddressByFid, registerDemand);
+                             entryAddressByFid, registerDemand,
+                             new Shumway.Core.WasmBuildAddressIndex(entryAddressByFid));
     }
 
     public bool Contains(int functorId)
@@ -81,6 +97,19 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 
     /// <summary>Diagnostic: read a mailbox slot from outside the chain — the
     /// only way to see where a hung module got to.</summary>
+    public void DebugWriteSlot(int slot, long value)
+        => System.Runtime.InteropServices.Marshal.WriteInt64(
+            _memory.Start, MailboxAt + slot * 8, value);
+
+    /// <summary>Diagnostic: read a heap cell from the world's IMAGE (what
+    /// the module last saw or wrote), from outside any chain.</summary>
+    public long DebugReadHeapCell(int index)
+    {
+        long hb = DebugReadSlot(WasmAbi.HeapBase);
+        return System.Runtime.InteropServices.Marshal.ReadInt64(
+            _memory.Start + (int)hb + index * 8);
+    }
+
     public long DebugReadSlot(int slot)
         => System.Runtime.InteropServices.Marshal.ReadInt64(
             _memory.Start, MailboxAt + slot * 8);
@@ -159,6 +188,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 
         public bool TryResolve(int functorId, int address, out int cursor)
             => TryResolveIn(_build, functorId, address, out cursor);
+
+        public long TranslatePcToLive(long buildPc)
+            => _build.AddrIndex.Translate(buildPc, _w._liveByFid);
 
         public long ReadSlot(int slot)
             => Marshal.ReadInt64(_w._memory.Start, MailboxAt + slot * WasmAbi.SlotSize);

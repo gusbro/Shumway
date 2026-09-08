@@ -41,6 +41,10 @@ public sealed class WasmTierDelegate
     /// watermark, ST, stack limit. Null until one fires.</summary>
     public static long[]? DiagFirstDeoptSlots;
 
+    /// <summary>Diagnostic tripwire: scan the heap for an AttVar cell with
+    /// no attr-table record after every delegate return. Off by default.</summary>
+    public static bool DiagOrphanScan;
+
     public static void ResetDiag()
     {
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
@@ -63,9 +67,15 @@ public sealed class WasmTierDelegate
     /// or a retry.</summary>
     public bool Invoke(Activation engine, int address)
     {
-        if (!engine.WasmModeCompatible || engine.HasPendingWakeups)
+        if (!engine.WasmModeCompatible || engine.HasPendingWakeups
+            || engine.InWakeupDrain)
         {
-            engine.SetPc(address == 0 ? _world.EntryAddressOf(_functorId) : address);
+            // A relink may have moved the code out from under the build:
+            // the fallback pc must be LIVE (see IWasmExecutionWorld's
+            // translation contract).
+            engine.SetPc(address == 0
+                ? _world.LiveEntryAddressOf(_functorId)
+                : (int)_world.TranslatePcToLive(address));
             engine.IlTailCallPending = true;
             return true;
         }
@@ -80,7 +90,9 @@ public sealed class WasmTierDelegate
             {
                 // The captured build predates this functor (a nested rebuild
                 // raced the entry): run its bytecode this once.
-                engine.SetPc(address == 0 ? _world.EntryAddressOf(_functorId) : address);
+                engine.SetPc(address == 0
+                    ? _world.LiveEntryAddressOf(_functorId)
+                    : (int)_world.TranslatePcToLive(address));
                 engine.IlTailCallPending = true;
                 return true;
             }
@@ -103,14 +115,21 @@ public sealed class WasmTierDelegate
                         && TryChain(cx, engine, pc, ref currentFid, ref cursor))
                         continue;
                     DiagTailExits++;
-                    pendingPc = pc;     // non-wasm callee: the interpreter dispatches
+                    // A marker passes through symbolically; a raw bytecode
+                    // address is build-space and must move to live space.
+                    pendingPc = Activation.IsResumeMarker(pc)
+                        ? pc : (int)cx.TranslatePcToLive(pc);
                     result = true;
                     break;
                 }
                 if (v == WasmVerdict.Deopt)
                 {
                     DiagDeopts++;
-                    pendingPc = (int)cx.ReadSlot(WasmAbi.Pc);
+                    // The module baked this pc when the group was compiled;
+                    // a consult since then relinked the program and moved
+                    // the code (a stale pc here was the "bytecode
+                    // corruption" crash). Translate to the live space.
+                    pendingPc = (int)cx.TranslatePcToLive(cx.ReadSlot(WasmAbi.Pc));
                     NoteDeoptPc(pendingPc);
                     // A deopt AT an area's limit is a capacity signal, not a
                     // semantic one. The wasm limit sits a margin below the
@@ -194,6 +213,10 @@ public sealed class WasmTierDelegate
         // bigger image instead of deopting at the same spot.
         if (growTrail) engine.GrowWasmBindingTrail();
         if (growStack) engine.GrowWasmStack();
+        if (DiagOrphanScan && engine.FindOrphanAttVar() is int orphan and >= 0)
+            throw new System.InvalidOperationException(
+                $"orphan AttVar after delegate: fid={_functorId} "
+                + $"entry-fid={currentFid} heap[{orphan}] result={result}");
         if (pendingPc != int.MinValue)
         {
             engine.SetPc(pendingPc);

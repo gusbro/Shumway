@@ -38,6 +38,29 @@ public interface IWasmExecutionWorld
     /// bytecode fallback target when an entry cannot run on the tier.</summary>
     int EntryAddressOf(int functorId);
 
+    /// <summary>A CONSULT relinks the whole static program and moves every
+    /// linked address; the module's baked addresses (deopt pcs, markers, BP
+    /// encodings) then live in BUILD space, one generation behind. The
+    /// bytecode itself does not change (it only moves), so a build stays
+    /// valid — every place a build address crosses into the live code space
+    /// goes through the translation below, and this hands the world the
+    /// current (functor -> live address) map. Boundary-tick only, never
+    /// mid-chain.</summary>
+    void RefreshLiveAddresses(
+        System.Collections.Generic.IReadOnlyDictionary<int, int> liveByFid)
+    { }
+
+    /// <summary>The functor's entry address in the LIVE code space — where
+    /// the interpreter must run its bytecode now. Falls back to the build
+    /// address for a world that never relinks (test harnesses).</summary>
+    int LiveEntryAddressOf(int functorId) => EntryAddressOf(functorId);
+
+    /// <summary>Translates a CURRENT-build address to the live code space:
+    /// the member owning it is found by base, and the pc moves by the
+    /// member's own displacement. Identity for a world that never
+    /// relinks.</summary>
+    long TranslatePcToLive(long buildPc) => buildPc;
+
     /// <summary>Opens a chain against the engine's live state: areas staged,
     /// mailbox filled, the current build captured. The caller must Dispose
     /// exactly once. Chains nest only through builtins (a findall
@@ -62,6 +85,11 @@ public interface IWasmChainContext : System.IDisposable
     /// THIS chain captured -- not the world's latest, which a nested
     /// promotion may have replaced.</summary>
     bool TryResolve(int functorId, int address, out int cursor);
+
+    /// <summary>Translates an address of THIS chain's build (a deopt pc, a
+    /// marker payload falling back to bytecode) to the live code space.
+    /// Identity for a world that never relinks.</summary>
+    long TranslatePcToLive(long buildPc) => buildPc;
 
     long ReadSlot(int slot);
 

@@ -36,7 +36,22 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         IReadOnlyDictionary<int, int> EntryCursorByFid,
         IReadOnlyDictionary<int, int> CursorByAddress,
         IReadOnlyDictionary<int, int> EntryAddressByFid,
-        int RegisterDemand);
+        int RegisterDemand,
+        WasmBuildAddressIndex AddrIndex);
+
+    // (fid -> live linked address) after a relink; null until one happens.
+    // Reference-swapped at a boundary tick, read lock-free by chains.
+    private volatile IReadOnlyDictionary<int, int>? _liveByFid;
+
+    public void RefreshLiveAddresses(IReadOnlyDictionary<int, int> liveByFid)
+        => _liveByFid = liveByFid;
+
+    public int LiveEntryAddressOf(int functorId)
+        => _liveByFid is { } live && live.TryGetValue(functorId, out int at)
+            ? at : EntryAddressOf(functorId);
+
+    public long TranslatePcToLive(long buildPc)
+        => _current is { } b ? b.AddrIndex.Translate(buildPc, _liveByFid) : buildPc;
 
     public void InstallGroup(byte[] module,
         IReadOnlyDictionary<int, int> entryCursorByFid,
@@ -67,7 +82,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         // stands for the others.
         _ = index.Value;
         _current = new Build(pinned, index, entryCursorByFid, cursorByAddress,
-                             entryAddressByFid, registerDemand);
+                             entryAddressByFid, registerDemand,
+                             new WasmBuildAddressIndex(entryAddressByFid));
     }
 
     /// <summary>Wall time inside the per-thread module registration
@@ -93,11 +109,13 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         => _current!.EntryAddressByFid[functorId];
 
     public IWasmChainContext BeginChain(Activation engine)
-        => new Chain(_current ?? throw new InvalidOperationException("no group installed"),
+        => new Chain(this,
+                     _current ?? throw new InvalidOperationException("no group installed"),
                      engine);
 
     private sealed class Chain : IWasmChainContext
     {
+        private readonly BrowserWasmWorld _w;
         private readonly Build _build;
         private readonly Activation _engine;
         private readonly long[] _mailbox = GC.AllocateArray<long>(WasmAbi.SlotCount, pinned: true);
@@ -107,8 +125,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private int[] _trail = null!;
         private bool _engineAuthoritative;
 
-        public Chain(Build build, Activation engine)
+        public Chain(BrowserWasmWorld w, Build build, Activation engine)
         {
+            _w = w;
             _build = build;
             _engine = engine;
             _mailboxAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_mailbox, 0);
@@ -171,6 +190,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 
         public bool TryResolve(int functorId, int address, out int cursor)
             => TryResolveIn(_build, functorId, address, out cursor);
+
+        public long TranslatePcToLive(long buildPc)
+            => _build.AddrIndex.Translate(buildPc, _w._liveByFid);
 
         public long ReadSlot(int slot) => _mailbox[slot];
 
@@ -241,6 +263,11 @@ internal static class BrowserWasmTier
         }
     }
 
+    // Every world holding installed builds for the CURRENT engine — the
+    // dynamic group's and the baked prelude's — so a relink's live-address
+    // refresh reaches them all. Reset when a new engine attaches.
+    private static readonly List<BrowserWasmWorld> _worlds = new();
+
     /// <summary>Attaches the wasm promotion store to an engine. No-op when
     /// the capability is off.</summary>
     internal static void Attach(PrologEngine engine, int threshold = 16)
@@ -248,6 +275,9 @@ internal static class BrowserWasmTier
         if (!RuntimeCaps.SupportsWasmCodegen) return;
         var store = engine.IlPromotion;
         var world = new BrowserWasmWorld();
+        _worlds.Clear();
+        _worlds.Add(world);
+        BakedFids.Clear();
         var members = new List<WasmGroupMember>();
         var env = new EngineWasmCompileEnv();
         store.Wasm = new WasmPromotionStore(store)
@@ -257,6 +287,29 @@ internal static class BrowserWasmTier
                 Promote(store, world, members, env, pred, linkedBase),
             BatchPromoter = candidates =>
                 PromoteBatch(store, world, members, env, candidates),
+        };
+        // A relink moved predicates out from under their modules: the
+        // evicted members leave the dynamic group (their biases are dead —
+        // compiling them again would poison the whole build), and evicted
+        // baked members leave the baked bookkeeping. What remains valid is
+        // reinstalled so the group module carries no dead code.
+        store.Wasm.StaleEvicted = staleFids =>
+        {
+            var gone = new HashSet<int>(staleFids);
+            int removed = members.RemoveAll(m => gone.Contains(m.Predicate.FunctorId));
+            BakedFids.RemoveWhere(gone.Contains);
+            if (removed > 0 && members.Count > 0) InstallCurrent(world, members, env);
+        };
+        // A relink moved the code: the worlds translate at their boundaries,
+        // and the member list REBASES so the next promotion compiles against
+        // live addresses instead of poisoning the group with dead biases.
+        store.Wasm.LiveRefreshed = liveByFid =>
+        {
+            foreach (var w in _worlds) w.RefreshLiveAddresses(liveByFid);
+            for (int i = 0; i < members.Count; i++)
+                if (liveByFid.TryGetValue(members[i].Predicate.FunctorId, out int at)
+                    && members[i].Bias != at)
+                    members[i] = members[i] with { Bias = at };
         };
     }
 
@@ -323,8 +376,12 @@ internal static class BrowserWasmTier
                 added = good;
             }
             foreach (var m in added)
+            {
                 store.RegisterBoundDelegate(m.Predicate.FunctorId,
                     new WasmTierDelegate(m.Predicate.FunctorId, world).Invoke);
+                store.Wasm?.NoteInstalled(m.Predicate.FunctorId, m.Bias,
+                    m.Predicate);
+            }
             return added.Count;
         }
         finally
@@ -430,10 +487,12 @@ internal static class BrowserWasmTier
                 entryAddr, baked.RegisterDemand);
         }
         catch (WasmRegisterException e) { reason = e.Message; return false; }
+        _worlds.Add(world);
         foreach (var m in baked.Members)
         {
             store.RegisterBoundDelegate(m.FunctorId,
                 new WasmTierDelegate(m.FunctorId, world).Invoke);
+            store.Wasm?.NoteInstalled(m.FunctorId, m.Bias, byAddress[m.Bias]);
             BakedFids.Add(m.FunctorId);
         }
         reason = $"{baked.Members.Count} predicates";
@@ -815,6 +874,10 @@ internal static partial class WebShumwayApp
                 var refused = w.UnpromotableFunctorIds().Select(Name).ToList();
                 return $"% wasm_compile: threshold={w.Threshold}\n"
                     + $"%   baked prelude: {BrowserWasmTier.BakedInstallNote}\n"
+                    + (w.RelinkEvictions > 0
+                        ? $"%   relink evictions: {w.RelinkEvictions} (a library "
+                          + "load moved the code; evicted predicates re-promote)\n"
+                        : "")
                     + $"%   promoted ({promoted.Count}"
                     + (folded.Count > 0 ? " + " + string.Join(" + ", folded) : "")
                     + $"): {string.Join(" ", promoted)}\n"

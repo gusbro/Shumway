@@ -43,23 +43,117 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     private int _lastBatchStamp = -1;
 
-    /// <summary>Runs the batch when the program changed since the last one.
-    /// Called by the host after a consult and after each query completes (a
-    /// query may consult). Cheap when nothing changed: one int compare. The
-    /// static link only exists after a query setup, so when a consult just
-    /// invalidated it this runs one trivial query to rebuild it — that
-    /// throwaway goal, not the user's next real one, pays for the
-    /// compile.</summary>
+    // (fid -> address and bytecode identity at install time) of every wasm
+    // delegate, baked and compiled alike: what ReconcileWithLink compares
+    // against the live link.
+    private readonly Dictionary<int, (int Addr, ulong Hash)> _installed = new();
+
+    /// <summary>Records where a wasm delegate's predicate was linked when it
+    /// was installed, and what its bytecode was. Every install site must
+    /// call this; an unrecorded delegate is invisible to the relink
+    /// reconciliation below.</summary>
+    public void NoteInstalled(int functorId, int linkedAddress,
+        CompiledPredicate predicate)
+        => _installed[functorId] = (linkedAddress, CodeHash(predicate));
+
+    // FNV-1a over the linked bytecode and call sites: equal hashes mean the
+    // predicate merely MOVED; a redefinition changes them.
+    private static ulong CodeHash(CompiledPredicate pred)
+    {
+        const ulong prime = 1099511628211UL;
+        ulong h = 14695981039346656037UL;
+        foreach (byte b in pred.Bytecode) { h ^= b; h *= prime; }
+        h ^= (uint)pred.Arity; h *= prime;
+        foreach (var site in pred.CallSites)
+        {
+            h ^= (uint)site.OpcodeOffset; h *= prime;
+            h ^= (uint)site.CalleeFunctorId; h *= prime;
+        }
+        return h;
+    }
+
+    /// <summary>Fires after <see cref="ReconcileWithLink"/> evicts stale
+    /// delegates, with the evicted functor ids: the tier drops its group
+    /// members and baked bookkeeping for them.</summary>
+    public System.Action<IReadOnlyList<int>>? StaleEvicted { get; set; }
+
+    /// <summary>Fires with the fresh (functor -> live address) map after a
+    /// relink moved code: the tier hands it to its execution worlds, whose
+    /// boundary translation keeps every installed build valid.</summary>
+    public System.Action<IReadOnlyDictionary<int, int>>? LiveRefreshed { get; set; }
+
+    /// <summary>Delegates evicted because a relink REDEFINED their
+    /// predicates; running total, surfaced by the status report.</summary>
+    public int RelinkEvictions { get; private set; }
+
+    /// <summary>A wasm module bakes its members' linked ADDRESSES: deopt
+    /// pcs, resume markers, BP encodings. ANY consult relinks the whole
+    /// static program and moves every address (measured: two plain facts
+    /// shifted all ~530 prelude predicates), after which a stale build
+    /// address reaching the interpreter's SetPc runs what is now different
+    /// code: "bytecode corruption" crashes. The bytecode itself only MOVES
+    /// (hashes equal), so the builds stay valid: this refreshes the worlds'
+    /// live-address maps (the boundary translation does the rest) and
+    /// evicts only a delegate whose predicate was REDEFINED or dropped,
+    /// which falls back to bytecode until re-promoted.</summary>
+    public int ReconcileWithLink(PrologEngine engine)
+    {
+        if (_installed.Count == 0) return 0;
+        var liveAddr = new Dictionary<int, int>(_installed.Count);
+        var livePred = new Dictionary<int, CompiledPredicate>(_installed.Count);
+        foreach (var (addr, pred) in StaticPredicatesOf(engine))
+        { liveAddr[pred.FunctorId] = addr; livePred[pred.FunctorId] = pred; }
+        if (liveAddr.Count == 0) return 0;
+        List<int>? stale = null;
+        bool moved = false;
+        foreach (var (fid, (addr, hash)) in _installed)
+        {
+            if (liveAddr.TryGetValue(fid, out int now)
+                && CodeHash(livePred[fid]) == hash)
+            {
+                moved |= now != addr;
+                continue;
+            }
+            (stale ??= new()).Add(fid);
+        }
+        if (stale is not null)
+        {
+            foreach (int fid in stale)
+            {
+                ilStore.EvictDelegate(fid);
+                _installed.Remove(fid);
+            }
+            RelinkEvictions += stale.Count;
+            StaleEvicted?.Invoke(stale);
+        }
+        if (moved) LiveRefreshed?.Invoke(liveAddr);
+        return stale?.Count ?? 0;
+    }
+
+    /// <summary>Runs the relink reconciliation and, under
+    /// <see cref="CompileAllOnConsult"/>, the batch. Called by the host
+    /// after a consult and after each query completes (a query may consult).
+    /// Cheap when nothing changed: one int compare. The static link only
+    /// exists after a query setup, so when a consult just invalidated it
+    /// this runs one trivial query to rebuild it — that throwaway goal, not
+    /// the user's next real one, pays for the compile.</summary>
     public int CompileAllTick(PrologEngine engine)
     {
-        if (!CompileAllOnConsult || BatchPromoter is null) return 0;
         // A consult INVALIDATES the static link (the program changed); a
-        // dynamic-store change bumps the stamp. Either means the batch may
-        // have new candidates; neither means one int/null compare otherwise.
+        // dynamic-store change bumps the stamp. Either means addresses may
+        // have moved and the batch may have new candidates; neither means
+        // one int/null compare otherwise.
         if (engine._staticLink is not null
             && engine._programStamp == _lastBatchStamp) return 0;
+        bool anythingToDo = _installed.Count > 0
+            || (CompileAllOnConsult && BatchPromoter is not null);
+        if (!anythingToDo) return 0;
         if (engine._staticLink is null) engine.Query("true.");
         _lastBatchStamp = engine._programStamp;
+        // Evict the stale BEFORE the batch, so it recompiles them against
+        // the addresses the modules will actually bake.
+        ReconcileWithLink(engine);
+        if (!CompileAllOnConsult || BatchPromoter is null) return 0;
         return System.Math.Max(0, PromoteAllStatics(engine));
     }
 
@@ -94,6 +188,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             if (_unpromotable.Contains(fid)) continue;
             if (already.Contains(fid)) continue;
             if (IlPromotionStore.IsExcludedFromPromotion(fid)) continue;
+            if (IsWakeInternal(fid)) continue;
             candidates.Add((pred, addr));
         }
         if (candidates.Count == 0) return 0;
@@ -102,6 +197,22 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     private readonly Dictionary<int, int> _counters = new();
     private readonly HashSet<int> _unpromotable = new();
+
+    /// <summary>The wakeup subsystem's wrappers ('$wake_call' and friends)
+    /// are excluded from THIS tier: their bodies are meta-calls the module
+    /// deopts on at entry, so promotion buys nothing — and a promoted
+    /// '$wake_call' in the attvar-bind drain corrupts the interpreter's
+    /// resume (misaligned bytecode after the deopt; open issue, found by
+    /// clpfd's `X = 2` after `X in 1..3, X #> 1`). The IL tier runs them
+    /// fine and keeps them.</summary>
+    private static bool IsWakeInternal(int functorId)
+    {
+        var (atomId, _) = FunctorTable.Lookup(functorId);
+        string? name = AtomTable.GetById(atomId)?.Name;
+        return name is not null
+            && (name.StartsWith("$wake", System.StringComparison.Ordinal)
+                || name.StartsWith("$prelude$$wake", System.StringComparison.Ordinal));
+    }
 
     public bool Enabled => Threshold > 0 && Promoter is not null;
 
@@ -134,7 +245,8 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         // The synthetic __query__ wrappers have a different body per query
         // under one functor id: promoting one would replay a stale query.
         // Mid-consult suspension mirrors the IL store's reasoning too.
-        if (IlPromotionStore.IsExcludedFromPromotion(functorId))
+        if (IlPromotionStore.IsExcludedFromPromotion(functorId)
+            || IsWakeInternal(functorId))
         {
             _unpromotable.Add(functorId);
             return null;
@@ -152,6 +264,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             return null;
         }
         ilStore.RegisterBoundDelegate(functorId, del);
+        NoteInstalled(functorId, linkedAddress, predicate);
         return del;
     }
 }

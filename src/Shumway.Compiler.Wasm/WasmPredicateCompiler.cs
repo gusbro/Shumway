@@ -416,6 +416,7 @@ public static class WasmPredicateCompiler
 
         private void Op(Instruction i) => _code.Add(i);
         private void OpenIf() { Op(new If(BlockType.Empty)); _extraDepth++; }
+        private void OpenIf(BlockType t) { Op(new If(t)); _extraDepth++; }
         private void OpenElse() { Op(new Else()); }
         private void CloseNested() { Op(new End()); _extraDepth--; }
         private void OpenBlock() { Op(new Block(BlockType.Empty)); _extraDepth++; }
@@ -582,24 +583,33 @@ public static class WasmPredicateCompiler
             _extraDepth--;                                  // accounted in BrDispatch instead
             if (DebugLoopGuard)
             {
-                // DIAGNOSTIC (off by default): every dispatch bumps a
-                // counter in the Cursor slot and records the cursor in the
-                // BuiltinId slot; past 10M dispatches the run returns the
-                // impossible verdict 99, turning an in-module infinite loop
-                // into a readable report instead of a hang.
-                StoreSlot64(WasmAbi.BuiltinId, () =>
+                // DIAGNOSTIC (off by default): every dispatch records the
+                // cursor in slot 27 and bumps a counter in slot 26; when the
+                // counter passes the limit in slot 25 (10M when the host
+                // leaves it 0) the run returns the impossible verdict 99.
+                // Turns an in-module infinite loop into a readable report,
+                // and with a host-set limit it single-steps a run by
+                // dispatch count.
+                StoreSlot64(27, () =>
                 {
                     Op(new LocalGet(LCur));
                     Op(new Int64ExtendInt32Signed());
                 });
-                StoreSlot64(WasmAbi.Cursor, () =>
+                StoreSlot64(26, () =>
                 {
-                    LoadSlot64(WasmAbi.Cursor);
+                    LoadSlot64(26);
                     Op(new Int64Constant(1));
                     Op(new Int64Add());
                 });
-                LoadSlot64(WasmAbi.Cursor);
+                LoadSlot64(26);
+                LoadSlot64(25);
+                Op(new Int64Constant(0));
+                Op(new Int64GreaterThanSigned());
+                OpenIf(BlockType.Int64);
+                LoadSlot64(25);
+                OpenElse();
                 Op(new Int64Constant(10_000_000));
+                CloseNested();
                 Op(new Int64GreaterThanSigned());
                 OpenIf();
                 Op(new Int32Constant(99));
@@ -1000,6 +1010,23 @@ public static class WasmPredicateCompiler
             Op(new Int32Constant(3));
             Op(new Int32ShiftLeft());
             Op(new Int32Add());
+            Op(new LocalSet(LT2));                          // &stack[B + arity]
+            // The CP records BOTH trail tops (ADR-004). The module unwinds
+            // only the binding trail; when the CP's extra-trail top differs
+            // from the live one there are AttrModify / CatchFrame / mutable
+            // entries to undo that only the host's interleaved UnwindTrails
+            // can — backtracking past a put_attr here left the attr table
+            // out of step with the cells (an orphan AttVar crashed get_attr,
+            // found by clpfd's in/2 + #>/2 under a promoted caller). Hand
+            // the whole failure to the host, untouched.
+            Op(new LocalGet(LT2));
+            Op(new Int64Load { Offset = 6 * 8 });           // ctl[5] = extra-trail top
+            LoadSlot64(WasmAbi.ExtraTrailTop);
+            Op(new Int64NotEqual());
+            OpenIf();
+            EmitReturn(WasmVerdict.Fail);
+            CloseNested();
+            Op(new LocalGet(LT2));
             Op(new Int64Load { Offset = 4 * 8 });           // ctl[3] = BP (1+arity handled: base+arity*8, +1 cell +3 cells)
             Op(new Int32WrapInt64());
             Op(new LocalSet(LT1));                          // bp
@@ -1921,6 +1948,26 @@ public static class WasmPredicateCompiler
 
         // ---- the register/Y helpers with unify semantics ----
 
+        /// <summary>Pushes the cell in <paramref name="local"/> as a BIND
+        /// value: an attributed variable's cell becomes Ref(home) — its
+        /// payload — because an AttVar cell exists only at its home (Deref
+        /// does not follow it; a raw copy elsewhere is an orphan the attr
+        /// table knows nothing about, and get_attr crashed on one: the
+        /// boards.pl clpfd corruption). Everything else passes through.</summary>
+        private void PushCellAttVarAsRef(uint local)
+        {
+            Op(new LocalGet(local)); Op(new LocalSet(LC1));
+            Op(new LocalGet(LC1));
+            Op(new Int64Constant(60)); Op(new Int64ShiftRightUnsigned());
+            Op(new Int64Constant((long)Tag.AttVar)); Op(new Int64Equal());
+            OpenIf();
+            Op(new LocalGet(LC1));
+            Op(new Int64Constant(Cell.PayloadMask)); Op(new Int64And());
+            Op(new LocalSet(LC1));
+            CloseNested();
+            Op(new LocalGet(LC1));
+        }
+
         private void EmitUnifyTwo(Action loadLeft, Action loadRight, int pc)
         {
             // Unifies two cells (get_value_y / get_value_x). Both sides
@@ -1973,7 +2020,7 @@ public static class WasmPredicateCompiler
                         { Op(new LocalGet(LT1)); Op(new Int64ExtendInt32Unsigned()); });
                     }
                     OpenElse();
-                    EmitBindDa(ins.Pc, () => Op(new LocalGet(LC2)));
+                    EmitBindDa(ins.Pc, () => PushCellAttVarAsRef(LC2));
                     CloseNested();
                 }
                 OpenElse();
@@ -1986,7 +2033,7 @@ public static class WasmPredicateCompiler
                     OpenIf();
                     {
                         Op(new LocalGet(LT2)); Op(new LocalSet(LDa));
-                        EmitBindDa(ins.Pc, () => Op(new LocalGet(LC0)));
+                        EmitBindDa(ins.Pc, () => PushCellAttVarAsRef(LC0));
                     }
                     OpenElse();
                     {
