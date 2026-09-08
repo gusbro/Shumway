@@ -104,12 +104,15 @@ Piece by piece:
   Several `outputs` claims in one description continue one another:
   `outputs("hello "), outputs("hello ")` says the goal writes one and
   then the other, the same claim as `outputs("hello hello ")`.
-  What is claimed is the text of the WHOLE run, in order. A goal with
-  several answers writes one text between them all, so an `outputs`
-  claim cannot be attached to a particular answer: a description saying
-  the goal writes `1` and then `2` holds of a goal that writes both
-  before its first answer just as it holds of one that writes each
-  beside its own answer.
+  Where the goal answers more than once, a claim per answer is a claim
+  about that answer: the run is cut where the answers arrived, and the
+  claims are matched against those pieces one for one. So
+  `outputs("1"), outputs("2"), X = 1 ; X = 2` says the goal writes `1`
+  before its first answer and `2` between the first and the second, and
+  a goal writing both before the first answer does not have it. Claims
+  past the last answer describe what came after it, where the pieces
+  simply continue one another. A single claim, as most transcripts have,
+  speaks for the whole run whatever the answers did.
 - **`inputs(Text)` and `peeks(Text)`** say what the goal reads: it must
   consume `inputs` and leave `peeks` unread. The two are supplied to the
   goal as one input and both halves are checked. Writing the peek down

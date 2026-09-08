@@ -56,21 +56,50 @@ public sealed class QuadsSuccessiveOutputsTests
     }
 
     [Fact]
-    public void TheClaimIsAboutTheWholeRunNotOneAnswer()
+    public void SeveralClaimsBesideSeveralAnswersAreCutAtTheAnswers()
     {
-        // The capture wraps the enumeration of every answer, so the text is
-        // the run's, in order — successive claims are consecutive pieces of
-        // it and not one per answer. Both goals below write "12" over the
-        // run, one piece per answer and both pieces before the first, and
-        // the same description holds of each. Documented in the guide,
-        // pinned here so it cannot drift into a per-answer reading by
-        // accident.
+        // WHEN the goal answers more than once, a claim per answer is a
+        // claim ABOUT that answer: the run is cut where the answers arrived
+        // and claim i is matched against the piece answer i wrote. Both
+        // goals here write "12" over the whole run — a1 a piece per answer,
+        // a2 all of it before the first — and the description says the
+        // first. Only a1 has it.
         string report = RunQuads(
             "a1\n?- member(X, [1,2]), write(X).\n" +
             "   outputs(\"1\"),\n   outputs(\"2\"),\n   X = 1 ; X = 2.\n\n" +
             "a2\n?- member(X, [1,2]), ( X == 1 -> write('12') ; true ).\n" +
             "   outputs(\"1\"),\n   outputs(\"2\"),\n   X = 1 ; X = 2.\n");
+        Assert.Contains("quads: 1/2", report);
+        Assert.Contains("[a2]", report);
+    }
+
+    [Fact]
+    public void OneClaimStillSpeaksForTheWholeRun()
+    {
+        // The shape every published transcript has: one claim, one text,
+        // whatever the answers did. Both goals of the test above satisfy
+        // it, because both write "12".
+        string report = RunQuads(
+            "b1\n?- member(X, [1,2]), write(X).\n" +
+            "   outputs(\"12\"),\n   X = 1 ; X = 2.\n\n" +
+            "b2\n?- member(X, [1,2]), ( X == 1 -> write('12') ; true ).\n" +
+            "   outputs(\"12\"),\n   X = 1 ; X = 2.\n");
         Assert.Contains("quads: 2/2", report);
+    }
+
+    [Fact]
+    public void AnOutputClaimBesideAnAnswerSequenceIsCheckedAtAll()
+    {
+        // `;` binds looser than `,`, so `outputs("9"), X = 1 ; X = 2` parses
+        // with the descriptor buried inside the first answer — and it was
+        // then never seen, so a plainly wrong claim passed. Descriptors are
+        // lifted to the front of the description, where they describe the
+        // run.
+        string report = RunQuads(
+            "c1\n?- member(X, [1,2]), write(X).\n" +
+            "   outputs(\"99\"),\n   X = 1 ; X = 2.\n");
+        Assert.Contains("quads: 0/1", report);
+        Assert.Contains("[c1]", report);
     }
 
     [Fact]

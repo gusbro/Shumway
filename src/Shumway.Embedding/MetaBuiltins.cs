@@ -444,6 +444,9 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("$wot_begin", 2, WotBeginBounded,
             Io, "'$wot_begin'(+Sink, +MaxChars)",
             "Internal: begins a with_output_to capture with a smaller ceiling.");
+        BuiltinsRegistry.Register("$wot_mark", 1, WotMark,
+            Io, "'$wot_mark'(-Chars)",
+            "Internal: how much the innermost with_output_to capture holds so far.");
         BuiltinsRegistry.Register("$wot_end", 1, WotEnd,
             Io, "'$wot_end'(+Sink)", "Internal: ends a with_output_to capture and unifies the sink.");
         BuiltinsRegistry.Register("atom_to_term",   3, AtomToTerm,
