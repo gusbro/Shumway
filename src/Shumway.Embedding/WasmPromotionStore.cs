@@ -111,7 +111,17 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// later dispatch or batch tries it again.</summary>
     public void MarkUnpromotable(int functorId) => _unpromotable.Add(functorId);
 
-    public IEnumerable<int> UnpromotableFunctorIds() => _unpromotable;
+    /// <summary>The functors a compile actually REFUSED. The set also caches
+    /// by-design exclusions (the synthetic __query__ wrappers, whose body
+    /// changes per query under one functor id) so RecordDispatch decides
+    /// once — but those are not refusals and reporting them as such reads
+    /// like something went wrong.</summary>
+    public IEnumerable<int> UnpromotableFunctorIds()
+    {
+        foreach (int fid in _unpromotable)
+            if (!IlPromotionStore.IsExcludedFromPromotion(fid))
+                yield return fid;
+    }
 
     /// <summary>Records one dispatch; compiles, installs and returns the
     /// delegate when the count crosses the threshold. Engine-thread only,
