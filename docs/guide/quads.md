@@ -101,6 +101,15 @@ Piece by piece:
   and ends that way and says nothing about the middle. That is how a
   claim about output survives an implementation's choice of variable
   names. A text written down whole claims the output entire.
+  Several `outputs` claims in one description continue one another:
+  `outputs("hello "), outputs("hello ")` says the goal writes one and
+  then the other, the same claim as `outputs("hello hello ")`.
+  What is claimed is the text of the WHOLE run, in order. A goal with
+  several answers writes one text between them all, so an `outputs`
+  claim cannot be attached to a particular answer: a description saying
+  the goal writes `1` and then `2` holds of a goal that writes both
+  before its first answer just as it holds of one that writes each
+  beside its own answer.
 - **`inputs(Text)` and `peeks(Text)`** say what the goal reads: it must
   consume `inputs` and leave `peeks` unread. The two are supplied to the
   goal as one input and both halves are checked. Writing the peek down

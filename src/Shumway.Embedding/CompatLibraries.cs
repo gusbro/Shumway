@@ -406,6 +406,11 @@ internal static class CompatLibraries
                 % match consecutively. Overwriting instead made the second
                 % the whole claim, and a transcript written the first way
                 % ran to its limit and then failed (issue #114).
+                % The claim is about the WHOLE run's text: the capture wraps
+                % the enumeration of every answer, so an outputs claim is
+                % never attached to a particular answer and successive ones
+                % are consecutive pieces of that one text, not one per
+                % answer.
             ;   nonvar(E), E = outputs(T), quads_text_pattern(T, _)
             ->  Rest = Rest1, In1 = In0, Pk1 = Pk0,
                 ( Out0 == none -> Out1 = T ; Out1 = (Out0, T) )
