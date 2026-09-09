@@ -98,7 +98,6 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// which falls back to bytecode until re-promoted.</summary>
     public int ReconcileWithLink(PrologEngine engine)
     {
-        RefreshHookedModules(engine);
         if (_installed.Count == 0) return 0;
         var liveAddr = new Dictionary<int, int>(_installed.Count);
         var livePred = new Dictionary<int, CompiledPredicate>(_installed.Count);
@@ -181,7 +180,6 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (BatchPromoter is null) return -1;
         var link = engine._staticLink;
         if (link is null) return -1;
-        RefreshHookedModules(engine);
         var already = new HashSet<int>(ilStore.PromotedFunctorIds());
         var candidates = new List<(CompiledPredicate, int)>();
         foreach (var (addr, pred) in link.PredicatesByAddress)
@@ -190,7 +188,6 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             if (_unpromotable.Contains(fid)) continue;
             if (already.Contains(fid)) continue;
             if (IlPromotionStore.IsExcludedFromPromotion(fid)) continue;
-            if (IsHookedLibraryMember(fid)) continue;
             candidates.Add((pred, addr));
         }
         if (candidates.Count == 0) return 0;
@@ -199,68 +196,6 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     private readonly Dictionary<int, int> _counters = new();
     private readonly HashSet<int> _unpromotable = new();
-
-    // Library MODULES that register an attribute-unification hook
-    // (M$verify_attributes/3-4): their predicate space is excluded from
-    // this tier. An attvar-heavy library under the tier is today both
-    // slower (labeling's binds drain through interpreted re-entries) and
-    // still corruptible in one open shape (a top-level attvar bind with
-    // the clpfd LIBRARY promoted lands the interpreter on a misaligned
-    // continuation). The prelude's NATIVE clpfd layer has no module of its
-    // own and stays in — it is what the phase-B bench certifies. Rebuilt
-    // by PromoteAllStatics from the live link; the lazy path consults it.
-    private readonly List<string> _hookedModulePrefixes = new();
-    private readonly HashSet<int> _hookedExports = new();
-
-    private void RefreshHookedModules(PrologEngine engine)
-    {
-        _hookedModulePrefixes.Clear();
-        _hookedExports.Clear();
-        var link = engine._staticLink;
-        if (link is null) return;
-        var hooked = new List<string>();
-        // Module-local hooks (ADR-040): Module$verify_attributes/3-4.
-        foreach (var (_, pred) in link.PredicatesByAddress)
-        {
-            var (aid, ar) = FunctorTable.Lookup(pred.FunctorId);
-            if (ar is not (3 or 4)) continue;
-            string? n = AtomTable.GetById(aid)?.Name;
-            const string suffix = "$verify_attributes";
-            if (n is not null && n.EndsWith(suffix, System.StringComparison.Ordinal)
-                && n.Length > suffix.Length)
-                hooked.Add(n[..^suffix.Length]);
-        }
-        // And the BARE multifile form: a library declaring
-        // `:- multifile verify_attributes/4` owns the hook without mangling
-        // its name (clpfd does exactly this), so the manifest is what says
-        // which module it belongs to.
-        int bare3 = FunctorTable.Intern(
-            AtomTable.Intern("verify_attributes", permanent: true).Id, 3);
-        int bare4 = FunctorTable.Intern(
-            AtomTable.Intern("verify_attributes", permanent: true).Id, 4);
-        foreach (var (modName, manifest) in engine.Modules)
-            if (manifest.PublicFunctors.Contains(bare3)
-                || manifest.PublicFunctors.Contains(bare4))
-                hooked.Add(modName);
-        foreach (string m in hooked)
-        {
-            _hookedModulePrefixes.Add(m + "$");
-            if (engine.Modules.TryGetValue(m, out var manifest))
-                foreach (int pf in manifest.PublicFunctors) _hookedExports.Add(pf);
-        }
-    }
-
-    private bool IsHookedLibraryMember(int functorId)
-    {
-        if (_hookedExports.Contains(functorId)) return true;
-        if (_hookedModulePrefixes.Count == 0) return false;
-        var (atomId, _) = FunctorTable.Lookup(functorId);
-        string? name = AtomTable.GetById(atomId)?.Name;
-        if (name is null) return false;
-        foreach (string p in _hookedModulePrefixes)
-            if (name.StartsWith(p, System.StringComparison.Ordinal)) return true;
-        return false;
-    }
 
     public bool Enabled => Threshold > 0 && Promoter is not null;
 
@@ -293,8 +228,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         // The synthetic __query__ wrappers have a different body per query
         // under one functor id: promoting one would replay a stale query.
         // Mid-consult suspension mirrors the IL store's reasoning too.
-        if (IlPromotionStore.IsExcludedFromPromotion(functorId)
-            || IsHookedLibraryMember(functorId))
+        if (IlPromotionStore.IsExcludedFromPromotion(functorId))
         {
             _unpromotable.Add(functorId);
             return null;
