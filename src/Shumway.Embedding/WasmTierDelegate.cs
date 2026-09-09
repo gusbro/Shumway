@@ -34,9 +34,28 @@ public sealed class WasmTierDelegate
     /// chain exit, to decide what earns open-coding. Diagnostic only.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
         DiagBuiltinTally = new();
-    /// <summary>The first few distinct deopt PCs, for attribution: a deopt
-    /// storm names its instruction. -1 = unused slot.</summary>
-    public static readonly long[] DiagDeoptPcs = new long[8];
+    /// <summary>Deopt PCs with a HIT COUNT each, for attribution: knowing
+    /// where a storm falls is only half of it, the ranking is what says
+    /// which instruction to open-code next. Parallel arrays scanned
+    /// linearly -- this runs on the deopt path, which already pays a full
+    /// image staging, so a probe over a few dozen longs is free by
+    /// comparison. -1 = unused slot; PCs past the table land in
+    /// <see cref="DiagDeoptOverflow"/>.</summary>
+    public static readonly long[] DiagDeoptPcs = FreshPcTable();
+    public static readonly long[] DiagDeoptHits = new long[64];
+
+    // -1, not 0: pc 0 is a legal address, and a table left at its default
+    // would make every slot look OCCUPIED by it -- no site is ever claimed
+    // and every deopt lands in the overflow. ResetDiag is not enough; a
+    // browser session never calls it.
+    private static long[] FreshPcTable()
+    {
+        var a = new long[64];
+        for (int i = 0; i < a.Length; i++) a[i] = -1;
+        return a;
+    }
+    /// <summary>Deopts whose PC did not fit the table.</summary>
+    public static long DiagDeoptOverflow;
     /// <summary>Key slots at the FIRST deopt: flags, TR, trail limit, H,
     /// watermark, ST, stack limit. Null until one fires.</summary>
     public static long[]? DiagFirstDeoptSlots;
@@ -49,17 +68,64 @@ public sealed class WasmTierDelegate
     {
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
         DiagBuiltinTally.Clear();
-        for (int i = 0; i < DiagDeoptPcs.Length; i++) DiagDeoptPcs[i] = -1;
+        for (int i = 0; i < DiagDeoptPcs.Length; i++) { DiagDeoptPcs[i] = -1; DiagDeoptHits[i] = 0; }
+        DiagDeoptOverflow = 0;
         DiagFirstDeoptSlots = null;
+        DiagFirstRestoreGuard = null;
+    }
+
+
+    /// <summary>The two values the restore path's extra-trail guard compares
+    /// at the FIRST deopt: the top saved in the choice point (ctl[5]) and the
+    /// live one. They are supposed to be equal whenever nothing attributed
+    /// was bound; a run whose every Trust steps aside says they are not, and
+    /// the pair below says which side is wrong. Captured once, so nothing
+    /// here is on a hot path.</summary>
+    public static long[]? DiagFirstRestoreGuard;
+    /// <summary>Capture the guard only at this pc (0 = never). Diagnostic.</summary>
+    public static int DiagGuardPc;
+
+    private static void CaptureRestoreGuard(Activation engine, IWasmChainContext cx)
+    {
+        int b = engine.B;
+        var stack = engine.WasmStackView;
+        if (b < 0 || b >= stack.Length) return;
+        // [arity | A1..Aarity | CE CP B BP bindingTop extraTop heapTop ...]
+        int arity = (int)stack[b].Data;
+        int ctl = b + 1 + arity;
+        if ((uint)(ctl + 5) >= (uint)stack.Length) return;
+        DiagFirstRestoreGuard ??= new long[8];
+        var cap = new[]
+        {
+            b, arity,
+            stack[ctl + 5].Data,                    // the raw saved cell
+            (long)(int)stack[ctl + 5].Data,         // ...as the emitter reads it
+            engine.ExtraTrailTop,                   // the live top, managed
+            cx.ReadSlot(WasmAbi.ExtraTrailTop),     // ...as the mailbox has it
+            cx.ReadSlot(WasmAbi.DiagA),             // what the GUARD saw: saved
+            cx.ReadSlot(WasmAbi.DiagB),             // what the GUARD saw: live
+        };
+        System.Array.Copy(cap, DiagFirstRestoreGuard, 8);
     }
 
     private static void NoteDeoptPc(long pc)
     {
         for (int i = 0; i < DiagDeoptPcs.Length; i++)
         {
-            if (DiagDeoptPcs[i] == pc) return;
-            if (DiagDeoptPcs[i] == -1) { DiagDeoptPcs[i] = pc; return; }
+            if (DiagDeoptPcs[i] == pc) { DiagDeoptHits[i]++; return; }
+            if (DiagDeoptPcs[i] == -1) { DiagDeoptPcs[i] = pc; DiagDeoptHits[i] = 1; return; }
         }
+        DiagDeoptOverflow++;
+    }
+
+    /// <summary>The deopt sites, heaviest first: (pc, hits). Diagnostic.</summary>
+    public static List<(long Pc, long Hits)> DeoptRanking()
+    {
+        var r = new List<(long, long)>();
+        for (int i = 0; i < DiagDeoptPcs.Length; i++)
+            if (DiagDeoptPcs[i] >= 0) r.Add((DiagDeoptPcs[i], DiagDeoptHits[i]));
+        r.Sort((x, y) => y.Item2.CompareTo(x.Item2));
+        return r;
     }
 
     /// <summary>The delegate entry. <paramref name="address"/> is a marker
@@ -150,6 +216,8 @@ public sealed class WasmTierDelegate
                             cx.ReadSlot(WasmAbi.StackTop),
                             cx.ReadSlot(WasmAbi.StackLimit),
                         };
+                    if (DiagGuardPc != 0 && pendingPc == DiagGuardPc)
+                        CaptureRestoreGuard(engine, cx);
                     result = true;
                     break;
                 }

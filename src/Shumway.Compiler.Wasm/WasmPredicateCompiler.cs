@@ -1756,18 +1756,20 @@ public static class WasmPredicateCompiler
                 GoTo(missAddr);                 // not compound: a miss
                 CloseNested();
 
-                // arity of the functor cell at the payload, from the mirror
-                // the host keeps at FunctorArityBase.
+                // arity of the functor cell at the payload, from the host's
+                // mirror of the functor table: one i64 per id, and the arity
+                // is its low half.
                 Op(new LocalGet(LC0)); Op(new Int32WrapInt64());
                 Op(new LocalSet(LT1));          // the structure's heap index
-                LoadSlot32(WasmAbi.FunctorArityBase);
+                LoadSlot32(WasmAbi.FunctorTableBase);
                 CellLoadDyn(LHeapB, LT1);
                 Op(new Int64Constant(Cell.PayloadMask));
                 Op(new Int64And());
                 Op(new Int32WrapInt64());
-                Op(new Int32Constant(2)); Op(new Int32ShiftLeft());
+                Op(new Int32Constant(3)); Op(new Int32ShiftLeft());
                 Op(new Int32Add());
-                Op(new Int32Load());
+                Op(new Int64Load());
+                Op(new Int32WrapInt64());
                 Op(new Int32Constant(idx));
                 Op(new Int32LessThanOrEqualSigned());
                 OpenIf();
@@ -1934,7 +1936,8 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LT2)); Op(new LocalGet(LT0));
             Op(new Int32GreaterThanOrEqualSigned());
             Op(new BranchIf(1));
-            // regs[t2] = stack[B + 1 + t2]
+            // regs[t2] = stack[B + 1 + t2]. A cell is EIGHT bytes: these
+            // index cells, not the 4-byte trail entries.
             Op(new LocalGet(LRegsB));
             Op(new LocalGet(LT2)); Op(new Int32Constant(3)); Op(new Int32ShiftLeft());
             Op(new Int32Add());
@@ -1949,7 +1952,8 @@ public static class WasmPredicateCompiler
             CloseNested();
             CloseNested();
 
-            // ctlBase (a byte address) = &stack[B] + (1 + arity) * 8
+            // ctlBase (a byte address) = &stack[B] + arity * 8; the loads
+            // below carry the +1 cell for the arity word in their offsets.
             CellAddr(LStackB, LB);
             Op(new LocalGet(LT0)); Op(new Int32Constant(3)); Op(new Int32ShiftLeft());
             Op(new Int32Add());
@@ -1967,6 +1971,14 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.ExtraTrailTop);
             Op(new Int32NotEqual());
             OpenIf();
+            // Leave the two operands where the host can read them: a guard
+            // that fires on every backtrack is a bug in the comparison, not
+            // a real difference, and only the values at the instant it fired
+            // tell the two apart.
+            StoreSlot64(WasmAbi.DiagA, () =>
+            { Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 6 * 8 }); });
+            StoreSlot64(WasmAbi.DiagB, () =>
+            { LoadSlot32(WasmAbi.ExtraTrailTop); Op(new Int64ExtendInt32Signed()); });
             EmitDeopt(pcForDeopt);
             CloseNested();
 
@@ -3367,7 +3379,7 @@ public static class WasmPredicateCompiler
         // (a: i64, b: i64, mailbox: i32) -> i32: 0 fail, 1 ok, 2 deopt.
         // Iterative over a worklist of cell pairs laid above the stack top
         // (nothing pushes frames or CPs while it runs); functor arities come
-        // from the host-mirrored table at FunctorArityBase, because the
+        // from the host-mirrored table at FunctorTableBase, because the
         // functor table is managed state. Attvars, bigints, rationals and
         // PSTRs deopt: their unification is engine logic. A deopt after
         // partial binding is sound -- everything bound so far was required,
@@ -3377,7 +3389,7 @@ public static class WasmPredicateCompiler
         private static List<Instruction> BuildUnifierBody()
         {
             const uint PA = 0, PB = 1, MB = 2;
-            const uint HEAPB = 3, TRAILB = 4, ARITYB = 5, TR = 6, HHB = 7,
+            const uint HEAPB = 3, TRAILB = 4, FTABB = 5, TR = 6, HHB = 7,
                        TRLIM = 8, WL = 9, WLBASE = 10, WLLIM = 11,
                        DA = 12, DB = 13, K = 14;
             const uint CA = 15, CB = 16, C1 = 17, FA = 18;
@@ -3464,7 +3476,7 @@ public static class WasmPredicateCompiler
             // ---- prologue ----
             SlotToI32(WasmAbi.HeapBase, HEAPB);
             SlotToI32(WasmAbi.BindingTrailBase, TRAILB);
-            SlotToI32(WasmAbi.FunctorArityBase, ARITYB);
+            SlotToI32(WasmAbi.FunctorTableBase, FTABB);
             SlotToI32(WasmAbi.TrailTop, TR);
             SlotToI32(WasmAbi.HeapBacktrack, HHB);
             SlotToI32(WasmAbi.TrailLimit, TRLIM);
@@ -3543,13 +3555,18 @@ public static class WasmPredicateCompiler
                     HeapLoad(DB); LSet(C1);
                     LG(FA); LG(C1); O(new Int64NotEqual());
                     OIf(); Ret(0); OEnd();
-                    LG(ARITYB);
+                    LG(FTABB);
                     LG(FA); I64(Cell.PayloadMask); O(new Int64And());
-                    O(new Int32WrapInt64()); I32(2); O(new Int32ShiftLeft());
-                    O(new Int32Add()); O(new Int32Load()); LSet(K);
+                    O(new Int32WrapInt64()); I32(3); O(new Int32ShiftLeft());
+                    O(new Int32Add()); O(new Int64Load());
+                    O(new Int32WrapInt64()); LSet(K);
                     OBlock(); OLoop();
                     {
-                        LG(K); I32(0); O(new Int32Equal()); O(new BranchIf(1));
+                        // le_s, not eq: the arity comes from the host's mirror,
+                        // and a negative one would walk past the exit and only
+                        // stop when the worklist filled. Same one instruction.
+                        LG(K); I32(0); O(new Int32LessThanOrEqualSigned());
+                        O(new BranchIf(1));
                         LG(WL); I32(16); O(new Int32Add()); LG(WLLIM);
                         O(new Int32GreaterThanSigned());
                         OIf(); Ret(2); OEnd();

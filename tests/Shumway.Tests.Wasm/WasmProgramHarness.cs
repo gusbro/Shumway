@@ -31,8 +31,9 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
     private const int StackCells = 30_000;
     private const int TrailAt = StackAt + StackCells * 8;
     private const int TrailEntries = 20_000;
-    // The functor-arity mirror the general unifier reads (i32 per functor id).
-    private const int ArityAt = TrailAt + TrailEntries * 4;
+    // The functor-table mirror the unifier and the sub-index hops read
+    // (one packed i64 per functor id).
+    private const int FunctorTableAt = TrailAt + TrailEntries * 4;
 
     // Harness encodings (IWasmCompileEnv): tagged so they can never collide
     // with each other or with a small cursor.
@@ -54,7 +55,7 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
         Shumway.Embedding.MetaBuiltins.EnsureRegistered();
         // Sixteen pages hold the whole image (heap 480 KB, stack 240 KB,
-        // trail 80 KB, the functor-arity mirror, mailbox and registers).
+        // trail 80 KB, the functor mirror, mailbox and registers).
         _memory = new UnmanagedMemory(16, 16);
         var clauses = new ClauseReader(source).ReadAll().ToList();
         var module = new ModuleCompiler().Compile(clauses);
@@ -164,25 +165,40 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
         SetSlot(WasmAbi.CutBarrier, -1);
         SetSlot(WasmAbi.WriteMode, 0);
         SetSlot(WasmAbi.UnifyPointer, 0);
-        SetSlot(WasmAbi.FunctorArityBase, ArityAt);
-        SyncArityTable();
+        SetSlot(WasmAbi.FunctorTableBase, FunctorTableAt);
+        SyncFunctorTable();
     }
+
+    /// <summary>The image's mirror of functor id <paramref name="fid"/>,
+    /// unpacked. Lets a test hold the image to the managed table cell for
+    /// cell rather than trusting that the arity alone came out right.</summary>
+    public (int AtomId, int Arity) MirroredFunctor(int fid)
+    {
+        long packed = Marshal.ReadInt64(_memory.Start, FunctorTableAt + fid * 8);
+        return ((int)((ulong)packed >> 32), (int)packed);
+    }
+
+    /// <summary>How many functor ids the image currently mirrors.</summary>
+    public static int MirroredCount => FunctorTable.IdLimit;
 
     // ---- building and reading terms in the image ----
 
     private void WriteHeap(int index, Cell c)
         => Marshal.WriteInt64(_memory.Start, HeapAt + index * 8, c.Data);
 
-    /// <summary>Mirrors every functor's arity into the image. Re-run per
-    /// query setup: term builders may intern functors after construction.</summary>
-    private void SyncArityTable()
+    /// <summary>Mirrors the functor table into the image, exactly as the
+    /// real worlds do. Re-run per query setup: term builders may intern
+    /// functors after construction.</summary>
+    private void SyncFunctorTable()
     {
-        int count = FunctorTable.Count;
-        if (ArityAt + count * 4 > 16 * 65536)
-            throw new InvalidOperationException($"arity mirror overflows the image ({count} functors)");
-        for (int fid = 0; fid < count; fid++)
-            Marshal.WriteInt32(_memory.Start, ArityAt + fid * 4,
-                FunctorTable.TryLookup(fid, out var fe) ? fe.Arity : 0);
+        int count = FunctorTable.IdLimit;
+        if (FunctorTableAt + count * 8 > 16 * 65536)
+            throw new InvalidOperationException(
+                $"functor mirror overflows the image ({count} functors)");
+        var packed = new long[count];
+        int n = FunctorTable.CopyPackedFrom(0, packed);
+        for (int fid = 0; fid < n; fid++)
+            Marshal.WriteInt64(_memory.Start, FunctorTableAt + fid * 8, packed[fid]);
     }
 
     private int AllocHeap(int cells)

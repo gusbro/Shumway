@@ -125,11 +125,23 @@ public static class WasmAbi
     public const int WriteMode = 22;
     /// <summary>S -- the unify pointer.</summary>
     public const int UnifyPointer = 23;
-    /// <summary>Base of an int32 array mapping functor id to arity, mirrored
-    /// into the linear memory by the host. The general unifier needs an
-    /// arity to walk a structure's arguments, and the functor table is
-    /// managed state.</summary>
-    public const int FunctorArityBase = 24;
+    /// <summary>Base of the functor table's mirror in linear memory: one
+    /// i64 per functor id, packed <c>(atomId &lt;&lt; 32) | arity</c> exactly
+    /// as FunctorTable keeps it. The table is managed state the module
+    /// cannot reach, and the mirror is deliberately an EXACT copy rather
+    /// than the arity alone: a wasm-side value that diverges can then be
+    /// named (this functor, that atom) instead of only counted.
+    ///
+    /// <para>An id the host has not mirrored reads as zero, whose arity is
+    /// zero: a structure walk enqueues nothing and a sub-index hop misses.
+    /// Both are the safe direction.</para></summary>
+    public const int FunctorTableBase = 24;
+
+    /// <summary>Diagnostic scratch: a step-aside site may leave the two
+    /// values it compared here, so the host can see WHY it stepped aside
+    /// rather than only where. Never read by compiled code.</summary>
+    public const int DiagA = 25;
+    public const int DiagB = 26;
 
     public const int SlotCount = 32;
     public const int SlotSize = 8;

@@ -774,6 +774,48 @@ either — an A/B with the guard in and out named it in one run. Bench
 after removal: geomean 106.6x (counter 292x, nrev 69x, tak 73x, crypt
 128x, zebra 73x).
 
+### The restore path had never actually run
+
+The guard above was removed as redundant because `EmitRestoreCommon`
+"already steps aside when the CP's extra-trail top differs". It did step
+aside — on every single retry and trust, for a reason that had nothing to
+do with the extra trail.
+
+`EmitRestoreCommon` reaches the choice point's control block by adding the
+arity to the frame base, and it scaled that arity by four. A cell is eight
+bytes. With arity 3 the pointer landed twelve bytes short, so every load
+off it read the second half of one cell and the first half of the next.
+The extra-trail slot came back as `0x24C0000000` where the frame actually
+holds `RawInt(0)` (`0xC000000000000000`, which wraps to the 0 the guard
+wanted). Unequal, always. The register-restore loop above it indexed both
+the register bank and the stack the same wrong way.
+
+What makes this worth a section is the failure mode, not the typo. A
+backend that may hand work back to the interpreter can be **wrong in a way
+that looks exactly like being right, only slower**: the deopt discarded
+the bad restore, the interpreter re-ran the whole instruction, and every
+answer came out correct. A differential against Tier-0 cannot see this,
+and neither can a conformance suite; both were green throughout.
+
+What it cost: `once(queens(10,_))` entered the tier 379,669 times and
+stepped aside 379,661 of them — one full image staging per backtrack.
+Fixed, the same goal enters 8 times and steps aside never, because the
+backtracking now stays inside the module (5,888 ms to 4,794 ms on the
+desktop world, where Tier-0 already runs under a JIT; the browser's
+interpreted Tier-0 should show more).
+
+What caught it: counting the step-asides **per pc** and naming each site
+by its instruction. The total alone said nothing actionable, and both the
+standing hypotheses — clpfd, attributed variables — were wrong. The
+ranking put `Trust` in `select/3` and `permutation/2` at the top and the
+question answered itself. `WasmTierDelegate.DeoptRanking()` keeps that
+ranking and `wasm_compile(status)` prints it.
+
+The regression test is `tests/Shumway.Tests.Wasm/RestorePathTests.cs`: deep
+backtracking on the tier with `deopts == 0` asserted. Nothing in it binds
+an attributed variable, so there is no legitimate step-aside to allow —
+which is what makes zero the right bound rather than a small number.
+
 ## Risk register
 
 | Risk | Exposure | Mitigation / kill switch |

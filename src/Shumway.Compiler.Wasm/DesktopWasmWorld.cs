@@ -27,8 +27,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 
     private readonly UnmanagedMemory _memory = new(Pages, Pages);
     private Build? _current;
-    private int _aritySynced;
-    private int _arityAt = -1;
+    private int _functorSynced;
+    private int _functorAt = -1;
 
     /// <summary>One installed group compile: the instance and the maps a
     /// chain captures. Old builds stay referenced by their open chains.</summary>
@@ -120,7 +120,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private readonly Build _build;
         private readonly Activation _engine;
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
-        private int _heapAt, _stackAt, _trailAt, _arityAt;
+        private int _heapAt, _stackAt, _trailAt, _functorAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -144,18 +144,18 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _heapAt = RegistersAt + regs.Length * 8;
             _stackAt = _heapAt + heap.Length * 8;
             _trailAt = _stackAt + stack.Length * 8;
-            _arityAt = _trailAt + trail.Length * 4;
-            int fcount = FunctorTable.Count;
-            if (_arityAt + (long)fcount * 4 > (long)Pages * 65536)
+            _functorAt = _trailAt + trail.Length * 4;
+            int fcount = FunctorTable.IdLimit;
+            if (_functorAt + (long)fcount * 8 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
-            if (_arityAt != _w._arityAt) { _w._arityAt = _arityAt; _w._aritySynced = 0; }
+            if (_functorAt != _w._functorAt) { _w._functorAt = _functorAt; _w._functorSynced = 0; }
 
             var bases = new Activation.WasmMailboxBases(
                 _heapAt, _stackAt, RegistersAt, _trailAt,
                 HeapLimitCells: heap.Length - 8,
                 StackLimitCells: stack.Length - 8,
                 TrailLimitEntries: trail.Length - 8,
-                FunctorArityBase: _arityAt);
+                FunctorTableBase: _functorAt);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -174,12 +174,16 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int tr = _engine.BindingTrailTop;
             fixed (int* p = trail)
                 Buffer.MemoryCopy(p, mem + _trailAt, tr * 4L, tr * 4L);
-            // TryLookup, not Lookup: the id space can have holes (atom GC) and
-            // ids other threads interned but not yet published. Neither kind
-            // can appear in THIS engine's areas, so 0 is a safe filler.
-            for (; _w._aritySynced < fcount; _w._aritySynced++)
-                *(int*)(mem + _arityAt + _w._aritySynced * 4L)
-                    = FunctorTable.TryLookup(_w._aritySynced, out var fe) ? fe.Arity : 0;
+            // An exact copy of the table's own packed array, resumed where
+            // the last staging stopped. CopyPackedFrom stops at an id a
+            // racing intern has not published, so the mirror never freezes a
+            // filler in place; the next staging picks it up.
+            if (_w._functorSynced < fcount)
+            {
+                var dest = new Span<long>(
+                    mem + _functorAt + _w._functorSynced * 8L, fcount - _w._functorSynced);
+                _w._functorSynced = FunctorTable.CopyPackedFrom(_w._functorSynced, dest);
+            }
             _engineAuthoritative = false;
         }
 

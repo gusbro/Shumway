@@ -164,7 +164,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 HeapLimitCells: heap.Length - 8,
                 StackLimitCells: stack.Length - 8,
                 TrailLimitEntries: trail.Length - 8,
-                FunctorArityBase: BrowserWasmTier.ArityMirrorAddress());
+                FunctorTableBase: BrowserWasmTier.FunctorMirrorAddress());
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -231,35 +231,77 @@ internal static class BrowserWasmTier
 {
     // The functor-arity mirror the general unifier reads, pinned and
     // process-wide: append-only under the lock, read lock-free by the wasm.
-    private static int[] _arityMirror = GC.AllocateArray<int>(4096, pinned: true);
-    private static int _aritySynced;
-    private static readonly object _arityLock = new();
+    private static long[] _functorMirror = GC.AllocateArray<long>(4096, pinned: true);
+    private static int _functorSynced;
+    private static readonly object _functorMirrorLock = new();
 
-    internal static long ArityMirrorAddress()
+
+    /// <summary>The deopt sites that actually cost, heaviest first, each
+    /// named by the instruction it steps aside at. A deopt pays a full image
+    /// staging, so a handful of hot sites can dominate a run: this is the
+    /// list that says which one to open-code next, instead of guessing from
+    /// the total.</summary>
+    internal static string DeoptRankingReport(PrologEngine engine)
     {
-        SyncArityMirror();
-        return (long)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_arityMirror, 0);
+        var rank = WasmTierDelegate.DeoptRanking();
+        if (rank.Count == 0) return "";
+        var spans = new List<(int Lo, int Hi, Shumway.Compiler.Wam.CompiledPredicate Pred)>();
+        foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
+            spans.Add((addr, addr + pred.Bytecode.Length, pred));
+
+        var sb = new System.Text.StringBuilder();
+        long total = WasmTierDelegate.DiagDeopts;
+        sb.Append("%   deopt sites (of ").Append(total).Append("):\n");
+        for (int i = 0; i < rank.Count && i < 8; i++)
+        {
+            var (pc, hits) = rank[i];
+            string where = $"0x{pc:X}";
+            foreach (var sp in spans)
+                if (pc >= sp.Lo && pc < sp.Hi)
+                {
+                    var (aid, ar) = Shumway.Core.FunctorTable.Lookup(sp.Pred.FunctorId);
+                    var op = (Shumway.Core.Opcode)sp.Pred.Bytecode[pc - sp.Lo];
+                    where = $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}"
+                          + $"@+{pc - sp.Lo} {op}";
+                    break;
+                }
+            double pct = total > 0 ? hits * 100.0 / total : 0;
+            sb.Append($"%     {hits} ({pct:F0}%) {where}\n");
+        }
+        if (WasmTierDelegate.DiagDeoptOverflow > 0)
+            sb.Append($"%     {WasmTierDelegate.DiagDeoptOverflow} at sites past the table\n");
+        return sb.ToString();
     }
 
-    private static void SyncArityMirror()
+    internal static long FunctorMirrorAddress()
     {
-        int count = FunctorTable.Count;
-        if (count <= Volatile.Read(ref _aritySynced)) return;
-        lock (_arityLock)
+        SyncFunctorMirror();
+        return (long)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_functorMirror, 0);
+    }
+
+    /// <summary>Keeps the linear-memory image of the functor table current:
+    /// an exact copy of the packed (atomId, arity) array, extended in place
+    /// from where the last sync stopped.</summary>
+    private static void SyncFunctorMirror()
+    {
+        int count = FunctorTable.IdLimit;
+        if (count <= Volatile.Read(ref _functorSynced)) return;
+        lock (_functorMirrorLock)
         {
-            if (count > _arityMirror.Length)
+            if (count > _functorMirror.Length)
             {
-                int grown = _arityMirror.Length;
+                int grown = _functorMirror.Length;
                 while (grown < count) grown *= 2;
-                var next = GC.AllocateArray<int>(grown, pinned: true);
-                Array.Copy(_arityMirror, next, _arityMirror.Length);
-                _arityMirror = next;
+                var next = GC.AllocateArray<long>(grown, pinned: true);
+                Array.Copy(_functorMirror, next, _functorMirror.Length);
+                _functorMirror = next;
                 // The new address is picked up at the NEXT staging; the old
                 // pinned array stays valid for any chain in flight.
             }
-            for (int fid = _aritySynced; fid < count; fid++)
-                _arityMirror[fid] = FunctorTable.TryLookup(fid, out var fe) ? fe.Arity : 0;
-            Volatile.Write(ref _aritySynced, count);
+            int synced = _functorSynced;
+            Volatile.Write(ref _functorSynced,
+                FunctorTable.CopyPackedFrom(synced,
+                    _functorMirror.AsSpan(synced, count - synced)));
         }
     }
 
@@ -900,6 +942,7 @@ internal static partial class WebShumwayApp
                     + $"deopts={WasmTierDelegate.DiagDeopts} "
                     + $"builtinExits={WasmTierDelegate.DiagBuiltins} "
                     + $"tailExits={WasmTierDelegate.DiagTailExits}\n"
+                    + BrowserWasmTier.DeoptRankingReport(engine)
                     + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} group builds, "
                     + $"{BrowserWasmTier.DiagCompileTicks * 1000.0 / Stopwatch.Frequency:F0} ms total\n";
             }

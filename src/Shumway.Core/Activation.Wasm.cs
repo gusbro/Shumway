@@ -15,7 +15,7 @@ public sealed partial class Activation
     public readonly record struct WasmMailboxBases(
         long HeapBase, long StackBase, long RegistersBase, long BindingTrailBase,
         int HeapLimitCells, int StackLimitCells, int TrailLimitEntries,
-        long FunctorArityBase);
+        long FunctorTableBase);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -83,7 +83,7 @@ public sealed partial class Activation
         m[WasmAbi.CutBarrier] = _b0;
         m[WasmAbi.WriteMode] = _writeMode ? 1 : 0;
         m[WasmAbi.UnifyPointer] = _unifyPointer;
-        m[WasmAbi.FunctorArityBase] = bases.FunctorArityBase;
+        m[WasmAbi.FunctorTableBase] = bases.FunctorTableBase;
         return true;
     }
 
