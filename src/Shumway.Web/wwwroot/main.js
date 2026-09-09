@@ -270,7 +270,8 @@ async function run(queryText) {
   // promotion threshold (1 = promote on first call), wasm_compile(all).
   // compiles the whole static program now and after every consult,
   // wasm_compile(off). stops promoting (what already promoted keeps running
-  // as wasm — restart. is the full off), wasm_compile(status). reports.
+  // as wasm, and the OFF sticks: a later restart. boots with neither the
+  // tier nor the baked prelude), wasm_compile(status). reports.
   const wasmCompile = /^\s*wasm_compile\s*(?:\(\s*(on|off|all|status|\d+)\s*\))?\s*\.?\s*$/
     .exec(queryText);
   if (wasmCompile) {
@@ -1788,6 +1789,15 @@ if (persistMode) {
     // A fresh engine (restart.): the baked prelude must reinstall — interning
     // is idempotent, so the replay validation passes again — and `all` must
     // still find nothing of the prelude to compile.
+    // wasm_compile(off) must SURVIVE a restart: the boot skips both the
+    // tier and the baked prelude, or "an engine with no wasm at all" would
+    // be false the moment it booted.
+    mark('off then restart');
+    lines.push(await session.exports().WasmCompileControl('off'));
+    await session.resetEngine();
+    lines.push('after off+restart:\n');
+    lines.push(await session.exports().WasmCompileControl('status'));
+    lines.push(await session.exports().WasmCompileControl('on'));
     mark('restart');
     await session.resetEngine();
     lines.push('after restart:\n');

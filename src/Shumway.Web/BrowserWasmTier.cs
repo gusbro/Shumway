@@ -270,9 +270,16 @@ internal static class BrowserWasmTier
 
     /// <summary>Attaches the wasm promotion store to an engine. No-op when
     /// the capability is off.</summary>
+    /// <summary>Set by wasm_compile(off) and honoured by the BOOT, so a
+    /// restart really does give an engine with no wasm in it. Without it the
+    /// boot re-attached the tier at the default threshold AND installed the
+    /// baked prelude, so "restart. for a clean engine" was false twice over.
+    /// Cleared by any wasm_compile that turns the tier back on.</summary>
+    internal static bool Disabled;
+
     internal static void Attach(PrologEngine engine, int threshold = 16)
     {
-        if (!RuntimeCaps.SupportsWasmCodegen) return;
+        if (!RuntimeCaps.SupportsWasmCodegen || Disabled) return;
         var store = engine.IlPromotion;
         var world = new BrowserWasmWorld();
         _worlds.Clear();
@@ -903,14 +910,22 @@ internal static partial class WebShumwayApp
                     w.Threshold = 0;
                     w.CompileAllOnConsult = false;
                 }
-                return "% wasm_compile: promotion off — already-promoted "
-                    + "predicates keep running as wasm (restart. for a clean engine)\n";
+                // A predicate already promoted keeps running as wasm: taking
+                // its delegate away with a live choice point inside would
+                // break the redo. A fresh engine has none, so the flag makes
+                // the BOOT skip both the tier and the baked prelude — which
+                // is what makes the sentence below true.
+                BrowserWasmTier.Disabled = true;
+                return "% wasm_compile: promotion off. Already-promoted "
+                    + "predicates keep running as wasm; restart. now gives an "
+                    + "engine with no wasm at all (wasm_compile. re-enables)\n";
             }
             if (command == "all")
             {
                 // Compile the whole static program NOW and again after every
                 // consult — never on the user's first real query, which would
                 // otherwise be billed for all of it at once.
+                BrowserWasmTier.Disabled = false;   // asking for all un-disables
                 if (store.Wasm is null) BrowserWasmTier.Attach(engine, threshold: 16);
                 if (store.Wasm is not { } wa)
                     return "% wasm_compile: could not attach\n";
@@ -942,6 +957,7 @@ internal static partial class WebShumwayApp
                 : int.TryParse(command, out int n) && n > 0 ? n : -1;
             if (threshold < 0)
                 return "% wasm_compile: on | off | status | <threshold>\n";
+            BrowserWasmTier.Disabled = false;       // turning it on un-disables
             if (store.Wasm is { } existing)
             {
                 existing.Threshold = threshold;

@@ -52,6 +52,13 @@ internal static partial class WebShumwayApp
     private static void InstallBakedPrelude(PrologEngine engine)
     {
         if (!Shumway.Core.RuntimeCaps.SupportsWasmCodegen) return;
+        // wasm_compile(off) asked for no wasm: installing 530 predicates of
+        // it at boot would answer a different question.
+        if (BrowserWasmTier.Disabled)
+        {
+            BrowserWasmTier.BakedInstallNote = "not installed (wasm_compile off)";
+            return;
+        }
         using Stream? rs = typeof(WebShumwayApp).Assembly
             .GetManifestResourceStream(WasmGroupResourceName);
         if (rs is null) return;
