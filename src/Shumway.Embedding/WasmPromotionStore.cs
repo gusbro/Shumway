@@ -201,9 +201,24 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     public bool IsUnpromotable(int functorId) => _unpromotable.Contains(functorId);
 
+    // Why each refusal happened, so the report can say it. A refusal is
+    // always the backend declining a shape it does not translate yet, and
+    // that reason is the only actionable part of it.
+    private readonly Dictionary<int, string> _refusalReason = new();
+
     /// <summary>Marks a functor refused (a batch build's poisoner) so no
-    /// later dispatch or batch tries it again.</summary>
-    public void MarkUnpromotable(int functorId) => _unpromotable.Add(functorId);
+    /// later dispatch or batch tries it again. <paramref name="reason"/> is
+    /// the compiler's own message.</summary>
+    public void MarkUnpromotable(int functorId, string? reason = null)
+    {
+        _unpromotable.Add(functorId);
+        if (reason is { Length: > 0 }) _refusalReason[functorId] = reason;
+    }
+
+    /// <summary>What the compiler said when it refused this functor, or
+    /// null when it was refused without one.</summary>
+    public string? RefusalReason(int functorId)
+        => _refusalReason.TryGetValue(functorId, out string? r) ? r : null;
 
     /// <summary>The functors a compile actually REFUSED. The set also caches
     /// by-design exclusions (the synthetic __query__ wrappers, whose body

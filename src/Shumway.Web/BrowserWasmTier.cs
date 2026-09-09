@@ -357,9 +357,9 @@ internal static class BrowserWasmTier
                             new List<WasmGroupMember> { m }, env);
                         good.Add(m);
                     }
-                    catch (WasmCompileException)
+                    catch (WasmCompileException ex)
                     {
-                        store.Wasm?.MarkUnpromotable(m.Predicate.FunctorId);
+                        store.Wasm?.MarkUnpromotable(m.Predicate.FunctorId, ex.Message);
                     }
                 }
                 if (good.Count == 0) return 0;
@@ -426,11 +426,14 @@ internal static class BrowserWasmTier
             InstallCurrent(world, members, env);
             return new WasmTierDelegate(pred.FunctorId, world).Invoke;
         }
-        catch (WasmCompileException)
+        catch (WasmCompileException ex)
         {
-            // The candidate poisoned the group: reinstall without it.
+            // The candidate poisoned the group: reinstall without it, and
+            // keep WHY. A refusal is the backend declining a shape it does
+            // not translate yet, and that reason is its actionable part.
             members.Remove(candidate);
             if (members.Count > 0) InstallCurrent(world, members, env);
+            store.Wasm?.MarkUnpromotable(pred.FunctorId, ex.Message);
             return null;
         }
     }
@@ -871,7 +874,10 @@ internal static partial class WebShumwayApp
                 }
                 var folded = byModule.Select(kv => $"{kv.Value} {kv.Key}").ToList();
                 if (baked > 0) folded.Add($"{baked} baked prelude");
-                var refused = w.UnpromotableFunctorIds().Select(Name).ToList();
+                var refused = w.UnpromotableFunctorIds()
+                    .Select(f => w.RefusalReason(f) is { } why
+                        ? $"{Name(f)} ({why})" : Name(f))
+                    .ToList();
                 return $"% wasm_compile: threshold={w.Threshold}\n"
                     + $"%   baked prelude: {BrowserWasmTier.BakedInstallNote}\n"
                     + (w.RelinkEvictions > 0
@@ -909,6 +915,11 @@ internal static partial class WebShumwayApp
                 if (store.Wasm is not { } wa)
                     return "% wasm_compile: could not attach\n";
                 wa.CompileAllOnConsult = true;
+                // `all` means ALL: whatever the batch cannot reach - a
+                // predicate consulted later, one the batch skipped - promotes
+                // on its FIRST dispatch instead of after the lazy tier's
+                // warm-up count.
+                wa.Threshold = 1;
                 long b0 = Stopwatch.GetTimestamp();
                 int batched = wa.CompileAllTick(engine);
                 double ms = (Stopwatch.GetTimestamp() - b0) * 1000.0 / Stopwatch.Frequency;
@@ -919,7 +930,8 @@ internal static partial class WebShumwayApp
                     ? $"% (the baked prelude is not installed — {BrowserWasmTier.BakedInstallNote})\n"
                     : "";
                 return $"% wasm_compile: all — {batched} predicates compiled now "
-                    + $"({ms:F0} ms); every consult recompiles the new ones\n"
+                    + $"({ms:F0} ms), threshold 1 from here; every consult "
+                    + "recompiles the new ones\n"
                     + bakedNote
                     + "% (experimental)\n";
             }
