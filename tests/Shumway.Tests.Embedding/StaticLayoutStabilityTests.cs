@@ -21,7 +21,9 @@ public sealed class StaticLayoutStabilityTests
     private static Dictionary<int, (int Addr, string Name)> Layout(PrologEngine e)
     {
         var d = new Dictionary<int, (int, string)>();
-        foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(e))
+        var link = e._staticLink;
+        if (link is null) return d;
+        foreach (var (addr, pred) in link.PredicatesByAddress)
         {
             var (aid, ar) = Shumway.Core.FunctorTable.Lookup(pred.FunctorId);
             d[pred.FunctorId] =
