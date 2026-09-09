@@ -57,7 +57,9 @@ public sealed class Linker
     /// addresses after them do not move. Their bytes are emitted as they
     /// were; nothing links to them, so their call sites are left
     /// unpatched.</summary>
-    public IReadOnlySet<int>? DeadIndices { get; set; }
+    // HashSet, not IReadOnlySet: the latter does not exist on .NET
+    // Framework, which this project also targets.
+    public HashSet<int>? DeadIndices { get; set; }
 
     public LinkResult Link(
         CompiledModule module, int loadOffset = 0,
