@@ -210,6 +210,9 @@ public static class WasmPredicateCompiler
                 case Opcode.SwitchOnAtomArg:
                 case Opcode.SwitchOnStructure:
                 case Opcode.SwitchOnStructureArg:
+                case Opcode.SwitchOnAtomSub:
+                case Opcode.SwitchOnIntegerSub:
+                case Opcode.SwitchOnStructureSub:
                 case Opcode.Try:
                 case Opcode.Retry:
                 case Opcode.Trust:
@@ -327,10 +330,19 @@ public static class WasmPredicateCompiler
                     case Opcode.SwitchOnIntegerArg:
                     case Opcode.SwitchOnAtomArg:
                     case Opcode.SwitchOnStructureArg:
+                    case Opcode.SwitchOnAtomSub:
+                    case Opcode.SwitchOnIntegerSub:
+                    case Opcode.SwitchOnStructureSub:
                     {
-                        int tableId = ins.Op is Opcode.SwitchOnInteger or Opcode.SwitchOnAtom
-                                or Opcode.SwitchOnStructure
-                            ? ins.I0 : ins.I1;
+                        int tableId = ins.Op switch
+                        {
+                            Opcode.SwitchOnInteger or Opcode.SwitchOnAtom
+                                or Opcode.SwitchOnStructure => ins.I0,
+                            // (argIdx, sub0, sub1, tableId)
+                            Opcode.SwitchOnAtomSub or Opcode.SwitchOnIntegerSub
+                                or Opcode.SwitchOnStructureSub => ins.I3,
+                            _ => ins.I1,
+                        };
                         var table = Sec(ins).Predicate.SwitchTables[tableId];
                         foreach (int v in table.Values) _leaders.Add(b + v);
                         _leaders.Add(b + table.DefaultAddress);
@@ -1130,6 +1142,9 @@ public static class WasmPredicateCompiler
                 case Opcode.SwitchOnAtomArg: EmitSwitchOnAtom(ins, ins.I0, ins.I1); return true;
                 case Opcode.SwitchOnStructure: EmitSwitchOnStructure(ins, 0, ins.I0); return true;
                 case Opcode.SwitchOnStructureArg: EmitSwitchOnStructure(ins, ins.I0, ins.I1); return true;
+                case Opcode.SwitchOnAtomSub: EmitSwitchOnConstSub(ins, atoms: true); return true;
+                case Opcode.SwitchOnIntegerSub: EmitSwitchOnConstSub(ins, atoms: false); return true;
+                case Opcode.SwitchOnStructureSub: EmitSwitchOnStructureSub(ins); return true;
                 case Opcode.Try: EmitTry(ins); return true;
                 case Opcode.Retry: EmitRetry(ins); return true;
                 case Opcode.Trust: EmitTrust(ins); return true;
@@ -1689,6 +1704,165 @@ public static class WasmPredicateCompiler
                 CloseNested();
             }
             GoTo(b + table.DefaultAddress);
+        }
+
+        // ---- sub-argument indexing (ADR-027 / ADR-028) ----
+
+        /// <summary>One hop of the bounded sub-path: LC0 holds a dereferenced
+        /// cell, and this replaces it with its <paramref name="idx"/>-th
+        /// argument, dereferenced. A hop that cannot be taken -- a cell that
+        /// is not compound, an index past the arity — is a MISS and jumps to
+        /// <paramref name="missAddr"/>, which is the table's default: exactly
+        /// what TryHop returning false does in the interpreter.
+        ///
+        /// <para>A packed string steps aside: its hops read the head element
+        /// and the tail through engine helpers that have no wasm counterpart,
+        /// and the interpreter re-runs the whole instruction after the deopt
+        /// anyway.</para></summary>
+        private void EmitSubHop(int idx, int missAddr, int pcForDeopt)
+        {
+            TagOfC0(); Op(new LocalSet(LT0));
+
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant((int)Tag.Pstr));
+            Op(new Int32Equal());
+            OpenIf();
+            EmitDeopt(pcForDeopt);
+            CloseNested();
+
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant((int)Tag.Lis));
+            Op(new Int32Equal());
+            OpenIf();
+            {
+                // A cons has exactly two arguments, laid out at its payload.
+                if ((uint)idx > 1u) GoTo(missAddr);
+                else
+                {
+                    Op(new LocalGet(LC0)); Op(new Int32WrapInt64());
+                    Op(new Int32Constant(idx)); Op(new Int32Add());
+                    Op(new LocalSet(LT1));
+                    CellLoadDyn(LHeapB, LT1);
+                    Op(new LocalSet(LC0));
+                    Deref();
+                }
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant((int)Tag.Str));
+                Op(new Int32NotEqual());
+                OpenIf();
+                GoTo(missAddr);                 // not compound: a miss
+                CloseNested();
+
+                // arity of the functor cell at the payload, from the mirror
+                // the host keeps at FunctorArityBase.
+                Op(new LocalGet(LC0)); Op(new Int32WrapInt64());
+                Op(new LocalSet(LT1));          // the structure's heap index
+                LoadSlot32(WasmAbi.FunctorArityBase);
+                CellLoadDyn(LHeapB, LT1);
+                Op(new Int64Constant(Cell.PayloadMask));
+                Op(new Int64And());
+                Op(new Int32WrapInt64());
+                Op(new Int32Constant(2)); Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int32Load());
+                Op(new Int32Constant(idx));
+                Op(new Int32LessThanOrEqualSigned());
+                OpenIf();
+                GoTo(missAddr);                 // index past the arity: a miss
+                CloseNested();
+
+                Op(new LocalGet(LT1));
+                Op(new Int32Constant(1 + idx)); Op(new Int32Add());
+                Op(new LocalSet(LT1));
+                CellLoadDyn(LHeapB, LT1);
+                Op(new LocalSet(LC0));
+                Deref();
+            }
+            CloseNested();
+        }
+
+        /// <summary>Walks the whole sub-path into LC0 (sub1 &lt; 0 means one
+        /// hop), leaving a dereferenced terminal.</summary>
+        private void EmitSubWalk(int reg, int sub0, int sub1, int missAddr, int pcForDeopt)
+        {
+            RegLoad(reg); Op(new LocalSet(LC0)); Deref();
+            EmitSubHop(sub0, missAddr, pcForDeopt);
+            if (sub1 >= 0) EmitSubHop(sub1, missAddr, pcForDeopt);
+        }
+
+        /// <summary>switch_on_atom_sub / switch_on_integer_sub: the terminal
+        /// of the sub-path decides, and a terminal of the wrong type is the
+        /// table's default — the cell comparison covers both, since an atom
+        /// cell and an integer cell differ in their tag.</summary>
+        private void EmitSwitchOnConstSub(Instr ins, bool atoms)
+        {
+            int b = Bias(ins);
+            var table = Sec(ins).Predicate.SwitchTables[ins.I3];
+            int miss = b + table.DefaultAddress;
+            EmitSubWalk(ins.I0, ins.I1, ins.I2, miss, ins.Pc);
+            for (int k = 0; k < table.Count; k++)
+            {
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(atoms
+                    ? Cell.Atom(table.Keys[k]).Data
+                    : Cell.Int(table.Keys[k]).Data));
+                Op(new Int64Equal());
+                OpenIf();
+                GoTo(b + table.Values[k]);
+                CloseNested();
+            }
+            GoTo(miss);
+        }
+
+        /// <summary>switch_on_structure_sub: a Str terminal keys by its
+        /// functor; a cons keys as './2' (ADR-017 inline lists carry no
+        /// functor cell, and ADR-047 makes a non-empty packed string a cons
+        /// too — that one steps aside in the hop above).</summary>
+        private void EmitSwitchOnStructureSub(Instr ins)
+        {
+            int b = Bias(ins);
+            var table = Sec(ins).Predicate.SwitchTables[ins.I3];
+            int miss = b + table.DefaultAddress;
+            EmitSubWalk(ins.I0, ins.I1, ins.I2, miss, ins.Pc);
+
+            TagOfC0(); Op(new LocalSet(LT0));
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant((int)Tag.Lis));
+            Op(new Int32Equal());
+            OpenIf();
+            {
+                // The cons key is the ATOM id of '.', not an interned './2':
+                // the interpreter and the IL backend both look it up that way,
+                // and a table this one keys differently silently misses.
+                bool listed = false;
+                for (int k = 0; k < table.Count && !listed; k++)
+                    if (table.Keys[k] == AtomTable.ConsFunctorId)
+                    { GoTo(b + table.Values[k]); listed = true; }
+                if (!listed) GoTo(miss);
+            }
+            CloseNested();
+
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant((int)Tag.Str));
+            Op(new Int32NotEqual());
+            OpenIf();
+            GoTo(miss);
+            CloseNested();
+
+            Op(new LocalGet(LC0)); Op(new Int32WrapInt64()); Op(new LocalSet(LT1));
+            for (int k = 0; k < table.Count; k++)
+            {
+                CellLoadDyn(LHeapB, LT1);
+                Op(new Int64Constant(Cell.Functor(table.Keys[k]).Data));
+                Op(new Int64Equal());
+                OpenIf();
+                GoTo(b + table.Values[k]);
+                CloseNested();
+            }
+            GoTo(miss);
         }
 
         // ---- choice points (the engine's own layout, cell for cell) ----
