@@ -25,6 +25,16 @@
          COOP/COEP headers. See docs. -->
     <WasmEnableThreads>true</WasmEnableThreads>
 
+    <!-- REQUIRED for the NativeFileReference below to reach the runtime.
+         Threads do NOT imply the native relink: without this the SDK prints
+         "the native references won't be linked in, because neither
+         $(WasmBuildNative), nor $(RunAOTCompilation) are 'true'" as a
+         WARNING and publishes a runtime with no shim, so the wasm tier dies
+         at DllNotFoundException the first time it registers a module. With
+         it, a machine missing the wasm-tools workload fails the build
+         instead of shipping that. -->
+    <WasmBuildNative>true</WasmBuildNative>
+
     <!-- Sigil (Tier-1's IL emitter) is a third-party assembly we cannot annotate,
          so the trimmer reports IL2104 for it. Narrow and local, per the repo's
          zero-warning rule: it is scoped to THIS project, names the one code, and
@@ -50,13 +60,24 @@
     <ProjectReference Include="..\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
   </ItemGroup>
 
-  <!-- spike.c: the one-line call_indirect shim the spike's DllImport reaches
+  <!-- spike.c: the one-line call_indirect shim the tier's DllImport reaches
        (a managed calli through a runtime-added table index hangs; native code
-       has no such trouble). Threads already force the native relink, so this
-       only adds an object file to a link that happens anyway. -->
+       has no such trouble). Reaching the runtime needs WasmBuildNative above
+       and the wasm-tools workload. -->
   <ItemGroup>
     <NativeFileReference Include="spike.c" />
   </ItemGroup>
+
+  <!-- Publish into a CLEAN directory. Static web assets are fingerprinted by
+       content, so every publish adds a new dotnet.*.js / dotnet.native.*.wasm
+       and leaves the previous ones behind: the output grew to 288 MB of dead
+       copies, and — worse — a stale runtime that still carried a shim masked
+       a build that had stopped linking it, so the browser worked while the
+       build was broken. The publish output is derived; wiping it first costs
+       nothing and keeps what is served equal to what was built. -->
+  <Target Name="WipeStalePublishOutput" BeforeTargets="PrepareForPublish">
+    <RemoveDir Directories="$(PublishDir)" Condition="'$(PublishDir)' != '' AND Exists('$(PublishDir)')" />
+  </Target>
 
   <!-- The browser cannot emit IL (see RuntimeCaps), so declare it as a link-time
        constant: the trimmer folds RuntimeCaps.SupportsRuntimeCodegen to false,
