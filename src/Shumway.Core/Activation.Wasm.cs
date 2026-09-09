@@ -79,6 +79,8 @@ public sealed partial class Activation
         m[WasmAbi.StackLimit] = bases.StackLimitCells;
         m[WasmAbi.TrailLimit] = bases.TrailLimitEntries;
         m[WasmAbi.ExtraTrailTop] = _extraTrailTop;
+        m[WasmAbi.GoalsRun] = 0;                // drained on every sync back
+        m[WasmAbi.CellsClaimed] = 0;
         m[WasmAbi.ViewGen] = CurrentViewGen;
         m[WasmAbi.CutBarrier] = _b0;
         m[WasmAbi.WriteMode] = _writeMode ? 1 : 0;
@@ -105,5 +107,10 @@ public sealed partial class Activation
         _unifyPointer = (int)m[WasmAbi.UnifyPointer];
         CurrentViewGen = m[WasmAbi.ViewGen];
         _b0 = (int)m[WasmAbi.CutBarrier];
+        // What the module did on its own: goals it dispatched and cells it
+        // claimed, neither of which passes through a managed counter. Drained
+        // here, so re-entering the chain does not count them twice.
+        Inferences += m[WasmAbi.GoalsRun];
+        _cellsAllocated += m[WasmAbi.CellsClaimed];
     }
 }

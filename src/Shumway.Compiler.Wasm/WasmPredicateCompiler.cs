@@ -85,6 +85,10 @@ public static class WasmPredicateCompiler
     private const uint LC2 = 20;
     private const uint LMode = 21;    // i32: unify write mode
     private const uint LS = 22;       // i32: the unify pointer
+    // i64 tallies, after the AEval bank (see EngineLocals): goals dispatched
+    // and heap cells claimed, spilled to the mailbox with the scalars.
+    private const uint LGoals = 31;
+    private const uint LCells = 32;
 
     private const long RawIntTag = (long)Tag.RawInt << Cell.TagShift;
 
@@ -575,6 +579,7 @@ public static class WasmPredicateCompiler
             new Local { Count = 3, Type = WebAssemblyValueType.Int64 },
             new Local { Count = 2, Type = WebAssemblyValueType.Int32 },
             new Local { Count = AEvalMaxDepth, Type = WebAssemblyValueType.Int64 },
+            new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -786,10 +791,26 @@ public static class WasmPredicateCompiler
             LoadSlot32(WasmAbi.ContinuationPc); Op(new LocalSet(LCP));
             LoadSlot32(WasmAbi.WriteMode); Op(new LocalSet(LMode));
             LoadSlot32(WasmAbi.UnifyPointer); Op(new LocalSet(LS));
+            LoadSlot64(WasmAbi.GoalsRun); Op(new LocalSet(LGoals));
+            // Cells claimed = (H at exit - H at entry) + every span a
+            // backtrack discarded. Seeding with -H here and adding H back in
+            // the epilogue gives the first term with no extra local and no
+            // per-allocation work: claiming a cell is still just H++.
+            LoadSlot64(WasmAbi.CellsClaimed);
+            LoadSlot32(WasmAbi.HeapTop); Op(new Int64ExtendInt32Signed());
+            Op(new Int64Subtract());
+            Op(new LocalSet(LCells));
         }
 
         private void StoreScalars()
         {
+            StoreSlot64(WasmAbi.GoalsRun, () => Op(new LocalGet(LGoals)));
+            StoreSlot64(WasmAbi.CellsClaimed, () =>
+            {
+                Op(new LocalGet(LCells));
+                Op(new LocalGet(LH)); Op(new Int64ExtendInt32Signed());
+                Op(new Int64Add());
+            });
             StoreSlotFromI32Local(WasmAbi.HeapTop, LH);
             StoreSlotFromI32Local(WasmAbi.TrailTop, LTR);
             StoreSlotFromI32Local(WasmAbi.EnvTop, LE);
@@ -1345,14 +1366,25 @@ public static class WasmPredicateCompiler
                 case Opcode.AEvalUn: EmitAEvalUn(ins); return false;
                 case Opcode.AEvalIs: EmitAEvalIs(ins); return false;
                 case Opcode.AEvalCmp: EmitAEvalCmp(ins); return false;
-                case Opcode.Call: return EmitCall(ins);
-                case Opcode.Execute: EmitExecute(ins); return true;
+                case Opcode.Call: BumpGoals(); return EmitCall(ins);
+                case Opcode.Execute: BumpGoals(); EmitExecute(ins); return true;
                 default:
                     throw new WasmCompileException($"emit: {ins.Op} at {ins.Pc}");
             }
         }
 
         // ---- control ----
+
+        /// <summary>One goal dispatched, the event time/1 counts. An i64 add
+        /// on a local: the tally reaches memory once per chain, in the
+        /// epilogue, not once per goal.</summary>
+        private void BumpGoals()
+        {
+            Op(new LocalGet(LGoals));
+            Op(new Int64Constant(1));
+            Op(new Int64Add());
+            Op(new LocalSet(LGoals));
+        }
 
         private void EmitFlagsCheck(int pc)
         {
@@ -2004,6 +2036,17 @@ public static class WasmPredicateCompiler
             CloseNested();
             CloseNested();
 
+            // H is about to go BACKWARDS. Cells claimed before this
+            // backtrack were still claimed -- time/1 counts allocations, not
+            // the top -- so bank the span being discarded before dropping it.
+            Op(new LocalGet(LCells));
+            Op(new LocalGet(LH));
+            Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 7 * 8 });
+            Op(new Int32WrapInt64());
+            Op(new Int32Subtract());
+            Op(new Int64ExtendInt32Signed());
+            Op(new Int64Add());
+            Op(new LocalSet(LCells));
             Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 7 * 8 });
             Op(new Int32WrapInt64()); Op(new LocalSet(LH));         // ctl[6]
             StoreSlot64(WasmAbi.ViewGen, () =>

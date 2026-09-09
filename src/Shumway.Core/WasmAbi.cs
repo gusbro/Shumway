@@ -143,6 +143,15 @@ public static class WasmAbi
     public const int DiagA = 25;
     public const int DiagB = 26;
 
+    /// <summary>Goals dispatched and heap cells claimed INSIDE the module,
+    /// added to the engine's own tallies when a chain closes. Without these
+    /// the module is invisible to time/1: every call it makes and every cell
+    /// it claims never reaches a managed counter, and a run that stays in
+    /// wasm reports a handful of inferences for millions of goals. The heap
+    /// count is allocations, not the top, so backtracking does not undo it.</summary>
+    public const int GoalsRun = 27;
+    public const int CellsClaimed = 28;
+
     public const int SlotCount = 32;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
