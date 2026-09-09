@@ -67,8 +67,7 @@ public sealed class WasmTierDelegate
     /// or a retry.</summary>
     public bool Invoke(Activation engine, int address)
     {
-        if (!engine.WasmModeCompatible || engine.HasPendingWakeups
-            || engine.InWakeupDrain)
+        if (!engine.WasmModeCompatible || engine.HasPendingWakeups)
         {
             // A relink may have moved the code out from under the build:
             // the fallback pc must be LIVE (see IWasmExecutionWorld's

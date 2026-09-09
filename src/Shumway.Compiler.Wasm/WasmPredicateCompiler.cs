@@ -1011,21 +1011,13 @@ public static class WasmPredicateCompiler
             Op(new Int32ShiftLeft());
             Op(new Int32Add());
             Op(new LocalSet(LT2));                          // &stack[B + arity]
-            // The CP records BOTH trail tops (ADR-004). The module unwinds
-            // only the binding trail; when the CP's extra-trail top differs
-            // from the live one there are AttrModify / CatchFrame / mutable
-            // entries to undo that only the host's interleaved UnwindTrails
-            // can — backtracking past a put_attr here left the attr table
-            // out of step with the cells (an orphan AttVar crashed get_attr,
-            // found by clpfd's in/2 + #>/2 under a promoted caller). Hand
-            // the whole failure to the host, untouched.
-            Op(new LocalGet(LT2));
-            Op(new Int64Load { Offset = 6 * 8 });           // ctl[5] = extra-trail top
-            LoadSlot64(WasmAbi.ExtraTrailTop);
-            Op(new Int64NotEqual());
-            OpenIf();
-            EmitReturn(WasmVerdict.Fail);
-            CloseNested();
+            // No extra-trail guard here: the retry/trust case this jumps to
+            // opens with EmitRestoreCommon, which already steps aside when
+            // the CP's extra-trail top differs from the live one (the module
+            // can only unwind the binding trail). A guard here as well cost
+            // 100x on the phase-B bench when it compared the RAW ctl cell
+            // (RawInt, tag bits included) against the plain mailbox top and
+            // so fired on every failure.
             Op(new LocalGet(LT2));
             Op(new Int64Load { Offset = 4 * 8 });           // ctl[3] = BP (1+arity handled: base+arity*8, +1 cell +3 cells)
             Op(new Int32WrapInt64());

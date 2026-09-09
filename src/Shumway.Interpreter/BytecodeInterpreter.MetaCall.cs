@@ -185,13 +185,6 @@ public sealed partial class BytecodeInterpreter
 
     private bool RunWakeupsInhibited(ProgramView code)
     {
-        // The wasm tier stands down for the whole drain (see
-        // Activation.InWakeupDrain); nesting is possible (a woken goal may
-        // bind another attvar), so restore rather than clear.
-        bool prevDrain = _engine.InWakeupDrain;
-        _engine.InWakeupDrain = true;
-        try
-        {
         while (_engine.HasPendingWakeups)
         {
             var batch = _engine.TakePendingWakeups();
@@ -242,8 +235,6 @@ public sealed partial class BytecodeInterpreter
                 if (!RunGoalList(code, goalLists[i])) return false;
         }
         return true;
-        }
-        finally { _engine.InWakeupDrain = prevDrain; }
     }
 
     /// <summary>Builds <c>verify_attributes(Module, AttrValue, Value,

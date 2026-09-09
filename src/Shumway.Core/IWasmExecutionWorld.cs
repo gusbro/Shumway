@@ -47,19 +47,18 @@ public interface IWasmExecutionWorld
     /// current (functor -> live address) map. Boundary-tick only, never
     /// mid-chain.</summary>
     void RefreshLiveAddresses(
-        System.Collections.Generic.IReadOnlyDictionary<int, int> liveByFid)
-    { }
+        System.Collections.Generic.IReadOnlyDictionary<int, int> liveByFid);
 
     /// <summary>The functor's entry address in the LIVE code space — where
     /// the interpreter must run its bytecode now. Falls back to the build
     /// address for a world that never relinks (test harnesses).</summary>
-    int LiveEntryAddressOf(int functorId) => EntryAddressOf(functorId);
+    int LiveEntryAddressOf(int functorId);
 
     /// <summary>Translates a CURRENT-build address to the live code space:
     /// the member owning it is found by base, and the pc moves by the
     /// member's own displacement. Identity for a world that never
     /// relinks.</summary>
-    long TranslatePcToLive(long buildPc) => buildPc;
+    long TranslatePcToLive(long buildPc);
 
     /// <summary>Opens a chain against the engine's live state: areas staged,
     /// mailbox filled, the current build captured. The caller must Dispose
@@ -89,7 +88,7 @@ public interface IWasmChainContext : System.IDisposable
     /// <summary>Translates an address of THIS chain's build (a deopt pc, a
     /// marker payload falling back to bytecode) to the live code space.
     /// Identity for a world that never relinks.</summary>
-    long TranslatePcToLive(long buildPc) => buildPc;
+    long TranslatePcToLive(long buildPc);
 
     long ReadSlot(int slot);
 

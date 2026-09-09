@@ -1781,16 +1781,7 @@ public sealed partial class Activation
     /// The interpreter checks this at every goal boundary.</summary>
     public bool HasPendingWakeups => _pendingWakeups.Count > 0;
 
-    /// <summary>True while the interpreter drains attvar wakeups (hooks and
-    /// woken goals). The wasm tier steps aside for the whole drain: the
-    /// drain's meta-call machinery re-enters goals through paths a delegate's
-    /// resume protocol does not cover yet, and a promoted predicate inside
-    /// it corrupted the interpreter's continuation (the boards.pl
-    /// "reserved_invalid opcode" crash). Open issue; bytecode is always
-    /// correct.</summary>
-    public bool InWakeupDrain { get; set; }
-
-    /// <summary>Set by the bytecode interpreter so Tier-1 IL code can run
+/// <summary>Set by the bytecode interpreter so Tier-1 IL code can run
     /// pending <c>verify_attributes</c> wakeups through the interpreter's
     /// goal-running machinery (which the IL delegate, holding only an
     /// <see cref="Activation"/>, cannot reach directly). Returns false when a

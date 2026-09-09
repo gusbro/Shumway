@@ -1772,6 +1772,19 @@ if (persistMode) {
     lines.push('clpfd tick: ' + await session.exports().WasmCompileAllTick() + '\n');
     mark('final status');
     lines.push(await session.exports().WasmCompileControl('status'));
+    // The boards.pl shape: clpfd labeling under the tier — attvar binds,
+    // wakeup drains, backtracking through promoted code. The reported
+    // corruption ("reserved_invalid opcode") came from exactly this.
+    mark('queens');
+    await session.consult(
+      'qn(N, Qs) :- length(Qs, N), Qs ins 1..N, all_distinct(Qs), qdiag(Qs).\n' +
+      'qdiag([]).  qdiag([Q|Qs]) :- qoff(Q, Qs, 1), qdiag(Qs).\n' +
+      'qoff(_, [], _).\n' +
+      'qoff(Q, [R|Rs], D) :- Q + D #\\= R, R + D #\\= Q, D1 is D + 1, qoff(Q, Rs, D1).\n');
+    lines.push('queens tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    const errQ = await session.start('qn(8, Qs), labeling([], Qs), msort(Qs, [1,2,3,4,5,6,7,8]).');
+    if (errQ) lines.push('queens start error: ' + errQ + '\n');
+    else lines.push('queens: ' + JSON.stringify(await session.next(120)) + '\n');
     // A fresh engine (restart.): the baked prelude must reinstall — interning
     // is idempotent, so the replay validation passes again — and `all` must
     // still find nothing of the prelude to compile.
