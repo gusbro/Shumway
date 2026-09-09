@@ -691,28 +691,21 @@ Measured with a probe over the static link: consulting two plain facts
 moves the linked address of every one of the ~530 prelude predicates.
 Library loading moves them further.
 
-This matters beyond the crash, because the group-module design was
-recorded as resting on the opposite: markers and BP encodings carry
-(functor, ADDRESS) rather than cursor ordinals precisely so that "a
-promotion renumbers cursors, but addresses never move". That premise is
-FALSE across a consult. Two readings are possible and the difference has
-not been settled:
+**RESOLVED, and not where this looked.** The group-module design rests
+on markers and BP encodings carrying (functor, ADDRESS) rather than
+cursor ordinals, so that "a promotion renumbers cursors, but addresses
+never move". That premise was right and the ENGINE was breaking it: the
+static region was laid out with consulted code before the precompiled
+prelude, so every consult moved everything. The engine now lays the
+region out append-only, and a reconsult leaves the superseded version in
+place as a dead region, so an address survives both (PR #116, ADR-015).
 
-- the stability claim was only ever about a rebuild WITHOUT a consult
-  (promotion alone), which is true, and the consult case was simply never
-  considered — the latent bug then dates from group modules; or
-- the claim was believed to be general, in which case every consult in
-  the wasm tier's life has been handing stale addresses to the
-  interpreter, and boards.pl is the first program whose shape made it
-  observable.
-
-What ships is a translation layer, not a claim about stability: the
-boundary tick refreshes a (functor -> live address) map on every world,
-and each place a BUILD address crosses into the live code space — a deopt
-pc, a bytecode fallback — passes through `WasmBuildAddressIndex`, which
-finds the owning member by base and moves the pc by that member's own
-displacement. Only a REDEFINED predicate (bytecode hash changed) is
-evicted.
+This tier keeps a translation layer anyway — the boundary tick refreshes
+a (functor -> live address) map on every world, and each place a BUILD
+address crosses into the live code space passes through
+`WasmBuildAddressIndex` — as a belt against a future layout change, and
+because eviction on a genuine REDEFINITION is still wanted. With the
+engine holding addresses still, it is a no-op in the ordinary case.
 
 **Known hole in that layer.** One field can hold addresses from either
 space: a resume marker's payload is BUILD-space when a module baked it
@@ -733,33 +726,34 @@ copy elsewhere is an orphan the attr table knows nothing about, and
 (bind Ref(home) instead of the raw cell) makes the corruption go away —
 red-proofed: reverting the emitter change fails the new test.
 
-The gap: the write caught by an image diff was `heap[29]: Ref(29) ->
-(AttVar, payload 0)`. A COPIED attvar would carry its home in the
-payload, not zero. So either the source cell was already (AttVar, 0) —
-itself a corruption one step earlier — or something applied the AttVar
-tag to a zero payload. The fix is validated by behaviour; the mechanism
-is not fully explained, and the payload-0 signature deserves a second
-look before this is called closed.
+The gap, still open: the write caught by an image diff was
+`heap[29]: Ref(29) -> (AttVar, payload 0)`. A COPIED attvar would carry
+its home in the payload, not zero. So either the source cell was already
+(AttVar, 0) — itself a corruption one step earlier — or something applied
+the AttVar tag to a zero payload. The normalisation is right on its own
+terms (an attvar cell must not be copied) and is red-proofed by a test,
+but the byte pattern is unexplained.
 
-### Attvar-hooked libraries are excluded from this tier
+What the corruption ITSELF turned out to be is the moving addresses
+above: with the engine's layout stable, `X in 1..3, X #> 1, X = 2` with
+the whole clpfd library promoted answers correctly, five of five on the
+desktop world and in the browser, where every earlier run ended in
+"reserved_invalid opcode ... bytecode corruption". Attributed variables
+were not the defect; they were the shortest path to observing it.
 
-A library that registers an attribute-unification hook — the module-local
-`Module$verify_attributes/3-4` of ADR-040, or the BARE multifile
-`verify_attributes/4` that clpfd declares and whose owner only the module
-manifest names — is kept off this tier, module and exports alike.
+### Attvar-hooked libraries were excluded, and are not any more
 
-The correctness reason is solid: one shape still corrupts the
-interpreter's continuation (a top-level attvar bind with the clpfd
-library promoted), reproduced on the desktop world. It is OPEN, and the
-exclusion is what keeps it unreachable.
+A library that registers an attribute-unification hook was briefly kept
+off this tier. That was containment for the corruption above, and it went
+away with the cause: clpfd is promoted again, and the shapes that used to
+crash pass.
 
-The performance reason is NOT solidly measured. Promoted clpfd labeling
-timed ~8.5 s against ~0.5 s for a Tier-0 run, but those two numbers came
-from different harnesses (a scratch CLI with its own promoter, versus the
-REPL) over different goal shapes, and repeat runs of the same
-configuration varied 8.5-59 s. Treat "promoted attvar libraries are
-slower" as a hypothesis with a suggestive number, not a result. A proper
-back-to-back A/B in one harness is owed.
+The performance claim that also argued for it — promoted clpfd labeling
+timing ~8.5 s against ~0.5 s on Tier-0 — was never soundly measured: the
+two numbers came from different harnesses over different goals, and
+repeats of one configuration varied 8.5-59 s. It is not a result, and
+nothing rests on it now. If the question comes back, it needs a
+back-to-back A/B in one harness.
 
 ### The guard that cost 100x, and the method that caught it
 
