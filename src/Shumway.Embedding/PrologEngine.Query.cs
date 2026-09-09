@@ -1276,6 +1276,10 @@ public sealed partial class PrologEngine
             }
         }
 
+        // Lay the static region out append-only, so a consult does not move
+        // predicates it did not change (see OrderStaticRegion).
+        OrderStaticRegion(pStatic);
+
         product = _programProduct = new CompiledProgramProduct
         {
             DerivationGen = _derivationGen,

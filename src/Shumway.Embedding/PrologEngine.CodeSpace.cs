@@ -53,6 +53,71 @@ public sealed partial class PrologEngine
     /// bundle load). A query links only its transient region against this.</summary>
     internal Shumway.Compiler.Wam.Linker.LinkResult? _staticLink;
 
+    // Static-region LAYOUT ORDER, so a consult does not move code that did
+    // not change. The linker lays predicates out in list order, and the list
+    // was "whatever the module compiler produced, then the precompiled
+    // prelude appended" — so consulting one fact pushed the whole prelude
+    // down by its size, and every address baked against the old layout
+    // (Tier-1 wasm modules bake deopt pcs, resume markers and BP encodings;
+    // debug metadata and any host-held address likewise) pointed into
+    // different code. The layout is now append-only: a predicate keeps the
+    // ordinal it was first laid out with, and anything new or CHANGED takes
+    // a fresh ordinal at the end. Unchanged predicates therefore keep their
+    // addresses across consults, which is what the other backends already
+    // assume.
+    private readonly Dictionary<int, (int Ordinal, ulong Hash)> _staticLayout = new();
+    private int _staticLayoutNext;
+
+    private static ulong LayoutHash(Shumway.Compiler.Wam.CompiledPredicate p)
+    {
+        const ulong prime = 1099511628211UL;
+        ulong h = 14695981039346656037UL;
+        foreach (byte b in p.Bytecode) { h ^= b; h *= prime; }
+        h ^= (uint)p.Bytecode.Length; h *= prime;
+        // Switch tables and call sites live outside the bytecode but decide
+        // what the linker writes into it.
+        foreach (var t in p.SwitchTables)
+        {
+            h ^= (uint)t.DefaultAddress; h *= prime;
+            for (int i = 0; i < t.Count; i++)
+            { h ^= (uint)t.Keys[i]; h *= prime; h ^= (uint)t.Values[i]; h *= prime; }
+        }
+        foreach (var c in p.CallSites)
+        {
+            h ^= (uint)c.OpcodeOffset; h *= prime;
+            h ^= (uint)c.CalleeFunctorId; h *= prime;
+        }
+        return h;
+    }
+
+    /// <summary>Sorts the static region into its stable layout order (see
+    /// <see cref="_staticLayout"/>). In-place and stable, so predicates
+    /// sharing an ordinal keep their relative order.</summary>
+    internal void OrderStaticRegion(
+        List<Shumway.Compiler.Wam.CompiledPredicate> preds)
+    {
+        var keyed = new List<(int Key, int Index, Shumway.Compiler.Wam.CompiledPredicate P)>(
+            preds.Count);
+        for (int i = 0; i < preds.Count; i++)
+        {
+            var pred = preds[i];
+            ulong hash = LayoutHash(pred);
+            if (_staticLayout.TryGetValue(pred.FunctorId, out var at) && at.Hash == hash)
+            {
+                keyed.Add((at.Ordinal, i, pred));
+                continue;
+            }
+            // New, or changed by a reconsult: it goes to the end, so the
+            // predicates before it keep their addresses.
+            int ordinal = _staticLayoutNext++;
+            _staticLayout[pred.FunctorId] = (ordinal, hash);
+            keyed.Add((ordinal, i, pred));
+        }
+        keyed.Sort((a, b) => a.Key != b.Key ? a.Key.CompareTo(b.Key)
+                                            : a.Index.CompareTo(b.Index));
+        for (int i = 0; i < keyed.Count; i++) preds[i] = keyed[i].P;
+    }
+
     /// <summary>the persistent program buffer —
     /// <c>prefix + static + dynamic</c>. Owned by PrologEngine across
     /// queries; <c>assertz</c> / <c>asserta</c> extend it in-place
