@@ -677,6 +677,109 @@ classes interned atoms in static field initializers — beforefieldinit
 cctor timing differs between Mono and CoreCLR, shuffling early ids per
 platform. Interning now happens inside Register().
 
+## The boards.pl round: relink, attvars, and what is still not understood
+
+`use_module(library(clpfd))` plus `wasm_compile(all)` plus a queens goal
+reported "Encountered reserved_invalid opcode ... bytecode corruption".
+Pulling that thread produced three findings and two honest gaps. The gaps
+are written down here because a tidy story that does not fit the evidence
+is worse than an open question.
+
+### A consult relinks everything, and that contradicts an older claim
+
+Measured with a probe over the static link: consulting two plain facts
+moves the linked address of every one of the ~530 prelude predicates.
+Library loading moves them further.
+
+This matters beyond the crash, because the group-module design was
+recorded as resting on the opposite: markers and BP encodings carry
+(functor, ADDRESS) rather than cursor ordinals precisely so that "a
+promotion renumbers cursors, but addresses never move". That premise is
+FALSE across a consult. Two readings are possible and the difference has
+not been settled:
+
+- the stability claim was only ever about a rebuild WITHOUT a consult
+  (promotion alone), which is true, and the consult case was simply never
+  considered — the latent bug then dates from group modules; or
+- the claim was believed to be general, in which case every consult in
+  the wasm tier's life has been handing stale addresses to the
+  interpreter, and boards.pl is the first program whose shape made it
+  observable.
+
+What ships is a translation layer, not a claim about stability: the
+boundary tick refreshes a (functor -> live address) map on every world,
+and each place a BUILD address crosses into the live code space — a deopt
+pc, a bytecode fallback — passes through `WasmBuildAddressIndex`, which
+finds the owning member by base and moves the pc by that member's own
+displacement. Only a REDEFINED predicate (bytecode hash changed) is
+evicted.
+
+**Known hole in that layer.** One field can hold addresses from either
+space: a resume marker's payload is BUILD-space when a module baked it
+and LIVE-space when the interpreter made it. Resolution looks the payload
+up in the build's `CursorByAddress`, so an interpreter-made marker misses
+after a relink and the chain exits instead of continuing. That is a
+performance leak, not a correctness one, and it is unmeasured. The clean
+fix is to tag the space or to keep a live->build reverse map at entry.
+
+### An attributed variable's cell must not be copied — but the observed
+### bytes do not match the tidy explanation
+
+An AttVar cell exists only at its home: `Deref` does not follow it, so a
+copy elsewhere is an orphan the attr table knows nothing about, and
+`get_attr` then failed with a missing-key exception. `EmitUnifyTwo`
+(get_value_x / get_value_y) lacked the normalisation that
+`unify_value` and `unify_variable` already applied, and adding it
+(bind Ref(home) instead of the raw cell) makes the corruption go away —
+red-proofed: reverting the emitter change fails the new test.
+
+The gap: the write caught by an image diff was `heap[29]: Ref(29) ->
+(AttVar, payload 0)`. A COPIED attvar would carry its home in the
+payload, not zero. So either the source cell was already (AttVar, 0) —
+itself a corruption one step earlier — or something applied the AttVar
+tag to a zero payload. The fix is validated by behaviour; the mechanism
+is not fully explained, and the payload-0 signature deserves a second
+look before this is called closed.
+
+### Attvar-hooked libraries are excluded from this tier
+
+A library that registers an attribute-unification hook — the module-local
+`Module$verify_attributes/3-4` of ADR-040, or the BARE multifile
+`verify_attributes/4` that clpfd declares and whose owner only the module
+manifest names — is kept off this tier, module and exports alike.
+
+The correctness reason is solid: one shape still corrupts the
+interpreter's continuation (a top-level attvar bind with the clpfd
+library promoted), reproduced on the desktop world. It is OPEN, and the
+exclusion is what keeps it unreachable.
+
+The performance reason is NOT solidly measured. Promoted clpfd labeling
+timed ~8.5 s against ~0.5 s for a Tier-0 run, but those two numbers came
+from different harnesses (a scratch CLI with its own promoter, versus the
+REPL) over different goal shapes, and repeat runs of the same
+configuration varied 8.5-59 s. Treat "promoted attvar libraries are
+slower" as a hypothesis with a suggestive number, not a result. A proper
+back-to-back A/B in one harness is owed.
+
+### The guard that cost 100x, and the method that caught it
+
+The same round added an extra-trail guard to the fail case. The phase-B
+bench then read geomean 1.5x where it reads ~100x, with entry counts up
+four orders of magnitude (zebra 5 -> 173,011 chain entries). The cause
+was a type error, not a design one: the guard compared the RAW ctl cell
+(a `RawInt`, tag bits included) against the plain mailbox top, so the
+comparison was always unequal and every failure exited to the host. The
+guard was also redundant — the retry or trust case a fail jumps to opens
+with `EmitRestoreCommon`, which already steps aside when the CP's
+extra-trail top differs — so it was removed rather than repaired.
+
+Two lessons worth keeping. Comparing a cell against a scalar is a class
+of bug the emitter invites (cells carry tags; mailbox slots do not), and
+the bench is what found it: no test failed, and no reasoning found it
+either — an A/B with the guard in and out named it in one run. Bench
+after removal: geomean 106.6x (counter 292x, nrev 69x, tak 73x, crypt
+128x, zebra 73x).
+
 ## Risk register
 
 | Risk | Exposure | Mitigation / kill switch |
