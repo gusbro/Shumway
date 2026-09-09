@@ -25,6 +25,13 @@
          COOP/COEP headers. See docs. -->
     <WasmEnableThreads>true</WasmEnableThreads>
 
+    <!-- The wasm Tier-1 is OPT-IN for this app. A published WebShumway is
+         Tier-0 unless asked otherwise: the tier is still an arc under
+         measurement, and switching it on also drags in the emscripten relink
+         for the shim and a ~3 MB baked prelude asset.
+         Build or publish with -p:ShumwayWasmTier=true to include it. -->
+    <ShumwayWasmTier Condition="'$(ShumwayWasmTier)' == ''">false</ShumwayWasmTier>
+
     <!-- REQUIRED for the NativeFileReference below to reach the runtime.
          Threads do NOT imply the native relink: without this the SDK prints
          "the native references won't be linked in, because neither
@@ -33,7 +40,7 @@
          at DllNotFoundException the first time it registers a module. With
          it, a machine missing the wasm-tools workload fails the build
          instead of shipping that. -->
-    <WasmBuildNative>true</WasmBuildNative>
+    <WasmBuildNative Condition="'$(ShumwayWasmTier)' == 'true'">true</WasmBuildNative>
 
     <!-- Sigil (Tier-1's IL emitter) is a third-party assembly we cannot annotate,
          so the trimmer reports IL2104 for it. Narrow and local, per the repo's
@@ -64,7 +71,7 @@
        (a managed calli through a runtime-added table index hangs; native code
        has no such trouble). Reaching the runtime needs WasmBuildNative above
        and the wasm-tools workload. -->
-  <ItemGroup>
+  <ItemGroup Condition="'$(ShumwayWasmTier)' == 'true'">
     <NativeFileReference Include="spike.c" />
   </ItemGroup>
 
@@ -90,7 +97,7 @@
     <!-- The wasm Tier-1 (docs/design/wasm-tier1-plan.md): promoted predicates
          compile to WebAssembly modules and run natively. Browser only. -->
     <RuntimeHostConfigurationOption Include="Shumway.WasmCodegen"
-        Value="true" Trim="true" />
+        Value="$(ShumwayWasmTier)" Trim="true" />
   </ItemGroup>
 
   <!-- Bake the standard library into a bundle the app embeds, so the engine boots
@@ -153,6 +160,7 @@
        against the stale dll and skip a needed rebake until the next build. -->
   <Target Name="BuildWasmBakeTool"
           BeforeTargets="PrepareForBuild"
+          Condition="'$(ShumwayWasmTier)' == 'true'"
           DependsOnTargets="BakeStdlibBundle">
     <MSBuild Projects="..\Shumway.WasmBake\Shumway.WasmBake.csproj"
              Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
@@ -160,13 +168,14 @@
 
   <Target Name="BakeWasmGroup"
           BeforeTargets="PrepareForBuild"
+          Condition="'$(ShumwayWasmTier)' == 'true'"
           DependsOnTargets="BuildWasmBakeTool"
           Inputs="$(StdlibBundle);$(ShumwayWasmBakeDll)"
           Outputs="$(WasmGroupAsset)">
     <Exec Command="dotnet &quot;$(ShumwayWasmBakeDll)&quot; &quot;$(StdlibBundle)&quot; -o &quot;$(WasmGroupAsset)&quot;" />
   </Target>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(ShumwayWasmTier)' == 'true'">
     <EmbeddedResource Include="$(WasmGroupAsset)" LogicalName="prelude.wasmgroup" Visible="false" />
   </ItemGroup>
 
