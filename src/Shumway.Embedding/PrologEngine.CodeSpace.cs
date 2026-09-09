@@ -65,8 +65,31 @@ public sealed partial class PrologEngine
     // a fresh ordinal at the end. Unchanged predicates therefore keep their
     // addresses across consults, which is what the other backends already
     // assume.
-    private readonly Dictionary<int, (int Ordinal, ulong Hash)> _staticLayout = new();
+    private readonly Dictionary<int, (int Ordinal, ulong Hash,
+        Shumway.Compiler.Wam.CompiledPredicate Pred)> _staticLayout = new();
     private int _staticLayoutNext;
+
+    // Superseded versions, by the ordinal they still occupy. A reconsult
+    // replaces a predicate: the new version is appended, and the OLD one
+    // stays exactly where it was — dead, owning nothing — so the code laid
+    // out after it keeps its address. Reclaiming the space is future work
+    // (see StaticDeadRegions), which is why the inventory is kept.
+    private readonly SortedDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
+        _staticDead = new();
+
+    /// <summary>Indices into the ordered static list that are laid out but
+    /// own nothing — handed to the linker each time the region is built.</summary>
+    internal HashSet<int>? StaticDeadIndices { get; private set; }
+
+    /// <summary>Where the dead regions of the CURRENT static program are,
+    /// and how big: (address, size, the functor whose old version it was).
+    /// The bookkeeping a future pass needs to reuse the holes a reconsult
+    /// leaves; nothing reuses them yet, so this only ever grows within an
+    /// engine's life and is rebuilt from scratch by a full relink.</summary>
+    public IReadOnlyList<Shumway.Compiler.Wam.Linker.DeadRegion> StaticDeadRegions
+        => _staticLink?.DeadRegions
+           ?? (IReadOnlyList<Shumway.Compiler.Wam.Linker.DeadRegion>)
+              System.Array.Empty<Shumway.Compiler.Wam.Linker.DeadRegion>();
 
     private static ulong LayoutHash(Shumway.Compiler.Wam.CompiledPredicate p)
     {
@@ -96,26 +119,49 @@ public sealed partial class PrologEngine
     internal void OrderStaticRegion(
         List<Shumway.Compiler.Wam.CompiledPredicate> preds)
     {
-        var keyed = new List<(int Key, int Index, Shumway.Compiler.Wam.CompiledPredicate P)>(
-            preds.Count);
+        // The sets, as the layout sees them: A = what is being laid out now,
+        // B = what the layout already holds. B minus A keeps its ordinal and
+        // therefore its address. A minus B is appended. A intersect B splits:
+        // unchanged keeps its ordinal, CHANGED leaves its old version behind
+        // as a dead region and the new one is appended like a fresh
+        // predicate.
+        var keyed = new List<(int Key, Shumway.Compiler.Wam.CompiledPredicate P,
+                              bool Dead)>(preds.Count + _staticDead.Count);
+        var live = new HashSet<int>();
         for (int i = 0; i < preds.Count; i++)
         {
             var pred = preds[i];
+            live.Add(pred.FunctorId);
             ulong hash = LayoutHash(pred);
-            if (_staticLayout.TryGetValue(pred.FunctorId, out var at) && at.Hash == hash)
+            if (_staticLayout.TryGetValue(pred.FunctorId, out var at))
             {
-                keyed.Add((at.Ordinal, i, pred));
-                continue;
+                if (at.Hash == hash)
+                {
+                    keyed.Add((at.Ordinal, pred, false));
+                    continue;
+                }
+                // Changed: its old version stays where it was, dead.
+                _staticDead[at.Ordinal] = at.Pred;
             }
-            // New, or changed by a reconsult: it goes to the end, so the
-            // predicates before it keep their addresses.
             int ordinal = _staticLayoutNext++;
-            _staticLayout[pred.FunctorId] = (ordinal, hash);
-            keyed.Add((ordinal, i, pred));
+            _staticLayout[pred.FunctorId] = (ordinal, hash, pred);
+            keyed.Add((ordinal, pred, false));
         }
-        keyed.Sort((a, b) => a.Key != b.Key ? a.Key.CompareTo(b.Key)
-                                            : a.Index.CompareTo(b.Index));
-        for (int i = 0; i < keyed.Count; i++) preds[i] = keyed[i].P;
+        // The dead versions occupy their old ordinals. One whose functor is
+        // absent from this layout entirely (abolished, or a reconsult that
+        // dropped it) stays dead too — the space is still spoken for.
+        foreach (var (ordinal, dead) in _staticDead)
+            keyed.Add((ordinal, dead, true));
+
+        keyed.Sort((a, b) => a.Key.CompareTo(b.Key));
+        preds.Clear();
+        HashSet<int>? deadIndices = null;
+        for (int i = 0; i < keyed.Count; i++)
+        {
+            preds.Add(keyed[i].P);
+            if (keyed[i].Dead) (deadIndices ??= new()).Add(i);
+        }
+        StaticDeadIndices = deadIndices;
     }
 
     /// <summary>the persistent program buffer —

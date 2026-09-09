@@ -36,7 +36,28 @@ public sealed class Linker
         IReadOnlyDictionary<int, int> Addresses,
         IReadOnlyList<SwitchTable> SwitchTables,
         IReadOnlyDictionary<int, CompiledPredicate> PredicatesByAddress,
-        IReadOnlyList<(int Offset, int FunctorId)> UnresolvedSites);
+        IReadOnlyList<(int Offset, int FunctorId)> UnresolvedSites)
+    {
+        /// <summary>Regions the layout holds but nothing can reach: the
+        /// superseded version of a predicate a reconsult replaced, left in
+        /// place so the code after it keeps its address. Recorded — address,
+        /// size and whose it was — so a later pass can reuse or reclaim
+        /// them; nothing does yet.</summary>
+        public IReadOnlyList<DeadRegion> DeadRegions { get; init; }
+            = System.Array.Empty<DeadRegion>();
+    }
+
+    /// <summary>A stretch of the linked program that is laid out but
+    /// unreachable: <paramref name="FunctorId"/> named it before a reconsult
+    /// replaced the predicate, and the live version lives elsewhere.</summary>
+    public readonly record struct DeadRegion(int Address, int Size, int FunctorId);
+
+    /// <summary>Indices of <c>predicates</c> that are laid out but do NOT
+    /// claim their functor: superseded versions kept in place so the
+    /// addresses after them do not move. Their bytes are emitted as they
+    /// were; nothing links to them, so their call sites are left
+    /// unpatched.</summary>
+    public IReadOnlySet<int>? DeadIndices { get; set; }
 
     public LinkResult Link(
         CompiledModule module, int loadOffset = 0,
@@ -72,16 +93,29 @@ public sealed class Linker
         var unresolvedCalls = new List<(int Offset, int FunctorId)>();
         var switchTables = new List<SwitchTable>();
 
-        foreach (var p in predicates)
+        var deadRegions = new List<DeadRegion>();
+        for (int pi = 0; pi < predicates.Count; pi++)
         {
+            var p = predicates[pi];
+            int basePos = bytes.Count;
+            int absAddr = basePos + loadOffset;
+
+            // A DEAD entry occupies its bytes and nothing else: no address,
+            // no switch tables, no call-site patching. It exists so that the
+            // predicates laid out after it keep the addresses they had.
+            if (DeadIndices is { } dead && dead.Contains(pi))
+            {
+                bytes.AddRange(p.Bytecode);
+                deadRegions.Add(new DeadRegion(absAddr, p.Bytecode.Length, p.FunctorId));
+                continue;
+            }
+
             if (addresses.ContainsKey(p.FunctorId))
                 throw new InvalidOperationException(
                     "Duplicate predicate definition: functor id "
                     + $"{p.FunctorId} (name '{NameForFunctor(p.FunctorId)}'/{p.Arity}) "
                     + "appears in two predicates of the same module.");
 
-            int basePos = bytes.Count;
-            int absAddr = basePos + loadOffset;
             addresses[p.FunctorId] = absAddr;
             predicatesByAddress[absAddr] = p;
             bytes.AddRange(p.Bytecode);
@@ -204,7 +238,10 @@ public sealed class Linker
         // `program` byte array, so it gets resolved addresses without
         // help.
         return new LinkResult(
-            program, addresses, switchTables, predicatesByAddress, unresolvedSites);
+            program, addresses, switchTables, predicatesByAddress, unresolvedSites)
+        {
+            DeadRegions = deadRegions,
+        };
     }
 
     private static string NameForFunctor(int functorId)
