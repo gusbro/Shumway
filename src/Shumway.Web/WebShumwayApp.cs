@@ -63,6 +63,13 @@ internal static partial class WebShumwayApp
     [JSImport("ui.writeError", "main.js")]
     internal static partial void WriteErrorToPage(string text);
 
+    /// <summary>Appends one of the engine's own asides: what it compiled, what
+    /// it restored. Neither program output nor a diagnostic -- the first
+    /// competes with what the program prints, the second says something went
+    /// wrong.</summary>
+    [JSImport("ui.writeNote", "main.js")]
+    internal static partial void WriteNoteToPage(string text);
+
     /// <summary>The runtime thread's context, captured while we are on it.
     /// JavaScript interop is thread-affine: <see cref="WriteToPage"/> may only be
     /// called from the thread that owns the JavaScript side. The search does not

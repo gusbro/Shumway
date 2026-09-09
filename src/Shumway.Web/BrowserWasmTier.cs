@@ -241,6 +241,21 @@ internal static class BrowserWasmTier
     /// staging, so a handful of hot sites can dominate a run: this is the
     /// list that says which one to open-code next, instead of guessing from
     /// the total.</summary>
+    /// <summary>The functors that asked for the last group build, named.</summary>
+    internal static string TriggerNames(WasmPromotionStore w)
+    {
+        var names = new List<string>();
+        foreach (int f in w.LastBatchTrigger)
+        {
+            var (aid, ar) = FunctorTable.Lookup(f);
+            names.Add($"{AtomTable.GetById(aid)?.Name}/{ar}");
+            if (names.Count == 6) break;
+        }
+        return string.Join(" ", names)
+            + (w.LastBatchTrigger.Count > 6
+                ? $" and {w.LastBatchTrigger.Count - 6} more" : "");
+    }
+
     internal static string DeoptRankingReport(PrologEngine engine)
     {
         var rank = WasmTierDelegate.DeoptRanking();
@@ -347,6 +362,17 @@ internal static class BrowserWasmTier
                 Promote(store, world, members, env, pred, linkedBase),
             BatchPromoter = candidates =>
                 PromoteBatch(store, world, members, env, candidates),
+            BatchStarting = n =>
+            {
+                // Only a build worth waiting for gets a line. A handful of
+                // predicates compiles faster than the notice takes to read,
+                // and the batch may then refuse them all and report zero —
+                // the most annoying way to say nothing happened.
+                if (n < AnnounceFloor) return;
+                AnnouncedBatch = true;
+                WebShumwayApp.WriteNoteToPage(
+                    $"% compiling {n} predicates to WebAssembly...\n");
+            },
         };
         // A relink moved predicates out from under their modules: the
         // evicted members leave the dynamic group (their biases are dead —
@@ -565,6 +591,13 @@ internal static class BrowserWasmTier
     /// <summary>(caller functor, callee functor) to call sites, from the last
     /// group build: the evidence for whether a group could be split along
     /// some module boundary. Static, so it costs nothing at run time.</summary>
+    // Set by BatchStarting so the tick can close the notice it opened: a
+    // "compiling..." with no answer under it reads as a hang.
+    internal static bool AnnouncedBatch;
+
+    /// <summary>Batches smaller than this compile without saying so.</summary>
+    private const int AnnounceFloor = 5;
+
     internal static IReadOnlyDictionary<(int Caller, int Callee), int> LastCallSites
         = new Dictionary<(int, int), int>();
 
@@ -964,7 +997,20 @@ internal static partial class WebShumwayApp
                     + BrowserWasmTier.DeoptRankingReport(engine)
                     + WasmCoupling.Report(engine, BrowserWasmTier.LastCallSites)
                     + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} group builds, "
-                    + $"{BrowserWasmTier.DiagCompileTicks * 1000.0 / Stopwatch.Frequency:F0} ms\n";
+                    + $"{BrowserWasmTier.DiagCompileTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
+                    // A build after a consult explains itself; one a predicate
+                    // asked for is the one worth chasing, and it needs a name.
+                    + (w.LastBatchTrigger.Count > 0
+                        ? $", last asked for by {BrowserWasmTier.TriggerNames(w)}\n" : "\n")
+                    // The module is registered ONCE PER THREAD, lazily: the
+                    // first chain a pool thread opens makes the browser
+                    // compile the whole group before it can run anything. On
+                    // a big group that is seconds, it reads as the query
+                    // hanging after its output, and no other counter here
+                    // shows it.
+                    + "%   module registration: "
+                    + $"{BrowserWasmWorld.DiagRegisterTicks * 1000.0 / Stopwatch.Frequency:F0}"
+                    + " ms (per thread, on that thread's first chain)\n";
                 // Every counter above is a DELTA SINCE THE PREVIOUS STATUS:
                 // cleared on the way out, so goals can be measured one at a
                 // time. A running total since boot reads as if it belonged to
@@ -973,6 +1019,7 @@ internal static partial class WebShumwayApp
                 WasmTierDelegate.ResetDiag();
                 BrowserWasmTier.DiagCompileTicks = 0;
                 BrowserWasmTier.DiagCompileBuilds = 0;
+                BrowserWasmWorld.DiagRegisterTicks = 0;
                 return report;
             }
             if (command is "off" or "none")
@@ -1059,18 +1106,34 @@ internal static partial class WebShumwayApp
             var engine = _session?.Engine;
             if (engine?.IlPromotion.Wasm is not { CompileAllOnConsult: true } w)
                 return 0;
-            // Say it BEFORE the work, and only when there is work: a consult
-            // that changed nothing takes the one-compare path and must not
-            // put a line on the page.
-            bool pending = w.BatchPending(engine);
-            if (pending) WriteToPage("% consulted, compiling...\n");
+            // The "compiling" half is announced by the store, which is the
+            // first place the candidate count is known; here we only report
+            // what a build actually did. Nothing to compile says nothing.
+            BrowserWasmTier.AnnouncedBatch = false;
             long t0 = Stopwatch.GetTimestamp();
             int n = w.CompileAllTick(engine);
-            if (pending)
+            if (BrowserWasmTier.AnnouncedBatch)
             {
                 double ms = (Stopwatch.GetTimestamp() - t0) * 1000.0
                           / Stopwatch.Frequency;
-                WriteToPage($"% compiled ({n} predicates, {ms:F0} ms)\n");
+                // Name the cause. "A build happened" leaves you guessing
+                // between the consult you just did and some predicate that
+                // asked for one; only the second is worth chasing.
+                string why = "after a consult";
+                if (w.LastBatchTrigger.Count > 0)
+                {
+                    var names = new List<string>();
+                    foreach (int f in w.LastBatchTrigger)
+                    {
+                        var (aid, ar) = FunctorTable.Lookup(f);
+                        names.Add($"{AtomTable.GetById(aid)?.Name}/{ar}");
+                        if (names.Count == 4) break;
+                    }
+                    why = "asked for by " + string.Join(" ", names)
+                        + (w.LastBatchTrigger.Count > 4
+                            ? $" and {w.LastBatchTrigger.Count - 4} more" : "");
+                }
+                WriteNoteToPage($"% compiled ({n} predicates, {ms:F0} ms, {why})\n");
             }
             return n;
         });

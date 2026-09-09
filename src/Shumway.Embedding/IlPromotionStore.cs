@@ -464,12 +464,27 @@ public sealed class IlPromotionStore
     // The synthetic __query__/N wrappers have a DIFFERENT body per query under the
     // same functor id — caching one query's IL would replay it for every later query
     // of that arity.
-    internal static bool IsExcludedFromPromotion(int functorId)
+    //
+    // The SAME is true of the helpers a query stub synthesises for its `;`,
+    // `->` and `\+`. MetaTransform names those with the reserved "$q" prefix
+    // precisely so they are "REUSED query-to-query" and stay bounded
+    // (MetaTransform.HelperPrefix) — which means '$q$disj_1'/5 is one functor
+    // id carrying a different body every time. Promoting it is the same
+    // replay bug, and on the wasm tier it also rebuilds the whole group
+    // module on every query that contains a disjunction (measured: 13
+    // seconds after consulting boards.pl).
+    public static bool IsExcludedFromPromotion(int functorId)
     {
         var (atomId, _) = Shumway.Core.FunctorTable.Lookup(functorId);
         string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
-        return name == "__query__";
+        return name == "__query__" || IsQueryStubHelper(name);
     }
+
+    /// <summary>A helper synthesised for the CURRENT query's stub: named
+    /// <c>$q$kind_N</c>, module-mangled to <c>mod$$q$kind_N</c>.</summary>
+    public static bool IsQueryStubHelper(string name)
+        => name.StartsWith("$q$", System.StringComparison.Ordinal)
+           || name.Contains("$$q$", System.StringComparison.Ordinal);
 
     // A bytecode body opening with enter_dynamic is mutation-driven dispatch
     // (per-clause check_visible + in-place chain patches, ADR-015): a cached IL

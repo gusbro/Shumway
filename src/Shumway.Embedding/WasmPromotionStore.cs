@@ -34,6 +34,11 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// that only ever promotes lazily never sets it.</summary>
     public System.Func<List<(CompiledPredicate Pred, int Addr)>, int>? BatchPromoter { get; set; }
 
+    /// <summary>Raised with the candidate count immediately before a batch
+    /// build, for hosts that want to say so: the build is the one visible
+    /// pause the tier imposes, and it is worth a line.</summary>
+    public System.Action<int>? BatchStarting { get; set; }
+
     /// <summary>wasm_compile(all): compile the whole static program as it is
     /// CONSULTED, not when the user's first query happens to need the link —
     /// deferring the batch would bill that query for every compile at once.
@@ -41,7 +46,24 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// consult that changed the program.</summary>
     public bool CompileAllOnConsult { get; set; }
 
-    private int _lastBatchStamp = -1;
+    // The static link the batch last reconciled against. IDENTITY, not a
+    // program stamp: a consult replaces the link, while an assert or a
+    // dynamic hotness flip bumps _programStamp without touching the static
+    // program at all. Keying on the stamp made every other goal reconcile
+    // 800-odd predicates -- hashing each one's bytecode -- for nothing, which
+    // reads to the user as the engine thinking for a second after each query.
+    private object? _lastLink;
+
+    // Functors that crossed the threshold while the batch owns compilation:
+    // picked up whole at the next boundary instead of each rebuilding the
+    // group where it stands.
+    private readonly HashSet<int> _pendingBatch = new();
+
+    /// <summary>Why the last batch ran: null for a consult (the static link
+    /// was replaced, which is the expected cause), otherwise the functors
+    /// that crossed the threshold and asked for it. "A build happened" is not
+    /// actionable; "THIS predicate asked for it" is.</summary>
+    public IReadOnlyList<int> LastBatchTrigger { get; private set; } = System.Array.Empty<int>();
 
     // (fid -> address and bytecode identity at install time) of every wasm
     // delegate, baked and compiled alike: what ReconcileWithLink compares
@@ -137,33 +159,35 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// exists after a query setup, so when a consult just invalidated it
     /// this runs one trivial query to rebuild it — that throwaway goal, not
     /// the user's next real one, pays for the compile.</summary>
-    /// <summary>Whether the next <see cref="CompileAllTick"/> would actually
-    /// build, as opposed to taking its one-compare no-op. The caller needs to
-    /// know BEFORE the fact: a "compiling..." notice is only honest if it
-    /// precedes the work, and a consult that changed nothing must stay
-    /// silent.</summary>
-    public bool BatchPending(PrologEngine engine)
-        => !(engine._staticLink is not null
-             && engine._programStamp == _lastBatchStamp)
-           && CompileAllOnConsult && BatchPromoter is not null;
+    /// <summary>How many ticks got past the early-out and actually
+    /// reconciled. The tick runs after every query, and its work is O(all
+    /// installed predicates) with a bytecode hash each: a tick that runs when
+    /// nothing changed is invisible except as a pause, so it is counted.
+    /// </summary>
+    public int BatchTicksWorked { get; private set; }
 
     public int CompileAllTick(PrologEngine engine)
     {
-        // A consult INVALIDATES the static link (the program changed); a
-        // dynamic-store change bumps the stamp. Either means addresses may
-        // have moved and the batch may have new candidates; neither means
-        // one int/null compare otherwise.
+        // Only a change to the STATIC program can add candidates or move
+        // code, and a consult is what changes it: it invalidates the link,
+        // and the next query builds a new one. Anything else is a reference
+        // compare.
         if (engine._staticLink is not null
-            && engine._programStamp == _lastBatchStamp) return 0;
+            && ReferenceEquals(engine._staticLink, _lastLink)
+            && _pendingBatch.Count == 0) return 0;
         bool anythingToDo = _installed.Count > 0
             || (CompileAllOnConsult && BatchPromoter is not null);
         if (!anythingToDo) return 0;
         if (engine._staticLink is null) engine.Query("true.");
-        _lastBatchStamp = engine._programStamp;
+        _lastLink = engine._staticLink;
+        BatchTicksWorked++;
         // Evict the stale BEFORE the batch, so it recompiles them against
         // the addresses the modules will actually bake.
         ReconcileWithLink(engine);
         if (!CompileAllOnConsult || BatchPromoter is null) return 0;
+        LastBatchTrigger = _pendingBatch.Count > 0
+            ? new List<int>(_pendingBatch) : System.Array.Empty<int>();
+        _pendingBatch.Clear();          // PromoteAllStatics sweeps them up
         return System.Math.Max(0, PromoteAllStatics(engine));
     }
 
@@ -201,6 +225,12 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             candidates.Add((pred, addr));
         }
         if (candidates.Count == 0) return 0;
+        // Announced HERE and nowhere else: this is the first moment the count
+        // is known and the last before the work. A notice keyed on "the tick
+        // will run" instead fires after every consult, including the ones
+        // whose whole program is already promoted -- "compiling... 0
+        // predicates", which is noise that also happens to be false.
+        BatchStarting?.Invoke(candidates.Count);
         return BatchPromoter(candidates);
     }
 
@@ -263,6 +293,19 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         count++;
         _counters[functorId] = count;
         if (count < Threshold) return null;
+
+        // Under the batch, a straggler must NOT build on its own. The group is
+        // one module: promoting a single predicate re-emits all of it, and
+        // with the whole program on the tier that is a full rebuild landing
+        // INSIDE the user's query -- after the goal has written its output,
+        // before it answers. Note it and let the next boundary tick take it
+        // with the others; until then it keeps running on Tier-0, exactly as
+        // it did between crossing the threshold and being installed.
+        if (CompileAllOnConsult && BatchPromoter is not null)
+        {
+            _pendingBatch.Add(functorId);
+            return null;
+        }
 
         var del = Promoter!(predicate, linkedAddress);
         if (del is null)

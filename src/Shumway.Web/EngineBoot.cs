@@ -80,6 +80,9 @@ internal static partial class WebShumwayApp
         {
             BrowserWasmTier.BakedInstallNote = $"failed: {e.GetType().Name}: {e.Message}";
         }
-        WriteToPage($"% prelude wasm group: {BrowserWasmTier.BakedInstallNote}\n");
+        // Deliberately NOT written to the page: a successful boot has
+        // nothing to say, and this greeted every restart with a line about
+        // an asset nobody asked for. wasm_compile(status) reports the note
+        // on demand, which is where someone looking for it would look.
     }
 }

@@ -103,6 +103,9 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
         return (engine, () => builds, wasm);
     }
 
+    internal static (PrologEngine, Func<int>, WasmPromotionStore) TierForProbe()
+        => Tier(batch: true, threshold: 1);
+
     [Fact]
     public void TheBatchPathBuildsTheGroupOnce()
     {
@@ -115,6 +118,133 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
         // ANTI-VACUITY: "one build" is trivially true if nothing was promoted.
         Assert.True(promoted > 5, $"only {promoted} predicates promoted");
         Assert.Equal(1, builds());
+    }
+
+    [Fact]
+    public void AGoalThatChangesNothingDoesNoWork()
+    {
+        // The tick runs after EVERY query, not only after a consult, and its
+        // work is O(all installed predicates) with a bytecode hash each. A
+        // goal that leaves the static program alone must therefore cost
+        // nothing here: no build, no reconcile, no notice.
+        var (e, builds, w) = Tier(batch: true, threshold: 1);
+        int announced = 0;
+        w.BatchStarting = _ => announced++;
+        // Through the tick, which is the host's only entry point: it is what
+        // records the link the batch reconciled against.
+        Assert.True(w.CompileAllTick(e) > 5);
+        int afterFirst = builds();
+        Assert.Equal(1, announced);         // the real build DID announce
+        announced = 0;
+
+        for (int i = 0; i < 5; i++)
+            Assert.True(e.Query("run(L), length(L, N), N == 1.").Success);
+        int worked0 = w.BatchTicksWorked;
+        int extra = 0;
+        for (int i = 0; i < 5; i++) extra += w.CompileAllTick(e);
+
+        o.WriteLine($"builds after batch={afterFirst}, after 5 goals+ticks="
+            + $"{builds()}, compiled={extra}, announced={announced}, "
+            + $"ticksThatWorked={w.BatchTicksWorked - worked0}");
+        // Nothing static changed across those goals, so no tick may work.
+        Assert.Equal(afterFirst, builds());
+        Assert.Equal(0, extra);
+        Assert.Equal(0, announced);
+        Assert.Equal(worked0, w.BatchTicksWorked);
+    }
+
+    [Fact]
+    public void ATickWithNothingToCompileSaysNothing()
+    {
+        // What the user saw: after a restart the whole program is already on
+        // the tier (the baked prelude), the next tick still runs because the
+        // link was rebuilt, and it announced a build of zero predicates. The
+        // notice has to be keyed on the candidate COUNT, which only the batch
+        // itself knows, not on "a tick is about to run".
+        var (e, builds, w) = Tier(batch: true, threshold: 1);
+        var announcedCounts = new List<int>();
+        w.BatchStarting = n => announcedCounts.Add(n);
+        Assert.True(w.CompileAllTick(e) > 5);
+        int afterFirst = builds();
+
+        // A consult that adds nothing new: it invalidates the link, so the
+        // tick DOES run, and it must still find nothing to compile.
+        e.ConsultString("% nothing here\n");
+        int n2 = w.CompileAllTick(e);
+
+        o.WriteLine($"first announce={string.Join(",", announcedCounts)} "
+            + $"secondTick={n2} builds={builds()} (was {afterFirst})");
+        // The property that matters: a notice is only ever raised with real
+        // candidates in hand. It may still announce a batch the backend then
+        // refuses in full (n2 == 0 here) -- that is a refusal, not a phantom.
+        Assert.All(announcedCounts, n => Assert.True(n > 0,
+            "announced a build of zero predicates"));
+        Assert.True(announcedCounts[0] > 5);
+    }
+
+    [Fact]
+    public void AStragglerDoesNotRebuildTheGroupInsideTheQuery()
+    {
+        // The group is one module, so promoting a single latecomer re-emits
+        // ALL of it. Under the batch the whole program is on the tier, which
+        // makes that a full rebuild landing in the middle of the user's
+        // query -- after the goal has written its output, before it answers.
+        // The straggler waits for the boundary instead.
+        var (e, builds, w) = Tier(batch: true, threshold: 1);
+        Assert.True(w.CompileAllTick(e) > 5);
+        int afterBatch = builds();
+
+        // A predicate the batch never saw, dispatched from inside a query.
+        e.ConsultString(":- public latecomer/1.\nlatecomer(X) :- e(X).\n");
+        Assert.True(e.Query("latecomer(X), X == 3.").Success);
+        int duringQuery = builds();
+
+        int afterTick = w.CompileAllTick(e);
+        o.WriteLine($"builds: afterBatch={afterBatch} duringQuery={duringQuery} "
+            + $"afterBoundary={builds()} tickCompiled={afterTick}");
+
+        // Nothing was rebuilt while the query ran...
+        Assert.Equal(afterBatch, duringQuery);
+        // ...and the boundary picked the latecomer up.
+        Assert.True(afterTick > 0, "the boundary tick compiled nothing");
+        Assert.True(builds() > duringQuery, "the boundary tick did not build");
+
+        // And the build NAMES who asked for it. A rebuild nobody can explain
+        // is the thing that made this hard to find in the first place: the
+        // count alone leaves you guessing between the consult you just did
+        // and some predicate quietly demanding one.
+        Assert.NotEmpty(w.LastBatchTrigger);
+        var (aid, ar) = Shumway.Core.FunctorTable.Lookup(w.LastBatchTrigger[0]);
+        string who = $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}";
+        o.WriteLine($"trigger: {who}");
+        Assert.Contains("latecomer", who);
+    }
+
+    [Theory]
+    // The shape MetaTransform gives a query stub's helpers, bare and
+    // module-mangled (MetaTransform.HelperName: "{prefix}${kind}_{id}").
+    [InlineData("$q$disj_1", true)]
+    [InlineData("$q$neg_2", true)]
+    [InlineData("user$$q$disj_1", true)]
+    [InlineData("__query__", true)]
+    // ...and what must NOT be swept up with them: consult-time helpers carry
+    // the engine's monotonic id and are perfectly stable.
+    [InlineData("$disj_1", false)]
+    [InlineData("user$$disj_17", false)]
+    [InlineData("clpfd$clpfd_run", false)]
+    [InlineData("queens", false)]
+    public void QueryStubHelpersAreExcludedFromPromotion(string name, bool excluded)
+    {
+        // A query stub synthesises helpers for its ;, -> and \+, named with a
+        // reserved "$q" prefix precisely so the names are REUSED
+        // query-to-query (MetaTransform.HelperPrefix). One functor id, a
+        // different body every time: the same replay hazard __query__ is
+        // excluded for. On the wasm tier promoting one also rebuilt the whole
+        // group module on every such query -- 13 seconds after consulting
+        // boards.pl, attributed by the status line to '$q$disj_1'/5.
+        int fid = Shumway.Core.FunctorTable.Intern(
+            Shumway.Core.AtomTable.Intern(name, permanent: true).Id, 5);
+        Assert.Equal(excluded, IlPromotionStore.IsExcludedFromPromotion(fid));
     }
 
     [Fact]

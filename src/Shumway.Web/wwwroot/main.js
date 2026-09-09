@@ -77,6 +77,11 @@ function freshLine() {
 const emitEngineOutput = (text) => emit(text);
 // Standard error, which in a browser has nowhere else to go.
 const emitDiagnostic = (text) => emit(text, 'error');
+// The engine's own asides -- what it compiled, what it restored. Not
+// program output (that competes with what the program prints) and not a
+// diagnostic (nothing went wrong): the same grey the page uses for its
+// own remarks.
+const emitNote = (text) => emit(text, 'note');
 
 // A page that dies silently looks like a page that is still loading. Anything
 // that escapes lands in the transcript, where it can be read and reported.
@@ -1549,7 +1554,7 @@ window.shumwayDebug = {
   toggle: () => debugUi.toggle(),
 };
 
-emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop) + '\n\n', 'note');
+emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop, emitNote) + '\n\n', 'note');
 setPending(false);
 
 editor = attach(
