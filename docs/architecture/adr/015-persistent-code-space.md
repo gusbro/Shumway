@@ -265,6 +265,43 @@ with full multi-arg indexing.
 > GC reclaims when the query ends. `compact_dynamic_buffer/0` exists as an
 > explicit reclaim hook, but no moving code-GC is required.
 
+## Addendum: the static region's layout is append-only
+
+A linked address must survive a consult. The engine assumes it (dispatch
+tables, debug metadata, anything a host holds), and the wasm tier depends
+on it outright: its group modules bake deopt pcs, resume markers and BP
+encodings, so an address that moves points into different code. That was
+not true until measured and fixed: the region was laid out as "what the
+module compiler produced, then the precompiled prelude appended", so
+consulting a source put it BEFORE the prelude and pushed every prelude
+predicate down. Two plain facts moved all 531 of them; a library load
+moved them thousands of bytes.
+
+The layout is now decided by ORDINALS, not by list order. Reading the
+predicates being laid out as A and the ones the layout already holds as B:
+
+- **B minus A** keeps its ordinal, and therefore its address.
+- **A minus B** is appended: fresh ordinals at the end.
+- **A intersect B** splits. Unchanged (same bytecode, switch tables and
+  call sites) keeps its ordinal. CHANGED — a reconsult — is treated like a
+  fresh predicate: the new version is appended, and the OLD version stays
+  exactly where it was, laid out but owning nothing.
+
+That last part is what keeps a reconsult from moving anything. The
+superseded version is a DEAD REGION: its bytes are emitted so the code
+after it keeps its address, its functor resolves to the new version's
+address, and nothing links to it, so its call sites are left unpatched.
+It is unreachable by construction.
+
+**The holes are bookkept.** `Linker.DeadRegions` (surfaced as
+`PrologEngine.StaticDeadRegions`) records each one's address, size and the
+functor whose version it was. Nothing reuses them yet — a program that
+reconsults in a loop grows its static region — and the inventory is
+exactly what a future pass needs to fill a hole with a predicate that
+fits, or to compact the region when no baked address is outstanding.
+Compaction is not free to schedule: it moves addresses by definition, so
+it may only run where the engine can prove nothing holds one.
+
 ## Consequences
 
 - Per-query overhead drops from O(program) to O(query goal).

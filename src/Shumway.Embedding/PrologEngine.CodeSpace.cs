@@ -53,6 +53,117 @@ public sealed partial class PrologEngine
     /// bundle load). A query links only its transient region against this.</summary>
     internal Shumway.Compiler.Wam.Linker.LinkResult? _staticLink;
 
+    // Static-region LAYOUT ORDER, so a consult does not move code that did
+    // not change. The linker lays predicates out in list order, and the list
+    // was "whatever the module compiler produced, then the precompiled
+    // prelude appended" — so consulting one fact pushed the whole prelude
+    // down by its size, and every address baked against the old layout
+    // (Tier-1 wasm modules bake deopt pcs, resume markers and BP encodings;
+    // debug metadata and any host-held address likewise) pointed into
+    // different code. The layout is now append-only: a predicate keeps the
+    // ordinal it was first laid out with, and anything new or CHANGED takes
+    // a fresh ordinal at the end. Unchanged predicates therefore keep their
+    // addresses across consults, which is what the other backends already
+    // assume.
+    private readonly Dictionary<int, (int Ordinal, ulong Hash,
+        Shumway.Compiler.Wam.CompiledPredicate Pred)> _staticLayout = new();
+    private int _staticLayoutNext;
+
+    // Superseded versions, by the ordinal they still occupy. A reconsult
+    // replaces a predicate: the new version is appended, and the OLD one
+    // stays exactly where it was — dead, owning nothing — so the code laid
+    // out after it keeps its address. Reclaiming the space is future work
+    // (see StaticDeadRegions), which is why the inventory is kept.
+    private readonly SortedDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
+        _staticDead = new();
+
+    /// <summary>Indices into the ordered static list that are laid out but
+    /// own nothing — handed to the linker each time the region is built.</summary>
+    internal HashSet<int>? StaticDeadIndices { get; private set; }
+
+    /// <summary>Where the dead regions of the CURRENT static program are,
+    /// and how big: (address, size, the functor whose old version it was).
+    /// The bookkeeping a future pass needs to reuse the holes a reconsult
+    /// leaves; nothing reuses them yet, so this only ever grows within an
+    /// engine's life and is rebuilt from scratch by a full relink.</summary>
+    public IReadOnlyList<Shumway.Compiler.Wam.Linker.DeadRegion> StaticDeadRegions
+        => _staticLink?.DeadRegions
+           ?? (IReadOnlyList<Shumway.Compiler.Wam.Linker.DeadRegion>)
+              System.Array.Empty<Shumway.Compiler.Wam.Linker.DeadRegion>();
+
+    private static ulong LayoutHash(Shumway.Compiler.Wam.CompiledPredicate p)
+    {
+        const ulong prime = 1099511628211UL;
+        ulong h = 14695981039346656037UL;
+        foreach (byte b in p.Bytecode) { h ^= b; h *= prime; }
+        h ^= (uint)p.Bytecode.Length; h *= prime;
+        // Switch tables and call sites live outside the bytecode but decide
+        // what the linker writes into it.
+        foreach (var t in p.SwitchTables)
+        {
+            h ^= (uint)t.DefaultAddress; h *= prime;
+            for (int i = 0; i < t.Count; i++)
+            { h ^= (uint)t.Keys[i]; h *= prime; h ^= (uint)t.Values[i]; h *= prime; }
+        }
+        foreach (var c in p.CallSites)
+        {
+            h ^= (uint)c.OpcodeOffset; h *= prime;
+            h ^= (uint)c.CalleeFunctorId; h *= prime;
+        }
+        return h;
+    }
+
+    /// <summary>Sorts the static region into its stable layout order (see
+    /// <see cref="_staticLayout"/>). In-place and stable, so predicates
+    /// sharing an ordinal keep their relative order.</summary>
+    internal void OrderStaticRegion(
+        List<Shumway.Compiler.Wam.CompiledPredicate> preds)
+    {
+        // The sets, as the layout sees them: A = what is being laid out now,
+        // B = what the layout already holds. B minus A keeps its ordinal and
+        // therefore its address. A minus B is appended. A intersect B splits:
+        // unchanged keeps its ordinal, CHANGED leaves its old version behind
+        // as a dead region and the new one is appended like a fresh
+        // predicate.
+        var keyed = new List<(int Key, Shumway.Compiler.Wam.CompiledPredicate P,
+                              bool Dead)>(preds.Count + _staticDead.Count);
+        var live = new HashSet<int>();
+        for (int i = 0; i < preds.Count; i++)
+        {
+            var pred = preds[i];
+            live.Add(pred.FunctorId);
+            ulong hash = LayoutHash(pred);
+            if (_staticLayout.TryGetValue(pred.FunctorId, out var at))
+            {
+                if (at.Hash == hash)
+                {
+                    keyed.Add((at.Ordinal, pred, false));
+                    continue;
+                }
+                // Changed: its old version stays where it was, dead.
+                _staticDead[at.Ordinal] = at.Pred;
+            }
+            int ordinal = _staticLayoutNext++;
+            _staticLayout[pred.FunctorId] = (ordinal, hash, pred);
+            keyed.Add((ordinal, pred, false));
+        }
+        // The dead versions occupy their old ordinals. One whose functor is
+        // absent from this layout entirely (abolished, or a reconsult that
+        // dropped it) stays dead too — the space is still spoken for.
+        foreach (var (ordinal, dead) in _staticDead)
+            keyed.Add((ordinal, dead, true));
+
+        keyed.Sort((a, b) => a.Key.CompareTo(b.Key));
+        preds.Clear();
+        HashSet<int>? deadIndices = null;
+        for (int i = 0; i < keyed.Count; i++)
+        {
+            preds.Add(keyed[i].P);
+            if (keyed[i].Dead) (deadIndices ??= new()).Add(i);
+        }
+        StaticDeadIndices = deadIndices;
+    }
+
     /// <summary>the persistent program buffer —
     /// <c>prefix + static + dynamic</c>. Owned by PrologEngine across
     /// queries; <c>assertz</c> / <c>asserta</c> extend it in-place

@@ -1015,7 +1015,13 @@ internal sealed class BundleLoader
             LastStaticLinkWasSharedHit = false;
             if (_sharedStaticLinks.Count >= SharedStaticLinkCapacity)
                 _sharedStaticLinks.Clear();
-            var link = new Shumway.Compiler.Wam.Linker().Link(staticPreds, loadOffset: loadOffset);
+            var link = new Shumway.Compiler.Wam.Linker
+            {
+                // Superseded predicate versions a reconsult left behind: laid
+                // out, owning nothing, so the code after them keeps its
+                // address (PrologEngine.OrderStaticRegion).
+                DeadIndices = E.StaticDeadIndices,
+            }.Link(staticPreds, loadOffset: loadOffset);
             System.Threading.Interlocked.Increment(ref StaticLinkBuildCount);
             _sharedStaticLinks[key] = link;
             return link;

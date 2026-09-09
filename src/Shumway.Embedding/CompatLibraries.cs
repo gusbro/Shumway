@@ -1265,7 +1265,16 @@ internal static class CompatLibraries
             ;   Left = []
             ).
 
+        % Opening the scratch input is the harness's own work, not the
+        % goal's: when it fails the quad did not run at all, and reporting
+        % that as a description that did not hold sends the reader looking
+        % at the wrong thing (a CI-only failure of exactly this shape cost a
+        % round of diagnosis). The error names the path and the reason.
         quads_open_input(Path, Chars, Stream, Saved) :-
+            catch(quads_open_input_(Path, Chars, Stream, Saved), E,
+                  throw(quads_harness_error(input_file(Path), E))).
+
+        quads_open_input_(Path, Chars, Stream, Saved) :-
             current_input(Saved),
             setup_call_cleanup(open(Path, write, W),
                                quads_put_chars(W, Chars),
@@ -1298,13 +1307,23 @@ internal static class CompatLibraries
         % runs several engines at once from the same directory, and they
         % raced over it. Process id plus a per-call counter, in the system
         % temp directory.
+        %
+        % The counter lives in the ENGINE's database, so it restarts at 1
+        % with every engine — two engines in one process therefore reach for
+        % the SAME name, and only the cleanup deleting the file in time kept
+        % them apart. A leftover handle (an abandoned goal, an antivirus
+        % holding the file) turns that into one engine reading the other's
+        % input. The random component makes the name unique per FILE, so
+        % correctness no longer rests on the deletion winning a race.
         quads_input_file(Path) :-
             ( catch(current_prolog_flag(pid, P), _, fail) -> true ; P = 0 ),
             ( retract('$quad_tmp_seq'(N0)) -> true ; N0 = 0 ),
             N is N0 + 1,
             assertz('$quad_tmp_seq'(N)),
+            ( catch(random_between(100000, 999999, R), _, fail) -> true ; R = 0 ),
             quads_temp_dir(D),
-            atomic_list_concat([D, '/shumway_quads_', P, '_', N, '.tmp'], Path).
+            atomic_list_concat([D, '/shumway_quads_', P, '_', N, '_', R, '.tmp'],
+                               Path).
 
         quads_temp_dir(D) :-
             (   catch(getenv('TMPDIR', D0), _, fail) -> D = D0
