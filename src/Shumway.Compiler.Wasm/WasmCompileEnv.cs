@@ -116,4 +116,9 @@ public sealed record WasmGroupEntry(
     System.Collections.Generic.IReadOnlyDictionary<int, int> CursorByAddress,
     /// <summary>X registers the module addresses (highest index + 1),
     /// across all members.</summary>
-    int RegisterDemand);
+    int RegisterDemand,
+    /// <summary>(caller functor, callee functor) to the number of call sites
+    /// between them, counted while compiling. STATIC: it says which edges
+    /// exist and how tightly the code is coupled, NOT how often an edge is
+    /// taken at run time.</summary>
+    System.Collections.Generic.IReadOnlyDictionary<(int Caller, int Callee), int> CallSites);

@@ -137,6 +137,16 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// exists after a query setup, so when a consult just invalidated it
     /// this runs one trivial query to rebuild it — that throwaway goal, not
     /// the user's next real one, pays for the compile.</summary>
+    /// <summary>Whether the next <see cref="CompileAllTick"/> would actually
+    /// build, as opposed to taking its one-compare no-op. The caller needs to
+    /// know BEFORE the fact: a "compiling..." notice is only honest if it
+    /// precedes the work, and a consult that changed nothing must stay
+    /// silent.</summary>
+    public bool BatchPending(PrologEngine engine)
+        => !(engine._staticLink is not null
+             && engine._programStamp == _lastBatchStamp)
+           && CompileAllOnConsult && BatchPromoter is not null;
+
     public int CompileAllTick(PrologEngine engine)
     {
         // A consult INVALIDATES the static link (the program changed); a

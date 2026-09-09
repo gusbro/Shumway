@@ -319,7 +319,17 @@ internal static class BrowserWasmTier
     /// Cleared by any wasm_compile that turns the tier back on.</summary>
     internal static bool Disabled;
 
-    internal static void Attach(PrologEngine engine, int threshold = 16)
+    /// <summary>Attaches the tier. The default is the BATCH mode: one group
+    /// build for the whole linked program at each consult boundary, because
+    /// the group is a single wasm module -- adding a member renumbers every
+    /// cursor and re-emits all of it, so promoting n predicates one dispatch
+    /// at a time costs n(n+1)/2 predicate compiles. Measured on boards.pl:
+    /// 136 group builds one at a time against 3 in batch.
+    ///
+    /// <para>A caller asking for a numeric threshold is asking for the lazy
+    /// mode and gets it, batch off.</para></summary>
+    internal static void Attach(PrologEngine engine, int threshold = 1,
+        bool batch = true)
     {
         if (!RuntimeCaps.SupportsWasmCodegen || Disabled) return;
         var store = engine.IlPromotion;
@@ -332,6 +342,7 @@ internal static class BrowserWasmTier
         store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = threshold,
+            CompileAllOnConsult = batch,
             Promoter = (pred, linkedBase) =>
                 Promote(store, world, members, env, pred, linkedBase),
             BatchPromoter = candidates =>
@@ -551,6 +562,12 @@ internal static class BrowserWasmTier
         return true;
     }
 
+    /// <summary>(caller functor, callee functor) to call sites, from the last
+    /// group build: the evidence for whether a group could be split along
+    /// some module boundary. Static, so it costs nothing at run time.</summary>
+    internal static IReadOnlyDictionary<(int Caller, int Callee), int> LastCallSites
+        = new Dictionary<(int, int), int>();
+
     private static void InstallCurrent(BrowserWasmWorld world,
         List<WasmGroupMember> members, EngineWasmCompileEnv env)
     {
@@ -560,6 +577,7 @@ internal static class BrowserWasmTier
             entryAddr[m.Predicate.FunctorId] = m.Bias;
         world.InstallGroup(entry.Module, entry.EntryCursorByFid,
             entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+        LastCallSites = entry.CallSites;
     }
 }
 
@@ -927,7 +945,7 @@ internal static partial class WebShumwayApp
                     .Select(f => w.RefusalReason(f) is { } why
                         ? $"{Name(f)} ({why})" : Name(f))
                     .ToList();
-                return $"% wasm_compile: threshold={w.Threshold}\n"
+                string report = $"% wasm_compile: threshold={w.Threshold}\n"
                     + $"%   baked prelude: {BrowserWasmTier.BakedInstallNote}\n"
                     + (w.RelinkEvictions > 0
                         ? $"%   relink evictions: {w.RelinkEvictions} (a library "
@@ -937,16 +955,27 @@ internal static partial class WebShumwayApp
                     + (folded.Count > 0 ? " + " + string.Join(" + ", folded) : "")
                     + $"): {string.Join(" ", promoted)}\n"
                     + $"%   refused ({refused.Count}): {string.Join(" ", refused)}\n"
+                    + "%   since the previous status:\n"
                     + $"%   chains={WasmTierDelegate.DiagEntries} "
                     + $"switches={WasmTierDelegate.DiagSwitches} "
                     + $"deopts={WasmTierDelegate.DiagDeopts} "
                     + $"builtinExits={WasmTierDelegate.DiagBuiltins} "
                     + $"tailExits={WasmTierDelegate.DiagTailExits}\n"
                     + BrowserWasmTier.DeoptRankingReport(engine)
+                    + WasmCoupling.Report(engine, BrowserWasmTier.LastCallSites)
                     + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} group builds, "
-                    + $"{BrowserWasmTier.DiagCompileTicks * 1000.0 / Stopwatch.Frequency:F0} ms total\n";
+                    + $"{BrowserWasmTier.DiagCompileTicks * 1000.0 / Stopwatch.Frequency:F0} ms\n";
+                // Every counter above is a DELTA SINCE THE PREVIOUS STATUS:
+                // cleared on the way out, so goals can be measured one at a
+                // time. A running total since boot reads as if it belonged to
+                // the last query, and 136 group builds accumulated over a
+                // session of them looks exactly like one query gone wrong.
+                WasmTierDelegate.ResetDiag();
+                BrowserWasmTier.DiagCompileTicks = 0;
+                BrowserWasmTier.DiagCompileBuilds = 0;
+                return report;
             }
-            if (command == "off")
+            if (command is "off" or "none")
             {
                 if (store.Wasm is { } w)
                 {
@@ -999,14 +1028,19 @@ internal static partial class WebShumwayApp
             int threshold = command == "on" ? 16
                 : int.TryParse(command, out int n) && n > 0 ? n : -1;
             if (threshold < 0)
-                return "% wasm_compile: on | off | status | <threshold>\n";
+                return "% wasm_compile: all | none | status | <threshold>\n";
             BrowserWasmTier.Disabled = false;       // turning it on un-disables
             if (store.Wasm is { } existing)
             {
                 existing.Threshold = threshold;
-                return $"% wasm_compile: threshold={threshold}\n";
+                // A threshold IS the lazy mode. Leaving the consult batch on
+                // beside it would compile the whole program anyway and make
+                // the number meaningless.
+                existing.CompileAllOnConsult = false;
+                return $"% wasm_compile: threshold={threshold} (lazy; "
+                     + "wasm_compile(all) restores one build per program)\n";
             }
-            BrowserWasmTier.Attach(engine, threshold);
+            BrowserWasmTier.Attach(engine, threshold, batch: false);
             return store.Wasm is null
                 ? "% wasm_compile: could not attach\n"
                 : $"% wasm_compile: attached, threshold={threshold} — hot "
@@ -1025,7 +1059,20 @@ internal static partial class WebShumwayApp
             var engine = _session?.Engine;
             if (engine?.IlPromotion.Wasm is not { CompileAllOnConsult: true } w)
                 return 0;
-            return w.CompileAllTick(engine);
+            // Say it BEFORE the work, and only when there is work: a consult
+            // that changed nothing takes the one-compare path and must not
+            // put a line on the page.
+            bool pending = w.BatchPending(engine);
+            if (pending) WriteToPage("% consulted, compiling...\n");
+            long t0 = Stopwatch.GetTimestamp();
+            int n = w.CompileAllTick(engine);
+            if (pending)
+            {
+                double ms = (Stopwatch.GetTimestamp() - t0) * 1000.0
+                          / Stopwatch.Frequency;
+                WriteToPage($"% compiled ({n} predicates, {ms:F0} ms)\n");
+            }
+            return n;
         });
 }
 

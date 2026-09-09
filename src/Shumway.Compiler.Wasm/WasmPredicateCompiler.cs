@@ -56,7 +56,7 @@ public static class WasmPredicateCompiler
         foreach (var m in members)
             entryCursors[m.Predicate.FunctorId] = c.CursorByAddress[m.Bias];
         return new WasmGroupEntry(bytes, entryCursors, c.CursorByAddress,
-                                  c.RegisterDemand);
+                                  c.RegisterDemand, c.CallSites);
     }
 
     /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
@@ -112,6 +112,11 @@ public static class WasmPredicateCompiler
         // (baked Cp marker value, resume address): the PROCEED jump table
         // for in-group non-tail calls, collected in the cursor pass.
         private readonly List<(int Marker, int Addr)> _proceedTargets = new();
+        // (callerFid, calleeFid) -> call sites between them, for the coupling
+        // report. Filled by the cursor pass, which walks every instruction
+        // anyway, so it costs nothing at run time and nothing extra to compile.
+        private readonly Dictionary<(int, int), int> _callSites = new();
+        public IReadOnlyDictionary<(int, int), int> CallSites => _callSites;
 
         private WasmGroupMember Sec(Instr ins) => _members[ins.Section];
         private int Bias(Instr ins) => _members[ins.Section].Bias;
@@ -411,9 +416,18 @@ public static class WasmPredicateCompiler
             // the module. Foreign Cp values still return the verdict.
             foreach (var ins in _instrs)
             {
-                if (ins.Op != Opcode.Call) continue;
+                if (ins.Op is not (Opcode.Call or Opcode.Execute)) continue;
                 if (!_callee.TryGetValue(ins.Pc, out int callee)) continue;
                 if (_env.TryGetBuiltin(callee, out _)) continue;
+                // Who calls whom, counted at COMPILE time: the caller's and
+                // callee's functors, one entry per call site. Free (this pass
+                // already walks every instruction) and it is the evidence for
+                // whether a group could be split along some boundary without
+                // putting a host round trip on a hot path.
+                var edge = (SelfFid(ins), callee);
+                _callSites.TryGetValue(edge, out int seen);
+                _callSites[edge] = seen + 1;
+                if (ins.Op != Opcode.Call) continue;
                 if (!_entryByFid.ContainsKey(callee)) continue;
                 int marker = _env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9);
                 _proceedTargets.Add((marker, ins.Pc + 9));
