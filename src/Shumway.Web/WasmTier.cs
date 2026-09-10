@@ -97,6 +97,64 @@ internal static partial class WebShumwayApp
         }).ConfigureAwait(false);
     }
 
+    /// <summary>Where the WAM's scalars should live. They are in LOCALS today,
+    /// loaded from the mailbox on entry and spilled on exit, and that prologue
+    /// and epilogue are both most of a small module's fixed size and what every
+    /// crossing pays. Imported mutable globals would remove them rather than
+    /// share them -- a module reached by a tail call would find the state
+    /// already there.
+    ///
+    /// <para>The question is the price of an ACCESS, because these are the
+    /// hottest reads and writes in the engine. The same counting loop, four
+    /// ways, differing only in where the counter lives.</para></summary>
+    [JSExport]
+    internal static async Task<string> WasmScalarHomeProbe(int iterations, int rounds)
+        => await Task.Run(() =>
+        {
+            var report = new StringBuilder();
+            try
+            {
+                long[] mem = GC.AllocateArray<long>(16, pinned: true);
+                int memAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(mem, 0);
+                foreach (SpikeScalarHomeModules.Home home in
+                         Enum.GetValues<SpikeScalarHomeModules.Home>())
+                {
+                    int idx;
+                    try
+                    {
+                        idx = Register(report, home.ToString(),
+                            SpikeScalarHomeModules.Build(home, shared: true));
+                    }
+                    catch (Exception ex)
+                    {
+                        report.Append(home).Append(": REFUSED ")
+                              .Append(ex.Message).Append('\n');
+                        continue;
+                    }
+                    double best = double.MaxValue;
+                    long result = 0;
+                    for (int r = 0; r < Math.Max(1, rounds); r++)
+                    {
+                        mem[0] = iterations;
+                        var sw = Stopwatch.StartNew();
+                        shumway_wasm_call(idx, memAt, 0);
+                        sw.Stop();
+                        result = mem[SpikeScalarHomeModules.ResultSlot];
+                        double ns = sw.Elapsed.TotalMilliseconds * 1e6 / iterations;
+                        if (ns < best) best = ns;
+                    }
+                    report.Append(home).Append(": ").Append(best.ToString("F2"))
+                          .Append(" ns/access (result ").Append(result).Append(")\n");
+                }
+            }
+            catch (Exception ex)
+            {
+                report.Append("STOPPED: ").Append(ex.GetType().Name)
+                      .Append(": ").Append(ex.Message).Append('\n');
+            }
+            return report.ToString();
+        }).ConfigureAwait(false);
+
     /// <summary>Is engine work actually pinned to one thread? A compiled module
     /// is registered in the CALLING thread's function table, so a pool that
     /// hands out a different thread each time makes every module pay
@@ -148,16 +206,23 @@ internal static partial class WebShumwayApp
                 // is instantiated, so A reaching B at all is G4 -- a table
                 // import is by reference, and slots added later must be
                 // visible.
+                bool carry = rounds < 0;        // negative rounds: carry state
+                rounds = Math.Abs(rounds);
+                report.Append(carry
+                    ? "hops CARRYING the scalar set (9 spilled, 13 reloaded)\n"
+                    : "bare hops (no state transfer)\n");
                 int a = Register(report, "ping",
                     SpikeTailPingPongModules.Build(
                         SpikeTailPingPongModules.HalfA,
-                        SpikeTailPingPongModules.IndexOfBSlot, shared: true));
+                        SpikeTailPingPongModules.IndexOfBSlot, shared: true,
+                        carryState: carry));
                 report.Append("table length after ping: ")
                       .Append(shumway_wasm_table_length()).Append('\n');
                 int b = Register(report, "pong",
                     SpikeTailPingPongModules.Build(
                         SpikeTailPingPongModules.HalfB,
-                        SpikeTailPingPongModules.IndexOfASlot, shared: true));
+                        SpikeTailPingPongModules.IndexOfASlot, shared: true,
+                        carryState: carry));
                 report.Append("table length after pong: ")
                       .Append(shumway_wasm_table_length()).Append('\n');
 

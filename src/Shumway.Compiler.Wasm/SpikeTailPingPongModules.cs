@@ -52,7 +52,14 @@ public static class SpikeTailPingPongModules
     /// itself done and RETURN to the host with the slot's id (so the harness
     /// can tell which half finished); otherwise tail-call the other half. The
     /// only non-tail exit is the last one.</para></summary>
-    public static byte[] Build(int selfHalf, int otherIndexSlot, bool shared)
+    /// <summary>Slots standing in for the WAM's mutable scalars, so a hop can
+    /// be measured with the state transfer a real one would do.</summary>
+    public const int ScalarBase = 8;
+    public const int MutableScalars = 9;    // what StoreScalars actually spills
+    public const int LoadedScalars = 13;    // those plus the four bases
+
+    public static byte[] Build(int selfHalf, int otherIndexSlot, bool shared,
+                               bool carryState = false)
     {
         var module = new Module();
         // Type 0 is the production signature, on purpose: return_call_indirect
@@ -115,6 +122,25 @@ public static class SpikeTailPingPongModules
         // ...otherwise hand control to the other half and DO NOT come back.
         code.Add(new LocalGet(0));                  // mailbox, passed along
         code.Add(new LocalGet(1));                  // cursor, passed along
+        // Optionally do what a real crossing does: spill the mutable scalars
+        // and reload the full set. The hop itself is 6 ns; this is the rest of
+        // the bill, and the point of measuring it separately.
+        if (carryState)
+        {
+            for (int i = 0; i < MutableScalars; i++)
+            {
+                Base();
+                code.Add(new LocalGet((uint)(2 + i)));
+                code.Add(new Int64Store { Offset = (uint)((ScalarBase + i) * 8) });
+            }
+            for (int i = 0; i < LoadedScalars; i++)
+            {
+                Base();
+                code.Add(new Int64Load { Offset = (uint)((ScalarBase + i) * 8) });
+                code.Add(new LocalSet((uint)(2 + i)));
+            }
+        }
+
         // The other half's table index, read at run time.
         Base();
         code.Add(new Int64Load { Offset = (uint)(otherIndexSlot * 8) });
@@ -124,7 +150,15 @@ public static class SpikeTailPingPongModules
         code.Add(new Int32Constant(-1));
         code.Add(new End());
 
-        module.Codes.Add(new FunctionBody { Locals = [], Code = code });
+        module.Codes.Add(new FunctionBody
+        {
+            // Enough locals to stand in for the scalar set.
+            Locals = carryState
+                ? [new Local { Count = (uint)(2 + LoadedScalars),
+                               Type = WebAssemblyValueType.Int64 }]
+                : [],
+            Code = code,
+        });
 
         using var stream = new MemoryStream();
         module.WriteToBinary(stream);

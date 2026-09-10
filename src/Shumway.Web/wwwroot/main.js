@@ -1680,6 +1680,27 @@ if (persistMode) {
   try {
     await (await import('./selftest.js')).persistProbe(workspace, emit, persistMode[1]);
   } catch (ex) { emitFailure('persist probe', ex); }
+} else if (location.hash.startsWith('#wasmscalar')) {
+  // #wasmscalar: where should the WAM's scalars live? Locals are registers but
+  // need a prologue and an epilogue; imported globals need neither but may not
+  // be registers. These are the hottest reads and writes in the engine.
+  try {
+    const spec = /^#wasmscalar=(\d+)x(\d+)$/.exec(location.hash);
+    const iterations = spec ? Number(spec[1]) : 20000000;
+    const rounds = spec ? Number(spec[2]) : 5;
+    const report = await session.exports().WasmScalarHomeProbe(iterations, rounds);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmscalar';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = 'scalar probe STOPPED: ' + (ex && ex.message ? ex.message : ex);
+    emit(t);
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
+  try { window.close(); } catch { }
 } else if (location.hash.startsWith('#wasmthread')) {
   // #wasmthread: is engine work pinned to one thread? A module is registered
   // in the calling thread's own function table, so a pool that hands out a
@@ -1706,7 +1727,9 @@ if (persistMode) {
   // millions of hops in bounded stack. Everything runs in C#; the page starts
   // it and posts the report back, because a page cannot write to disk.
   try {
-    const spec = /^#wasmsplit=(\d+)x(\d+)$/.exec(location.hash);
+    // A negative round count means: carry the WAM scalar set on every
+    // hop, which is what a real crossing does.
+    const spec = /^#wasmsplit=(\d+)x(-?\d+)$/.exec(location.hash);
     const hops = spec ? Number(spec[1]) : 10000000;
     const rounds = spec ? Number(spec[2]) : 5;
     emit(`--- wasm split spike: ${hops} hops x${rounds} ---\n`);

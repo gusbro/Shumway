@@ -95,6 +95,44 @@ public sealed class ResumeTableAgreesTests(ITestOutputHelper o)
         Assert.True(checkedRows > 20, $"only {checkedRows} rows compared");
     }
 
+    /// <summary>Two worlds of ONE engine share the table, and each other's
+    /// markers resolve to the other's module id. That is the whole mechanism
+    /// the split needs: a module has to be able to discover that a marker is
+    /// not its own AND where it went. A table per world could only ever answer
+    /// "not mine".</summary>
+    [Fact]
+    public void SiblingWorldsShareOneTableAndSeeEachOther()
+    {
+        var shared = new WasmResumeTable();
+        var a = new DesktopWasmWorld(shared);
+        var b = new DesktopWasmWorld(shared);
+        Assert.NotEqual(a.ModuleId, b.ModuleId);
+        Assert.Same(a.ResumeTable, b.ResumeTable);
+
+        // Rows written by one are visible to the other, tagged with the owner.
+        int m = Activation.EncodeResumeMarker(900_101, 0x11);
+        shared.Set(m, b.ModuleId, cursor: 33);
+        Assert.True(a.ResumeTable.TryGet(m, out int owner, out int cursor));
+        Assert.Equal(b.ModuleId, owner);
+        Assert.Equal(33, cursor);
+        Assert.NotEqual(a.ModuleId, owner);      // a can tell it is foreign
+    }
+
+    /// <summary>A world with no sibling gets its own table: engines must not
+    /// see each other's rows. Same markers, different code -- addresses belong
+    /// to an engine's code space while the marker pool is global.</summary>
+    [Fact]
+    public void SeparateEnginesDoNotShareRows()
+    {
+        var one = new DesktopWasmWorld();
+        var other = new DesktopWasmWorld();
+        Assert.NotSame(one.ResumeTable, other.ResumeTable);
+
+        int m = Activation.EncodeResumeMarker(900_102, 0x22);
+        one.ResumeTable.Set(m, one.ModuleId, cursor: 7);
+        Assert.False(other.ResumeTable.TryGet(m, out _, out _));
+    }
+
     /// <summary>The other direction: a marker the build never minted must not
     /// resolve. Otherwise "not mine" would be indistinguishable from a row that
     /// happens to be zero, and the module would jump somewhere.</summary>

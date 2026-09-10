@@ -27,6 +27,19 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 
     private readonly UnmanagedMemory _memory = new(Pages, Pages);
     private Build? _current;
+
+    /// <summary>A world of its own engine, with a private resume table.
+    /// </summary>
+    public DesktopWasmWorld() : this(new Shumway.Core.WasmResumeTable()) { }
+
+    /// <summary>A world sharing an engine's resume table with its siblings,
+    /// taking the next module id from it.</summary>
+    public DesktopWasmWorld(Shumway.Core.WasmResumeTable shared)
+    {
+        ResumeTable = shared;
+        ModuleId = shared.NextModuleId();
+    }
+
     private int _functorSynced;
     private int _functorAt = -1;
 
@@ -76,7 +89,11 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
     /// same two maps the host resolves through, so the two cannot drift: a
     /// marker is (functor, address), the build records addresses, and the
     /// address index says which member owns each one.</summary>
-    public Shumway.Core.WasmResumeTable ResumeTable { get; } = new();
+    /// <summary>The engine's resume table, shared with every other world of
+    /// the same engine: resolving a marker has to be able to say "that one
+    /// belongs to another module, and here is which". A world given none makes
+    /// its own, which is the single-world case.</summary>
+    public Shumway.Core.WasmResumeTable ResumeTable { get; }
 
     private void PopulateResumeTable(
         IReadOnlyDictionary<int, int> entryCursorByFid,
@@ -100,7 +117,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 
     /// <summary>This world's module id. One group means one module, so it is
     /// constant here; it stops being constant when a group is split.</summary>
-    public int ModuleId { get; } = 0;
+    public int ModuleId { get; }
 
     public bool Contains(int functorId)
         => _current?.EntryCursorByFid.ContainsKey(functorId) == true;

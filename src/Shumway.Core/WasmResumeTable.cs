@@ -15,12 +15,17 @@ namespace Shumway.Core;
 /// is a bug with nowhere to show. Reading the same rows makes that class of bug
 /// impossible rather than unlikely.</para>
 ///
-/// <para>An instance belongs to ONE world. Functor ids and the marker pool are
-/// process-wide, but bytecode addresses belong to an engine's code space, so
-/// two engines running the same program mint the same markers for different
-/// code. Per-world resolution is what keeps them apart, and a shared table
-/// would lose it — the desktop tests, which build dozens of engines in a
-/// process, would be the first to notice.</para></summary>
+/// <para>An instance belongs to ONE ENGINE, and every module of that engine
+/// shares it. That is the whole point: a module resolving a marker has to be
+/// able to discover that it belongs to a DIFFERENT module and where that one
+/// is, which it cannot do from a table only it can see.</para>
+///
+/// <para>Engine, though, and never process-wide. Functor ids and the marker
+/// pool are global, but bytecode addresses belong to an engine's code space,
+/// so two engines running the same program mint the same markers for different
+/// code. Sharing across engines would resolve one engine's marker into
+/// another's module — and the desktop tests, which build dozens of engines in
+/// a process, would be the first to find out.</para></summary>
 public sealed class WasmResumeTable
 {
     // Row: ((moduleId + 1) << 32) | cursor. Zero is "not here", which has to
@@ -29,6 +34,16 @@ public sealed class WasmResumeTable
 
     public WasmResumeTable(int initialRows = 4096)
         => _rows = new long[initialRows];
+
+    /// <summary>Hands out the next module id for this engine. Ids are dense
+    /// and start at 0, so they index the moduleId -&gt; table-index array the
+    /// in-wasm hop reads.</summary>
+    public int NextModuleId() => _nextModuleId++;
+
+    private int _nextModuleId;
+
+    /// <summary>How many modules this engine has handed ids to.</summary>
+    public int ModuleCount => _nextModuleId;
 
     /// <summary>The rows, for the host to copy into linear memory. Grown by
     /// <see cref="Set"/>; the reference changes, so read it each time.</summary>

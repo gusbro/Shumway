@@ -119,6 +119,53 @@ their own module and import them, which would give per-predicate grain with no
 repetition at all. Whether functions can be imported across these modules the
 way the table is has not been established.
 
+## Where the scalars live, and what a crossing really costs
+
+The WAM's scalars live in LOCALS, loaded from the mailbox on entry and spilled
+on exit. That prologue and epilogue are ~1,198 of a small module's ~3,234 byte
+floor, and every crossing pays them, so three alternatives were measured.
+
+**A local is a register and nothing else is.** The same counting loop, four
+ways, V8:
+
+```
+Local            0.32 ns/access
+OwnGlobal        1.05 ns/access    3.3x
+ImportedGlobal   2.57 ns/access    8x
+Memory (mailbox) 2.49 ns/access    7.8x
+```
+
+Keeping the scalars in imported globals and reading them directly is 8x per
+access, on values like `H` that move on every allocation. And an imported
+global costs the same as a mailbox slot (2.57 against 2.49), so using globals
+as the home and caching them in locals at the boundaries — the second variant —
+buys nothing either: the prologue would read fifteen globals instead of fifteen
+memory slots at the same price. Note it is *importing* that costs: a module's
+own global is 1.05 ns, but a private global cannot be shared state.
+
+**And the crossing's state transfer is nearly free**, which is the number that
+settles it:
+
+```
+bare hop                                6.1 ns
+hop spilling 9 scalars and reloading 13  10.2 ns
+                                        --------
+state transfer                          ~4.1 ns
+```
+
+Estimating that at 24 accesses times 2.5 ns gives ~60 ns, and that estimate is
+wrong by fifteen. The accesses are to contiguous memory in one cache line with
+no dependencies between them, and the processor overlaps them; the 2.5 ns above
+was the cost of an access *on the critical path of a dependent loop*, where
+each iteration waits for the last. A unit cost measured in a dependent loop
+does not multiply.
+
+So a full cross-module crossing, state and all, is **~10 ns against the
+4,000–15,000 ns** the same crossing costs today going out through
+mono-interpreted C#. The prologue and epilogue are not the problem, in time or
+in bytes, and the design stands as it is: scalars in locals, mailbox for
+crossings.
+
 ## What the spike caught
 
 The module addressed linear memory absolutely — slots 0, 8, 16 — instead of

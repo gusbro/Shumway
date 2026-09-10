@@ -32,6 +32,16 @@ EM_JS(int, shumway_wasm_table_length, (void), {
 /* Instantiates the module (bytes in the shared linear memory) against this
  * realm's memory and registers its `run` export in THIS thread's table.
  * Returns the table index, or -1 with the reason on the console. */
+/* One mutable i64 global, shared by every module that imports it: the
+ * experiment for keeping the WAM's scalars out of locals, so that a module
+ * reached by a tail call finds the state already there instead of loading it.
+ * Created lazily and kept on the module scope, because all the modules of a
+ * thread have to see the SAME one for that to mean anything. */
+EM_JS(void, shumway_wasm_state_reset, (void), {
+    globalThis.__shumwayState = new WebAssembly.Global(
+        { value: 'i64', mutable: true }, 0n);
+});
+
 EM_JS(int, shumway_wasm_register, (int bytesPtr, int len), {
     try {
         /* >>> 0: the pointer crosses as a SIGNED int32, and a buffer above
@@ -45,10 +55,19 @@ EM_JS(int, shumway_wasm_register, (int bytesPtr, int len), {
          * from directly, and the copy detaches the bytes from the heap. */
         var bytes = HEAPU8.slice(at, at + n);
         var mod = new WebAssembly.Module(bytes);
-        var inst = new WebAssembly.Instance(mod, { env: {
-            memory: wasmMemory,
-            __indirect_function_table: wasmTable,
-        } });
+        if (!globalThis.__shumwayState) {
+            globalThis.__shumwayState = new WebAssembly.Global(
+                { value: 'i64', mutable: true }, 0n);
+        }
+        var inst = new WebAssembly.Instance(mod, {
+            env: {
+                memory: wasmMemory,
+                __indirect_function_table: wasmTable,
+            },
+            /* Offered to every module; one that does not declare the import
+             * simply ignores it. */
+            state: { h: globalThis.__shumwayState },
+        });
         return addFunction(inst.exports.run, 'iii');
     } catch (e) {
         console.error('shumway_wasm_register: ' + e);
