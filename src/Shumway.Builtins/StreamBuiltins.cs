@@ -1264,21 +1264,25 @@ public static class StreamBuiltins
     }
 
     /// <summary>current_input/1 and current_output/1 take a variable or a
-    /// term naming an OPEN stream; anything else (an unrelated atom, a
-    /// closed stream) is domain_error(stream, X) rather than a quiet
-    /// failure.</summary>
+    /// STREAM-TERM; their domain is `stream`, not `stream_or_alias`, so an
+    /// alias atom is domain_error(stream, X) too. A CLOSED stream is still a
+    /// stream-term, so it passes here and the unification below simply fails:
+    /// these are queries ABOUT a stream, and ISO 8.11.1.3 lists no
+    /// existence_error for them. Only a term that can NEVER be a stream-term
+    /// is a domain error, and that is decided by FORM alone: 7.10.2.1 makes
+    /// the shape of a stream-term implementation defined, and ours is
+    /// '$stream'(Integer). Whether that id names a live stream is a question
+    /// about EXISTENCE, not about the domain, exactly as it is for an alias
+    /// atom -- which is why a never-opened '$stream'(53) behaves like a closed
+    /// one rather than like '$stream'(foo). Deciding it by consulting the
+    /// registry would make the domain vary as the program runs.
+    /// </summary>
     private static void RequireStreamOrVar(Activation engine, Cell cell)
     {
         Cell d = Resolve(engine, cell);
         if (d.Tag is Tag.Ref or Tag.AttVar) return;
-        try
-        {
-            ResolveStream(engine, d);
-        }
-        catch (PrologRuntimeException)
-        {
-            throw new PrologRuntimeException("domain_error", "stream", engine, d);
-        }
+        if (TryReadStreamId(engine, d, out _)) return;
+        throw new PrologRuntimeException("domain_error", "stream", engine, d);
     }
 
     /// <summary><c>current_output(Stream)</c> — ISO §8.11.2.</summary>

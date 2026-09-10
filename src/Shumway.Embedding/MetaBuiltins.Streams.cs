@@ -67,9 +67,13 @@ public static partial class MetaBuiltins
         // §8.11.8.3: a bound first argument that is not a stream term is
         // domain_error(stream, S); a bound property outside the recognised
         // set is domain_error(stream_property, P).
+        // What makes a stream-term is its FORM: '$stream'(foo) is none and is
+        // a domain error, while '$stream'(53) is one whether or not a stream
+        // by that id exists -- an id that names nothing is handled below the
+        // same way a closed one is.
         Term sArg = MaterializeRegister(engine, 0);
         if (sArg is not VarTerm
-            && sArg is not CompoundTerm { Functor: "$stream", Args.Length: 1 })
+            && sArg is not CompoundTerm { Functor: "$stream", Args: [IntTerm] })
             throw new ShumwayPrologException(IsoError.DomainError("stream", sArg));
         Term pArg = MaterializeRegister(engine, 1);
         bool knownProp = pArg switch
@@ -89,8 +93,10 @@ public static partial class MetaBuiltins
         if (sArg is CompoundTerm { Functor: "$stream", Args: [IntTerm sid] })
         {
             onlyStream = registry.GetById((int)sid.Value);
-            if (onlyStream is null)
-                throw new ShumwayPrologException(IsoError.ExistenceError("stream", sArg));
+            // A closed stream leaves the registry but is still a stream-term,
+            // and 8.11.8.3 lists no existence_error: a query about a stream
+            // that is no longer there simply has no properties, so it FAILS.
+            if (onlyStream is null) return false;
         }
         string? onlyProp = pArg switch
         {
