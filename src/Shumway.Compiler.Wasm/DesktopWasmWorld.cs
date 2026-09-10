@@ -34,11 +34,18 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 
     /// <summary>A world sharing an engine's resume table with its siblings,
     /// taking the next module id from it.</summary>
-    public DesktopWasmWorld(Shumway.Core.WasmResumeTable shared)
+    public DesktopWasmWorld(Shumway.Core.WasmResumeTable shared,
+                            FunctionTable? sharedFunctions = null)
     {
         ResumeTable = shared;
         ModuleId = shared.NextModuleId();
+        Functions = sharedFunctions ?? new FunctionTable(0, null);
     }
+
+    /// <summary>The function table every module of this engine is registered
+    /// in. The browser has one per thread already (emscripten's); here it is
+    /// made explicitly so the same emitted code works in both.</summary>
+    public FunctionTable Functions { get; }
 
     private int _functorSynced;
     private int _functorAt = -1;
@@ -78,7 +85,13 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         var instance = creator(new ImportDictionary
         {
             { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },
+            { WasmAbi.TableModule, WasmAbi.TableField, Functions },
         });
+        // Register this module where the others can reach it. A reinstall
+        // replaces the entry rather than adding one: the module id is the
+        // world's, and the slot belongs to the id.
+        while (Functions.Length <= ModuleId) Functions.Grow(1);
+        Functions[ModuleId] = (Func<int, int, int>)instance.Exports.run;
         var addrIndex = new Shumway.Core.WasmBuildAddressIndex(entryAddressByFid);
         _current = new Build(instance, entryCursorByFid, cursorByAddress,
                              entryAddressByFid, registerDemand, addrIndex);

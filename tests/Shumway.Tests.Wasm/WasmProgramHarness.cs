@@ -41,6 +41,7 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
     private const int MarkerTag = 0x20000000;
     private const int TopSentinel = -1;
 
+    private readonly FunctionTable _functions = new(16, null);
     private readonly UnmanagedMemory _memory;
     private readonly List<(int FunctorId, Instance<WasmPredicateExports> Instance,
         IReadOnlyDictionary<int, int> CursorByAddress)> _preds = new();
@@ -72,6 +73,9 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
             var instance = creator(new ImportDictionary
             {
                 { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },
+            // Every module imports the thread's function table now: it is how
+            // one reaches another without going out to the host.
+            { WasmAbi.TableModule, WasmAbi.TableField, _functions },
             });
             _preds.Add((p.FunctorId, instance, entry.CursorByAddress));
         }

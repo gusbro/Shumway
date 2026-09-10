@@ -201,6 +201,12 @@ public static class WasmAbi
     public const int DebugGuardCount = 36;
     public const int DebugGuardCursor = 37;
 
+    /// <summary>The thread's function table, as emscripten names it. Every
+    /// module a thread registers lands in this one, which is what lets a
+    /// module reach another without going out to the host.</summary>
+    public const string TableModule = "env";
+    public const string TableField = "__indirect_function_table";
+
     public const int SlotCount = 40;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;

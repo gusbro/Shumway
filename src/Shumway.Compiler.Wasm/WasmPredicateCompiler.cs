@@ -542,6 +542,13 @@ public static class WasmPredicateCompiler
                 Field = WasmAbi.MemoryField,
                 Type = new Memory(1, 65536),
             });
+            // The thread's function table, where every module of this engine
+            // is registered. A marker resolving to ANOTHER module is reached
+            // through it, inside wasm, instead of by returning a verdict and
+            // letting the host re-dispatch. The memory import stays FIRST:
+            // WasmSharedMemory walks the import section for its limits byte.
+            module.Imports.Add(new Import.Table(WasmAbi.TableModule,
+                                               WasmAbi.TableField, 0, null));
             module.Types.Add(new WebAssemblyType
             {
                 Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int64,
