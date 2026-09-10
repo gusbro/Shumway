@@ -30,6 +30,14 @@ public sealed class WasmTierDelegate
     /// to the interpreter for tail calls it must dispatch. Not on any hot
     /// path decision; plain longs.</summary>
     public static long DiagEntries, DiagSwitches, DiagDeopts, DiagBuiltins, DiagTailExits;
+
+    /// <summary>Chain exits taken because the target was in ANOTHER module
+    /// (foreign) versus because the host owed work first (boundary). Only the
+    /// first kind is what splitting the group into many modules has to make
+    /// cheap; the second survives any arrangement. Kept apart because a single
+    /// "switches" number cannot tell a design question from a fact of
+    /// life.</summary>
+    public static long DiagForeignExits, DiagBoundaryExits;
     /// <summary>Requests per builtin id — which builtins actually cost a
     /// chain exit, to decide what earns open-coding. Diagnostic only.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
@@ -72,6 +80,7 @@ public sealed class WasmTierDelegate
     public static void ResetDiag()
     {
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
+        DiagForeignExits = DiagBoundaryExits = 0;
         DiagBuiltinTally.Clear();
         for (int i = 0; i < DiagDeoptPcs.Length; i++) { DiagDeoptPcs[i] = -1; DiagDeoptHits[i] = 0; }
         DiagDeoptOverflow = 0;
@@ -307,9 +316,18 @@ public sealed class WasmTierDelegate
                                  ref int currentFid, ref int cursor)
     {
         var (fid, address) = Activation.DecodeResumeMarker(marker);
-        if (!cx.TryResolve(fid, address, out int c)) return false;
-        if (cx.ReadSlot(WasmAbi.HeapTop) >= cx.ReadSlot(WasmAbi.HeapWatermark)) return false;
-        if (engine.IsCancellationRequested || engine.HasPendingWakeups) return false;
+        // The two ways this can fail are worth telling apart. FOREIGN means
+        // the target simply is not in this chain's module: the chain closes,
+        // the interpreter re-dispatches, and another one opens -- the cost the
+        // many-modules arc exists to remove, and the only counter that says
+        // how much there is to remove. BOUNDARY means the target IS here but
+        // the host owes work first (a heap collection, a wakeup, a
+        // cancellation); that exit stays no matter how modules are arranged.
+        if (!cx.TryResolve(fid, address, out int c)) { DiagForeignExits++; return false; }
+        if (cx.ReadSlot(WasmAbi.HeapTop) >= cx.ReadSlot(WasmAbi.HeapWatermark))
+        { DiagBoundaryExits++; return false; }
+        if (engine.IsCancellationRequested || engine.HasPendingWakeups)
+        { DiagBoundaryExits++; return false; }
         DiagSwitches++;
         currentFid = fid;
         cursor = c;
