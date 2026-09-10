@@ -6,9 +6,15 @@
 #   powershell -File src/Shumway.Web/WebShumwayServe.ps1            # port 8080
 #   powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Port 9000
 #   powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Root <otro wwwroot>
+#   powershell -File src/Shumway.Web/WebShumwayServe.ps1 -Collect out.txt
+#       ...also accepts POST /collect and writes the body to that file, which
+#       is how a headless run hands a measurement back (a page cannot write to
+#       disk, and reading it out of the DOM depends on when the browser is
+#       asked).
 param(
   [string]$Root = (Join-Path $PSScriptRoot 'bin\Release\net10.0\publish\wwwroot'),
-  [int]$Port = 8080
+  [int]$Port = 8080,
+  [string]$Collect = ''
 )
 
 if (-not (Test-Path $Root -PathType Container)) {
@@ -48,6 +54,17 @@ while ($listener.IsListening) {
   try {
     $urlPath = [uri]::UnescapeDataString($ctx.Request.Url.LocalPath)
     if ($urlPath -eq '/') { $urlPath = '/index.html' }
+
+    if ($urlPath -eq '/collect' -and $ctx.Request.HttpMethod -eq 'POST') {
+      $reader = New-Object System.IO.StreamReader($ctx.Request.InputStream)
+      $body = $reader.ReadToEnd()
+      $reader.Close()
+      if ($Collect) { [System.IO.File]::AppendAllText($Collect, $body + "`n") }
+      else { Write-Host $body }
+      $res.StatusCode = 204
+      $res.OutputStream.Close()
+      continue
+    }
     $filePath = Join-Path $Root ($urlPath.TrimStart('/').Replace('/', '\'))
 
     if (Test-Path $filePath -PathType Leaf) {

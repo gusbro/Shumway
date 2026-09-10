@@ -34,6 +34,12 @@ if (args.Length > 0 && args[0] == "--bench")
     return;
 }
 
+if (args.Length > 0 && args[0] == "--wasm-spike")
+{
+    WasmSpike.Run(args);
+    return;
+}
+
 if (Array.IndexOf(args, "--alloc") >= 0)
 {
     VanRoyMultiEngine.RunAlloc(args);

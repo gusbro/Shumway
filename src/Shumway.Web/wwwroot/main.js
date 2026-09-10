@@ -77,6 +77,11 @@ function freshLine() {
 const emitEngineOutput = (text) => emit(text);
 // Standard error, which in a browser has nowhere else to go.
 const emitDiagnostic = (text) => emit(text, 'error');
+// The engine's own asides -- what it compiled, what it restored. Not
+// program output (that competes with what the program prints) and not a
+// diagnostic (nothing went wrong): the same grey the page uses for its
+// own remarks.
+const emitNote = (text) => emit(text, 'note');
 
 // A page that dies silently looks like a page that is still loading. Anything
 // that escapes lands in the transcript, where it can be read and reported.
@@ -118,6 +123,8 @@ function answerWidth() {
 
 let aborted = false;
 let stepping = false;      // a solution is being searched for right now
+let autoAdvancing = false; // an a/f advance loop is draining solutions
+let autoStop = false;      // `.` during that loop: stop after the current step
 let answersShown = 0;      // answers reported for the query in progress — what
                            // `f` counts from, so its chunks stay aligned
 
@@ -214,6 +221,14 @@ function runningIndicator() {
   };
 }
 
+// Under wasm_compile(all): re-run the batch compile at the BOUNDARY — after
+// a consult, after a completed query (a query may consult) — so the cost
+// never lands inside the user's next real query. One int compare when
+// nothing changed; fire-and-forget, the page never waits on it.
+function wasmAllTick() {
+  try { session.exports().WasmCompileAllTick(); } catch { }
+}
+
 async function step() {
   stepping = true;
   debugUi.setRunning(true);        // Break's moment, if the mode is on
@@ -225,12 +240,12 @@ async function step() {
   debugUi.clearStopped();
   // The goal may have written as it ran; an answer starts its own line.
   freshLine();
-  if (aborted) { aborted = false; emit('% Execution aborted.\n\n', 'note'); setPending(false); return; }
-  if (tag === session.FAILED) { emit('false.\n\n', 'answer'); setPending(false); return; }
-  if (tag === session.ERROR) { emit(text + '\n\n', 'error'); setPending(false); return; }
+  if (aborted) { aborted = false; emit('% Execution aborted.\n\n', 'note'); setPending(false); wasmAllTick(); return; }
+  if (tag === session.FAILED) { emit('false.\n\n', 'answer'); setPending(false); wasmAllTick(); return; }
+  if (tag === session.ERROR) { emit(text + '\n\n', 'error'); setPending(false); wasmAllTick(); return; }
   if (tag === session.LAST) {
     answersShown++;
-    emit(text + '.\n\n', 'answer'); setPending(false); return;
+    emit(text + '.\n\n', 'answer'); setPending(false); wasmAllTick(); return;
   }
   // No newline: the answer waits on its line for the `;` or `.` that follows
   // it, exactly as a console top level leaves it.
@@ -252,6 +267,21 @@ async function run(queryText) {
     consultedSomething = false;
     consultEpoch++;
     emit('% the engine is fresh — nothing is loaded (consult to reload)\n\n', 'note');
+    return;
+  }
+  // `wasm_compile.` — the page-side switch for the wasm tier, like `restart.`:
+  // attaches the promotion store to the LIVE engine (safe between queries;
+  // nothing already running changes). Variants: wasm_compile(N). sets the
+  // promotion threshold (1 = promote on first call), wasm_compile(all).
+  // compiles the whole static program now and after every consult,
+  // wasm_compile(off). stops promoting (what already promoted keeps running
+  // as wasm, and the OFF sticks: a later restart. boots with neither the
+  // tier nor the baked prelude), wasm_compile(status). reports.
+  const wasmCompile = /^\s*wasm_compile\s*(?:\(\s*(on|off|all|status|\d+)\s*\))?\s*\.?\s*$/
+    .exec(queryText);
+  if (wasmCompile) {
+    const report = await session.exports().WasmCompileControl(wasmCompile[1] || 'on');
+    emit(report + '\n', 'note');
     return;
   }
   const err = await session.start(queryText);
@@ -339,8 +369,15 @@ queryInput.addEventListener('keydown', async (e) => {
 
   // While solutions are pending the keys mean what they mean in a top level.
   if (pending) {
+    // A key landing while the NEXT solution is still computing (step() in
+    // flight, or an a/f advance loop running) must not start a second
+    // concurrent step — two session.next() in flight interleave answers and
+    // double the ';' echoes. `.` below still ends an advance loop; Stop
+    // still aborts the in-flight search.
+    const busy = stepping || autoAdvancing;
     if (e.key === ';' || e.key === ' ' || e.key === 'n') {
       e.preventDefault();
+      if (busy) return;
       // Echo the request and close the line, so the next solution starts on
       // its own — `X = 1 ;` then the next answer, as a top level reads.
       emit(';\n', 'answer');
@@ -353,15 +390,20 @@ queryInput.addEventListener('keydown', async (e) => {
     // answer, on failure, on an error and on an abort alike.
     if (e.key === 'a' || e.key === 'f') {
       e.preventDefault();
+      if (busy) return;
       // Not "five more": five is a chunk BOUNDARY, so `f` fills out the
       // current group — four after one answer, five after five. Answers then
       // arrive in aligned blocks however you got there.
       let left = e.key === 'a' ? Infinity : 5 - (answersShown % 5);
-      while (pending && left > 0) {
-        left--;
-        emit(';\n', 'answer');
-        await step();
-      }
+      autoAdvancing = true;
+      autoStop = false;
+      try {
+        while (pending && left > 0 && !autoStop) {
+          left--;
+          emit(';\n', 'answer');
+          await step();
+        }
+      } finally { autoAdvancing = false; }
       return;
     }
     if (e.key === 'h') {
@@ -375,6 +417,10 @@ queryInput.addEventListener('keydown', async (e) => {
     }
     if (e.key === '.' || e.key === 'Enter' || e.key === 'Escape') {
       e.preventDefault();
+      // During an a/f advance the `.` means "stop taking more": let the
+      // in-flight step finish and the loop end — no second cancel path.
+      if (autoAdvancing) { autoStop = true; return; }
+      if (stepping) return;         // computing: Stop is the abort
       emit('.\n\n', 'answer');
       await session.cancel();
       setPending(false);
@@ -1148,6 +1194,9 @@ addEventListener('keydown', async (e) => {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
   if (e.key === 'Enter') {
     e.preventDefault();
+    // Focus the query box FIRST: consulting is always followed by querying,
+    // and moving focus after the await can lose to an editor refocus.
+    queryInput.focus();
     await consultBuffer('% consulted.\n');
     return;
   }
@@ -1402,6 +1451,7 @@ async function consultBuffer(note) {
     // breakpoints are re-applied against the new code.
     await debugUi.afterConsult();
     consultedSomething = true;
+    wasmAllTick();
     // How long it took, when it took long enough to have been noticed: loading
     // a library is seconds of work and saying so is the difference between
     // "slow" and "broken".
@@ -1504,7 +1554,7 @@ window.shumwayDebug = {
   toggle: () => debugUi.toggle(),
 };
 
-emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop) + '\n\n', 'note');
+emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop, emitNote) + '\n\n', 'note');
 setPending(false);
 
 editor = attach(
@@ -1630,6 +1680,171 @@ if (persistMode) {
   try {
     await (await import('./selftest.js')).persistProbe(workspace, emit, persistMode[1]);
   } catch (ex) { emitFailure('persist probe', ex); }
+} else if (location.hash.startsWith('#wasmspike')) {
+  // #wasmspike, or #wasmspike=<iterations>x<rounds>. Everything runs in C#:
+  // it holds the module bytes, registers them per thread through the C shim's
+  // EM_JS (each worker has its OWN function table; only the memory is
+  // shared), and calls through a single call_indirect. The page only starts
+  // it and shows the report.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const spec = /^#wasmspike=(\d+)x(\d+)$/.exec(location.hash);
+    const iterations = spec ? Number(spec[1]) : 3000000;
+    const rounds = spec ? Number(spec[2]) : 3;
+    emit(`--- wasm spike: ${iterations} iterations x${rounds} ---\n`);
+    mark('probe: starting, ' + iterations + ' x' + rounds);
+
+    const report = await session.exports().WasmProbe(iterations, rounds);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmspike';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+
+    // Last, apart, because it may hang the worker it runs on: the raw calli
+    // with an index that IS valid for the calling thread. If it answers, the
+    // first attempt's hang was the cross-thread index all along.
+    mark('calli with a thread-local index...');
+    mark(await session.exports().WasmCalliCheck());
+    mark('cross-thread: register on one pool thread, call from another...');
+    mark(await session.exports().WasmCrossThreadCheck());
+    mark('all checks done');
+  } catch (ex) {
+    const text = `wasm spike CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+  }
+} else if (location.hash.startsWith('#wasmtier')) {
+  // #wasmtier, or #wasmtier=<rounds>: the phase-2 measurement — a tiered
+  // engine (wasm Tier-1, threshold 1) against a plain Tier-0 engine over
+  // the counter, nrev and tak, correctness cross-checked first.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const spec = /^#wasmtier=(\d+)$/.exec(location.hash);
+    const rounds = spec ? Number(spec[1]) : 5;
+    emit(`--- wasm tier: x${rounds} rounds ---\n`);
+    mark('tier: starting rounds=' + rounds);
+    const report = await session.exports().WasmTierProbe(rounds);
+    mark('tier: probe returned');
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmtier';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const text = `wasm tier CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+  }
+} else if (location.hash === '#wasmcompilecheck') {
+  // The wasm_compile pseudo-goal's export, end to end on the live session
+  // engine: attach at threshold 1, run something hot through the REPL path,
+  // and status must show the promotion (plus the compile-time tally).
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: 'mark: ' + t }); } catch { } };
+  try {
+    const lines = [];
+    mark('attach 1');
+    lines.push(await session.exports().WasmCompileControl('1'));
+    await session.consult('wloop(0).  wloop(N) :- N > 0, N1 is N - 1, wloop(N1).');
+    mark('wloop query');
+    const err = await session.start('wloop(50000).');
+    if (err) lines.push('start error: ' + err);
+    else lines.push('wloop: ' + JSON.stringify(await session.next(80)));
+    lines.push(await session.exports().WasmCompileControl('status'));
+    // wasm_compile(all): the batch runs NOW and again after a consult —
+    // status must show the new predicate promoted without any query
+    // having dispatched it. Registration is EAGER at install, so a module
+    // the browser refuses fails the batch here, cleanly.
+    mark('all');
+    lines.push(await session.exports().WasmCompileControl('all'));
+    mark('post-all query');
+    const err2 = await session.start('numlist(1, 20, L), msort(L, S), length(S, 20), wloop(1000).');
+    if (err2) lines.push('post-all start error: ' + err2 + '\n');
+    else lines.push('post-all: ' + JSON.stringify(await session.next(80)) + '\n');
+    mark('consult later');
+    await session.consult('later(0).  later(N) :- N > 0, N1 is N - 1, later(N1).');
+    lines.push('tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    mark('later query');
+    const err3 = await session.start('later(500).');
+    if (err3) lines.push('later start error: ' + err3 + '\n');
+    else lines.push('later: ' + JSON.stringify(await session.next(80)) + '\n');
+    // A library load under `all` promotes its whole module (clpfd is
+    // hundreds of predicates): status must fold it into a count, not bury
+    // the user's own predicates under it.
+    mark('clpfd');
+    await session.consult(':- use_module(library(clpfd)).  b(X) :- X in 1..3, X #> 1.');
+    lines.push('clpfd tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    mark('final status');
+    lines.push(await session.exports().WasmCompileControl('status'));
+    // The boards.pl shape: clpfd labeling under the tier — attvar binds,
+    // wakeup drains, backtracking through promoted code. The reported
+    // corruption ("reserved_invalid opcode") came from exactly this.
+    mark('queens');
+    await session.consult(
+      'qn(N, Qs) :- length(Qs, N), Qs ins 1..N, all_distinct(Qs), qdiag(Qs).\n' +
+      'qdiag([]).  qdiag([Q|Qs]) :- qoff(Q, Qs, 1), qdiag(Qs).\n' +
+      'qoff(_, [], _).\n' +
+      'qoff(Q, [R|Rs], D) :- Q + D #\\= R, R + D #\\= Q, D1 is D + 1, qoff(Q, Rs, D1).\n');
+    lines.push('queens tick: ' + await session.exports().WasmCompileAllTick() + '\n');
+    const errQ = await session.start('qn(8, Qs), labeling([], Qs), msort(Qs, [1,2,3,4,5,6,7,8]).');
+    if (errQ) lines.push('queens start error: ' + errQ + '\n');
+    else lines.push('queens: ' + JSON.stringify(await session.next(120)) + '\n');
+    // A fresh engine (restart.): the baked prelude must reinstall — interning
+    // is idempotent, so the replay validation passes again — and `all` must
+    // still find nothing of the prelude to compile.
+    // wasm_compile(off) must SURVIVE a restart: the boot skips both the
+    // tier and the baked prelude, or "an engine with no wasm at all" would
+    // be false the moment it booted.
+    mark('off then restart');
+    lines.push(await session.exports().WasmCompileControl('off'));
+    await session.resetEngine();
+    lines.push('after off+restart:\n');
+    lines.push(await session.exports().WasmCompileControl('status'));
+    lines.push(await session.exports().WasmCompileControl('on'));
+    mark('restart');
+    await session.resetEngine();
+    lines.push('after restart:\n');
+    lines.push(await session.exports().WasmCompileControl('status'));
+    mark('post-restart all');
+    lines.push(await session.exports().WasmCompileControl('all'));
+    lines.push(await session.exports().WasmCompileControl('off'));
+    const report = lines.join('');
+    emit(report);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+    // A headless run is done once the report is posted; without this the
+    // browser lingers and the NEXT run trips over its profile singleton.
+    try { window.close(); } catch { }
+  } catch (ex) {
+    const text = `wasmcompilecheck CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+    try { window.close(); } catch { }
+  }
+} else if (location.hash.startsWith('#wasmbench')) {
+  // #wasmbench, or #wasmbench=<rounds>: phase B — five programs (counter,
+  // nrev, tak, crypt, zebra), tiered against plain Tier-0, best-of-rounds
+  // and the geometric mean. The report feeds docs/benchmarks/browser.md.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    const spec = /^#wasmbench=(\d+)$/.exec(location.hash);
+    const rounds = spec ? Number(spec[1]) : 5;
+    emit(`--- wasm bench: x${rounds} rounds ---\n`);
+    mark('bench: starting rounds=' + rounds);
+    const report = await session.exports().WasmBenchProbe(rounds);
+    mark('bench: probe returned');
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmbench';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const text = `wasm bench CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+  }
 } else if (location.hash === '#selftest') {
   try {
     await (await import('./selftest.js')).run(session, emit, out, editor, workspace);
@@ -1637,4 +1852,7 @@ if (persistMode) {
     // A selftest that dies silently reads as a selftest that passed.
     emit(`--- selftest CRASHED: ${ex && ex.stack ? ex.stack : ex} ---\n`, 'error');
   }
+  // Hand the transcript to a headless harness the way the wasm probes do:
+  // the DOM is only readable at a moment the harness cannot pick.
+  try { await fetch('/collect', { method: 'POST', body: out.textContent }); } catch { }
 }

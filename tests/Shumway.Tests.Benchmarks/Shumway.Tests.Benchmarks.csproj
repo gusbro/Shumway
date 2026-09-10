@@ -15,6 +15,7 @@
     <ProjectReference Include="..\..\src\Shumway.Core\Shumway.Core.csproj" />
     <ProjectReference Include="..\..\src\Shumway.Interpreter\Shumway.Interpreter.csproj" />
     <ProjectReference Include="..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\..\src\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
   </ItemGroup>
 
 </Project>

@@ -144,6 +144,37 @@ public static class FunctorTable
     /// <summary>Number of distinct functors interned so far. Includes orphaned ids from lost intern races.</summary>
     public static int Count => _byId.Count;
 
+    /// <summary>One past the highest functor id ever allocated. Unlike
+    /// <see cref="Count"/> this counts holes, so it is the right bound for
+    /// anything indexing BY id rather than enumerating entries.</summary>
+    public static int IdLimit => Volatile.Read(ref _nextId);
+
+    /// <summary>Copies the dense <c>(atomId &lt;&lt; 32) | arity</c> publication
+    /// array, starting at <paramref name="from"/>, into <paramref name="dest"/>
+    /// indexed from zero. Returns the first id NOT copied.
+    ///
+    /// <para>Copying stops at the first id a racing intern has allocated but
+    /// not yet published, so an incremental mirror resumes exactly there
+    /// instead of freezing a filler in place forever. The packed layout is
+    /// the one the table already keeps for its own lock-free lookups, which
+    /// is what makes an exact mirror a memcpy rather than a probe per
+    /// id.</para></summary>
+    public static int CopyPackedFrom(int from, Span<long> dest)
+    {
+        if (from < 0) throw new ArgumentOutOfRangeException(nameof(from));
+        long[] arr = _byIdArray;
+        int limit = Math.Min(IdLimit, arr.Length);
+        int n = 0;
+        while (from + n < limit && n < dest.Length)
+        {
+            long packed = Volatile.Read(ref arr[from + n]);
+            if (packed < 0) break;              // allocated, not published yet
+            dest[n] = packed;
+            n++;
+        }
+        return from + n;
+    }
+
     /// <summary>
     /// Clears the table. Intended only for test isolation; do not call from production code.
     /// </summary>

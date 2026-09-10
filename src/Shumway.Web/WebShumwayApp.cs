@@ -63,6 +63,13 @@ internal static partial class WebShumwayApp
     [JSImport("ui.writeError", "main.js")]
     internal static partial void WriteErrorToPage(string text);
 
+    /// <summary>Appends one of the engine's own asides: what it compiled, what
+    /// it restored. Neither program output nor a diagnostic -- the first
+    /// competes with what the program prints, the second says something went
+    /// wrong.</summary>
+    [JSImport("ui.writeNote", "main.js")]
+    internal static partial void WriteNoteToPage(string text);
+
     /// <summary>The runtime thread's context, captured while we are on it.
     /// JavaScript interop is thread-affine: <see cref="WriteToPage"/> may only be
     /// called from the thread that owns the JavaScript side. The search does not
@@ -91,6 +98,15 @@ internal static partial class WebShumwayApp
         // one. Set here rather than at the call site: nothing this build
         // produces can be compressed.
         BundleFormat.DisableCompression = true;
+
+        // Intern the whole builtin block HERE, while this is provably the
+        // only thread (exports are not callable until Main returns). Boot()
+        // runs on a pool thread concurrently with page exports, and a stray
+        // intern from, say, an early highlight landing mid-registration gives
+        // atom/functor ids a per-boot shuffle — which is exactly what the
+        // baked prelude group's validation would reject (its module bakes
+        // this process's ids). shumway-wasmbake mirrors this call.
+        Shumway.Builtins.StandardBuiltins.EnsureRegistered();
     }
 
     /// <summary>Creates the engine. Returns a short description of what booted,

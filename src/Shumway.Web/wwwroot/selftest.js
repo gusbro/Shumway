@@ -730,6 +730,26 @@ export async function run(session, emit, out, editor, workspace) {
           await until(async () => !(await workspace.list()).includes(name)), true);
   }
 
+  // The wasm tier's runtime switch, end to end on the LIVE session engine:
+  // attach at threshold 1, run something hot, and the status must show it
+  // promoted — and keep answering exactly what Tier-0 answered above.
+  {
+    const on = await session.exports().WasmCompileControl('1');
+    const attached = on.includes('attached') || on.includes('threshold=1');
+    check('wasm_compile attaches', attached
+          || on.includes('capability is off'), true);
+    if (attached) {
+      await session.consult(
+        'wloop(0).  wloop(N) :- N > 0, N1 is N - 1, wloop(N1).');
+      check('promoted code still answers', await solutions('wloop(50000).'), 'true');
+      const status = await session.exports().WasmCompileControl('status');
+      check('wasm_compile status shows a promotion',
+            /promoted \([1-9]/.test(status), true);
+      check('wasm_compile off answers',
+            (await session.exports().WasmCompileControl('off')).includes('off'), true);
+    }
+  }
+
   // Persistence is reported rather than assumed: a browser may refuse storage,
   // and the session must still work when it does.
   emit(`note: origin-private storage ${workspace.persistent() ? 'available' : 'UNAVAILABLE'}`

@@ -1,0 +1,842 @@
+# WebAssembly Tier-1 — JIT and AOT from WAM to native wasm
+
+## Context
+
+WebShumway runs the whole engine in the browser, but **Tier-0 only,
+interpreted by the Mono interpreter** (no `RunAOTCompilation`): an interpreter
+on an interpreter. Tier-1 does not exist there because `Reflection.Emit` does
+not work under browser-wasm, and the `Shumway.RuntimeCodegen=false` feature
+switch trims the IL subsystem out of the payload. On the desktop, Tier-1 is
+worth 1.9–5.5x (geomean ~3.3x) over a Tier-0 that already runs JITted
+(`docs/benchmarks/analysis.md:38-58`); against the browser's interpreted
+Tier-0 the possible margin is larger. No browser-vs-native benchmark existed.
+
+**The idea**: a parallel backend that compiles WAM directly to **WebAssembly
+modules** — JIT (promote hot predicates by emitting and instantiating a module
+at runtime inside the browser) and AOT (`shumway-link` baking `.wasm` into
+bundles). **No interpreted IL** (user decision): the goal is native code on
+the browser's wasm engine. Benchmarks decide whether the arc continues.
+
+What the exploration established (verified in the tree):
+
+- **The consuming side is already backend-agnostic.** `ITier1Dispatcher`
+  (`src/Shumway.Core/ITier1Dispatcher.cs`), the
+  `bool PredicateDelegate(Activation, int cursor)` contract
+  (`src/Shumway.Compiler.Il/PredicateDelegate.cs:28`), the resume markers +
+  `IlTailCallPending` (interpreter path: `BytecodeInterpreter.cs:512-617`),
+  and the ADR-014 IL choice points (`PushIlChoicePoint`, BP=-1, `_ilCpStack`)
+  work identically for any producer of delegates. **Zero interpreter
+  changes.**
+- **The producer is not abstracted**: `Sigil.Emit<PredicateDelegate>` runs
+  through ~7k lines. The wasm backend is a fork of the emitter, not a
+  retro-abstraction.
+- **The real ABI is ~93 helper calls** (68 `Activation`, 14 `ArithEvalStack`,
+  ~9 `Cell`); `Cell` is `struct{long}` (maps to i64), `Activation` does not
+  marshal. The obstacle ADR-042 §2 named — the heap is a managed `Cell[]` —
+  is resolved with pinning + shared `WebAssembly.Memory`.
+- **AOT already has a template**: `PersistedIlBuilder` + `IlPatchSite` +
+  load-time patching (`BundleLoader.ApplyIlPatches`) and functor binding
+  (`RegisterBoundDelegate`, unconditional install — works in the browser).
+- **Browser**: a second module can import the .NET runtime's memory (shared,
+  via `WasmEnableThreads`); synchronous instantiation is legal in workers;
+  wasm 3.0 tail calls (Chrome 112+/FF 121+/Safari 18.4 — WebShumway already
+  requires modern browsers for threads). The engine runs on pool threads; JS
+  interop is affine to the runtime thread (reference pattern:
+  `PageInput.cs:58-82`).
+
+**Emitter** (user decision: hybrid): the `WebAssembly` NuGet package
+(dotnet-webassembly, **Apache-2.0**, active — 2.1.0 as of Jul 2026, wasm 3.0,
+zero deps; its wasm-to-IL execution engine gives xUnit tests with no browser),
+isolated behind our own interface so an in-house emitter can replace it later.
+
+## Design decisions (D1–D7)
+
+- **D1 — Call path: raw `calli` through a table index, no JS on the hot
+  path.** At instantiation (JS, runtime thread), `Module.addFunction(export)`
+  registers the function in the dotnet module's table and returns an i32
+  index; C# invokes it via `delegate* unmanaged<int,int,int>` from the pool
+  thread. If this does not work under the Mono interpreter → **spike No-Go**
+  (the JS-thunk path is rejected as a product: thread affinity + per-call
+  marshalling).
+- **D2 — Memory contract: mailbox + bases pinned per entry.** The module's
+  view is (i) the imported shared dotnet memory
+  (`(import "env" "memory" (memory 0 65536 shared))`) and (ii) a pinned (POH)
+  `long[]` **mailbox** per `Activation`. The C# wrapper, on **every entry**,
+  inside `fixed(Cell* …)` over `_heap/_stack/_registers/trails`, writes fresh
+  bases + the WAM scalar registers into the mailbox, does the `calli`, and
+  copies the scalars back. The heap can only be replaced (growth/GC) by
+  managed code, and managed only runs when the wasm has bailed ⇒ bases are
+  stable by construction during each wasm activation. This settles ADR-042's
+  open question.
+- **D3 — Bail protocol: the wasm never calls managed.** Export
+  `(mailbox: i32, cursor: i32) -> i32 verdict`: 0=Fail, 1=Success,
+  2=SuccessTailCall (mailbox Pc → `IlTailCallPending`), 3=BuiltinRequest,
+  4=PushChoicePoint, 5=Safepoint (GC watermark or the wakeup/interrupt flags
+  word, checked on every back edge). The wrapper **is** the
+  `PredicateDelegate`: a loop that refreshes bases, calls, handles verdicts
+  3–5 (invokes the builtin / `PushIlChoicePoint` / `MaybeCollectHeap` +
+  wakeups) and re-enters at a continuation cursor (extra `br_table` cases,
+  the same mechanism as the IL resume cursors).
+- **D4 — Choice points via verdict 4** (no pre-registration): the delayed-CP
+  forms (ADR-031) push mid-body; the push is already a boundary. Uses the
+  existing `PushIlChoicePoint` with the wrapper as the delegate.
+- **D5 — Isolated emitter**: our own `IWasmModuleWriter` interface with one
+  implementation over dotnet-webassembly. If the library lacks the memory
+  limits `shared` flag, that byte is post-patched in the import section (a
+  well-defined binary location).
+- **D6 — Id binding: constants for JIT, imported globals for AOT.** JIT
+  compiles in-process with live ids → `i64.const`. AOT imports immutable
+  globals resolved at instantiation from a `WasmBindSite[]` table
+  (Kind/Name/Arity/Cursor, mirroring `IlPatchKind` incl. ResumeMarker) — the
+  import object is the natural mechanism, no byte patching.
+- **D7 — Capability + trimming**: `RuntimeCaps.SupportsWasmCodegen` with
+  `[FeatureSwitchDefinition("Shumway.WasmCodegen")]`, default false; only
+  Shumway.Web turns it on. Desktop trims `Shumway.Compiler.Wasm` + the
+  package, symmetric to `Shumway.RuntimeCodegen`. Consult the property, never
+  cache it (rule documented in `RuntimeCaps.cs`).
+
+## Phase 0 — Go/No-Go SPIKE (~1.5-2 weeks)
+
+A hand-built module for the self-tail counter
+(`loop(N) :- N > 0, N1 is N - 1, loop(N1). loop(0).`), interop + memory only.
+
+Files:
+- NEW `src/Shumway.Compiler.Wasm/Shumway.Compiler.Wasm.csproj` (net10, refs:
+  the WebAssembly package + Shumway.Core).
+- NEW `src/Shumway.Compiler.Wasm/WasmAbi.cs` — the mailbox layout (named
+  slots) + the verdict enum. Reused as-is by the full backend.
+- NEW `src/Shumway.Compiler.Wasm/SpikeCounterModule.cs` — builds the module
+  through the library: open-coded X0 deref, small-int tag test, i64
+  arithmetic, self-tail as `loop`/`br`, watermark+flags check on the back
+  edge → verdict 5. `BuildForTest(shared: false)` variant for xUnit.
+- NEW `src/Shumway.Web/WasmTier.cs` — instantiation service (post to
+  `_jsThread` in the `PageInput` style, async) + a spike wrapper implementing
+  `PredicateDelegate` over the mailbox.
+- NEW `src/Shumway.Web/wwwroot/wasmtier.js` — `getDotnetRuntime(0)`,
+  `Module.wasmMemory`, `WebAssembly.instantiate` (async), `addFunction`,
+  returns the index.
+- MODIFY `src/Shumway.Web/wwwroot/main.js` (~:1633, beside `#selftest`) +
+  NEW `wwwroot/wasmspike.js` — the `#wasmspike` hook: counter N=10⁷ Tier-0 vs
+  wasm (installed via `IlPromotionStore.RegisterBoundDelegate`), median of 5,
+  a table.
+
+Mandatory measurements: (1) the `calli` boundary cost (degenerate module, 10⁶
+entries; the JS thunk only as a comparative record); (2) base stability under
+heap growth/GC between re-entries (verdict-5 bail → collect → re-enter with
+fresh bases); (3) library fitness (the shared flag; validates and
+instantiates in Chrome and Firefox; the non-shared variant runs in xUnit on
+the library's wasm-to-IL engine).
+
+**Go criterion (numeric): wasm ≥ 2.0x over interpreted Tier-0 on the counter,
+in Chrome AND Firefox, with the boundary ≤ 1 µs per entry.** Less than that
+in the friendliest possible shape = the boundary/memory tax ate the win →
+No-Go, findings to `docs/benchmarks/browser-spike.md`, end of the arc.
+
+### Status: PHASE 0 CLOSED — GO (1067x, boundary 285 ns)
+
+The measurements are in [browser-spike.md](../benchmarks/browser-spike.md),
+including an intermediate WRONG verdict worth more than the numbers:
+
+- **The first attempt produced a false No-Go.** The calli hung because the
+  index came from the PAGE's `addFunction`: with threads, every worker has
+  its OWN WebAssembly.Table (only the memory is shared), and a foreign index
+  either does not exist (a silent trap = the hang) or names a DIFFERENT
+  function (worse: it would run the wrong code without failing). Measured in
+  both variants.
+- **The way through**: register IN THE CALLING THREAD'S REALM, via `spike.c`
+  linked into dotnet.native.wasm (the relink already happens for threads):
+  `shumway_wasm_register` (EM_JS: instantiates against the shared memory and
+  addFunctions into THIS thread's table) + `shumway_wasm_call` (one line, one
+  call_indirect). With a thread-local index, **D1's raw calli also works**
+  (285 ns): the mechanism was never broken.
+- **Chrome numbers**: wasm counter 5.4-9.8 ns/iteration against 5,783 ns of
+  the browser's Tier-0 (600-1100x; the gate asked for 2x); boundary 250-420
+  ns (ceiling 1000). D2 confirmed: the module imports the runtime's memory
+  and addresses the mailbox and registers inside it.
+- **Product shape**: bytes compiled once; every pool thread registers lazily
+  and caches ITS index (a per-thread map). Firefox was not measured (not on
+  this machine); what failed and got fixed belonged to the runtime, not the
+  browser.
+
+Phase 1 (the real backend) follows, with the mailbox ABI already pinned by
+the desktop tests and this registration mechanism as the base.
+
+### Status: desktop half DONE
+
+These exist and work, with no browser:
+
+- `src/Shumway.Compiler.Wasm/` (net10, `WebAssembly` package 2.1.0,
+  Apache-2.0, zero dependencies of its own) with `WasmAbi` (a mailbox of 16
+  64-bit slots + the six verdicts), `SpikeCounterModule` (the hand-built
+  counter) and `WasmSharedMemory`.
+- `tests/Shumway.Tests.Wasm/` — 16 tests that **execute** the module on the
+  library's engine against a harness that places mailbox, registers and heap
+  inside the imported memory. It is the same view the module has in the
+  browser: it only addresses by offset within the memory it is handed.
+
+What got pinned: the X0 deref reading the base from the mailbox, the tag
+test, unpacking and repacking a whole cell (sign included), `loop`/`br` as
+the tail call, the flags and watermark bail on the back edge, and the cursor
+re-entry finishing the count where it left off.
+
+Brought forward from the risk register: **the `shared` flag is no longer a
+risk**. The library does not emit it, so the import's limits byte is patched
+(0x01 → 0x03, one byte for one byte, no section moves) and tests pin it,
+including that the patched module parses back whole.
+
+The browser half remains, which is where the three mandatory measurements
+live: `WasmTier.cs` + `wasmtier.js` (instantiation and `addFunction`), the
+`#wasmspike` hook, and the table-index `calli` under the Mono interpreter,
+which is what decides D1.
+
+### Phase 1, first slice: DONE (real compiler, corpus green, 4.7x gate)
+
+`WasmPredicateCompiler` compiles WAM→wasm against the engine's REAL state:
+the same frame layout (CE/CP/N + Y), the same CP words (11+arity, BP
+included), the same trail rule (young-to-old, bind if addr<HB). Control = a
+dispatcher loop with a br_table over cursors; the cursors are ALSO the
+re-entry vocabulary (resume markers and CP BPs name cursors), so a call's
+return and a backtrack land in the same dispatch.
+
+Translated set: switch_on_term/integer/atom (+ the ADR-028 `_arg` variants),
+try/retry/trust OPEN-CODED (the whole CP in wasm, restore and trail unwind
+included; the local fail path compares BP against its own encodings and
+returns Fail only for foreign CPs), allocate/deallocate(+proceed) with the
+faithful stack reclamation, get/put of constants and X/Y registers,
+get_value_x/y (unify with the young-to-old discipline), a_int_bin/cmp on the
+small-int lane (overflow → deopt). Everything else REJECTS the predicate;
+everything hard at runtime (attvar, bigint, full trail, watermark) is
+**Deopt** (verdict 6): scalars synced + Pc = the bytecode address of THE
+instruction, and the interpreter continues as if the predicate had never
+been compiled — the deopt is cheap because the state IS the engine's.
+
+37 tests (`WasmCompilerTests` + the gate): 100k counter, factorial with
+frames and marker resumes, mutual recursion, enumeration with backtracking
+inside the wasm, indexing, a Y-slot accumulator, rejection. Measured gate:
+**4.7x over Tier-0** on the desktop with the per-round CP included (the gate
+asked for 2x); Tier-1 IL gives 8.6x here — in the browser Tier-0 is ~34x
+worse and the wasm is not, so the projected ratio there is ~150x.
+
+Harness TRAP noted: REGISTERS are working state — CP restores overwrite
+them; an answer is read through the variable's HOME captured at query setup,
+never through the final register.
+
+Left of phase 1: structures/lists (get/put/unify_structure, ADR-017/019),
+cut, ITE regions, the rest of the arithmetic lane, and the engine wiring
+(phase 2: per-thread registration + WasmDelegateFactory).
+
+### Phase 1 COMPLETE (slices 2-4: structures, cut/builtins, and the close)
+
+Slice 2 (structures/lists): get/put/unify_* with ADR-017 inline cells and
+ADR-019 last-arg nested builds; the unify machine (WriteMode + S) lives in
+locals synced through mailbox slots 22/23 so a mid-sequence deopt is
+resumable. Slice 3 (cut/builtins): cut = B down to the barrier with the
+stale-barrier no-op (ISO); engine extras (cleanups, IL-CPs) via the Flags
+word → deopt; call_builtin/execute_builtin leave through BuiltinRequest (id
++ cursor; tail = cursor -1); ADR-025 inline ITE (try_me_else with the
+sentinel arity + jump). Slice 4, the phase close:
+
+- **Floats**: get_float/put_float with the double's bits baked from the
+  literal pool; dynamic paired cell (header | H+1); -0.0 is born 0.0 (the
+  MakeFloat funnel). Binding is var → Ref(header), as the engine's unify
+  does.
+- **a_eval_*** (ADR-018): the RPN stack simulated at compile time over 8 i64
+  locals — a deopt anywhere in the sequence rewinds to the FIRST push
+  (pushes are read-only ⇒ re-running is sound). Bin {Add,Sub,Mul,IntDiv,Mod}
+  and Un {Neg,Pos,Abs,Sign,BitNot} on the small-int lane with the Fits60
+  check; everything else (float division, transcendentals, bigint/float
+  literals) deopts at sequence start. A sequence cannot cross a leader
+  (external re-entry ⇒ locals lost): the predicate is rejected.
+- **ADR-020 reserved builds**: put_structure_r/put_list_r with the
+  write-frame cascade (PushWriteFrame/OnReservedArgWritten) REPLAYED at
+  compile time — the build tree is static, so the whole region flattens to
+  ONE upfront heap guard + straight stores at fixed offsets from H0.
+  Deopt-free by construction (pure writes); a leader inside rejects.
+- **General unifier**: the module's wasm function 2 (internal, not exported,
+  `(a i64, b i64, mailbox i32) → 0 fail / 1 ok / 2 deopt`), a worklist of
+  pairs ABOVE the stack top (nothing pushes frames while it runs), functor
+  arities via a host-mirrored i32 table at the new FunctorArityBase slot
+  (24; SlotCount → 32). Walks Str/Lis/Float; attvar, bigint, rational and
+  PSTR deopt (engine logic). Deopt after partial binding is sound: what got
+  bound was required, is trailed, and the interpreter re-unifies
+  idempotently. Called from get_value/unify_value when both sides are bound
+  compounds.
+
+89 tests green (WasmArithFloat + WasmReservedUnify new; the rejection pin is
+now a bigint literal). Trap caught while building it: two DIFFERENT
+immediates of the same tag (Int 2 vs Int 3) fell to the unifier's deopt
+fallthrough instead of failing — the "same immediate tag, different cells"
+case must answer 0.
+
+Still rejected (a v1 decision, not correctness): ADR-023 dynamics, native
+blocks, bigint/rational literals, indexed dispatch in odd shapes. With the
+Deopt verdict, every exclusion is a PERFORMANCE decision.
+
+## Phase 1 — Backend (~3-4 weeks, conditional on Go)
+
+`WasmPredicateCompiler.Compile(CompiledPredicate, WasmIdSource) → (byte[],
+WasmEntry)`, a fork of the emitter (reuses the neutral analyses: the
+`CanCompile` census, shape classification, the ADR-018 RPN streams).
+
+- **Open-coded in wasm**: deref, tag tests, small-int box/unbox (direct
+  `i64.load/store`), bind + push to both trails (bases and cursors in the
+  mailbox), X/Y moves, structure and list build/match, scalar cut,
+  compare/branch, the 14 `ArithEvalStack` RPN ops over small ints as pure
+  i64 (overflow or a non-small operand → bail).
+- **Bail**: call/execute to another predicate (= the existing threaded
+  continuation: `Cp = EncodeResumeMarker(selfFid, cursor)`, Pc, verdict 2 —
+  the interpreter's marker path does the rest), builtins (3), CP push (4),
+  safepoints (5), bigint/rational, attvar binding.
+- **Wasm imports: none in v1** (memory + id globals only).
+- **Opcode tier table** (`WasmOpcodeTiers.cs`), over the universe of 57:
+  T=translatable, B=bail, R=reject the predicate (v1: indexed dispatch, ITE
+  regions, ADR-023 dynamics, native blocks — revisit post-benchmark). First
+  milestone: self-tail + head matching + arithmetic (tak/nrev-class bodies).
+
+Files: `WasmPredicateCompiler.cs`, `.Emit.cs`, `WasmOpcodeTiers.cs`,
+`IWasmModuleWriter.cs` + `DotnetWebAssemblyWriter.cs`, `WasmIdSource.cs`,
+`WasmEntry.cs`/`WasmBindSite.cs`; in Shumway.Web `WasmDelegateFactory.cs`
+(the verdict loop, generalising the spike wrapper).
+
+Phase gate: the T corpus green in xUnit + the counter still ≥2x with the real
+compiler.
+
+## Phase 2 — JIT (~1.5-2 weeks)
+
+- NEW `src/Shumway.Embedding/WasmPromotionStore.cs` — a parallel store (do
+  not generalise `IlPromotionStore`, which holds `PredicateDelegate` and
+  calls the IL compiler directly): per-functor counters + threshold + a
+  background compile worker mirroring the existing shape, gated by
+  `SupportsWasmCodegen`. Compiles bytes on a pool thread, instantiates via
+  `WasmTier` (async, runtime thread), installs through the **existing**
+  `IlPromotionStore.RegisterBoundDelegate` (`IlPromotionStore.cs:541`,
+  unconditional install) → reuses the Call→CallIl rewrite, `IlByFunctorId`
+  and `ITier1Dispatcher` untouched.
+- MODIFY `src/Shumway.Core/RuntimeCaps.cs` (D7),
+  `src/Shumway.Embedding/IlPromotionStore.cs:555` + `BundleLoader.cs:639`
+  (`IsPermanentlyBytecodeOnly` must be false under `SupportsWasmCodegen` —
+  today the linker rewrites to `CallBytecode` and statically removes the
+  dispatch on web), `src/Shumway.Web/EngineBoot.cs` (`Tier0Only`) and
+  `Shumway.Web.csproj` (new switch true; `Shumway.RuntimeCodegen` stays
+  false).
+
+Until the install completes, the predicate stays on Tier-0 — the same UX as
+today's background compile.
+
+### Phase 2 status: DESKTOP half DONE (the tier runs in the live engine)
+
+The engine wiring is complete and proven on the desktop with the REAL
+engine — only the browser half (pinning + calli + boot) remained:
+
+- **`WasmAbi` moved to `Shumway.Core`** (the ABI mirrors engine state; the
+  engine does not depend on the compiler). `Activation.Wasm.cs`: the mailbox
+  bridge — `TryFillWasmMailbox`/`SyncFromWasmMailbox` + array views +
+  `WasmModeCompatible` (trail-everything / occurs_check ⇒ per-entry fallback
+  to bytecode).
+- **Deopt with no interpreter change**: the delegate returns true with
+  `IlTailCallPending` + `Pc` = a bytecode address — the existing
+  post-delegate path (BytecodeInterpreter 603-616) continues at that Pc,
+  marker or bytecode alike. Tail call and deopt are THE SAME mechanism.
+- **`EngineWasmCompileEnv`**: every encode is an interned resume marker
+  (`EncodeResumeMarker`) — call target = marker(callee, 0), a CP's BP =
+  marker(self, retry-cursor), a continuation = marker(self, cursor); deopt
+  pc = linked base + local offset (the pre-link CompiledPredicate offsets
+  match the linked program 1:1; the linker only rewrites operand VALUES).
+  Indirect builtins (IsCall/IsDollarCall) deopt at the call site;
+  call_builtin carries the env trim in the high half of the BuiltinId slot.
+- **`WasmTierDelegate`** (Embedding): the verdict loop as a
+  `PredicateDelegate`; mirrors the interpreter's CallBuiltin/ExecuteBuiltin
+  (TrimEnv before the impl, `BuiltinReturnPc` = marker or Cp, StampBuiltin).
+  Fail returns false and the interpreter's backtracking re-enters through
+  the wasm CP's marker BP — proven with findall enumerating through wasm
+  CPs.
+- **`DesktopWasmRunner`** (Compiler.Wasm): a copy-in/copy-out image over the
+  library's wasm-to-IL engine — EVERYTHING in a cell is an INDEX, never an
+  address, which is what makes the copy model sound; the FINAL tops bound
+  the copy-back (whatever sits above is dead). Arity mirror via `TryLookup`
+  (the id space has HOLES from atom GC + publication races).
+- **`WasmPromotionStore`** (Embedding, no reference to the wasm backend —
+  the world injects `Promoter`): counters + threshold + rejects; installs
+  through `RegisterBoundDelegate` ⇒ markers, rewrites and EVICTION shared
+  with IL. Hooks: `Tier1DispatcherAdapter.OnDispatch` (ahead of the IL path)
+  and `IsPermanentlyBytecodeOnly` (with wasm on it consults the wasm reject
+  set — without this the linker rewrites to CallBytecode and kills the
+  dispatch).
+- **TRAPS CAUGHT**: (1) the `__query__` wrappers reuse one functor id with a
+  different body per query — promoting one REPLAYS the old query (the IL
+  store's exclusion is now shared); (2) markers are sequentially interned
+  pairs, NOT base+fid*stride arithmetic; (3) consulted functor ids are
+  module-scoped — do not guess fids by re-interning names in tests.
+
+Tests: `EngineWasmTierTests` (4) — nrev/app recursion via markers,
+cut+findall backtracking into wasm CPs, floats + reserved builds + the
+general unifier, a control engine. 92/92 of the wasm project green.
+
+### PHASE 2 COMPLETE — runs in the browser, MEASURED
+
+Browser half: `RuntimeCaps.SupportsWasmCodegen` (the `Shumway.WasmCodegen`
+switch, default false, only Shumway.Web turns it on); `BrowserWasmRunner`
+(`fixed` pins over the real arrays — D2: managed only runs with the wasm
+bailed, so the pins last exactly the call; pinned mailbox; table index
+cached PER THREAD via ThreadLocal + synchronous registration through spike.c
+— the EM_JS registration is synchronous in the calling thread, no runtime
+thread needed; bytes patched to shared with WasmSharedMemory; per-module
+register demand — `EnsureWasmRegisters` BEFORE taking the view, an
+out-of-range store corrupts whatever lies next); `BrowserWasmTier.Attach` in
+`BootEngine` (process-wide pinned arity mirror, append-only). The
+`#wasmtier[=rounds]` probe (two engines side by side, correctness
+cross-checked first).
+
+**Run in headless Chrome, measured** (docs/benchmarks/browser.md):
+- correctness: all 3 goals (counter/nrev/tak) agree, tier vs Tier-0;
+- **counter 300k: ~100-220x** (8-16 ms vs ~1665 ms — the self-tail stays in
+  wasm, the only boundary is the one `is` per turn);
+- **nrev 200×5: 1.2-1.4x** (call+alloc heavy: the per-element nrev→app
+  handoff bounces through markers, and heap pressure deopts at the
+  watermark);
+- **tak: bounded** — NOT by builtins (its arithmetic is open-coded:
+  `a_int_cmp`/`a_int_bin`, zero BuiltinRequest); the tax is the 3 NON-TAIL
+  calls to tak per invocation (the tail `execute` stays in wasm), each with
+  two boundary round-trips. Verified by disassembly.
+
+The spread NAMES the three bail seams and none is a correctness limit (deopt
+returns them to the tier they were on). The MEASUREMENT reorders the plan:
+the dominant seam for tak AND nrev is the **non-tail inter-predicate call**
+(it bounces through the interpreter), NOT builtins. The big lever is a
+direct wasm→wasm call (resolve the callee's index and call it instead of
+verdict 2) — the measured priority for the next phase. Open-coded builtins
+help builtin-dense code, but the data says calls come first.
+
+Test trap caught: `EngineWasmTierTests` runs LIVE engines ⇒ shares the
+global AtomTable/FunctorTable; in-process assembly parallelism must be
+DISABLED (as Embedding does), or another class interns functors under a
+running engine's feet.
+
+## Phase 3 — AOT: RETHOUGHT (baking bytes is redundant)
+
+The original design (baking `.wasm` + `WasmBindSite[]` into the bundle) does
+NOT pay for its complexity, unlike persisted IL, for a concrete reason:
+
+- Persisted IL bakes ASSEMBLY bytes because compiling IL is EXPENSIVE
+  (`Reflection.Emit` + JIT); skipping that at load time is worth it.
+- Generating WASM bytes is CHEAP (`WasmPredicateCompiler` just emits bytes,
+  no JIT). The expensive cost — instantiating/JITting the module — is paid
+  by the browser AT LOAD TIME regardless, whether the bytes come from the
+  bundle or are generated on the fly.
+- Moreover the module's encodings (markers) are PER PROCESS (pairs interned
+  at runtime), so baked bytes are not portable without imported globals
+  (D6) that the loader computes FROM the `CompiledPredicate` — which the
+  bundle ALREADY carries. That is: baked bytes would be redundant with the
+  stored `CompiledPredicate`.
+
+Conclusion: for WebShumway the JIT path (phases 1-2) ALREADY delivers what
+AOT would (predicates on Tier-1 from the first call), because wasm codegen
+is cheap enough that the promotion threshold's warmup is negligible. The
+useful form of "AOT" would be eager priming at load (promote the bundle's
+predicates at threshold 1 on load), which reuses the whole JIT path with no
+new bundle section — and even that is marginal.
+
+**AOT is deferred: it adds nothing over the measured JIT.** If it is picked
+up again, the right shape is priming at load, NOT baking bytes.
+
+## Phase T — Tests (parallel to 1-3)
+
+- NEW `tests/Shumway.Tests.Wasm/` — desktop xUnit with no browser: modules
+  with non-shared memory executed by the library's wasm-to-IL engine against
+  a mailbox/memory harness, + differential runs vs Tier-0 over the T corpus.
+- Browser: extend `wwwroot/selftest.js` with a wasm section (promote, re-run
+  the selftest corpus, compare answers).
+- Regression: the full `Shumway.Tests.Embedding` green with the switch false
+  (the default) everywhere.
+
+### The performance round's DECISION — options weighed
+
+With the diagnostic in hand (the cost was ~150 µs of MONO-INTERPRETED C# on
+every module entry, not the ~0.3 µs boundaries nor the ~3 µs of wasm), three
+paths were weighed:
+
+- **(A) The hop inside wasm** (`call_indirect` through an imported function
+  table + a per-thread functor→index map in linear memory): zero C# per
+  hop, the theoretical ceiling. AGAINST: only testable in a browser, a
+  foreign-realm index traps the worker SILENTLY (the phase-0 lesson), and
+  it needs new wasm mechanics (table import, per-thread map).
+- **(B) A C#-level CHAIN over a shared mailbox**: pin + fill ONCE per
+  delegate invocation; between chained modules the mailbox already holds the
+  scalars the wasm itself synced on return, so a hop is a marker decode + a
+  dictionary probe + a raw call (~4-15 µs interpreted vs ~150 µs). FOR: no
+  new wasm mechanics, fully testable on the desktop (the copy world), and it
+  captures ~90% of the win.
+- **(C) Cheapening the per-entry marshalling** (cache pins, partial fill):
+  discarded — the 24-slot fill IS the cost under the interpreter; there is
+  no cheap version of "C# per entry".
+
+**TAKEN: (B), with (A) noted as the residual lever.** The criterion: maximum
+measurable win at minimum risk with desktop tests; (A) is only justified if
+a real corpus shows the residual interpreted switch dominating (today it
+bounds tak at 3.4x — already above the 2x gate). As a bonus, implementing
+(B) uncovered two correctness bugs (over-cut from a stale B0; an untrailed
+bind surviving backtracking) that (A) would have buried under a more opaque
+layer.
+
+### POST-measurement performance round: CHAINS + inline =/2 + trail-first
+
+The fine-grained measurement (wall/inWasm/stage split) revealed the real
+enemy: MONO-INTERPRETED C# per entry (~150 µs of staging vs ~3 µs of wasm —
+Mono interprets the whole runner in the browser). Three designs in cascade,
+each dictated by the verdict diagnostic (never by hypothesis — two earlier
+hypotheses, the watermark and tak's builtins, DIED against the diag):
+
+1. **The CHAIN model** (replaces per-entry): `IWasmExecutionWorld` +
+   `IWasmChainContext` in Core; a delegate opens ONE chain (pin + fill once)
+   and hops module-to-module over the mailbox the wasm itself keeps synced.
+   A switch = marker decode + dict + raw call. Per-switch guards: watermark,
+   cancellation, wakeups (only builtins queue them mid-chain). A builtin =
+   SyncEngine → impl → RefreshFromEngine (the arrays may have been REPLACED
+   by growth). Worlds: `DesktopWasmWorld` (one image, copy-in/out PER CHAIN)
+   and `BrowserWasmWorld` (GCHandle pins per chain, a pinned mailbox per
+   context — nesting through sub-engines/reentrant-solve works because the
+   builtin path re-syncs around it). nrev: 1.3x → ~35x.
+2. **=/2 open-coded** (`IsInlineUnify` in the env): the `A = Z` in tak's
+   leaves was ONE host exit per leaf (~16k). It is now the same two-cell
+   unify get_value uses, at all 4 call-site shapes. tak's builtins: 16k→0.
+3. **A SOUNDNESS BUG caught by the diag: trail-first at the binds.** The
+   bind emitted the STORE before the trail-space check; with a full trail
+   the deopt left an UNTRAILED bind behind (survives backtracking =
+   unsound) and the interpreter's re-run saw the var already bound → never
+   trailed → the trail never grew → a deopt STORM (14,912, one per leaf, TR
+   stuck at the limit). The general unifier already did trail-first WITH
+   the comment; the inline binds did not. All funnelled through ONE
+   trail-first `EmitBindDa`. Deopts: 14,912→36.
+
+Also: the earlier over-cut fix (SetB0 parity — the CutBarrier slot is
+refreshed at EVERY dispatch, self-tail included; regression `w/2` with
+per-level `d/1` CPs: 4 solutions, not 1).
+
+Final browser numbers: counter ~90-250x, nrev ~31-39x, tak ~3.4x (the 2x
+gate cleared on all three). What remains in tak/nrev: the interpreted switch
+(~4-15 µs); the next lever is the tail hop IN wasm (call_indirect + an
+imported table), an arc of its own.
+
+## Phase 3' — The direct wasm→wasm call (the measured lever, its own arc)
+
+The measurement points here, not at AOT nor at builtins. The analysis of
+what is tractable and what is not:
+
+- **The NON-TAIL call (tak) is NOT cheaply removable.** A non-tail `call`
+  fixes CP and the callee returns through CP; in a predicate-JIT the fail of
+  a deep callee can unwind CPs many frames up, which a recursive C stack
+  does not model. Keeping non-tail calls in wasm = moving the whole dispatch
+  LOOP (with backtracking over the CP stack) into wasm = "compiling the
+  engine to wasm", not a predicate JIT. A separate large arc.
+- **The TAIL call to another functor (nrev→app) IS tractable.** A tail call
+  has no continuation to preserve (it IS the last goal, it inherits CP): the
+  module could `call_indirect` the callee's `run(mailbox, 0)` and return its
+  verdict directly (tail semantics: the callee's result IS the caller's).
+  Requires: a per-thread `functorId → callee table index` map mirrored into
+  linear memory (the module reads the index and call_indirects; 0 = not
+  registered on this thread yet, fall back to verdict 2). It attacks the
+  nrev→app handoff (app's internal recursion is already a wasm self-tail).
+  RISK: a wrong index = silent corruption/trap; it needs the fallback and
+  careful tests. This is the arc's correct entry point.
+
+**Status**: superseded by the GROUP-MODULE design below before any code was
+written -- the table import never happened.
+
+### Phase 3'' — GROUP MODULES supersede the table import
+
+Re-examining the alternatives turned up a design strictly better than the
+`call_indirect` hop on every axis: **compile the whole set of promoted
+predicates into ONE wasm module**, with the LINKED addresses as the unified
+pc space (every predicate's bias is its linked base, so pcs never collide
+and a deopt pc needs no translation). Consequences:
+
+- **A cross-functor call is an internal `br_table` jump** -- the same
+  mechanism the self-tail already uses, generalised: "self" becomes "in
+  group". No table import, no per-thread functor→index map, no silent-trap
+  risk, and fully desktop-testable (the whole reason (A) lost the last
+  round evaporates).
+- **It covers NON-TAIL calls too**, which the table design could not: a
+  call site bakes `Cp = marker(self, resume-cursor)` as a constant and
+  jumps to the callee's entry; the callee's PROCEED compares Cp against
+  the group's known marker constants (collected in the cursor pass) and
+  jumps straight to the caller's resume -- the interpreter's marker path,
+  done inside wasm. tak's three non-tail calls per invocation become
+  internal jumps. A foreign Cp still returns the Success verdict.
+- **Backtracking across group members stays native**: the shared fail case
+  compares a popped BP against ALL the group's BP markers; only foreign
+  CPs return Fail to the host.
+- **Cursors go global** (one space for the whole module) and the markers
+  carry (fid, global cursor), so the interpreter's foreign re-entry path
+  needs no per-delegate translation and `addrByCursor` is the identity on
+  the biased pcs.
+- **Cost**: promotion rebuilds the group module (codegen is measured-cheap;
+  instantiation is one per promotion, amortised); the boundary guards
+  (watermark at proceed-jump, flags at calls) keep GC and interrupts
+  honest, exactly as the chain's guards do today.
+
+The chain driver stays as the OUTER loop (entry, builtins, deopt, foreign
+callees); what the group removes is the interpreted per-switch cost for
+in-group hops -- the ~4-15 us that bounds tak and nrev.
+
+**SHIPPED and MEASURED.** The pieces: `WasmPredicateCompiler.CompileGroup`
+(sections with biased pcs; `Sec/Bias/SelfFid` per instruction; the proceed
+jump table collected in the cursor pass; the shared fail case over every
+member's BP markers; the in-group branches in call/execute); markers encode
+(fid, ADDRESS) everywhere -- BPs, return markers, builtin resumes -- so
+choice points and `BuiltinReturnPc` survive group rebuilds (cursor ordinals
+renumber; addresses never move). The worlds install BUILDS (module + maps);
+an open chain keeps the build it captured, so a nested promotion cannot
+pull the module out from under it; the delegate resolves (fid, address) to
+the captured build's cursor at entry. The single-predicate `Compile` is now
+`CompileGroup` of one, which kept the whole existing suite as the guard --
+93/93 stayed green through the refactor with no semantic edits.
+
+Browser numbers (headless Chrome, best of 5): **counter ~208x, nrev ~75x,
+tak ~77x**. The diagnostics pin the contract: nrev(200) = 2 chain entries,
+ZERO switches; tak(14,10,4) = 37 entries (all trail-growth deopts), zero
+switches, zero builtin exits. tak gained a further ~27x over the chain
+model; nrev roughly doubled. A desktop test
+(`InGroupCallsNeverLeaveTheModule`) pins switches == 0 for the warmed
+group.
+
+## Phase B — Benchmarks + close (~1 week) — DONE, gate cleared ~50x over
+
+The `#wasmbench[=rounds]` page runs the five programs (counter, tak, nrev,
+crypt, zebra), each in its own engine pair, best-of-rounds, against plain
+Tier-0. Result (headless Chrome, best of 5): counter 240x, nrev 74x, tak
+75x, crypt 117x, zebra 56x — **geomean ~97x** against the 2x gate. Report
+with the full attribution story in `docs/benchmarks/browser.md`.
+
+The round's two findings, both caught by the per-program diagnostics rather
+than by guesswork: crypt's `\==` chains cost 183k builtin exits (fix:
+==/2 and \==/2 open-coded for atomic cells — one 64-bit compare; crypt
+went from 31x SLOWER to 117x faster), and crypt/5 / zebra/3 never promoted
+at all because a wasm caller's forward call entered the callee's bytecode
+without being counted as a dispatch (fix: the forward-marker fallback routes
+through OnDispatch; 283k chain re-entries became 5). The type-test tally
+question the plan left open is answered: NO — the whole Van Roy corpus
+produced two builtin requests total, nothing to inline.
+
+ADR-050 records D1–D7 (satisfies the decision policy: new backend + new
+dependency ⇒ ADR).
+
+## Group partitioning — one module, K functions under the JIT cliff
+
+`wasm_compile(all)`'s 529-member group exposed a limit no validator
+enforces: a single `run()` body of ~640k instructions crosses the JIT's
+compilation cliff (RyuJIT on the desktop world, Liftoff bailing to
+TurboFan in the browser) and takes minutes to enter — while 634k takes
+seconds. The module is therefore emitted as: function 0, the exported
+dispatcher (routes a cursor to its partition by range, loops on
+continue-cursors — a partition returns `cursor + 0x100` for "not mine,
+continue there"); functions 1..K, partitions cut at member boundaries
+under a budget of ~2,500 WAM instructions (~100k emitted each); function
+K+1, the fail/proceed resolver holding the only full BP→retry-cursor and
+Cp-marker→resume-cursor chains (partitions chain just their local
+subsets — self-backtracking and recursive returns — and hand a miss over
+via the FAIL/PROCEED pseudo-cursors); function K+2, the general unifier.
+In-partition jumps, the overwhelming majority, remain internal branches;
+a cross-partition transfer spills the mailbox scalars and re-enters
+through the dispatcher, tens of native instructions. Moving the
+group-wide chains into the resolver also removed the quadratic term
+every Proceed site paid (the 529-member module shrank 5.5 MB → 2.9 MB).
+Nothing outside the compiler changed: same export, same mailbox
+contract, same global cursors and markers.
+
+## The prebaked prelude — bake at build time, replay-validate at boot
+
+`shumway-wasmbake` compiles the stdlib bundle's whole static program into
+one group module at build time; the web build embeds the asset
+(`prelude.wasmgroup`, ~3 MB) and the boot installs it in ~400 ms — the
+~7 s browser-side compile of `wasm_compile(all)` paid once per build
+instead of per session, and `all` itself drops to milliseconds (nothing
+left to compile but user code).
+
+The module bakes process-local values — interned resume markers, linked
+addresses, builtin ids, id-bearing bytecode operands — so the bytes are
+only valid in a process that reproduces the bake's intern history. That
+is asserted, not assumed: the bake records evidence (the full functor
+table; per member the functor, linked address, a bytecode+call-sites
+hash, and the float pool; every marker in first-intern order; every
+builtin decision) and the boot REPLAYS it against the live process.
+Replaying the marker log both re-interns and verifies — a virgin pool
+assigns the same values in the same order or the comparison fails. Any
+mismatch names the first divergence and the boot falls back to lazy
+compilation: staleness degrades to slowness, never to wrong code.
+
+The baked group is installed in its own frozen world; later promotions
+build a second, user-code group from empty (extending the baked one
+would make the first lazy promotion recompile the whole prelude), and a
+call between the two groups is an ordinary chain switch.
+
+Two intern-order hazards were found and fixed on the way: the tool
+mirrors the web Main's early `StandardBuiltins.EnsureRegistered()` (the
+browser boots concurrently with page exports, so the builtin block must
+be interned before any other thread can run), and the clpfd builtin
+classes interned atoms in static field initializers — beforefieldinit
+cctor timing differs between Mono and CoreCLR, shuffling early ids per
+platform. Interning now happens inside Register().
+
+## The boards.pl round: relink, attvars, and what is still not understood
+
+`use_module(library(clpfd))` plus `wasm_compile(all)` plus a queens goal
+reported "Encountered reserved_invalid opcode ... bytecode corruption".
+Pulling that thread produced three findings and two honest gaps. The gaps
+are written down here because a tidy story that does not fit the evidence
+is worse than an open question.
+
+### A consult relinks everything, and that contradicts an older claim
+
+Measured with a probe over the static link: consulting two plain facts
+moves the linked address of every one of the ~530 prelude predicates.
+Library loading moves them further.
+
+**RESOLVED, and not where this looked.** The group-module design rests
+on markers and BP encodings carrying (functor, ADDRESS) rather than
+cursor ordinals, so that "a promotion renumbers cursors, but addresses
+never move". That premise was right and the ENGINE was breaking it: the
+static region was laid out with consulted code before the precompiled
+prelude, so every consult moved everything. The engine now lays the
+region out append-only, and a reconsult leaves the superseded version in
+place as a dead region, so an address survives both (PR #116, ADR-015).
+
+This tier keeps a translation layer anyway — the boundary tick refreshes
+a (functor -> live address) map on every world, and each place a BUILD
+address crosses into the live code space passes through
+`WasmBuildAddressIndex` — as a belt against a future layout change, and
+because eviction on a genuine REDEFINITION is still wanted. With the
+engine holding addresses still, it is a no-op in the ordinary case.
+
+**Known hole in that layer.** One field can hold addresses from either
+space: a resume marker's payload is BUILD-space when a module baked it
+and LIVE-space when the interpreter made it. Resolution looks the payload
+up in the build's `CursorByAddress`, so an interpreter-made marker misses
+after a relink and the chain exits instead of continuing. That is a
+performance leak, not a correctness one, and it is unmeasured. The clean
+fix is to tag the space or to keep a live->build reverse map at entry.
+
+### An attributed variable's cell must not be copied — but the observed
+### bytes do not match the tidy explanation
+
+An AttVar cell exists only at its home: `Deref` does not follow it, so a
+copy elsewhere is an orphan the attr table knows nothing about, and
+`get_attr` then failed with a missing-key exception. `EmitUnifyTwo`
+(get_value_x / get_value_y) lacked the normalisation that
+`unify_value` and `unify_variable` already applied, and adding it
+(bind Ref(home) instead of the raw cell) makes the corruption go away —
+red-proofed: reverting the emitter change fails the new test.
+
+The gap, still open: the write caught by an image diff was
+`heap[29]: Ref(29) -> (AttVar, payload 0)`. A COPIED attvar would carry
+its home in the payload, not zero. So either the source cell was already
+(AttVar, 0) — itself a corruption one step earlier — or something applied
+the AttVar tag to a zero payload. The normalisation is right on its own
+terms (an attvar cell must not be copied) and is red-proofed by a test,
+but the byte pattern is unexplained.
+
+What the corruption ITSELF turned out to be is the moving addresses
+above: with the engine's layout stable, `X in 1..3, X #> 1, X = 2` with
+the whole clpfd library promoted answers correctly, five of five on the
+desktop world and in the browser, where every earlier run ended in
+"reserved_invalid opcode ... bytecode corruption". Attributed variables
+were not the defect; they were the shortest path to observing it.
+
+### Attvar-hooked libraries were excluded, and are not any more
+
+A library that registers an attribute-unification hook was briefly kept
+off this tier. That was containment for the corruption above, and it went
+away with the cause: clpfd is promoted again, and the shapes that used to
+crash pass.
+
+The performance claim that also argued for it — promoted clpfd labeling
+timing ~8.5 s against ~0.5 s on Tier-0 — was never soundly measured: the
+two numbers came from different harnesses over different goals, and
+repeats of one configuration varied 8.5-59 s. It is not a result, and
+nothing rests on it now. If the question comes back, it needs a
+back-to-back A/B in one harness.
+
+### The guard that cost 100x, and the method that caught it
+
+The same round added an extra-trail guard to the fail case. The phase-B
+bench then read geomean 1.5x where it reads ~100x, with entry counts up
+four orders of magnitude (zebra 5 -> 173,011 chain entries). The cause
+was a type error, not a design one: the guard compared the RAW ctl cell
+(a `RawInt`, tag bits included) against the plain mailbox top, so the
+comparison was always unequal and every failure exited to the host. The
+guard was also redundant — the retry or trust case a fail jumps to opens
+with `EmitRestoreCommon`, which already steps aside when the CP's
+extra-trail top differs — so it was removed rather than repaired.
+
+Two lessons worth keeping. Comparing a cell against a scalar is a class
+of bug the emitter invites (cells carry tags; mailbox slots do not), and
+the bench is what found it: no test failed, and no reasoning found it
+either — an A/B with the guard in and out named it in one run. Bench
+after removal: geomean 106.6x (counter 292x, nrev 69x, tak 73x, crypt
+128x, zebra 73x).
+
+### The restore path had never actually run
+
+The guard above was removed as redundant because `EmitRestoreCommon`
+"already steps aside when the CP's extra-trail top differs". It did step
+aside — on every single retry and trust, for a reason that had nothing to
+do with the extra trail.
+
+`EmitRestoreCommon` reaches the choice point's control block by adding the
+arity to the frame base, and it scaled that arity by four. A cell is eight
+bytes. With arity 3 the pointer landed twelve bytes short, so every load
+off it read the second half of one cell and the first half of the next.
+The extra-trail slot came back as `0x24C0000000` where the frame actually
+holds `RawInt(0)` (`0xC000000000000000`, which wraps to the 0 the guard
+wanted). Unequal, always. The register-restore loop above it indexed both
+the register bank and the stack the same wrong way.
+
+What makes this worth a section is the failure mode, not the typo. A
+backend that may hand work back to the interpreter can be **wrong in a way
+that looks exactly like being right, only slower**: the deopt discarded
+the bad restore, the interpreter re-ran the whole instruction, and every
+answer came out correct. A differential against Tier-0 cannot see this,
+and neither can a conformance suite; both were green throughout.
+
+What it cost: `once(queens(10,_))` entered the tier 379,669 times and
+stepped aside 379,661 of them — one full image staging per backtrack.
+Fixed, the same goal enters 8 times and steps aside never, because the
+backtracking now stays inside the module (5,888 ms to 4,794 ms on the
+desktop world, where Tier-0 already runs under a JIT; the browser's
+interpreted Tier-0 should show more).
+
+What caught it: counting the step-asides **per pc** and naming each site
+by its instruction. The total alone said nothing actionable, and both the
+standing hypotheses — clpfd, attributed variables — were wrong. The
+ranking put `Trust` in `select/3` and `permutation/2` at the top and the
+question answered itself. `WasmTierDelegate.DeoptRanking()` keeps that
+ranking and `wasm_compile(status)` prints it.
+
+The regression test is `tests/Shumway.Tests.Wasm/RestorePathTests.cs`: deep
+backtracking on the tier with `deopts == 0` asserted. Nothing in it binds
+an attributed variable, so there is no legitimate step-aside to allow —
+which is what makes zero the right bound rather than a small number.
+
+## Risk register
+
+| Risk | Exposure | Mitigation / kill switch |
+|---|---|---|
+| `calli` to an addFunction index not viable under the Mono interpreter | Kills D1 and the design | Spike measurement 1; a documented No-Go; the JS thunk rejected as a product |
+| SGen pinning semantics (fixed/POH) under browser-wasm with threads | Corruption | Spike measurement 2, with GC stress |
+| The heap's `Cell[]` replaced by growth/GC | Stale bases | Structural: managed only runs with the wasm bailed; base refresh on every wrapper iteration; watermark bail before allocating |
+| The library does not emit the shared flag | Blocks instantiation | Post-patch of the limits byte (D5) |
+| Instantiation cost per JIT promotion | Latency | Async install; Tier-0 keeps running; the threshold amortises |
+| Payload (the package + Compiler.Wasm in the web bundle) | Load time | Trim-friendly writer; AOT-only deploys can exclude the emitter |
+| Verdict frequency in builtin-heavy predicates | Eats the win | Tier R rejects them until the benchmark justifies more open-coding; per-shape bail counters in the wrapper |
+| Wakeups/interrupts lost in long wasm loops (ADR-049) | Correctness | A flags word in the mailbox checked on every back edge → verdict 5 |
+
+## End-to-end verification
+
+1. **Spike**: `#wasmspike` in Chrome and Firefox prints the table; the
+   numeric Go/No-Go criterion; the non-shared variant's xUnit green.
+2. **Post-phase 1**: the T corpus differential vs Tier-0 in xUnit; the
+   counter ≥2x with the real compiler.
+3. **Post-phase 2/3**: the extended `#selftest` green with the JIT active;
+   a `--with-wasm` bundle boots WebShumway and promotes from AOT; the full
+   Embedding suite green with the switch off.
+4. **Close**: `#bench` published in `docs/benchmarks/browser.md`; geomean
+   ≥2x decides the default; ADR-050 written.

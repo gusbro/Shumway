@@ -702,7 +702,17 @@ public sealed partial class Activation
     {
         int addr = Deref(varAddr);
         if (_heap[addr].Tag != Tag.AttVar) return -1;
-        var record = _attrTable[addr];
+        // The record can be missing where the cell still reads AttVar (the
+        // unwind's AttrModify case documents the same tolerance): treat it
+        // as "no attribute" rather than throwing out of the engine. In
+        // Debug it still asserts — a missing record outside those windows
+        // is an invariant break worth catching.
+        if (!_attrTable.TryGetValue(addr, out var record))
+        {
+            System.Diagnostics.Debug.Assert(false,
+                $"AttVar at heap[{addr}] has no attr record");
+            return -1;
+        }
         return record.TryGetValue(moduleId, out int value) ? value : -1;
     }
 
@@ -739,6 +749,30 @@ public sealed partial class Activation
         return _heap[addr].Tag == Tag.AttVar
             ? _attrTable[addr].Keys
             : Array.Empty<int>();
+    }
+
+    /// <summary>Diagnostic: the first heap address holding an AttVar cell
+    /// with no attr-table record, or -1. An attributed variable exists only
+    /// at its home WITH its record; anything else is a corruption tripwire's
+    /// find.</summary>
+    public int FindOrphanAttVar()
+    {
+        for (int i = 0; i < _heapTop; i++)
+            if (_heap[i].Tag == Tag.AttVar && !_attrTable.ContainsKey(i))
+                return i;
+        return -1;
+    }
+
+    /// <summary>Diagnostic: a window of raw cells around an address, plus
+    /// which of them have attr-table records.</summary>
+    public string DumpHeapWindow(int at, int radius)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = System.Math.Max(0, at - radius);
+             i <= System.Math.Min(_heapTop - 1, at + radius); i++)
+            sb.Append($"[{i}]={_heap[i].Tag}:{_heap[i].Data & Cell.PayloadMask}"
+                + (_attrTable.ContainsKey(i) ? "*" : "") + " ");
+        return sb.ToString();
     }
 
     private void TrailAttrChange(int homeAddr, int moduleId, int oldValue)
@@ -1747,7 +1781,7 @@ public sealed partial class Activation
     /// The interpreter checks this at every goal boundary.</summary>
     public bool HasPendingWakeups => _pendingWakeups.Count > 0;
 
-    /// <summary>Set by the bytecode interpreter so Tier-1 IL code can run
+/// <summary>Set by the bytecode interpreter so Tier-1 IL code can run
     /// pending <c>verify_attributes</c> wakeups through the interpreter's
     /// goal-running machinery (which the IL delegate, holding only an
     /// <see cref="Activation"/>, cannot reach directly). Returns false when a

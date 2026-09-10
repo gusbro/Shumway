@@ -81,6 +81,16 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
             return existing;
         }
 
+        // The wasm tier counts the same dispatches; its install lands in the
+        // store's table, so the wrapper below is the ordinary one.
+        if (_store.Wasm is { Enabled: true } wasm
+            && wasm.RecordDispatch(functorId, pred, targetAddress) is not null)
+        {
+            var wrappedWasm = _store.TryGetDispatchWrapper(functorId)!;
+            _dispatchCache[targetAddress] = wrappedWasm;
+            return wrappedWasm;
+        }
+
         // JIT-indexing profile counts only not-yet-promoted predicates — a promoted
         // one already runs as IL, so the indexing decision is moot.
         _jitProfile.RecordCall(functorId);

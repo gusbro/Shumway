@@ -16,10 +16,11 @@ public static class ClpfdDomainBuiltins
     private const long Sup = ClpfdDomain.Sup;
     private const long SizeInfinite = 1000000000;
 
-    private static readonly int InfAtom = AtomTable.Intern("inf", permanent: true).Id;
-    private static readonly int SupAtom = AtomTable.Intern("sup", permanent: true).Id;
-    private static readonly int MinusFunctor =
-        FunctorTable.Intern(AtomTable.Intern("-", permanent: true).Id, 2);
+    // Interned in Register(), not in field initializers: a beforefieldinit
+    // cctor runs at an unspecified time that DIFFERS between runtimes (Mono
+    // interns these mid-registration, CoreCLR later), which shuffles early
+    // ids per platform — and the baked prelude wasm group validates ids.
+    private static int InfAtom, SupAtom, MinusFunctor;
 
     // ---- argument helpers ----
 
@@ -259,6 +260,9 @@ public static class ClpfdDomainBuiltins
 
     public static void Register()
     {
+        InfAtom = AtomTable.Intern("inf", permanent: true).Id;
+        SupAtom = AtomTable.Intern("sup", permanent: true).Id;
+        MinusFunctor = FunctorTable.Intern(AtomTable.Intern("-", permanent: true).Id, 2);
         BuiltinsRegistry.Register("$dom_new", 3, New);
         BuiltinsRegistry.Register("$dom_universal", 1, UniversalB);
         BuiltinsRegistry.Register("$dom_min", 2, Min);

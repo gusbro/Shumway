@@ -258,6 +258,11 @@ public sealed class IlPromotionStore
     /// <summary>Profile samples required before the phase-2 PGO recompile.</summary>
     public int PgoSampleThreshold { get; set; } = 32;
 
+    /// <summary>The wasm tier's promotion state, when a world wired one
+    /// (browser boot; desktop differential tests). Its delegates install into
+    /// THIS store's table, so dispatch and eviction are shared.</summary>
+    public WasmPromotionStore? Wasm { get; set; }
+
     /// <summary>The delegate bound to <paramref name="functorId"/>, or null.</summary>
     public PredicateDelegate? TryGet(int functorId)
         => _delegates.TryGetValue(functorId, out var d) ? d : null;
@@ -459,12 +464,27 @@ public sealed class IlPromotionStore
     // The synthetic __query__/N wrappers have a DIFFERENT body per query under the
     // same functor id — caching one query's IL would replay it for every later query
     // of that arity.
-    private static bool IsExcludedFromPromotion(int functorId)
+    //
+    // The SAME is true of the helpers a query stub synthesises for its `;`,
+    // `->` and `\+`. MetaTransform names those with the reserved "$q" prefix
+    // precisely so they are "REUSED query-to-query" and stay bounded
+    // (MetaTransform.HelperPrefix) — which means '$q$disj_1'/5 is one functor
+    // id carrying a different body every time. Promoting it is the same
+    // replay bug, and on the wasm tier it also rebuilds the whole group
+    // module on every query that contains a disjunction (measured: 13
+    // seconds after consulting boards.pl).
+    public static bool IsExcludedFromPromotion(int functorId)
     {
         var (atomId, _) = Shumway.Core.FunctorTable.Lookup(functorId);
         string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
-        return name == "__query__";
+        return name == "__query__" || IsQueryStubHelper(name);
     }
+
+    /// <summary>A helper synthesised for the CURRENT query's stub: named
+    /// <c>$q$kind_N</c>, module-mangled to <c>mod$$q$kind_N</c>.</summary>
+    public static bool IsQueryStubHelper(string name)
+        => name.StartsWith("$q$", System.StringComparison.Ordinal)
+           || name.Contains("$$q$", System.StringComparison.Ordinal);
 
     // A bytecode body opening with enter_dynamic is mutation-driven dispatch
     // (per-clause check_visible + in-place chain patches, ADR-015): a cached IL
@@ -554,6 +574,9 @@ public sealed class IlPromotionStore
     /// CallBytecode immediately, skipping OnDispatch per dispatch.</summary>
     public bool IsPermanentlyBytecodeOnly(int functorId, CompiledPredicate predicate)
     {
+        // An enabled wasm tier promotes through dispatch too: the static
+        // CallBytecode rewrite would starve it of the dispatches it counts.
+        if (Wasm is { Enabled: true }) return Wasm.IsUnpromotable(functorId);
         if (Threshold <= 0) return true;
         if (!DynamicCodeSupported) return true;
         if (_unpromotable.Contains(functorId)) return true;

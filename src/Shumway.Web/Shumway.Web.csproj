@@ -25,6 +25,23 @@
          COOP/COEP headers. See docs. -->
     <WasmEnableThreads>true</WasmEnableThreads>
 
+    <!-- The wasm Tier-1 is OPT-IN for this app. A published WebShumway is
+         Tier-0 unless asked otherwise: the tier is still an arc under
+         measurement, and switching it on also drags in the emscripten relink
+         for the shim and a ~3 MB baked prelude asset.
+         Build or publish with -p:ShumwayWasmTier=true to include it. -->
+    <ShumwayWasmTier Condition="'$(ShumwayWasmTier)' == ''">false</ShumwayWasmTier>
+
+    <!-- REQUIRED for the NativeFileReference below to reach the runtime.
+         Threads do NOT imply the native relink: without this the SDK prints
+         "the native references won't be linked in, because neither
+         $(WasmBuildNative), nor $(RunAOTCompilation) are 'true'" as a
+         WARNING and publishes a runtime with no shim, so the wasm tier dies
+         at DllNotFoundException the first time it registers a module. With
+         it, a machine missing the wasm-tools workload fails the build
+         instead of shipping that. -->
+    <WasmBuildNative Condition="'$(ShumwayWasmTier)' == 'true'">true</WasmBuildNative>
+
     <!-- Sigil (Tier-1's IL emitter) is a third-party assembly we cannot annotate,
          so the trimmer reports IL2104 for it. Narrow and local, per the repo's
          zero-warning rule: it is scoped to THIS project, names the one code, and
@@ -46,7 +63,28 @@
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
     <ProjectReference Include="..\Shumway.TopLevel\Shumway.TopLevel.csproj" />
+    <!-- The wasm Tier-1 spike (phase 0). Browser-only by nature. -->
+    <ProjectReference Include="..\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
   </ItemGroup>
+
+  <!-- spike.c: the one-line call_indirect shim the tier's DllImport reaches
+       (a managed calli through a runtime-added table index hangs; native code
+       has no such trouble). Reaching the runtime needs WasmBuildNative above
+       and the wasm-tools workload. -->
+  <ItemGroup Condition="'$(ShumwayWasmTier)' == 'true'">
+    <NativeFileReference Include="spike.c" />
+  </ItemGroup>
+
+  <!-- Publish into a CLEAN directory. Static web assets are fingerprinted by
+       content, so every publish adds a new dotnet.*.js / dotnet.native.*.wasm
+       and leaves the previous ones behind: the output grew to 288 MB of dead
+       copies, and — worse — a stale runtime that still carried a shim masked
+       a build that had stopped linking it, so the browser worked while the
+       build was broken. The publish output is derived; wiping it first costs
+       nothing and keeps what is served equal to what was built. -->
+  <Target Name="WipeStalePublishOutput" BeforeTargets="PrepareForPublish">
+    <RemoveDir Directories="$(PublishDir)" Condition="'$(PublishDir)' != '' AND Exists('$(PublishDir)')" />
+  </Target>
 
   <!-- The browser cannot emit IL (see RuntimeCaps), so declare it as a link-time
        constant: the trimmer folds RuntimeCaps.SupportsRuntimeCodegen to false,
@@ -56,6 +94,10 @@
   <ItemGroup>
     <RuntimeHostConfigurationOption Include="Shumway.RuntimeCodegen"
                                     Value="false" Trim="true" />
+    <!-- The wasm Tier-1 (docs/design/wasm-tier1-plan.md): promoted predicates
+         compile to WebAssembly modules and run natively. Browser only. -->
+    <RuntimeHostConfigurationOption Include="Shumway.WasmCodegen"
+        Value="$(ShumwayWasmTier)" Trim="true" />
   </ItemGroup>
 
   <!-- Bake the standard library into a bundle the app embeds, so the engine boots
@@ -98,6 +140,43 @@
 
   <ItemGroup>
     <EmbeddedResource Include="$(StdlibBundle)" LogicalName="stdlib.shum" Visible="false" />
+  </ItemGroup>
+
+  <!-- Bake the prelude's wasm Tier-1 group ahead of time, so the engine boots
+       with the whole stdlib already native — wasm_compile(all)'s ~6 s browser
+       compile paid once at build time instead. The asset embeds validation
+       evidence and the boot rejects it (falling back to lazy compilation)
+       whenever this process would not reproduce the bake's intern state, so
+       staleness degrades to slowness, never to wrong code. Rebakes when the
+       stdlib bundle or the wasm compiler changes. -->
+  <PropertyGroup>
+    <WasmGroupAsset>$(StdlibDir)prelude.wasmgroup</WasmGroupAsset>
+    <ShumwayWasmBakeDll>..\Shumway.WasmBake\bin\$(Configuration)\net10.0\shumway-wasmbake.dll</ShumwayWasmBakeDll>
+  </PropertyGroup>
+
+  <!-- Two targets: the tool build runs unconditionally (MSBuild's own
+       up-to-date check makes it cheap), so the SECOND target's incremental
+       decision sees the FRESH tool dll — one target doing both would compare
+       against the stale dll and skip a needed rebake until the next build. -->
+  <Target Name="BuildWasmBakeTool"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(ShumwayWasmTier)' == 'true'"
+          DependsOnTargets="BakeStdlibBundle">
+    <MSBuild Projects="..\Shumway.WasmBake\Shumway.WasmBake.csproj"
+             Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <Target Name="BakeWasmGroup"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(ShumwayWasmTier)' == 'true'"
+          DependsOnTargets="BuildWasmBakeTool"
+          Inputs="$(StdlibBundle);$(ShumwayWasmBakeDll)"
+          Outputs="$(WasmGroupAsset)">
+    <Exec Command="dotnet &quot;$(ShumwayWasmBakeDll)&quot; &quot;$(StdlibBundle)&quot; -o &quot;$(WasmGroupAsset)&quot;" />
+  </Target>
+
+  <ItemGroup Condition="'$(ShumwayWasmTier)' == 'true'">
+    <EmbeddedResource Include="$(WasmGroupAsset)" LogicalName="prelude.wasmgroup" Visible="false" />
   </ItemGroup>
 
 </Project>

@@ -25,12 +25,16 @@ let engine = null;
  *        as it is written — a program that prints while it searches should be
  *        watchable while it runs.
  */
-export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop) {
+export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, onNote) {
   const { dotnet } = await import('./_framework/dotnet.js');
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
   setModuleImports('main.js', {
     ui: {
-      write: onOutput, writeError: onDiagnostic, askForInput: onAskForInput,
+      write: (t) => { if (typeof t === 'string' && t.startsWith('[tier]')) { try { fetch('/collect', { method: 'POST', body: t }); } catch {} } return onOutput(t); },
+      // A caller that does not distinguish notes still gets them, as
+      // diagnostics: an undefined import would throw at the first call.
+      writeError: onDiagnostic, writeNote: onNote ?? onDiagnostic,
+      askForInput: onAskForInput,
       debugStopped: (json) => onDebugStop?.(JSON.parse(json)),
     },
   });
