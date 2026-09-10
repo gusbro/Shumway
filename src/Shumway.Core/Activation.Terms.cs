@@ -985,7 +985,44 @@ public sealed partial class Activation
         if (Unify(aIdx, bIdx, 0, null)) return true;
         if (!_unifyEscalate) return false;
         _unifyEscalate = false;
-        return Unify(aIdx, bIdx, 0, new HashSet<long>());
+        return Escalated(aIdx, bIdx);
+    }
+
+    /// <summary>Pairs whose unification was put off because the term was
+    /// deeper than the recursion is allowed to go. Heap index pairs, packed;
+    /// pooled on the engine and empty between calls.</summary>
+    private List<long>? _unifyDeferred;
+
+    /// <summary>The escalated pass, plus the work list it fills. A pair put
+    /// off at the depth limit is unified here at depth zero, and one of those
+    /// may put off pairs of its own, so this runs until the list is empty:
+    /// C# stack use is bounded by the limit however deep the term goes.
+    ///
+    /// <para>The mark makes it re-entrant. A unification reached from inside
+    /// one (an attributed variable's hook) owns only what it pushed, and a
+    /// failure unwinds to the mark rather than clearing the list under
+    /// whoever is above.</para></summary>
+    private bool Escalated(int aIdx, int bIdx)
+    {
+        var pairs = new HashSet<long>();
+        int mark = _unifyDeferred?.Count ?? 0;
+        try
+        {
+            if (!Unify(aIdx, bIdx, 0, pairs)) return false;
+            while (_unifyDeferred is { } work && work.Count > mark)
+            {
+                long pending = work[^1];
+                work.RemoveAt(work.Count - 1);
+                if (!Unify((int)(pending >> 32), (int)(uint)pending, 0, pairs))
+                    return false;
+            }
+            return true;
+        }
+        finally
+        {
+            if (_unifyDeferred is { } left && left.Count > mark)
+                left.RemoveRange(mark, left.Count - mark);
+        }
     }
 
     /// <summary>The occurs_check flag's route for general unification: the
@@ -1032,18 +1069,35 @@ public sealed partial class Activation
     private bool Unify(int aIdx, int bIdx, int depth, HashSet<long>? activePairs)
     {
         Profiler.Unify();
-        if (activePairs is null && depth >= UnifyRecursionLimit)
+        if (depth >= UnifyRecursionLimit)
         {
-            // Escalate by RESTART, not in place: a set created here only
-            // covers THIS subtree — the recursion unwinds below the limit,
-            // dives into the cycle again with a fresh empty set, and the
-            // pair knowledge is lost forever (A=A*B, B=C*A*C, A=B hung
-            // exactly so, oscillating around the limit). The entry point
-            // re-runs the WHOLE unification with the guard on from depth 0;
-            // bindings already made are monotone (they re-unify via the
-            // address shortcut or the pair set), so no rollback is needed.
-            _unifyEscalate = true;
-            return false;
+            if (activePairs is null)
+            {
+                // Escalate by RESTART, not in place: a set created here only
+                // covers THIS subtree — the recursion unwinds below the limit,
+                // dives into the cycle again with a fresh empty set, and the
+                // pair knowledge is lost forever (A=A*B, B=C*A*C, A=B hung
+                // exactly so, oscillating around the limit). The entry point
+                // re-runs the WHOLE unification with the guard on from depth 0;
+                // bindings already made are monotone (they re-unify via the
+                // address shortcut or the pair set), so no rollback is needed.
+                _unifyEscalate = true;
+                return false;
+            }
+            // Already escalated, and the term is deeper than the C# stack can
+            // be trusted with — a stack overflow cannot be caught, so it is
+            // not an option. The pair goes on a WORK LIST the entry point
+            // drains at depth 0, which is the mixed form: recursive while the
+            // depth is known to be safe, an explicit stack past that.
+            //
+            // Deferring is sound because unification is CONFLUENT: which
+            // equation you solve first cannot change the most general unifier,
+            // nor whether the set is solvable at all. And the pair set is
+            // append-only here (see below), so order cannot change what it
+            // knows either.
+            (_unifyDeferred ??= new List<long>())
+                .Add(((long)aIdx << 32) | (uint)bIdx);
+            return true;
         }
         int aAddr = Deref(aIdx);
         int bAddr = Deref(bIdx);
@@ -1207,7 +1261,7 @@ public sealed partial class Activation
         if (UnifyStr(fA, fB)) return true;
         if (!_unifyEscalate) return false;
         _unifyEscalate = false;
-        return UnifyStr(fA, fB, 0, new HashSet<long>());
+        return EscalatedStr(fA, fB);
     }
 
     private bool GuardedUnifyLis(int hA, int hB)
@@ -1215,7 +1269,37 @@ public sealed partial class Activation
         if (UnifyLis(hA, hB)) return true;
         if (!_unifyEscalate) return false;
         _unifyEscalate = false;
-        return UnifyLis(hA, hB, 0, new HashSet<long>());
+        return EscalatedLis(hA, hB);
+    }
+
+    // The same escalated pass as Escalated(int, int), entered at a compound
+    // rather than at a pair of cells. Both drain the work list; see there.
+    private bool EscalatedStr(int fA, int fB) => Escalated(fA, fB, str: true);
+
+    private bool EscalatedLis(int hA, int hB) => Escalated(hA, hB, str: false);
+
+    private bool Escalated(int a, int b, bool str)
+    {
+        var pairs = new HashSet<long>();
+        int mark = _unifyDeferred?.Count ?? 0;
+        try
+        {
+            if (!(str ? UnifyStr(a, b, 0, pairs) : UnifyLis(a, b, 0, pairs)))
+                return false;
+            while (_unifyDeferred is { } work && work.Count > mark)
+            {
+                long pending = work[^1];
+                work.RemoveAt(work.Count - 1);
+                if (!Unify((int)(pending >> 32), (int)(uint)pending, 0, pairs))
+                    return false;
+            }
+            return true;
+        }
+        finally
+        {
+            if (_unifyDeferred is { } left && left.Count > mark)
+                left.RemoveRange(mark, left.Count - mark);
+        }
     }
 
     private bool UnifyStr(int fA, int fB, int depth = 0, HashSet<long>? activePairs = null)
