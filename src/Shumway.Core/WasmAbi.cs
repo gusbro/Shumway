@@ -152,7 +152,56 @@ public static class WasmAbi
     public const int GoalsRun = 27;
     public const int CellsClaimed = 28;
 
-    public const int SlotCount = 32;
+    /// <summary>Base of the RESUME TABLE: one i64 per resume marker, indexed
+    /// by <c>marker - Activation.ResumeMarkerBase</c>.
+    ///
+    /// <para>A marker is already a dense id — <c>EncodeResumeMarker</c> interns
+    /// the (functor, address) pair and hands back <c>Base + denseId</c> — so
+    /// resolving one is a subscript, not a search. That replaces a linear chain
+    /// of baked <c>if (bp == const)</c> comparisons, one per choice-point site
+    /// in the module.</para>
+    ///
+    /// <para>Row layout: <c>((moduleId + 1) &lt;&lt; 32) | cursor</c>. Zero means
+    /// the marker does not resolve HERE, which is the safe direction: the
+    /// module returns the verdict and the host takes over, exactly as it did
+    /// before there was a table.</para>
+    ///
+    /// <para>PER WORLD, never global. Functor ids and the marker pool are
+    /// process-wide, but bytecode addresses belong to each engine's code space:
+    /// two engines running the same program mint the SAME markers for DIFFERENT
+    /// code. Today that is safe only because resolution is per world, and a
+    /// shared table would quietly lose it.</para></summary>
+    public const int ResumeTableBase = 29;
+    /// <summary>Rows in the resume table. A marker at or past this is newer
+    /// than the table and resolves to the host.</summary>
+    public const int ResumeTableLength = 30;
+    /// <summary>Which module is executing, so a row can be recognised as this
+    /// module's own. One module per group makes this constant; it stops being
+    /// constant when a group is split.</summary>
+    public const int SelfModuleId = 31;
+
+    /// <summary>Base of the moduleId -&gt; function-table index array the
+    /// in-wasm hop reads. Empty until modules can call each other directly.
+    /// </summary>
+    public const int ModuleIndexBase = 32;
+    /// <summary>Install epoch, stamped when a chain opens: a chain whose
+    /// generation is stale stops resolving in wasm and defers to the host.
+    /// </summary>
+    public const int TableGeneration = 33;
+    /// <summary>The module that produced the current step-aside, so the host
+    /// can pick the right address displacement. Written on the slow path only.
+    /// </summary>
+    public const int CurrentModuleId = 34;
+
+    /// <summary>Scratch for the emitter's DebugLoopGuard (off by default): a
+    /// dispatch counter, the last cursor, and a limit the host may set. Kept
+    /// here rather than at hand-picked indexes, which is how they came to
+    /// overlap the diagnostic tallies once already.</summary>
+    public const int DebugGuardLimit = 35;
+    public const int DebugGuardCount = 36;
+    public const int DebugGuardCursor = 37;
+
+    public const int SlotCount = 40;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

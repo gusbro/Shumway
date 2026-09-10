@@ -66,10 +66,41 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         {
             { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },
         });
+        var addrIndex = new Shumway.Core.WasmBuildAddressIndex(entryAddressByFid);
         _current = new Build(instance, entryCursorByFid, cursorByAddress,
-                             entryAddressByFid, registerDemand,
-                             new Shumway.Core.WasmBuildAddressIndex(entryAddressByFid));
+                             entryAddressByFid, registerDemand, addrIndex);
+        PopulateResumeTable(entryCursorByFid, cursorByAddress, addrIndex);
     }
+
+    /// <summary>The rows a module reads to resolve a marker. Derived from the
+    /// same two maps the host resolves through, so the two cannot drift: a
+    /// marker is (functor, address), the build records addresses, and the
+    /// address index says which member owns each one.</summary>
+    public Shumway.Core.WasmResumeTable ResumeTable { get; } = new();
+
+    private void PopulateResumeTable(
+        IReadOnlyDictionary<int, int> entryCursorByFid,
+        IReadOnlyDictionary<int, int> cursorByAddress,
+        Shumway.Core.WasmBuildAddressIndex addrIndex)
+    {
+        // A fresh entry is address 0 under the member's own functor.
+        foreach (var (fid, cursor) in entryCursorByFid)
+            ResumeTable.Set(Shumway.Core.Activation.EncodeResumeMarker(fid, 0),
+                            ModuleId, cursor);
+        // Every other re-entry point belongs to whichever member's range it
+        // falls in.
+        foreach (var (address, cursor) in cursorByAddress)
+        {
+            int fid = addrIndex.OwnerFunctorOf(address);
+            if (fid < 0) continue;              // precedes every member
+            ResumeTable.Set(Shumway.Core.Activation.EncodeResumeMarker(fid, address),
+                            ModuleId, cursor);
+        }
+    }
+
+    /// <summary>This world's module id. One group means one module, so it is
+    /// constant here; it stops being constant when a group is split.</summary>
+    public int ModuleId { get; } = 0;
 
     public bool Contains(int functorId)
         => _current?.EntryCursorByFid.ContainsKey(functorId) == true;
@@ -120,7 +151,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private readonly Build _build;
         private readonly Activation _engine;
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
-        private int _heapAt, _stackAt, _trailAt, _functorAt;
+        private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -146,7 +177,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _trailAt = _stackAt + stack.Length * 8;
             _functorAt = _trailAt + trail.Length * 4;
             int fcount = FunctorTable.IdLimit;
-            if (_functorAt + (long)fcount * 8 > (long)Pages * 65536)
+            long[] resumeRows = _w.ResumeTable.Rows;
+            _resumeAt = _functorAt + fcount * 8;
+            if (_resumeAt + (long)resumeRows.Length * 8 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._functorAt) { _w._functorAt = _functorAt; _w._functorSynced = 0; }
 
@@ -155,7 +188,10 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 HeapLimitCells: heap.Length - 8,
                 StackLimitCells: stack.Length - 8,
                 TrailLimitEntries: trail.Length - 8,
-                FunctorTableBase: _functorAt);
+                FunctorTableBase: _functorAt,
+                ResumeTableBase: _resumeAt,
+                ResumeTableRows: resumeRows.Length,
+                SelfModuleId: _w.ModuleId);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -184,6 +220,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                     mem + _functorAt + _w._functorSynced * 8L, fcount - _w._functorSynced);
                 _w._functorSynced = FunctorTable.CopyPackedFrom(_w._functorSynced, dest);
             }
+            fixed (long* p = resumeRows)
+                Buffer.MemoryCopy(p, mem + _resumeAt, resumeRows.Length * 8L,
+                                  resumeRows.Length * 8L);
             _engineAuthoritative = false;
         }
 

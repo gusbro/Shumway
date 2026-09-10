@@ -456,6 +456,64 @@ public static class WasmPredicateCompiler
         private void BrDispatch()
             => Op(new Branch((uint)(_extraDepth + (_caseCount - 1 - _caseIndex))));
 
+        /// <summary>Resolves a resume marker through the resume table and, when
+        /// it names THIS module, dispatches to its cursor. Leaves nothing on
+        /// the stack and falls through when the marker resolves elsewhere or
+        /// not at all — the caller then does whatever it did before there was
+        /// a table.
+        ///
+        /// <para>A marker is already a dense id (EncodeResumeMarker interns the
+        /// pair and returns Base + denseId), so this is a subscript rather than
+        /// a search. What it replaces is a linear chain of baked comparisons,
+        /// one per choice-point or return site in the module: on a big group
+        /// that chain is long, and every failure walked it.</para>
+        ///
+        /// <para>Out-of-range is "not here", not a fault: a marker minted after
+        /// this table was sized is newer than the module, and the host is the
+        /// right place for it.</para></summary>
+        private void EmitResumeProbe(uint markerLocal)
+        {
+            // i = marker - ResumeMarkerBase
+            Op(new LocalGet(markerLocal));
+            Op(new Int32Constant(Activation.ResumeMarkerBase));
+            Op(new Int32Subtract());
+            Op(new LocalSet(LT2));
+
+            // if ((uint)i < length) { row = table[i]; ... }
+            Op(new LocalGet(LT2));
+            LoadSlot32(WasmAbi.ResumeTableLength);
+            Op(new Int32LessThanUnsigned());
+            OpenIf();
+            {
+                LoadSlot32(WasmAbi.ResumeTableBase);
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new LocalSet(LC2));                  // row
+
+                // The row's high half is moduleId + 1; zero means no row.
+                Op(new LocalGet(LC2));
+                Op(new Int64Constant(32));
+                Op(new Int64ShiftRightUnsigned());
+                Op(new Int32WrapInt64());
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                LoadSlot32(WasmAbi.SelfModuleId);
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC2));
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LCur));
+                    BrDispatch();
+                }
+                CloseNested();
+            }
+            CloseNested();
+        }
+
         private void GoTo(int addr)
         {
             Op(new Int32Constant(CursorOf(addr)));
@@ -615,29 +673,32 @@ public static class WasmPredicateCompiler
             if (DebugLoopGuard)
             {
                 // DIAGNOSTIC (off by default): every dispatch records the
-                // cursor in slot 27 and bumps a counter in slot 26; when the
-                // counter passes the limit in slot 25 (10M when the host
-                // leaves it 0) the run returns the impossible verdict 99.
+                // cursor in DebugGuardCursor and bumps DebugGuardCount; when
+                // it passes DebugGuardLimit (10M when the host leaves it 0)
+                // the run returns the impossible verdict 99. These had been
+                // bare slot numbers, and the numbers had since been given to
+                // the diagnostic tallies -- turning the guard on would have
+                // corrupted them.
                 // Turns an in-module infinite loop into a readable report,
                 // and with a host-set limit it single-steps a run by
                 // dispatch count.
-                StoreSlot64(27, () =>
+                StoreSlot64(WasmAbi.DebugGuardCursor, () =>
                 {
                     Op(new LocalGet(LCur));
                     Op(new Int64ExtendInt32Signed());
                 });
-                StoreSlot64(26, () =>
+                StoreSlot64(WasmAbi.DebugGuardCount, () =>
                 {
-                    LoadSlot64(26);
+                    LoadSlot64(WasmAbi.DebugGuardCount);
                     Op(new Int64Constant(1));
                     Op(new Int64Add());
                 });
-                LoadSlot64(26);
-                LoadSlot64(25);
+                LoadSlot64(WasmAbi.DebugGuardCount);
+                LoadSlot64(WasmAbi.DebugGuardLimit);
                 Op(new Int64Constant(0));
                 Op(new Int64GreaterThanSigned());
                 OpenIf(BlockType.Int64);
-                LoadSlot64(25);
+                LoadSlot64(WasmAbi.DebugGuardLimit);
                 OpenElse();
                 Op(new Int64Constant(10_000_000));
                 CloseNested();
@@ -746,23 +807,18 @@ public static class WasmPredicateCompiler
         /// single-function module's answer.</summary>
         private void EmitProceedResolve()
         {
-            if (_proceedTargets.Count > 0)
-            {
-                Op(new LocalGet(LH));
-                LoadSlot32(WasmAbi.HeapWatermark);
-                Op(new Int32LessThanSigned());
-                OpenIf();
-                foreach (var (marker, addr) in _proceedTargets)
-                {
-                    Op(new LocalGet(LCP));
-                    Op(new Int32Constant(marker));
-                    Op(new Int32Equal());
-                    OpenIf();
-                    GoTo(addr);
-                    CloseNested();
-                }
-                CloseNested();
-            }
+            // Identical to what a partition emits now. The resolver existed to
+            // hold the ONE full copy of a chain no partition could afford to
+            // carry; a table read is the same handful of instructions
+            // everywhere, so there is no longer a full copy to hold. The
+            // function stays because the dispatcher routes the pseudo-cursors
+            // here, and removing it is a separate cleanup.
+            Op(new LocalGet(LH));
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            EmitResumeProbe(LCP);
+            CloseNested();
             EmitReturn(WasmVerdict.Success);
         }
 
@@ -1075,37 +1131,18 @@ public static class WasmPredicateCompiler
             // whose retry cursor is local (self-backtracking, the hot case)
             // and hands a miss to the resolver; the resolver chains them ALL
             // and only a CP no member pushed returns Fail to the host.
-            var bpPairs = new SortedDictionary<int, int>();
-            foreach (var ins in _instrs)
-                switch (ins.Op)
-                {
-                    case Opcode.Try:
-                        bpPairs[_env.EncodeBp(SelfFid(ins), ins.Pc + 9)]
-                            = CursorOf(ins.Pc + 9);
-                        break;
-                    case Opcode.Retry:
-                        bpPairs[_env.EncodeBp(SelfFid(ins), ins.Pc + 5)]
-                            = CursorOf(ins.Pc + 5);
-                        break;
-                    case Opcode.TryMeElse:
-                    case Opcode.RetryMeElse:
-                        bpPairs[_env.EncodeBp(SelfFid(ins), Bias(ins) + ins.I0)]
-                            = CursorOf(Bias(ins) + ins.I0);
-                        break;
-                }
-            foreach (var (bpValue, cursor) in bpPairs)
-            {
-                if (!fullChain && (cursor < _curPart.Lo || cursor >= _curPart.Hi))
-                    continue;
-                Op(new LocalGet(LT1));
-                Op(new Int32Constant(bpValue));
-                Op(new Int32Equal());
-                OpenIf();
-                Op(new Int32Constant(cursor));
-                Op(new LocalSet(LCur));
-                BrDispatch();
-                CloseNested();
-            }
+            // One indexed read, where a chain of baked comparisons used to be:
+            // one `if (bp == const)` per choice-point site in the module,
+            // walked linearly on EVERY failure. A BP is a resume marker and a
+            // marker is a dense id, so the answer is a subscript.
+            //
+            // The probe dispatches to any cursor of this module, including one
+            // in another partition -- the br_table's default hands those to the
+            // group dispatcher, which is the same route a jump across
+            // partitions already takes. So the partition/resolver split that
+            // the chain needed does not apply here, and `fullChain` no longer
+            // changes what is emitted, only where the miss goes.
+            EmitResumeProbe(LT1);
             if (fullChain) EmitReturn(WasmVerdict.Fail);    // a foreign CP
             else EmitContinueReturn();                      // LCur is still FAIL
         }
@@ -1429,34 +1466,22 @@ public static class WasmPredicateCompiler
                 EmitReturn(WasmVerdict.Success);
                 return;
             }
-            // Chain only the targets that resume in THIS partition (a
-            // recursive call's return, the hot case, is one of these); a
-            // miss hands the full chain to the resolver via the PROCEED
-            // pseudo-cursor. Chaining every group target at every Proceed
-            // site is what made the single-function module's size quadratic.
-            var local = new List<(int Marker, int Addr)>();
-            foreach (var t in _proceedTargets)
-            {
-                int cursor = CursorOf(t.Addr);
-                if (cursor >= _curPart.Lo && cursor < _curPart.Hi) local.Add(t);
-            }
-            if (local.Count > 0)
-            {
-                Op(new LocalGet(LH));
-                LoadSlot32(WasmAbi.HeapWatermark);
-                Op(new Int32LessThanSigned());
-                OpenIf();
-                foreach (var (marker, addr) in local)
-                {
-                    Op(new LocalGet(LCP));
-                    Op(new Int32Constant(marker));
-                    Op(new Int32Equal());
-                    OpenIf();
-                    GoTo(addr);
-                    CloseNested();
-                }
-                CloseNested();
-            }
+            // The watermark guard comes FIRST and still decides everything: at
+            // or past it the module owes the host a collection, so it declines
+            // to resume here no matter what the table says.
+            //
+            // Past the guard it is one indexed read. Note this resolves MORE
+            // than the old chain did: that chain only knew the return sites of
+            // in-group calls, while the table knows every re-entry point of the
+            // module, so a Cp that lands on one of them now resumes in wasm
+            // instead of going out and coming back. Same control flow, fewer
+            // crossings.
+            Op(new LocalGet(LH));
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            EmitResumeProbe(LCP);
+            CloseNested();
             Op(new Int32Constant(_proceedCase));
             Op(new LocalSet(LCur));
             EmitContinueReturn();

@@ -25,6 +25,16 @@ public sealed class WasmBuildAddressIndex
         System.Array.Sort(_bases, _fids);
     }
 
+    /// <summary>The functor owning a build-space pc, or -1. The same search
+    /// the translation uses, exposed because populating the resume table needs
+    /// to attribute each address to its predicate: a marker is a (functor,
+    /// address) pair and the build only records the addresses.</summary>
+    public int OwnerFunctorOf(long pc)
+    {
+        int at = OwnerOf(pc);
+        return at < 0 ? -1 : _fids[at];
+    }
+
     /// <summary>The member owning a build-space pc: the greatest base at or
     /// below it. -1 when the pc precedes every member.</summary>
     private int OwnerOf(long pc)

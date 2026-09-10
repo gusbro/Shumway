@@ -15,7 +15,14 @@ public sealed partial class Activation
     public readonly record struct WasmMailboxBases(
         long HeapBase, long StackBase, long RegistersBase, long BindingTrailBase,
         int HeapLimitCells, int StackLimitCells, int TrailLimitEntries,
-        long FunctorTableBase);
+        long FunctorTableBase,
+        /// <summary>Base and row count of the resume table, and which module
+        /// is running. Zero rows disables in-wasm marker resolution: the
+        /// module returns the verdict and the host resolves, which is what it
+        /// did before there was a table.</summary>
+        long ResumeTableBase = 0,
+        int ResumeTableRows = 0,
+        int SelfModuleId = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -81,6 +88,9 @@ public sealed partial class Activation
         m[WasmAbi.ExtraTrailTop] = _extraTrailTop;
         m[WasmAbi.GoalsRun] = 0;                // drained on every sync back
         m[WasmAbi.CellsClaimed] = 0;
+        m[WasmAbi.ResumeTableBase] = bases.ResumeTableBase;
+        m[WasmAbi.ResumeTableLength] = bases.ResumeTableRows;
+        m[WasmAbi.SelfModuleId] = bases.SelfModuleId;
         m[WasmAbi.ViewGen] = CurrentViewGen;
         m[WasmAbi.CutBarrier] = _b0;
         m[WasmAbi.WriteMode] = _writeMode ? 1 : 0;
