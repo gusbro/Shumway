@@ -70,8 +70,12 @@ public static class StreamBuiltins
                     "existence_error", "stream", engine, d);
             return h;
         }
-        // Neither a stream-term nor an alias: ISO §8.11 domain_error
-        // (`stream_or_alias` names a DOMAIN, not a type — GNU and SWI agree).
+        // Still open, and every stream-term is an instance of it.
+        if (IsPartialStreamTerm(engine, d))
+            throw new PrologRuntimeException("instantiation_error");
+        // Neither a stream-term nor an alias, and no instance of it could be
+        // one: ISO 8.11 domain_error (`stream_or_alias` names a DOMAIN, not a
+        // type).
         throw new PrologRuntimeException(
             "domain_error", "stream_or_alias", engine, d);
     }
@@ -94,6 +98,21 @@ public static class StreamBuiltins
         if (v < 0 || v > int.MaxValue) return false;
         id = (int)v;
         return true;
+    }
+
+    /// <summary>True when <paramref name="d"/> has the stream-term shape with
+    /// an UNBOUND id. It is not a stream-term yet, but every stream-term is an
+    /// instance of it, so what is wrong with it is the missing information and
+    /// not the domain: an instantiation_error can be made good by binding it,
+    /// a domain error says nothing ever could (stc#72).</summary>
+    private static bool IsPartialStreamTerm(Activation engine, Cell d)
+    {
+        if (d.Tag != Tag.Str) return false;
+        int fIdx = d.AsHeapIndex;
+        var (atomId, arity) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
+        if (arity != 1) return false;
+        if ((AtomTable.GetById(atomId)?.Name ?? "") != StreamFunctor) return false;
+        return Resolve(engine, engine.GetHeap(fIdx + 1)).Tag is Tag.Ref or Tag.AttVar;
     }
 
     /// <summary>True when <paramref name="cell"/> resolves to an open
@@ -1282,6 +1301,8 @@ public static class StreamBuiltins
         Cell d = Resolve(engine, cell);
         if (d.Tag is Tag.Ref or Tag.AttVar) return;
         if (TryReadStreamId(engine, d, out _)) return;
+        if (IsPartialStreamTerm(engine, d))
+            throw new PrologRuntimeException("instantiation_error");
         throw new PrologRuntimeException("domain_error", "stream", engine, d);
     }
 

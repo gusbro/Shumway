@@ -72,6 +72,9 @@ public static partial class MetaBuiltins
         // by that id exists -- an id that names nothing is handled below the
         // same way a closed one is.
         Term sArg = MaterializeRegister(engine, 0);
+        // Open enough that binding it could still name a stream (stc#72).
+        if (sArg is CompoundTerm { Functor: "$stream", Args: [VarTerm] })
+            throw new ShumwayPrologException(IsoError.InstantiationError());
         if (sArg is not VarTerm
             && sArg is not CompoundTerm { Functor: "$stream", Args: [IntTerm] })
             throw new ShumwayPrologException(IsoError.DomainError("stream", sArg));
