@@ -38,6 +38,10 @@ internal static partial class WebShumwayApp
 
     /// <summary>The registration and the crossing, for the tier's runner
     /// (BrowserWasmRunner): thin internal doors over the spike.c shim.</summary>
+    /// <summary>This thread's function-table length, for the pinning probe.
+    /// </summary>
+    internal static int TableLengthHere() => shumway_wasm_table_length();
+
     internal static int WasmRegister(int bytesPtr, int len)
         => shumway_wasm_register(bytesPtr, len);
     internal static int WasmCall(int index, int mailbox, int cursor)
@@ -91,6 +95,32 @@ internal static partial class WebShumwayApp
             }
             return report.ToString();
         }).ConfigureAwait(false);
+    }
+
+    /// <summary>Is engine work actually pinned to one thread? A compiled module
+    /// is registered in the CALLING thread's function table, so a pool that
+    /// hands out a different thread each time makes every module pay
+    /// registration again there. The claim is only worth anything if the ids
+    /// come back identical, and worth checking because CA1416 says a dedicated
+    /// thread is unsupported on this platform -- an annotation older than
+    /// switchable threads, but an annotation all the same.</summary>
+    [JSExport]
+    internal static async Task<string> WasmThreadProbe(int calls)
+    {
+        var ids = new List<int>();
+        for (int i = 0; i < Math.Max(2, calls); i++)
+            ids.Add(await WebShumwayApp.OnEngineThreadId().ConfigureAwait(false));
+
+        var report = new StringBuilder();
+        report.Append("engine thread ids over ").Append(ids.Count)
+              .Append(" calls: ").Append(string.Join(", ", ids)).AppendLine();
+        bool pinned = ids.TrueForAll(i => i == ids[0]);
+        report.Append(pinned ? "PINNED: one thread" : "NOT PINNED: the ids differ")
+              .AppendLine();
+        report.Append("table length seen from it: ")
+              .Append(await WebShumwayApp.OnEngineTableLength().ConfigureAwait(false))
+              .AppendLine();
+        return report.ToString();
     }
 
     /// <summary>Phase 0 of the many-modules arc, in the browser: two modules

@@ -1680,6 +1680,24 @@ if (persistMode) {
   try {
     await (await import('./selftest.js')).persistProbe(workspace, emit, persistMode[1]);
   } catch (ex) { emitFailure('persist probe', ex); }
+} else if (location.hash.startsWith('#wasmthread')) {
+  // #wasmthread: is engine work pinned to one thread? A module is registered
+  // in the calling thread's own function table, so a pool that hands out a
+  // different thread each time makes every module pay registration again.
+  try {
+    const report = await session.exports().WasmThreadProbe(8);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmthread';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = 'thread probe STOPPED: ' + (ex && ex.message ? ex.message : ex);
+    emit(t);
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
+  try { window.close(); } catch { }
 } else if (location.hash.startsWith('#wasmsplit')) {
   // #wasmsplit, or #wasmsplit=<hops>x<rounds>. Phase 0 of the many-modules
   // arc: two modules hand control to each other with return_call_indirect
