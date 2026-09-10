@@ -89,6 +89,36 @@ The 35.74 ms maximum against a 0.31 ms median says one predicate is enormous
 (almost certainly in clpfd) and on its own justifies keeping partitions as a
 safety valve rather than deleting them.
 
+## The grain: 16 predicates a module, not one
+
+The 1.53x above is entirely fixed furniture -- the dispatcher, the fail/proceed
+resolver and the general unifier -- repeated per module. Measured on the same
+818 predicates:
+
+```
+smallest module : 3,028 bytes (its predicate is 1 byte of WAM)
+median module   : 5,727 bytes
+one group       : 4,095,932 bytes
+
+  1 per module  : 6,268,753 bytes  (1.53x)
+  4 per module  : 4,576,292 bytes  (1.12x)
+ 16 per module  : 4,192,857 bytes  (1.02x)
+ 64 per module  : 4,110,601 bytes  (1.00x)
+```
+
+A one-byte predicate yields a 3 KB module, so the floor is ~3 KB and the median
+one-predicate module is more than half furniture.
+
+At 16 per module the overhead is 2%. That keeps what the arc actually wants --
+adding a predicate recompiles sixteen, not eight hundred -- without asking the
+browser to compile 2.2 MB more. "One module per predicate" was the intuitive
+phrasing and is the worst of the measured options.
+
+Untried, and possibly better than either: put the three shared functions in
+their own module and import them, which would give per-predicate grain with no
+repetition at all. Whether functions can be imported across these modules the
+way the table is has not been established.
+
 ## What the spike caught
 
 The module addressed linear memory absolutely — slots 0, 8, 16 — instead of
