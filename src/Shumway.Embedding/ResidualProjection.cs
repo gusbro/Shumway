@@ -14,29 +14,9 @@ public static class ResidualProjection
     /// entry in <paramref name="renames"/> replaced by a variable of the mapped name.
     /// Untouched subterms are returned by reference.</summary>
     public static Term SubstituteVarNames(Term term, IReadOnlyDictionary<string, string> renames)
-    {
-        switch (term)
-        {
-            case VarTerm v when renames.TryGetValue(v.Name, out string? newName):
-                return new VarTerm(newName);
-            case CompoundTerm { Functor: ".", Args.Length: 2 }:
-                // A list is walked along its spine rather than into its tail: a
-                // long one would otherwise cost a C# frame per element, which is
-                // a stack overflow where the stack is small (a browser).
-                return SubstituteInList(term, renames);
-            case CompoundTerm c:
-                var newArgs = new Term[c.Args.Length];
-                bool changed = false;
-                for (int i = 0; i < c.Args.Length; i++)
-                {
-                    newArgs[i] = SubstituteVarNames(c.Args[i], renames);
-                    if (!ReferenceEquals(newArgs[i], c.Args[i])) changed = true;
-                }
-                return changed ? new CompoundTerm(c.Functor, newArgs) : term;
-            default:
-                return term;
-        }
-    }
+        => Rebuild(term, node => node is VarTerm v
+                                 && renames.TryGetValue(v.Name, out string? renamed)
+            ? new VarTerm(renamed) : null);
 
     /// <summary>Replaces every cycle back-edge variable (TermReader's
     /// <c>IsCycleBack</c>) with a variable spelled <c>...</c> — the one-line
@@ -45,45 +25,8 @@ public static class ResidualProjection
     /// named-equation idiom has no room. A VarTerm so the renderer emits the
     /// three dots bare, not as a quoted atom.</summary>
     public static Term ElideCycleMarkers(Term term)
-    {
-        switch (term)
-        {
-            case VarTerm { IsCycleBack: true }:
-                return new VarTerm("...");
-            case CompoundTerm { Functor: ".", Args.Length: 2 } cons:
-            {
-                var heads = new List<Term>();
-                Term cursor = cons;
-                bool changed = false;
-                while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cc)
-                {
-                    Term head = ElideCycleMarkers(cc.Args[0]);
-                    if (!ReferenceEquals(head, cc.Args[0])) changed = true;
-                    heads.Add(head);
-                    cursor = cc.Args[1];
-                }
-                Term tail = ElideCycleMarkers(cursor);
-                if (!ReferenceEquals(tail, cursor)) changed = true;
-                if (!changed) return term;
-                for (int i = heads.Count - 1; i >= 0; i--)
-                    tail = new CompoundTerm(".", new[] { heads[i], tail });
-                return tail;
-            }
-            case CompoundTerm c:
-            {
-                var newArgs = new Term[c.Args.Length];
-                bool changed = false;
-                for (int i = 0; i < c.Args.Length; i++)
-                {
-                    newArgs[i] = ElideCycleMarkers(c.Args[i]);
-                    if (!ReferenceEquals(newArgs[i], c.Args[i])) changed = true;
-                }
-                return changed ? new CompoundTerm(c.Functor, newArgs) : term;
-            }
-            default:
-                return term;
-        }
-    }
+        => Rebuild(term, node => node is VarTerm { IsCycleBack: true }
+            ? new VarTerm("...") : null);
 
     /// <summary>Replaces every compound BELOW the root whose
     /// <c>CycleId</c> (TermReader's cycle-owner stamp) has a name in
@@ -94,102 +37,76 @@ public static class ResidualProjection
     /// <see cref="SubstituteVarNames"/>: its rebuilds drop the stamp.</summary>
     public static Term SubstituteCycleOwnersBelowRoot(
         Term term, IReadOnlyDictionary<string, string> names)
-    {
-        if (term is not CompoundTerm root) return term;
-        if (root is { Functor: ".", Args.Length: 2 })
-            return SubstituteOwnersInList(root, names, skipRootOwner: true);
-        var newArgs = new Term[root.Args.Length];
-        bool changed = false;
-        for (int i = 0; i < root.Args.Length; i++)
-        {
-            newArgs[i] = SubstituteOwners(root.Args[i], names);
-            if (!ReferenceEquals(newArgs[i], root.Args[i])) changed = true;
-        }
-        return changed ? new CompoundTerm(root.Functor, newArgs) : term;
-    }
+        => term is CompoundTerm
+            ? Rebuild(term, OwnerNamer(names), mapRoot: false)
+            : term;
 
     private static Term SubstituteOwners(Term term, IReadOnlyDictionary<string, string> names)
+        => Rebuild(term, OwnerNamer(names));
+
+    /// <summary>A compound stamped as a cycle owner whose name the display
+    /// knows becomes a variable of that name, taking the whole subterm with
+    /// it. An interior cons is one of those, which is what replaces the rest
+    /// of a spine with its name.</summary>
+    private static Func<Term, Term?> OwnerNamer(IReadOnlyDictionary<string, string> names)
+        => node => node is CompoundTerm { CycleId: { } cid }
+                   && names.TryGetValue(cid, out string? owner)
+            ? new VarTerm(owner) : null;
+
+    /// <summary>Rebuilds a term with <paramref name="map"/> applied to every
+    /// node, on an EXPLICIT stack. How deep a term nests is the program's
+    /// choice, so a recursive rebuild would spend a C# frame per level and a
+    /// .NET stack overflow cannot be caught: it takes the process down. A node
+    /// the map replaces is not descended into, and a subterm nothing touched
+    /// comes back BY REFERENCE, so an untouched term is not copied.
+    ///
+    /// <para><paramref name="mapRoot"/> false leaves the root itself alone and
+    /// maps only below it, which is what lets a value whose own root is a cycle
+    /// owner still show its structure.</para>
+    ///
+    /// <para>A rebuilt compound loses its CycleId stamp, exactly as the
+    /// recursive form it replaces did; SubstituteCycleOwnersBelowRoot has to
+    /// run before anything that rebuilds.</para></summary>
+    private static Term Rebuild(Term root, Func<Term, Term?> map, bool mapRoot = true)
     {
-        switch (term)
+        if (mapRoot && map(root) is { } mappedRoot) return mappedRoot;
+        if (root is not CompoundTerm rootCompound) return root;
+
+        var pending = new Stack<Rebuilding>();
+        pending.Push(new Rebuilding(rootCompound));
+        while (true)
         {
-            case CompoundTerm c when c.CycleId is { } cid
-                                     && names.TryGetValue(cid, out string? name):
-                return new VarTerm(name);
-            case CompoundTerm { Functor: ".", Args.Length: 2 } cons:
-                return SubstituteOwnersInList(cons, names, skipRootOwner: false);
-            case CompoundTerm c:
+            Rebuilding frame = pending.Peek();
+            if (frame.Next < frame.Node.Args.Length)
             {
-                var newArgs = new Term[c.Args.Length];
-                bool changed = false;
-                for (int i = 0; i < c.Args.Length; i++)
-                {
-                    newArgs[i] = SubstituteOwners(c.Args[i], names);
-                    if (!ReferenceEquals(newArgs[i], c.Args[i])) changed = true;
-                }
-                return changed ? new CompoundTerm(c.Functor, newArgs) : term;
+                Term arg = frame.Node.Args[frame.Next];
+                if (map(arg) is { } replaced) frame.Put(replaced);
+                else if (arg is CompoundTerm child) pending.Push(new Rebuilding(child));
+                else frame.Put(arg);
+                continue;
             }
-            default:
-                return term;
+            Term built = frame.Changed
+                ? new CompoundTerm(frame.Node.Functor, frame.Args) : frame.Node;
+            pending.Pop();
+            if (pending.Count == 0) return built;
+            pending.Peek().Put(built);
         }
     }
 
-    private static Term SubstituteOwnersInList(
-        CompoundTerm list, IReadOnlyDictionary<string, string> names, bool skipRootOwner)
+    /// <summary>One compound part-way through being rebuilt.</summary>
+    private sealed class Rebuilding(CompoundTerm node)
     {
-        var heads = new List<Term>();
-        Term cursor = list;
-        bool changed = false, first = true;
-        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
-        {
-            // An interior cons that is itself a cycle owner replaces the
-            // whole remaining spine with its name.
-            if (!(first && skipRootOwner) && cons.CycleId is { } cid
-                && names.TryGetValue(cid, out string? name))
-            {
-                changed = true;
-                cursor = new VarTerm(name);
-                goto rebuild;
-            }
-            first = false;
-            Term head = SubstituteOwners(cons.Args[0], names);
-            if (!ReferenceEquals(head, cons.Args[0])) changed = true;
-            heads.Add(head);
-            cursor = cons.Args[1];
-        }
-        {
-            Term tail = SubstituteOwners(cursor, names);
-            if (!ReferenceEquals(tail, cursor)) changed = true;
-            cursor = tail;
-        }
-    rebuild:
-        if (!changed) return list;
-        Term rebuilt = cursor;
-        for (int i = heads.Count - 1; i >= 0; i--)
-            rebuilt = new CompoundTerm(".", new[] { heads[i], rebuilt });
-        return rebuilt;
-    }
+        public CompoundTerm Node { get; } = node;
+        public Term[] Args { get; } = new Term[node.Args.Length];
+        public int Next { get; private set; }
+        public bool Changed { get; private set; }
 
-    private static Term SubstituteInList(Term list, IReadOnlyDictionary<string, string> renames)
-    {
-        var heads = new List<Term>();
-        var originals = new List<Term>();
-        Term cursor = list;
-        bool changed = false;
-        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+        public void Put(Term value)
         {
-            Term head = SubstituteVarNames(cons.Args[0], renames);
-            if (!ReferenceEquals(head, cons.Args[0])) changed = true;
-            heads.Add(head);
-            originals.Add(cons);
-            cursor = cons.Args[1];
+            Args[Next] = value;
+            if (!ReferenceEquals(value, Node.Args[Next])) Changed = true;
+            Next++;
         }
-        Term tail = SubstituteVarNames(cursor, renames);
-        if (!ReferenceEquals(tail, cursor)) changed = true;
-        if (!changed) return list;
-
-        for (int i = heads.Count - 1; i >= 0; i--)
-            tail = new CompoundTerm(".", new[] { heads[i], tail });
-        return tail;
     }
 
     /// <summary>The first name from <paramref name="owners"/> that occurs as a variable

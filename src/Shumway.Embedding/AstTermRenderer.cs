@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using Shumway.Compiler.Ast;
@@ -69,34 +70,243 @@ public static class AstTermRenderer
     public static string RenderAnswer(Term term, OperatorTable ops)
         => Render(term, 1200, ops, quoted: true, portrayText: true);
 
+    /// <summary>Renders a term on an EXPLICIT stack. How deep a term nests is
+    /// the program's choice, so a recursive renderer spends a C# frame per
+    /// level, and a .NET stack overflow cannot be caught: it takes the process
+    /// down with nothing to report.
+    ///
+    /// <para>The shape is post-order because the spelling of a node depends on
+    /// the TEXT of its children: a tight symbolic operator has to know whether
+    /// its operand ends in a graphic char, or <c>X = -1</c> would come back as
+    /// <c>X=-1</c> and lex <c>=-</c> as one token. So children render onto a
+    /// results stack and each node assembles its own text from them. What each
+    /// node does with them is unchanged; only the descent moved.</para>
+    /// </summary>
     public static string Render(
         Term term, int maxPrec, OperatorTable ops, bool quoted, bool portrayText)
     {
+        var work = new Stack<Step>();
+        var done = new Stack<string>();
+        work.Push(Step.Descend(term, maxPrec, asOperand: false));
+        while (work.Count > 0)
+        {
+            Step step = work.Pop();
+            if (step.Kind == Shape.Descend)
+                Push(step, work, done, ops, quoted, portrayText);
+            else
+                done.Push(Assemble(step, done, ops, quoted));
+        }
+        return done.Pop();
+    }
+
+    /// <summary>What a node still owes once its children are rendered.</summary>
+    private enum Shape { Descend, Infix, Prefix, Postfix, Canonical, Curly, List, OpenText }
+
+    private readonly record struct Step(
+        Shape Kind, Term Node, int MaxPrec, bool AsOperand, int Count, string Text)
+    {
+        public static Step Descend(Term t, int maxPrec, bool asOperand)
+            => new(Shape.Descend, t, maxPrec, asOperand, 0, "");
+
+        public static Step Assembling(
+            Shape kind, Term node, int maxPrec, int count, string text = "")
+            => new(kind, node, maxPrec, false, count, text);
+    }
+
+    /// <summary>Decides what a node is and queues the work: either its finished
+    /// text straight onto the results, or an assembly step underneath the
+    /// children it needs. Children go on in REVERSE so they render left to
+    /// right and land on the results stack in that order.</summary>
+    private static void Push(
+        Step step, Stack<Step> work, Stack<string> done,
+        OperatorTable ops, bool quoted, bool portrayText)
+    {
+        Term term = step.Node;
+        // An OPERAND that is a bare operator atom would not re-read (ISO
+        // 6.3.1.3, the s#378 rule the parser now enforces), so it renders
+        // parenthesised — `(is)/2`, never `is/2`. Argument and list positions
+        // keep the bare atom, which is exactly where ISO admits it. Decided
+        // from the TERM, so it is settled here rather than after rendering.
+        if (step.AsOperand && term is AtomTerm operandAtom
+            && IsOperatorAtom(operandAtom.Name, ops))
+        {
+            done.Push("(" + AtomText(operandAtom.Name, quoted) + ")");
+            return;
+        }
         switch (term)
         {
-            case AtomTerm a:
-                return quoted ? Shumway.Builtins.TermRenderer.QuotedAtomName(a.Name) : a.Name;
-            case VarTerm v: return v.Name;
-            case IntTerm n: return n.Value.ToString(CultureInfo.InvariantCulture);
-            case FloatTerm f: return Shumway.Builtins.Number.FormatPrologFloat(f.Value);
-            case StringTerm s: return RenderDoubleQuoted(s.Content);
-            case BigIntTerm b: return b.Value.ToString(CultureInfo.InvariantCulture);
+            case AtomTerm a: done.Push(AtomText(a.Name, quoted)); return;
+            case VarTerm v: done.Push(v.Name); return;
+            case IntTerm n: done.Push(n.Value.ToString(CultureInfo.InvariantCulture)); return;
+            case FloatTerm f:
+                done.Push(Shumway.Builtins.Number.FormatPrologFloat(f.Value)); return;
+            case StringTerm s: done.Push(RenderDoubleQuoted(s.Content)); return;
+            case BigIntTerm b:
+                done.Push(b.Value.ToString(CultureInfo.InvariantCulture)); return;
+
             case CompoundTerm { Functor: ".", Args.Length: 2 } list:
-                if (portrayText && TryRenderTextList(list, out string text)) return text;
-                if (portrayText
-                    && TryRenderOpenTextList(list, ops, quoted, portrayText, out string open))
-                    return open;
-                return RenderList(list, ops, quoted, portrayText);
+            {
+                if (portrayText && TryRenderTextList(list, out string text))
+                { done.Push(text); return; }
+                if (portrayText && TryOpenTextPrefix(list, out string prefix, out Term openTail))
+                {
+                    work.Push(Step.Assembling(Shape.OpenText, list, 0, 1, prefix));
+                    work.Push(Step.Descend(openTail, 0, asOperand: false));
+                    return;
+                }
+                // The spine is walked HERE, so a long list costs no depth at
+                // all; only its elements nest.
+                var elements = new List<Term>();
+                Term cursor = list;
+                while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+                {
+                    elements.Add(cons.Args[0]);
+                    cursor = cons.Args[1];
+                }
+                bool proper = cursor is AtomTerm { Name: "[]" };
+                work.Push(Step.Assembling(Shape.List, list, 0,
+                    elements.Count + (proper ? 0 : 1), proper ? "]" : "|"));
+                if (!proper) work.Push(Step.Descend(cursor, 999, asOperand: false));
+                for (int i = elements.Count - 1; i >= 0; i--)
+                    work.Push(Step.Descend(elements[i], 999, asOperand: false));
+                return;
+            }
+
             // '{}'(X) reads back as {X} — the canonical form would re-parse
             // but is not what writeq/portray_clause emit.
             case CompoundTerm { Functor: "{}", Args.Length: 1 } curly:
-                return "{" + Render(curly.Args[0], 1200, ops, quoted, portrayText) + "}";
+                work.Push(Step.Assembling(Shape.Curly, curly, step.MaxPrec, 1));
+                work.Push(Step.Descend(curly.Args[0], 1200, asOperand: false));
+                return;
+
+            case CompoundTerm c when c.Args.Length == 2
+                    && ops.TryGetInfix(c.Functor, out int iPrec, out var iType):
+                work.Push(Step.Assembling(Shape.Infix, c, step.MaxPrec, 2));
+                work.Push(Step.Descend(c.Args[1],
+                    iType == OperatorType.Xfy ? iPrec : iPrec - 1, asOperand: true));
+                work.Push(Step.Descend(c.Args[0],
+                    iType == OperatorType.Yfx ? iPrec : iPrec - 1, asOperand: true));
+                return;
+
+            case CompoundTerm c when c.Args.Length == 1
+                    && ops.TryGetPrefix(c.Functor, out int pPrec, out var pType):
+                work.Push(Step.Assembling(Shape.Prefix, c, step.MaxPrec, 1));
+                work.Push(Step.Descend(c.Args[0],
+                    pType == OperatorType.Fy ? pPrec : pPrec - 1, asOperand: true));
+                return;
+
+            case CompoundTerm c when c.Args.Length == 1
+                    && ops.TryGetPostfix(c.Functor, out int sPrec, out var sType):
+                work.Push(Step.Assembling(Shape.Postfix, c, step.MaxPrec, 1));
+                work.Push(Step.Descend(c.Args[0],
+                    sType == OperatorType.Yf ? sPrec : sPrec - 1, asOperand: true));
+                return;
+
             case CompoundTerm c:
-                return RenderCompound(c, maxPrec, ops, quoted, portrayText);
+                work.Push(Step.Assembling(Shape.Canonical, c, step.MaxPrec, c.Args.Length));
+                for (int i = c.Args.Length - 1; i >= 0; i--)
+                    work.Push(Step.Descend(c.Args[i], 999, asOperand: false));
+                return;
+
             default:
-                return term.ToString() ?? "?";
+                done.Push(term.ToString() ?? "?");
+                return;
         }
     }
+
+    /// <summary>Builds a node's text from the children already on the results
+    /// stack. Byte for byte what the recursive form composed.</summary>
+    private static string Assemble(
+        Step step, Stack<string> done, OperatorTable ops, bool quoted)
+    {
+        var parts = new string[step.Count];
+        for (int i = step.Count - 1; i >= 0; i--) parts[i] = done.Pop();
+        var c = (CompoundTerm)step.Node;
+        switch (step.Kind)
+        {
+            case Shape.OpenText:
+                return step.Text + "||" + parts[0];
+
+            case Shape.List:
+                return step.Text == "]"
+                    ? "[" + string.Join(", ", parts) + "]"
+                    : "[" + string.Join(", ", parts, 0, parts.Length - 1)
+                          + " | " + parts[^1] + "]";
+
+            case Shape.Curly:
+                return "{" + parts[0] + "}";
+
+            case Shape.Infix:
+            {
+                ops.TryGetInfix(c.Functor, out int iPrec, out _);
+                // comma and semicolon (sequence / disjunction operators)
+                // render with no leading space: `a, b` and `a ; b`. Symbolic
+                // operators (`+`, `/`, `=`) stay tight. Alphabetic operators
+                // (`is`, `mod`) keep spaces both sides.
+                string sep = c.Functor switch
+                {
+                    "," => ", ",
+                    ";" => "; ",
+                    _ when IsSymbolic(c.Functor) => c.Functor,
+                    _ => $" {c.Functor} ",
+                };
+                string leftStr = parts[0], rightStr = parts[1];
+                // A tight symbolic operator fuses with a graphic-ending operand
+                // into ONE token on re-read (`.. = ..` as `..=..`; `X = -1` as
+                // `X=-1`, lexing `=-`): pad exactly where adjacency would fuse.
+                if (sep.Length > 0 && IsGraphicChar(sep[0]))
+                {
+                    if (leftStr.Length > 0 && IsGraphicChar(leftStr[^1]))
+                        sep = " " + sep;
+                    if (rightStr.Length > 0 && IsGraphicChar(rightStr[0]))
+                        sep += " ";
+                }
+                string infixBody = $"{leftStr}{sep}{rightStr}";
+                return iPrec > step.MaxPrec ? $"({infixBody})" : infixBody;
+            }
+
+            case Shape.Prefix:
+            {
+                ops.TryGetPrefix(c.Functor, out int pPrec, out _);
+                string prefixBody = $"{c.Functor} {parts[0]}";
+                return pPrec > step.MaxPrec ? $"({prefixBody})" : prefixBody;
+            }
+
+            case Shape.Postfix:
+            {
+                ops.TryGetPostfix(c.Functor, out int sPrec, out _);
+                string sep = IsSymbolic(c.Functor) ? c.Functor : $" {c.Functor}";
+                string operandStr = parts[0];
+                if (sep.Length > 0 && IsGraphicChar(sep[0])
+                    && operandStr.Length > 0 && IsGraphicChar(operandStr[^1]))
+                    sep = " " + sep;
+                string postfixBody = $"{operandStr}{sep}";
+                return sPrec > step.MaxPrec ? $"({postfixBody})" : postfixBody;
+            }
+
+            default:
+            {
+                // Canonical form. Arguments sit at priority 999 (below the
+                // argument-comma's 1000) so a comma-term arg gets parenthesised.
+                var sb = new StringBuilder(AtomText(c.Functor, quoted));
+                sb.Append('(');
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append(parts[i]);
+                }
+                return sb.Append(')').ToString();
+            }
+        }
+    }
+
+    private static string AtomText(string name, bool quoted)
+        => quoted ? Shumway.Builtins.TermRenderer.QuotedAtomName(name) : name;
+
+    private static bool IsOperatorAtom(string name, OperatorTable ops)
+        => ops.TryGetInfix(name, out _, out _)
+           || ops.TryGetPrefix(name, out _, out _)
+           || ops.TryGetPostfix(name, out _, out _);
 
     /// <summary>A proper, non-empty list of single-character atoms renders as
     /// a double-quoted string — the text reading of the default
@@ -125,12 +335,15 @@ public static class AstTermRenderer
     /// it can be read back: `"abc"||T`. An answer to a grammar is a difference
     /// list, and spelling out each of its characters buries the one thing the
     /// reader is after, which is where the text ends and the tail begins.
+    ///
+    /// <para>Returns the text PREFIX and the tail still to render; the tail
+    /// goes through the ordinary descent so it costs no C# depth.</para>
     /// </summary>
-    private static bool TryRenderOpenTextList(
-        CompoundTerm cons, OperatorTable ops, bool quoted, bool portrayText,
-        out string rendered)
+    private static bool TryOpenTextPrefix(
+        CompoundTerm cons, out string prefix, out Term tail)
     {
-        rendered = "";
+        prefix = "";
+        tail = cons;
         var sb = new StringBuilder();
         Term cursor = cons;
         while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c)
@@ -142,8 +355,8 @@ public static class AstTermRenderer
         // A closed one is the other reading's business, and an empty prefix
         // prepends nothing: `""||T` is T.
         if (cursor is AtomTerm { Name: "[]" } || sb.Length == 0) return false;
-        rendered = RenderDoubleQuoted(sb.ToString()) + "||"
-                 + Render(cursor, 0, ops, quoted, portrayText);
+        prefix = RenderDoubleQuoted(sb.ToString());
+        tail = cursor;
         return true;
     }
 
@@ -169,87 +382,6 @@ public static class AstTermRenderer
         return sb.Append('"').ToString();
     }
 
-    private static string RenderCompound(
-        CompoundTerm c, int maxPrec, OperatorTable ops, bool quoted, bool portrayText)
-    {
-        if (c.Args.Length == 2 && ops.TryGetInfix(c.Functor, out int iPrec, out var iType))
-        {
-            int leftMax = iType == OperatorType.Yfx ? iPrec : iPrec - 1;
-            int rightMax = iType == OperatorType.Xfy ? iPrec : iPrec - 1;
-            // comma and semicolon (sequence / disjunction
-            // operators) render with no leading space: `a, b` and
-            // `a ; b`. Symbolic operators (`+`, `/`, `=`) stay tight.
-            // Alphabetic operators (`is`, `mod`) keep spaces both
-            // sides.
-            string sep = c.Functor switch
-            {
-                "," => ", ",
-                ";" => "; ",
-                _ when IsSymbolic(c.Functor) => c.Functor,
-                _ => $" {c.Functor} ",
-            };
-            string leftStr = RenderOperand(c.Args[0], leftMax, ops, quoted, portrayText);
-            string rightStr = RenderOperand(c.Args[1], rightMax, ops, quoted, portrayText);
-            // A tight symbolic operator fuses with a graphic-ending operand
-            // into ONE token on re-read (`.. = ..` as `..=..`; `X = -1` as
-            // `X=-1`, lexing `=-`): pad exactly where adjacency would fuse.
-            if (sep.Length > 0 && IsGraphicChar(sep[0]))
-            {
-                if (leftStr.Length > 0 && IsGraphicChar(leftStr[^1]))
-                    sep = " " + sep;
-                if (rightStr.Length > 0 && IsGraphicChar(rightStr[0]))
-                    sep += " ";
-            }
-            string body = $"{leftStr}{sep}{rightStr}";
-            return iPrec > maxPrec ? $"({body})" : body;
-        }
-        if (c.Args.Length == 1 && ops.TryGetPrefix(c.Functor, out int pPrec, out var pType))
-        {
-            int argMax = pType == OperatorType.Fy ? pPrec : pPrec - 1;
-            string body = $"{c.Functor} {RenderOperand(c.Args[0], argMax, ops, quoted, portrayText)}";
-            return pPrec > maxPrec ? $"({body})" : body;
-        }
-        if (c.Args.Length == 1 && ops.TryGetPostfix(c.Functor, out int sPrec, out var sType))
-        {
-            int argMax = sType == OperatorType.Yf ? sPrec : sPrec - 1;
-            string sep = IsSymbolic(c.Functor) ? c.Functor : $" {c.Functor}";
-            string operandStr = RenderOperand(c.Args[0], argMax, ops, quoted, portrayText);
-            if (sep.Length > 0 && IsGraphicChar(sep[0])
-                && operandStr.Length > 0 && IsGraphicChar(operandStr[^1]))
-                sep = " " + sep;
-            string body = $"{operandStr}{sep}";
-            return sPrec > maxPrec ? $"({body})" : body;
-        }
-        // Canonical form. Arguments sit at priority 999 (below the
-        // argument-comma's 1000) so a comma-term arg gets parenthesised.
-        var sb = new StringBuilder(
-            quoted ? Shumway.Builtins.TermRenderer.QuotedAtomName(c.Functor) : c.Functor);
-        sb.Append('(');
-        for (int i = 0; i < c.Args.Length; i++)
-        {
-            if (i > 0) sb.Append(", ");
-            sb.Append(Render(c.Args[i], 999, ops, quoted, portrayText));
-        }
-        return sb.Append(')').ToString();
-    }
-
-    /// <summary>An OPERAND of an operator: a bare operator atom there would
-    /// not re-read (ISO 6.3.1.3, the s#378 rule the parser now enforces), so
-    /// it renders parenthesised — `(is)/2`, never `is/2`. Argument and list
-    /// positions render through plain Render and keep the bare atom, which
-    /// is exactly where ISO admits it.</summary>
-    private static string RenderOperand(
-        Term t, int maxPrec, OperatorTable ops, bool quoted, bool portrayText)
-    {
-        string s = Render(t, maxPrec, ops, quoted, portrayText);
-        return t is AtomTerm a
-               && (ops.TryGetInfix(a.Name, out _, out _)
-                   || ops.TryGetPrefix(a.Name, out _, out _)
-                   || ops.TryGetPostfix(a.Name, out _, out _))
-            ? "(" + s + ")"
-            : s;
-    }
-
     private static bool IsSymbolic(string name)
     {
         if (name.Length == 0) return false;
@@ -263,20 +395,4 @@ public static class AstTermRenderer
     /// pieces would otherwise fuse.</summary>
     internal static bool IsGraphicChar(char ch)
         => "+-*/\\^<>=~:.?@#&$".IndexOf(ch) >= 0;
-
-    private static string RenderList(
-        CompoundTerm cons, OperatorTable ops, bool quoted, bool portrayText)
-    {
-        var elements = new List<string>();
-        Term cursor = cons;
-        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c)
-        {
-            elements.Add(Render(c.Args[0], 999, ops, quoted, portrayText));
-            cursor = c.Args[1];
-        }
-        if (cursor is AtomTerm { Name: "[]" })
-            return "[" + string.Join(", ", elements) + "]";
-        return "[" + string.Join(", ", elements) + " | "
-            + Render(cursor, 999, ops, quoted, portrayText) + "]";
-    }
 }
