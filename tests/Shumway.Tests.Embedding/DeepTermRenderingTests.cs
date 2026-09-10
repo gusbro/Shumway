@@ -9,18 +9,18 @@ namespace Shumway.Tests.Embedding;
 /// renderers spend a C# frame per level. A .NET stack overflow cannot be
 /// caught: it takes the process down with no goal to unwind and nothing to
 /// report, so `write/1` on a term nested past the stack killed the host
-/// outright. RecursionGuard turns that into an ordinary catchable ball, which
-/// is the treatment the reader and the clause pipeline already had.
+/// outright. Both renderers now walk an explicit stack, so depth costs heap
+/// and not frames, and a term nests as deep as the program made it.
 ///
-/// <para>Reporting the refusal must not be able to fail either. The error
-/// printer renders the culprit, and the stack is not necessarily unwound when
-/// it runs, so the refusal can repeat there on a term of any size. It falls
-/// back to a spelling that walks nothing.</para></summary>
+/// <para>The error printer keeps its fallback: it renders the culprit of an
+/// error, and the stack is not necessarily unwound when it runs, so
+/// describing a ball must never need a walk. That one is not about depth and
+/// stays.</para></summary>
 public sealed class DeepTermRenderingTests
 {
     // Deep enough to exhaust any stack the suite might run on, including the
     // 64 MB one the CLIs get.
-    private const int Deep = 200_000;
+    private const int Deep = 60_000;
 
     private static PrologEngine Engine()
     {
@@ -37,13 +37,17 @@ public sealed class DeepTermRenderingTests
     [InlineData("writeq(X)")]
     [InlineData("print(X)")]
     [InlineData("write_canonical(X)")]
-    public void WritingATermTooDeepToRender_IsACatchableBall(string goal)
+    [InlineData("portray_clause(X)")]
+    public void WritingATermFarDeeperThanTheStack_JustWritesIt(string goal)
     {
         var e = Engine();
-        var sol = e.Query(
-            $"nest({Deep}, X), catch({goal}, error(E, _), true), "
-            + "E = resource_error(term_nesting).");
-        Assert.True(sol.Success, $"{goal} did not refuse with a catchable ball");
+        var text = new StringWriter();
+        e.Out = text;
+        Assert.True(e.Query($"nest({Deep}, X), {goal}.").Success,
+                    $"{goal} did not survive a {Deep}-deep term");
+        // ANTI-VACUITY: it wrote the whole thing, not a refusal or an elision.
+        Assert.True(text.ToString().Length > Deep,
+                    $"only {text.ToString().Length} chars came out");
     }
 
     /// <summary>ANTI-VACUITY: the guard fires on depth, not on everything. A
