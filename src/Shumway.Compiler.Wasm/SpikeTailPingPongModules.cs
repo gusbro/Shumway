@@ -28,22 +28,31 @@ public static class SpikeTailPingPongModules
     public const int HopsRemainingSlot = 0;
     public const int HopsDoneSlot = 1;
 
-    /// <summary>The table slots the two modules occupy. The host fills the
-    /// table; the modules only ever read these constants.</summary>
-    public const int SlotA = 0;
-    public const int SlotB = 1;
+    /// <summary>Where the host writes each half's function-table index, in
+    /// cells. A module reads the OTHER half's index from here rather than
+    /// having it baked in, because the index is whatever addFunction hands out
+    /// at run time and the two halves refer to each other. That indirection is
+    /// also what production needs, so the spike exercises the real shape.
+    /// </summary>
+    public const int IndexOfASlot = 2;
+    public const int IndexOfBSlot = 3;
+
+    /// <summary>Identifies a half in the report; not a table index.</summary>
+    public const int HalfA = 0;
+    public const int HalfB = 1;
 
     public const string TableModule = "env";
     public const string TableField = "__indirect_function_table";
 
-    /// <summary>One half of the pair. <paramref name="selfSlot"/> is where this
-    /// module sits, <paramref name="otherSlot"/> where it hands control to.
+    /// <summary>One half of the pair. <paramref name="selfHalf"/> identifies
+    /// this one in the report; <paramref name="otherIndexSlot"/> is the memory
+    /// cell where the host leaves the other half's table index.
     ///
     /// <para>The body: decrement the counter; when it reaches zero, count
     /// itself done and RETURN to the host with the slot's id (so the harness
     /// can tell which half finished); otherwise tail-call the other half. The
     /// only non-tail exit is the last one.</para></summary>
-    public static byte[] Build(int selfSlot, int otherSlot, bool shared)
+    public static byte[] Build(int selfHalf, int otherIndexSlot, bool shared)
     {
         var module = new Module();
         // Type 0 is the production signature, on purpose: return_call_indirect
@@ -75,31 +84,41 @@ public static class SpikeTailPingPongModules
         });
 
         var code = new List<Instruction>();
+        // EVERY address is relative to the base the host passes in local 0.
+        // Absolute offsets would work against a private image and corrupt the
+        // runtime's own linear memory in a browser, where address 0 belongs to
+        // someone else -- and would read garbage back, which is exactly how
+        // this was caught.
+        void Base() => code.Add(new LocalGet(0));
+
         // remaining = mem[HopsRemaining] - 1
-        code.Add(new Int32Constant(HopsRemainingSlot * 8));
-        code.Add(new Int32Constant(HopsRemainingSlot * 8));
-        code.Add(new Int64Load());
+        Base();
+        Base();
+        code.Add(new Int64Load { Offset = HopsRemainingSlot * 8 });
         code.Add(new Int64Constant(1));
         code.Add(new Int64Subtract());
-        code.Add(new Int64Store());
+        code.Add(new Int64Store { Offset = HopsRemainingSlot * 8 });
 
-        // if (remaining <= 0) { mem[HopsDone] = slot; return slot; }
-        code.Add(new Int32Constant(HopsRemainingSlot * 8));
-        code.Add(new Int64Load());
+        // if (remaining <= 0) { mem[HopsDone] = half; return half; }
+        Base();
+        code.Add(new Int64Load { Offset = HopsRemainingSlot * 8 });
         code.Add(new Int64Constant(0));
         code.Add(new Int64LessThanOrEqualSigned());
         code.Add(new If());
-        code.Add(new Int32Constant(HopsDoneSlot * 8));
-        code.Add(new Int64Constant(selfSlot));
-        code.Add(new Int64Store());
-        code.Add(new Int32Constant(selfSlot));
+        Base();
+        code.Add(new Int64Constant(selfHalf));
+        code.Add(new Int64Store { Offset = HopsDoneSlot * 8 });
+        code.Add(new Int32Constant(selfHalf));
         code.Add(new Return());
         code.Add(new End());
 
         // ...otherwise hand control to the other half and DO NOT come back.
         code.Add(new LocalGet(0));                  // mailbox, passed along
         code.Add(new LocalGet(1));                  // cursor, passed along
-        code.Add(new Int32Constant(otherSlot));
+        // The other half's table index, read at run time.
+        Base();
+        code.Add(new Int64Load { Offset = (uint)(otherIndexSlot * 8) });
+        code.Add(new Int32WrapInt64());
         code.Add(new ReturnCallIndirect(0));        // type 0, table 0
         // Unreachable in practice; wasm still wants the block to type-check.
         code.Add(new Int32Constant(-1));

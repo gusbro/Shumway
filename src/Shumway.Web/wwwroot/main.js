@@ -1680,6 +1680,33 @@ if (persistMode) {
   try {
     await (await import('./selftest.js')).persistProbe(workspace, emit, persistMode[1]);
   } catch (ex) { emitFailure('persist probe', ex); }
+} else if (location.hash.startsWith('#wasmsplit')) {
+  // #wasmsplit, or #wasmsplit=<hops>x<rounds>. Phase 0 of the many-modules
+  // arc: two modules hand control to each other with return_call_indirect
+  // through this thread's function table, never returning to the host. G0 is
+  // the gate that can kill the arc and it is a property, not a speed --
+  // millions of hops in bounded stack. Everything runs in C#; the page starts
+  // it and posts the report back, because a page cannot write to disk.
+  try {
+    const spec = /^#wasmsplit=(\d+)x(\d+)$/.exec(location.hash);
+    const hops = spec ? Number(spec[1]) : 10000000;
+    const rounds = spec ? Number(spec[2]) : 5;
+    emit(`--- wasm split spike: ${hops} hops x${rounds} ---\n`);
+    const report = await session.exports().WasmSplitProbe(hops, rounds);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmsplit';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = 'split spike STOPPED: ' + (ex && ex.message ? ex.message : ex);
+    emit(t + '\n');
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
+  // A headless run has its answer; leaving the page open just holds the
+  // browser's profile singleton against the next run.
+  try { window.close(); } catch { }
 } else if (location.hash.startsWith('#wasmspike')) {
   // #wasmspike, or #wasmspike=<iterations>x<rounds>. Everything runs in C#:
   // it holds the module bytes, registers them per thread through the C shim's

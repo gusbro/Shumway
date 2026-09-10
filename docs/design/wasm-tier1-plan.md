@@ -816,6 +816,38 @@ backtracking on the tier with `deopts == 0` asserted. Nothing in it binds
 an attributed variable, so there is no legitimate step-aside to allow —
 which is what makes zero the right bound rather than a small number.
 
+### The next arc: many small modules, and the hop that makes them possible
+
+The group is one module because one module per predicate meant a "switch" per
+cross-module call costing 4-15 us. That cost was never wasm: it was the marker
+decode, the dictionary probe and the chain close/reopen, all in C# the browser
+runs interpreted. Inside wasm the same crossing is a `return_call_indirect`.
+
+Measured, Edge headless (`docs/benchmarks/wasm-split-spike.md`): **6.1 ns per
+hop**, and 50 million hops across five rounds without the stack growing. That
+second part is the one that could have ended the arc — a Prolog program makes
+millions of calls and in the WAM a call IS a jump, so a tail call compiled as
+an ordinary call has no fallback. It also confirmed that a table import is live
+rather than a snapshot: a module reaches slots `addFunction` adds after it was
+instantiated, which is what lets modules appear one at a time.
+
+Two facts made the design smaller than it looked. A resume marker is ALREADY a
+dense id -- `EncodeResumeMarker` interns the (functor, address) pair and returns
+`Base + denseId` -- so resolving one is a subscript, not a search. And the
+marker vocabulary is process-global, so it means the same thing in every
+module; only the baked comparison chains were module-local.
+
+Turning those chains into an indexed read paid on its own, before splitting
+anything: the prelude and clpfd went from 5,594,098 to 4,095,932 bytes, -26.8%,
+because a million and a half bytes of that module were comparisons. Resolution
+went from O(sites) to O(1), and failure is half of Prolog.
+
+One constraint is not negotiable and is easy to get wrong: the table is PER
+WORLD. Functor ids and the marker pool are process-wide, but bytecode addresses
+belong to an engine's code space, so two engines running the same program mint
+the SAME markers for DIFFERENT code. Per-world resolution is the only thing
+keeping them apart today.
+
 ## Risk register
 
 | Risk | Exposure | Mitigation / kill switch |

@@ -12,8 +12,13 @@
  * executed in the calling thread's own realm, against the calling thread's
  * own table. A thread registers the module bytes once and gets an index that
  * is valid where it will be used; the shim below then calls through it with
- * a single call_indirect. The shim and this file never change; the bytes and
- * the index are run-time values, which is what keeps the JIT story alive.
+ * a single call_indirect. The bytes and the index are run-time values, which
+ * is what keeps the JIT story alive.
+ *
+ * The module is also handed THAT SAME TABLE as an import. Every module a
+ * thread registers lands in it, so a module can reach another one through it
+ * directly -- a tail call inside wasm rather than a return to the host and a
+ * fresh entry. A module that does not declare the import simply ignores it.
  */
 
 #include <emscripten/em_js.h>
@@ -40,7 +45,10 @@ EM_JS(int, shumway_wasm_register, (int bytesPtr, int len), {
          * from directly, and the copy detaches the bytes from the heap. */
         var bytes = HEAPU8.slice(at, at + n);
         var mod = new WebAssembly.Module(bytes);
-        var inst = new WebAssembly.Instance(mod, { env: { memory: wasmMemory } });
+        var inst = new WebAssembly.Instance(mod, { env: {
+            memory: wasmMemory,
+            __indirect_function_table: wasmTable,
+        } });
         return addFunction(inst.exports.run, 'iii');
     } catch (e) {
         console.error('shumway_wasm_register: ' + e);

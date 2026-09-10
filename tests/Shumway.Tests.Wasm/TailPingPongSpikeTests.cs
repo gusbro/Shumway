@@ -33,12 +33,12 @@ public sealed class TailPingPongSpikeTests(ITestOutputHelper o)
     public void SharedMemoryPatchWalksPastATableImport()
     {
         byte[] plain = SpikeTailPingPongModules.Build(
-            SpikeTailPingPongModules.SlotA, SpikeTailPingPongModules.SlotB,
+            SpikeTailPingPongModules.HalfA, SpikeTailPingPongModules.IndexOfBSlot,
             shared: false);
         Assert.False(WasmSharedMemory.IsShared(plain));
 
         byte[] shared = SpikeTailPingPongModules.Build(
-            SpikeTailPingPongModules.SlotA, SpikeTailPingPongModules.SlotB,
+            SpikeTailPingPongModules.HalfA, SpikeTailPingPongModules.IndexOfBSlot,
             shared: true);
         Assert.True(WasmSharedMemory.IsShared(shared));
         // One byte for one byte: no section length may move.
@@ -74,8 +74,8 @@ public sealed class TailPingPongSpikeTests(ITestOutputHelper o)
         Instance<PingPongExports> a, b;
         try
         {
-            a = Instantiate(SpikeTailPingPongModules.SlotA, SpikeTailPingPongModules.SlotB);
-            b = Instantiate(SpikeTailPingPongModules.SlotB, SpikeTailPingPongModules.SlotA);
+            a = Instantiate(SpikeTailPingPongModules.HalfA, SpikeTailPingPongModules.IndexOfBSlot);
+            b = Instantiate(SpikeTailPingPongModules.HalfB, SpikeTailPingPongModules.IndexOfASlot);
         }
         catch (Exception e)
         {
@@ -85,19 +85,24 @@ public sealed class TailPingPongSpikeTests(ITestOutputHelper o)
             return;
         }
 
-        table[(int)SpikeTailPingPongModules.SlotA] = (Func<int, int, int>)a.Exports.run;
-        table[(int)SpikeTailPingPongModules.SlotB] = (Func<int, int, int>)b.Exports.run;
+        table[0] = (Func<int, int, int>)a.Exports.run;
+        table[1] = (Func<int, int, int>)b.Exports.run;
+        // The halves find each other through memory, as they will in the
+        // browser where addFunction picks the indexes.
+        const int at = 4096;   // any base; the module only knows what it is told
+        Marshal.WriteInt64(memory.Start, at + SpikeTailPingPongModules.IndexOfASlot * 8, 0);
+        Marshal.WriteInt64(memory.Start, at + SpikeTailPingPongModules.IndexOfBSlot * 8, 1);
 
-        Marshal.WriteInt64(memory.Start, SpikeTailPingPongModules.HopsRemainingSlot * 8, 7);
+        Marshal.WriteInt64(memory.Start, at + SpikeTailPingPongModules.HopsRemainingSlot * 8, 7);
         int who;
-        try { who = a.Exports.run(0, 0); }
+        try { who = a.Exports.run(at, 0); }
         catch (Exception e)
         {
             Assert.Fail($"G3 = NO: the hop did not execute. {e.GetType().Name}: {e.Message}");
             return;
         }
 
-        long done = Marshal.ReadInt64(memory.Start, SpikeTailPingPongModules.HopsDoneSlot * 8);
+        long done = Marshal.ReadInt64(memory.Start, at + SpikeTailPingPongModules.HopsDoneSlot * 8);
         o.WriteLine($"G3 = YES: 7 hops, finished in slot {who} (memory says {done})");
         // Seven hops starting at A ends at B: A,B,A,B,A,B,A -> the 7th
         // decrement happens in A... the parity is what it is; assert only that
@@ -132,19 +137,25 @@ public sealed class TailPingPongSpikeTests(ITestOutputHelper o)
         Instance<PingPongExports> a, b;
         try
         {
-            a = Instantiate(SpikeTailPingPongModules.SlotA, SpikeTailPingPongModules.SlotB);
-            b = Instantiate(SpikeTailPingPongModules.SlotB, SpikeTailPingPongModules.SlotA);
+            a = Instantiate(SpikeTailPingPongModules.HalfA, SpikeTailPingPongModules.IndexOfBSlot);
+            b = Instantiate(SpikeTailPingPongModules.HalfB, SpikeTailPingPongModules.IndexOfASlot);
         }
         catch (Exception e) { Assert.Fail($"G3 = NO: {e.Message}"); return; }
-        table[(int)SpikeTailPingPongModules.SlotA] = (Func<int, int, int>)a.Exports.run;
-        table[(int)SpikeTailPingPongModules.SlotB] = (Func<int, int, int>)b.Exports.run;
+        table[0] = (Func<int, int, int>)a.Exports.run;
+        table[1] = (Func<int, int, int>)b.Exports.run;
+        // The halves find each other through memory, as they will in the
+        // browser where addFunction picks the indexes. Everything they touch
+        // is relative to the base they are handed.
+        const int at = 4096;
+        Marshal.WriteInt64(memory.Start, at + SpikeTailPingPongModules.IndexOfASlot * 8, 0);
+        Marshal.WriteInt64(memory.Start, at + SpikeTailPingPongModules.IndexOfBSlot * 8, 1);
 
         // Modest here on purpose: the browser is where the real 10^7 number is
         // taken. This only has to be far past any plausible frame budget.
         const long hops = 200_000;
-        Marshal.WriteInt64(memory.Start, SpikeTailPingPongModules.HopsRemainingSlot * 8, hops);
+        Marshal.WriteInt64(memory.Start, at + SpikeTailPingPongModules.HopsRemainingSlot * 8, hops);
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        int who = a.Exports.run(0, 0);
+        int who = a.Exports.run(at, 0);
         sw.Stop();
         o.WriteLine($"{hops} hops in {sw.Elapsed.TotalMilliseconds:F1} ms "
             + $"({sw.Elapsed.TotalMilliseconds * 1e6 / hops:F0} ns/hop, library engine), "

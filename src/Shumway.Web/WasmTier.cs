@@ -93,6 +93,82 @@ internal static partial class WebShumwayApp
         }).ConfigureAwait(false);
     }
 
+    /// <summary>Phase 0 of the many-modules arc, in the browser: two modules
+    /// that hand control to each other with <c>return_call_indirect</c> through
+    /// this thread's function table, never returning to the host.
+    ///
+    /// <para>G0 is the gate that can kill the arc, and it is a PROPERTY, not a
+    /// speed: millions of hops must run in bounded stack. If the engine
+    /// compiles the tail call as an ordinary call the stack grows per hop and
+    /// there is no fallback -- in the WAM a call IS a jump and the continuation
+    /// lives in CP. G1 is the speed, against the 4-15 us a cross-module switch
+    /// costs today going out through mono-interpreted C#. G4 is that a module
+    /// reaches table slots added AFTER it was instantiated.</para></summary>
+    [JSExport]
+    internal static async Task<string> WasmSplitProbe(int hops, int rounds)
+        => await Task.Run(() =>
+        {
+            var report = new StringBuilder();
+            try
+            {
+                long[] mem = GC.AllocateArray<long>(64, pinned: true);
+                int memAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(mem, 0);
+
+                // Registered one at a time on purpose: B does not exist when A
+                // is instantiated, so A reaching B at all is G4 -- a table
+                // import is by reference, and slots added later must be
+                // visible.
+                int a = Register(report, "ping",
+                    SpikeTailPingPongModules.Build(
+                        SpikeTailPingPongModules.HalfA,
+                        SpikeTailPingPongModules.IndexOfBSlot, shared: true));
+                report.Append("table length after ping: ")
+                      .Append(shumway_wasm_table_length()).Append('\n');
+                int b = Register(report, "pong",
+                    SpikeTailPingPongModules.Build(
+                        SpikeTailPingPongModules.HalfB,
+                        SpikeTailPingPongModules.IndexOfASlot, shared: true));
+                report.Append("table length after pong: ")
+                      .Append(shumway_wasm_table_length()).Append('\n');
+
+                mem[SpikeTailPingPongModules.IndexOfASlot] = a;
+                mem[SpikeTailPingPongModules.IndexOfBSlot] = b;
+
+                // One hop first: if the tail call is not wired the failure is
+                // here, small and readable, not inside a 10^7 loop.
+                mem[SpikeTailPingPongModules.HopsRemainingSlot] = 2;
+                int who = shumway_wasm_call(a, memAt, 0);
+                report.Append("two hops answer: ").Append(who)
+                      .Append(" (memory says ")
+                      .Append(mem[SpikeTailPingPongModules.HopsDoneSlot])
+                      .Append(")\n");
+
+                double best = double.MaxValue;
+                for (int r = 0; r < Math.Max(1, rounds); r++)
+                {
+                    mem[SpikeTailPingPongModules.HopsRemainingSlot] = hops;
+                    var sw = Stopwatch.StartNew();
+                    int end = shumway_wasm_call(a, memAt, 0);
+                    sw.Stop();
+                    double ns = sw.Elapsed.TotalMilliseconds * 1e6 / hops;
+                    report.Append("round ").Append(r).Append(": ").Append(hops)
+                          .Append(" hops in ").Append(sw.Elapsed.TotalMilliseconds.ToString("F1"))
+                          .Append(" ms = ").Append(ns.ToString("F1"))
+                          .Append(" ns/hop, ended in half ").Append(end).Append('\n');
+                    if (ns < best) best = ns;
+                }
+                report.Append("G0 = PASS (").Append(hops)
+                      .Append(" hops per round, bounded stack)\n");
+                report.Append("G1 best: ").Append(best.ToString("F1")).Append(" ns/hop\n");
+            }
+            catch (Exception ex)
+            {
+                report.Append("STOPPED: ").Append(ex.GetType().Name)
+                      .Append(": ").Append(ex.Message).Append('\n');
+            }
+            return report.ToString();
+        }).ConfigureAwait(false);
+
     /// <summary>Whether the raw managed calli works once the index is valid
     /// for the calling thread -- kept apart because a hang here must not cost
     /// the measurements. If it does work, the first attempt's hang was never
