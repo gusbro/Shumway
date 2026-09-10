@@ -102,4 +102,55 @@ public sealed class DeepTermEngineWalksTests
         Assert.True(e.Query(
             $"nest({Deep}, _), A = f(A), B = f(B), A = B.").Success);
     }
+
+    /// <summary>The occurs-checked unifier could NOT take the deferral the
+    /// plain one takes: its pair set is a PATH, removed on the way out, so a
+    /// pair put off until later would no longer see the ancestors that make a
+    /// cyclic term terminate. It walks an explicit stack with LEAVE items
+    /// instead, which keeps enter and leave nested the way a `finally`
+    /// did.</summary>
+    [Fact]
+    public void OccursCheckedUnificationHandlesAnyDepth()
+    {
+        var e = Engine();
+        Assert.True(e.Query(
+            $"nest({Deep}, X), nest({Deep}, Y), unify_with_occurs_check(X, Y).")
+            .Success);
+        // ANTI-VACUITY: still deciding, not just surviving.
+        Assert.True(e.Query(
+            $"nest({Deep}, X), nest({Deep - 1}, Y), "
+            + $"\\+ unify_with_occurs_check(X, Y).").Success);
+    }
+
+    /// <summary>What the path set is FOR, unchanged: two cyclic terms unify
+    /// coinductively, two that cannot do not, and the check still refuses to
+    /// build a new cycle.</summary>
+    [Fact]
+    public void TheOccursCheckedCyclicRulesAreUnchanged()
+    {
+        var e = Engine();
+        Assert.True(e.Query("X = f(X), Y = f(Y), unify_with_occurs_check(X, Y).")
+                     .Success);
+        Assert.True(e.Query("P = [a|P], Q = [a|Q], unify_with_occurs_check(P, Q).")
+                     .Success);
+        Assert.True(e.Query(
+            $"\\+ (U = f(U, a), V = f(V, b), unify_with_occurs_check(U, V)).")
+            .Success);
+        Assert.True(e.Query($"\\+ unify_with_occurs_check(V, f(V)).").Success);
+    }
+
+    /// <summary>The FLAG routes every unification through that path, including
+    /// a deep one, and mode 2 still raises rather than failing.</summary>
+    [Fact]
+    public void TheOccursCheckFlagHandlesAnyDepthAndStillRaises()
+    {
+        var e = Engine();
+        Assert.True(e.Query(
+            "set_prolog_flag(occurs_check, true), "
+            + $"nest({Deep}, X), nest({Deep}, Y), X = Y.").Success);
+        Assert.True(e.Query(
+            "set_prolog_flag(occurs_check, error), "
+            + "catch(W = f(W), error(E, _), true), E == representation_error(term).")
+            .Success);
+    }
 }
