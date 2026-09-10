@@ -259,10 +259,16 @@ public static partial class TermRenderer
             // `'.'(a,[])`, not `[a]`. The dot functor obeys the quoted option
             // like any other atom: write_term defaults quoted(false), so it
             // prints bare -- `.(a,[])`.
+            // The spine cells this walk joins to the cycle path. Unlike the
+            // bracket form below it needs them whatever max_depth says: see
+            // PlanCanonStep.
+            var canonSpine = new List<int>();
+            Push(stack, new RenderJob { Op = RenderOp.ExitSpine, Spine = canonSpine });
             Push(stack, new RenderJob
             {
-                Op = RenderOp.CanonStep, Cell = lisCell, Out = output,
+                Op = RenderOp.CanonStep, Cell = lisCell, Out = output, First = true,
                 Text = options.Quoted ? "'.'(" : ".(", ConsDepth = 0,
+                Spine = canonSpine,
             });
             return;
         }
@@ -380,13 +386,36 @@ public static partial class TermRenderer
             PushNode(stack, head, output, 999);
     }
 
-    /// <summary>One cons of the functional form `'.'(H, T)`.</summary>
+    /// <summary>One cons of the functional form `'.'(H, T)`.
+    ///
+    /// <para>The spine is walked here rather than through the node gate, so
+    /// the cycle check has to be here too, and it cannot be conditional on
+    /// max_depth being off the way the bracket form's is: max_depth does not
+    /// bound this walk at all (`[a,b,c]` under max_depth(2) prints in full as
+    /// `.(a,.(b,.(c,[])))`). Without it a cyclic spine never terminated --
+    /// `X = [a|X], write_canonical(X)` wrote `.(a,.(a,` until something gave
+    /// out.</para></summary>
     private static void PlanCanonStep(
         Activation engine, in RenderJob job, List<RenderJob> stack, TermRenderOptions options)
     {
         Cell cursor = job.Cell;
         TextWriter output = job.Out;
         Resolve(engine, ref cursor);
+
+        // The entry cons was already joined to the path by the node gate, but
+        // only when max_depth is off; with it on, this walk owns that too.
+        if (cursor.Tag == Tag.Lis && (!job.First || options.MaxDepth > 0))
+        {
+            var spinePath = options.OnPath ??= new HashSet<int>();
+            if (!spinePath.Add(cursor.AsHeapIndex))
+            {
+                output.Write("...");
+                output.Write(new string(')', job.ConsDepth));
+                return;
+            }
+            job.Spine!.Add(cursor.AsHeapIndex);
+        }
+
         if (!engine.TryUnconsListLike(cursor, out Cell head, out Cell tail))
         {
             PushText(stack, output, new string(')', job.ConsDepth));
@@ -396,8 +425,8 @@ public static partial class TermRenderer
         output.Write(job.Text);
         Push(stack, new RenderJob
         {
-            Op = RenderOp.CanonStep, Cell = tail, Out = output,
-            Text = job.Text, ConsDepth = job.ConsDepth + 1,
+            Op = RenderOp.CanonStep, Cell = tail, Out = output, First = false,
+            Text = job.Text, ConsDepth = job.ConsDepth + 1, Spine = job.Spine,
         });
         PushText(stack, output, ",");
         PushNode(stack, head, output, 999);
