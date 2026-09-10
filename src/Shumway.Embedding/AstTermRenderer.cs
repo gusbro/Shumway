@@ -72,6 +72,11 @@ public static class AstTermRenderer
     public static string Render(
         Term term, int maxPrec, OperatorTable ops, bool quoted, bool portrayText)
     {
+        // Nesting costs a C# frame here, and how deep a term nests is the
+        // program's business. Guarded at the top rather than in RenderCompound
+        // because `{X}` and a list element recurse straight through this
+        // switch. A display path, so the probe's cost does not matter.
+        Shumway.Core.RecursionGuard.EnsureRoom();
         switch (term)
         {
             case AtomTerm a:

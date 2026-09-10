@@ -15,6 +15,10 @@ public static class ResidualProjection
     /// Untouched subterms are returned by reference.</summary>
     public static Term SubstituteVarNames(Term term, IReadOnlyDictionary<string, string> renames)
     {
+        // One frame per level of NESTING, and a program chooses how deep its
+        // terms go. The list spine below is walked iteratively; this covers
+        // what stays recursive, turning a dead process into a catchable ball.
+        Shumway.Core.RecursionGuard.EnsureRoom();
         switch (term)
         {
             case VarTerm v when renames.TryGetValue(v.Name, out string? newName):
@@ -46,6 +50,7 @@ public static class ResidualProjection
     /// three dots bare, not as a quoted atom.</summary>
     public static Term ElideCycleMarkers(Term term)
     {
+        Shumway.Core.RecursionGuard.EnsureRoom();
         switch (term)
         {
             case VarTerm { IsCycleBack: true }:
@@ -110,6 +115,7 @@ public static class ResidualProjection
 
     private static Term SubstituteOwners(Term term, IReadOnlyDictionary<string, string> names)
     {
+        Shumway.Core.RecursionGuard.EnsureRoom();
         switch (term)
         {
             case CompoundTerm c when c.CycleId is { } cid
@@ -197,6 +203,7 @@ public static class ResidualProjection
     /// a goal is shown once, under the first of its variables the user can see.</summary>
     public static string? FindMentionedOwner(Term term, IReadOnlyList<string> owners)
     {
+        Shumway.Core.RecursionGuard.EnsureRoom();
         // Iterative, for the same reason SubstituteVarNames is: a goal may
         // mention a list of any length, and one C# frame per element is a stack
         // overflow waiting for a big enough answer.

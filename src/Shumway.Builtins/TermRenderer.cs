@@ -216,6 +216,11 @@ public static class TermRenderer
 
     private static void RenderCompound(Activation engine, Cell strCell, TextWriter output, TermRenderOptions options, int maxPriority)
     {
+        // One C# frame per level of NESTING, and the level count is the
+        // program's to choose. The list spine and the text walks below are
+        // iterative, so this is the whole of what is left recursive here; the
+        // guard turns a dead process into a catchable ball.
+        RecursionGuard.EnsureRoom();
         int functorIdx = strCell.AsHeapIndex;
         Cell functorCell = engine.GetHeap(functorIdx);
         var (atomId, arity) = FunctorTable.Lookup(functorCell.AsFunctorId);
