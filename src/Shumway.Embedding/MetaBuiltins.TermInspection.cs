@@ -1416,17 +1416,21 @@ public static partial class MetaBuiltins
             throw new ShumwayPrologException(IsoError.InstantiationError());
         if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2)
         {
-            // ISO §8.9.4.3 checks each slot before the indicator shape:
-            // vars → instantiation; non-integer arity → type_error(integer);
-            // non-atom name → type_error(atom); then the numeric range.
-            if (c.Args[0] is VarTerm || c.Args[1] is VarTerm)
+            // ISO §8.9.4.3 judges the halves IN TURN, name first, rather than
+            // taking every variable ahead of every type. The two orders differ
+            // for 1/_ : a name that is already wrong is reported even while
+            // the arity is unbound, because no arity could rescue it and an
+            // instantiation_error would promise otherwise. Matches GNU.
+            if (c.Args[0] is VarTerm)
+                throw new ShumwayPrologException(IsoError.InstantiationError());
+            if (c.Args[0] is not AtomTerm name)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("atom", c.Args[0]));
+            if (c.Args[1] is VarTerm)
                 throw new ShumwayPrologException(IsoError.InstantiationError());
             if (c.Args[1] is not IntTerm and not BigIntTerm)
                 throw new ShumwayPrologException(
                     IsoError.TypeError("integer", c.Args[1]));
-            if (c.Args[0] is not AtomTerm name)
-                throw new ShumwayPrologException(
-                    IsoError.TypeError("atom", c.Args[0]));
             if (c.Args[1] is BigIntTerm big)
                 throw new ShumwayPrologException(big.Value.Sign < 0
                     ? IsoError.DomainError("not_less_than_zero", big)
