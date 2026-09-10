@@ -61,20 +61,19 @@ public sealed class DeepTermRenderingTests
         Assert.EndsWith(new string(')', 100), shown);
     }
 
-    /// <summary>The answer display walks the term too, through the OTHER
-    /// renderer. With elision off, the top level meets the same wall and has
-    /// to report rather than die.</summary>
+    /// <summary>The answer display goes through the OTHER renderer, which is
+    /// iterative, so with elision off it RENDERS the whole thing rather than
+    /// refusing. Safe is not the goal; capable is.</summary>
     [Fact]
-    public void TheAnswerDisplayRefusesInsteadOfDying()
+    public void TheAnswerDisplayRendersAnyDepth()
     {
         var e = Engine();
         e.Flags.AnswerMaxDepth = 0;                 // the user asked for it all
         using var run = new TopLevelSession(e).StartQuery($"nest({Deep}, X).");
         Assert.True(run.MoveNext());
-        var raised = Assert.Throws<Shumway.Core.PrologRuntimeException>(
-            () => run.Format(200));
-        Assert.Equal("resource_error", raised.Kind);
-        Assert.Equal("term_nesting", raised.Detail);
+        string shown = run.Format(200);
+        Assert.StartsWith("X = f(f(", shown);
+        Assert.True(shown.Length > Deep, $"only {shown.Length} chars came out");
     }
 
     /// <summary>And the report of that refusal names it, rather than coming
