@@ -19,7 +19,7 @@ the gates that had to pass before any of it was worth building.
 | G1 | ≤ 100 ns per hop | **PASS** — 6.1 ns best, ~6.3 ns median |
 | G3 | the test library executes the hop | **PASS** — so xUnit can exercise it |
 | G4 | a module reaches slots added later | **PASS** |
-| G2 | incremental compile ≤ 1.5× batch | not yet measured |
+| G2 | incremental compile ≤ 1.5× batch | **PASS** — 0.76×, i.e. cheaper |
 
 ```
 ping: 139 bytes, registered at index 7874 on thread 7
@@ -57,6 +57,38 @@ new module would have meant re-instantiating the ones that call it.
 can exercise the hop. Had it not, every cross-module path would have been
 browser-only to test, which changes the cost of the whole arc.
 
+## G2 — compiling one at a time is CHEAPER
+
+818 predicates of the prelude and clpfd, compile time only (instantiation and
+per-thread registration are the browser's):
+
+```
+one batch      : 763 ms, 4,095,932 bytes
+one at a time  : 583 ms, 6,268,753 bytes total
+ratio          : 0.76x time, 1.53x bytes
+per predicate  : median 0.31 ms, max 35.74 ms
+```
+
+The gate asked for no worse than 1.5x. It is 0.76x — separate modules are
+*faster* to compile, because a group pays work that is superlinear in its
+member count: numbering global cursors, building the br_table, cutting
+partitions. Incremental promotion does not pay a toll here, it collects one.
+
+A median of 0.31 ms per predicate against a 30 ms budget means a promotion can
+happen mid-session without being felt, which is what lets the tier stop needing
+a batch mode at all.
+
+The cost has moved to **bytes: 1.53x**. Every module repeats the dispatcher,
+the fail/proceed resolver and the general unifier, so 818 of them carry 2.2 MB
+more wasm than one group — and the browser compiles all of it. That is the same
+currency the resume table just saved 26.8% of, so it does not sink the arc, but
+it names the next fight: either modules share those functions through imports,
+or predicates are grouped a few at a time rather than one each.
+
+The 35.74 ms maximum against a 0.31 ms median says one predicate is enormous
+(almost certainly in clpfd) and on its own justifies keeping partitions as a
+safety valve rather than deleting them.
+
 ## What the spike caught
 
 The module addressed linear memory absolutely — slots 0, 8, 16 — instead of
@@ -79,10 +111,10 @@ SpiderMonkey implemented tail calls separately, so G0 is genuinely open there.
 calls is Tier-0, which already works; how to detect it — by feature probe at
 boot, or by user agent after a report — is a decision for when there is one.
 
-**G2, the incremental compile cost.** Whether compiling n predicates as n
-modules, one at a time, stays within 1.5× of one batch build. That is the gate
-that says a real JIT is possible rather than merely fast; it needs the actual
-emitter rather than these hand-built modules.
+**The 1.53× in bytes.** Every module repeating the dispatcher, the resolver and
+the unifier is the one number that got worse, and the browser compiles all of
+it at load. Sharing those functions through imports, or grouping a few
+predicates per module, is the obvious answer and neither has been tried.
 
 ## Reproducing
 
