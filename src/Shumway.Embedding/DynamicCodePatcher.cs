@@ -1268,13 +1268,26 @@ internal sealed class DynamicCodePatcher
     /// Selection includes logically-dead entries as candidates: their
     /// <c>check_visible</c> still runs at the jump target, and a sole-but-dead
     /// candidate correctly fails the call.</summary>
-    private static readonly bool DynSelDiag =
+    /// <summary>Settable so a test can ask what the selector DECIDED. The
+    /// cost this guards is C# work per call, which no Prolog-level counter
+    /// (inferences, heap cells) can see -- measuring it by the clock is
+    /// measuring the machine, so the verdict itself is the observable.</summary>
+    internal static bool DynSelDiag =
         System.Environment.GetEnvironmentVariable("SHUMWAY_DYNSEL_DIAG") == "1";
+
+    /// <summary>Verdict tallies, counted only while <see cref="DynSelDiag"/>
+    /// is on: a sole candidate jumped to, a call ruled out without walking,
+    /// and a call handed back to the chain. Not interlocked -- diagnostic
+    /// only, and an activation dispatches on one thread.</summary>
+    internal static long SelSole, SelNone, SelDeclined;
+
+    internal static void ResetSelCounters() => SelSole = SelNone = SelDeclined = 0;
 
     private static int SelDiag(int fid, int result, string reason)
     {
         if (DynSelDiag)
         {
+            if (result == -1) SelNone++; else SelDeclined++;
             string name = "?";
             if (fid != 0)
             {
@@ -1348,12 +1361,10 @@ internal sealed class DynamicCodePatcher
         var headOp = (Shumway.Core.Opcode)prog[chainHead];
         if (headOp != Shumway.Core.Opcode.TryMeElse) return SelDiag(fid, -2, $"head-op={headOp}");
 
-        int matchCount;
         DynChainEntry? match;
         if (entries.Count == 1)
         {
             // Sole clause: always the sole candidate, first arg irrelevant.
-            matchCount = 1;
             match = entries[0];
         }
         else
@@ -1366,15 +1377,14 @@ internal sealed class DynamicCodePatcher
                 a0 = engine.GetHeap(engine.Deref(a0.AsHeapIndex));
                 if (a0.Tag == Tag.Ref) return SelDiag(fid, -2, "unbound-a0");
             }
-            matchCount = 0;
-            match = null;
-            foreach (var entry in entries)
-            {
-                if (!EntryKeyCouldMatch(engine, entry, a0)) continue;
-                if (++matchCount > 1) return SelDiag(fid, -2, "multi-candidate");
-                match = entry;
-            }
-            if (matchCount == 0) return SelDiag(fid, -1, "no-candidate");
+            // A tag that keys nothing -- a float, a bigint -- cannot rule any
+            // clause out, so every entry stays a candidate and there is more
+            // than one of them (the sole-entry case returned above).
+            if (DynFirstArgKey.OfCall(engine, a0) is not { } callKey)
+                return SelDiag(fid, -2, "unkeyed-a0");
+            if (state.NoCandidate(callKey)) return SelDiag(fid, -1, "no-candidate");
+            if (!state.TrySoleCandidate(callKey, out match))
+                return SelDiag(fid, -2, "multi-candidate");
         }
         // Sole candidate. Its chunk must start with a chain instruction we
         // can skip (try_me_else / retry_me_else, incl. the 155f demoted-head
@@ -1384,45 +1394,8 @@ internal sealed class DynamicCodePatcher
         var op = (Shumway.Core.Opcode)prog[addr];
         if (op != Shumway.Core.Opcode.TryMeElse
             && op != Shumway.Core.Opcode.RetryMeElse) return SelDiag(fid, -2, $"entry-op={op}");
+        if (DynSelDiag) SelSole++;
         return addr + ChainEntryHeaderSize(prog, addr);
-    }
-
-    // First-arg key compatibility: a clause whose head first argument is a
-    // variable (or a shape we don't key) matches ANY call; otherwise the tags
-    // must be unifiable and, for atoms/small ints, the values equal. Every
-    // uncertain shape returns true (the clause stays a candidate — that only
-    // costs the selection, never correctness). "Keyed" call tags are the ones
-    // whose mismatch PROVES non-unifiability against a constant/compound key.
-    private static bool EntryKeyCouldMatch(Activation engine, DynChainEntry entry, Cell callArg)
-    {
-        Term head = entry.Clause.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
-            ? h : entry.Clause.Term;
-        if (head is not CompoundTerm hc || hc.Args.Length == 0) return true;
-        bool keyedCall = callArg.Tag is Tag.Atom or Tag.Int or Tag.Str or Tag.Lis or Tag.Pstr;
-        if (!keyedCall) return true;
-        switch (hc.Args[0])
-        {
-            case AtomTerm a:
-                return callArg.Tag == Tag.Atom
-                    && AtomTable.Intern(a.Name, permanent: true).Id == callArg.AsAtomId;
-            case IntTerm i:
-                return callArg.Tag == Tag.Int && callArg.AsInt == i.Value;
-            case CompoundTerm c when c.Functor == "." && c.Args.Length == 2:
-                return callArg.Tag is Tag.Lis or Tag.Pstr;
-            case CompoundTerm c:
-                // Real functor/arity comparison: Logtalk's per-entity `_def`
-                // tables are chains keyed by DISTINCT goal-template compounds
-                // (precision(_), order(_), …) — without this the whole chain
-                // stayed multi-candidate and the lgtunit determinism tests
-                // under debug(on) saw the surviving chain CP.
-                if (callArg.Tag != Tag.Str) return false;
-                var (aid, ar) = FunctorTable.Lookup(
-                    engine.GetHeap(callArg.AsHeapIndex).AsFunctorId);
-                return c.Args.Length == ar
-                    && AtomTable.Intern(c.Functor, permanent: true).Id == aid;
-            default:
-                return true;    // var / float / bigint / unkeyed head shapes
-        }
     }
 
     internal DynChainTable GetOrCreateChainTable(Activation engine)
@@ -1557,7 +1530,68 @@ internal sealed class DynamicCodePatcher
 
 internal sealed class DynChainState
 {
+    /// <summary>The chain in order. Read everywhere and indexed positionally
+    /// (a clause index IS a position here), so it stays a plain list; the
+    /// buckets beside it are maintained by the four mutators below and must
+    /// be the only way it changes.</summary>
     public readonly List<DynChainEntry> Entries = new();
+
+    // Dispatch-time selection asks "which clauses could match THIS first
+    // argument", once per call. Answering it by walking the chain made that
+    // O(clauses) per call, so a predicate grown and queried inside one query
+    // -- which never gets the indexed recompile, since that happens at query
+    // setup -- was quadratic. These give the answer in a lookup.
+    private readonly Dictionary<DynFirstArgKey, List<DynChainEntry>> _byKey = new();
+    private readonly List<DynChainEntry> _matchAnything = new();
+
+    public void AppendEntry(DynChainEntry e) { Entries.Add(e); Index(e); }
+
+    public void PrependEntry(DynChainEntry e) { Entries.Insert(0, e); Index(e); }
+
+    public void RemoveEntryAt(int i)
+    {
+        DynChainEntry e = Entries[i];
+        Entries.RemoveAt(i);
+        if (e.Key.MatchesEverything) _matchAnything.Remove(e);
+        else if (_byKey.TryGetValue(e.Key, out var bucket))
+        {
+            bucket.Remove(e);
+            if (bucket.Count == 0) _byKey.Remove(e.Key);
+        }
+    }
+
+    public void ClearEntries()
+    {
+        Entries.Clear();
+        _byKey.Clear();
+        _matchAnything.Clear();
+    }
+
+    private void Index(DynChainEntry e)
+    {
+        if (e.Key.MatchesEverything) { _matchAnything.Add(e); return; }
+        if (!_byKey.TryGetValue(e.Key, out var bucket))
+            _byKey[e.Key] = bucket = new List<DynChainEntry>();
+        bucket.Add(e);
+    }
+
+    /// <summary>The clauses a call with this key could match: the ones keyed
+    /// the same, plus the ones that match anything. Returns false when there
+    /// is not exactly one, which is all the caller needs to know -- zero means
+    /// fail outright, more than one means let the chain run.</summary>
+    public bool TrySoleCandidate(DynFirstArgKey callKey, out DynChainEntry? sole)
+    {
+        _byKey.TryGetValue(callKey, out var bucket);
+        int keyed = bucket?.Count ?? 0;
+        if (keyed + _matchAnything.Count != 1) { sole = null; return false; }
+        sole = keyed == 1 ? bucket![0] : _matchAnything[0];
+        return true;
+    }
+
+    /// <summary>True when nothing at all could match -- the call fails without
+    /// touching the chain.</summary>
+    public bool NoCandidate(DynFirstArgKey callKey)
+        => _matchAnything.Count == 0 && !_byKey.ContainsKey(callKey);
     /// <summary>Absolute byte position of the operand at the bytecode
     /// tail of this predicate's chain — the <c>&lt;next&gt;</c> of
     /// either the latest-appended clause's <c>retry_me_else</c>, or
@@ -1683,5 +1717,76 @@ internal sealed class DynChainEntry
         NextOperandAddr = next;
         ChunkAddr = chunkAddr;
         ChunkLength = chunkLength;
+        Key = DynFirstArgKey.Of(c);
+    }
+
+    /// <summary>The clause's first-argument key, decided once here rather
+    /// than re-derived on every dispatch -- interning the head atom per entry
+    /// per call was most of what the selection cost.</summary>
+    public readonly DynFirstArgKey Key;
+}
+
+/// <summary>A dynamic clause's first argument, reduced to what dispatch-time
+/// selection needs: enough to PROVE a call cannot match, and
+/// <see cref="Anything"/> for every shape that cannot prove it. The kinds
+/// mirror ADR-041's cases exactly; adding one that is not provable would make
+/// the selection wrong, not just slower.</summary>
+internal readonly record struct DynFirstArgKey(byte Kind, long Value)
+{
+    public const byte AnythingKind = 0, AtomKind = 1, IntKind = 2,
+                      ListKind = 3, StructKind = 4;
+
+    public static readonly DynFirstArgKey Anything = new(AnythingKind, 0);
+    public bool MatchesEverything => Kind == AnythingKind;
+
+    /// <summary>The key of a clause's head first argument.</summary>
+    /// <remarks>Every shape that cannot PROVE a mismatch must map to
+    /// <see cref="Anything"/>. Getting that wrong makes the selection wrong,
+    /// not merely slower: a clause left out of a call's candidates is a
+    /// solution that never runs.</remarks>
+    public static DynFirstArgKey Of(Clause c)
+    {
+        Term head = c.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
+            ? h : c.Term;
+        if (head is not CompoundTerm hc || hc.Args.Length == 0) return Anything;
+        switch (hc.Args[0])
+        {
+            case AtomTerm a:
+                return new(AtomKind, AtomTable.Intern(a.Name, permanent: true).Id);
+            case IntTerm i:
+                return new(IntKind, i.Value);
+            case CompoundTerm { Functor: ".", Args.Length: 2 }:
+                return new(ListKind, 0);
+            case CompoundTerm cc:
+                // Functor AND arity, not just "some compound": Logtalk's
+                // per-entity `_def` tables are chains keyed by DISTINCT goal
+                // templates (precision(_), order(_), ...), and keying them
+                // together would leave the whole chain multi-candidate.
+                return new(StructKind,
+                    ((long)AtomTable.Intern(cc.Functor, permanent: true).Id << 32)
+                    | (uint)cc.Args.Length);
+            default:
+                return Anything;    // var / float / bigint / unkeyed head shapes
+        }
+    }
+
+    /// <summary>The key a CALL's first argument selects, or null when the
+    /// argument's tag proves nothing -- a float or a bigint keys no clause, so
+    /// every entry stays a candidate and the selection has to decline.</summary>
+    public static DynFirstArgKey? OfCall(Activation engine, Cell callArg)
+        => callArg.Tag switch
+        {
+            Tag.Atom => new DynFirstArgKey(AtomKind, callArg.AsAtomId),
+            Tag.Int => new DynFirstArgKey(IntKind, callArg.AsInt),
+            Tag.Lis or Tag.Pstr => new DynFirstArgKey(ListKind, 0),
+            Tag.Str => StructCallKey(engine, callArg),
+            _ => null,
+        };
+
+    private static DynFirstArgKey StructCallKey(Activation engine, Cell callArg)
+    {
+        var (aid, ar) = FunctorTable.Lookup(
+            engine.GetHeap(callArg.AsHeapIndex).AsFunctorId);
+        return new DynFirstArgKey(StructKind, ((long)aid << 32) | (uint)ar);
     }
 }
