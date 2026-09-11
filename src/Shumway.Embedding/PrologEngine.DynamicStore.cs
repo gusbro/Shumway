@@ -438,7 +438,7 @@ public sealed partial class PrologEngine
             if (entry.ChunkAddr >= 0)
                 chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
         }
-        chain.Entries.Clear();
+        chain.ClearEntries();
     }
 
     // ============================================================================
@@ -2417,7 +2417,7 @@ public sealed partial class PrologEngine
         Shumway.Core.BytecodeIO.WriteInt32(program, chain.TailNextAddr, chunkAddr);
 
         // Update chain state.
-        chain.Entries.Add(new DynChainEntry(
+        chain.AppendEntry(new DynChainEntry(
             newClause,
             died: chunkAddr + DiedOperandLocal,
             next: chunkAddr + NextOperandLocal,
@@ -2618,7 +2618,7 @@ public sealed partial class PrologEngine
         // entries shift one to the right, matching _dynamicClauses where
         // asserta prepended.
         chain.HeadClauseAddr = chunkAddr;
-        chain.Entries.Insert(0, new DynChainEntry(
+        chain.PrependEntry(new DynChainEntry(
             newClause,
             died: chunkAddr + DiedOperandLocal,
             next: chunkAddr + NextOperandLocal,
@@ -2757,7 +2757,7 @@ public sealed partial class PrologEngine
             }
             if (entry.ChunkAddr >= 0)
                 chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
-            chain.Entries.RemoveAt(i);
+            chain.RemoveEntryAt(i);
         }
         if (diag) StackDiag($"died-m{matched}p{patched}", engine, functorId);
         return matched;
@@ -2786,7 +2786,7 @@ public sealed partial class PrologEngine
         // disturbing the rest of the predicate's contiguous bytecode).
         if (entry.ChunkAddr >= 0)
             chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
-        chain.Entries.RemoveAt(clauseIndex);
+        chain.RemoveEntryAt(clauseIndex);
     }
 
     /// <summary>Builds the per-functor chain state by walking the linked
@@ -2898,7 +2898,7 @@ public sealed partial class PrologEngine
             else if (info.Op == Shumway.Core.Opcode.CheckVisible
                      && clauseIndex < clauses.Count)
             {
-                chain.Entries.Add(new DynChainEntry(
+                chain.AppendEntry(new DynChainEntry(
                     clauses[clauseIndex],
                     died: pc + 9,
                     next: pendingNextOperand,
