@@ -77,7 +77,7 @@ internal sealed class DynamicClauseStore
     public List<Clause> this[int fid]
     {
         get => _clauses[fid];
-        set => _clauses[fid] = value;
+        set { NotifyReplaced(fid); _clauses[fid] = value; }
     }
 
     /// <summary>Get-or-create: the live clause list for
@@ -94,8 +94,17 @@ internal sealed class DynamicClauseStore
         return list;
     }
 
-    public bool RemoveSlot(int fid) => _clauses.Remove(fid);
-    public void ClearAllSlots() => _clauses.Clear();
+    public bool RemoveSlot(int fid)
+    {
+        NotifyReplaced(fid);
+        return _clauses.Remove(fid);
+    }
+
+    public void ClearAllSlots()
+    {
+        foreach (int fid in _clauses.Keys) NotifyReplaced(fid);
+        _clauses.Clear();
+    }
     public IEnumerable<int> ClauseFunctors => _clauses.Keys;
     public int ClauseFunctorCount => _clauses.Count;
     public IEnumerable<KeyValuePair<int, List<Clause>>> Slots => _clauses;
@@ -110,6 +119,130 @@ internal sealed class DynamicClauseStore
             target._clauses[fid] = new List<Clause>(clauses);
     }
 
+    // ----- open retract enumerations -----
+
+    /// <summary>A retract/1 enumeration that has not copied its remaining
+    /// candidates yet. It holds a window [start, end) of the LIVE clause
+    /// list instead, and the store tells it about mutations so it can either
+    /// adjust the window or copy the window out before it is disturbed.
+    ///
+    /// <para>The window is the enumeration's ISO logical-update view, so a
+    /// clause removed from inside it must be COPIED OUT first: the view
+    /// still contains it. Everything outside the window is free.</para></summary>
+    internal interface IClauseWindow
+    {
+        /// <summary>A clause is about to be removed at <paramref name="index"/>.
+        /// Returns after the window has either shifted or materialized.</summary>
+        void BeforeRemoveAt(int index);
+        /// <summary>A clause is about to be inserted at <paramref name="index"/>.</summary>
+        void BeforeInsertAt(int index);
+        /// <summary>The list is about to change in a way the window cannot
+        /// track (cleared, replaced, bulk-loaded): copy the window out.</summary>
+        void Materialize();
+    }
+
+    private readonly Dictionary<int, List<IClauseWindow>> _windows = new();
+
+    public void OpenWindow(int fid, IClauseWindow w)
+    {
+        if (!_windows.TryGetValue(fid, out var list))
+            _windows[fid] = list = new List<IClauseWindow>();
+        list.Add(w);
+    }
+
+    public void CloseWindow(int fid, IClauseWindow w)
+    {
+        if (_windows.TryGetValue(fid, out var list) && list.Remove(w)
+            && list.Count == 0)
+            _windows.Remove(fid);
+    }
+
+    /// <summary>Mutation chokepoint. Every change to a clause list goes
+    /// through one of these three so no open window can be disturbed behind
+    /// its back; the fast path is a dictionary miss.</summary>
+    // A window that copies out closes itself, which removes it from `ws`
+    // mid-notification: walk DOWNWARDS so a removal at or above the cursor
+    // cannot make the walk skip an entry, and never copy the list (this runs
+    // on every assert and retract).
+    private void NotifyRemoveAt(int fid, int index)
+    {
+        if (_windows.Count == 0 || !_windows.TryGetValue(fid, out var ws)) return;
+        for (int i = ws.Count - 1; i >= 0; i--)
+        {
+            if (i >= ws.Count) continue;
+            ws[i].BeforeRemoveAt(index);
+        }
+    }
+
+    private void NotifyInsertAt(int fid, int index)
+    {
+        if (_windows.Count == 0 || !_windows.TryGetValue(fid, out var ws)) return;
+        for (int i = ws.Count - 1; i >= 0; i--)
+        {
+            if (i >= ws.Count) continue;
+            ws[i].BeforeInsertAt(index);
+        }
+    }
+
+    private void NotifyReplaced(int fid)
+    {
+        if (_windows.Count == 0 || !_windows.TryGetValue(fid, out var ws)) return;
+        // Every window copies out, so `ws` empties and the dictionary entry
+        // goes with it; take the last one each time rather than indexing.
+        while (ws.Count > 0)
+        {
+            var w = ws[ws.Count - 1];
+            w.Materialize();
+            if (ws.Count > 0 && ReferenceEquals(ws[ws.Count - 1], w))
+                ws.RemoveAt(ws.Count - 1);
+        }
+    }
+
+    // ----- clause mutation (the only sanctioned way to change a list) -----
+
+    public void AppendClause(int fid, Clause c)
+    {
+        var list = Slot(fid);
+        NotifyInsertAt(fid, list.Count);
+        list.Add(c);
+    }
+
+    public void PrependClause(int fid, Clause c)
+    {
+        NotifyInsertAt(fid, 0);
+        Slot(fid).Insert(0, c);
+    }
+
+    public void RemoveClauseAt(int fid, int index)
+    {
+        NotifyRemoveAt(fid, index);
+        _clauses[fid].RemoveAt(index);
+    }
+
+    public void ClearClauses(int fid)
+    {
+        if (!_clauses.TryGetValue(fid, out var list)) return;
+        NotifyReplaced(fid);
+        list.Clear();
+    }
+
+    /// <summary>Replaces the clause at <paramref name="index"/> (consult-time
+    /// goal expansion rewrites a just-stored clause). A window holding that
+    /// position would otherwise silently change identity, so it copies out.</summary>
+    public void ReplaceClauseAt(int fid, int index, Clause c)
+    {
+        NotifyReplaced(fid);
+        _clauses[fid][index] = c;
+    }
+
+    /// <summary>Bulk load into a (re)built slot — consult, bundle load,
+    /// restore. Windows cannot track this, so they copy out first.</summary>
+    public void AppendClauseRange(int fid, IEnumerable<Clause> cs)
+    {
+        NotifyReplaced(fid);
+        Slot(fid).AddRange(cs);
+    }
+
     // ----- retract snapshot pool -----
     // retract/1 walks a snapshot of the clause list so mid-walk mutation
     // can't skew it; the buffer is pooled (one spare) because the classic
@@ -118,8 +251,14 @@ internal sealed class DynamicClauseStore
     private Clause[]? _retractSnapshotSpare;
     private const int RetractSnapshotSpareMaxLen = 4096;
 
+    /// <summary>Total clauses ever copied out of a live list because a
+    /// retract enumeration's window was about to be disturbed. The cost the
+    /// window exists to avoid, counted exactly rather than timed.</summary>
+    public long ClausesCopiedOut;
+
     public Clause[] RentRetractSnapshot(int minLength)
     {
+        ClausesCopiedOut += minLength;
         Clause[]? spare = _retractSnapshotSpare;
         if (spare is not null && spare.Length >= minLength)
         {

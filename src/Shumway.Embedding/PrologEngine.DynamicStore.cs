@@ -25,7 +25,7 @@ public sealed partial class PrologEngine
         clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
-        GetOrCreateDynamicSlot(fid).Add(clause);
+        _dynStore.AppendClause(fid, clause);
         InvalidateDynamicCache(fid);
         return fid;
     }
@@ -37,7 +37,7 @@ public sealed partial class PrologEngine
         clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
-        GetOrCreateDynamicSlot(fid).Insert(0, clause);
+        _dynStore.PrependClause(fid, clause);
         InvalidateDynamicCache(fid);
         // persistent invalidation moved into
         // PrependDynamicClauseIncremental — the in-place path can
@@ -57,7 +57,7 @@ public sealed partial class PrologEngine
         {
             if (TermsStructurallyEqual(list[i].Term, clause.Term))
             {
-                list.RemoveAt(i);
+                _dynStore.RemoveClauseAt(fid, i);
                 InvalidateDynamicCache(fid);
                 if (_jitIndexProfile.IsHot(fid)) InvalidatePersistent();
                 return true;
@@ -176,6 +176,23 @@ public sealed partial class PrologEngine
     /// <summary>returns a buffer with at least
     /// <paramref name="minLength"/> slots for a retract tail snapshot,
     /// reusing the per-engine spare when it fits.</summary>
+    /// <summary>Registers a retract/1 enumeration's uncopied view so store
+    /// mutations are reported to it. Paired with
+    /// <see cref="CloseClauseWindow"/> on exhaustion, prune, or copy-out.</summary>
+    internal void OpenClauseWindow(int fid, DynamicClauseStore.IClauseWindow w)
+        => _dynStore.OpenWindow(fid, w);
+
+    internal void CloseClauseWindow(int fid, DynamicClauseStore.IClauseWindow w)
+        => _dynStore.CloseWindow(fid, w);
+
+    /// <summary>Clauses copied out of live lists by retract enumerations —
+    /// the window's exact cost measure.</summary>
+    internal long ClausesCopiedOut
+    {
+        get => _dynStore.ClausesCopiedOut;
+        set => _dynStore.ClausesCopiedOut = value;
+    }
+
     internal Clause[] RentRetractSnapshot(int minLength) => _dynStore.RentRetractSnapshot(minLength);
 
     /// <summary>hands a snapshot buffer back for reuse. Clears
@@ -248,7 +265,7 @@ public sealed partial class PrologEngine
         int retiredBodyAddr = -1;
         if (isIndexed)
             retiredBodyAddr = FindBodyAddrForClauseIndex(engine, functorId, idx);
-        list.RemoveAt(idx);
+        _dynStore.RemoveClauseAt(functorId, idx);
         InvalidateDynamicCache(functorId);
         // a retract from a non-owner engine (a nested query
         // rebuilt the host buffer since this engine's setup) patches only
@@ -472,7 +489,7 @@ public sealed partial class PrologEngine
     /// (caches, IL eviction, the ADR-034 mutated-fids set).</summary>
     internal void ClearDynamicClauses(Activation engine, int functorId)
     {
-        if (_dynStore.TryGetClauses(functorId, out var list)) list.Clear();
+        _dynStore.ClearClauses(functorId);
         InvalidateDynamicCache(functorId);
         InvalidatePersistent();
         AbolishDynamicInChain(engine, functorId);
@@ -518,10 +535,9 @@ public sealed partial class PrologEngine
         foreach (var (fid, clauses) in snapshot)
         {
             EnsureDynamic(fid);
-            var slot = GetOrCreateDynamicSlot(fid);
             foreach (var c in clauses)
             {
-                slot.Add(c);
+                _dynStore.AppendClause(fid, c);
                 InvalidateDynamicCache(fid);
                 AppendDynamicClauseIncremental(engine, fid, c);
             }
