@@ -936,6 +936,8 @@ public sealed partial class Activation
                     CatchFrame f = _catchFrames[entry.HeapIdx];
                     f.Active = true;
                     _catchFrames[entry.HeapIdx] = f;
+                    // Active again, so the scan has to be able to reach it.
+                    if (entry.HeapIdx > _catchScanFrom) _catchScanFrom = entry.HeapIdx;
                 }
                 break;
             default:

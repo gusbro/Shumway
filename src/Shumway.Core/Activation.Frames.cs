@@ -319,6 +319,7 @@ public sealed partial class Activation
                 BindingTrailMarker = _bindingTrailTop,
             };
         }
+        if (_catchScanFrom >= count) _catchScanFrom = count - 1;
     }
 
     /// <summary>Reads the catch frame at <paramref name="index"/>.</summary>
@@ -339,6 +340,7 @@ public sealed partial class Activation
     public void PushCatchFrame(int catcherHeapIdx, int recoveryHeapIdx)
     {
         int index = _catchFrames.Count;
+        _catchScanFrom = index;          // the new frame is active and on top
         _catchFrames.Add(new CatchFrame
         {
             CatcherHeapIdx = catcherHeapIdx,
@@ -379,7 +381,8 @@ public sealed partial class Activation
     /// re-activates it. A no-op when there is no active frame.</summary>
     public void DeactivateTopCatchFrame()
     {
-        for (int i = _catchFrames.Count - 1; i >= 0; i--)
+        for (int i = System.Math.Min(_catchScanFrom, _catchFrames.Count - 1);
+             i >= 0; i--)
         {
             if (!_catchFrames[i].Active) continue;
             CatchFrame f = _catchFrames[i];
@@ -395,8 +398,12 @@ public sealed partial class Activation
                 OldValue = new Cell(CatchTrailDeactivate),
                 BindingTrailMarker = _bindingTrailTop,
             };
+            // Everything above i is now closed, so the next search starts
+            // below it rather than walking them again.
+            _catchScanFrom = i - 1;
             return;
         }
+        _catchScanFrom = -1;
     }
 
     /// <summary>Rolls the machine back to the state captured when catch
@@ -428,6 +435,7 @@ public sealed partial class Activation
 
     public void UnwindToCatchFrame(int index)
     {
+        _catchScanFrom = _catchFrames.Count - 1;   // upper bound; see the field
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] unwindTo idx={index} count={_catchFrames.Count} xTop={_extraTrailTop}");
         CatchFrame f = _catchFrames[index];
