@@ -23,6 +23,13 @@ namespace Shumway.Tests.Embedding;
 /// else still runs the chain from its head.</para></summary>
 public sealed class DynamicDispatchIndexTests
 {
+    /// <summary>The predicate under test. Tallying only this one keeps the
+    /// counts exact: they are process-wide, and the prelude dispatches
+    /// dynamic predicates of its own during the same query.</summary>
+    private static int CpFid
+        => Shumway.Core.FunctorTable.Intern(
+            Shumway.Core.AtomTable.Intern("cp").Id, 2);
+
     private static PrologEngine Engine()
     {
         var e = new PrologEngine { Out = new StringWriter() };
@@ -54,19 +61,12 @@ public sealed class DynamicDispatchIndexTests
     [Fact]
     public void ACallCostsTheSameWhateverTheClauseCountIs()
     {
-        foreach (int clauses in new[] { 2_000, 32_000 })
-        {
-            var (sole, none, declined) = Verdicts(clauses);
-            // Not one of the 20,000 calls was handed back to the chain, at
-            // either size. That IS the O(1) claim: a walk cannot produce it
-            // (breaking the buckets gives 0 resolved and 20,000 declined).
-            Assert.Equal(0L, declined);
-            Assert.Equal(0L, none);
-            // A floor, not an equality: the tally is per process, so whatever
-            // dynamic predicates a previously loaded library leaves in the
-            // prelude dispatch here too and add to it.
-            Assert.True(sole >= 20_000, $"{clauses} clauses: sole={sole}");
-        }
+        // Every one of the 20,000 calls was resolved to its sole clause and
+        // not one was handed back to the chain -- the same three integers at
+        // either size. That IS the O(1) claim: a walk cannot produce it
+        // (breaking the buckets gives 0 resolved and 20,000 handed back).
+        Assert.Equal((20_000L, 0L, 0L), Verdicts(2_000));
+        Assert.Equal((20_000L, 0L, 0L), Verdicts(32_000));
     }
 
     /// <summary>ANTI-VACUITY: the counters are not simply always these
@@ -80,15 +80,12 @@ public sealed class DynamicDispatchIndexTests
         // call is handed back. Here that happens exactly once: the first call
         // BINDS the key, and the 99 after it are answered from the buckets --
         // which is the decline path and its exit in one number.
-        var (sole, none, declined) = Verdicts(2_000, "hit(100, _)");
-        Assert.Equal(1L, declined);
-        Assert.Equal(0L, none);
-        Assert.True(sole >= 99, $"sole={sole}");
+        Assert.Equal((99L, 0L, 1L), Verdicts(2_000, "hit(100, _)"));
         // A key no clause has: ruled out, and the call fails -- without the
         // chain ever running.
         var e = Engine();
         Assert.True(e.Query("mk(2000).").Success);
-        DynamicCodePatcher.ResetSelCounters();
+        DynamicCodePatcher.ResetSelCounters(CpFid);
         DynamicCodePatcher.DynSelDiag = true;
         try { Assert.False(e.Query("cp(999999, _).").Success); }
         finally { DynamicCodePatcher.DynSelDiag = false; }
@@ -120,7 +117,7 @@ public sealed class DynamicDispatchIndexTests
     {
         var e = Engine();
         Assert.True(e.Query($"mk({clauses}).").Success);
-        DynamicCodePatcher.ResetSelCounters();
+        DynamicCodePatcher.ResetSelCounters(CpFid);
         DynamicCodePatcher.DynSelDiag = true;
         try { Assert.True(e.Query($"mk(0), {goal}.").Success); }
         finally { DynamicCodePatcher.DynSelDiag = false; }

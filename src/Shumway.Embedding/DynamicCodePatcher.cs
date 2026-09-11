@@ -1281,13 +1281,26 @@ internal sealed class DynamicCodePatcher
     /// only, and an activation dispatches on one thread.</summary>
     internal static long SelSole, SelNone, SelDeclined;
 
-    internal static void ResetSelCounters() => SelSole = SelNone = SelDeclined = 0;
+    /// <summary>When nonzero, only this functor is tallied. The tallies are
+    /// process-wide and a query dispatches more dynamic predicates than the
+    /// one under test -- whatever a previously loaded library left in the
+    /// prelude counts too, which is ambient and not reproducible.</summary>
+    internal static int SelDiagFid;
+
+    internal static void ResetSelCounters(int fid = 0)
+    {
+        SelSole = SelNone = SelDeclined = 0;
+        SelDiagFid = fid;
+    }
 
     private static int SelDiag(int fid, int result, string reason)
     {
         if (DynSelDiag)
         {
-            if (result == -1) SelNone++; else SelDeclined++;
+            if (SelDiagFid == 0 || fid == SelDiagFid)
+            {
+                if (result == -1) SelNone++; else SelDeclined++;
+            }
             string name = "?";
             if (fid != 0)
             {
@@ -1394,7 +1407,7 @@ internal sealed class DynamicCodePatcher
         var op = (Shumway.Core.Opcode)prog[addr];
         if (op != Shumway.Core.Opcode.TryMeElse
             && op != Shumway.Core.Opcode.RetryMeElse) return SelDiag(fid, -2, $"entry-op={op}");
-        if (DynSelDiag) SelSole++;
+        if (DynSelDiag && (SelDiagFid == 0 || fid == SelDiagFid)) SelSole++;
         return addr + ChainEntryHeaderSize(prog, addr);
     }
 
