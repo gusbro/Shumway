@@ -2,6 +2,8 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using System.IO;
+using Shumway.Builtins;
+using Shumway.Core;
 using Shumway.Embedding;
 using Xunit;
 
@@ -113,36 +115,28 @@ public sealed class NestedCatchScalingTests
     /// four million calls were most of a gigabyte. An exit that nothing can
     /// come back to now drops the frame outright.
     ///
-    /// <para>Measured as a SHAPE, like the one above: the loop runs twice at
-    /// sizes an order of magnitude apart, and the second must not cost ten
-    /// times the managed memory of the first. A leak of a fixed size per call
-    /// cannot pass that; the bound is loose enough that GC timing cannot fail
-    /// it.</para></summary>
+    /// <para>Counted rather than weighed. Managed memory was the obvious
+    /// measure and the wrong one: the loop also grows the PROLOG heap by two
+    /// cells a call, which at these sizes is the same order as the frames, so
+    /// the test was really measuring legitimate allocation and it failed on
+    /// .NET Framework where the two land differently. The frame count is the
+    /// thing the fix is about, it is exact, and it is the same number on every
+    /// runtime.</para></summary>
     [Fact]
     public void ADeterministicLoopDoesNotKeepAFramePerCatch()
     {
+        BuiltinsRegistry.Register("$catch_frames", 1,
+            a => a.UnifyRegisterWithCell(0, Cell.Int(a.CatchFrameCount)));
         var e = new PrologEngine { Out = new StringWriter() };
         e.ConsultString("""
             loop(0) :- !.
             loop(N) :- catch(true, -, true), M is N - 1, loop(M).
             """);
-        long Cost(int n)
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-            long before = GC.GetTotalMemory(true);
-            Assert.True(e.Query($"loop({n}).").Success);
-            return GC.GetTotalMemory(false) - before;
-        }
-        long small = Cost(20_000);
-        long large = Cost(400_000);
-        // Twenty times the calls; a per-call frame would be twenty times the
-        // memory. Allow five, which no accumulation can fit under and no GC
-        // schedule can exceed.
-        Assert.True(large < System.Math.Max(small, 1_000_000) * 5,
-            $"20,000 calls cost {small:N0} bytes and 400,000 cost {large:N0}; "
-            + "a frame per catch/3 is being kept");
+        // 200,000 calls left 200,000 frames standing. The bound is loose --
+        // what matters is that it does not grow with the loop.
+        Assert.True(
+            e.Query("loop(200000), '$catch_frames'(C), C < 100.").Success,
+            "a frame per catch/3 is being kept");
     }
 
     /// <summary>ANTI-VACUITY for the reclamation, and the condition it turns
