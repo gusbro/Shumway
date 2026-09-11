@@ -985,7 +985,44 @@ public sealed partial class Activation
         if (Unify(aIdx, bIdx, 0, null)) return true;
         if (!_unifyEscalate) return false;
         _unifyEscalate = false;
-        return Unify(aIdx, bIdx, 0, new HashSet<long>());
+        return Escalated(aIdx, bIdx);
+    }
+
+    /// <summary>Pairs whose unification was put off because the term was
+    /// deeper than the recursion is allowed to go. Heap index pairs, packed;
+    /// pooled on the engine and empty between calls.</summary>
+    private List<long>? _unifyDeferred;
+
+    /// <summary>The escalated pass, plus the work list it fills. A pair put
+    /// off at the depth limit is unified here at depth zero, and one of those
+    /// may put off pairs of its own, so this runs until the list is empty:
+    /// C# stack use is bounded by the limit however deep the term goes.
+    ///
+    /// <para>The mark makes it re-entrant. A unification reached from inside
+    /// one (an attributed variable's hook) owns only what it pushed, and a
+    /// failure unwinds to the mark rather than clearing the list under
+    /// whoever is above.</para></summary>
+    private bool Escalated(int aIdx, int bIdx)
+    {
+        var pairs = new HashSet<long>();
+        int mark = _unifyDeferred?.Count ?? 0;
+        try
+        {
+            if (!Unify(aIdx, bIdx, 0, pairs)) return false;
+            while (_unifyDeferred is { } work && work.Count > mark)
+            {
+                long pending = work[^1];
+                work.RemoveAt(work.Count - 1);
+                if (!Unify((int)(pending >> 32), (int)(uint)pending, 0, pairs))
+                    return false;
+            }
+            return true;
+        }
+        finally
+        {
+            if (_unifyDeferred is { } left && left.Count > mark)
+                left.RemoveRange(mark, left.Count - mark);
+        }
     }
 
     /// <summary>The occurs_check flag's route for general unification: the
@@ -1032,18 +1069,35 @@ public sealed partial class Activation
     private bool Unify(int aIdx, int bIdx, int depth, HashSet<long>? activePairs)
     {
         Profiler.Unify();
-        if (activePairs is null && depth >= UnifyRecursionLimit)
+        if (depth >= UnifyRecursionLimit)
         {
-            // Escalate by RESTART, not in place: a set created here only
-            // covers THIS subtree — the recursion unwinds below the limit,
-            // dives into the cycle again with a fresh empty set, and the
-            // pair knowledge is lost forever (A=A*B, B=C*A*C, A=B hung
-            // exactly so, oscillating around the limit). The entry point
-            // re-runs the WHOLE unification with the guard on from depth 0;
-            // bindings already made are monotone (they re-unify via the
-            // address shortcut or the pair set), so no rollback is needed.
-            _unifyEscalate = true;
-            return false;
+            if (activePairs is null)
+            {
+                // Escalate by RESTART, not in place: a set created here only
+                // covers THIS subtree — the recursion unwinds below the limit,
+                // dives into the cycle again with a fresh empty set, and the
+                // pair knowledge is lost forever (A=A*B, B=C*A*C, A=B hung
+                // exactly so, oscillating around the limit). The entry point
+                // re-runs the WHOLE unification with the guard on from depth 0;
+                // bindings already made are monotone (they re-unify via the
+                // address shortcut or the pair set), so no rollback is needed.
+                _unifyEscalate = true;
+                return false;
+            }
+            // Already escalated, and the term is deeper than the C# stack can
+            // be trusted with — a stack overflow cannot be caught, so it is
+            // not an option. The pair goes on a WORK LIST the entry point
+            // drains at depth 0, which is the mixed form: recursive while the
+            // depth is known to be safe, an explicit stack past that.
+            //
+            // Deferring is sound because unification is CONFLUENT: which
+            // equation you solve first cannot change the most general unifier,
+            // nor whether the set is solvable at all. And the pair set is
+            // append-only here (see below), so order cannot change what it
+            // knows either.
+            (_unifyDeferred ??= new List<long>())
+                .Add(((long)aIdx << 32) | (uint)bIdx);
+            return true;
         }
         int aAddr = Deref(aIdx);
         int bAddr = Deref(bIdx);
@@ -1207,7 +1261,7 @@ public sealed partial class Activation
         if (UnifyStr(fA, fB)) return true;
         if (!_unifyEscalate) return false;
         _unifyEscalate = false;
-        return UnifyStr(fA, fB, 0, new HashSet<long>());
+        return EscalatedStr(fA, fB);
     }
 
     private bool GuardedUnifyLis(int hA, int hB)
@@ -1215,7 +1269,37 @@ public sealed partial class Activation
         if (UnifyLis(hA, hB)) return true;
         if (!_unifyEscalate) return false;
         _unifyEscalate = false;
-        return UnifyLis(hA, hB, 0, new HashSet<long>());
+        return EscalatedLis(hA, hB);
+    }
+
+    // The same escalated pass as Escalated(int, int), entered at a compound
+    // rather than at a pair of cells. Both drain the work list; see there.
+    private bool EscalatedStr(int fA, int fB) => Escalated(fA, fB, str: true);
+
+    private bool EscalatedLis(int hA, int hB) => Escalated(hA, hB, str: false);
+
+    private bool Escalated(int a, int b, bool str)
+    {
+        var pairs = new HashSet<long>();
+        int mark = _unifyDeferred?.Count ?? 0;
+        try
+        {
+            if (!(str ? UnifyStr(a, b, 0, pairs) : UnifyLis(a, b, 0, pairs)))
+                return false;
+            while (_unifyDeferred is { } work && work.Count > mark)
+            {
+                long pending = work[^1];
+                work.RemoveAt(work.Count - 1);
+                if (!Unify((int)(pending >> 32), (int)(uint)pending, 0, pairs))
+                    return false;
+            }
+            return true;
+        }
+        finally
+        {
+            if (_unifyDeferred is { } left && left.Count > mark)
+                left.RemoveRange(mark, left.Count - mark);
+        }
     }
 
     private bool UnifyStr(int fA, int fB, int depth = 0, HashSet<long>? activePairs = null)
@@ -1318,8 +1402,10 @@ public sealed partial class Activation
         {
             Tag.Atom => a.AsAtomId == b.AsAtomId,
             Tag.Int => a.AsInt == b.AsInt,
-            Tag.Str => UnifyStrWithOccursCheck(a.AsHeapIndex, b.AsHeapIndex),
-            Tag.Lis => UnifyLisWithOccursCheck(a.AsHeapIndex, b.AsHeapIndex),
+            Tag.Str => RunOccursCheck(
+                new OccursItem(OccursWork.Str, a.AsHeapIndex, b.AsHeapIndex)),
+            Tag.Lis => RunOccursCheck(
+                new OccursItem(OccursWork.Lis, a.AsHeapIndex, b.AsHeapIndex)),
             Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
             Tag.Rational => _rationalTable[a.AsRationalId].Equals(_rationalTable[b.AsRationalId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
@@ -1338,9 +1424,80 @@ public sealed partial class Activation
     /// <c>X = f(X)</c>), at the cost of one structural walk per bind.
     /// </summary>
     public bool UnifyWithOccursCheck(int aIdx, int bIdx)
-        => UnifyWithOccursCheck(aIdx, bIdx, activePairs: null);
+        => RunOccursCheck(new OccursItem(OccursWork.Pair, aIdx, bIdx));
 
-    private bool UnifyWithOccursCheck(int aIdx, int bIdx, HashSet<long>? activePairs)
+    /// <summary>What the occurs-checked walk still owes. `Leave` is how a
+    /// compound gets OFF the path it joined: pushed under its children, it
+    /// runs when they are done, which is what a `finally` did when this
+    /// descended the C# stack.</summary>
+    private enum OccursWork : byte { Pair, Str, Lis, Leave }
+
+    /// <summary>A queued step. The path key a Leave removes IS the pair it
+    /// names, so it is recomputed rather than carried: one field fewer in a
+    /// struct copied on every push and pop.</summary>
+    private readonly record struct OccursItem(OccursWork Kind, int A, int B)
+    {
+        public long PathKey => ((long)A << 32) | (uint)B;
+    }
+
+    /// <summary>The occurs-checked unification, on an EXPLICIT stack. How deep
+    /// a term nests is the program's choice and a .NET stack overflow cannot
+    /// be caught, so this may not spend a frame per level.
+    ///
+    /// <para>The work list rather than the deferral the plain unifier uses:
+    /// this pair set is a PATH, removed on the way out, so a pair put off
+    /// until later would no longer see the ancestors that make a cyclic term
+    /// terminate. Enter and leave have to keep their nesting, and here they
+    /// do -- a Leave item sits under the children of the compound that pushed
+    /// it.</para></summary>
+    private bool RunOccursCheck(OccursItem seed)
+    {
+        // Both scratch structures come into being only when something needs
+        // them: the work list is pooled on the engine and the path set is not
+        // built until a compound joins it, so `X = a` under the flag allocates
+        // nothing, exactly as it did when this descended the C# stack. The
+        // mark keeps the pooled list re-entrant, for a unification reached
+        // from inside one through an attributed variable's hook.
+        var work = _occursWork ??= new List<OccursItem>();
+        int mark = work.Count;
+        HashSet<long>? path = null;
+        try
+        {
+            work.Add(seed);
+            while (work.Count > mark)
+            {
+                OccursItem item = work[^1];
+                work.RemoveAt(work.Count - 1);
+                bool ok;
+                switch (item.Kind)
+                {
+                    case OccursWork.Leave: path!.Remove(item.PathKey); continue;
+                    case OccursWork.Pair:
+                        ok = UnifyWithOccursCheck(item.A, item.B, ref path, work);
+                        break;
+                    case OccursWork.Str:
+                        ok = EnterOccursStr(item.A, item.B, ref path, work);
+                        break;
+                    default:
+                        ok = EnterOccursLis(item.A, item.B, ref path, work);
+                        break;
+                }
+                if (!ok) return false;
+            }
+            return true;
+        }
+        finally
+        {
+            if (work.Count > mark) work.RemoveRange(mark, work.Count - mark);
+        }
+    }
+
+    /// <summary>Pooled work list for the occurs-checked walk; empty between
+    /// calls.</summary>
+    private List<OccursItem>? _occursWork;
+
+    private bool UnifyWithOccursCheck(
+        int aIdx, int bIdx, ref HashSet<long>? path, List<OccursItem> work)
     {
         int aAddr = Deref(aIdx);
         int bAddr = Deref(bIdx);
@@ -1393,8 +1550,9 @@ public sealed partial class Activation
         {
             Tag.Atom => aCell.AsAtomId == bCell.AsAtomId,
             Tag.Int => aCell.AsInt == bCell.AsInt,
-            Tag.Str => UnifyStrWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex, activePairs),
-            Tag.Lis => UnifyLisWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex, activePairs),
+            // Queued, not descended: the enclosing loop runs them.
+            Tag.Str => Queue(OccursWork.Str, aCell.AsHeapIndex, bCell.AsHeapIndex, work),
+            Tag.Lis => Queue(OccursWork.Lis, aCell.AsHeapIndex, bCell.AsHeapIndex, work),
             Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
             Tag.Rational => _rationalTable[aCell.AsRationalId].Equals(_rationalTable[bCell.AsRationalId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
@@ -1410,31 +1568,46 @@ public sealed partial class Activation
     // tree fixpoint (this engine's terms ARE rational trees; Trealla agrees).
     // The occurs CHECK itself guards only the creation of NEW cycles: a
     // variable binding to a term it occurs in (OccursIn, on the Ref paths).
-    private bool UnifyStrWithOccursCheck(int fA, int fB, HashSet<long>? activePairs = null)
+    private static bool Queue(OccursWork kind, int a, int b, List<OccursItem> work)
+    {
+        work.Add(new OccursItem(kind, a, b));
+        return true;
+    }
+
+    /// <summary>Joins a compound pair to the path and queues its arguments.
+    /// Re-entering a pair already ON the path SUCCEEDS -- it is the pair being
+    /// unified above us, and assuming it equal is the rational-tree fixpoint
+    /// (this engine's terms ARE rational trees; Trealla agrees), which is what
+    /// makes X = f(X), Y = f(Y), unify_with_occurs_check(X, Y) terminate. The
+    /// occurs CHECK itself guards only the creation of NEW cycles: a variable
+    /// binding to a term it occurs in, on the Ref paths above.</summary>
+    private bool EnterOccursStr(
+        int fA, int fB, ref HashSet<long>? path, List<OccursItem> work)
     {
         int functorIdA = _heap[fA].AsFunctorId;
         int functorIdB = _heap[fB].AsFunctorId;
         if (functorIdA != functorIdB) return false;
         long pairKey = ((long)fA << 32) | (uint)fB;
-        activePairs ??= new HashSet<long>();
-        if (!activePairs.Add(pairKey)) return true;   // cyclic pair → coinductive success
+        if (!(path ??= new HashSet<long>()).Add(pairKey)) return true;   // coinductive
         var (_, arity) = FunctorTable.Lookup(functorIdA);
-        bool ok = true;
-        for (int i = 1; i <= arity && ok; i++)
-            ok = UnifyWithOccursCheck(fA + i, fB + i, activePairs);
-        activePairs.Remove(pairKey);
-        return ok;
+        // Leave first so it runs LAST, and arguments in reverse so they run
+        // left to right -- the order the recursive form unified them in, which
+        // decides which of two failures is reported.
+        work.Add(new OccursItem(OccursWork.Leave, fA, fB));
+        for (int i = arity; i >= 1; i--)
+            work.Add(new OccursItem(OccursWork.Pair, fA + i, fB + i));
+        return true;
     }
 
-    private bool UnifyLisWithOccursCheck(int hA, int hB, HashSet<long>? activePairs = null)
+    private bool EnterOccursLis(
+        int hA, int hB, ref HashSet<long>? path, List<OccursItem> work)
     {
         long pairKey = ((long)hA << 32) | (uint)hB;
-        activePairs ??= new HashSet<long>();
-        if (!activePairs.Add(pairKey)) return true;   // cyclic pair → coinductive success
-        bool ok = UnifyWithOccursCheck(hA, hB, activePairs)
-               && UnifyWithOccursCheck(hA + 1, hB + 1, activePairs);
-        activePairs.Remove(pairKey);
-        return ok;
+        if (!(path ??= new HashSet<long>()).Add(pairKey)) return true;   // coinductive
+        work.Add(new OccursItem(OccursWork.Leave, hA, hB));
+        work.Add(new OccursItem(OccursWork.Pair, hA + 1, hB + 1));
+        work.Add(new OccursItem(OccursWork.Pair, hA, hB));
+        return true;
     }
 
     /// <summary>True iff the variable cell at <paramref name="targetAddr"/>
