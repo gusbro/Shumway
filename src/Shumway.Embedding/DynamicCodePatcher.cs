@@ -1384,44 +1384,6 @@ internal sealed class DynamicCodePatcher
         return addr + ChainEntryHeaderSize(prog, addr);
     }
 
-    // First-arg key compatibility: a clause whose head first argument is a
-    // variable (or a shape we don't key) matches ANY call; otherwise the tags
-    // must be unifiable and, for atoms/small ints, the values equal. Every
-    // uncertain shape returns true (the clause stays a candidate — that only
-    // costs the selection, never correctness). "Keyed" call tags are the ones
-    // whose mismatch PROVES non-unifiability against a constant/compound key.
-    private static bool EntryKeyCouldMatch(Activation engine, DynChainEntry entry, Cell callArg)
-    {
-        Term head = entry.Clause.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
-            ? h : entry.Clause.Term;
-        if (head is not CompoundTerm hc || hc.Args.Length == 0) return true;
-        bool keyedCall = callArg.Tag is Tag.Atom or Tag.Int or Tag.Str or Tag.Lis or Tag.Pstr;
-        if (!keyedCall) return true;
-        switch (hc.Args[0])
-        {
-            case AtomTerm a:
-                return callArg.Tag == Tag.Atom
-                    && AtomTable.Intern(a.Name, permanent: true).Id == callArg.AsAtomId;
-            case IntTerm i:
-                return callArg.Tag == Tag.Int && callArg.AsInt == i.Value;
-            case CompoundTerm c when c.Functor == "." && c.Args.Length == 2:
-                return callArg.Tag is Tag.Lis or Tag.Pstr;
-            case CompoundTerm c:
-                // Real functor/arity comparison: Logtalk's per-entity `_def`
-                // tables are chains keyed by DISTINCT goal-template compounds
-                // (precision(_), order(_), …) — without this the whole chain
-                // stayed multi-candidate and the lgtunit determinism tests
-                // under debug(on) saw the surviving chain CP.
-                if (callArg.Tag != Tag.Str) return false;
-                var (aid, ar) = FunctorTable.Lookup(
-                    engine.GetHeap(callArg.AsHeapIndex).AsFunctorId);
-                return c.Args.Length == ar
-                    && AtomTable.Intern(c.Functor, permanent: true).Id == aid;
-            default:
-                return true;    // var / float / bigint / unkeyed head shapes
-        }
-    }
-
     internal DynChainTable GetOrCreateChainTable(Activation engine)
         => _engineChainTables.GetValue(engine, static _ => new DynChainTable());
 
@@ -1764,6 +1726,10 @@ internal readonly record struct DynFirstArgKey(byte Kind, long Value)
     public bool MatchesEverything => Kind == AnythingKind;
 
     /// <summary>The key of a clause's head first argument.</summary>
+    /// <remarks>Every shape that cannot PROVE a mismatch must map to
+    /// <see cref="Anything"/>. Getting that wrong makes the selection wrong,
+    /// not merely slower: a clause left out of a call's candidates is a
+    /// solution that never runs.</remarks>
     public static DynFirstArgKey Of(Clause c)
     {
         Term head = c.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
@@ -1778,6 +1744,10 @@ internal readonly record struct DynFirstArgKey(byte Kind, long Value)
             case CompoundTerm { Functor: ".", Args.Length: 2 }:
                 return new(ListKind, 0);
             case CompoundTerm cc:
+                // Functor AND arity, not just "some compound": Logtalk's
+                // per-entity `_def` tables are chains keyed by DISTINCT goal
+                // templates (precision(_), order(_), ...), and keying them
+                // together would leave the whole chain multi-candidate.
                 return new(StructKind,
                     ((long)AtomTable.Intern(cc.Functor, permanent: true).Id << 32)
                     | (uint)cc.Args.Length);

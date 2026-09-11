@@ -74,11 +74,41 @@ maintained alongside `DynChainTable`.
 - Compiled shapes do not change: no new opcodes, no bundle-format impact,
   the dynamic-seeds path untouched.
 - Cost: one deref + one small table lookup per dynamic dispatch of a
-  bound-first-arg call; the selection scan is O(entries) over an in-memory
-  array (the same order the chain walk itself would pay in failure cases —
-  and strictly less work when it prunes).
+  bound-first-arg call.
 - The JIT indexed compile remains purely a performance upgrade (O(1)
   dispatch), as it always should have been.
+
+## Amendment (2026-09-11): the key really is per entry now
+
+As shipped, the selection did NOT do what point 1 above says. The key was
+re-derived from the clause's AST on every dispatch — interning the head atom
+per clause, per call — and the candidates were found by walking every entry.
+The original cost note excused that as "the same order the chain walk itself
+would pay", which does not hold: the walk stops at its first match, while the
+selection must see every entry to prove there is no SECOND candidate. So it
+always paid the full O(entries), including on the path it was meant to speed
+up.
+
+That is invisible while the JIT's indexed recompile is doing the real work,
+because that recompile happens at query SETUP. It is not invisible for a
+predicate built and used inside ONE query, which never reaches it — which is
+what `setup_call_cleanup/3` does, asserting a `'$cleanup_pending'` clause per
+level. A nest of it was quadratic for this reason.
+
+Point 1 is now true: the key is decided once in the entry's constructor, and
+`DynChainState` keeps buckets beside its list — one per key, plus the entries
+that match anything — maintained by the only four operations that change the
+list. 20,000 calls on one key, varying only the predicate's size: 0.86s ->
+0.20s over 2,000 clauses, and 20.0s -> 0.08s over 32,000.
+
+Ordering is unaffected BY CONSTRUCTION, which is what makes this safe: the
+buckets answer only "exactly one candidate" or "none". Two or more still
+declines and the chain runs from its head, so nothing here can reorder a
+solution.
+
+`retract/1` is NOT covered: it walks the clause list itself rather than
+dispatching, so it stays O(clauses) and the `setup_call_cleanup` nest stays
+quadratic until that is addressed separately.
 
 ## Conformance case
 
