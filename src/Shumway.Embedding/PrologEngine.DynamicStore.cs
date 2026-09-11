@@ -368,6 +368,22 @@ public sealed partial class PrologEngine
     /// permanently at ~100 tombstones that every read walked — 1.55M
     /// retry dispatches per lint. The re-thread is O(live) pointer
     /// patches, so the dead count alone is the right trigger.</para></summary>
+    /// <summary>Every chunk address this chain owns — live entries, the dead
+    /// chunks not yet reclaimed, and the head. Built only when a choice
+    /// point's saved BP falls inside the chain's address envelope.</summary>
+    /// <summary>How many times the exact chunk-address set had to be built
+    /// — the O(clauses) work the envelope exists to avoid. Zero over a drain.</summary>
+    internal long ChainAddressSetsBuilt;
+
+    private static HashSet<int> BuildChainAddressSet(DynChainState chain)
+    {
+        var set = new HashSet<int>();
+        foreach (var e in chain.Entries) set.Add(e.ChunkAddr);
+        foreach (var (a, _) in chain.DeadChunks) set.Add(a);
+        set.Add(chain.HeadClauseAddr);
+        return set;
+    }
+
     private void TryReclaimDeadDynamicChain(Activation engine, int functorId)
     {
         if (engine.CurrentProgram is null) return;
@@ -388,12 +404,27 @@ public sealed partial class PrologEngine
         // entries + dead chunks + the head). A choice point enumerating
         // the predicate has SavedBp at one of these. If any active CP
         // does, an enumeration is in progress — keep the dead clauses.
-        var chainAddrs = new HashSet<int>();
-        foreach (var e in chain.Entries) chainAddrs.Add(e.ChunkAddr);
-        foreach (var (a, _) in chain.DeadChunks) chainAddrs.Add(a);
-        chainAddrs.Add(chain.HeadClauseAddr);
+        // Reject by the chain's ADDRESS ENVELOPE first: that is one compare
+        // per choice point and no allocation. Building the exact set of chunk
+        // addresses costs O(clauses) per fire, and the answer is almost always
+        // "no choice point is in this chain" -- which was the single biggest
+        // cost of a drain. Only a saved BP that lands inside the envelope
+        // needs the set, and the envelope is conservative (other predicates'
+        // chunks can lie between ours), so the set still decides.
+        int lo = chain.MinChunkAddr, hi = chain.MaxChunkAddr;
+        if (chain.HeadClauseAddr < lo) lo = chain.HeadClauseAddr;
+        if (chain.HeadClauseAddr > hi) hi = chain.HeadClauseAddr;
+        HashSet<int>? chainAddrs = null;
         foreach (var (_, savedBp, _) in engine.EnumerateChoicePoints())
+        {
+            if (savedBp < lo || savedBp > hi) continue;
+            if (chainAddrs is null)
+            {
+                ChainAddressSetsBuilt++;
+                chainAddrs = BuildChainAddressSet(chain);
+            }
             if (chainAddrs.Contains(savedBp)) return;
+        }
         ChainReclaims++;
 
         // Safe and worthwhile — re-thread the chain through its live
@@ -406,7 +437,7 @@ public sealed partial class PrologEngine
         // while another goal iterates this predicate" caveat is exactly
         // the safety condition checked above.
         GarbageCollectClauses(engine, functorId, reclaimChunks: false);
-    }
+           }
 
     /// <summary>Removes every asserted clause of the given dynamic functor and
     /// drops the functor from the dynamic registry, so subsequent calls raise

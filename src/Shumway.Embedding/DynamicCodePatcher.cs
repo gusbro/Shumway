@@ -1557,9 +1557,33 @@ internal sealed class DynChainState
     private readonly Dictionary<DynFirstArgKey, List<DynChainEntry>> _byKey = new();
     private readonly List<DynChainEntry> _matchAnything = new();
 
-    public void AppendEntry(DynChainEntry e) { Entries.Add(e); Index(e); }
+    // Dead-chain reclamation asks "is any choice point sitting INSIDE this
+    // chain". It answered that by building a set of every chunk address in
+    // the chain, per fire -- O(clauses) of allocation and hashing to answer a
+    // question that is almost always no, which was the single biggest cost of
+    // a drain. These bounds, maintained as entries come and go, let the CP
+    // scan reject an address without touching the chain at all; only an
+    // address that falls INSIDE the range needs the exact set. They are a
+    // conservative envelope (other predicates' chunks can lie between ours),
+    // never a verdict.
+    public int MinChunkAddr = int.MaxValue;
+    public int MaxChunkAddr = int.MinValue;
 
-    public void PrependEntry(DynChainEntry e) { Entries.Insert(0, e); Index(e); }
+    /// <summary>Brings an address into the envelope. The live entries do this
+    /// themselves; the head and the dead chunks are added by the caller that
+    /// records them.</summary>
+    public void WidenBounds(int addr)
+    {
+        if (addr < 0) return;
+        if (addr < MinChunkAddr) MinChunkAddr = addr;
+        if (addr > MaxChunkAddr) MaxChunkAddr = addr;
+    }
+
+    public void AppendEntry(DynChainEntry e)
+    { Entries.Add(e); Index(e); WidenBounds(e.ChunkAddr); }
+
+    public void PrependEntry(DynChainEntry e)
+    { Entries.Insert(0, e); Index(e); WidenBounds(e.ChunkAddr); }
 
     public void RemoveEntryAt(int i)
     {
@@ -1576,6 +1600,8 @@ internal sealed class DynChainState
     public void ClearEntries()
     {
         Entries.Clear();
+        MinChunkAddr = int.MaxValue;
+        MaxChunkAddr = int.MinValue;
         _byKey.Clear();
         _matchAnything.Clear();
     }
