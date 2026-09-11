@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using Shumway.Embedding;
@@ -38,27 +37,96 @@ public sealed class DynamicDispatchIndexTests
     }
 
     /// <summary>The shape: a FIXED number of calls, and only the size of the
-    /// predicate varies. Walking the chain makes the second case sixteen times
-    /// the first; a lookup makes it the same.</summary>
+    /// predicate varies.
+    ///
+    /// <para>COUNTED, not timed. The cost this is about is C# work inside the
+    /// selector, so no Prolog-level counter sees it -- inferences and heap
+    /// cells come out identical (40,002 and 20,000) whether the selector
+    /// walks 2,000 entries per call or none. And the clock cannot say it
+    /// either: the wall time of these runs is not even monotonic in the
+    /// clause count on an idle machine, so a ratio bound over it fails on
+    /// whichever lane the noise lands badly (it did, on net48-x86).</para>
+    ///
+    /// <para>What the fix actually claims is that the selector ANSWERS from
+    /// its buckets instead of handing the call back to the chain. That is
+    /// exact, and it is the same integer on every runtime and every clause
+    /// count.</para></summary>
     [Fact]
     public void ACallCostsTheSameWhateverTheClauseCountIs()
     {
-        double small = Timed(2_000);
-        double large = Timed(32_000);
-        Assert.True(large < System.Math.Max(small, 0.05) * 6,
-            $"20,000 calls took {small:F2}s over 2,000 clauses and "
-            + $"{large:F2}s over 32,000");
+        foreach (int clauses in new[] { 2_000, 32_000 })
+        {
+            var (sole, none, declined) = Verdicts(clauses);
+            // Not one of the 20,000 calls was handed back to the chain, at
+            // either size. That IS the O(1) claim: a walk cannot produce it
+            // (breaking the buckets gives 0 resolved and 20,000 declined).
+            Assert.Equal(0L, declined);
+            Assert.Equal(0L, none);
+            // A floor, not an equality: the tally is per process, so whatever
+            // dynamic predicates a previously loaded library leaves in the
+            // prelude dispatch here too and add to it.
+            Assert.True(sole >= 20_000, $"{clauses} clauses: sole={sole}");
+        }
     }
 
-    private static double Timed(int clauses)
+    /// <summary>ANTI-VACUITY: the counters are not simply always these
+    /// numbers. A call the buckets cannot answer must DECLINE -- an unbound
+    /// first argument leaves every clause a candidate -- and a key no clause
+    /// carries must be ruled out without walking.</summary>
+    [Fact]
+    public void ACallTheBucketsCannotAnswerIsHandedBackToTheChain()
+    {
+        // An unbound first argument leaves every clause a candidate, so the
+        // call is handed back. Here that happens exactly once: the first call
+        // BINDS the key, and the 99 after it are answered from the buckets --
+        // which is the decline path and its exit in one number.
+        var (sole, none, declined) = Verdicts(2_000, "hit(100, _)");
+        Assert.Equal(1L, declined);
+        Assert.Equal(0L, none);
+        Assert.True(sole >= 99, $"sole={sole}");
+        // A key no clause has: ruled out, and the call fails -- without the
+        // chain ever running.
+        var e = Engine();
+        Assert.True(e.Query("mk(2000).").Success);
+        DynamicCodePatcher.ResetSelCounters();
+        DynamicCodePatcher.DynSelDiag = true;
+        try { Assert.False(e.Query("cp(999999, _).").Success); }
+        finally { DynamicCodePatcher.DynSelDiag = false; }
+        Assert.Equal(1L, DynamicCodePatcher.SelNone);
+        Assert.Equal(0L, DynamicCodePatcher.SelDeclined);
+    }
+
+    /// <summary>ANTI-VACUITY for the answers themselves: selecting one clause
+    /// out of thousands must return the RIGHT one, and must leave no choice
+    /// point behind it.</summary>
+    [Fact]
+    public void SelectingOneClauseOutOfThousandsStillAnswersCorrectly()
+    {
+        var e = Engine();
+        Assert.True(e.Query("mk(2000).").Success);
+        Assert.Single(e.QueryAll("cp(1500, X)."));
+        Assert.True(e.Query("cp(1500, x).").Success);
+        Assert.False(e.Query("cp(1500, y).").Success);
+        Assert.False(e.Query("cp(2001, _).").Success);
+    }
+
+    /// <summary>Runs a fixed number of calls over a predicate of the given
+    /// size and reports what the selector decided: (sole, none, declined).
+    /// The build and the calls share ONE query, so the JIT's query-setup
+    /// recompile cannot index the predicate first -- which is the case this
+    /// is about.</summary>
+    private static (long Sole, long None, long Declined) Verdicts(
+        int clauses, string goal = "hit(20000, 1)")
     {
         var e = Engine();
         Assert.True(e.Query($"mk({clauses}).").Success);
-        var sw = Stopwatch.StartNew();
-        // Same query as the build, so the JIT's query-setup recompile cannot
-        // rescue it -- which is the case this is about.
-        Assert.True(e.Query($"mk(0), hit(20000, 1).").Success);
-        return sw.Elapsed.TotalSeconds;
+        DynamicCodePatcher.ResetSelCounters();
+        DynamicCodePatcher.DynSelDiag = true;
+        try { Assert.True(e.Query($"mk(0), {goal}.").Success); }
+        finally { DynamicCodePatcher.DynSelDiag = false; }
+        return (DynamicCodePatcher.SelSole, DynamicCodePatcher.SelNone,
+            DynamicCodePatcher.SelDeclined);
+
     }
 
     /// <summary>ANTI-VACUITY, and the whole contract: which clauses run, and

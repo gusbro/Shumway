@@ -1268,13 +1268,26 @@ internal sealed class DynamicCodePatcher
     /// Selection includes logically-dead entries as candidates: their
     /// <c>check_visible</c> still runs at the jump target, and a sole-but-dead
     /// candidate correctly fails the call.</summary>
-    private static readonly bool DynSelDiag =
+    /// <summary>Settable so a test can ask what the selector DECIDED. The
+    /// cost this guards is C# work per call, which no Prolog-level counter
+    /// (inferences, heap cells) can see -- measuring it by the clock is
+    /// measuring the machine, so the verdict itself is the observable.</summary>
+    internal static bool DynSelDiag =
         System.Environment.GetEnvironmentVariable("SHUMWAY_DYNSEL_DIAG") == "1";
+
+    /// <summary>Verdict tallies, counted only while <see cref="DynSelDiag"/>
+    /// is on: a sole candidate jumped to, a call ruled out without walking,
+    /// and a call handed back to the chain. Not interlocked -- diagnostic
+    /// only, and an activation dispatches on one thread.</summary>
+    internal static long SelSole, SelNone, SelDeclined;
+
+    internal static void ResetSelCounters() => SelSole = SelNone = SelDeclined = 0;
 
     private static int SelDiag(int fid, int result, string reason)
     {
         if (DynSelDiag)
         {
+            if (result == -1) SelNone++; else SelDeclined++;
             string name = "?";
             if (fid != 0)
             {
@@ -1381,6 +1394,7 @@ internal sealed class DynamicCodePatcher
         var op = (Shumway.Core.Opcode)prog[addr];
         if (op != Shumway.Core.Opcode.TryMeElse
             && op != Shumway.Core.Opcode.RetryMeElse) return SelDiag(fid, -2, $"entry-op={op}");
+        if (DynSelDiag) SelSole++;
         return addr + ChainEntryHeaderSize(prog, addr);
     }
 
