@@ -283,6 +283,13 @@ public sealed partial class Activation
     // ----- catch/3 frame stack -----
 
     private const long CatchTrailPush = 0;
+    /// <summary>A push record whose frame was already reclaimed on a
+    /// deterministic exit. The record stays where it is -- the entries the
+    /// guarded goal wrote after it are still live, and the nested driver's
+    /// failure path does not rewind this trail -- so it is neutered in place
+    /// rather than removed. Undoing it does nothing, which is right: the
+    /// frame it would have removed is gone.</summary>
+    private const long CatchTrailReclaimed = 2;
     private const long CatchTrailDeactivate = 1;
 
     /// <summary>Number of catch frames on the stack (active or not).</summary>
@@ -386,6 +393,11 @@ public sealed partial class Activation
         {
             if (!_catchFrames[i].Active) continue;
             CatchFrame f = _catchFrames[i];
+            if (TryReclaimCatchFrame(i, f))
+            {
+                _catchScanFrom = i - 1;
+                return;
+            }
             f.Active = false;
             _catchFrames[i] = f;
             if (CatchDiag)
@@ -404,6 +416,50 @@ public sealed partial class Activation
             return;
         }
         _catchScanFrom = -1;
+    }
+
+    /// <summary>Drops a frame outright instead of parking it, when nothing can
+    /// come back for it. A frame is otherwise reclaimed only by BACKTRACKING,
+    /// through its push record, so a deterministic loop accumulated one per
+    /// catch/3 forever -- about 230 bytes a call, and four million calls were
+    /// most of a gigabyte.
+    ///
+    /// <para>Two conditions, both necessary. The frame must be the TOP one, or
+    /// removing it would renumber the frames above that other trail records
+    /// name. And no choice point may have outlived the guarded goal
+    /// (<c>_b &lt;= SnapB</c>), since that is exactly what could re-enter it and
+    /// need the catcher live again; a cut that took choice points from BELOW
+    /// the catch is fine too, because backtracking then leaves the catch
+    /// entirely and would have removed the frame anyway.</para>
+    ///
+    /// <para>The push record cannot be removed with it -- the guarded goal's
+    /// own records sit after it and the nested driver's failure path does not
+    /// rewind this trail -- so it is neutered in place, unless it happens to
+    /// be the last entry, in which case the trail shrinks too and a loop like
+    /// `catch(true, _, true)` costs nothing at all. The record is identified
+    /// before being touched: the frame recorded the trail top BEFORE writing
+    /// it, so it sits at SnapExtraTrailTop, and it is verified to still be
+    /// this frame's push before anything is written.</para></summary>
+    private bool TryReclaimCatchFrame(int i, in CatchFrame f)
+    {
+        if (i != _catchFrames.Count - 1) return false;
+        if (_b > f.SnapB) return false;
+        int rec = f.SnapExtraTrailTop;
+        if (rec < 0 || rec >= _extraTrailTop) return false;
+        if (_extraTrail[rec].Type != TrailType.CatchFrame
+            || _extraTrail[rec].OldValue.Data != CatchTrailPush
+            || _extraTrail[rec].HeapIdx != i) return false;
+        if (CatchDiag)
+            System.Console.Error.WriteLine($"[catch] reclaim idx={i} rec={rec} xTop={_extraTrailTop}");
+        if (rec == _extraTrailTop - 1) _extraTrailTop = rec;
+        else
+        {
+            ExtraTrailEntry e = _extraTrail[rec];
+            e.OldValue = new Cell(CatchTrailReclaimed);
+            _extraTrail[rec] = e;
+        }
+        _catchFrames.RemoveAt(i);
+        return true;
     }
 
     /// <summary>Rolls the machine back to the state captured when catch

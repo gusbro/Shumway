@@ -1,3 +1,4 @@
+using System;
 using System.Diagnostics;
 using System.Linq;
 using System.IO;
@@ -105,5 +106,62 @@ public sealed class NestedCatchScalingTests
         Assert.True(e.Query(
             "catch((catch(true, a, true), catch(throw(b), b, true)), _, fail).")
             .Success);
+    }
+
+    /// <summary>A frame is otherwise reclaimed only by BACKTRACKING, through
+    /// its push record, so a deterministic loop kept one per catch/3 forever:
+    /// four million calls were most of a gigabyte. An exit that nothing can
+    /// come back to now drops the frame outright.
+    ///
+    /// <para>Measured as a SHAPE, like the one above: the loop runs twice at
+    /// sizes an order of magnitude apart, and the second must not cost ten
+    /// times the managed memory of the first. A leak of a fixed size per call
+    /// cannot pass that; the bound is loose enough that GC timing cannot fail
+    /// it.</para></summary>
+    [Fact]
+    public void ADeterministicLoopDoesNotKeepAFramePerCatch()
+    {
+        var e = new PrologEngine { Out = new StringWriter() };
+        e.ConsultString("""
+            loop(0) :- !.
+            loop(N) :- catch(true, -, true), M is N - 1, loop(M).
+            """);
+        long Cost(int n)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            long before = GC.GetTotalMemory(true);
+            Assert.True(e.Query($"loop({n}).").Success);
+            return GC.GetTotalMemory(false) - before;
+        }
+        long small = Cost(20_000);
+        long large = Cost(400_000);
+        // Twenty times the calls; a per-call frame would be twenty times the
+        // memory. Allow five, which no accumulation can fit under and no GC
+        // schedule can exceed.
+        Assert.True(large < System.Math.Max(small, 1_000_000) * 5,
+            $"20,000 calls cost {small:N0} bytes and 400,000 cost {large:N0}; "
+            + "a frame per catch/3 is being kept");
+    }
+
+    /// <summary>ANTI-VACUITY for the reclamation, and the condition it turns
+    /// on: a choice point that outlives the guarded goal is exactly what can
+    /// come back for the catcher, so the frame must NOT be dropped then. The
+    /// third solution throws, and the catch has to still be there.</summary>
+    [Fact]
+    public void ALiveChoicePointKeepsTheCatcher()
+    {
+        var e = new PrologEngine { Out = new StringWriter() };
+        e.ConsultString("""
+            side(1).
+            side(2).
+            side(3).
+            guarded(X) :- side(X), (X =:= 3 -> throw(boom) ; true).
+            go(X) :- catch(guarded(X), boom, X = caught).
+            """);
+        var all = e.QueryAll("go(X).").ToList();
+        Assert.Equal(3, all.Count);
+        Assert.Equal("caught", ((Shumway.Compiler.Ast.AtomTerm)all[2]["X"]!).Name);
     }
 }

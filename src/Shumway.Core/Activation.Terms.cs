@@ -923,6 +923,8 @@ public sealed partial class Activation
                 // been removed by its own entry. A deactivate (recorded by
                 // '$catch_end') is undone by re-activating that frame, so
                 // backtracking into a guarded goal restores its catcher.
+                if (entry.OldValue.Data == CatchTrailReclaimed)
+                    break;   // the frame went already, on a deterministic exit
                 if (entry.OldValue.Data == CatchTrailPush)
                 {
                     if (CatchDiag)
