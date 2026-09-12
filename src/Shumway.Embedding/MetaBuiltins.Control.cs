@@ -1164,7 +1164,15 @@ public static partial class MetaBuiltins
         // Push the choice point before the real unification below, so a
         // backtrack's trail unwind peels off exactly this solution's
         // bindings before the resume retracts the next match.
-        if (matchIndex + 1 < candidates.Count)
+        // More CANDIDATES, not merely more clauses. With a keyed pattern the
+        // index can say that nothing after the match could ever unify, and
+        // then retract is deterministic: no choice point, so no view to keep
+        // and no copy to make. `retract(p(K))` over a predicate keyed on K is
+        // the common shape where that is true of every call.
+        bool morePending = index is not null
+            ? index.FirstCandidateFrom(key, matchIndex + 1) >= 0
+            : matchIndex + 1 < candidates.Count;
+        if (morePending)
         {
             // The remaining candidates are the enumeration's logical update
             // view, and they are NOT copied: the cursor holds a window into
@@ -1346,7 +1354,10 @@ public static partial class MetaBuiltins
             RetractTrace.MatchFound(matchIndex, src[matchIndex]);
 
             Clause candidate = src[matchIndex];
-            bool morePending = matchIndex + 1 < endExclusive;
+            bool morePending = index is not null
+                ? index.FirstCandidateFrom(key, matchIndex + 1) is var nx
+                  && nx >= 0 && nx < endExclusive
+                : matchIndex + 1 < endExclusive;
             // Advance PAST the match before removing it, so the removal is
             // below the window and shifts it instead of forcing a copy --
             // including on the last candidate, where the window goes empty.
