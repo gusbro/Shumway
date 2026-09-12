@@ -1041,6 +1041,40 @@ public static partial class MetaBuiltins
     /// the normal path (its ':'/2 head is not a dynamic predicate —
     /// permission_error, as for any non-dynamic). The unqualified fast path
     /// pays ONE extra int compare on the functor lookup it already did.</summary>
+    /// <summary>The first-argument key the retract PATTERN selects, or null
+    /// when the pattern rules nothing out and every clause stays a candidate:
+    /// an unbound first argument, a shape no key describes (a float, a big
+    /// integer), or a head with no arguments at all.
+    ///
+    /// <para>Module qualification has already been stripped from
+    /// <paramref name="patternHeap"/> by <see cref="ReadPatternHeadFunctorId"/>;
+    /// the rule form is descended into here, because a rule pattern keys on
+    /// its HEAD exactly as a stored clause does.</para></summary>
+    private static DynFirstArgKey? PatternFirstArgKey(
+        Activation engine, int patternHeap)
+    {
+        int idx = engine.Deref(patternHeap);
+        Cell c = engine.GetHeap(idx);
+        if (c.Tag != Tag.Str) return null;
+        int sa = c.AsHeapIndex;
+        Cell f = engine.GetHeap(sa);
+        if (f.Tag != Tag.Functor) return null;
+        var (atomId, arity) = FunctorTable.Lookup(f.AsFunctorId);
+        if (arity == 2 && atomId == _ruleFunctorAtomId)
+        {
+            idx = engine.Deref(sa + 1);
+            c = engine.GetHeap(idx);
+            if (c.Tag != Tag.Str) return null;
+            sa = c.AsHeapIndex;
+            f = engine.GetHeap(sa);
+            if (f.Tag != Tag.Functor) return null;
+            (atomId, arity) = FunctorTable.Lookup(f.AsFunctorId);
+        }
+        if (arity == 0) return null;
+        Cell first = engine.GetHeap(engine.Deref(sa + 1));
+        return DynFirstArgKey.OfCall(engine, first);
+    }
+
     private static int ReadPatternHeadFunctorId(Activation engine, ref int patternHeap)
     {
         int idx = engine.Deref(patternHeap);
@@ -1107,8 +1141,19 @@ public static partial class MetaBuiltins
         int patternHeap)
     {
         RetractTrace.StepEntry(engine, isResume: false, startIndex: 0);
+        // A bound first argument in the pattern selects the clauses worth
+        // trying. Without it the scan was O(clauses) per call, which is
+        // quadratic over the classic "retract each key in turn" loop and was
+        // 74% of one.
+        DynamicClauseIndex? index = null;
+        DynFirstArgKey key = default;
+        if (PatternFirstArgKey(engine, patternHeap) is { } k)
+        {
+            key = k;
+            index = host.ClauseIndexFor(patternFid);
+        }
         int matchIndex = FindRetractMatch(
-            engine, candidates, 0, candidates.Count, patternHeap);
+            engine, host, candidates, 0, candidates.Count, patternHeap, index, key);
         if (matchIndex < 0)
         {
             RetractTrace.NoMatch(candidates.Count);
@@ -1281,8 +1326,17 @@ public static partial class MetaBuiltins
             // the window out, which switches both the list and the bound.
             IReadOnlyList<Clause> src = _snap is not null ? _snap : _live;
             int endExclusive = _snap is not null ? _snapCount : _end;
+            // The index is over the LIVE list, so it serves a window but not a
+            // copied-out snapshot, whose positions no longer mean anything.
+            DynamicClauseIndex? index = null;
+            DynFirstArgKey key = default;
+            if (_snap is null && PatternFirstArgKey(engine, patternHeap) is { } k)
+            {
+                key = k;
+                index = _host.ClauseIndexFor(_patternFid);
+            }
             int matchIndex = FindRetractMatch(
-                engine, src, _start, endExclusive, patternHeap);
+                engine, _host, src, _start, endExclusive, patternHeap, index, key);
             if (matchIndex < 0)
             {
                 Close();
@@ -1365,15 +1419,26 @@ public static partial class MetaBuiltins
             : t;
 
     private static int FindRetractMatch(
-        Activation engine, IReadOnlyList<Clause> candidates, int startIndex,
-        int endExclusive, int patternHeap)
+        Activation engine, PrologEngine host, IReadOnlyList<Clause> candidates,
+        int startIndex, int endExclusive, int patternHeap,
+        DynamicClauseIndex? index = null, DynFirstArgKey key = default)
     {
         // endExclusive bounds the scan explicitly — a resume's
         // candidates live in a pooled buffer that may be longer than the
         // snapshot it holds, so candidates.Count is not the right bound.
         bool ruleForm = IsRuleFormPattern(engine, patternHeap);
+        // With an index, the walk visits only the clauses whose first argument
+        // does not rule them out, in clause order; without one it visits every
+        // clause. Either way the trial unification below decides, so the index
+        // can only ever skip a clause it has PROVEN cannot match.
         for (int i = startIndex; i < endExclusive; i++)
         {
+            if (index is not null)
+            {
+                i = index.FirstCandidateFrom(key, i);
+                if (i < 0 || i >= endExclusive) return -1;
+            }
+            host.RetractCandidatesTried++;
             Term candTerm = RuleFormCandidate(candidates[i].Term, ruleForm);
             if (DefiniteMismatch(engine, patternHeap, candTerm, depth: 4))
                 continue;

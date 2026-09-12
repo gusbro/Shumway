@@ -77,7 +77,7 @@ internal sealed class DynamicClauseStore
     public List<Clause> this[int fid]
     {
         get => _clauses[fid];
-        set { NotifyReplaced(fid); _clauses[fid] = value; }
+        set { NotifyReplaced(fid); _indexes.Remove(fid); _clauses[fid] = value; }
     }
 
     /// <summary>Get-or-create: the live clause list for
@@ -97,6 +97,7 @@ internal sealed class DynamicClauseStore
     public bool RemoveSlot(int fid)
     {
         NotifyReplaced(fid);
+        _indexes.Remove(fid);
         return _clauses.Remove(fid);
     }
 
@@ -104,6 +105,7 @@ internal sealed class DynamicClauseStore
     {
         foreach (int fid in _clauses.Keys) NotifyReplaced(fid);
         _clauses.Clear();
+        _indexes.Clear();
     }
     public IEnumerable<int> ClauseFunctors => _clauses.Keys;
     public int ClauseFunctorCount => _clauses.Count;
@@ -205,18 +207,23 @@ internal sealed class DynamicClauseStore
         var list = Slot(fid);
         NotifyInsertAt(fid, list.Count);
         list.Add(c);
+        if (_indexes.TryGetValue(fid, out var ix)) ix.Append(c);
     }
 
     public void PrependClause(int fid, Clause c)
     {
         NotifyInsertAt(fid, 0);
         Slot(fid).Insert(0, c);
+        if (_indexes.TryGetValue(fid, out var ix)) ix.Prepend(c);
     }
 
     public void RemoveClauseAt(int fid, int index)
     {
         NotifyRemoveAt(fid, index);
-        _clauses[fid].RemoveAt(index);
+        var list = _clauses[fid];
+        Clause c = list[index];
+        list.RemoveAt(index);
+        if (_indexes.TryGetValue(fid, out var ix)) ix.RemoveAt(index, c);
     }
 
     public void ClearClauses(int fid)
@@ -224,6 +231,7 @@ internal sealed class DynamicClauseStore
         if (!_clauses.TryGetValue(fid, out var list)) return;
         NotifyReplaced(fid);
         list.Clear();
+        _indexes.Remove(fid);
     }
 
     /// <summary>Replaces the clause at <paramref name="index"/> (consult-time
@@ -233,6 +241,9 @@ internal sealed class DynamicClauseStore
     {
         NotifyReplaced(fid);
         _clauses[fid][index] = c;
+        // A clause swapped in place can carry a different key; rebuilding is
+        // cheaper to be sure of than patching, and this is consult-time only.
+        _indexes.Remove(fid);
     }
 
     /// <summary>Bulk load into a (re)built slot — consult, bundle load,
@@ -241,7 +252,42 @@ internal sealed class DynamicClauseStore
     {
         NotifyReplaced(fid);
         Slot(fid).AddRange(cs);
+        _indexes.Remove(fid);
     }
+
+    // ----- first-argument index -----
+
+    private readonly Dictionary<int, DynamicClauseIndex> _indexes = new();
+
+    /// <summary>The first-argument index for <paramref name="fid"/>, built on
+    /// first use and maintained by the mutators above.
+    ///
+    /// <para>It is rebuilt when it disagrees with the list on how many clauses
+    /// there are. That can only happen if something mutated a clause list
+    /// without going through this class, which is a bug — but a stale index
+    /// would silently drop solutions, and rebuilding costs one pass, so the
+    /// index heals rather than lies.</para></summary>
+    public DynamicClauseIndex IndexFor(int fid, List<Clause> clauses)
+    {
+        if (!_indexes.TryGetValue(fid, out var ix))
+        {
+            _indexes[fid] = ix = new DynamicClauseIndex();
+            ix.Rebuild(clauses);
+            return ix;
+        }
+        if (ix.Count != clauses.Count)
+        {
+            System.Diagnostics.Debug.Assert(false,
+                "a clause list was mutated outside DynamicClauseStore");
+            IndexRebuilds++;
+            ix.Rebuild(clauses);
+        }
+        return ix;
+    }
+
+    /// <summary>Rebuilds forced by an index that had fallen out of step — zero
+    /// unless a mutation escaped the chokepoint.</summary>
+    public long IndexRebuilds;
 
     // ----- retract snapshot pool -----
     // retract/1 walks a snapshot of the clause list so mid-walk mutation

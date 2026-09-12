@@ -193,6 +193,23 @@ public sealed partial class PrologEngine
         set => _dynStore.ClausesCopiedOut = value;
     }
 
+    /// <summary>The first-argument index over <paramref name="fid"/>'s live
+    /// clause list, or null when it has no clauses. Built on first use.</summary>
+    /// <summary>Clauses retract/1 has actually tried to unify with. The index
+    /// exists to keep this near the number of retracts instead of near their
+    /// product with the predicate's size, so it is the exact measure of
+    /// whether the index is working.</summary>
+    internal long RetractCandidatesTried;
+
+    internal DynamicClauseIndex? ClauseIndexFor(int fid)
+        => _dynStore.TryGetClauses(fid, out var list) && list.Count > 0
+            ? _dynStore.IndexFor(fid, list)
+            : null;
+
+    /// <summary>Index rebuilds forced by a clause list that had been mutated
+    /// outside the store — zero unless something escaped the chokepoint.</summary>
+    internal long ClauseIndexRebuilds => _dynStore.IndexRebuilds;
+
     internal Clause[] RentRetractSnapshot(int minLength) => _dynStore.RentRetractSnapshot(minLength);
 
     /// <summary>hands a snapshot buffer back for reuse. Clears
