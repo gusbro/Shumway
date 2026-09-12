@@ -1885,6 +1885,12 @@ public sealed partial class PrologEngine
         // from a nested query must also reach the buffers of suspended
         // outer engines — see _liveEngines).
         RegisterLiveEngine(engine);
+        // The precise GC register bound assumes the interpreter's caller-saved
+        // discipline; promoted IL regions break it (see GcPreciseRegisterBounds).
+        // Promotion can also install MID-query, so the flag is decided by
+        // whether it is possible, not by what is installed right now.
+        engine.GcPreciseRegisterBounds =
+            IlPromotion.Threshold <= 0 && IlPromotion.PromotedCount == 0;
 
         if (StackDiagEnabled)
         {
