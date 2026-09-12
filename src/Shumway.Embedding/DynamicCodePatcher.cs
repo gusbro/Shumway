@@ -1598,6 +1598,13 @@ internal sealed class DynChainState
     /// <summary>Brings an address into the envelope. The live entries do this
     /// themselves; the head and the dead chunks are added by the caller that
     /// records them.</summary>
+    // Reclamation refuses a chain holding any clause emitted inside a source
+    // block, because such a chunk is not individually relocatable. Answering
+    // that by walking every entry, on every sweep, was O(clauses) per four
+    // retracts -- invisible under 32,000 clauses and 64% of a 128,000-clause
+    // drain. It is a count.
+    public int SourceBlockEntries;
+
     public void WidenBounds(int addr)
     {
         if (addr < 0) return;
@@ -1655,13 +1662,17 @@ internal sealed class DynChainState
     /// <summary>Appending patches the old tail's link itself, so it leaves no
     /// stale link behind it.</summary>
     public void AppendEntry(DynChainEntry e)
-    { Entries.Add(e); Index(e); WidenBounds(e.ChunkAddr); CountUp(e.Clause); }
+    {
+        Entries.Add(e); Index(e); WidenBounds(e.ChunkAddr); CountUp(e.Clause);
+        if (e.ChunkAddr < 0) SourceBlockEntries++;
+    }
 
     /// <summary>Prepending shifts every position up by one, and patches the
     /// head link itself.</summary>
     public void PrependEntry(DynChainEntry e)
     {
         Entries.Insert(0, e); Index(e); WidenBounds(e.ChunkAddr); CountUp(e.Clause);
+        if (e.ChunkAddr < 0) SourceBlockEntries++;
         // The new entry is at 0, so "the first N are verified" no longer
         // describes anything; re-verify from scratch.
         VerifiedCount = 0;
@@ -1677,6 +1688,7 @@ internal sealed class DynChainState
         DynChainEntry e = Entries[i];
         Entries.RemoveAt(i);
         CountDown(e.Clause);
+        if (e.ChunkAddr < 0) SourceBlockEntries--;
         // Everything above the hole moved down one, then the link INTO the
         // hole's position is the one the sweep has to re-make.
         if (StaleLo != int.MaxValue && StaleLo > i) StaleLo--;
@@ -1696,6 +1708,7 @@ internal sealed class DynChainState
     {
         Entries.Clear();
         _entriesPerClause.Clear();
+        SourceBlockEntries = 0;
         MarkAllLinksStale();
         ResetVerification();
         MinChunkAddr = int.MaxValue;

@@ -413,9 +413,10 @@ public sealed partial class PrologEngine
         int dead = chain.DeadChunks.Count;
         if (dead < ReclaimDeadThreshold) return;
         // A source-block clause (ChunkAddr < 0) isn't individually
-        // relocatable — skip reclamation if the chain holds any.
-        foreach (var e in chain.Entries)
-            if (e.ChunkAddr < 0) return;
+        // relocatable — skip reclamation if the chain holds any. Counted as
+        // entries come and go: walking for it is O(clauses) on every sweep,
+        // which is every fourth retract.
+        if (chain.SourceBlockEntries > 0) return;
 
         // Safety: collect every chunk start address in this chain (live
         // entries + dead chunks + the head). A choice point enumerating
@@ -2880,6 +2881,18 @@ public sealed partial class PrologEngine
     /// <summary>Chain links actually re-threaded by reclamation. The full pass
     /// rewrote one per live clause on every sweep.</summary>
     internal long ChainRethreadLinks;
+
+    /// <summary>Chain entries for <paramref name="fid"/> whose chunk came from
+    /// a source block, as the chain has been counting them, and the same
+    /// number counted the slow way. Equal unless the bookkeeping has drifted.</summary>
+    internal (int Counted, int Actual) SourceBlockEntryCheck(Activation engine, int fid)
+    {
+        if (GetChainTable(engine) is not { } tbl
+            || !tbl.Chains.TryGetValue(fid, out var chain)) return (0, 0);
+        int actual = 0;
+        foreach (var e in chain.Entries) if (e.ChunkAddr < 0) actual++;
+        return (chain.SourceBlockEntries, actual);
+    }
 
     private int PatchDiedFromChainByClause(Activation engine, int functorId,
         Clause clause, int hintIndex = -1)
