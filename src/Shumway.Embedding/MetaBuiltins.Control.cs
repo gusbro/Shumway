@@ -888,13 +888,14 @@ public static partial class MetaBuiltins
         // UNDEFINED → plain failure, not an error.
         if (!host.IsRetractAllModifiable(patternFid)) return false;
 
-        // scan the LIVE clause list directly — no snapshot copy.
-        // This is sound for the first step: the scan runs to completion
-        // before anything can mutate the list (no goal executes between
-        // here and the match). A choice point keeps the rest of the view as
-        // a WINDOW into that same list, which is copied out only if a later
-        // mutation would disturb it.
-        IReadOnlyList<Clause> candidates = host.DynamicClausesFor(patternFid);
+        // scan the PHYSICAL clause list directly — no snapshot copy, and no
+        // compaction either: retract is the one reader that skips a tombstone
+        // itself instead of paying a pass to close it up. Sound for the first
+        // step because the scan runs to completion before anything can mutate
+        // the list; a choice point keeps the rest of the view as a WINDOW
+        // into that same list, copied out only if a later mutation would
+        // disturb it.
+        IReadOnlyList<Clause> candidates = host.PhysicalClausesFor(patternFid);
         RetractTrace.Begin(null!, patternFid, candidates.Count);
         int returnPc = engine.BuiltinReturnPc;
         // patternHeap is the pattern's heap home (the result of
@@ -1276,14 +1277,29 @@ public static partial class MetaBuiltins
 
         public void BeforeRemoveAt(int index)
         {
-            if (index < _start) { _start--; _end--; }
-            else if (index < _end) Materialize();
+            // A removal is a TOMBSTONE now: no position moves, so a slot
+            // below or above the window changes nothing it can see. One
+            // inside it is a clause this view still owes -- copy out while
+            // the clause is still in the slot.
+            if (_start <= index && index < _end) Materialize();
         }
 
         public void BeforeInsertAt(int index)
         {
             if (index <= _start) { _start++; _end++; }
             else if (index < _end) Materialize();
+        }
+
+        public void BeforeCompact(DynamicClauseStore store, int fid)
+        {
+            // Compaction closes tombstoned slots below and inside... below
+            // only: a tombstone inside the window would have materialized it
+            // when it was made. Both bounds fall by the tombstones under
+            // them, and the clauses the window holds do not move relative to
+            // each other -- a rebase, where the eager design copied.
+            if (_snap is not null) return;
+            _end -= store.TombstonesBefore(fid, _end);
+            _start -= store.TombstonesBefore(fid, _start);
         }
 
         public void Materialize()
@@ -1358,9 +1374,9 @@ public static partial class MetaBuiltins
                 ? index.FirstCandidateFrom(key, matchIndex + 1) is var nx
                   && nx >= 0 && nx < endExclusive
                 : matchIndex + 1 < endExclusive;
-            // Advance PAST the match before removing it, so the removal is
-            // below the window and shifts it instead of forcing a copy --
-            // including on the last candidate, where the window goes empty.
+            // Advance PAST the match before removing it, so the tombstone
+            // lands below the window and costs nothing -- including on the
+            // last candidate, where the window goes empty.
             bool wasWindow = _snap is null;
             _start = matchIndex + 1;
             if (morePending)
@@ -1449,6 +1465,10 @@ public static partial class MetaBuiltins
                 i = index.FirstCandidateFrom(key, i);
                 if (i < 0 || i >= endExclusive) return -1;
             }
+            // A tombstone is a slot a retract already emptied; the clause
+            // it held is gone from every view that can reach this scan.
+            if (ReferenceEquals(candidates[i], DynamicClauseStore.Tombstone))
+                continue;
             host.RetractCandidatesTried++;
             Term candTerm = RuleFormCandidate(candidates[i].Term, ruleForm);
             if (DefiniteMismatch(engine, patternHeap, candTerm, depth: 4))

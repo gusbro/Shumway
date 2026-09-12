@@ -201,9 +201,27 @@ public sealed partial class PrologEngine
     /// whether the index is working.</summary>
     internal long RetractCandidatesTried;
 
+    /// <summary>The PHYSICAL clause list, tombstones included — the retract
+    /// path only. Everything else reads through the dense accessors, which
+    /// compact first, so a tombstone cannot reach anything that shows a
+    /// clause to a program.</summary>
+    internal List<Clause> PhysicalClausesFor(int fid)
+        => _dynStore.HasClauses(fid)
+            ? _dynStore.PhysicalClauses(fid)
+            : new List<Clause>();
+
+    /// <summary>Compacts every slot holding tombstones — called at the
+    /// query-setup safe point; a never-returning query compacts through the
+    /// store's proportional trigger instead.</summary>
+    internal void CompactClauseSlots() => _dynStore.CompactAllSlots();
+
+    internal long ClauseSlotCompactions => _dynStore.Compactions;
+
     internal DynamicClauseIndex? ClauseIndexFor(int fid)
-        => _dynStore.TryGetClauses(fid, out var list) && list.Count > 0
-            ? _dynStore.IndexFor(fid, list)
+        // Over the PHYSICAL list: the index's positions are slot positions,
+        // and the dense accessor would compact once per retract.
+        => _dynStore.HasClauses(fid) && _dynStore.PhysicalClauses(fid).Count > 0
+            ? _dynStore.IndexFor(fid, _dynStore.PhysicalClauses(fid))
             : null;
 
     /// <summary>Index rebuilds forced by a clause list that had been mutated
@@ -263,7 +281,11 @@ public sealed partial class PrologEngine
     internal bool RemoveDynamicByReference(
         Activation engine, int functorId, Clause clause, int knownIndex = -1)
     {
-        if (!_dynStore.TryGetClauses(functorId, out var list)) return false;
+        if (!_dynStore.HasClauses(functorId)) return false;
+        // PHYSICAL, tombstones included: knownIndex is a slot position from
+        // the retract scan, and asking for the dense view here would compact
+        // once per retract — the very shift the tombstones defer.
+        var list = _dynStore.PhysicalClauses(functorId);
         // retract's first step scans the live list, so it
         // already knows the match's index — trust it after a cheap
         // reference check instead of an O(N) IndexOf (Blint: 80K
@@ -281,7 +303,18 @@ public sealed partial class PrologEngine
         bool isIndexed = IsExtensibleIndexedLayout(engine, functorId);
         int retiredBodyAddr = -1;
         if (isIndexed)
+        {
+            // The var-chain walk counts entries the way a DENSE list is
+            // numbered, so the slot has to be dense before idx can address
+            // it. Rare layout; the compaction resets the debt it spends.
+            if (_dynStore.TombstoneCount(functorId) > 0)
+            {
+                _dynStore.CompactSlot(functorId);
+                idx = list.IndexOf(clause);
+                if (idx < 0) return false;
+            }
             retiredBodyAddr = FindBodyAddrForClauseIndex(engine, functorId, idx);
+        }
         _dynStore.RemoveClauseAt(functorId, idx);
         InvalidateDynamicCache(functorId);
         // a retract from a non-owner engine (a nested query
@@ -309,7 +342,7 @@ public sealed partial class PrologEngine
             // index lands on the WRONG entry — killing a live clause in
             // this engine's own view while the retracted one stays visible
             // (observed as Logtalk's loading-stack "ghost" entries).
-            PatchDiedFromChainByClause(engine, functorId, clause, idx);
+            PatchDiedFromChainByClause(engine, functorId, clause);
             // reclaim accumulated dead clauses from the chain
             // when it's safe (no in-progress enumeration of this
             // predicate). An assert+retract loop (e.g. next_char_i) would
@@ -717,53 +750,33 @@ public sealed partial class PrologEngine
         // negligible compared to the O(n) walk over n dead entries
         // the GC eliminates.
 
-        // Only the links AROUND a removed entry are stale; the rest already
-        // point where this walk would put them. Re-threading the whole chain
-        // to fix a handful is O(clauses) per sweep, which is every four
-        // retracts -- the quadratic in a drain. The chain tracks the range it
-        // dirtied; anything the tracking does not model widens it to
-        // everything, so the fallback is the old full pass.
-        int lo = chain.StaleLo, hi = chain.StaleHi;
-        if (lo < 0 || lo > chain.Entries.Count) lo = 0;
-        if (hi > chain.Entries.Count) hi = chain.Entries.Count;
-        int prevNext;
-        if (lo > hi)
+        // Replay the recorded bypasses, in retirement order: each writes
+        // the retired entry's nearest live predecessor's <next> to whatever
+        // the retired entry's own <next> HOLDS RIGHT NOW. Reading at replay
+        // time rather than capture time is what keeps later mutations
+        // coherent -- a chunk appended after the retirement patched exactly
+        // that slot, and a bypass replayed earlier in this same loop did
+        // too. O(retirements since the last sweep), where the full pass was
+        // O(live) to fix a handful.
+        foreach (var (prevAddr, entry) in chain.PendingBypass)
         {
-            // Nothing stale. The tail still has to be anchored, and
-            // TailNextAddr is already right.
-            lo = hi = -1;
-            prevNext = chain.TailNextAddr;
+            if (prevAddr <= 0 || entry.NextOperandAddr <= 0) continue;
+            if (prevAddr + sizeof(int) > program.Length
+                || entry.NextOperandAddr + sizeof(int) > program.Length) continue;
+            Shumway.Core.BytecodeIO.WriteInt32(program, prevAddr,
+                Shumway.Core.BytecodeIO.ReadInt32(program, entry.NextOperandAddr));
         }
-        else
-        {
-            prevNext = lo == 0
-                ? chain.HeadClauseAddr + 1              // head's <next> operand
-                : chain.Entries[lo - 1].NextOperandAddr;
-            for (int i = lo; i < chain.Entries.Count && i <= hi; i++)
-            {
-                var entry = chain.Entries[i];
-                int entryClauseAddr = entry.NextOperandAddr - 1;
-                if (entryClauseAddr == chain.HeadClauseAddr)
-                {
-                    // The head itself is this live entry — its <next>
-                    // is already the right anchor for the next jump;
-                    // don't patch it to point at itself.
-                    prevNext = entry.NextOperandAddr;
-                    continue;
-                }
-                Shumway.Core.BytecodeIO.WriteInt32(program, prevNext, entryClauseAddr);
-                prevNext = entry.NextOperandAddr;
-            }
-        }
-        // Tail's <next> goes to the fail-stub — only when the walk actually
-        // reached the tail, which is the only case in which it can have moved.
-        if (hi >= chain.Entries.Count && prevNext > 0)
-        {
-            Shumway.Core.BytecodeIO.WriteInt32(program, prevNext, failStub);
-            chain.TailNextAddr = prevNext;
-        }
-        chain.MarkLinksClean();
-        ChainRethreadLinks += lo < 0 ? 0 : System.Math.Min(hi, chain.Entries.Count) - lo + 1;
+        ChainRethreadLinks += chain.PendingBypass.Count;
+        chain.PendingBypass.Clear();
+        // The bytecode tail is now the live tail; appends patch through this.
+        if (chain.LastLive is { } lastLive && lastLive.NextOperandAddr > 0)
+            chain.TailNextAddr = lastLive.NextOperandAddr;
+        else if (chain.LiveCount == 0 && chain.HeadClauseAddr >= 0)
+            chain.TailNextAddr = chain.HeadClauseAddr + 1;
+        // With the links replayed nothing references positions, so this is
+        // the safe moment to drop the retired entries -- proportionally, so
+        // each pass pays for the retirements that caused it.
+        if (chain.RetiredCount * 2 >= chain.Entries.Count) chain.CompactEntries();
 
         // Drain the dead-chunk staging into the engine-wide free
         // list so subsequent incremental assertz / asserta can
@@ -2250,12 +2263,14 @@ public sealed partial class PrologEngine
             var store = _dynStore.TryGetClauses(fid, out var cs)
                 ? cs : (IReadOnlyList<Clause>)Array.Empty<Clause>();
             // Set-compare by clause identity: equal → the view is exact.
-            bool diverged = store.Count != chain.Entries.Count;
+            // Retired entries are not part of the view: they are the chain's
+            // deferred bookkeeping, not clauses.
+            bool diverged = store.Count != chain.LiveCount;
             if (!diverged)
             {
                 var storeSet = new HashSet<Clause>(store, ReferenceEqualityComparer.Instance);
                 foreach (var e in chain.Entries)
-                    if (!storeSet.Contains(e.Clause)) { diverged = true; break; }
+                    if (!e.Retired && !storeSet.Contains(e.Clause)) { diverged = true; break; }
             }
             if (!diverged) continue;
             // Any divergence → rebuild wholesale. A fine-grained diff-append
@@ -2854,8 +2869,8 @@ public sealed partial class PrologEngine
         return false;
     }
 
-    /// <summary>broadcast counterpart of
-    /// <see cref="PatchDiedFromChain"/>: finds the target engine's chain
+    /// <summary>broadcast counterpart of the per-clause died patch: finds
+    /// the target engine's chain
     /// entries whose <see cref="DynChainEntry.Clause"/> IS the retracted
     /// clause (reference identity — the store and every chain share the
     /// same Clause objects) and patches each one's died slot in that
@@ -2890,12 +2905,13 @@ public sealed partial class PrologEngine
         if (GetChainTable(engine) is not { } tbl
             || !tbl.Chains.TryGetValue(fid, out var chain)) return (0, 0);
         int actual = 0;
-        foreach (var e in chain.Entries) if (e.ChunkAddr < 0) actual++;
+        foreach (var e in chain.Entries)
+            if (!e.Retired && e.ChunkAddr < 0) actual++;
         return (chain.SourceBlockEntries, actual);
     }
 
     private int PatchDiedFromChainByClause(Activation engine, int functorId,
-        Clause clause, int hintIndex = -1)
+        Clause clause)
     {
         bool diag = StackDiagEnabled;
         if (GetChainTable(engine) is not { } tbl
@@ -2906,58 +2922,43 @@ public sealed partial class PrologEngine
         }
         var program = engine.CurrentProgram;
         int matched = 0, patched = 0;
-        int from = chain.Entries.Count - 1, to = 0;
-        if (hintIndex >= 0 && hintIndex < chain.Entries.Count
-            && chain.EntriesHolding(clause) == 1
-            && ReferenceEquals(chain.Entries[hintIndex].Clause, clause))
+        // The chain knows the single live entry holding this clause, so the
+        // ordinary retract is a lookup and a retirement, no walk. A clause
+        // the map cannot answer for -- several entries once held it, or the
+        // chain lags the store -- takes the walk, which retires every match
+        // in place.
+        if (chain.TryGetSoleEntry(clause, out var sole))
         {
             ChainPatchHints++;
-            from = to = hintIndex;
+            RetireChainEntry(chain, sole!, program, ref matched, ref patched);
         }
-        for (int i = from; i >= to; i--)
+        else
         {
-            var entry = chain.Entries[i];
-            if (!ReferenceEquals(entry.Clause, clause)) continue;
-            matched++;
-            if (program is not null && entry.DiedOperandAddr > 0
-                && entry.DiedOperandAddr + sizeof(long) <= program.Length
-                && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
+            foreach (var entry in chain.Entries)
             {
-                BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
-                patched++;
+                if (entry.Retired || !ReferenceEquals(entry.Clause, clause))
+                    continue;
+                RetireChainEntry(chain, entry, program, ref matched, ref patched);
             }
-            if (entry.ChunkAddr >= 0)
-                chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
-            chain.RemoveEntryAt(i);
         }
         if (diag) StackDiag($"died-m{matched}p{patched}", engine, functorId);
         return matched;
     }
 
-    private void PatchDiedFromChain(Activation engine, int functorId, int clauseIndex)
+    private void RetireChainEntry(DynChainState chain, DynChainEntry entry,
+        byte[]? program, ref int matched, ref int patched)
     {
-        // the engine's own chain table (describes ITS buffer).
-        if (GetChainTable(engine) is not { } tbl
-            || !tbl.Chains.TryGetValue(functorId, out var chain)) return;
-        if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return;
-        var entry = chain.Entries[clauseIndex];
-        var program = engine.CurrentProgram;
-        // last-line safety: skip the in-place died patch when
-        // the entry's cached slot is out of range OR structurally stale
-        // (should never fire with per-engine tables). The clause is
-        // already removed from _dynamicClauses by the caller, so clause/2
-        // is correct; the chain rebuilds at the next query setup.
+        matched++;
         if (program is not null && entry.DiedOperandAddr > 0
             && entry.DiedOperandAddr + sizeof(long) <= program.Length
             && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
+        {
             BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
-        // stage the chunk for free-list reuse on GC, but
-        // only when it was an incrementally-allocated chunk (consult-
-        // time blocks have ChunkAddr=-1 and can't be freed without
-        // disturbing the rest of the predicate's contiguous bytecode).
+            patched++;
+        }
         if (entry.ChunkAddr >= 0)
             chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
-        chain.RemoveEntryAt(clauseIndex);
+        chain.RetireEntry(entry);
     }
 
     /// <summary>Builds the per-functor chain state by walking the linked

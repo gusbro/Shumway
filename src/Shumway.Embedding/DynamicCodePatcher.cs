@@ -1324,7 +1324,7 @@ internal sealed class DynamicCodePatcher
             fid = pred.FunctorId;
         else if (!table.TrampolineFids.TryGetValue(trampolinePc, out fid))
             return SelDiag(0, -2, $"unknown-trampoline@{trampolinePc}");
-        if (!table.Chains.TryGetValue(fid, out var state) || state.Entries.Count == 0)
+        if (!table.Chains.TryGetValue(fid, out var state) || state.LiveCount == 0)
         {
             // ISO abolish/1: once abolished the predicate is UNDEFINED — a
             // NEW call (this dispatch) is an undefined-procedure call, so
@@ -1375,10 +1375,12 @@ internal sealed class DynamicCodePatcher
         if (headOp != Shumway.Core.Opcode.TryMeElse) return SelDiag(fid, -2, $"head-op={headOp}");
 
         DynChainEntry? match;
-        if (entries.Count == 1)
+        if (state.LiveCount == 1)
         {
-            // Sole clause: always the sole candidate, first arg irrelevant.
-            match = entries[0];
+            // Sole live clause: always the sole candidate, first arg
+            // irrelevant. Retired entries may still sit in the list, which
+            // is why this is the live head and not entries[0].
+            match = state.FirstLive!;
         }
         else
         {
@@ -1619,20 +1621,77 @@ internal sealed class DynChainState
     // else to find.
     private readonly Dictionary<Clause, int> _entriesPerClause = new();
 
-    // Reclamation re-threads the chain's <next> links to bypass the entries
-    // that died. Only the links AROUND a removal are stale, so re-threading
-    // the whole chain is O(clauses) to fix a handful -- which is what made a
-    // drain quadratic. These bound the positions whose incoming link may be
-    // stale, in CURRENT Entries coordinates. Lo > Hi means nothing is.
-    //
-    // They start wide open: a chain built or rebuilt wholesale has every link
-    // to establish, and anything this bookkeeping does not model must widen
-    // them rather than narrow them.
-    public int StaleLo, StaleHi = int.MaxValue;
+    // Bypassing a retired entry in the BYTECODE must wait for the sweep (a
+    // live choice point may still resume into it), so each retirement records
+    // the one link that will need re-making: the address of the nearest live
+    // predecessor's <next> operand, captured while the live list still knows
+    // it. The sweep replays the records in retirement order, reading each
+    // retired entry's own <next> slot for the continuation -- reading it AT
+    // REPLAY TIME is what keeps a chunk appended after the retirement
+    // connected, because the append patched exactly that slot.
+    public DynChainEntry? FirstLive, LastLive;
+    public int LiveCount;
+    public int RetiredCount;
+    public readonly List<(int PrevAddr, DynChainEntry Entry)> PendingBypass = new();
 
-    public void MarkAllLinksStale() { StaleLo = 0; StaleHi = int.MaxValue; }
+    /// <summary>The single live entry holding a clause, or nothing while the
+    /// clause has none or has ever had more than one -- the walk decides
+    /// those. It is what lets a retract retire its entry without scanning
+    /// the chain for it.</summary>
+    private readonly Dictionary<Clause, DynChainEntry?> _byClause =
+        new(ReferenceEqualityComparer.Instance);
 
-    public void MarkLinksClean() { StaleLo = int.MaxValue; StaleHi = -1; }
+    public bool TryGetSoleEntry(Clause c, out DynChainEntry? sole)
+    {
+        sole = null;
+        if (!_byClause.TryGetValue(c, out var e) || e is null || e.Retired)
+            return false;
+        sole = e;
+        return true;
+    }
+
+    /// <summary>Marks <paramref name="e"/> retired in place. No position
+    /// moves; the entry leaves the live list, the buckets, and the sole-entry
+    /// map, and the link that fed it is recorded for the sweep.</summary>
+    public void RetireEntry(DynChainEntry e)
+    {
+        if (e.Retired) return;
+        e.Retired = true;
+        RetiredCount++;
+        CountDown(e.Clause);
+        if (e.ChunkAddr < 0) SourceBlockEntries--;
+        if (_byClause.TryGetValue(e.Clause, out var known)
+            && ReferenceEquals(known, e))
+            _byClause.Remove(e.Clause);
+        if (e.Key.MatchesEverything) _matchAnything.Remove(e);
+        else if (_byKey.TryGetValue(e.Key, out var bucket))
+        {
+            bucket.Remove(e);
+            if (bucket.Count == 0) _byKey.Remove(e.Key);
+        }
+        int prevAddr = e.PrevLive is { } pl ? pl.NextOperandAddr
+            : HeadClauseAddr >= 0 ? HeadClauseAddr + 1 : -1;
+        PendingBypass.Add((prevAddr, e));
+        if (e.PrevLive is { } pv) pv.NextLive = e.NextLive; else FirstLive = e.NextLive;
+        if (e.NextLive is { } nx) nx.PrevLive = e.PrevLive; else LastLive = e.PrevLive;
+        e.PrevLive = e.NextLive = null;
+        LiveCount--;
+    }
+
+    /// <summary>Drops the retired entries once they reach half the list --
+    /// proportional, so each pass pays for the retirements that caused it.
+    /// Only with no bypass pending: the records reference entries, and the
+    /// verification watermark is positional.</summary>
+    public void CompactEntries()
+    {
+        if (RetiredCount == 0 || PendingBypass.Count > 0) return;
+        int w = 0;
+        for (int r = 0; r < Entries.Count; r++)
+            if (!Entries[r].Retired) Entries[w++] = Entries[r];
+        Entries.RemoveRange(w, Entries.Count - w);
+        RetiredCount = 0;
+        VerifiedCount = 0;
+    }
 
     // Reclamation validates every entry's cached byte offsets against the live
     // buffer before touching it. An entry's offsets cannot move while the
@@ -1665,6 +1724,11 @@ internal sealed class DynChainState
     {
         Entries.Add(e); Index(e); WidenBounds(e.ChunkAddr); CountUp(e.Clause);
         if (e.ChunkAddr < 0) SourceBlockEntries++;
+        if (!_byClause.TryAdd(e.Clause, e)) _byClause[e.Clause] = null;
+        e.PrevLive = LastLive;
+        if (LastLive is { } t) t.NextLive = e; else FirstLive = e;
+        LastLive = e;
+        LiveCount++;
     }
 
     /// <summary>Prepending shifts every position up by one, and patches the
@@ -1673,43 +1737,33 @@ internal sealed class DynChainState
     {
         Entries.Insert(0, e); Index(e); WidenBounds(e.ChunkAddr); CountUp(e.Clause);
         if (e.ChunkAddr < 0) SourceBlockEntries++;
+        if (!_byClause.TryAdd(e.Clause, e)) _byClause[e.Clause] = null;
+        e.NextLive = FirstLive;
+        if (FirstLive is { } h) h.PrevLive = e; else LastLive = e;
+        FirstLive = e;
+        LiveCount++;
         // The new entry is at 0, so "the first N are verified" no longer
         // describes anything; re-verify from scratch.
         VerifiedCount = 0;
-        if (StaleLo <= StaleHi)
-        {
-            if (StaleLo != int.MaxValue) StaleLo++;
-            if (StaleHi != int.MaxValue) StaleHi++;
-        }
-    }
-
-    public void RemoveEntryAt(int i)
-    {
-        DynChainEntry e = Entries[i];
-        Entries.RemoveAt(i);
-        CountDown(e.Clause);
-        if (e.ChunkAddr < 0) SourceBlockEntries--;
-        // Everything above the hole moved down one, then the link INTO the
-        // hole's position is the one the sweep has to re-make.
-        if (StaleLo != int.MaxValue && StaleLo > i) StaleLo--;
-        if (StaleHi != int.MaxValue && StaleHi > i) StaleHi--;
-        if (i < StaleLo) StaleLo = i;
-        if (i > StaleHi) StaleHi = i;
-        if (i < VerifiedCount) VerifiedCount--;
-        if (e.Key.MatchesEverything) _matchAnything.Remove(e);
-        else if (_byKey.TryGetValue(e.Key, out var bucket))
-        {
-            bucket.Remove(e);
-            if (bucket.Count == 0) _byKey.Remove(e.Key);
-        }
+        // The prepend takes over the head's <next> slot: a pending bypass
+        // anchored there would clobber it at replay, so those records move
+        // to the slot that NOW feeds what the head used to -- this entry's.
+        if (HeadClauseAddr >= 0 && e.NextOperandAddr > 0)
+            for (int i = 0; i < PendingBypass.Count; i++)
+                if (PendingBypass[i].PrevAddr == HeadClauseAddr + 1)
+                    PendingBypass[i] = (e.NextOperandAddr, PendingBypass[i].Entry);
     }
 
     public void ClearEntries()
     {
         Entries.Clear();
         _entriesPerClause.Clear();
+        _byClause.Clear();
         SourceBlockEntries = 0;
-        MarkAllLinksStale();
+        FirstLive = LastLive = null;
+        LiveCount = 0;
+        RetiredCount = 0;
+        PendingBypass.Clear();
         ResetVerification();
         MinChunkAddr = int.MaxValue;
         MaxChunkAddr = int.MinValue;
@@ -1860,6 +1914,21 @@ internal sealed class DynChainEntry
     /// <c>asserta</c>.</summary>
     public int ChunkAddr;
     public int ChunkLength;
+
+    /// <summary>Marked instead of removed: taking an entry out of the list
+    /// shifts every position above it, which made a drain quadratic a third
+    /// time, in a third structure. A retired entry keeps its slot until the
+    /// list compacts, and only <see cref="DynChainState.RetireEntry"/> sets
+    /// this.</summary>
+    public bool Retired;
+
+    /// <summary>The doubly linked list of LIVE entries, in chain order. It is
+    /// what makes retiring O(1): the nearest live predecessor -- whose
+    /// <c>next</c> operand is the one link the sweep will have to re-make --
+    /// is one hop away at the moment of retirement, instead of a walk away
+    /// at the moment of the sweep.</summary>
+    public DynChainEntry? PrevLive, NextLive;
+
     public DynChainEntry(Clause c, int died, int next, int chunkAddr, int chunkLength)
     {
         Clause = c;

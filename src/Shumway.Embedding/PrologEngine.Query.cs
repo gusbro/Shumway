@@ -569,6 +569,11 @@ public sealed partial class PrologEngine
         // the next real query's setup does the deferred work.
         if (_debugEvalDepth == 0 && _persistentMutationsSinceCompact >= CompactWatermark)
             CompactDynamicCodeBuffer();
+        // Retract leaves tombstones so no clause position moves mid-query;
+        // readers compact the slot they touch and the proportional trigger
+        // bounds the rest, and this tidies up whatever is left at a point
+        // where nothing holds a position.
+        if (_debugEvalDepth == 0) CompactClauseSlots();
 
         // live-linked-consult forward-reference sites now live on
         // the per-buffer chain table, so they follow their buffer's lifetime

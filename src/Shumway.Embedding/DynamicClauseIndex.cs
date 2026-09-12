@@ -52,16 +52,17 @@ internal sealed class DynamicClauseIndex
         Bucket(DynFirstArgKey.Of(c)).Insert(0, seq);
     }
 
-    /// <summary><paramref name="c"/> is the clause AT <paramref name="index"/>,
-    /// passed in so its bucket is found by its own key. Searching the buckets
-    /// for the sequence number instead would be O(distinct keys) per removal,
-    /// which is the very cost this index exists to remove.</summary>
-    public void RemoveAt(int index, Clause c)
-    {
-        long seq = _seqs[index];
-        _seqs.RemoveAt(index);
-        RemoveSeq(Bucket(DynFirstArgKey.Of(c)), seq);
-    }
+    /// <summary>The clause at <paramref name="index"/> has been tombstoned.
+    /// Its sequence number STAYS in <see cref="_seqs"/> because the store
+    /// keeps the slot and no position moves; only the bucket entry goes,
+    /// which is what stops the clause being a candidate.
+    ///
+    /// <para><paramref name="c"/> is the clause that was there, passed in so
+    /// its bucket is found by its own key — searching every bucket for the
+    /// sequence number would be O(distinct keys) per retract, the very cost
+    /// this index exists to remove.</para></summary>
+    public void MarkDead(int index, Clause c)
+        => RemoveSeq(Bucket(DynFirstArgKey.Of(c)), _seqs[index]);
 
     /// <summary>Rebuilds from the clause list. Used when the list changes in a
     /// way the incremental path does not describe (bulk load, in-place clause
