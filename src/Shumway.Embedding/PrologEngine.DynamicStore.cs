@@ -725,7 +725,7 @@ public sealed partial class PrologEngine
         // out-of-range cell in a thrown ball). Dead-chunk reclamation is
         // optional; the chain rebuilds cleanly at the next query setup. No
         // InvalidatePersistent (would desync other live chains mid-load).
-        if (DynChainStaleIncremental(program, chain, failStub))
+        if (DynChainStaleIncremental(program, engine.ProgramLength, chain, failStub))
             return 0;
 
         // The trampoline always points at chain.HeadClauseAddr, which
@@ -2447,8 +2447,13 @@ public sealed partial class PrologEngine
         // .Length (capacity) — a chain reaching past this activation's
         // believed content end means its append position is stale and an
         // in-place extend would overwrite live entries.
-        if (DynChainAddressesStale(
-                chain, engine.ProgramLength, engine.DynamicFailStubAddr)
+        // Incremental, not the full walk: validating every entry HERE made
+        // each assertz O(chain), so growing a predicate was quadratic in its
+        // own size. Entries already validated against this buffer stay valid
+        // -- content never shrinks on the same array -- and only the ones
+        // added since need looking at.
+        if (DynChainStaleIncremental(engine.CurrentProgram!, engine.ProgramLength,
+                chain, engine.DynamicFailStubAddr)
             || !IsChainInstructionAt(engine.CurrentProgram, chain.TailNextAddr - 1))
         {
             InvalidatePersistent();
@@ -2641,8 +2646,8 @@ public sealed partial class PrologEngine
         // NB: checked against ProgramLength (content), not capacity —
         // see the assertz path for the stale-append-position rationale.
         if (chain.TrampolineExecuteOperandAddr + sizeof(long) > engine.ProgramLength
-            || DynChainAddressesStale(
-                   chain, engine.ProgramLength, engine.DynamicFailStubAddr)
+            || DynChainStaleIncremental(engine.CurrentProgram!, engine.ProgramLength,
+                   chain, engine.DynamicFailStubAddr)
             || (chain.HeadClauseAddr >= 0
                 && !IsChainInstructionAt(engine.CurrentProgram, chain.HeadClauseAddr)))
         {
@@ -2782,12 +2787,12 @@ public sealed partial class PrologEngine
     /// re-checked every time because those do move. A failure re-arms the full
     /// check for next time rather than leaving a half-verified chain.</summary>
     private static bool DynChainStaleIncremental(
-        byte[] program, DynChainState chain, int failStub)
+        byte[] program, int length, DynChainState chain, int failStub)
     {
         static bool Bad(int addr, int len) => addr > 0 && addr + sizeof(long) > len;
-        if (Bad(chain.HeadClauseAddr, program.Length)
-            || Bad(chain.TailNextAddr, program.Length)
-            || Bad(failStub, program.Length)
+        if (Bad(chain.HeadClauseAddr, length)
+            || Bad(chain.TailNextAddr, length)
+            || Bad(failStub, length)
             || (chain.HeadClauseAddr >= 0
                 && !IsChainInstructionAt(program, chain.HeadClauseAddr)))
         {
@@ -2800,8 +2805,8 @@ public sealed partial class PrologEngine
         for (int i = from; i < chain.Entries.Count; i++)
         {
             var e = chain.Entries[i];
-            if (Bad(e.NextOperandAddr, program.Length)
-                || Bad(e.DiedOperandAddr, program.Length)
+            if (Bad(e.NextOperandAddr, length)
+                || Bad(e.DiedOperandAddr, length)
                 || !IsChainInstructionAt(program, e.NextOperandAddr - 1))
             {
                 chain.ResetVerification();
@@ -2818,20 +2823,6 @@ public sealed partial class PrologEngine
     /// check looked at every live clause on every sweep.</summary>
     internal static long ChainEntriesVerified;
 
-    private static bool DynChainAddressesStale(
-        DynChainState chain, int programLength, int failStub)
-    {
-        static bool Bad(int addr, int len) => addr > 0 && addr + sizeof(long) > len;
-        if (Bad(chain.HeadClauseAddr, programLength)
-            || Bad(chain.TailNextAddr, programLength)
-            || Bad(failStub, programLength))
-            return true;
-        foreach (var e in chain.Entries)
-            if (Bad(e.NextOperandAddr, programLength) || Bad(e.DiedOperandAddr, programLength))
-                return true;
-        return false;
-    }
-
     /// <summary>O(1) structural staleness check: the byte at
     /// <paramref name="opcodeAddr"/> must be a chain instruction
     /// (<c>try_me_else</c> / <c>retry_me_else</c>). A dynamic chain's
@@ -2847,26 +2838,6 @@ public sealed partial class PrologEngine
         byte op = program[opcodeAddr];
         return op == (byte)Shumway.Core.Opcode.TryMeElse
             || op == (byte)Shumway.Core.Opcode.RetryMeElse;
-    }
-
-    /// <summary>full structural staleness check for a dynamic
-    /// chain: the head and every entry's <c>&lt;next&gt;</c> operand
-    /// (offset +1) must sit right after a chain instruction in the live
-    /// buffer. Catches a stale-but-in-range chain (its cached offsets point
-    /// inside the buffer but no longer at the actual chain instructions —
-    /// e.g. after the persistent buffer was rebuilt) that the bounds-only
-    /// <see cref="DynChainAddressesStale"/> misses. O(entries); used only on
-    /// the retract-family paths (dead-chain reclaim, died patch), not the
-    /// per-clause assertz fast path.</summary>
-    private static bool DynChainStructurallyStale(byte[]? program, DynChainState chain)
-    {
-        if (program is null) return true;
-        if (chain.HeadClauseAddr >= 0 && !IsChainInstructionAt(program, chain.HeadClauseAddr))
-            return true;
-        foreach (var e in chain.Entries)
-            if (!IsChainInstructionAt(program, e.NextOperandAddr - 1))
-                return true;
-        return false;
     }
 
     /// <summary>broadcast counterpart of the per-clause died patch: finds

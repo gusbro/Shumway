@@ -1685,12 +1685,20 @@ internal sealed class DynChainState
     public void CompactEntries()
     {
         if (RetiredCount == 0 || PendingBypass.Count > 0) return;
-        int w = 0;
+        int w = 0, verifiedKept = 0;
         for (int r = 0; r < Entries.Count; r++)
-            if (!Entries[r].Retired) Entries[w++] = Entries[r];
+        {
+            if (Entries[r].Retired) continue;
+            // Verification is per entry and position-independent, so a
+            // survivor from below the watermark is still verified at its new
+            // position -- resetting to zero here made every compaction force
+            // a full re-verify at the next sweep.
+            if (r < VerifiedCount) verifiedKept++;
+            Entries[w++] = Entries[r];
+        }
         Entries.RemoveRange(w, Entries.Count - w);
         RetiredCount = 0;
-        VerifiedCount = 0;
+        VerifiedCount = verifiedKept;
     }
 
     // Reclamation validates every entry's cached byte offsets against the live
