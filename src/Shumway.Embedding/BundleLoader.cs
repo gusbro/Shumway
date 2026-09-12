@@ -1434,9 +1434,8 @@ internal sealed class BundleLoader
             // tabling driver reads it through.
             if (isPrelude && seed.EncodedClauses.Count > 0)
                 E._preludeFunctors.Add(fid);
-            var slot = E._dynStore.Slot(fid);
             foreach (var encoded in seed.EncodedClauses)
-                slot.Add(TermCodec.DecodeClause(encoded));
+                E._dynStore.AppendClause(fid, TermCodec.DecodeClause(encoded));
             // ADR-023 priming — a bundle's `:- dynamic`/`:- visible` predicate
             // shipped WITH clauses runs as its Tier-1 IL snapshot from the first
             // call (evictable on the first mutation).

@@ -486,7 +486,8 @@ internal sealed class ConsultPipeline
                     if (ReferenceEquals(ge, slot[slotIdx])) continue;
                     // A hook can leave a non-goal (a number, a naked var) in a
                     // control position — the stored form stays converted.
-                    slot[slotIdx] = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(ge);
+                    E._dynStore.ReplaceClauseAt(fid, slotIdx,
+                        Shumway.Compiler.Ast.ClauseBodyConversion.Convert(ge));
                     E.InvalidateDynamicCache(fid);
                 }
             }
@@ -1646,15 +1647,14 @@ internal sealed class ConsultPipeline
                         // predicate enters the database in its CONVERTED form,
                         // exactly as an assertz'd one does.
                         c = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(c);
-                        var dynSlot = E._dynStore.Slot(fid);
-                        dynSlot.Add(c);
+                        E._dynStore.AppendClause(fid, c);
                         // In-file goal_expansion applies to this clause too —
                         // recorded for the post-commit re-expansion pass, with
                         // the position hooks are numbered against (the count of
                         // KEPT clauses before it, since guard indices are
                         // assigned over the final kept list).
                         (_dynRoutedThisConsult ??= new()).Add(
-                            (fid, dynSlot.Count - 1, keptClauses.Count));
+                            (fid, E._dynStore[fid].Count - 1, keptClauses.Count));
                         // ADR-023 — a CONSULT-borne clause is a mutation of the
                         // dynamic predicate exactly like a runtime assertz, and
                         // must invalidate the same things: the promoted IL

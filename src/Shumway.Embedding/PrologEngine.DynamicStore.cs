@@ -25,7 +25,7 @@ public sealed partial class PrologEngine
         clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
-        GetOrCreateDynamicSlot(fid).Add(clause);
+        _dynStore.AppendClause(fid, clause);
         InvalidateDynamicCache(fid);
         return fid;
     }
@@ -37,7 +37,7 @@ public sealed partial class PrologEngine
         clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
-        GetOrCreateDynamicSlot(fid).Insert(0, clause);
+        _dynStore.PrependClause(fid, clause);
         InvalidateDynamicCache(fid);
         // persistent invalidation moved into
         // PrependDynamicClauseIncremental — the in-place path can
@@ -57,7 +57,7 @@ public sealed partial class PrologEngine
         {
             if (TermsStructurallyEqual(list[i].Term, clause.Term))
             {
-                list.RemoveAt(i);
+                _dynStore.RemoveClauseAt(fid, i);
                 InvalidateDynamicCache(fid);
                 if (_jitIndexProfile.IsHot(fid)) InvalidatePersistent();
                 return true;
@@ -176,6 +176,58 @@ public sealed partial class PrologEngine
     /// <summary>returns a buffer with at least
     /// <paramref name="minLength"/> slots for a retract tail snapshot,
     /// reusing the per-engine spare when it fits.</summary>
+    /// <summary>Registers a retract/1 enumeration's uncopied view so store
+    /// mutations are reported to it. Paired with
+    /// <see cref="CloseClauseWindow"/> on exhaustion, prune, or copy-out.</summary>
+    internal void OpenClauseWindow(int fid, DynamicClauseStore.IClauseWindow w)
+        => _dynStore.OpenWindow(fid, w);
+
+    internal void CloseClauseWindow(int fid, DynamicClauseStore.IClauseWindow w)
+        => _dynStore.CloseWindow(fid, w);
+
+    /// <summary>Clauses copied out of live lists by retract enumerations —
+    /// the window's exact cost measure.</summary>
+    internal long ClausesCopiedOut
+    {
+        get => _dynStore.ClausesCopiedOut;
+        set => _dynStore.ClausesCopiedOut = value;
+    }
+
+    /// <summary>The first-argument index over <paramref name="fid"/>'s live
+    /// clause list, or null when it has no clauses. Built on first use.</summary>
+    /// <summary>Clauses retract/1 has actually tried to unify with. The index
+    /// exists to keep this near the number of retracts instead of near their
+    /// product with the predicate's size, so it is the exact measure of
+    /// whether the index is working.</summary>
+    internal long RetractCandidatesTried;
+
+    /// <summary>The PHYSICAL clause list, tombstones included — the retract
+    /// path only. Everything else reads through the dense accessors, which
+    /// compact first, so a tombstone cannot reach anything that shows a
+    /// clause to a program.</summary>
+    internal List<Clause> PhysicalClausesFor(int fid)
+        => _dynStore.HasClauses(fid)
+            ? _dynStore.PhysicalClauses(fid)
+            : new List<Clause>();
+
+    /// <summary>Compacts every slot holding tombstones — called at the
+    /// query-setup safe point; a never-returning query compacts through the
+    /// store's proportional trigger instead.</summary>
+    internal void CompactClauseSlots() => _dynStore.CompactAllSlots();
+
+    internal long ClauseSlotCompactions => _dynStore.Compactions;
+
+    internal DynamicClauseIndex? ClauseIndexFor(int fid)
+        // Over the PHYSICAL list: the index's positions are slot positions,
+        // and the dense accessor would compact once per retract.
+        => _dynStore.HasClauses(fid) && _dynStore.PhysicalClauses(fid).Count > 0
+            ? _dynStore.IndexFor(fid, _dynStore.PhysicalClauses(fid))
+            : null;
+
+    /// <summary>Index rebuilds forced by a clause list that had been mutated
+    /// outside the store — zero unless something escaped the chokepoint.</summary>
+    internal long ClauseIndexRebuilds => _dynStore.IndexRebuilds;
+
     internal Clause[] RentRetractSnapshot(int minLength) => _dynStore.RentRetractSnapshot(minLength);
 
     /// <summary>hands a snapshot buffer back for reuse. Clears
@@ -229,7 +281,11 @@ public sealed partial class PrologEngine
     internal bool RemoveDynamicByReference(
         Activation engine, int functorId, Clause clause, int knownIndex = -1)
     {
-        if (!_dynStore.TryGetClauses(functorId, out var list)) return false;
+        if (!_dynStore.HasClauses(functorId)) return false;
+        // PHYSICAL, tombstones included: knownIndex is a slot position from
+        // the retract scan, and asking for the dense view here would compact
+        // once per retract — the very shift the tombstones defer.
+        var list = _dynStore.PhysicalClauses(functorId);
         // retract's first step scans the live list, so it
         // already knows the match's index — trust it after a cheap
         // reference check instead of an O(N) IndexOf (Blint: 80K
@@ -247,8 +303,19 @@ public sealed partial class PrologEngine
         bool isIndexed = IsExtensibleIndexedLayout(engine, functorId);
         int retiredBodyAddr = -1;
         if (isIndexed)
+        {
+            // The var-chain walk counts entries the way a DENSE list is
+            // numbered, so the slot has to be dense before idx can address
+            // it. Rare layout; the compaction resets the debt it spends.
+            if (_dynStore.TombstoneCount(functorId) > 0)
+            {
+                _dynStore.CompactSlot(functorId);
+                idx = list.IndexOf(clause);
+                if (idx < 0) return false;
+            }
             retiredBodyAddr = FindBodyAddrForClauseIndex(engine, functorId, idx);
-        list.RemoveAt(idx);
+        }
+        _dynStore.RemoveClauseAt(functorId, idx);
         InvalidateDynamicCache(functorId);
         // a retract from a non-owner engine (a nested query
         // rebuilt the host buffer since this engine's setup) patches only
@@ -351,6 +418,22 @@ public sealed partial class PrologEngine
     /// permanently at ~100 tombstones that every read walked — 1.55M
     /// retry dispatches per lint. The re-thread is O(live) pointer
     /// patches, so the dead count alone is the right trigger.</para></summary>
+    /// <summary>Every chunk address this chain owns — live entries, the dead
+    /// chunks not yet reclaimed, and the head. Built only when a choice
+    /// point's saved BP falls inside the chain's address envelope.</summary>
+    /// <summary>How many times the exact chunk-address set had to be built
+    /// — the O(clauses) work the envelope exists to avoid. Zero over a drain.</summary>
+    internal long ChainAddressSetsBuilt;
+
+    private static HashSet<int> BuildChainAddressSet(DynChainState chain)
+    {
+        var set = new HashSet<int>();
+        foreach (var e in chain.Entries) set.Add(e.ChunkAddr);
+        foreach (var (a, _) in chain.DeadChunks) set.Add(a);
+        set.Add(chain.HeadClauseAddr);
+        return set;
+    }
+
     private void TryReclaimDeadDynamicChain(Activation engine, int functorId)
     {
         if (engine.CurrentProgram is null) return;
@@ -363,20 +446,36 @@ public sealed partial class PrologEngine
         int dead = chain.DeadChunks.Count;
         if (dead < ReclaimDeadThreshold) return;
         // A source-block clause (ChunkAddr < 0) isn't individually
-        // relocatable — skip reclamation if the chain holds any.
-        foreach (var e in chain.Entries)
-            if (e.ChunkAddr < 0) return;
+        // relocatable — skip reclamation if the chain holds any. Counted as
+        // entries come and go: walking for it is O(clauses) on every sweep,
+        // which is every fourth retract.
+        if (chain.SourceBlockEntries > 0) return;
 
         // Safety: collect every chunk start address in this chain (live
         // entries + dead chunks + the head). A choice point enumerating
         // the predicate has SavedBp at one of these. If any active CP
         // does, an enumeration is in progress — keep the dead clauses.
-        var chainAddrs = new HashSet<int>();
-        foreach (var e in chain.Entries) chainAddrs.Add(e.ChunkAddr);
-        foreach (var (a, _) in chain.DeadChunks) chainAddrs.Add(a);
-        chainAddrs.Add(chain.HeadClauseAddr);
+        // Reject by the chain's ADDRESS ENVELOPE first: that is one compare
+        // per choice point and no allocation. Building the exact set of chunk
+        // addresses costs O(clauses) per fire, and the answer is almost always
+        // "no choice point is in this chain" -- which was the single biggest
+        // cost of a drain. Only a saved BP that lands inside the envelope
+        // needs the set, and the envelope is conservative (other predicates'
+        // chunks can lie between ours), so the set still decides.
+        int lo = chain.MinChunkAddr, hi = chain.MaxChunkAddr;
+        if (chain.HeadClauseAddr < lo) lo = chain.HeadClauseAddr;
+        if (chain.HeadClauseAddr > hi) hi = chain.HeadClauseAddr;
+        HashSet<int>? chainAddrs = null;
         foreach (var (_, savedBp, _) in engine.EnumerateChoicePoints())
+        {
+            if (savedBp < lo || savedBp > hi) continue;
+            if (chainAddrs is null)
+            {
+                ChainAddressSetsBuilt++;
+                chainAddrs = BuildChainAddressSet(chain);
+            }
             if (chainAddrs.Contains(savedBp)) return;
+        }
         ChainReclaims++;
 
         // Safe and worthwhile — re-thread the chain through its live
@@ -389,7 +488,7 @@ public sealed partial class PrologEngine
         // while another goal iterates this predicate" caveat is exactly
         // the safety condition checked above.
         GarbageCollectClauses(engine, functorId, reclaimChunks: false);
-    }
+           }
 
     /// <summary>Removes every asserted clause of the given dynamic functor and
     /// drops the functor from the dynamic registry, so subsequent calls raise
@@ -472,7 +571,7 @@ public sealed partial class PrologEngine
     /// (caches, IL eviction, the ADR-034 mutated-fids set).</summary>
     internal void ClearDynamicClauses(Activation engine, int functorId)
     {
-        if (_dynStore.TryGetClauses(functorId, out var list)) list.Clear();
+        _dynStore.ClearClauses(functorId);
         InvalidateDynamicCache(functorId);
         InvalidatePersistent();
         AbolishDynamicInChain(engine, functorId);
@@ -518,10 +617,9 @@ public sealed partial class PrologEngine
         foreach (var (fid, clauses) in snapshot)
         {
             EnsureDynamic(fid);
-            var slot = GetOrCreateDynamicSlot(fid);
             foreach (var c in clauses)
             {
-                slot.Add(c);
+                _dynStore.AppendClause(fid, c);
                 InvalidateDynamicCache(fid);
                 AppendDynamicClauseIncremental(engine, fid, c);
             }
@@ -627,8 +725,7 @@ public sealed partial class PrologEngine
         // out-of-range cell in a thrown ball). Dead-chunk reclamation is
         // optional; the chain rebuilds cleanly at the next query setup. No
         // InvalidatePersistent (would desync other live chains mid-load).
-        if (DynChainAddressesStale(chain, program.Length, failStub)
-            || DynChainStructurallyStale(program, chain))
+        if (DynChainStaleIncremental(program, engine.ProgramLength, chain, failStub))
             return 0;
 
         // The trampoline always points at chain.HeadClauseAddr, which
@@ -653,24 +750,33 @@ public sealed partial class PrologEngine
         // negligible compared to the O(n) walk over n dead entries
         // the GC eliminates.
 
-        int prevNext = chain.HeadClauseAddr + 1;   // head's <next> operand
-        foreach (var entry in chain.Entries)
+        // Replay the recorded bypasses, in retirement order: each writes
+        // the retired entry's nearest live predecessor's <next> to whatever
+        // the retired entry's own <next> HOLDS RIGHT NOW. Reading at replay
+        // time rather than capture time is what keeps later mutations
+        // coherent -- a chunk appended after the retirement patched exactly
+        // that slot, and a bypass replayed earlier in this same loop did
+        // too. O(retirements since the last sweep), where the full pass was
+        // O(live) to fix a handful.
+        foreach (var (prevAddr, entry) in chain.PendingBypass)
         {
-            int entryClauseAddr = entry.NextOperandAddr - 1;
-            if (entryClauseAddr == chain.HeadClauseAddr)
-            {
-                // The head itself is this live entry — its <next>
-                // is already the right anchor for the next jump;
-                // don't patch it to point at itself.
-                prevNext = entry.NextOperandAddr;
-                continue;
-            }
-            Shumway.Core.BytecodeIO.WriteInt32(program, prevNext, entryClauseAddr);
-            prevNext = entry.NextOperandAddr;
+            if (prevAddr <= 0 || entry.NextOperandAddr <= 0) continue;
+            if (prevAddr + sizeof(int) > program.Length
+                || entry.NextOperandAddr + sizeof(int) > program.Length) continue;
+            Shumway.Core.BytecodeIO.WriteInt32(program, prevAddr,
+                Shumway.Core.BytecodeIO.ReadInt32(program, entry.NextOperandAddr));
         }
-        // Tail's <next> goes to the fail-stub.
-        Shumway.Core.BytecodeIO.WriteInt32(program, prevNext, failStub);
-        chain.TailNextAddr = prevNext;
+        ChainRethreadLinks += chain.PendingBypass.Count;
+        chain.PendingBypass.Clear();
+        // The bytecode tail is now the live tail; appends patch through this.
+        if (chain.LastLive is { } lastLive && lastLive.NextOperandAddr > 0)
+            chain.TailNextAddr = lastLive.NextOperandAddr;
+        else if (chain.LiveCount == 0 && chain.HeadClauseAddr >= 0)
+            chain.TailNextAddr = chain.HeadClauseAddr + 1;
+        // With the links replayed nothing references positions, so this is
+        // the safe moment to drop the retired entries -- proportionally, so
+        // each pass pays for the retirements that caused it.
+        if (chain.RetiredCount * 2 >= chain.Entries.Count) chain.CompactEntries();
 
         // Drain the dead-chunk staging into the engine-wide free
         // list so subsequent incremental assertz / asserta can
@@ -2157,12 +2263,14 @@ public sealed partial class PrologEngine
             var store = _dynStore.TryGetClauses(fid, out var cs)
                 ? cs : (IReadOnlyList<Clause>)Array.Empty<Clause>();
             // Set-compare by clause identity: equal → the view is exact.
-            bool diverged = store.Count != chain.Entries.Count;
+            // Retired entries are not part of the view: they are the chain's
+            // deferred bookkeeping, not clauses.
+            bool diverged = store.Count != chain.LiveCount;
             if (!diverged)
             {
                 var storeSet = new HashSet<Clause>(store, ReferenceEqualityComparer.Instance);
                 foreach (var e in chain.Entries)
-                    if (!storeSet.Contains(e.Clause)) { diverged = true; break; }
+                    if (!e.Retired && !storeSet.Contains(e.Clause)) { diverged = true; break; }
             }
             if (!diverged) continue;
             // Any divergence → rebuild wholesale. A fine-grained diff-append
@@ -2339,8 +2447,13 @@ public sealed partial class PrologEngine
         // .Length (capacity) — a chain reaching past this activation's
         // believed content end means its append position is stale and an
         // in-place extend would overwrite live entries.
-        if (DynChainAddressesStale(
-                chain, engine.ProgramLength, engine.DynamicFailStubAddr)
+        // Incremental, not the full walk: validating every entry HERE made
+        // each assertz O(chain), so growing a predicate was quadratic in its
+        // own size. Entries already validated against this buffer stay valid
+        // -- content never shrinks on the same array -- and only the ones
+        // added since need looking at.
+        if (DynChainStaleIncremental(engine.CurrentProgram!, engine.ProgramLength,
+                chain, engine.DynamicFailStubAddr)
             || !IsChainInstructionAt(engine.CurrentProgram, chain.TailNextAddr - 1))
         {
             InvalidatePersistent();
@@ -2533,8 +2646,8 @@ public sealed partial class PrologEngine
         // NB: checked against ProgramLength (content), not capacity —
         // see the assertz path for the stale-append-position rationale.
         if (chain.TrampolineExecuteOperandAddr + sizeof(long) > engine.ProgramLength
-            || DynChainAddressesStale(
-                   chain, engine.ProgramLength, engine.DynamicFailStubAddr)
+            || DynChainStaleIncremental(engine.CurrentProgram!, engine.ProgramLength,
+                   chain, engine.DynamicFailStubAddr)
             || (chain.HeadClauseAddr >= 0
                 && !IsChainInstructionAt(engine.CurrentProgram, chain.HeadClauseAddr)))
         {
@@ -2667,19 +2780,48 @@ public sealed partial class PrologEngine
     /// fall back to the store (which is already authoritative) rather than
     /// crash. An 8-byte tail margin covers both the int32 <c>next</c> and
     /// int64 <c>died</c> operands with one check.</summary>
-    private static bool DynChainAddressesStale(
-        DynChainState chain, int programLength, int failStub)
+    /// <summary>The two staleness checks above, but only over the entries not
+    /// already validated against THIS program buffer. An entry's offsets
+    /// cannot move while the buffer is the same array object, so a previous
+    /// sweep's verdict on it still holds; head, tail and the fail stub are
+    /// re-checked every time because those do move. A failure re-arms the full
+    /// check for next time rather than leaving a half-verified chain.</summary>
+    private static bool DynChainStaleIncremental(
+        byte[] program, int length, DynChainState chain, int failStub)
     {
         static bool Bad(int addr, int len) => addr > 0 && addr + sizeof(long) > len;
-        if (Bad(chain.HeadClauseAddr, programLength)
-            || Bad(chain.TailNextAddr, programLength)
-            || Bad(failStub, programLength))
+        if (Bad(chain.HeadClauseAddr, length)
+            || Bad(chain.TailNextAddr, length)
+            || Bad(failStub, length)
+            || (chain.HeadClauseAddr >= 0
+                && !IsChainInstructionAt(program, chain.HeadClauseAddr)))
+        {
+            chain.ResetVerification();
             return true;
-        foreach (var e in chain.Entries)
-            if (Bad(e.NextOperandAddr, programLength) || Bad(e.DiedOperandAddr, programLength))
+        }
+        int from = ReferenceEquals(program, chain.VerifiedProgram)
+            ? chain.VerifiedCount : 0;
+        if (from > chain.Entries.Count) from = 0;
+        for (int i = from; i < chain.Entries.Count; i++)
+        {
+            var e = chain.Entries[i];
+            if (Bad(e.NextOperandAddr, length)
+                || Bad(e.DiedOperandAddr, length)
+                || !IsChainInstructionAt(program, e.NextOperandAddr - 1))
+            {
+                chain.ResetVerification();
                 return true;
+            }
+        }
+        ChainEntriesVerified += chain.Entries.Count - from;
+        chain.VerifiedProgram = program;
+        chain.VerifiedCount = chain.Entries.Count;
         return false;
     }
+
+    /// <summary>Chain entries actually re-validated by reclamation. The full
+    /// check looked at every live clause on every sweep.</summary>
+    internal static long ChainEntriesVerified;
 
     /// <summary>O(1) structural staleness check: the byte at
     /// <paramref name="opcodeAddr"/> must be a chain instruction
@@ -2698,28 +2840,8 @@ public sealed partial class PrologEngine
             || op == (byte)Shumway.Core.Opcode.RetryMeElse;
     }
 
-    /// <summary>full structural staleness check for a dynamic
-    /// chain: the head and every entry's <c>&lt;next&gt;</c> operand
-    /// (offset +1) must sit right after a chain instruction in the live
-    /// buffer. Catches a stale-but-in-range chain (its cached offsets point
-    /// inside the buffer but no longer at the actual chain instructions —
-    /// e.g. after the persistent buffer was rebuilt) that the bounds-only
-    /// <see cref="DynChainAddressesStale"/> misses. O(entries); used only on
-    /// the retract-family paths (dead-chain reclaim, died patch), not the
-    /// per-clause assertz fast path.</summary>
-    private static bool DynChainStructurallyStale(byte[]? program, DynChainState chain)
-    {
-        if (program is null) return true;
-        if (chain.HeadClauseAddr >= 0 && !IsChainInstructionAt(program, chain.HeadClauseAddr))
-            return true;
-        foreach (var e in chain.Entries)
-            if (!IsChainInstructionAt(program, e.NextOperandAddr - 1))
-                return true;
-        return false;
-    }
-
-    /// <summary>broadcast counterpart of
-    /// <see cref="PatchDiedFromChain"/>: finds the target engine's chain
+    /// <summary>broadcast counterpart of the per-clause died patch: finds
+    /// the target engine's chain
     /// entries whose <see cref="DynChainEntry.Clause"/> IS the retracted
     /// clause (reference identity — the store and every chain share the
     /// same Clause objects) and patches each one's died slot in that
@@ -2732,7 +2854,35 @@ public sealed partial class PrologEngine
     /// received it (fine: not visible either) or its view uses a layout
     /// the chain table doesn't describe (indexed) — the caller decides
     /// whether to rebuild.</returns>
-    private int PatchDiedFromChainByClause(Activation engine, int functorId, Clause clause)
+    /// <param name="hintIndex">Where the clause sat in the STORE's list. The
+    /// chain usually mirrors it, so this is usually the entry — but the chain
+    /// can lag the store, which is why this is a hint and not an index. It is
+    /// trusted only when the chain holds exactly ONE entry for the clause,
+    /// since then there is provably nothing else the walk could find; anything
+    /// else falls back to the walk, which is what this always did.</param>
+    /// <summary>Died-slot patches that took the hint instead of walking the
+    /// chain — the walk was O(clauses) on every retract.</summary>
+    internal long ChainPatchHints;
+
+    /// <summary>Chain links actually re-threaded by reclamation. The full pass
+    /// rewrote one per live clause on every sweep.</summary>
+    internal long ChainRethreadLinks;
+
+    /// <summary>Chain entries for <paramref name="fid"/> whose chunk came from
+    /// a source block, as the chain has been counting them, and the same
+    /// number counted the slow way. Equal unless the bookkeeping has drifted.</summary>
+    internal (int Counted, int Actual) SourceBlockEntryCheck(Activation engine, int fid)
+    {
+        if (GetChainTable(engine) is not { } tbl
+            || !tbl.Chains.TryGetValue(fid, out var chain)) return (0, 0);
+        int actual = 0;
+        foreach (var e in chain.Entries)
+            if (!e.Retired && e.ChunkAddr < 0) actual++;
+        return (chain.SourceBlockEntries, actual);
+    }
+
+    private int PatchDiedFromChainByClause(Activation engine, int functorId,
+        Clause clause)
     {
         bool diag = StackDiagEnabled;
         if (GetChainTable(engine) is not { } tbl
@@ -2743,50 +2893,43 @@ public sealed partial class PrologEngine
         }
         var program = engine.CurrentProgram;
         int matched = 0, patched = 0;
-        for (int i = chain.Entries.Count - 1; i >= 0; i--)
+        // The chain knows the single live entry holding this clause, so the
+        // ordinary retract is a lookup and a retirement, no walk. A clause
+        // the map cannot answer for -- several entries once held it, or the
+        // chain lags the store -- takes the walk, which retires every match
+        // in place.
+        if (chain.TryGetSoleEntry(clause, out var sole))
         {
-            var entry = chain.Entries[i];
-            if (!ReferenceEquals(entry.Clause, clause)) continue;
-            matched++;
-            if (program is not null && entry.DiedOperandAddr > 0
-                && entry.DiedOperandAddr + sizeof(long) <= program.Length
-                && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
+            ChainPatchHints++;
+            RetireChainEntry(chain, sole!, program, ref matched, ref patched);
+        }
+        else
+        {
+            foreach (var entry in chain.Entries)
             {
-                BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
-                patched++;
+                if (entry.Retired || !ReferenceEquals(entry.Clause, clause))
+                    continue;
+                RetireChainEntry(chain, entry, program, ref matched, ref patched);
             }
-            if (entry.ChunkAddr >= 0)
-                chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
-            chain.RemoveEntryAt(i);
         }
         if (diag) StackDiag($"died-m{matched}p{patched}", engine, functorId);
         return matched;
     }
 
-    private void PatchDiedFromChain(Activation engine, int functorId, int clauseIndex)
+    private void RetireChainEntry(DynChainState chain, DynChainEntry entry,
+        byte[]? program, ref int matched, ref int patched)
     {
-        // the engine's own chain table (describes ITS buffer).
-        if (GetChainTable(engine) is not { } tbl
-            || !tbl.Chains.TryGetValue(functorId, out var chain)) return;
-        if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return;
-        var entry = chain.Entries[clauseIndex];
-        var program = engine.CurrentProgram;
-        // last-line safety: skip the in-place died patch when
-        // the entry's cached slot is out of range OR structurally stale
-        // (should never fire with per-engine tables). The clause is
-        // already removed from _dynamicClauses by the caller, so clause/2
-        // is correct; the chain rebuilds at the next query setup.
+        matched++;
         if (program is not null && entry.DiedOperandAddr > 0
             && entry.DiedOperandAddr + sizeof(long) <= program.Length
             && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
+        {
             BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
-        // stage the chunk for free-list reuse on GC, but
-        // only when it was an incrementally-allocated chunk (consult-
-        // time blocks have ChunkAddr=-1 and can't be freed without
-        // disturbing the rest of the predicate's contiguous bytecode).
+            patched++;
+        }
         if (entry.ChunkAddr >= 0)
             chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
-        chain.RemoveEntryAt(clauseIndex);
+        chain.RetireEntry(entry);
     }
 
     /// <summary>Builds the per-functor chain state by walking the linked
