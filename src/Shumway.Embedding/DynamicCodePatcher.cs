@@ -1605,16 +1605,85 @@ internal sealed class DynChainState
         if (addr > MaxChunkAddr) MaxChunkAddr = addr;
     }
 
-    public void AppendEntry(DynChainEntry e)
-    { Entries.Add(e); Index(e); WidenBounds(e.ChunkAddr); }
+    // Retracting patches the died slot of every entry holding the retracted
+    // clause, which meant walking the whole chain per retract. Knowing HOW
+    // MANY entries hold a clause is enough to skip that walk: exactly one
+    // means a position hint can be trusted outright, because there is nothing
+    // else to find.
+    private readonly Dictionary<Clause, int> _entriesPerClause = new();
 
+    // Reclamation re-threads the chain's <next> links to bypass the entries
+    // that died. Only the links AROUND a removal are stale, so re-threading
+    // the whole chain is O(clauses) to fix a handful -- which is what made a
+    // drain quadratic. These bound the positions whose incoming link may be
+    // stale, in CURRENT Entries coordinates. Lo > Hi means nothing is.
+    //
+    // They start wide open: a chain built or rebuilt wholesale has every link
+    // to establish, and anything this bookkeeping does not model must widen
+    // them rather than narrow them.
+    public int StaleLo, StaleHi = int.MaxValue;
+
+    public void MarkAllLinksStale() { StaleLo = 0; StaleHi = int.MaxValue; }
+
+    public void MarkLinksClean() { StaleLo = int.MaxValue; StaleHi = -1; }
+
+    // Reclamation validates every entry's cached byte offsets against the live
+    // buffer before touching it. An entry's offsets cannot move while the
+    // buffer is the SAME array object -- growing it reallocates, and an
+    // in-place patch writes bytes without moving anything -- so entries
+    // already validated against this buffer stay valid, and only the ones
+    // added since need looking at. Checking all of them per sweep was
+    // O(clauses) on every fourth retract.
+    public byte[]? VerifiedProgram;
+    public int VerifiedCount;
+
+    public void ResetVerification() { VerifiedProgram = null; VerifiedCount = 0; }
+
+    public int EntriesHolding(Clause c)
+        => _entriesPerClause.TryGetValue(c, out int n) ? n : 0;
+
+    private void CountUp(Clause c)
+        => _entriesPerClause[c] = EntriesHolding(c) + 1;
+
+    private void CountDown(Clause c)
+    {
+        int n = EntriesHolding(c) - 1;
+        if (n <= 0) _entriesPerClause.Remove(c);
+        else _entriesPerClause[c] = n;
+    }
+
+    /// <summary>Appending patches the old tail's link itself, so it leaves no
+    /// stale link behind it.</summary>
+    public void AppendEntry(DynChainEntry e)
+    { Entries.Add(e); Index(e); WidenBounds(e.ChunkAddr); CountUp(e.Clause); }
+
+    /// <summary>Prepending shifts every position up by one, and patches the
+    /// head link itself.</summary>
     public void PrependEntry(DynChainEntry e)
-    { Entries.Insert(0, e); Index(e); WidenBounds(e.ChunkAddr); }
+    {
+        Entries.Insert(0, e); Index(e); WidenBounds(e.ChunkAddr); CountUp(e.Clause);
+        // The new entry is at 0, so "the first N are verified" no longer
+        // describes anything; re-verify from scratch.
+        VerifiedCount = 0;
+        if (StaleLo <= StaleHi)
+        {
+            if (StaleLo != int.MaxValue) StaleLo++;
+            if (StaleHi != int.MaxValue) StaleHi++;
+        }
+    }
 
     public void RemoveEntryAt(int i)
     {
         DynChainEntry e = Entries[i];
         Entries.RemoveAt(i);
+        CountDown(e.Clause);
+        // Everything above the hole moved down one, then the link INTO the
+        // hole's position is the one the sweep has to re-make.
+        if (StaleLo != int.MaxValue && StaleLo > i) StaleLo--;
+        if (StaleHi != int.MaxValue && StaleHi > i) StaleHi--;
+        if (i < StaleLo) StaleLo = i;
+        if (i > StaleHi) StaleHi = i;
+        if (i < VerifiedCount) VerifiedCount--;
         if (e.Key.MatchesEverything) _matchAnything.Remove(e);
         else if (_byKey.TryGetValue(e.Key, out var bucket))
         {
@@ -1626,6 +1695,9 @@ internal sealed class DynChainState
     public void ClearEntries()
     {
         Entries.Clear();
+        _entriesPerClause.Clear();
+        MarkAllLinksStale();
+        ResetVerification();
         MinChunkAddr = int.MaxValue;
         MaxChunkAddr = int.MinValue;
         _byKey.Clear();

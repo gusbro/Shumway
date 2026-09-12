@@ -309,7 +309,7 @@ public sealed partial class PrologEngine
             // index lands on the WRONG entry — killing a live clause in
             // this engine's own view while the retracted one stays visible
             // (observed as Logtalk's loading-stack "ghost" entries).
-            PatchDiedFromChainByClause(engine, functorId, clause);
+            PatchDiedFromChainByClause(engine, functorId, clause, idx);
             // reclaim accumulated dead clauses from the chain
             // when it's safe (no in-progress enumeration of this
             // predicate). An assert+retract loop (e.g. next_char_i) would
@@ -691,8 +691,7 @@ public sealed partial class PrologEngine
         // out-of-range cell in a thrown ball). Dead-chunk reclamation is
         // optional; the chain rebuilds cleanly at the next query setup. No
         // InvalidatePersistent (would desync other live chains mid-load).
-        if (DynChainAddressesStale(chain, program.Length, failStub)
-            || DynChainStructurallyStale(program, chain))
+        if (DynChainStaleIncremental(program, chain, failStub))
             return 0;
 
         // The trampoline always points at chain.HeadClauseAddr, which
@@ -717,24 +716,53 @@ public sealed partial class PrologEngine
         // negligible compared to the O(n) walk over n dead entries
         // the GC eliminates.
 
-        int prevNext = chain.HeadClauseAddr + 1;   // head's <next> operand
-        foreach (var entry in chain.Entries)
+        // Only the links AROUND a removed entry are stale; the rest already
+        // point where this walk would put them. Re-threading the whole chain
+        // to fix a handful is O(clauses) per sweep, which is every four
+        // retracts -- the quadratic in a drain. The chain tracks the range it
+        // dirtied; anything the tracking does not model widens it to
+        // everything, so the fallback is the old full pass.
+        int lo = chain.StaleLo, hi = chain.StaleHi;
+        if (lo < 0 || lo > chain.Entries.Count) lo = 0;
+        if (hi > chain.Entries.Count) hi = chain.Entries.Count;
+        int prevNext;
+        if (lo > hi)
         {
-            int entryClauseAddr = entry.NextOperandAddr - 1;
-            if (entryClauseAddr == chain.HeadClauseAddr)
-            {
-                // The head itself is this live entry — its <next>
-                // is already the right anchor for the next jump;
-                // don't patch it to point at itself.
-                prevNext = entry.NextOperandAddr;
-                continue;
-            }
-            Shumway.Core.BytecodeIO.WriteInt32(program, prevNext, entryClauseAddr);
-            prevNext = entry.NextOperandAddr;
+            // Nothing stale. The tail still has to be anchored, and
+            // TailNextAddr is already right.
+            lo = hi = -1;
+            prevNext = chain.TailNextAddr;
         }
-        // Tail's <next> goes to the fail-stub.
-        Shumway.Core.BytecodeIO.WriteInt32(program, prevNext, failStub);
-        chain.TailNextAddr = prevNext;
+        else
+        {
+            prevNext = lo == 0
+                ? chain.HeadClauseAddr + 1              // head's <next> operand
+                : chain.Entries[lo - 1].NextOperandAddr;
+            for (int i = lo; i < chain.Entries.Count && i <= hi; i++)
+            {
+                var entry = chain.Entries[i];
+                int entryClauseAddr = entry.NextOperandAddr - 1;
+                if (entryClauseAddr == chain.HeadClauseAddr)
+                {
+                    // The head itself is this live entry — its <next>
+                    // is already the right anchor for the next jump;
+                    // don't patch it to point at itself.
+                    prevNext = entry.NextOperandAddr;
+                    continue;
+                }
+                Shumway.Core.BytecodeIO.WriteInt32(program, prevNext, entryClauseAddr);
+                prevNext = entry.NextOperandAddr;
+            }
+        }
+        // Tail's <next> goes to the fail-stub — only when the walk actually
+        // reached the tail, which is the only case in which it can have moved.
+        if (hi >= chain.Entries.Count && prevNext > 0)
+        {
+            Shumway.Core.BytecodeIO.WriteInt32(program, prevNext, failStub);
+            chain.TailNextAddr = prevNext;
+        }
+        chain.MarkLinksClean();
+        ChainRethreadLinks += lo < 0 ? 0 : System.Math.Min(hi, chain.Entries.Count) - lo + 1;
 
         // Drain the dead-chunk staging into the engine-wide free
         // list so subsequent incremental assertz / asserta can
@@ -2731,6 +2759,49 @@ public sealed partial class PrologEngine
     /// fall back to the store (which is already authoritative) rather than
     /// crash. An 8-byte tail margin covers both the int32 <c>next</c> and
     /// int64 <c>died</c> operands with one check.</summary>
+    /// <summary>The two staleness checks above, but only over the entries not
+    /// already validated against THIS program buffer. An entry's offsets
+    /// cannot move while the buffer is the same array object, so a previous
+    /// sweep's verdict on it still holds; head, tail and the fail stub are
+    /// re-checked every time because those do move. A failure re-arms the full
+    /// check for next time rather than leaving a half-verified chain.</summary>
+    private static bool DynChainStaleIncremental(
+        byte[] program, DynChainState chain, int failStub)
+    {
+        static bool Bad(int addr, int len) => addr > 0 && addr + sizeof(long) > len;
+        if (Bad(chain.HeadClauseAddr, program.Length)
+            || Bad(chain.TailNextAddr, program.Length)
+            || Bad(failStub, program.Length)
+            || (chain.HeadClauseAddr >= 0
+                && !IsChainInstructionAt(program, chain.HeadClauseAddr)))
+        {
+            chain.ResetVerification();
+            return true;
+        }
+        int from = ReferenceEquals(program, chain.VerifiedProgram)
+            ? chain.VerifiedCount : 0;
+        if (from > chain.Entries.Count) from = 0;
+        for (int i = from; i < chain.Entries.Count; i++)
+        {
+            var e = chain.Entries[i];
+            if (Bad(e.NextOperandAddr, program.Length)
+                || Bad(e.DiedOperandAddr, program.Length)
+                || !IsChainInstructionAt(program, e.NextOperandAddr - 1))
+            {
+                chain.ResetVerification();
+                return true;
+            }
+        }
+        ChainEntriesVerified += chain.Entries.Count - from;
+        chain.VerifiedProgram = program;
+        chain.VerifiedCount = chain.Entries.Count;
+        return false;
+    }
+
+    /// <summary>Chain entries actually re-validated by reclamation. The full
+    /// check looked at every live clause on every sweep.</summary>
+    internal static long ChainEntriesVerified;
+
     private static bool DynChainAddressesStale(
         DynChainState chain, int programLength, int failStub)
     {
@@ -2796,7 +2867,22 @@ public sealed partial class PrologEngine
     /// received it (fine: not visible either) or its view uses a layout
     /// the chain table doesn't describe (indexed) — the caller decides
     /// whether to rebuild.</returns>
-    private int PatchDiedFromChainByClause(Activation engine, int functorId, Clause clause)
+    /// <param name="hintIndex">Where the clause sat in the STORE's list. The
+    /// chain usually mirrors it, so this is usually the entry — but the chain
+    /// can lag the store, which is why this is a hint and not an index. It is
+    /// trusted only when the chain holds exactly ONE entry for the clause,
+    /// since then there is provably nothing else the walk could find; anything
+    /// else falls back to the walk, which is what this always did.</param>
+    /// <summary>Died-slot patches that took the hint instead of walking the
+    /// chain — the walk was O(clauses) on every retract.</summary>
+    internal long ChainPatchHints;
+
+    /// <summary>Chain links actually re-threaded by reclamation. The full pass
+    /// rewrote one per live clause on every sweep.</summary>
+    internal long ChainRethreadLinks;
+
+    private int PatchDiedFromChainByClause(Activation engine, int functorId,
+        Clause clause, int hintIndex = -1)
     {
         bool diag = StackDiagEnabled;
         if (GetChainTable(engine) is not { } tbl
@@ -2807,7 +2893,15 @@ public sealed partial class PrologEngine
         }
         var program = engine.CurrentProgram;
         int matched = 0, patched = 0;
-        for (int i = chain.Entries.Count - 1; i >= 0; i--)
+        int from = chain.Entries.Count - 1, to = 0;
+        if (hintIndex >= 0 && hintIndex < chain.Entries.Count
+            && chain.EntriesHolding(clause) == 1
+            && ReferenceEquals(chain.Entries[hintIndex].Clause, clause))
+        {
+            ChainPatchHints++;
+            from = to = hintIndex;
+        }
+        for (int i = from; i >= to; i--)
         {
             var entry = chain.Entries[i];
             if (!ReferenceEquals(entry.Clause, clause)) continue;
