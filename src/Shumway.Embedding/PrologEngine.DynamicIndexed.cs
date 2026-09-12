@@ -14,6 +14,14 @@ public sealed partial class PrologEngine
     internal DynChainTable? GetChainTable(Activation engine) => ChainPatcher.GetChainTable(engine);
     internal DynChainTable GetOrCreateChainTable(Activation engine) => ChainPatcher.GetOrCreateChainTable(engine);
     internal void RegisterLiveEngine(Activation engine) => ChainPatcher.RegisterLiveEngine(engine);
+    internal void UnregisterLiveEngine(Activation engine) => ChainPatcher.UnregisterLiveEngine(engine);
+
+    /// <summary>Dynamic mutations broadcast to suspended activations.</summary>
+    internal long BroadcastTargets
+    {
+        get => ChainPatcher.BroadcastTargets;
+        set => ChainPatcher.BroadcastTargets = value;
+    }
     internal List<Activation>? OtherLiveEnginesByTable(Activation except) => ChainPatcher.OtherLiveEnginesByTable(except);
     internal bool EngineOwnsHostBuffer(Activation engine) => ChainPatcher.EngineOwnsHostBuffer(engine);
     internal void SyncOrInvalidateAfterMutation(Activation engine, bool ownedHostBuffer)

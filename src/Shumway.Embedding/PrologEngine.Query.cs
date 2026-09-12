@@ -101,6 +101,9 @@ public sealed partial class PrologEngine
                 interp.RunTeardownCleanups(program);
             host.DebugSession?.OnLeaveProlog(engine);
             host.AccountGarbageCollection(engine);
+            // Out of the dynamic-mutation broadcast: this activation cannot
+            // resume, so a later mutation has nothing to tell it.
+            host.UnregisterLiveEngine(engine);
             host._heapPool.Return(engine);
         }
     }

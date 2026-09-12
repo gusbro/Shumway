@@ -1429,11 +1429,36 @@ internal sealed class DynamicCodePatcher
     /// (and keep a to-be-reused buffer current).</summary>
     private readonly List<WeakReference<Activation>> _liveEngines = new();
 
+    /// <summary>Activations a mutation has been broadcast to. One per
+    /// mutation per SUSPENDED activation; zero when nothing is suspended,
+    /// which is the ordinary case and used to be one per finished-but-
+    /// uncollected query instead.</summary>
+    internal long BroadcastTargets;
+
     internal void RegisterLiveEngine(Activation engine)
     {
         for (int i = _liveEngines.Count - 1; i >= 0; i--)
             if (!_liveEngines[i].TryGetTarget(out _)) _liveEngines.RemoveAt(i);
         _liveEngines.Add(new WeakReference<Activation>(engine));
+    }
+
+    /// <summary>Drops <paramref name="engine"/> when its query ends, so the
+    /// list holds only OPEN activations — and therefore, minus whichever one
+    /// is running, exactly the suspended ones the broadcast is for.
+    ///
+    /// <para>Without this the list kept every finished-but-uncollected
+    /// activation, and each of them took a full chain patch on every
+    /// mutation: in a retract loop that was one wasted O(chain) walk per
+    /// retract, for a query that had already returned and can never resume.
+    /// The entries stay weak so a query whose enumerator is abandoned rather
+    /// than disposed can still be collected.</para></summary>
+    internal void UnregisterLiveEngine(Activation engine)
+    {
+        for (int i = _liveEngines.Count - 1; i >= 0; i--)
+        {
+            if (!_liveEngines[i].TryGetTarget(out var e) || ReferenceEquals(e, engine))
+                _liveEngines.RemoveAt(i);
+        }
     }
 
     /// <summary>Live engines OTHER than <paramref name="except"/>, at most
@@ -1456,6 +1481,7 @@ internal sealed class DynamicCodePatcher
             if (ReferenceEquals(e, except)) continue;
             if (GetChainTable(e) is not { } t || !seen.Add(t)) continue;
             (result ??= new List<Activation>()).Add(e);
+            BroadcastTargets++;
         }
         return result;
     }
