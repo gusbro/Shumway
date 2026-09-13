@@ -1268,13 +1268,39 @@ internal sealed class DynamicCodePatcher
     /// Selection includes logically-dead entries as candidates: their
     /// <c>check_visible</c> still runs at the jump target, and a sole-but-dead
     /// candidate correctly fails the call.</summary>
-    private static readonly bool DynSelDiag =
+    /// <summary>Settable so a test can ask what the selector DECIDED. The
+    /// cost this guards is C# work per call, which no Prolog-level counter
+    /// (inferences, heap cells) can see -- measuring it by the clock is
+    /// measuring the machine, so the verdict itself is the observable.</summary>
+    internal static bool DynSelDiag =
         System.Environment.GetEnvironmentVariable("SHUMWAY_DYNSEL_DIAG") == "1";
+
+    /// <summary>Verdict tallies, counted only while <see cref="DynSelDiag"/>
+    /// is on: a sole candidate jumped to, a call ruled out without walking,
+    /// and a call handed back to the chain. Not interlocked -- diagnostic
+    /// only, and an activation dispatches on one thread.</summary>
+    internal static long SelSole, SelNone, SelDeclined;
+
+    /// <summary>When nonzero, only this functor is tallied. The tallies are
+    /// process-wide and a query dispatches more dynamic predicates than the
+    /// one under test -- whatever a previously loaded library left in the
+    /// prelude counts too, which is ambient and not reproducible.</summary>
+    internal static int SelDiagFid;
+
+    internal static void ResetSelCounters(int fid = 0)
+    {
+        SelSole = SelNone = SelDeclined = 0;
+        SelDiagFid = fid;
+    }
 
     private static int SelDiag(int fid, int result, string reason)
     {
         if (DynSelDiag)
         {
+            if (SelDiagFid == 0 || fid == SelDiagFid)
+            {
+                if (result == -1) SelNone++; else SelDeclined++;
+            }
             string name = "?";
             if (fid != 0)
             {
@@ -1298,7 +1324,7 @@ internal sealed class DynamicCodePatcher
             fid = pred.FunctorId;
         else if (!table.TrampolineFids.TryGetValue(trampolinePc, out fid))
             return SelDiag(0, -2, $"unknown-trampoline@{trampolinePc}");
-        if (!table.Chains.TryGetValue(fid, out var state) || state.Entries.Count == 0)
+        if (!table.Chains.TryGetValue(fid, out var state) || state.LiveCount == 0)
         {
             // ISO abolish/1: once abolished the predicate is UNDEFINED — a
             // NEW call (this dispatch) is an undefined-procedure call, so
@@ -1348,13 +1374,13 @@ internal sealed class DynamicCodePatcher
         var headOp = (Shumway.Core.Opcode)prog[chainHead];
         if (headOp != Shumway.Core.Opcode.TryMeElse) return SelDiag(fid, -2, $"head-op={headOp}");
 
-        int matchCount;
         DynChainEntry? match;
-        if (entries.Count == 1)
+        if (state.LiveCount == 1)
         {
-            // Sole clause: always the sole candidate, first arg irrelevant.
-            matchCount = 1;
-            match = entries[0];
+            // Sole live clause: always the sole candidate, first arg
+            // irrelevant. Retired entries may still sit in the list, which
+            // is why this is the live head and not entries[0].
+            match = state.FirstLive!;
         }
         else
         {
@@ -1366,15 +1392,14 @@ internal sealed class DynamicCodePatcher
                 a0 = engine.GetHeap(engine.Deref(a0.AsHeapIndex));
                 if (a0.Tag == Tag.Ref) return SelDiag(fid, -2, "unbound-a0");
             }
-            matchCount = 0;
-            match = null;
-            foreach (var entry in entries)
-            {
-                if (!EntryKeyCouldMatch(engine, entry, a0)) continue;
-                if (++matchCount > 1) return SelDiag(fid, -2, "multi-candidate");
-                match = entry;
-            }
-            if (matchCount == 0) return SelDiag(fid, -1, "no-candidate");
+            // A tag that keys nothing -- a float, a bigint -- cannot rule any
+            // clause out, so every entry stays a candidate and there is more
+            // than one of them (the sole-entry case returned above).
+            if (DynFirstArgKey.OfCall(engine, a0) is not { } callKey)
+                return SelDiag(fid, -2, "unkeyed-a0");
+            if (state.NoCandidate(callKey)) return SelDiag(fid, -1, "no-candidate");
+            if (!state.TrySoleCandidate(callKey, out match))
+                return SelDiag(fid, -2, "multi-candidate");
         }
         // Sole candidate. Its chunk must start with a chain instruction we
         // can skip (try_me_else / retry_me_else, incl. the 155f demoted-head
@@ -1384,45 +1409,8 @@ internal sealed class DynamicCodePatcher
         var op = (Shumway.Core.Opcode)prog[addr];
         if (op != Shumway.Core.Opcode.TryMeElse
             && op != Shumway.Core.Opcode.RetryMeElse) return SelDiag(fid, -2, $"entry-op={op}");
+        if (DynSelDiag && (SelDiagFid == 0 || fid == SelDiagFid)) SelSole++;
         return addr + ChainEntryHeaderSize(prog, addr);
-    }
-
-    // First-arg key compatibility: a clause whose head first argument is a
-    // variable (or a shape we don't key) matches ANY call; otherwise the tags
-    // must be unifiable and, for atoms/small ints, the values equal. Every
-    // uncertain shape returns true (the clause stays a candidate — that only
-    // costs the selection, never correctness). "Keyed" call tags are the ones
-    // whose mismatch PROVES non-unifiability against a constant/compound key.
-    private static bool EntryKeyCouldMatch(Activation engine, DynChainEntry entry, Cell callArg)
-    {
-        Term head = entry.Clause.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
-            ? h : entry.Clause.Term;
-        if (head is not CompoundTerm hc || hc.Args.Length == 0) return true;
-        bool keyedCall = callArg.Tag is Tag.Atom or Tag.Int or Tag.Str or Tag.Lis or Tag.Pstr;
-        if (!keyedCall) return true;
-        switch (hc.Args[0])
-        {
-            case AtomTerm a:
-                return callArg.Tag == Tag.Atom
-                    && AtomTable.Intern(a.Name, permanent: true).Id == callArg.AsAtomId;
-            case IntTerm i:
-                return callArg.Tag == Tag.Int && callArg.AsInt == i.Value;
-            case CompoundTerm c when c.Functor == "." && c.Args.Length == 2:
-                return callArg.Tag is Tag.Lis or Tag.Pstr;
-            case CompoundTerm c:
-                // Real functor/arity comparison: Logtalk's per-entity `_def`
-                // tables are chains keyed by DISTINCT goal-template compounds
-                // (precision(_), order(_), …) — without this the whole chain
-                // stayed multi-candidate and the lgtunit determinism tests
-                // under debug(on) saw the surviving chain CP.
-                if (callArg.Tag != Tag.Str) return false;
-                var (aid, ar) = FunctorTable.Lookup(
-                    engine.GetHeap(callArg.AsHeapIndex).AsFunctorId);
-                return c.Args.Length == ar
-                    && AtomTable.Intern(c.Functor, permanent: true).Id == aid;
-            default:
-                return true;    // var / float / bigint / unkeyed head shapes
-        }
     }
 
     internal DynChainTable GetOrCreateChainTable(Activation engine)
@@ -1443,11 +1431,36 @@ internal sealed class DynamicCodePatcher
     /// (and keep a to-be-reused buffer current).</summary>
     private readonly List<WeakReference<Activation>> _liveEngines = new();
 
+    /// <summary>Activations a mutation has been broadcast to. One per
+    /// mutation per SUSPENDED activation; zero when nothing is suspended,
+    /// which is the ordinary case and used to be one per finished-but-
+    /// uncollected query instead.</summary>
+    internal long BroadcastTargets;
+
     internal void RegisterLiveEngine(Activation engine)
     {
         for (int i = _liveEngines.Count - 1; i >= 0; i--)
             if (!_liveEngines[i].TryGetTarget(out _)) _liveEngines.RemoveAt(i);
         _liveEngines.Add(new WeakReference<Activation>(engine));
+    }
+
+    /// <summary>Drops <paramref name="engine"/> when its query ends, so the
+    /// list holds only OPEN activations — and therefore, minus whichever one
+    /// is running, exactly the suspended ones the broadcast is for.
+    ///
+    /// <para>Without this the list kept every finished-but-uncollected
+    /// activation, and each of them took a full chain patch on every
+    /// mutation: in a retract loop that was one wasted O(chain) walk per
+    /// retract, for a query that had already returned and can never resume.
+    /// The entries stay weak so a query whose enumerator is abandoned rather
+    /// than disposed can still be collected.</para></summary>
+    internal void UnregisterLiveEngine(Activation engine)
+    {
+        for (int i = _liveEngines.Count - 1; i >= 0; i--)
+        {
+            if (!_liveEngines[i].TryGetTarget(out var e) || ReferenceEquals(e, engine))
+                _liveEngines.RemoveAt(i);
+        }
     }
 
     /// <summary>Live engines OTHER than <paramref name="except"/>, at most
@@ -1470,6 +1483,7 @@ internal sealed class DynamicCodePatcher
             if (ReferenceEquals(e, except)) continue;
             if (GetChainTable(e) is not { } t || !seen.Add(t)) continue;
             (result ??= new List<Activation>()).Add(e);
+            BroadcastTargets++;
         }
         return result;
     }
@@ -1557,7 +1571,239 @@ internal sealed class DynamicCodePatcher
 
 internal sealed class DynChainState
 {
+    /// <summary>The chain in order. Read everywhere and indexed positionally
+    /// (a clause index IS a position here), so it stays a plain list; the
+    /// buckets beside it are maintained by the four mutators below and must
+    /// be the only way it changes.</summary>
     public readonly List<DynChainEntry> Entries = new();
+
+    // Dispatch-time selection asks "which clauses could match THIS first
+    // argument", once per call. Answering it by walking the chain made that
+    // O(clauses) per call, so a predicate grown and queried inside one query
+    // -- which never gets the indexed recompile, since that happens at query
+    // setup -- was quadratic. These give the answer in a lookup.
+    private readonly Dictionary<DynFirstArgKey, List<DynChainEntry>> _byKey = new();
+    private readonly List<DynChainEntry> _matchAnything = new();
+
+    // Dead-chain reclamation asks "is any choice point sitting INSIDE this
+    // chain". It answered that by building a set of every chunk address in
+    // the chain, per fire -- O(clauses) of allocation and hashing to answer a
+    // question that is almost always no, which was the single biggest cost of
+    // a drain. These bounds, maintained as entries come and go, let the CP
+    // scan reject an address without touching the chain at all; only an
+    // address that falls INSIDE the range needs the exact set. They are a
+    // conservative envelope (other predicates' chunks can lie between ours),
+    // never a verdict.
+    public int MinChunkAddr = int.MaxValue;
+    public int MaxChunkAddr = int.MinValue;
+
+    /// <summary>Brings an address into the envelope. The live entries do this
+    /// themselves; the head and the dead chunks are added by the caller that
+    /// records them.</summary>
+    // Reclamation refuses a chain holding any clause emitted inside a source
+    // block, because such a chunk is not individually relocatable. Answering
+    // that by walking every entry, on every sweep, was O(clauses) per four
+    // retracts -- invisible under 32,000 clauses and 64% of a 128,000-clause
+    // drain. It is a count.
+    public int SourceBlockEntries;
+
+    public void WidenBounds(int addr)
+    {
+        if (addr < 0) return;
+        if (addr < MinChunkAddr) MinChunkAddr = addr;
+        if (addr > MaxChunkAddr) MaxChunkAddr = addr;
+    }
+
+    // Retracting patches the died slot of every entry holding the retracted
+    // clause, which meant walking the whole chain per retract. Knowing HOW
+    // MANY entries hold a clause is enough to skip that walk: exactly one
+    // means a position hint can be trusted outright, because there is nothing
+    // else to find.
+    private readonly Dictionary<Clause, int> _entriesPerClause = new();
+
+    // Bypassing a retired entry in the BYTECODE must wait for the sweep (a
+    // live choice point may still resume into it), so each retirement records
+    // the one link that will need re-making: the address of the nearest live
+    // predecessor's <next> operand, captured while the live list still knows
+    // it. The sweep replays the records in retirement order, reading each
+    // retired entry's own <next> slot for the continuation -- reading it AT
+    // REPLAY TIME is what keeps a chunk appended after the retirement
+    // connected, because the append patched exactly that slot.
+    public DynChainEntry? FirstLive, LastLive;
+    public int LiveCount;
+    public int RetiredCount;
+    public readonly List<(int PrevAddr, DynChainEntry Entry)> PendingBypass = new();
+
+    /// <summary>The single live entry holding a clause, or nothing while the
+    /// clause has none or has ever had more than one -- the walk decides
+    /// those. It is what lets a retract retire its entry without scanning
+    /// the chain for it.</summary>
+    private readonly Dictionary<Clause, DynChainEntry?> _byClause =
+        new(ReferenceEqualityComparer.Instance);
+
+    public bool TryGetSoleEntry(Clause c, out DynChainEntry? sole)
+    {
+        sole = null;
+        if (!_byClause.TryGetValue(c, out var e) || e is null || e.Retired)
+            return false;
+        sole = e;
+        return true;
+    }
+
+    /// <summary>Marks <paramref name="e"/> retired in place. No position
+    /// moves; the entry leaves the live list, the buckets, and the sole-entry
+    /// map, and the link that fed it is recorded for the sweep.</summary>
+    public void RetireEntry(DynChainEntry e)
+    {
+        if (e.Retired) return;
+        e.Retired = true;
+        RetiredCount++;
+        CountDown(e.Clause);
+        if (e.ChunkAddr < 0) SourceBlockEntries--;
+        if (_byClause.TryGetValue(e.Clause, out var known)
+            && ReferenceEquals(known, e))
+            _byClause.Remove(e.Clause);
+        if (e.Key.MatchesEverything) _matchAnything.Remove(e);
+        else if (_byKey.TryGetValue(e.Key, out var bucket))
+        {
+            bucket.Remove(e);
+            if (bucket.Count == 0) _byKey.Remove(e.Key);
+        }
+        int prevAddr = e.PrevLive is { } pl ? pl.NextOperandAddr
+            : HeadClauseAddr >= 0 ? HeadClauseAddr + 1 : -1;
+        PendingBypass.Add((prevAddr, e));
+        if (e.PrevLive is { } pv) pv.NextLive = e.NextLive; else FirstLive = e.NextLive;
+        if (e.NextLive is { } nx) nx.PrevLive = e.PrevLive; else LastLive = e.PrevLive;
+        e.PrevLive = e.NextLive = null;
+        LiveCount--;
+    }
+
+    /// <summary>Drops the retired entries once they reach half the list --
+    /// proportional, so each pass pays for the retirements that caused it.
+    /// Only with no bypass pending: the records reference entries, and the
+    /// verification watermark is positional.</summary>
+    public void CompactEntries()
+    {
+        if (RetiredCount == 0 || PendingBypass.Count > 0) return;
+        int w = 0, verifiedKept = 0;
+        for (int r = 0; r < Entries.Count; r++)
+        {
+            if (Entries[r].Retired) continue;
+            // Verification is per entry and position-independent, so a
+            // survivor from below the watermark is still verified at its new
+            // position -- resetting to zero here made every compaction force
+            // a full re-verify at the next sweep.
+            if (r < VerifiedCount) verifiedKept++;
+            Entries[w++] = Entries[r];
+        }
+        Entries.RemoveRange(w, Entries.Count - w);
+        RetiredCount = 0;
+        VerifiedCount = verifiedKept;
+    }
+
+    // Reclamation validates every entry's cached byte offsets against the live
+    // buffer before touching it. An entry's offsets cannot move while the
+    // buffer is the SAME array object -- growing it reallocates, and an
+    // in-place patch writes bytes without moving anything -- so entries
+    // already validated against this buffer stay valid, and only the ones
+    // added since need looking at. Checking all of them per sweep was
+    // O(clauses) on every fourth retract.
+    public byte[]? VerifiedProgram;
+    public int VerifiedCount;
+
+    public void ResetVerification() { VerifiedProgram = null; VerifiedCount = 0; }
+
+    public int EntriesHolding(Clause c)
+        => _entriesPerClause.TryGetValue(c, out int n) ? n : 0;
+
+    private void CountUp(Clause c)
+        => _entriesPerClause[c] = EntriesHolding(c) + 1;
+
+    private void CountDown(Clause c)
+    {
+        int n = EntriesHolding(c) - 1;
+        if (n <= 0) _entriesPerClause.Remove(c);
+        else _entriesPerClause[c] = n;
+    }
+
+    /// <summary>Appending patches the old tail's link itself, so it leaves no
+    /// stale link behind it.</summary>
+    public void AppendEntry(DynChainEntry e)
+    {
+        Entries.Add(e); Index(e); WidenBounds(e.ChunkAddr); CountUp(e.Clause);
+        if (e.ChunkAddr < 0) SourceBlockEntries++;
+        if (!_byClause.TryAdd(e.Clause, e)) _byClause[e.Clause] = null;
+        e.PrevLive = LastLive;
+        if (LastLive is { } t) t.NextLive = e; else FirstLive = e;
+        LastLive = e;
+        LiveCount++;
+    }
+
+    /// <summary>Prepending shifts every position up by one, and patches the
+    /// head link itself.</summary>
+    public void PrependEntry(DynChainEntry e)
+    {
+        Entries.Insert(0, e); Index(e); WidenBounds(e.ChunkAddr); CountUp(e.Clause);
+        if (e.ChunkAddr < 0) SourceBlockEntries++;
+        if (!_byClause.TryAdd(e.Clause, e)) _byClause[e.Clause] = null;
+        e.NextLive = FirstLive;
+        if (FirstLive is { } h) h.PrevLive = e; else LastLive = e;
+        FirstLive = e;
+        LiveCount++;
+        // The new entry is at 0, so "the first N are verified" no longer
+        // describes anything; re-verify from scratch.
+        VerifiedCount = 0;
+        // The prepend takes over the head's <next> slot: a pending bypass
+        // anchored there would clobber it at replay, so those records move
+        // to the slot that NOW feeds what the head used to -- this entry's.
+        if (HeadClauseAddr >= 0 && e.NextOperandAddr > 0)
+            for (int i = 0; i < PendingBypass.Count; i++)
+                if (PendingBypass[i].PrevAddr == HeadClauseAddr + 1)
+                    PendingBypass[i] = (e.NextOperandAddr, PendingBypass[i].Entry);
+    }
+
+    public void ClearEntries()
+    {
+        Entries.Clear();
+        _entriesPerClause.Clear();
+        _byClause.Clear();
+        SourceBlockEntries = 0;
+        FirstLive = LastLive = null;
+        LiveCount = 0;
+        RetiredCount = 0;
+        PendingBypass.Clear();
+        ResetVerification();
+        MinChunkAddr = int.MaxValue;
+        MaxChunkAddr = int.MinValue;
+        _byKey.Clear();
+        _matchAnything.Clear();
+    }
+
+    private void Index(DynChainEntry e)
+    {
+        if (e.Key.MatchesEverything) { _matchAnything.Add(e); return; }
+        if (!_byKey.TryGetValue(e.Key, out var bucket))
+            _byKey[e.Key] = bucket = new List<DynChainEntry>();
+        bucket.Add(e);
+    }
+
+    /// <summary>The clauses a call with this key could match: the ones keyed
+    /// the same, plus the ones that match anything. Returns false when there
+    /// is not exactly one, which is all the caller needs to know -- zero means
+    /// fail outright, more than one means let the chain run.</summary>
+    public bool TrySoleCandidate(DynFirstArgKey callKey, out DynChainEntry? sole)
+    {
+        _byKey.TryGetValue(callKey, out var bucket);
+        int keyed = bucket?.Count ?? 0;
+        if (keyed + _matchAnything.Count != 1) { sole = null; return false; }
+        sole = keyed == 1 ? bucket![0] : _matchAnything[0];
+        return true;
+    }
+
+    /// <summary>True when nothing at all could match -- the call fails without
+    /// touching the chain.</summary>
+    public bool NoCandidate(DynFirstArgKey callKey)
+        => _matchAnything.Count == 0 && !_byKey.ContainsKey(callKey);
     /// <summary>Absolute byte position of the operand at the bytecode
     /// tail of this predicate's chain — the <c>&lt;next&gt;</c> of
     /// either the latest-appended clause's <c>retry_me_else</c>, or
@@ -1676,6 +1922,21 @@ internal sealed class DynChainEntry
     /// <c>asserta</c>.</summary>
     public int ChunkAddr;
     public int ChunkLength;
+
+    /// <summary>Marked instead of removed: taking an entry out of the list
+    /// shifts every position above it, which made a drain quadratic a third
+    /// time, in a third structure. A retired entry keeps its slot until the
+    /// list compacts, and only <see cref="DynChainState.RetireEntry"/> sets
+    /// this.</summary>
+    public bool Retired;
+
+    /// <summary>The doubly linked list of LIVE entries, in chain order. It is
+    /// what makes retiring O(1): the nearest live predecessor -- whose
+    /// <c>next</c> operand is the one link the sweep will have to re-make --
+    /// is one hop away at the moment of retirement, instead of a walk away
+    /// at the moment of the sweep.</summary>
+    public DynChainEntry? PrevLive, NextLive;
+
     public DynChainEntry(Clause c, int died, int next, int chunkAddr, int chunkLength)
     {
         Clause = c;
@@ -1683,5 +1944,76 @@ internal sealed class DynChainEntry
         NextOperandAddr = next;
         ChunkAddr = chunkAddr;
         ChunkLength = chunkLength;
+        Key = DynFirstArgKey.Of(c);
+    }
+
+    /// <summary>The clause's first-argument key, decided once here rather
+    /// than re-derived on every dispatch -- interning the head atom per entry
+    /// per call was most of what the selection cost.</summary>
+    public readonly DynFirstArgKey Key;
+}
+
+/// <summary>A dynamic clause's first argument, reduced to what dispatch-time
+/// selection needs: enough to PROVE a call cannot match, and
+/// <see cref="Anything"/> for every shape that cannot prove it. The kinds
+/// mirror ADR-041's cases exactly; adding one that is not provable would make
+/// the selection wrong, not just slower.</summary>
+internal readonly record struct DynFirstArgKey(byte Kind, long Value)
+{
+    public const byte AnythingKind = 0, AtomKind = 1, IntKind = 2,
+                      ListKind = 3, StructKind = 4;
+
+    public static readonly DynFirstArgKey Anything = new(AnythingKind, 0);
+    public bool MatchesEverything => Kind == AnythingKind;
+
+    /// <summary>The key of a clause's head first argument.</summary>
+    /// <remarks>Every shape that cannot PROVE a mismatch must map to
+    /// <see cref="Anything"/>. Getting that wrong makes the selection wrong,
+    /// not merely slower: a clause left out of a call's candidates is a
+    /// solution that never runs.</remarks>
+    public static DynFirstArgKey Of(Clause c)
+    {
+        Term head = c.Term is CompoundTerm { Functor: ":-", Args: [var h, _] }
+            ? h : c.Term;
+        if (head is not CompoundTerm hc || hc.Args.Length == 0) return Anything;
+        switch (hc.Args[0])
+        {
+            case AtomTerm a:
+                return new(AtomKind, AtomTable.Intern(a.Name, permanent: true).Id);
+            case IntTerm i:
+                return new(IntKind, i.Value);
+            case CompoundTerm { Functor: ".", Args.Length: 2 }:
+                return new(ListKind, 0);
+            case CompoundTerm cc:
+                // Functor AND arity, not just "some compound": Logtalk's
+                // per-entity `_def` tables are chains keyed by DISTINCT goal
+                // templates (precision(_), order(_), ...), and keying them
+                // together would leave the whole chain multi-candidate.
+                return new(StructKind,
+                    ((long)AtomTable.Intern(cc.Functor, permanent: true).Id << 32)
+                    | (uint)cc.Args.Length);
+            default:
+                return Anything;    // var / float / bigint / unkeyed head shapes
+        }
+    }
+
+    /// <summary>The key a CALL's first argument selects, or null when the
+    /// argument's tag proves nothing -- a float or a bigint keys no clause, so
+    /// every entry stays a candidate and the selection has to decline.</summary>
+    public static DynFirstArgKey? OfCall(Activation engine, Cell callArg)
+        => callArg.Tag switch
+        {
+            Tag.Atom => new DynFirstArgKey(AtomKind, callArg.AsAtomId),
+            Tag.Int => new DynFirstArgKey(IntKind, callArg.AsInt),
+            Tag.Lis or Tag.Pstr => new DynFirstArgKey(ListKind, 0),
+            Tag.Str => StructCallKey(engine, callArg),
+            _ => null,
+        };
+
+    private static DynFirstArgKey StructCallKey(Activation engine, Cell callArg)
+    {
+        var (aid, ar) = FunctorTable.Lookup(
+            engine.GetHeap(callArg.AsHeapIndex).AsFunctorId);
+        return new DynFirstArgKey(StructKind, ((long)aid << 32) | (uint)ar);
     }
 }

@@ -1163,6 +1163,19 @@ internal static class Prelude
         '$must_be_wrong'(Name, X, Context) :-
             throw(error(type_error(Name, X), Context)).
 
+        % Insufficiency is "something is still missing AND nothing already
+        % known refutes it" -- the same reading the chars/codes clauses below
+        % use, where the KNOWN prefix must still be compatible. So foo/_ is
+        % insufficient, and 1/_ is not: no instantiation of the arity can make
+        % a non-atom name admissible, and an instantiation_error would promise
+        % otherwise. abolish/1 differs here on purpose: its 8.9.4.3 error table
+        % is checked in the standard's own order, which puts the variable case
+        % first. must_be/2 characterises the term instead of following a
+        % builtin's table.
+        '$must_be_insufficient'(predicate_indicator, N/A) :-
+            ( var(N) ; var(A) ),
+            ( var(N) -> true ; atom(N) ),
+            ( var(A) -> true ; integer(A), A >= 0 ).
         '$must_be_insufficient'(list, X) :- '$partial_list'(X).
         '$must_be_insufficient'(not_empty_list, X) :- '$partial_list'(X).
         '$must_be_insufficient'(chars, X) :- '$partial_list'(X, P), '$all_chars'(P).
@@ -1262,6 +1275,11 @@ internal static class Prelude
         % refused where a list is wanted. (97 can never become an atom, which
         % is why this is a short list and not a rule.)
         '$can_be_ok'(Type, X) :- '$must_be_ok'(Type, X), !.
+        % Open enough to still become an indicator; a half already refutable
+        % falls through and is reported as the type error it is.
+        '$can_be_ok'(predicate_indicator, N/A) :-
+            ( var(N) -> true ; atom(N) ),
+            ( var(A) -> true ; integer(A), A >= 0 ).
         '$can_be_ok'(list, X) :- '$partial_list'(X).
         % must_be wants it ground; can_be only wants it able to become so.
         '$can_be_ok'(term, X) :- acyclic_term(X).

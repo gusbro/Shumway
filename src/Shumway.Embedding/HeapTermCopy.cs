@@ -67,14 +67,64 @@ internal static class HeapTermCopy
         }
     }
 
+    /// <summary>C#-recursion depth past which a nested copy is put on a WORK
+    /// LIST instead of descending. How deep a term nests is the program's
+    /// choice, and a .NET stack overflow cannot be caught: it takes the
+    /// process down. Recursive while the depth is known to be safe, an
+    /// explicit stack past that.</summary>
+    private const int CopyRecursionLimit = 512;
+
+    /// <summary>Copies the value at <paramref name="src"/> into the reserved
+    /// slot <paramref name="dst"/>, now or later. Later is sound because every
+    /// destination is reserved BEFORE anything is copied into it and both
+    /// identity maps are registered before descending, so a cycle or a shared
+    /// subterm resolves the same whichever order the pieces are filled
+    /// in.</summary>
+    private static void CopyInto(Activation engine, int src, int dst, int depth,
+        Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap,
+        List<long> deferred)
+    {
+        if (depth < CopyRecursionLimit)
+        {
+            engine.SetHeap(dst, CopyAt(engine, src, depth, varMap, structMap, deferred));
+            return;
+        }
+        deferred.Add(((long)src << 32) | (uint)dst);
+    }
+
+    /// <summary>Fills in every slot the copy put off, and the slots those put
+    /// off in turn, until none is left.</summary>
+    private static void Drain(Activation engine,
+        Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap,
+        List<long> deferred)
+    {
+        while (deferred.Count > 0)
+        {
+            long pending = deferred[^1];
+            deferred.RemoveAt(deferred.Count - 1);
+            CopyInto(engine, (int)(pending >> 32), (int)(uint)pending, 0,
+                     varMap, structMap, deferred);
+        }
+    }
+
     private static Cell CopyRegisterValue(Activation engine, Cell rc,
         Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap)
     {
+        var deferred = new List<long>();
+        Cell copied = CopyRegisterValue(engine, rc, varMap, structMap, deferred);
+        Drain(engine, varMap, structMap, deferred);
+        return copied;
+    }
+
+    private static Cell CopyRegisterValue(Activation engine, Cell rc,
+        Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap,
+        List<long> deferred)
+    {
         switch (rc.Tag)
         {
-            case Tag.Ref: return CopyAt(engine, rc.AsHeapIndex, varMap, structMap);
-            case Tag.Str: return CopyStr(engine, rc.AsHeapIndex, varMap, structMap);
-            case Tag.Lis: return CopyLis(engine, rc.AsHeapIndex, varMap, structMap);
+            case Tag.Ref: return CopyAt(engine, rc.AsHeapIndex, 0, varMap, structMap, deferred);
+            case Tag.Str: return CopyStr(engine, rc.AsHeapIndex, 0, varMap, structMap, deferred);
+            case Tag.Lis: return CopyLis(engine, rc.AsHeapIndex, 0, varMap, structMap, deferred);
             case Tag.Atom:
             case Tag.Int:
             case Tag.Foreign:
@@ -87,14 +137,15 @@ internal static class HeapTermCopy
                 // one throwaway heap slot so CopyAt has an address to work from.
                 int tmp = engine.AllocateHeap(1);
                 engine.SetHeap(tmp, rc);
-                return CopyAt(engine, tmp, varMap, structMap);
+                return CopyAt(engine, tmp, 0, varMap, structMap, deferred);
         }
     }
 
     /// <summary>Copies the value stored at heap slot <paramref name="addr"/>
     /// (dereferencing first).</summary>
-    private static Cell CopyAt(Activation engine, int addr,
-        Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap)
+    private static Cell CopyAt(Activation engine, int addr, int depth,
+        Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap,
+        List<long> deferred)
     {
         int a = engine.Deref(addr);
         Cell c = engine.GetHeap(a);
@@ -129,9 +180,9 @@ internal static class HeapTermCopy
                 // as the old whole-term round-trip did).
                 return Materializer.MaterializeAsCell(engine, TermReader.Materialize(engine, a));
             case Tag.Str:
-                return CopyStr(engine, c.AsHeapIndex, varMap, structMap);
+                return CopyStr(engine, c.AsHeapIndex, depth, varMap, structMap, deferred);
             case Tag.Lis:
-                return CopyLis(engine, c.AsHeapIndex, varMap, structMap);
+                return CopyLis(engine, c.AsHeapIndex, depth, varMap, structMap, deferred);
             default:
                 throw new System.NotSupportedException(
                     $"HeapTermCopy does not handle the {c.Tag} tag.");
@@ -140,8 +191,9 @@ internal static class HeapTermCopy
 
     /// <summary><paramref name="fAddr"/> is the source FUNCTOR cell address
     /// (functor at fAddr, args at fAddr+1..fAddr+arity).</summary>
-    private static Cell CopyStr(Activation engine, int fAddr,
-        Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap)
+    private static Cell CopyStr(Activation engine, int fAddr, int depth,
+        Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap,
+        List<long> deferred)
     {
         if (structMap.TryGetValue(fAddr, out Cell cached)) return cached;
         Cell fcell = engine.GetHeap(fAddr);
@@ -155,14 +207,16 @@ internal static class HeapTermCopy
         engine.SetHeap(baseIdx, Cell.Str(baseIdx + 1));
         engine.SetHeap(baseIdx + 1, Cell.Functor(fcell.AsFunctorId));
         for (int i = 0; i < arity; i++)
-            engine.SetHeap(baseIdx + 2 + i, CopyAt(engine, fAddr + 1 + i, varMap, structMap));
+            CopyInto(engine, fAddr + 1 + i, baseIdx + 2 + i, depth + 1,
+                     varMap, structMap, deferred);
         return result;
     }
 
     /// <summary><paramref name="firstHead"/> is the source cons's head-cell
     /// address (head at firstHead, tail at firstHead+1).</summary>
-    private static Cell CopyLis(Activation engine, int firstHead,
-        Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap)
+    private static Cell CopyLis(Activation engine, int firstHead, int depth,
+        Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap,
+        List<long> deferred)
     {
         if (structMap.TryGetValue(firstHead, out Cell cached)) return cached;
         // Walk the spine iteratively, collecting each cons's head-cell address
@@ -196,12 +250,17 @@ internal static class HeapTermCopy
         // Register every cons before copying any element — cycle / DAG safety.
         for (int i = 0; i < n; i++)
             structMap[srcHeads[i]] = Cell.Lis(firstPair + 2 * i);
-        Cell tailCell = CopyAt(engine, finalTailAddr, varMap, structMap);
+        // The tail goes first, as it did when it was one expression: the
+        // order decides which fresh cells land at which addresses, and a
+        // variable's address is what the top level prints for it.
+        CopyInto(engine, finalTailAddr, firstPair + 2 * (n - 1) + 1, depth + 1,
+                 varMap, structMap, deferred);
         for (int i = 0; i < n; i++)
         {
-            engine.SetHeap(firstPair + 2 * i, CopyAt(engine, srcHeads[i], varMap, structMap));
-            engine.SetHeap(firstPair + 2 * i + 1,
-                i + 1 < n ? Cell.Lis(firstPair + 2 * (i + 1)) : tailCell);
+            CopyInto(engine, srcHeads[i], firstPair + 2 * i, depth + 1,
+                     varMap, structMap, deferred);
+            if (i + 1 < n)
+                engine.SetHeap(firstPair + 2 * i + 1, Cell.Lis(firstPair + 2 * (i + 1)));
         }
         return Cell.Lis(firstPair);
     }

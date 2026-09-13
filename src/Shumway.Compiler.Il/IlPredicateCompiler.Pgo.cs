@@ -68,7 +68,12 @@ public sealed partial class IlPredicateCompiler
         long[]? counts = IlProfileCounters.Get(profileKey);
         int n = info!.Clauses.Count;
         var order = Enumerable.Range(0, n).ToArray();
-        if (counts is not null)
+        // The counters were sized to the clause count at PROFILING time. A
+        // predicate whose shape drifted to a different clause count (still
+        // indexed-atom, but no longer the profiled one) would index past them
+        // — reorder by the profile only when it still describes this shape,
+        // otherwise emit the identity order (a correct, unoptimized compile).
+        if (counts is not null && counts.Length == n)
         {
             // Descending by hit count; Array.Sort isn't stable but ties
             // among equally-cold atoms don't matter.

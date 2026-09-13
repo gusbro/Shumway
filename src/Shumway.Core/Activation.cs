@@ -101,6 +101,14 @@ public sealed partial class Activation
     // (TrailType.CatchFrame) so backtracking restores the stack. The throw
     // handler walks it from the top to find a matching catcher.
     private readonly List<CatchFrame> _catchFrames = new();
+    // Where to start looking for the top-most ACTIVE catch frame. Only ever
+    // an UPPER BOUND: too high costs a few steps and never a wrong answer, so
+    // nothing's correctness depends on it. It exists because a frame is never
+    // popped, only marked inactive, so a scan from the top walks every frame
+    // an ascent already closed -- 100,000 nested catch/3 spent n(n+1)/2 steps
+    // there. Anything that ACTIVATES a frame raises it; only deactivating
+    // lowers it.
+    private int _catchScanFrom = -1;
 
     // ----- pooled scratch for the embedding layer's term
     // walkers (Materializer — findall runs it once per solution). Cleared on

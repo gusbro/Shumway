@@ -31,7 +31,7 @@ public static class ErrorRendering
             ex switch
             {
                 ShumwayPrologException pex =>
-                    $"error: {AstTermRenderer.RenderQuoted(ResidualProjection.ElideCycleMarkers(pex.Term))}",
+                    $"error: {TryRender(pex.Term) ?? "..."}",
                 PrologRuntimeException re => $"error: {FormatRuntimeError(re)}",
                 // A query whose TEXT is perfect syntax naming an
                 // unrepresentable value (a float above max_float): the ISO
@@ -106,14 +106,42 @@ public static class ErrorRendering
         if (re.Kind == "syntax_error")
             body = $"syntax_error({re.Detail})";
         else
+        {
+            // The plain spelling needs no term walk at all, which is what
+            // makes it the right answer when the walk is what failed.
+            string plain = string.IsNullOrEmpty(re.Detail)
+                ? re.Kind : $"{re.Kind}({re.Detail})";
             body = MetaBuiltins.TranslateRuntimeError(re)
                     is Shumway.Compiler.Ast.CompoundTerm { Functor: "error", Args.Length: 2 } ball
-                ? AstTermRenderer.RenderQuoted(ResidualProjection.ElideCycleMarkers(ball.Args[0]))
-                : string.IsNullOrEmpty(re.Detail) ? re.Kind : $"{re.Kind}({re.Detail})";
+                ? TryRender(ball.Args[0]) ?? plain
+                : plain;
+        }
         // Pattern, not IsNullOrEmpty: net48's reference assemblies lack the
         // NotNullWhen annotation, so the indexer trips CS8602 there.
         if (re.BuiltinName is { Length: > 0 } context && context[0] != '$')
             return $"{body} in {context}/{re.BuiltinArity}";
         return body;
+    }
+
+    /// <summary>Renders a term that is about to be REPORTED, or null when it
+    /// cannot be. Reporting must not be able to fail: the culprit of an error
+    /// is user data, and a term nested past what the renderer's guard allows
+    /// would otherwise throw a second error out of the error printer, where
+    /// nothing is left to catch it. `nest(200000, X), write(X)` killed the
+    /// process exactly that way, the refusal from write/1 arriving here
+    /// carrying the term that caused it.
+    ///
+    /// <para>The stack is not necessarily unwound when this runs, so the
+    /// refusal can repeat on a term of any size. Callers fall back to a
+    /// spelling that walks nothing.</para></summary>
+    private static string? TryRender(Shumway.Compiler.Ast.Term term)
+    {
+        // The cycle elision walks the term too, so it belongs INSIDE the try:
+        // as an argument it ran first and its refusal escaped past the catch.
+        try { return AstTermRenderer.RenderQuoted(ResidualProjection.ElideCycleMarkers(term)); }
+        catch (PrologRuntimeException deep) when (deep.Kind == "resource_error")
+        {
+            return null;
+        }
     }
 }

@@ -128,6 +128,20 @@ public static class SolutionFormatter
         foreach (string name in userVars)
             if (solution[name] is VarTerm ov) displayName.TryAdd(ov.Name, name);
 
+        // A query variable can be SPELLED like an engine one: `_G11` typed by
+        // the user, and the engine's name for heap cell 11, are two different
+        // variables that would print alike. The engine's is the one that gives
+        // way, because the user's name belongs to the user. Skipped when the
+        // name is already a key above, which is the case where the two ARE one
+        // variable and printing them alike is right.
+        foreach (string name in userVars)
+        {
+            if (!IsEngineVarName(name) || displayName.ContainsKey(name)) continue;
+            string moved = name + "_";
+            while (userVars.Contains(moved)) moved += "_";
+            displayName[name] = moved;
+        }
+
         // Copy-name -> the name the answer shows, from the copies binding (a list
         // `[Copy1, Copy2, …]` aligned with userVars), walking each copy against the
         // value it was copied from. Roots go first so a user variable's own name
@@ -229,12 +243,25 @@ public static class SolutionFormatter
         // CHAINED — `A = B, B = algo` instead of `A = algo, B = algo` — and
         // two vars sharing one still-unbound variable show their aliasing
         // (`A = B.`) instead of nothing. A lone unbound var stays omitted.
+        //
+        // A group is the variables whose values are the SAME TERM, and the
+        // rendered text cannot be what decides that. Two unrelated values can
+        // print alike: a user variable spelled like an engine one (`_G11`
+        // against the engine's name for heap cell 11), or elision cutting two
+        // long terms at the same place. Chaining those answers `X = Y` about
+        // terms that are not equal, which is a wrong answer and not a
+        // formatting blemish. So the text only BUCKETS the candidates and the
+        // term the engine produced, before any display renaming, decides.
         var renderedValue = new Dictionary<string, string>();
-        var groups = new Dictionary<string, List<string>>();
+        var groupOf = new Dictionary<string, int>();
+        var groupMembers = new List<List<string>>();
+        var groupValue = new List<Term>();
+        var byRendering = new Dictionary<string, List<int>>();
         foreach (string name in userVars)
         {
             Term? val = solution[name];
             if (val is null || residualsByVar.ContainsKey(name)) continue;
+            Term raw = val;
             if (cycleNames is not null)
             {
                 // Owners first: SubstituteVarNames' rebuilds drop the stamp.
@@ -251,9 +278,20 @@ public static class SolutionFormatter
             string key = AstTermRenderer.Render(
                 Elide(val, elide), BindingValuePriority, ops, quoted: true, portrayText: true);
             renderedValue[name] = key;
-            if (!groups.TryGetValue(key, out var members))
-                groups[key] = members = new List<string>();
-            members.Add(name);
+            if (!byRendering.TryGetValue(key, out var candidates))
+                byRendering[key] = candidates = new List<int>();
+            int g = -1;
+            foreach (int c in candidates)
+                if (SameTerm(groupValue[c], raw)) { g = c; break; }
+            if (g < 0)
+            {
+                g = groupMembers.Count;
+                groupMembers.Add(new List<string>());
+                groupValue.Add(raw);
+                candidates.Add(g);
+            }
+            groupOf[name] = g;
+            groupMembers[g].Add(name);
         }
 
         // What each shown value looks like, read backwards. A residual can
@@ -271,7 +309,7 @@ public static class SolutionFormatter
                 (nameByValue ??= new Dictionary<string, string>()).TryAdd(kv.Value, kv.Key);
 
         var lines = new List<string>();
-        var groupEmitted = new HashSet<string>();
+        var groupEmitted = new HashSet<int>();
         foreach (string name in userVars)
         {
             if (residualsByVar.TryGetValue(name, out var rs))
@@ -284,16 +322,15 @@ public static class SolutionFormatter
                                              displayName, nameByValue, elide, ops));
                 continue;
             }
-            if (!renderedValue.TryGetValue(name, out string? key)
-                || !groupEmitted.Add(key))
+            if (!groupOf.TryGetValue(name, out int grp) || !groupEmitted.Add(grp))
                 continue;   // no value, or its group was already emitted
-            var members = groups[key];
+            var members = groupMembers[grp];
             for (int i = 0; i + 1 < members.Count; i++)
                 AddBinding(lines, members[i], members[i + 1]);
             // The last member carries the value — unless the shared value is
             // itself an unbound variable (the chain alone says it all).
             if (solution[members[^1]] is not VarTerm)
-                AddBinding(lines, members[^1], key);
+                AddBinding(lines, members[^1], renderedValue[members[^1]]);
         }
         if (interiorCycles is not null)
             foreach (var (sname, owner) in interiorCycles)
@@ -312,6 +349,49 @@ public static class SolutionFormatter
 
         if (lines.Count == 0) return "true";
         return string.Join(",\n", lines);
+    }
+
+    /// <summary>True for the shape TermReader gives an engine variable,
+    /// <c>_G</c> followed by a heap address. A user variable spelled this way
+    /// is legal Prolog and collides with it.</summary>
+    private static bool IsEngineVarName(string name)
+    {
+        if (name.Length <= 2 || name[0] != '_' || name[1] != 'G') return false;
+        for (int i = 2; i < name.Length; i++)
+            if (name[i] < '0' || name[i] > '9') return false;
+        return true;
+    }
+
+    /// <summary>Structural equality of two answer values, on an EXPLICIT
+    /// stack. An answer is user data and nests as deep as the program made it,
+    /// so a recursive comparison would spend one C# frame per level and a
+    /// StackOverflow cannot be caught. Mirrors what Term.Equals means, and is
+    /// applied to the terms the engine produced rather than to their rendered
+    /// form, which is the whole point: two values that merely PRINT alike are
+    /// not the same answer.</summary>
+    private static bool SameTerm(Term a, Term b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        var pending = new Stack<(Term A, Term B)>();
+        pending.Push((a, b));
+        while (pending.Count > 0)
+        {
+            var (x, y) = pending.Pop();
+            if (ReferenceEquals(x, y)) continue;
+            if (x is CompoundTerm cx)
+            {
+                if (y is not CompoundTerm cy
+                    || cx.Args.Length != cy.Args.Length
+                    || cx.Functor != cy.Functor) return false;
+                for (int i = 0; i < cx.Args.Length; i++)
+                    pending.Push((cx.Args[i], cy.Args[i]));
+                continue;
+            }
+            // Leaves compare by value, and a variable by name: two engine
+            // variables are the same one exactly when they name one cell.
+            if (y is CompoundTerm || !x.Equals(y)) return false;
+        }
+        return true;
     }
 
     /// <summary>One residual constraint, named the way the bindings beside it

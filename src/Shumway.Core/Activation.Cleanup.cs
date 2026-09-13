@@ -68,6 +68,10 @@ public sealed partial class Activation
     public int RegisterCleanupHandler(Cell liveCleanup)
     {
         _cleanupHandlers ??= new List<CleanupHandler>();
+        // Registration order is usually level order too, and saying so lets
+        // the cut hook below find its range instead of walking everyone.
+        if (_cleanupHandlers.Count == 0) _cleanupLevelsSorted = true;
+        else if (_b < _cleanupHandlers[^1].Level) _cleanupLevelsSorted = false;
         int r = _nextCleanupRef++;
         _cleanupHandlers.Add(new CleanupHandler
             { Level = _b, Ref = r, Enqueued = false, Live = liveCleanup });
@@ -80,7 +84,12 @@ public sealed partial class Activation
     {
         if (_cleanupHandlers is null) return;
         for (int i = _cleanupHandlers.Count - 1; i >= 0; i--)
-            if (_cleanupHandlers[i].Ref == refId) { _cleanupHandlers.RemoveAt(i); return; }
+            if (_cleanupHandlers[i].Ref == refId)
+            {
+                _cleanupHandlers.RemoveAt(i);
+                if (_cleanupHandlers.Count == 0) _cleanupLevelsSorted = true;
+                return;
+            }
     }
 
     /// <summary>Cut hook: enqueue every handler whose registration level is AT OR
@@ -97,7 +106,18 @@ public sealed partial class Activation
     public void FireCleanupsAbove(int barrier, bool heapIntact = true)
     {
         if (_cleanupHandlers is null || _cleanupHandlers.Count == 0) return;
-        for (int i = 0; i < _cleanupHandlers.Count; i++)
+        // Only handlers at or above the barrier can fire, and a cut asks that
+        // question far more often than it gets a yes. Walking every live
+        // handler each time made a NEST of setup_call_cleanup quadratic:
+        // 4,000 deep spent 25,749,670 steps in this loop, about 1.6n^2.
+        //
+        // Registration level rises with registration order unless something
+        // registers after backtracking below an older handler, which is
+        // noticed as it happens; while that holds, the handlers that can fire
+        // are a SUFFIX and binary search finds where it starts. The scan then
+        // runs forward from there, so the order they are enqueued in -- which
+        // is the order they will run in -- is exactly what it was.
+        for (int i = FirstCleanupAtOrAbove(barrier); i < _cleanupHandlers.Count; i++)
         {
             CleanupHandler h = _cleanupHandlers[i];
             if (!h.Enqueued && h.Level >= barrier)
@@ -108,6 +128,27 @@ public sealed partial class Activation
             }
         }
     }
+
+    /// <summary>The first handler that could match a barrier: the start of the
+    /// suffix when levels are in order, and the whole list when they are
+    /// not.</summary>
+    private int FirstCleanupAtOrAbove(int barrier)
+    {
+        if (!_cleanupLevelsSorted) return 0;
+        int lo = 0, hi = _cleanupHandlers!.Count;
+        while (lo < hi)
+        {
+            int mid = lo + ((hi - lo) >> 1);
+            if (_cleanupHandlers[mid].Level < barrier) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    /// <summary>True while the handlers' levels are non-decreasing, so the
+    /// ones a barrier can reach form a suffix. Cleared when a registration
+    /// breaks it and restored when the list empties.</summary>
+    private bool _cleanupLevelsSorted = true;
 
     /// <summary>Teardown hook: enqueue every remaining handler (the query ended,
     /// or the caller stopped asking with choice points still live).</summary>
