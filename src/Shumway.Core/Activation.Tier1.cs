@@ -874,6 +874,19 @@ public sealed partial class Activation
         }
     }
 
+    /// <summary>The marker of a pair that was already interned, without
+    /// interning it: a host lookup that MISSES (an address no module baked)
+    /// must not mint a marker nobody will ever resolve.</summary>
+    public static bool TryGetResumeMarker(int functorId, int cursor, out int marker)
+    {
+        marker = 0;
+        if (cursor < 0) return false;
+        long key = ((long)functorId << 32) | (uint)cursor;
+        if (!_resumeMarkerByPair.TryGetValue(key, out int id)) return false;
+        marker = ResumeMarkerBase + id;
+        return true;
+    }
+
     public static (int FunctorId, int Cursor) DecodeResumeMarker(int address)
         => System.Threading.Volatile.Read(ref _resumeMarkerPairs)[address - ResumeMarkerBase];
 

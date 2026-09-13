@@ -175,22 +175,16 @@ public static class WasmAbi
     /// <summary>Rows in the resume table. A marker at or past this is newer
     /// than the table and resolves to the host.</summary>
     public const int ResumeTableLength = 30;
-    /// <summary>Which module is executing, so a row can be recognised as this
-    /// module's own. One module per group makes this constant; it stops being
-    /// constant when a group is split.</summary>
-    public const int SelfModuleId = 31;
+    // 31 and 33 are free (a chain no longer belongs to a module, and the
+    // table needs no generation stamp: an install restages every open chain).
 
     /// <summary>Base of the moduleId -&gt; function-table index array the
-    /// in-wasm hop reads. Empty until modules can call each other directly.
+    /// in-wasm hop reads: -1 for a module this thread has not registered.
     /// </summary>
     public const int ModuleIndexBase = 32;
-    /// <summary>Install epoch, stamped when a chain opens: a chain whose
-    /// generation is stale stops resolving in wasm and defers to the host.
-    /// </summary>
-    public const int TableGeneration = 33;
-    /// <summary>The module that produced the current step-aside, so the host
-    /// can pick the right address displacement. Written on the slow path only.
-    /// </summary>
+    /// <summary>The module that produced the last verdict, written by every
+    /// exit to the host and by nothing else. After in-wasm hops it is the only
+    /// way the host can tell whose build space a pc is in.</summary>
     public const int CurrentModuleId = 34;
 
     /// <summary>Scratch for the emitter's DebugLoopGuard (off by default): a
@@ -200,6 +194,11 @@ public static class WasmAbi
     public const int DebugGuardLimit = 35;
     public const int DebugGuardCount = 36;
     public const int DebugGuardCursor = 37;
+    /// <summary>Hops taken inside wasm during the chain (a module tail-calling
+    /// another through the table). The only witness that a crossing stayed in
+    /// wasm: a hop that silently went out to the host instead is correct and
+    /// slow, and no answer-comparing test can tell.</summary>
+    public const int HopCount = 38;
 
     /// <summary>The thread's function table, as emscripten names it. Every
     /// module a thread registers lands in this one, which is what lets a

@@ -78,6 +78,20 @@ public sealed class WasmResumeTable
             if ((_rows[i] & ~0xFFFFFFFFL) == tag) _rows[i] = 0;
     }
 
+    /// <summary>Forgets every row of one functor: what an eviction, or a
+    /// takeover by a newer module, does. Linear in the table; both are
+    /// rare.</summary>
+    public void ClearFunctor(int functorId)
+    {
+        for (int i = 0; i < _rows.Length; i++)
+        {
+            if (_rows[i] == 0) continue;
+            if (Activation.DecodeResumeMarker(Activation.ResumeMarkerBase + i).FunctorId
+                == functorId)
+                _rows[i] = 0;
+        }
+    }
+
     /// <summary>Reads a row back. False when the marker does not resolve here,
     /// which is what the host and the module both treat as "not mine".</summary>
     public bool TryGet(int marker, out int moduleId, out int cursor)

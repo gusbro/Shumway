@@ -43,12 +43,8 @@ public sealed class GroupBuildCountTests(ITestOutputHelper o)
 
         void Install()
         {
-            var entry = WasmPredicateCompiler.CompileGroup(members, env);
+            TieredEngine.Install(world, members, env);
             builds++;
-            var map = new Dictionary<int, int>(members.Count);
-            foreach (var mm in members) map[mm.Predicate.FunctorId] = mm.Bias;
-            world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                entry.CursorByAddress, map, entry.RegisterDemand);
         }
 
         var wasm = new WasmPromotionStore(store)

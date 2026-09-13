@@ -816,37 +816,208 @@ backtracking on the tier with `deopts == 0` asserted. Nothing in it binds
 an attributed variable, so there is no legitimate step-aside to allow —
 which is what makes zero the right bound rather than a small number.
 
-### The next arc: many small modules, and the hop that makes them possible
+## Many small modules — the hop inside wasm (phases 0-5 DONE)
 
-The group is one module because one module per predicate meant a "switch" per
-cross-module call costing 4-15 us. That cost was never wasm: it was the marker
-decode, the dictionary probe and the chain close/reopen, all in C# the browser
-runs interpreted. Inside wasm the same crossing is a `return_call_indirect`.
+The group was one module because one module per predicate meant a "switch"
+per cross-module call costing 4-15 us. That cost was never wasm: it was the
+marker decode, the dictionary probe and the chain close/reopen, all in C# the
+browser runs interpreted. Inside wasm the same crossing is a
+`return_call_indirect`. Adding a member to the one module renumbered every
+cursor and re-emitted the whole thing, so promoting n predicates one at a
+time cost n(n+1)/2 compilations: 136 builds for `boards.pl` against 3 in
+batch, and a batch of 854 predicates took 4 to 13 seconds in the browser.
+That is not a JIT.
 
-Measured, Edge headless (`docs/benchmarks/wasm-split-spike.md`): **6.1 ns per
-hop**, and 50 million hops across five rounds without the stack growing. That
-second part is the one that could have ended the arc — a Prolog program makes
-millions of calls and in the WAM a call IS a jump, so a tail call compiled as
-an ordinary call has no fallback. It also confirmed that a table import is live
-rather than a snapshot: a module reaches slots `addFunction` adds after it was
-instantiated, which is what lets modules appear one at a time.
+Two separable claims drove the order of work: **A (dispatch)** — resolving a
+marker should be an indexed read, not a chain of baked comparisons, which is
+true of the monolith on its own; and **B (splitting)** — once resolution is a
+table, the "not mine" case can be a tail call into the owning module instead
+of a verdict to the host, and then predicates can compile one at a time. The
+spike for B came first because it was the cheap way to kill the arc; A next
+because it pays on its own and builds the table B needs.
 
-Two facts made the design smaller than it looked. A resume marker is ALREADY a
-dense id -- `EncodeResumeMarker` interns the (functor, address) pair and returns
-`Base + denseId` -- so resolving one is a subscript, not a search. And the
-marker vocabulary is process-global, so it means the same thing in every
-module; only the baked comparison chains were module-local.
+### Phase 0 — the spike (GO)
 
-Turning those chains into an indexed read paid on its own, before splitting
-anything: the prelude and clpfd went from 5,594,098 to 4,095,932 bytes, -26.8%,
-because a million and a half bytes of that module were comparisons. Resolution
-went from O(sites) to O(1), and failure is half of Prolog.
+Hand-built modules with the production signature `(mailbox, cursor) -> i32`,
+importing `env.memory` and the thread's function table, ping-ponging through
+`return_call_indirect`. Measured in Edge headless
+(`docs/benchmarks/wasm-split-spike.md`): **6.1 ns per hop**, and 50 million
+hops across five rounds without the stack growing. That second part is the
+one that could have ended the arc — a Prolog program makes millions of calls
+and in the WAM a call IS a jump, so a tail call compiled as an ordinary call
+has no fallback. It also confirmed that a table import is live rather than a
+snapshot: a module reaches slots `addFunction` adds after it was
+instantiated, which is what lets modules appear one at a time. The emitter
+library's wasm-to-IL engine runs `return_call_indirect` through an imported
+table, so xUnit exercises the hop with no browser (the `#wasmsplit` hook
+keeps the browser number).
 
-One constraint is not negotiable and is easy to get wrong: the table is PER
-WORLD. Functor ids and the marker pool are process-wide, but bytecode addresses
-belong to an engine's code space, so two engines running the same program mint
-the SAME markers for DIFFERENT code. Per-world resolution is the only thing
-keeping them apart today.
+### Phase 1 — the instrument
+
+The blind spot of this arc is that a wrong translation still answers
+correctly: a deopt or a host round trip makes the interpreter redo the work,
+and no answer-comparing test can tell. The counters in `WasmTierDelegate`
+are the only defence: `DiagEntries`, `DiagSwitches` (host round trips),
+`DiagInWasmHops` (crossings that stayed inside wasm, counted through the
+`WasmAbi.HopCount` slot), `DiagForeignExits`, `DiagBoundaryExits`,
+`DiagDeopts`, `DiagBuiltins`, and the per-(functor, address) rankings beside
+them. The two-worlds fixture (`TwoWorldsCrossingTests`) pins the exact tuple:
+two worlds cost the same as one (equal entries, hops > 0, switches, foreign
+exits and deopts all 0). Every bug of phases 4 and 5 was caught by a counter,
+never by an answer.
+
+### Phase 2 — the resume table
+
+A resume marker is ALREADY a dense id: `EncodeResumeMarker` interns the
+(functor, address) pair in a process-wide pool and returns `Base + denseId`,
+so resolving one is a subscript, not a search. The table is a dense `i64`
+array in linear memory, indexed by `marker - ResumeMarkerBase`, one row per
+marker: `((moduleId + 1) << 32) | cursor`, zero meaning "not resolvable in
+this engine". Its base and length sit in the mailbox
+(`WasmAbi.ResumeTableBase`, `ResumeTableLength`), like the functor mirror.
+
+The table is PER ENGINE, and that is not negotiable: functor ids and the
+marker pool are process-wide, but bytecode addresses belong to an engine's
+code space, so two engines running the same program mint the SAME markers
+for DIFFERENT code. A global table would resolve one engine's marker into
+the other's module; the desktop tests, which create dozens of engines per
+process, are the first to bite.
+
+The host side of `IWasmChainContext.TryResolve` reads the same rows, so the
+host's answer and the module's answer are one derivation of one fact. A
+relink rewrites no row: a marker names a build address and the table is
+keyed by baked markers; live-address translation stays on the host path.
+
+Call, proceed and fail became one code shape — a probe (`EmitResumeProbe`):
+subscript the row; if the owner is this module, branch to the cursor
+locally; otherwise the foreign case. `EncodeCallTarget(callee)` is
+`marker(callee, 0)`, so a call is the same probe. Turning the baked chains
+into that read paid before splitting anything: the prelude and clpfd went
+from 5,594,098 to 4,095,932 bytes (-26.8%), because a million and a half
+bytes of that module were comparisons, and failure went from O(sites) to
+O(1).
+
+### Phase 3 — the pinned engine thread
+
+A module is registered in the CALLING thread's function table: with threads
+on, every worker has its own table and only the memory is shared, so a pool
+that hands out a different thread each time makes every module pay
+registration again there (37 ms for one big group; with many modules it is
+per module per thread). `WebShumwayApp` runs all engine work on one
+dedicated thread through a queue (`OnEngine`), which also subsumes the
+semaphore it used to hold. The `#wasmthread` probe asserts the pinning by
+reporting the managed thread id of a series of engine calls.
+
+### Phase 4 — the hop
+
+The foreign case of a probe, inside wasm:
+
+```
+idx = i32.load(ModuleIndexBase + moduleId * 4)
+idx < 0  ->  verdict to the host (not registered on this thread)
+spill the scalars; mailbox[Cursor] = cursor
+return_call_indirect (i32, i32) -> i32 at idx
+```
+
+The two-level indirection `moduleId -> table index` is deliberate:
+re-registering on another thread rewrites an array of N module entries, not
+M marker rows. The module id is BAKED into the module at compile time
+(`CompileGroup(..., moduleId)`) and the install refuses a module compiled
+for another id: the mailbox belongs to the chain, and after a hop the callee
+would otherwise compare row owners against the caller's id and dispatch
+foreign cursors as its own. That was one of three correct-but-slow bugs the
+counters caught; the other two were one linear memory per world (a hop
+tail-called the sibling with a mailbox address that only existed in the
+caller's memory — the desktop now shares a `DesktopWasmSpace` between the
+worlds of one engine, as emscripten's memory already is) and a pre-table
+shortcut in the proceed path that returned Success to the host before
+probing.
+
+After hops the host cannot know which module it is hearing from, and a
+deopt pc or a builtin's return address is in THAT module's build space:
+every verdict writes `WasmAbi.CurrentModuleId`; a hop writes nothing there.
+
+### Phase 5 — N modules
+
+`WasmModuleRegistry` (per engine, over the resume table) replaces the
+single-slot "current build": a functor belongs to at most one module;
+installing a module whose functor is already covered is a TAKEOVER (the old
+rows are cleared, the old module stays but is unreachable through the
+table); `Evict` removes the functor and zeroes its rows; modules are never
+removed. `Contains` is a dictionary probe, `TryResolve` a row read,
+`RegisterDemand` the maximum over the live modules. Relink reconciliation is
+per functor (`CodeHash`, `ReconcileWithLink`): a changed hash evicts the
+functor and it is re-promoted into a fresh module against live addresses.
+
+One rule fell out of the takeover and is the hot-path change of this phase:
+**only a SELF call or execute keeps the baked in-group jump**; a call to a
+sibling member of the same module goes through the table
+(`EmitForeignCallOrExit`), so that a later module taking the sibling over
+redirects the call site. Baked, a redefinition of `leaf/1` left `caller/1`
+answering from the dead region while `leaf(X)` itself answered the new
+clauses (`WasmRelinkEvictionTests`). A probe that resolves to the same
+module is a local branch and is not counted as a hop.
+
+The browser attaches the tier in BATCH mode by default (one module for the
+whole linked program at each consult boundary, the baked prelude being
+module 0, installed first) and in lazy mode — one module per predicate as it
+crosses the threshold — when asked for a numeric threshold. Either way a
+module is compiled once: a call or a backtrack into a sibling module is a
+tail call inside wasm, so the grain costs nothing at run time. The desktop
+test engine (`TieredEngine`) promotes one module per predicate, so every
+call and every retry between two predicates crosses a module boundary.
+
+### The stack, again, against generated code
+
+Phase 0 proved the browser's `return_call_indirect` does not grow the stack;
+the generated module still did. `run` was a loop that CALLED the partition
+owning the cursor and looped on a continue code, so a partition's
+`return_call_indirect` replaced only the partition frame and one `run` frame
+survived per hop: a deep choice-point chain overflowed at ~10^5 hops. `run`
+is now a router that enters partitions and the resolver with `return_call`,
+and their `$out` case (a cursor outside the partition) is a `return_call` to
+`run` with the cursor, so the module holds one frame at any depth. On the
+desktop the library's exported wrapper is a plain call into the internal
+function followed by `ret`, which the JIT turns into a tail call only
+opportunistically; the table entry is a stub with an explicit `tail.` call
+into the internal function instead. `ModuleRegistryTests` backtracks
+2,000,000 times across two modules (4 million hops, one entry) as the
+standing proof.
+
+### Phase 6 — cleanups, decided by measurement (OPEN)
+
+- Partitions (`PartitionBudgetWamInstrs = 2500`) exist only for the
+  browser's JIT cliff at ~640k instructions per function. With one module
+  per predicate they are almost never exercised, but a generated fact table
+  can still pass the budget, so they stay as a safety valve.
+- The shared resolver holds no full chain any more (a probe is the same
+  handful of instructions everywhere); it stays because the router sends the
+  pseudo-cursors there. Removing it is a separate cleanup.
+- `WasmBuildAddressIndex` exists because a build has many members; with one
+  per module the owner is known statically. It stays while the batch path
+  lives.
+- The batch promotion machinery is vestigial if incremental promotion is
+  cheap enough; the G2 number (one-at-a-time total against the batch,
+  `#wasmsplit`) decides.
+
+### Verification of the arc
+
+`ModuleRegistryTests`: one module per predicate answers like Tier-0 and only
+hops (counter-proof: the batch module hops 0); a reinstall takes the functor
+over and the siblings stay; an evicted functor degrades to bytecode (foreign
+exits > 0, never a trap or a wrong cursor); two engines in one process
+resolve through their own tables (the test that catches a global table); an
+install refuses a module compiled for another id; deep backtracking across
+modules does not stack. `ResumeTableAgreesTests`: every (functor, address)
+of an installed module round-trips through the table and the host agrees.
+`WasmRelinkEvictionTests`: a redefinition evicts the functor, the siblings
+stay on the tier, and the call site reaches the new definition.
+
+Gate per phase: `dotnet test tests/Shumway.Tests.Wasm/` (Debug and Release),
+`tests/Shumway.Tests.Core/`, `powershell -File
+tests/test-embedding-parallel.ps1`, `dotnet build -p:ShumwayNetFx=true`, and
+`dotnet build src/Shumway.Web/`, which is not in the solution and is covered
+by no other command.
 
 ## Risk register
 

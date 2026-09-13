@@ -12,7 +12,7 @@ public abstract class WasmRunExports
     public abstract int run(int mailbox, int cursor);
 }
 
-/// <summary>The desktop execution world: ONE group module instantiated
+/// <summary>The desktop execution world: the engine's modules instantiated
 /// against a private linear memory (the emitter library's wasm-to-IL
 /// engine); a chain copies the engine areas into that image once, runs any
 /// number of in-image hops, and copies back at the end. Everything in a cell
@@ -21,44 +21,39 @@ public abstract class WasmRunExports
 /// the real arrays and pays no copies. Engine-thread only.</summary>
 public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 {
-    private const int MailboxAt = 1024;
-    private const int RegistersAt = 2048;
-    private const int Pages = 512;              // 32 MB: generous for tests
+    private const int MailboxAt = DesktopWasmSpace.MailboxAt;
+    private const int RegistersAt = DesktopWasmSpace.RegistersAt;
+    private const int Pages = DesktopWasmSpace.Pages;
 
-    private readonly UnmanagedMemory _memory = new(Pages, Pages);
-    private Build? _current;
+    private readonly DesktopWasmSpace _space;
+    private readonly bool _ownsSpace;
+    private UnmanagedMemory _memory => _space.Memory;
 
-    /// <summary>A world of its own engine, with a private resume table.
-    /// </summary>
-    public DesktopWasmWorld() : this(new Shumway.Core.WasmResumeTable()) { }
+    /// <summary>A world of its own engine, in a space of its own.</summary>
+    public DesktopWasmWorld() : this(new DesktopWasmSpace(), ownsSpace: true) { }
 
-    /// <summary>A world sharing an engine's resume table with its siblings,
-    /// taking the next module id from it.</summary>
-    public DesktopWasmWorld(Shumway.Core.WasmResumeTable shared,
-                            FunctionTable? sharedFunctions = null)
+    /// <summary>A world sharing an engine's space with its siblings: one
+    /// memory, one function table, one module set. Two worlds over one space
+    /// are two installers of the same modules; the tests use that to stand
+    /// in for two promoters. The caller owns the space's lifetime.</summary>
+    public DesktopWasmWorld(DesktopWasmSpace space) : this(space, ownsSpace: false) { }
+
+    private DesktopWasmWorld(DesktopWasmSpace space, bool ownsSpace)
     {
-        ResumeTable = shared;
-        ModuleId = shared.NextModuleId();
-        Functions = sharedFunctions ?? new FunctionTable(0, null);
+        _space = space;
+        _ownsSpace = ownsSpace;
     }
 
     /// <summary>The function table every module of this engine is registered
     /// in. The browser has one per thread already (emscripten's); here it is
     /// made explicitly so the same emitted code works in both.</summary>
-    public FunctionTable Functions { get; }
+    public FunctionTable Functions => _space.Functions;
 
-    private int _functorSynced;
-    private int _functorAt = -1;
+    /// <summary>The modules and the rows they resolve through, shared with
+    /// every world of the same space.</summary>
+    public WasmModuleRegistry Modules => _space.Modules;
 
-    /// <summary>One installed group compile: the instance and the maps a
-    /// chain captures. Old builds stay referenced by their open chains.</summary>
-    private sealed record Build(
-        Instance<WasmRunExports> Instance,
-        IReadOnlyDictionary<int, int> EntryCursorByFid,
-        IReadOnlyDictionary<int, int> CursorByAddress,
-        IReadOnlyDictionary<int, int> EntryAddressByFid,
-        int RegisterDemand,
-        Shumway.Core.WasmBuildAddressIndex AddrIndex);
+    public Shumway.Core.WasmResumeTable ResumeTable => _space.ResumeTable;
 
     // (fid -> live linked address) after a relink; null until one happens.
     // Reference-swapped at a boundary tick, read lock-free by chains.
@@ -71,8 +66,12 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         => _liveByFid is { } live && live.TryGetValue(functorId, out int at)
             ? at : EntryAddressOf(functorId);
 
-    public long TranslatePcToLive(long buildPc)
-        => _current is { } b ? b.AddrIndex.Translate(buildPc, _liveByFid) : buildPc;
+    public long TranslatePcToLive(int functorId, long buildPc)
+        => Modules.TranslatePcToLive(functorId, buildPc, _liveByFid);
+
+    /// <summary>The id the next install will get: what a module has to be
+    /// compiled against, since the id is baked into its probes.</summary>
+    public int NextModuleId => ResumeTable.ModuleCount;
 
     public void InstallGroup(byte[] module,
         IReadOnlyDictionary<int, int> entryCursorByFid,
@@ -87,74 +86,61 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             { WasmAbi.MemoryModule, WasmAbi.MemoryField, new MemoryImport(() => _memory) },
             { WasmAbi.TableModule, WasmAbi.TableField, Functions },
         });
-        // Register this module where the others can reach it. A reinstall
-        // replaces the entry rather than adding one: the module id is the
-        // world's, and the slot belongs to the id.
-        while (Functions.Length <= ModuleId) Functions.Grow(1);
-        Functions[ModuleId] = (Func<int, int, int>)instance.Exports.run;
-        var addrIndex = new Shumway.Core.WasmBuildAddressIndex(entryAddressByFid);
-        _current = new Build(instance, entryCursorByFid, cursorByAddress,
-                             entryAddressByFid, registerDemand, addrIndex);
-        PopulateResumeTable(entryCursorByFid, cursorByAddress, addrIndex);
+        var m = Modules.Install(entryCursorByFid, cursorByAddress, entryAddressByFid,
+                                registerDemand);
+        // The slot IS the module id: the module index array the hop reads
+        // maps i -> i here (the browser's addFunction picks its own).
+        while (Functions.Length <= m.Id) Functions.Grow(1);
+        Functions[m.Id] = TailEntry(instance.Exports);
+        _space.Instances.Add(instance);
     }
 
-    /// <summary>The rows a module reads to resolve a marker. Derived from the
-    /// same two maps the host resolves through, so the two cannot drift: a
-    /// marker is (functor, address), the build records addresses, and the
-    /// address index says which member owns each one.</summary>
-    /// <summary>The engine's resume table, shared with every other world of
-    /// the same engine: resolving a marker has to be able to say "that one
-    /// belongs to another module, and here is which". A world given none makes
-    /// its own, which is the single-world case.</summary>
-    public Shumway.Core.WasmResumeTable ResumeTable { get; }
-
-    private void PopulateResumeTable(
-        IReadOnlyDictionary<int, int> entryCursorByFid,
-        IReadOnlyDictionary<int, int> cursorByAddress,
-        Shumway.Core.WasmBuildAddressIndex addrIndex)
+    /// <summary>The table entry for a module: a stub that TAIL-calls the
+    /// module's run with an explicit tail. prefix. The library's exported
+    /// wrapper is a plain call into the internal function followed by ret;
+    /// the JIT turns that into a tail call only opportunistically (not
+    /// under MinOpts or a debugger), and a hop through a non-tail wrapper
+    /// keeps one frame per hop. The internal function is the library's
+    /// "👻 &lt;index&gt;" static with the exports object as its LAST
+    /// parameter; run is function 0 (no imported functions). A library that
+    /// no longer names it that way gets the wrapper, and the deep
+    /// backtracking test says whether that still holds up.</summary>
+    private static Func<int, int, int> TailEntry(WasmRunExports exports)
     {
-        // A fresh entry is address 0 under the member's own functor.
-        foreach (var (fid, cursor) in entryCursorByFid)
-            ResumeTable.Set(Shumway.Core.Activation.EncodeResumeMarker(fid, 0),
-                            ModuleId, cursor);
-        // Every other re-entry point belongs to whichever member's range it
-        // falls in.
-        foreach (var (address, cursor) in cursorByAddress)
-        {
-            int fid = addrIndex.OwnerFunctorOf(address);
-            if (fid < 0) continue;              // precedes every member
-            ResumeTable.Set(Shumway.Core.Activation.EncodeResumeMarker(fid, address),
-                            ModuleId, cursor);
-        }
+        var type = exports.GetType();
+        var run = type.GetMethod("👻 0",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        if (run is null) return exports.run;
+        var stub = new System.Reflection.Emit.DynamicMethod("run_tail", typeof(int),
+            [typeof(WasmRunExports), typeof(int), typeof(int)], type, skipVisibility: true);
+        var il = stub.GetILGenerator();
+        il.Emit(System.Reflection.Emit.OpCodes.Ldarg_1);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldarg_2);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);
+        il.Emit(System.Reflection.Emit.OpCodes.Castclass, type);
+        il.Emit(System.Reflection.Emit.OpCodes.Tailcall);
+        il.Emit(System.Reflection.Emit.OpCodes.Call, run);
+        il.Emit(System.Reflection.Emit.OpCodes.Ret);
+        return (Func<int, int, int>)stub.CreateDelegate(typeof(Func<int, int, int>), exports);
     }
 
-    /// <summary>This world's module id. One group means one module, so it is
-    /// constant here; it stops being constant when a group is split.</summary>
-    public int ModuleId { get; }
+    public void Evict(IEnumerable<int> functorIds) => Modules.Evict(functorIds);
 
-    public bool Contains(int functorId)
-        => _current?.EntryCursorByFid.ContainsKey(functorId) == true;
+    public bool Contains(int functorId) => Modules.Contains(functorId);
 
-    public bool TryResolve(int functorId, int address, out int cursor)
-        => TryResolveIn(_current, functorId, address, out cursor);
+    public bool TryResolve(int functorId, int address, out WasmTarget target)
+        => Modules.TryResolve(functorId, address, out target);
 
-    private static bool TryResolveIn(Build? b, int functorId, int address, out int cursor)
-    {
-        cursor = 0;
-        if (b is null) return false;
-        if (address == 0) return b.EntryCursorByFid.TryGetValue(functorId, out cursor);
-        return b.EntryCursorByFid.ContainsKey(functorId)
-            && b.CursorByAddress.TryGetValue(address, out cursor);
-    }
-
-    public int EntryAddressOf(int functorId)
-        => _current!.EntryAddressByFid[functorId];
+    public int EntryAddressOf(int functorId) => Modules.EntryAddressOf(functorId);
 
     public IWasmChainContext BeginChain(Activation engine)
-        => new Chain(this, _current ?? throw new InvalidOperationException("no group installed"),
-                     engine);
+    {
+        if (Modules.ModuleCount == 0)
+            throw new InvalidOperationException("no module installed");
+        return new Chain(this, engine);
+    }
 
-    public void Dispose() => _memory.Dispose();
+    public void Dispose() { if (_ownsSpace) _space.Dispose(); }
 
     /// <summary>Diagnostic: read a mailbox slot from outside the chain — the
     /// only way to see where a hung module got to.</summary>
@@ -178,25 +164,23 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
     private sealed class Chain : IWasmChainContext
     {
         private readonly DesktopWasmWorld _w;
-        private readonly Build _build;
         private readonly Activation _engine;
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
-        private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt;
+        private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
 
-        public Chain(DesktopWasmWorld w, Build build, Activation engine)
+        public Chain(DesktopWasmWorld w, Activation engine)
         {
             _w = w;
-            _build = build;
             _engine = engine;
             StageFromEngine();
         }
 
         private unsafe void StageFromEngine()
         {
-            _engine.EnsureWasmRegisters(_build.RegisterDemand);
+            _engine.EnsureWasmRegisters(_w.Modules.RegisterDemand);
             Cell[] heap = _engine.WasmHeapView;
             Cell[] stack = _engine.WasmStackView;
             Cell[] regs = _engine.WasmRegistersView;
@@ -209,9 +193,12 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int fcount = FunctorTable.IdLimit;
             long[] resumeRows = _w.ResumeTable.Rows;
             _resumeAt = _functorAt + fcount * 8;
-            if (_resumeAt + (long)resumeRows.Length * 8 > (long)Pages * 65536)
+            _moduleIndexAt = _resumeAt + resumeRows.Length * 8;
+            int moduleCount = _w.ResumeTable.ModuleCount;
+            if (_moduleIndexAt + moduleCount * 4 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
-            if (_functorAt != _w._functorAt) { _w._functorAt = _functorAt; _w._functorSynced = 0; }
+            if (_functorAt != _w._space.FunctorAt)
+            { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
 
             var bases = new Activation.WasmMailboxBases(
                 _heapAt, _stackAt, RegistersAt, _trailAt,
@@ -221,7 +208,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 FunctorTableBase: _functorAt,
                 ResumeTableBase: _resumeAt,
                 ResumeTableRows: resumeRows.Length,
-                SelfModuleId: _w.ModuleId);
+                ModuleIndexBase: _moduleIndexAt);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -244,26 +231,38 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // the last staging stopped. CopyPackedFrom stops at an id a
             // racing intern has not published, so the mirror never freezes a
             // filler in place; the next staging picks it up.
-            if (_w._functorSynced < fcount)
+            if (_w._space.FunctorSynced < fcount)
             {
-                var dest = new Span<long>(
-                    mem + _functorAt + _w._functorSynced * 8L, fcount - _w._functorSynced);
-                _w._functorSynced = FunctorTable.CopyPackedFrom(_w._functorSynced, dest);
+                int done = _w._space.FunctorSynced;
+                var dest = new Span<long>(mem + _functorAt + done * 8L, fcount - done);
+                _w._space.FunctorSynced = FunctorTable.CopyPackedFrom(done, dest);
             }
             fixed (long* p = resumeRows)
                 Buffer.MemoryCopy(p, mem + _resumeAt, resumeRows.Length * 8L,
                                   resumeRows.Length * 8L);
+            // moduleId -> function-table index. Here the two happen to be the
+            // same number, because the world registers itself at its own id;
+            // in the browser addFunction picks the index, so the indirection
+            // is what makes one emitted form work in both.
+            for (int i = 0; i < moduleCount; i++)
+                *(int*)(mem + _moduleIndexAt + i * 4) = i;
             _engineAuthoritative = false;
         }
 
-        public WasmVerdict Call(int cursor)
-            => (WasmVerdict)_build.Instance.Exports.run(MailboxAt, cursor);
+        public WasmVerdict Call(WasmTarget target)
+            => (WasmVerdict)_w._space.Instances[target.ModuleId].Exports
+                .run(MailboxAt, target.Cursor);
 
-        public bool TryResolve(int functorId, int address, out int cursor)
-            => TryResolveIn(_build, functorId, address, out cursor);
+        public bool TryResolve(int functorId, int address, out WasmTarget target)
+            => _w.Modules.TryResolve(functorId, address, out target);
+
+        private WasmModuleRegistry.Module Current
+            => _w.Modules.ById((int)ReadSlot(WasmAbi.CurrentModuleId));
 
         public long TranslatePcToLive(long buildPc)
-            => _build.AddrIndex.Translate(buildPc, _w._liveByFid);
+            => Current.AddrIndex.Translate(buildPc, _w._liveByFid);
+
+        public int OwnerFunctorOf(long buildPc) => Current.AddrIndex.OwnerFunctorOf(buildPc);
 
         public long ReadSlot(int slot)
             => Marshal.ReadInt64(_w._memory.Start, MailboxAt + slot * WasmAbi.SlotSize);

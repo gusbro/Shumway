@@ -44,10 +44,15 @@ public static class WasmPredicateCompiler
     /// translation, and a cross-member call is an internal dispatch jump --
     /// the self-tail mechanism generalised. Cursors are global to the module;
     /// markers carry (fid, global cursor).</summary>
+    /// <param name="moduleId">The id the installing world gave this module.
+    /// BAKED into the code, not read from the mailbox: after a hop the
+    /// mailbox is still the chain's, and a module that took its identity
+    /// from there would dispatch another module's cursors as its own.</param>
     public static WasmGroupEntry CompileGroup(IReadOnlyList<WasmGroupMember> members,
-                                              IWasmCompileEnv env, bool shared = false)
+                                              IWasmCompileEnv env, bool shared = false,
+                                              int moduleId = 0)
     {
-        var c = new Compilation(members, env);
+        var c = new Compilation(members, env, moduleId);
         c.Decode();
         c.AssignCursors();
         byte[] bytes = c.Emit();
@@ -56,7 +61,7 @@ public static class WasmPredicateCompiler
         foreach (var m in members)
             entryCursors[m.Predicate.FunctorId] = c.CursorByAddress[m.Bias];
         return new WasmGroupEntry(bytes, entryCursors, c.CursorByAddress,
-                                  c.RegisterDemand, c.CallSites);
+                                  c.RegisterDemand, c.CallSites, moduleId);
     }
 
     /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
@@ -98,10 +103,11 @@ public static class WasmPredicateCompiler
     }
 
     private sealed class Compilation(IReadOnlyList<WasmGroupMember> members,
-                                     IWasmCompileEnv env)
+                                     IWasmCompileEnv env, int moduleId)
     {
         private readonly IReadOnlyList<WasmGroupMember> _members = members;
         private readonly IWasmCompileEnv _env = env;
+        private readonly int _moduleId = moduleId;
         private readonly List<Instr> _instrs = new();
         private readonly Dictionary<int, int> _byPc = new();
         private readonly SortedSet<int> _leaders = new();
@@ -109,9 +115,6 @@ public static class WasmPredicateCompiler
         private readonly Dictionary<int, int> _callee = new();   // call-site pc -> functor
         // fid -> entry address (the member's bias): the in-group call map.
         private readonly Dictionary<int, int> _entryByFid = new();
-        // (baked Cp marker value, resume address): the PROCEED jump table
-        // for in-group non-tail calls, collected in the cursor pass.
-        private readonly List<(int Marker, int Addr)> _proceedTargets = new();
         // (callerFid, calleeFid) -> call sites between them, for the coupling
         // report. Filled by the cursor pass, which walks every instruction
         // anyway, so it costs nothing at run time and nothing extra to compile.
@@ -141,11 +144,6 @@ public static class WasmPredicateCompiler
         /// instructions each): ~100k emitted per function, far under the
         /// ~640k cliff.</summary>
         private const int PartitionBudgetWamInstrs = 2500;
-
-        /// <summary>Partition-function returns below this are verdicts; at or
-        /// above, (value - base) is the cursor to continue at. Must stay
-        /// above every <see cref="WasmVerdict"/> and the loop guard's 99.</summary>
-        private const int ContinueBase = 0x100;
 
         private int UnifierIndex => _parts.Count + 2;   // 0 run, 1..K parts, K+1 resolver
 
@@ -427,10 +425,6 @@ public static class WasmPredicateCompiler
                 var edge = (SelfFid(ins), callee);
                 _callSites.TryGetValue(edge, out int seen);
                 _callSites[edge] = seen + 1;
-                if (ins.Op != Opcode.Call) continue;
-                if (!_entryByFid.ContainsKey(callee)) continue;
-                int marker = _env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9);
-                _proceedTargets.Add((marker, ins.Pc + 9));
             }
         }
 
@@ -500,7 +494,9 @@ public static class WasmPredicateCompiler
                 Op(new Int32WrapInt64());
                 Op(new Int32Constant(1));
                 Op(new Int32Subtract());
-                LoadSlot32(WasmAbi.SelfModuleId);
+                Op(new LocalSet(LT0));                  // owner module id
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(_moduleId));       // baked: see CompileGroup
                 Op(new Int32Equal());
                 OpenIf();
                 {
@@ -508,6 +504,56 @@ public static class WasmPredicateCompiler
                     Op(new Int32WrapInt64());
                     Op(new LocalSet(LCur));
                     BrDispatch();
+                }
+                OpenElse();
+                {
+                    // Another module owns it. Look up where that module sits
+                    // in this thread's function table and TAIL CALL it: the
+                    // frame is replaced, not stacked, which is what lets a
+                    // Prolog program cross modules millions of times. A plain
+                    // call would grow the real stack per crossing.
+                    //
+                    // Measured: the hop is 6.1 ns and carrying the scalar set
+                    // another 4.1, against the 4-15 us the same crossing costs
+                    // going out to the host and back.
+                    Op(new LocalGet(LT0));
+                    Op(new Int32Constant(0));
+                    Op(new Int32GreaterThanOrEqualSigned());
+                    OpenIf();
+                    {
+                        LoadSlot32(WasmAbi.ModuleIndexBase);
+                        Op(new LocalGet(LT0));
+                        Op(new Int32Constant(2));
+                        Op(new Int32ShiftLeft());
+                        Op(new Int32Add());
+                        Op(new Int32Load());
+                        Op(new LocalSet(LT1));          // table index, -1 absent
+
+                        // Slot 0 is a real slot: absence has to be -1, or the
+                        // first module registered can never be reached.
+                        Op(new LocalGet(LT1));
+                        Op(new Int32Constant(0));
+                        Op(new Int32GreaterThanOrEqualSigned());
+                        OpenIf();
+                        {
+                            // The callee reloads the scalars in its prologue,
+                            // so they have to be in the mailbox first.
+                            StoreScalars();
+                            StoreSlot64(WasmAbi.HopCount, () =>
+                            {
+                                LoadSlot64(WasmAbi.HopCount);
+                                Op(new Int64Constant(1));
+                                Op(new Int64Add());
+                            });
+                            Op(new LocalGet(0));                // mailbox
+                            Op(new LocalGet(LC2));
+                            Op(new Int32WrapInt64());           // its cursor
+                            Op(new LocalGet(LT1));
+                            Op(new ReturnCallIndirect(0));
+                        }
+                        CloseNested();
+                    }
+                    CloseNested();
                 }
                 CloseNested();
             }
@@ -555,7 +601,7 @@ public static class WasmPredicateCompiler
                               WebAssemblyValueType.Int32],
                 Returns = [WebAssemblyValueType.Int32],
             });
-            // 0: run (the exported dispatcher); 1..K: partitions; K+1: the
+            // 0: run (the exported router); 1..K: partitions; K+1: the
             // fail/proceed resolver; K+2: the general unifier. All internal
             // but run.
             int k = _parts.Count;
@@ -586,68 +632,43 @@ public static class WasmPredicateCompiler
             return ms.ToArray();
         }
 
-        /// <summary>run(mailbox, cursor): pick the partition owning the
-        /// cursor (ranges are ascending, so a chain of upper-bound tests; a
-        /// pseudo-cursor goes to the resolver), call it, loop while it
-        /// returns a continue-cursor, hand any verdict to the host. State
-        /// lives in the mailbox across partition calls — this function has
-        /// no engine state of its own.</summary>
+        /// <summary>run(mailbox, cursor): route the cursor to the partition
+        /// owning it (ranges are ascending, so a chain of upper-bound tests;
+        /// a pseudo-cursor goes to the resolver) with a TAIL call. Nothing
+        /// of this function survives the transfer: a partition leaving for
+        /// another partition tail-calls run again, and a hop to another
+        /// module is a return_call_indirect from a partition, so the module
+        /// holds ONE frame at any depth of backtracking. A plain call here
+        /// would keep a run frame per hop and grow the stack with the
+        /// choice-point chain.</summary>
         private FunctionBody BuildDispatcherBody()
         {
-            const uint lCur = 2, lR = 3;
             _code = new List<Instruction>();
-            Op(new LocalGet(1)); Op(new LocalSet(lCur));
-            Op(new Loop(BlockType.Empty));
-            Op(new Block(BlockType.Empty));                 // $called
-            Op(new LocalGet(lCur));
+            Op(new LocalGet(1));
             Op(new Int32Constant(_failCase));
             Op(new Int32GreaterThanOrEqualSigned());
             OpenIf();
             {
-                Op(new LocalGet(0)); Op(new LocalGet(lCur));
-                Op(new WebAssembly.Instructions.Call((uint)(_parts.Count + 1)));
-                Op(new LocalSet(lR));
-                Op(new Branch(1));                          // $called
+                Op(new LocalGet(0)); Op(new LocalGet(1));
+                Op(new ReturnCall((uint)(_parts.Count + 1)));
             }
             CloseNested();
             for (int p = 0; p < _parts.Count - 1; p++)
             {
-                Op(new LocalGet(lCur));
+                Op(new LocalGet(1));
                 Op(new Int32Constant(_parts[p].Hi));
                 Op(new Int32LessThanSigned());
                 OpenIf();
                 {
-                    Op(new LocalGet(0)); Op(new LocalGet(lCur));
-                    Op(new WebAssembly.Instructions.Call((uint)(1 + p)));
-                    Op(new LocalSet(lR));
-                    Op(new Branch(1));                      // $called
+                    Op(new LocalGet(0)); Op(new LocalGet(1));
+                    Op(new ReturnCall((uint)(1 + p)));
                 }
                 CloseNested();
             }
-            Op(new LocalGet(0)); Op(new LocalGet(lCur));
-            Op(new WebAssembly.Instructions.Call((uint)_parts.Count));
-            Op(new LocalSet(lR));
-            Op(new End());                                  // $called
-            Op(new LocalGet(lR));
-            Op(new Int32Constant(ContinueBase));
-            Op(new Int32LessThanSigned());
-            OpenIf();
-            Op(new LocalGet(lR));
-            Op(new Return());
-            CloseNested();
-            Op(new LocalGet(lR));
-            Op(new Int32Constant(ContinueBase));
-            Op(new Int32Subtract());
-            Op(new LocalSet(lCur));
-            Op(new Branch(0));                              // the loop
-            Op(new End());                                  // the loop
-            Op(new Int32Constant((int)WasmVerdict.Fail));   // unreachable
+            Op(new LocalGet(0)); Op(new LocalGet(1));
+            Op(new ReturnCall((uint)_parts.Count));
             Op(new End());                                  // the function
-            var body = new FunctionBody
-            {
-                Locals = [new Local { Count = 2, Type = WebAssemblyValueType.Int32 }],
-                Code = _code,
-            };
+            var body = new FunctionBody { Locals = [], Code = _code };
             _extraDepth = 0;
             return body;
         }
@@ -663,8 +684,8 @@ public static class WasmPredicateCompiler
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
         /// partition's own cursors, a LOCAL fail case (this partition's CP
-        /// sites only), and an $out case that spills the scalars and returns
-        /// the cursor for the dispatcher to route — how a jump reaches
+        /// sites only), and an $out case that spills the scalars and
+        /// tail-calls run with the cursor to route — how a jump reaches
         /// another partition. In-partition jumps stay internal branches.</summary>
         private FunctionBody BuildPartitionBody((int Lo, int Hi) part,
                                                 List<int> addrsInOrder)
@@ -902,21 +923,26 @@ public static class WasmPredicateCompiler
         private void EmitReturn(WasmVerdict v)
         {
             StoreScalars();
+            // After in-wasm hops the host cannot know which module it is
+            // hearing from, and a deopt pc or a builtin's return address is
+            // in THAT module's build space. Every verdict says. Not on the
+            // hop path: a hop reloads nothing from this slot.
+            StoreSlot64(WasmAbi.CurrentModuleId, () => Op(new Int64Constant(_moduleId)));
             Op(new Int32Constant((int)v));
             Op(new Return());
         }
 
-        /// <summary>Spill the scalars and return LCur + <see
-        /// cref="ContinueBase"/>: "not mine, continue at this cursor" — the
-        /// cross-partition transfer. The next partition's prologue reloads
-        /// what this stored.</summary>
+        /// <summary>Spill the scalars and tail-call run with LCur: "not
+        /// mine, continue at this cursor" — the cross-partition transfer.
+        /// The next partition's prologue reloads what this stored. A tail
+        /// call, so the transfer replaces this frame instead of stacking
+        /// under a dispatcher loop.</summary>
         private void EmitContinueReturn()
         {
             StoreScalars();
+            Op(new LocalGet(0));
             Op(new LocalGet(LCur));
-            Op(new Int32Constant(ContinueBase));
-            Op(new Int32Add());
-            Op(new Return());
+            Op(new ReturnCall(0));
         }
 
         private void EmitDeopt(int bytecodePc)
@@ -1330,7 +1356,7 @@ public static class WasmPredicateCompiler
                 case Opcode.DeallocateExecute:
                     EmitFlagsCheck(ins.Pc);
                     EmitDeallocate();
-                    EmitExecuteTail(ins.Pc);
+                    EmitExecuteTail(ins.Pc, SelfFid(ins));
                     return true;
                 case Opcode.NeckCut:
                     EmitFlagsCheck(ins.Pc);
@@ -1468,11 +1494,10 @@ public static class WasmPredicateCompiler
         /// marker, a bytecode address) returns the Success verdict.</summary>
         private void EmitProceedReturn()
         {
-            if (_proceedTargets.Count == 0)
-            {
-                EmitReturn(WasmVerdict.Success);
-                return;
-            }
+            // No shortcut for a module without return sites of its own: the
+            // table can still resolve a Cp to ANOTHER module, and a plain
+            // Success here would send every such return out through the host.
+            //
             // The watermark guard comes FIRST and still decides everything: at
             // or past it the module owes the host a collection, so it declines
             // to resume here no matter what the table says.
@@ -1535,13 +1560,16 @@ public static class WasmPredicateCompiler
             StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
             Op(new Int32Constant(_env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9)));
             Op(new LocalSet(LCP));
-            if (_entryByFid.TryGetValue(callee, out int calleeEntry))
+            if (callee == SelfFid(ins) && _entryByFid.TryGetValue(callee, out int calleeEntry))
             {
-                // In-group non-tail call: jump straight to the callee's
-                // entry; its proceed will match the Cp marker just staged
-                // and jump back to our resume cursor -- no host round-trip.
-                // The watermark guard gives the interpreter its GC boundary
-                // exactly where the marker path would have taken it.
+                // Self non-tail call: jump straight to the entry; the proceed
+                // will match the Cp marker just staged and jump back to our
+                // resume cursor -- no host round-trip. The watermark guard
+                // gives the interpreter its GC boundary exactly where the
+                // marker path would have taken it. Only SELF is baked: a
+                // sibling member can be taken over by a later module (a
+                // redefinition), and its fresh-entry row is the one thing
+                // that follows it there.
                 Op(new LocalGet(LH));
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32GreaterThanOrEqualSigned());
@@ -1551,10 +1579,38 @@ public static class WasmPredicateCompiler
                 GoTo(calleeEntry);
                 return true;
             }
-            StoreSlot64(WasmAbi.Pc,
-                () => Op(new Int64Constant(_env.EncodeCallTarget(callee))));
-            EmitReturn(WasmVerdict.SuccessTailCall);
+            // Not in this module. Try to reach it through the table before
+            // giving up to the host: EncodeCallTarget is marker(callee, 0),
+            // which is exactly the callee's fresh-entry row.
+            EmitForeignCallOrExit(callee, ins.Pc);
             return true;
+        }
+
+        /// <summary>A call whose callee lives in ANOTHER module: resolve it
+        /// through the resume table and tail-call it in wasm, and only fall
+        /// back to the host verdict when it cannot be reached from here (a
+        /// module this thread has not registered, or one that is not on the
+        /// tier at all).
+        ///
+        /// <para>The watermark guard comes first for the same reason the
+        /// in-group call has one: at or past it the host owes a collection,
+        /// and staying inside wasm would skip the boundary where it happens.
+        /// </para></summary>
+        private void EmitForeignCallOrExit(int callee, int pc)
+        {
+            int marker = _env.EncodeCallTarget(callee);
+            Op(new LocalGet(LH));
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            {
+                Op(new Int32Constant(marker));
+                Op(new LocalSet(LT1));
+                EmitResumeProbe(LT1);
+            }
+            CloseNested();
+            StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(marker)));
+            EmitReturn(WasmVerdict.SuccessTailCall);
         }
 
         /// <summary>=/2 open-coded: X0 against X1 through the same two-cell
@@ -1615,10 +1671,10 @@ public static class WasmPredicateCompiler
         private void EmitExecute(Instr ins)
         {
             EmitFlagsCheck(ins.Pc);
-            EmitExecuteTail(ins.Pc);
+            EmitExecuteTail(ins.Pc, SelfFid(ins));
         }
 
-        private void EmitExecuteTail(int pc)
+        private void EmitExecuteTail(int pc, int selfFid)
         {
             if (!_callee.TryGetValue(pc, out int callee))
                 throw new WasmCompileException($"execute at {pc} has no call site");
@@ -1650,11 +1706,11 @@ public static class WasmPredicateCompiler
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return;
             }
-            if (_entryByFid.TryGetValue(callee, out int calleeEntry))
+            if (callee == selfFid && _entryByFid.TryGetValue(callee, out int calleeEntry))
             {
-                // An in-group tail call (self included): back to the
-                // dispatch at the callee's entry, unless the heap crossed
-                // the watermark (the engine collects there).
+                // A self tail call: back to the dispatch at the entry, unless
+                // the heap crossed the watermark (the engine collects there).
+                // A sibling goes through the table -- see EmitCall.
                 Op(new LocalGet(LH));
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32GreaterThanOrEqualSigned());
@@ -1670,9 +1726,7 @@ public static class WasmPredicateCompiler
                 return;
             }
             StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
-            StoreSlot64(WasmAbi.Pc,
-                () => Op(new Int64Constant(_env.EncodeCallTarget(callee))));
-            EmitReturn(WasmVerdict.SuccessTailCall);
+            EmitForeignCallOrExit(callee, pc);
         }
 
         // ---- dispatch ----

@@ -121,4 +121,7 @@ public sealed record WasmGroupEntry(
     /// between them, counted while compiling. STATIC: it says which edges
     /// exist and how tightly the code is coupled, NOT how often an edge is
     /// taken at run time.</summary>
-    System.Collections.Generic.IReadOnlyDictionary<(int Caller, int Callee), int> CallSites);
+    System.Collections.Generic.IReadOnlyDictionary<(int Caller, int Callee), int> CallSites,
+    /// <summary>The module id baked into the code; the installing world's
+    /// id has to be this one.</summary>
+    int ModuleId = 0);

@@ -71,12 +71,7 @@ public class EngineWasmTierTests
                 members.Add(candidate);
                 try
                 {
-                    var entry = WasmPredicateCompiler.CompileGroup(members, env);
-                    var entryAddr = new Dictionary<int, int>(members.Count);
-                    foreach (var m in members)
-                        entryAddr[m.Predicate.FunctorId] = m.Bias;
-                    world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                        entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+                    TieredEngine.Install(world, members, env);
                     return new WasmTierDelegate(pred.FunctorId, world).Invoke;
                 }
                 catch (WasmCompileException)
@@ -85,12 +80,7 @@ public class EngineWasmTierTests
                     members.Remove(candidate);
                     if (members.Count > 0)
                     {
-                        var entry = WasmPredicateCompiler.CompileGroup(members, env);
-                        var entryAddr = new Dictionary<int, int>(members.Count);
-                        foreach (var m in members)
-                            entryAddr[m.Predicate.FunctorId] = m.Bias;
-                        world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                            entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+                        TieredEngine.Install(world, members, env);
                     }
                     return null;
                 }

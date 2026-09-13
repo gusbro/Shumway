@@ -17,20 +17,21 @@ public class WasmRelinkEvictionTests
 {
     private static (PrologEngine Engine, WasmPromotionStore Wasm) TieredEngine()
     {
+        var (e, w, _) = TieredEngineWithWorld();
+        return (e, w);
+    }
+
+    /// <summary>The batch shape: each consult's new candidates become ONE
+    /// module; an evicted functor leaves the rows and is recompiled, into a
+    /// fresh module, at the next tick.</summary>
+    private static (PrologEngine Engine, WasmPromotionStore Wasm, DesktopWasmWorld World)
+        TieredEngineWithWorld()
+    {
         var engine = new PrologEngine();
         var store = engine.IlPromotion;
         store.Threshold = 0;
         var world = new DesktopWasmWorld();
         var env = new EngineWasmCompileEnv();
-        var members = new List<WasmGroupMember>();
-        void Install()
-        {
-            var entry = WasmPredicateCompiler.CompileGroup(members, env);
-            var addrMap = new Dictionary<int, int>(members.Count);
-            foreach (var m in members) addrMap[m.Predicate.FunctorId] = m.Bias;
-            world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                entry.CursorByAddress, addrMap, entry.RegisterDemand);
-        }
         var wasm = new WasmPromotionStore(store)
         {
             Threshold = 1,
@@ -50,8 +51,7 @@ public class WasmRelinkEvictionTests
                     catch (WasmCompileException) { }
                 }
                 if (good.Count == 0) return 0;
-                members.AddRange(good);
-                Install();
+                Shumway.Tests.Wasm.TieredEngine.Install(world, good, env);
                 foreach (var m in good)
                 {
                     store.RegisterBoundDelegate(m.Predicate.FunctorId,
@@ -62,22 +62,22 @@ public class WasmRelinkEvictionTests
                 return good.Count;
             },
         };
-        wasm.LiveRefreshed = liveByFid =>
-        {
-            world.RefreshLiveAddresses(liveByFid);
-            for (int i = 0; i < members.Count; i++)
-                if (liveByFid.TryGetValue(members[i].Predicate.FunctorId, out int at)
-                    && members[i].Bias != at)
-                    members[i] = members[i] with { Bias = at };
-        };
-        wasm.StaleEvicted = fids =>
-        {
-            var gone = new HashSet<int>(fids);
-            members.RemoveAll(m => gone.Contains(m.Predicate.FunctorId));
-            if (members.Count > 0) Install();
-        };
+        wasm.LiveRefreshed = world.RefreshLiveAddresses;
+        wasm.StaleEvicted = world.Evict;
         store.Wasm = wasm;
-        return (engine, wasm);
+        return (engine, wasm, world);
+    }
+
+    /// <summary>The functor of a static predicate, by (possibly qualified) name.</summary>
+    private static int Fid(PrologEngine engine, string name, int arity)
+    {
+        foreach (var (_, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
+        {
+            var (aid, ar) = Shumway.Core.FunctorTable.Lookup(pred.FunctorId);
+            if (ar == arity && (Shumway.Core.AtomTable.GetById(aid)?.Name ?? "").EndsWith(name))
+                return pred.FunctorId;
+        }
+        throw new Xunit.Sdk.XunitException($"{name}/{arity} is not a static predicate");
     }
 
     [Fact]
@@ -124,5 +124,46 @@ public class WasmRelinkEvictionTests
         Assert.Equal(0, wasm.RelinkEvictions);
         Assert.True(engine.Query("plainfact(2).").Success);
         Assert.True(engine.Query("member(b, [a,b]).").Success);
+    }
+
+    /// <summary>A redefinition evicts: the functor's rows go to zero, so
+    /// its old markers resolve nowhere (a caller left on the tier reaches
+    /// it through bytecode), and the next tick compiles the NEW code into a
+    /// module of its own. The siblings' modules never change.</summary>
+    [Fact]
+    public void ARedefinitionEvictsTheFunctorAndTheSiblingsStayOnTheTier()
+    {
+        var (engine, wasm, world) = TieredEngineWithWorld();
+        engine.ConsultString("""
+            :- public leaf/1.
+            :- public caller/1.
+            leaf(1). leaf(2). leaf(3).
+            caller(X) :- leaf(X), X > 1.
+            """);
+        engine.Query("true.");
+        Assert.True(wasm.PromoteAllStatics(engine) > 100);
+        int leaf = Fid(engine, "leaf", 1), caller = Fid(engine, "caller", 1);
+        Assert.True(world.Contains(leaf) && world.Contains(caller), "the corpus is not on the tier");
+        int modulesBefore = world.NextModuleId;
+        Assert.True(engine.Query("findall(X, caller(X), [2,3]).").Success);
+
+        // A second consult unit ADDS clauses to leaf/1: same functor, new
+        // code at a new address (the old version stays as a dead region).
+        engine.ConsultString("leaf(5). leaf(6). leaf(7).");
+        wasm.CompileAllTick(engine);
+        Assert.True(wasm.RelinkEvictions > 0, "the redefinition evicted nothing");
+        // caller/1 never changed: same module, still covered.
+        Assert.True(world.Contains(caller));
+        // The call site in caller/1's module reaches the NEW leaf/1: a
+        // sibling call is a table probe, never a baked jump (baked, this
+        // answered [2,3] from the dead region while leaf(X) itself answered
+        // all six).
+        Assert.True(engine.Query("findall(X, caller(X), [2,3,5,6,7]).").Success);
+        // leaf/1 came back in a module of its own; nothing was rebuilt.
+        Assert.True(world.Contains(leaf));
+        Assert.True(world.TryResolve(leaf, 0, out var t) && t.ModuleId >= modulesBefore,
+            "the new leaf/1 did not get a fresh module");
+        Assert.True(world.TryResolve(caller, 0, out var c) && c.ModuleId < modulesBefore,
+            "caller/1 was rebuilt");
     }
 }

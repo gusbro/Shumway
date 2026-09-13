@@ -38,6 +38,9 @@ public sealed class WasmTierDelegate
     /// "switches" number cannot tell a design question from a fact of
     /// life.</summary>
     public static long DiagForeignExits, DiagBoundaryExits;
+    /// <summary>Crossings that stayed inside wasm (one module tail-calling
+    /// another). The counter a host switch turns into when the hop works.</summary>
+    public static long DiagInWasmHops;
     /// <summary>Requests per builtin id — which builtins actually cost a
     /// chain exit, to decide what earns open-coding. Diagnostic only.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
@@ -64,6 +67,11 @@ public sealed class WasmTierDelegate
     }
     /// <summary>Deopts whose PC did not fit the table.</summary>
     public static long DiagDeoptOverflow;
+    /// <summary>Host switches by (functor, address): the crossings the in-wasm
+    /// hop did NOT take, which is what tells where a hop is missing. Same
+    /// bounded shape as the deopt sites. Diagnostic.</summary>
+    public static readonly long[] DiagSwitchKeys = FreshPcTable();
+    public static readonly long[] DiagSwitchHits = new long[64];
     /// <summary>Key slots at the FIRST deopt: flags, TR, trail limit, H,
     /// watermark, ST, stack limit. Null until one fires.</summary>
     public static long[]? DiagFirstDeoptSlots;
@@ -80,10 +88,11 @@ public sealed class WasmTierDelegate
     public static void ResetDiag()
     {
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
-        DiagForeignExits = DiagBoundaryExits = 0;
+        DiagForeignExits = DiagBoundaryExits = DiagInWasmHops = 0;
         DiagBuiltinTally.Clear();
         for (int i = 0; i < DiagDeoptPcs.Length; i++) { DiagDeoptPcs[i] = -1; DiagDeoptHits[i] = 0; }
         DiagDeoptOverflow = 0;
+        for (int i = 0; i < DiagSwitchKeys.Length; i++) { DiagSwitchKeys[i] = -1; DiagSwitchHits[i] = 0; }
         DiagFirstDeoptSlots = null;
         DiagFirstRestoreGuard = null;
     }
@@ -132,6 +141,18 @@ public sealed class WasmTierDelegate
         DiagDeoptOverflow++;
     }
 
+    /// <summary>The host-switch sites, heaviest first: (functor, address,
+    /// hits). Diagnostic.</summary>
+    public static List<(int Fid, int Address, long Hits)> SwitchRanking()
+    {
+        var r = new List<(int, int, long)>();
+        for (int i = 0; i < DiagSwitchKeys.Length; i++)
+            if (DiagSwitchKeys[i] >= 0)
+                r.Add(((int)(DiagSwitchKeys[i] >> 32), (int)DiagSwitchKeys[i], DiagSwitchHits[i]));
+        r.Sort((x, y) => y.Item3.CompareTo(x.Item3));
+        return r;
+    }
+
     /// <summary>The deopt sites, heaviest first: (pc, hits). Diagnostic.</summary>
     public static List<(long Pc, long Hits)> DeoptRanking()
     {
@@ -154,7 +175,7 @@ public sealed class WasmTierDelegate
             // translation contract).
             engine.SetPc(address == 0
                 ? _world.LiveEntryAddressOf(_functorId)
-                : (int)_world.TranslatePcToLive(address));
+                : (int)_world.TranslatePcToLive(_functorId, address));
             engine.IlTailCallPending = true;
             return true;
         }
@@ -165,24 +186,24 @@ public sealed class WasmTierDelegate
         bool growTrail = false, growStack = false;
         using (var cx = _world.BeginChain(engine))
         {
-            if (!cx.TryResolve(currentFid, address, out int cursor))
+            if (!cx.TryResolve(currentFid, address, out WasmTarget target))
             {
-                // The captured build predates this functor (a nested rebuild
-                // raced the entry): run its bytecode this once.
+                // No module covers it (evicted under an open marker): run its
+                // bytecode this once.
                 engine.SetPc(address == 0
                     ? _world.LiveEntryAddressOf(_functorId)
-                    : (int)_world.TranslatePcToLive(address));
+                    : (int)_world.TranslatePcToLive(_functorId, address));
                 engine.IlTailCallPending = true;
                 return true;
             }
             while (true)
             {
-                WasmVerdict v = cx.Call(cursor);
+                WasmVerdict v = cx.Call(target);
                 if (v == WasmVerdict.Success)
                 {
                     int cp = (int)cx.ReadSlot(WasmAbi.ContinuationPc);
                     if (Activation.IsResumeMarker(cp)
-                        && TryChain(cx, engine, cp, ref currentFid, ref cursor))
+                        && TryChain(cx, engine, cp, ref currentFid, ref target))
                         continue;
                     result = true;      // the interpreter proceeds at Cp
                     break;
@@ -191,7 +212,7 @@ public sealed class WasmTierDelegate
                 {
                     int pc = (int)cx.ReadSlot(WasmAbi.Pc);
                     if (Activation.IsResumeMarker(pc)
-                        && TryChain(cx, engine, pc, ref currentFid, ref cursor))
+                        && TryChain(cx, engine, pc, ref currentFid, ref target))
                         continue;
                     DiagTailExits++;
                     // A marker passes through symbolically; a raw bytecode
@@ -250,6 +271,10 @@ public sealed class WasmTierDelegate
                 DiagBuiltinTally.AddOrUpdate(builtinId, 1, (_, n) => n + 1);
                 int trim = (int)(req >> 32);
                 int ret = (int)cx.ReadSlot(WasmAbi.Cursor);
+                // The return address is in the requesting module's build
+                // space, and its marker is keyed under the member that owns
+                // it -- which, after hops, is not the functor that entered.
+                if (ret >= 0) currentFid = cx.OwnerFunctorOf(ret);
                 // The builtin runs against the ENGINE: adopt the mailbox
                 // first, restage after -- managed code may bind, allocate,
                 // even replace an area array by growing it.
@@ -284,10 +309,11 @@ public sealed class WasmTierDelegate
                     break;
                 }
                 cx.RefreshFromEngine();
-                if (!cx.TryResolve(currentFid, ret, out cursor))
+                if (!cx.TryResolve(currentFid, ret, out target))
                     throw new System.InvalidOperationException(
-                        $"builtin resume address {ret} unknown to the build");
+                        $"builtin resume address {ret} unknown to any module");
             }
+            DiagInWasmHops += cx.ReadSlot(WasmAbi.HopCount);
         }
         // After the chain closed (the engine is authoritative again): give
         // the area the room the wasm ran out of, so the next chain stages a
@@ -313,7 +339,7 @@ public sealed class WasmTierDelegate
     /// and pending wakeups (only a builtin can queue them mid-chain; they
     /// must drain at the next goal boundary, which the interpreter owns).</summary>
     private static bool TryChain(IWasmChainContext cx, Activation engine, int marker,
-                                 ref int currentFid, ref int cursor)
+                                 ref int currentFid, ref WasmTarget target)
     {
         var (fid, address) = Activation.DecodeResumeMarker(marker);
         // The two ways this can fail are worth telling apart. FOREIGN means
@@ -323,14 +349,20 @@ public sealed class WasmTierDelegate
         // how much there is to remove. BOUNDARY means the target IS here but
         // the host owes work first (a heap collection, a wakeup, a
         // cancellation); that exit stays no matter how modules are arranged.
-        if (!cx.TryResolve(fid, address, out int c)) { DiagForeignExits++; return false; }
+        if (!cx.TryResolve(fid, address, out WasmTarget t)) { DiagForeignExits++; return false; }
         if (cx.ReadSlot(WasmAbi.HeapTop) >= cx.ReadSlot(WasmAbi.HeapWatermark))
         { DiagBoundaryExits++; return false; }
         if (engine.IsCancellationRequested || engine.HasPendingWakeups)
         { DiagBoundaryExits++; return false; }
         DiagSwitches++;
+        long key = ((long)fid << 32) | (uint)address;
+        for (int i = 0; i < DiagSwitchKeys.Length; i++)
+        {
+            if (DiagSwitchKeys[i] == key) { DiagSwitchHits[i]++; break; }
+            if (DiagSwitchKeys[i] == -1) { DiagSwitchKeys[i] = key; DiagSwitchHits[i] = 1; break; }
+        }
         currentFid = fid;
-        cursor = c;
+        target = t;
         return true;
     }
 }

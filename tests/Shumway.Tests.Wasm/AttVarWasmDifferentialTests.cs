@@ -97,11 +97,7 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
 
         void Install()
         {
-            var entry = WasmPredicateCompiler.CompileGroup(members, env);
-            var addrMap = new Dictionary<int, int>(members.Count);
-            foreach (var mm in members) addrMap[mm.Predicate.FunctorId] = mm.Bias;
-            world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                entry.CursorByAddress, addrMap, entry.RegisterDemand);
+            TieredEngine.Install(world, members, env);
         }
 
         store.Wasm = new WasmPromotionStore(store)

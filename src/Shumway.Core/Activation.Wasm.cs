@@ -22,7 +22,7 @@ public sealed partial class Activation
         /// did before there was a table.</summary>
         long ResumeTableBase = 0,
         int ResumeTableRows = 0,
-        int SelfModuleId = 0);
+        long ModuleIndexBase = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -90,7 +90,7 @@ public sealed partial class Activation
         m[WasmAbi.CellsClaimed] = 0;
         m[WasmAbi.ResumeTableBase] = bases.ResumeTableBase;
         m[WasmAbi.ResumeTableLength] = bases.ResumeTableRows;
-        m[WasmAbi.SelfModuleId] = bases.SelfModuleId;
+        m[WasmAbi.ModuleIndexBase] = bases.ModuleIndexBase;
         m[WasmAbi.ViewGen] = CurrentViewGen;
         m[WasmAbi.CutBarrier] = _b0;
         m[WasmAbi.WriteMode] = _writeMode ? 1 : 0;

@@ -46,8 +46,13 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
         engine.Query("true.");                      // materialise the static link
 
         var env = new EngineWasmCompileEnv();
-        var worldA = new DesktopWasmWorld();
-        var worldB = new DesktopWasmWorld();
+        // Siblings of ONE engine: one memory, one function table, one resume
+        // table. That is what lets a module discover a marker is another's
+        // AND reach it without going out to the host.
+        // Lives as long as the engine does: the worlds are bound into it.
+        var space = new DesktopWasmSpace();
+        var worldA = new DesktopWasmWorld(space);
+        var worldB = new DesktopWasmWorld(space);
         var inA = new List<WasmGroupMember>();
         var inB = new List<WasmGroupMember>();
 
@@ -63,11 +68,7 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
         void Install(DesktopWasmWorld world, List<WasmGroupMember> members)
         {
             if (members.Count == 0) return;
-            var entry = WasmPredicateCompiler.CompileGroup(members, env);
-            var addrMap = new Dictionary<int, int>(members.Count);
-            foreach (var m in members) addrMap[m.Predicate.FunctorId] = m.Bias;
-            world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                entry.CursorByAddress, addrMap, entry.RegisterDemand);
+            TieredEngine.Install(world, members, env);
             foreach (var m in members)
                 store.RegisterBoundDelegate(m.Predicate.FunctorId,
                     new WasmTierDelegate(m.Predicate.FunctorId, world).Invoke);
@@ -112,13 +113,18 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
         Assert.Equal(oracle, Answer(split));
     }
 
-    /// <summary>What the crossing COSTS, stated as a count. A call or a
-    /// backtrack whose target lives in the other module cannot be resolved
-    /// inside the chain, so the chain closes and another opens: that is a
-    /// foreign exit. Splitting one world into two must produce them; keeping
-    /// everything in one world must not.</summary>
+    /// <summary>What the crossing COSTS, stated as a count. A call, a return
+    /// or a backtrack whose target lives in the other module is resolved
+    /// through the shared table and taken as a tail call INSIDE wasm: a hop.
+    /// It must not close the chain (a foreign exit), nor go out to the host
+    /// and back (a switch), nor deopt. So the split costs exactly the chains
+    /// one world costs, plus hops; and one world takes no hop at all.
+    ///
+    /// <para>This is the counter that catches "correct but slow": a hop that
+    /// quietly fell back to the host still answers right, and only these
+    /// numbers move.</para></summary>
     [Fact]
-    public void CrossingModulesCostsForeignExitsAndStayingInOneDoesNot()
+    public void CrossingModulesHopsInsideWasmAndCostsNoExtraChain()
     {
         var (whole, _, _) = TwoWorlds(_ => true);
         WasmTierDelegate.ResetDiag();
@@ -126,6 +132,7 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
         long wholeForeign = WasmTierDelegate.DiagForeignExits;
         long wholeEntries = WasmTierDelegate.DiagEntries;
         long wholeSwitches = WasmTierDelegate.DiagSwitches;
+        long wholeHops = WasmTierDelegate.DiagInWasmHops;
 
         var (split, _, _) = TwoWorlds(n => n.EndsWith("lo") || n.EndsWith("both"));
         WasmTierDelegate.ResetDiag();
@@ -134,16 +141,35 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
         long splitEntries = WasmTierDelegate.DiagEntries;
 
         o.WriteLine($"one world : entries={wholeEntries} switches={wholeSwitches} "
-            + $"foreignExits={wholeForeign}");
-        o.WriteLine($"two worlds: entries={splitEntries} foreignExits={splitForeign}");
+            + $"foreignExits={wholeForeign} hops={wholeHops}");
+        o.WriteLine($"two worlds: entries={splitEntries} foreignExits={splitForeign} "
+            + $"deopts={WasmTierDelegate.DiagDeopts} "
+            + $"boundary={WasmTierDelegate.DiagBoundaryExits} "
+            + $"tailExits={WasmTierDelegate.DiagTailExits} "
+            + $"switches={WasmTierDelegate.DiagSwitches} "
+            + $"hops={WasmTierDelegate.DiagInWasmHops} "
+            + $"builtins={WasmTierDelegate.DiagBuiltins}");
+        foreach (var (pc, hits) in WasmTierDelegate.DeoptRanking())
+            o.WriteLine($"  deopt 0x{pc:X} x{hits}");
+        foreach (var (fid, addr, hits) in WasmTierDelegate.SwitchRanking())
+        {
+            var (aid, ar) = Shumway.Core.FunctorTable.Lookup(fid);
+            string name = Shumway.Core.AtomTable.GetById(aid)?.Name ?? "?";
+            o.WriteLine($"  switch {name}/{ar} @0x{addr:X} x{hits}");
+        }
 
         // ANTI-VACUITY: the tier has to have run at all.
         Assert.True(wholeEntries > 0, "nothing entered the tier");
-        // One module: every target resolves in the chain.
+        // One module: every target resolves in the chain, and there is
+        // nowhere to hop to.
         Assert.Equal(0, wholeForeign);
-        // Two modules: the crossings show up, and each one costs a chain.
-        Assert.True(splitForeign > 0, "the split produced no foreign exit");
-        Assert.True(splitEntries > wholeEntries,
-            $"splitting did not cost extra chains: {splitEntries} vs {wholeEntries}");
+        Assert.Equal(0, wholeHops);
+        // Two modules: the crossings happened (ANTI-VACUITY: as hops), and
+        // none of them left wasm in any of the three ways it could.
+        Assert.True(WasmTierDelegate.DiagInWasmHops > 0, "the split never hopped");
+        Assert.Equal(0, splitForeign);
+        Assert.Equal(0, WasmTierDelegate.DiagSwitches);
+        Assert.Equal(0, WasmTierDelegate.DiagDeopts);
+        Assert.Equal(wholeEntries, splitEntries);
     }
 }

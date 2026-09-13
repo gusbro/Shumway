@@ -51,11 +51,10 @@ public sealed class ResumeTableAgreesTests(ITestOutputHelper o)
         }
         Assert.True(members.Count >= 4, $"only {members.Count} members");
 
-        var entry = WasmPredicateCompiler.CompileGroup(members, env);
+        int moduleId = world.NextModuleId;
+        var entry = TieredEngine.Install(world, members, env);
         var addrMap = new Dictionary<int, int>(members.Count);
         foreach (var m in members) addrMap[m.Predicate.FunctorId] = m.Bias;
-        world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-            entry.CursorByAddress, addrMap, entry.RegisterDemand);
 
         var index = new WasmBuildAddressIndex(addrMap);
         int checkedRows = 0, freshEntries = 0;
@@ -66,10 +65,10 @@ public sealed class ResumeTableAgreesTests(ITestOutputHelper o)
             int marker = Activation.EncodeResumeMarker(fid, 0);
             Assert.True(world.ResumeTable.TryGet(marker, out int mod, out int cur),
                 $"no row for the fresh entry of functor {fid}");
-            Assert.Equal(world.ModuleId, mod);
-            Assert.True(world.TryResolve(fid, 0, out int hostCur),
+            Assert.Equal(moduleId, mod);
+            Assert.True(world.TryResolve(fid, 0, out WasmTarget host),
                 $"the host cannot resolve the fresh entry of functor {fid}");
-            Assert.Equal(hostCur, cur);
+            Assert.Equal(new WasmTarget(mod, cur), host);
             freshEntries++;
         }
 
@@ -81,10 +80,10 @@ public sealed class ResumeTableAgreesTests(ITestOutputHelper o)
             int marker = Activation.EncodeResumeMarker(fid, address);
             Assert.True(world.ResumeTable.TryGet(marker, out int mod, out int cur),
                 $"no row for ({fid}, 0x{address:X})");
-            Assert.Equal(world.ModuleId, mod);
-            Assert.True(world.TryResolve(fid, address, out int hostCur),
+            Assert.Equal(moduleId, mod);
+            Assert.True(world.TryResolve(fid, address, out WasmTarget host),
                 $"the host cannot resolve ({fid}, 0x{address:X})");
-            Assert.Equal(hostCur, cur);
+            Assert.Equal(new WasmTarget(mod, cur), host);
             Assert.Equal(cursor, cur);
             checkedRows++;
         }
@@ -95,27 +94,27 @@ public sealed class ResumeTableAgreesTests(ITestOutputHelper o)
         Assert.True(checkedRows > 20, $"only {checkedRows} rows compared");
     }
 
-    /// <summary>Two worlds of ONE engine share the table, and each other's
-    /// markers resolve to the other's module id. That is the whole mechanism
-    /// the split needs: a module has to be able to discover that a marker is
-    /// not its own AND where it went. A table per world could only ever answer
-    /// "not mine".</summary>
+    /// <summary>Two worlds of ONE engine share the table and the registry:
+    /// a row says which module owns a marker, and every module of the engine
+    /// reads the same rows. That is the whole mechanism the split needs: a
+    /// module has to be able to discover that a marker is not its own AND
+    /// where it went. A table per world could only ever answer "not mine".</summary>
     [Fact]
     public void SiblingWorldsShareOneTableAndSeeEachOther()
     {
-        var shared = new WasmResumeTable();
-        var a = new DesktopWasmWorld(shared);
-        var b = new DesktopWasmWorld(shared);
-        Assert.NotEqual(a.ModuleId, b.ModuleId);
+        using var space = new DesktopWasmSpace();
+        var shared = space.ResumeTable;
+        var a = new DesktopWasmWorld(space);
+        var b = new DesktopWasmWorld(space);
         Assert.Same(a.ResumeTable, b.ResumeTable);
+        Assert.Same(a.Modules, b.Modules);
 
-        // Rows written by one are visible to the other, tagged with the owner.
+        // Rows written through one are visible to the other, tagged with the owner.
         int m = Activation.EncodeResumeMarker(900_101, 0x11);
-        shared.Set(m, b.ModuleId, cursor: 33);
-        Assert.True(a.ResumeTable.TryGet(m, out int owner, out int cursor));
-        Assert.Equal(b.ModuleId, owner);
+        shared.Set(m, moduleId: 5, cursor: 33);
+        Assert.True(b.ResumeTable.TryGet(m, out int owner, out int cursor));
+        Assert.Equal(5, owner);
         Assert.Equal(33, cursor);
-        Assert.NotEqual(a.ModuleId, owner);      // a can tell it is foreign
     }
 
     /// <summary>A world with no sibling gets its own table: engines must not
@@ -129,7 +128,7 @@ public sealed class ResumeTableAgreesTests(ITestOutputHelper o)
         Assert.NotSame(one.ResumeTable, other.ResumeTable);
 
         int m = Activation.EncodeResumeMarker(900_102, 0x22);
-        one.ResumeTable.Set(m, one.ModuleId, cursor: 7);
+        one.ResumeTable.Set(m, moduleId: 0, cursor: 7);
         Assert.False(other.ResumeTable.TryGet(m, out _, out _));
     }
 
