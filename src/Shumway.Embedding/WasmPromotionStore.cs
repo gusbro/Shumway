@@ -96,8 +96,11 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     /// <summary>Fires after <see cref="ReconcileWithLink"/> evicts stale
     /// delegates, with the evicted functor ids: the tier drops its group
-    /// members and baked bookkeeping for them.</summary>
-    public System.Action<IReadOnlyList<int>>? StaleEvicted { get; set; }
+    /// members and baked bookkeeping for them, and answers with everything
+    /// that left the tier, the baked callers its registry dragged along
+    /// included (<see cref="IWasmExecutionWorld.Evict"/>); those lose their
+    /// delegates here too.</summary>
+    public System.Func<IReadOnlyList<int>, IReadOnlyList<int>>? StaleEvicted { get; set; }
 
     /// <summary>Fires with the fresh (functor -> live address) map after a
     /// relink moved code: the tier hands it to its execution worlds, whose
@@ -140,16 +143,27 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         }
         if (stale is not null)
         {
-            foreach (int fid in stale)
-            {
-                ilStore.EvictDelegate(fid);
-                _installed.Remove(fid);
-            }
-            RelinkEvictions += stale.Count;
-            StaleEvicted?.Invoke(stale);
+            Displaced(stale);
+            var gone = StaleEvicted?.Invoke(stale);
+            if (gone is not null) Displaced(gone);
         }
         if (moved) LiveRefreshed?.Invoke(liveAddr);
         return stale?.Count ?? 0;
+    }
+
+    /// <summary>Drops the delegates of functors the tier no longer covers
+    /// -- evicted, or displaced by a takeover (<see
+    /// cref="IWasmExecutionWorld.InstallGroup"/>) -- so they run on
+    /// bytecode and can be promoted again. Idempotent: a functor already
+    /// dropped counts nothing.</summary>
+    public void Displaced(IReadOnlyList<int> functorIds)
+    {
+        foreach (int fid in functorIds)
+        {
+            if (!_installed.Remove(fid)) continue;
+            ilStore.EvictDelegate(fid);
+            RelinkEvictions++;
+        }
     }
 
     /// <summary>Runs the relink reconciliation and, under

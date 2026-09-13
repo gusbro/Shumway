@@ -8,9 +8,11 @@ namespace Shumway.Tests.Wasm;
 
 /// <summary>Many modules in one engine: one per predicate, the grain the
 /// browser's lazy mode compiles at. The registry decides which module a
-/// functor runs in; the emitted code reaches a sibling through the resume
-/// table, so an install, a takeover and an eviction change WHERE a call
-/// lands without touching any module already built.</summary>
+/// functor runs in; the emitted code reaches a foreign functor through the
+/// resume table and a sibling of its own module by a baked jump, so a
+/// takeover or an eviction that moves a functor out of a module takes the
+/// module's baked callers of it along (they re-promote against the live
+/// code) and touches no module already built.</summary>
 public sealed class ModuleRegistryTests(ITestOutputHelper o)
 {
     private const string Corpus = """
@@ -23,6 +25,7 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
         both(X) :- lo(X).
         both(X) :- hi(X).
         chase(X, Y) :- both(X), hi(Y), Y >= X.
+        solo(X) :- X = 1.
         """;
 
     private const string Goal = "findall(X-Y, chase(X, Y), L), length(L, N).";
@@ -105,7 +108,7 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
             var (aid, _) = FunctorTable.Lookup(pred.FunctorId);
             string name = AtomTable.GetById(aid)?.Name ?? "";
             if (name.EndsWith("lo") || name.EndsWith("hi") || name.EndsWith("both")
-                || name.EndsWith("chase"))
+                || name.EndsWith("chase") || name.EndsWith("solo"))
                 members.Add(new WasmGroupMember(pred, addr, null));
         }
         TieredEngine.Install(world, members, env);
@@ -116,41 +119,80 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
     }
 
     /// <summary>Installing a functor a second time takes it over: its rows
-    /// move to the new module, the sibling's rows stay in the old one, and
-    /// the old module's call sites now land in the new code -- through the
-    /// table, as hops. Nothing is rebuilt.</summary>
+    /// move to the new module, and the old module's members that reach it
+    /// by baked jumps -- hi/1 and both/1 call lo/1, chase/2 calls them --
+    /// are displaced with it, since their jumps would land in the dead
+    /// code. A member that never calls it stays. Nothing is rebuilt.</summary>
     [Fact]
-    public void ReinstallingAFunctorTakesItOverAndTheSiblingsStay()
+    public void ATakeoverDisplacesTheBakedCallersAndTheOthersStay()
     {
         string oracle = Oracle();
         var (engine, world) = OneModule();
-        int lo = Fid(engine, "lo", 1), chase = Fid(engine, "chase", 2);
+        int lo = Fid(engine, "lo", 1), hi = Fid(engine, "hi", 1), both = Fid(engine, "both", 1),
+            chase = Fid(engine, "chase", 2), solo = Fid(engine, "solo", 1);
         Assert.Equal(0, world.Modules.OwnerOf(lo)!.Id);
         Assert.Equal(0, world.Modules.OwnerOf(chase)!.Id);
+        Assert.Equal(0, world.Modules.OwnerOf(solo)!.Id);
 
         // lo/1 alone, again, as a module of its own.
         var env = new EngineWasmCompileEnv();
         WasmGroupMember? loMember = null;
         foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
             if (pred.FunctorId == lo) loMember = new WasmGroupMember(pred, addr, null);
-        TieredEngine.InstallOne(world, loMember!, env);
+        TieredEngine.Install(world, new List<WasmGroupMember> { loMember! }, env,
+            store: null, out var displaced);
 
+        Assert.Equal(new HashSet<int> { hi, both, chase }, new HashSet<int>(displaced));
         Assert.Equal(2, world.Modules.ModuleCount);
         Assert.Equal(1, world.Modules.OwnerOf(lo)!.Id);
-        Assert.Equal(0, world.Modules.OwnerOf(chase)!.Id);
+        Assert.Equal(0, world.Modules.OwnerOf(solo)!.Id);
+        Assert.Null(world.Modules.OwnerOf(chase));
         Assert.True(world.TryResolve(lo, 0, out var t) && t.ModuleId == 1,
             "lo/1's fresh entry did not move to the new module");
-        Assert.True(world.TryResolve(chase, 0, out var c) && c.ModuleId == 0,
-            "chase/2's rows did not survive the takeover");
+        Assert.False(world.TryResolve(chase, 0, out _), "chase/2 kept a row");
+        Assert.True(world.TryResolve(solo, 0, out var s) && s.ModuleId == 0,
+            "solo/1 did not survive the takeover");
 
-        WasmTierDelegate.ResetDiag();
+        // The displaced run on bytecode until re-promoted (this engine has
+        // no wasm store to re-promote them, so bytecode it is); lo/1 in its
+        // new module still answers, and nothing deopts. (The bytecode call
+        // sites of the displaced were linked bytecode-to-bytecode when the
+        // tier was not attached, so lo/1 is entered from the top level.)
+        foreach (int fid in displaced) engine.IlPromotion.EvictDelegate(fid);
         Assert.Equal(oracle, Answer(engine));
-        // The old module's calls into lo/1 are hops now (ANTI-VACUITY: before
-        // the takeover the same goal hopped zero times, see the batch
-        // counter-proof above).
-        Assert.True(WasmTierDelegate.DiagInWasmHops > 0, "the takeover is not reached by hops");
+        WasmTierDelegate.ResetDiag();
+        Assert.True(engine.Query("findall(X, lo(X), [1,2,3]).").Success);
+        Assert.True(WasmTierDelegate.DiagEntries > 0, "nothing entered the tier");
         Assert.Equal(0, WasmTierDelegate.DiagSwitches);
         Assert.Equal(0, WasmTierDelegate.DiagDeopts);
+    }
+
+    /// <summary>An eviction takes the baked callers along, transitively,
+    /// and reports the whole set; the counter-proof evicts a member nobody
+    /// calls and gets that member alone.</summary>
+    [Fact]
+    public void AnEvictionDragsTheBakedCallersAlong()
+    {
+        string oracle = Oracle();
+        var (engine, world) = OneModule();
+        int lo = Fid(engine, "lo", 1), hi = Fid(engine, "hi", 1), both = Fid(engine, "both", 1),
+            chase = Fid(engine, "chase", 2), solo = Fid(engine, "solo", 1);
+
+        var gone = world.Evict(new[] { lo });
+        Assert.Equal(new HashSet<int> { lo, hi, both, chase }, new HashSet<int>(gone));
+        Assert.True(world.Contains(solo));
+        Assert.False(world.Contains(chase));
+        Assert.Equal(1, world.Modules.ModuleCount);
+        foreach (int fid in gone) engine.IlPromotion.EvictDelegate(fid);
+        Assert.Equal(oracle, Answer(engine));
+
+        // Counter-proof: chase/2 has no caller in the module.
+        var (engine2, world2) = OneModule();
+        int chase2 = Fid(engine2, "chase", 2);
+        var gone2 = world2.Evict(new[] { chase2 });
+        Assert.Equal(new[] { chase2 }, gone2);
+        Assert.True(world2.Contains(Fid(engine2, "lo", 1)));
+        Assert.True(world2.Contains(Fid(engine2, "both", 1)));
     }
 
     /// <summary>An evicted functor resolves nowhere, in the registry and in

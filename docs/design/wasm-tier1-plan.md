@@ -949,14 +949,27 @@ removed. `Contains` is a dictionary probe, `TryResolve` a row read,
 per functor (`CodeHash`, `ReconcileWithLink`): a changed hash evicts the
 functor and it is re-promoted into a fresh module against live addresses.
 
-One rule fell out of the takeover and is the hot-path change of this phase:
-**only a SELF call or execute keeps the baked in-group jump**; a call to a
-sibling member of the same module goes through the table
-(`EmitForeignCallOrExit`), so that a later module taking the sibling over
-redirects the call site. Baked, a redefinition of `leaf/1` left `caller/1`
-answering from the dead region while `leaf(X)` itself answered the new
-clauses (`WasmRelinkEvictionTests`). A probe that resolves to the same
-module is a local branch and is not counted as a hop.
+The takeover raised one question about the hot path. A member reaches a
+sibling of its own module by a baked jump to the sibling's entry cursor,
+and a jump does not consult the table: a redefinition of `leaf/1` that
+evicted only `leaf/1` left `caller/1` answering from the dead region while
+`leaf(X)` itself answered the new clauses (`WasmRelinkEvictionTests`).
+Routing sibling calls through a probe fixed that at a measured cost that
+was noise on the desktop and an estimated 1-2% on call-heavy code in the
+browser, paid by every call forever; the chosen fix pays at eviction time
+instead. **The registry records each module's baked call graph** (the
+member-to-member pairs of `WasmGroupEntry.CallSites`, or of the
+predicates' own `CallSites` for the baked prelude) and, when a functor
+leaves a module -- `Evict`, or a takeover in `Install` -- **evicts the
+module's baked callers of it, transitively** (a worklist over
+`BakedCallersOf`, restricted to members the module still owns). Both
+report the full set; `WasmPromotionStore.Displaced` drops those delegates
+so they run on bytecode and re-promote against the live code, and the
+relink test now checks that `caller/1` comes back in a fresh module while a
+bystander stays in its old one. The invariant, stated at the jump site: a
+baked jump never reaches code the table has left behind, because the
+jumper leaves first. A probe that resolves to the same module is a local
+branch and is not counted as a hop.
 
 The browser attaches the tier in BATCH mode by default (one module for the
 whole linked program at each consult boundary, the baked prelude being
@@ -1004,14 +1017,19 @@ standing proof.
 
 `ModuleRegistryTests`: one module per predicate answers like Tier-0 and only
 hops (counter-proof: the batch module hops 0); a reinstall takes the functor
-over and the siblings stay; an evicted functor degrades to bytecode (foreign
-exits > 0, never a trap or a wrong cursor); two engines in one process
+over, its baked callers with it, and the other members stay; an evicted
+functor degrades to bytecode (foreign exits > 0, never a trap or a wrong
+cursor); two engines in one process
 resolve through their own tables (the test that catches a global table); an
 install refuses a module compiled for another id; deep backtracking across
 modules does not stack. `ResumeTableAgreesTests`: every (functor, address)
 of an installed module round-trips through the table and the host agrees.
-`WasmRelinkEvictionTests`: a redefinition evicts the functor, the siblings
-stay on the tier, and the call site reaches the new definition.
+`WasmRelinkEvictionTests`: a redefinition evicts the functor and its baked
+callers, both come back in a fresh module, the bystander stays, and the
+call site reaches the new definition. `ModuleRegistryTests` also pins the
+cascade itself: a takeover of `lo/1` displaces exactly its transitive
+callers and leaves the member that never calls it; evicting a member nobody
+calls evicts that member alone.
 
 Gate per phase: `dotnet test tests/Shumway.Tests.Wasm/` (Debug and Release),
 `tests/Shumway.Tests.Core/`, `powershell -File

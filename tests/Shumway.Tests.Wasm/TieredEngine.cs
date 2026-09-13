@@ -35,7 +35,7 @@ internal static class TieredEngine
                     store.FloatPoolProvider?.Invoke(pred.FunctorId));
                 try
                 {
-                    InstallOne(world, m, env);
+                    InstallOne(world, m, env, store);
                     members.Add(m);
                     return new WasmTierDelegate(pred.FunctorId, world).Invoke;
                 }
@@ -52,17 +52,28 @@ internal static class TieredEngine
     /// <summary>Compiles the member as a module of its own against the id
     /// the world will give it, and installs it.</summary>
     public static void InstallOne(DesktopWasmWorld world, WasmGroupMember m,
-        EngineWasmCompileEnv env)
-        => Install(world, new List<WasmGroupMember> { m }, env);
+        EngineWasmCompileEnv env, IlPromotionStore? store = null)
+        => Install(world, new List<WasmGroupMember> { m }, env, store);
 
     public static WasmGroupEntry Install(DesktopWasmWorld world,
-        List<WasmGroupMember> members, EngineWasmCompileEnv env)
+        List<WasmGroupMember> members, EngineWasmCompileEnv env,
+        IlPromotionStore? store = null)
+        => Install(world, members, env, store, out _);
+
+    /// <summary>Also reports the functors of other modules the install
+    /// displaced (the baked callers of a taken-over member).</summary>
+    public static WasmGroupEntry Install(DesktopWasmWorld world,
+        List<WasmGroupMember> members, EngineWasmCompileEnv env,
+        IlPromotionStore? store, out IReadOnlyList<int> displaced)
     {
         var entry = WasmPredicateCompiler.CompileGroup(members, env,
             moduleId: world.NextModuleId);
         var addrMap = new Dictionary<int, int>(members.Count);
         foreach (var mm in members) addrMap[mm.Predicate.FunctorId] = mm.Bias;
-        entry.InstallInto(world, addrMap);
+        displaced = entry.InstallInto(world, addrMap);
+        // The store keeps a delegate per functor; a displaced one would keep
+        // bailing out of the tier on every call instead of re-promoting.
+        if (displaced.Count > 0 && store is not null) store.Wasm?.Displaced(displaced);
         return entry;
     }
 }

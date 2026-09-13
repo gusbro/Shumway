@@ -21,17 +21,24 @@ public interface IWasmExecutionWorld
 {
     /// <summary>Installs a freshly compiled module. Its members take over
     /// from whatever module covered them before (see
-    /// <see cref="WasmModuleRegistry.Install"/>). Engine-thread only, never
-    /// called mid-chain.</summary>
-    void InstallGroup(byte[] module,
+    /// <see cref="WasmModuleRegistry.Install"/>); <paramref
+    /// name="callEdges"/> are the module's (caller, callee) pairs, and the
+    /// returned list is the functors of OTHER modules the takeover pushed
+    /// to bytecode -- the caller drops their delegates. Engine-thread only,
+    /// never called mid-chain.</summary>
+    System.Collections.Generic.IReadOnlyList<int> InstallGroup(byte[] module,
         System.Collections.Generic.IReadOnlyDictionary<int, int> entryCursorByFid,
         System.Collections.Generic.IReadOnlyDictionary<int, int> cursorByAddress,
         System.Collections.Generic.IReadOnlyDictionary<int, int> entryAddressByFid,
-        int registerDemand);
+        int registerDemand,
+        System.Collections.Generic.IEnumerable<(int Caller, int Callee)> callEdges);
 
     /// <summary>Drops the functors from the tier: their markers stop
-    /// resolving anywhere and fall back to bytecode. Boundary-tick only.</summary>
-    void Evict(System.Collections.Generic.IEnumerable<int> functorIds);
+    /// resolving anywhere and fall back to bytecode. Returns everything
+    /// that left, the baked callers the registry drags along included.
+    /// Boundary-tick only.</summary>
+    System.Collections.Generic.IReadOnlyList<int> Evict(
+        System.Collections.Generic.IEnumerable<int> functorIds);
 
     /// <summary>The id the next install will get. A module bakes its own id
     /// into every probe, so it has to be compiled against this value.</summary>

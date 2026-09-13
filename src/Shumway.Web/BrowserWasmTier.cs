@@ -77,11 +77,12 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 
     public int ModuleCount => _table.ModuleCount;
 
-    public void InstallGroup(byte[] module,
+    public IReadOnlyList<int> InstallGroup(byte[] module,
         IReadOnlyDictionary<int, int> entryCursorByFid,
         IReadOnlyDictionary<int, int> cursorByAddress,
         IReadOnlyDictionary<int, int> entryAddressByFid,
-        int registerDemand)
+        int registerDemand,
+        IEnumerable<(int Caller, int Callee)> callEdges)
     {
         byte[] patched = WasmSharedMemory.Patch(module);
         byte[] pinned = GC.AllocateArray<byte>(patched.Length, pinned: true);
@@ -107,13 +108,14 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         // refused module out of the registry altogether.
         _ = index.Value;
         var m = _modules.Install(entryCursorByFid, cursorByAddress, entryAddressByFid,
-                                 registerDemand);
+                                 registerDemand, callEdges, out var displaced);
         if (m.Id != _registrations.Count)
             throw new InvalidOperationException("module id out of step with registrations");
         _registrations.Add(new Registration(pinned, index));
+        return displaced;
     }
 
-    public void Evict(IEnumerable<int> functorIds) => _modules.Evict(functorIds);
+    public IReadOnlyList<int> Evict(IEnumerable<int> functorIds) => _modules.Evict(functorIds);
 
     public bool Contains(int functorId) => _modules.Contains(functorId);
 
@@ -431,13 +433,15 @@ internal static class BrowserWasmTier
             },
         };
         // A relink moved predicates out from under their modules: their rows
-        // go to zero (a marker of theirs falls back to bytecode) and evicted
-        // baked members leave the baked bookkeeping. The modules stay: a
-        // re-promotion compiles a fresh one against live addresses.
+        // go to zero (a marker of theirs falls back to bytecode), the baked
+        // callers of each go with it, and evicted baked members leave the
+        // baked bookkeeping. The modules stay: a re-promotion compiles a
+        // fresh one against live addresses.
         store.Wasm.StaleEvicted = staleFids =>
         {
-            world.Evict(staleFids);
-            BakedFids.RemoveWhere(new HashSet<int>(staleFids).Contains);
+            var gone = world.Evict(staleFids);
+            BakedFids.RemoveWhere(new HashSet<int>(gone).Contains);
+            return gone;
         };
         // A relink moved the code: the world translates at its boundaries.
         store.Wasm.LiveRefreshed = world.RefreshLiveAddresses;
@@ -460,7 +464,7 @@ internal static class BrowserWasmTier
                     store.FloatPoolProvider?.Invoke(pred.FunctorId)));
             try
             {
-                Install(world, members, env);
+                Install(store, world, members, env);
             }
             catch (WasmRegisterException)
             {
@@ -488,7 +492,7 @@ internal static class BrowserWasmTier
                 if (good.Count == 0) return 0;
                 // Individually fine but jointly refused should not happen;
                 // if it does, nothing is installed.
-                try { Install(world, good, env); }
+                try { Install(store, world, good, env); }
                 catch (WasmCompileException) { return 0; }
                 members = good;
             }
@@ -523,7 +527,7 @@ internal static class BrowserWasmTier
         {
             var candidate = new WasmGroupMember(pred, linkedBase,
                 store.FloatPoolProvider?.Invoke(pred.FunctorId));
-            Install(world, new List<WasmGroupMember> { candidate }, env);
+            Install(store, world, new List<WasmGroupMember> { candidate }, env);
             return new WasmTierDelegate(pred.FunctorId, world).Invoke;
         }
         catch (WasmRegisterException)
@@ -590,10 +594,13 @@ internal static class BrowserWasmTier
         }
         var cursorByAddress = new Dictionary<int, int>(baked.CursorByAddress.Count);
         foreach (var kv in baked.CursorByAddress) cursorByAddress[kv.Key] = kv.Value;
+        var bakedPreds = new List<CompiledPredicate>(baked.Members.Count);
+        foreach (var m in baked.Members) bakedPreds.Add(byAddress[m.Bias]);
         try
         {
+            // The bake is module 0 of an empty world: nothing to displace.
             world.InstallGroup(baked.Module, entryCursors, cursorByAddress,
-                entryAddr, baked.RegisterDemand);
+                entryAddr, baked.RegisterDemand, WasmGroupInstall.EdgesOf(bakedPreds));
         }
         catch (WasmRegisterException e) { reason = e.Message; return false; }
         foreach (var m in baked.Members)
@@ -622,7 +629,7 @@ internal static class BrowserWasmTier
 
     /// <summary>Compiles the members as one module against the id the world
     /// will give it, and installs it. Throws before installing anything.</summary>
-    private static void Install(BrowserWasmWorld world,
+    private static void Install(IlPromotionStore store, BrowserWasmWorld world,
         List<WasmGroupMember> members, EngineWasmCompileEnv env)
     {
         var entry = WasmPredicateCompiler.CompileGroup(members, env,
@@ -630,7 +637,8 @@ internal static class BrowserWasmTier
         var entryAddr = new Dictionary<int, int>(members.Count);
         foreach (var m in members)
             entryAddr[m.Predicate.FunctorId] = m.Bias;
-        entry.InstallInto(world, entryAddr);
+        var displaced = entry.InstallInto(world, entryAddr);
+        if (displaced.Count > 0) store.Wasm?.Displaced(displaced);
         LastCallSites = entry.CallSites;
     }
 }

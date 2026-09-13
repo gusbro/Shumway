@@ -73,11 +73,12 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
     /// compiled against, since the id is baked into its probes.</summary>
     public int NextModuleId => ResumeTable.ModuleCount;
 
-    public void InstallGroup(byte[] module,
+    public IReadOnlyList<int> InstallGroup(byte[] module,
         IReadOnlyDictionary<int, int> entryCursorByFid,
         IReadOnlyDictionary<int, int> cursorByAddress,
         IReadOnlyDictionary<int, int> entryAddressByFid,
-        int registerDemand)
+        int registerDemand,
+        IEnumerable<(int Caller, int Callee)> callEdges)
     {
         using var stream = new MemoryStream(module);
         var creator = Module.ReadFromBinary(stream).Compile<WasmRunExports>();
@@ -87,12 +88,13 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             { WasmAbi.TableModule, WasmAbi.TableField, Functions },
         });
         var m = Modules.Install(entryCursorByFid, cursorByAddress, entryAddressByFid,
-                                registerDemand);
+                                registerDemand, callEdges, out var displaced);
         // The slot IS the module id: the module index array the hop reads
         // maps i -> i here (the browser's addFunction picks its own).
         while (Functions.Length <= m.Id) Functions.Grow(1);
         Functions[m.Id] = TailEntry(instance.Exports);
         _space.Instances.Add(instance);
+        return displaced;
     }
 
     /// <summary>The table entry for a module: a stub that TAIL-calls the
@@ -124,7 +126,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         return (Func<int, int, int>)stub.CreateDelegate(typeof(Func<int, int, int>), exports);
     }
 
-    public void Evict(IEnumerable<int> functorIds) => Modules.Evict(functorIds);
+    public IReadOnlyList<int> Evict(IEnumerable<int> functorIds) => Modules.Evict(functorIds);
 
     public bool Contains(int functorId) => Modules.Contains(functorId);
 

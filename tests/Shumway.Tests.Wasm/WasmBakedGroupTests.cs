@@ -76,7 +76,7 @@ public class WasmBakedGroupTests
         var cursors = new Dictionary<int, int>();
         foreach (var kv in baked.CursorByAddress) cursors[kv.Key] = kv.Value;
         world.InstallGroup(baked.Module, entryCursors, cursors, entryAddr,
-            baked.RegisterDemand);
+            baked.RegisterDemand, callEdges: []);
         foreach (var m in baked.Members)
             store.RegisterBoundDelegate(m.FunctorId,
                 new WasmTierDelegate(m.FunctorId, world).Invoke);

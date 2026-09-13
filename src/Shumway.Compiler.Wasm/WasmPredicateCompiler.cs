@@ -1356,7 +1356,7 @@ public static class WasmPredicateCompiler
                 case Opcode.DeallocateExecute:
                     EmitFlagsCheck(ins.Pc);
                     EmitDeallocate();
-                    EmitExecuteTail(ins.Pc, SelfFid(ins));
+                    EmitExecuteTail(ins.Pc);
                     return true;
                 case Opcode.NeckCut:
                     EmitFlagsCheck(ins.Pc);
@@ -1560,16 +1560,17 @@ public static class WasmPredicateCompiler
             StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
             Op(new Int32Constant(_env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9)));
             Op(new LocalSet(LCP));
-            if (callee == SelfFid(ins) && _entryByFid.TryGetValue(callee, out int calleeEntry))
+            if (_entryByFid.TryGetValue(callee, out int calleeEntry))
             {
-                // Self non-tail call: jump straight to the entry; the proceed
-                // will match the Cp marker just staged and jump back to our
-                // resume cursor -- no host round-trip. The watermark guard
-                // gives the interpreter its GC boundary exactly where the
-                // marker path would have taken it. Only SELF is baked: a
-                // sibling member can be taken over by a later module (a
-                // redefinition), and its fresh-entry row is the one thing
-                // that follows it there.
+                // In-group non-tail call: jump straight to the entry; the
+                // proceed will match the Cp marker just staged and jump back
+                // to our resume cursor -- no host round-trip. The watermark
+                // guard gives the interpreter its GC boundary exactly where
+                // the marker path would have taken it. The jump never reaches
+                // code the table has left behind: when a member leaves its
+                // module (eviction, takeover) the registry evicts its baked
+                // callers with it (WasmModuleRegistry), so this member is
+                // gone before the callee is.
                 Op(new LocalGet(LH));
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32GreaterThanOrEqualSigned());
@@ -1671,10 +1672,10 @@ public static class WasmPredicateCompiler
         private void EmitExecute(Instr ins)
         {
             EmitFlagsCheck(ins.Pc);
-            EmitExecuteTail(ins.Pc, SelfFid(ins));
+            EmitExecuteTail(ins.Pc);
         }
 
-        private void EmitExecuteTail(int pc, int selfFid)
+        private void EmitExecuteTail(int pc)
         {
             if (!_callee.TryGetValue(pc, out int callee))
                 throw new WasmCompileException($"execute at {pc} has no call site");
@@ -1706,11 +1707,11 @@ public static class WasmPredicateCompiler
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return;
             }
-            if (callee == selfFid && _entryByFid.TryGetValue(callee, out int calleeEntry))
+            if (_entryByFid.TryGetValue(callee, out int calleeEntry))
             {
-                // A self tail call: back to the dispatch at the entry, unless
-                // the heap crossed the watermark (the engine collects there).
-                // A sibling goes through the table -- see EmitCall.
+                // An in-group tail call: back to the dispatch at the entry,
+                // unless the heap crossed the watermark (the engine collects
+                // there). Baked for the same reason as EmitCall.
                 Op(new LocalGet(LH));
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32GreaterThanOrEqualSigned());

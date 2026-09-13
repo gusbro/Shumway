@@ -17,7 +17,15 @@ public readonly record struct WasmTarget(int ModuleId, int Cursor);
 /// the old rows of that functor are cleared and the old module keeps running
 /// for its other members, reaching the moved functor through the table like
 /// any foreign one. Modules are never removed: an open chain may be inside
-/// one, and a module every functor has left simply owns no rows.</para></summary>
+/// one, and a module every functor has left simply owns no rows.</para>
+///
+/// <para>INVARIANT: a baked in-module jump never lands in code the table no
+/// longer owns. A member calls a sibling of its own module by a baked jump,
+/// not a probe (the hot path pays nothing), so when a functor leaves a
+/// module, every member of that module that reaches it by baked jumps,
+/// transitively, leaves with it: they fall back to bytecode and are
+/// re-promoted against the live code. Evict and Install both report the
+/// full set so the store drops those delegates too.</para></summary>
 public sealed class WasmModuleRegistry
 {
     /// <summary>One installed module's maps. <see cref="AddrIndex"/> says
@@ -32,11 +40,16 @@ public sealed class WasmModuleRegistry
         public int RegisterDemand { get; }
         public WasmBuildAddressIndex AddrIndex { get; }
 
+        // callee -> the members that reach it by a baked jump. Member pairs
+        // only: a call to a non-member is a probe.
+        internal readonly Dictionary<int, List<int>> BakedCallersOf = new();
+
         internal Module(int id,
             IReadOnlyDictionary<int, int> entryCursorByFid,
             IReadOnlyDictionary<int, int> cursorByAddress,
             IReadOnlyDictionary<int, int> entryAddressByFid,
-            int registerDemand)
+            int registerDemand,
+            IEnumerable<(int Caller, int Callee)> callEdges)
         {
             Id = id;
             EntryCursorByFid = entryCursorByFid;
@@ -44,6 +57,14 @@ public sealed class WasmModuleRegistry
             EntryAddressByFid = entryAddressByFid;
             RegisterDemand = registerDemand;
             AddrIndex = new WasmBuildAddressIndex(entryAddressByFid);
+            foreach (var (caller, callee) in callEdges)
+            {
+                if (caller == callee || !entryCursorByFid.ContainsKey(caller)
+                    || !entryCursorByFid.ContainsKey(callee)) continue;
+                if (!BakedCallersOf.TryGetValue(callee, out var callers))
+                    BakedCallersOf[callee] = callers = new List<int>();
+                if (!callers.Contains(caller)) callers.Add(caller);
+            }
         }
     }
 
@@ -72,23 +93,35 @@ public sealed class WasmModuleRegistry
         => _byFid.TryGetValue(functorId, out var m) ? m : null;
 
     /// <summary>Records a module and writes its rows. The id is minted here:
-    /// the caller registers its runtime handle under it.</summary>
+    /// the caller registers its runtime handle under it. <paramref
+    /// name="callEdges"/> are the (caller, callee) pairs the module was
+    /// compiled with; the member-to-member ones are its baked jumps.
+    /// <paramref name="displaced"/> are the functors of OTHER modules this
+    /// install pushed to bytecode: the baked callers the taken-over functors
+    /// drag along (see the class remarks).</summary>
     public Module Install(
         IReadOnlyDictionary<int, int> entryCursorByFid,
         IReadOnlyDictionary<int, int> cursorByAddress,
         IReadOnlyDictionary<int, int> entryAddressByFid,
-        int registerDemand)
+        int registerDemand,
+        IEnumerable<(int Caller, int Callee)> callEdges,
+        out IReadOnlyList<int> displaced)
     {
         int id = Table.NextModuleId();
         if (id != _byId.Count)
             throw new System.InvalidOperationException(
                 "the resume table minted an id this registry did not see");
         var m = new Module(id, entryCursorByFid, cursorByAddress, entryAddressByFid,
-                           registerDemand);
+                           registerDemand, callEdges);
         _byId.Add(m);
+        var gone = new HashSet<int>();
+        foreach (int fid in entryCursorByFid.Keys) Leave(fid, gone);
+        // The taken-over functors themselves run in the new module; only
+        // their dragged callers are displaced.
+        foreach (int fid in entryCursorByFid.Keys) gone.Remove(fid);
+        displaced = new List<int>(gone);
         foreach (int fid in entryCursorByFid.Keys)
         {
-            if (_byFid.ContainsKey(fid)) Table.ClearFunctor(fid);
             _byFid[fid] = m;
             _entryAddressByFid[fid] = entryAddressByFid[fid];
         }
@@ -110,11 +143,35 @@ public sealed class WasmModuleRegistry
 
     /// <summary>Forgets the functors: their rows go to zero, so a marker of
     /// theirs resolves nowhere -- in wasm and on the host alike -- and falls
-    /// back to bytecode. The modules stay.</summary>
-    public void Evict(IEnumerable<int> functorIds)
+    /// back to bytecode. The modules stay. Returns everything that left,
+    /// the baked callers dragged along included.</summary>
+    public IReadOnlyList<int> Evict(IEnumerable<int> functorIds)
     {
-        foreach (int fid in functorIds)
-            if (_byFid.Remove(fid)) Table.ClearFunctor(fid);
+        var gone = new HashSet<int>();
+        foreach (int fid in functorIds) Leave(fid, gone);
+        return new List<int>(gone);
+    }
+
+    /// <summary>Takes the functor out of its module together with every
+    /// member that reaches it by baked jumps, transitively. A worklist, not
+    /// recursion: a module can have thousands of members. A member that
+    /// already left (taken over elsewhere) no longer runs the old code, so
+    /// the walk stops there.</summary>
+    private void Leave(int functorId, HashSet<int> gone)
+    {
+        if (!_byFid.TryGetValue(functorId, out var m)) return;
+        var work = new Stack<int>();
+        work.Push(functorId);
+        while (work.Count > 0)
+        {
+            int fid = work.Pop();
+            if (!_byFid.TryGetValue(fid, out var owner) || owner != m) continue;
+            _byFid.Remove(fid);
+            Table.ClearFunctor(fid);
+            gone.Add(fid);
+            if (m.BakedCallersOf.TryGetValue(fid, out var callers))
+                foreach (int caller in callers) work.Push(caller);
+        }
     }
 
     /// <summary>Resolves (functor, address) through the rows, exactly as a

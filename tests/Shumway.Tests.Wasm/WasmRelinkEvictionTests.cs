@@ -51,7 +51,7 @@ public class WasmRelinkEvictionTests
                     catch (WasmCompileException) { }
                 }
                 if (good.Count == 0) return 0;
-                Shumway.Tests.Wasm.TieredEngine.Install(world, good, env);
+                Shumway.Tests.Wasm.TieredEngine.Install(world, good, env, store);
                 foreach (var m in good)
                 {
                     store.RegisterBoundDelegate(m.Predicate.FunctorId,
@@ -126,24 +126,31 @@ public class WasmRelinkEvictionTests
         Assert.True(engine.Query("member(b, [a,b]).").Success);
     }
 
-    /// <summary>A redefinition evicts: the functor's rows go to zero, so
-    /// its old markers resolve nowhere (a caller left on the tier reaches
-    /// it through bytecode), and the next tick compiles the NEW code into a
-    /// module of its own. The siblings' modules never change.</summary>
+    /// <summary>A redefinition evicts: the functor's rows go to zero, and
+    /// the members of its module that reach it by a baked jump go with it
+    /// (their jumps would land in the dead region: baked and NOT dragged,
+    /// caller/1 answered [2,3] while leaf(X) itself answered all six). The
+    /// next tick compiles the new code and the dragged callers into a fresh
+    /// module; a sibling that never calls the redefined functor stays where
+    /// it was. Nothing else is rebuilt.</summary>
     [Fact]
-    public void ARedefinitionEvictsTheFunctorAndTheSiblingsStayOnTheTier()
+    public void ARedefinitionEvictsTheFunctorAndItsBakedCallers()
     {
         var (engine, wasm, world) = TieredEngineWithWorld();
         engine.ConsultString("""
             :- public leaf/1.
             :- public caller/1.
+            :- public bystander/1.
             leaf(1). leaf(2). leaf(3).
             caller(X) :- leaf(X), X > 1.
+            bystander(X) :- X = 1.
             """);
         engine.Query("true.");
         Assert.True(wasm.PromoteAllStatics(engine) > 100);
-        int leaf = Fid(engine, "leaf", 1), caller = Fid(engine, "caller", 1);
-        Assert.True(world.Contains(leaf) && world.Contains(caller), "the corpus is not on the tier");
+        int leaf = Fid(engine, "leaf", 1), caller = Fid(engine, "caller", 1),
+            bystander = Fid(engine, "bystander", 1);
+        Assert.True(world.Contains(leaf) && world.Contains(caller) && world.Contains(bystander),
+            "the corpus is not on the tier");
         int modulesBefore = world.NextModuleId;
         Assert.True(engine.Query("findall(X, caller(X), [2,3]).").Success);
 
@@ -151,19 +158,15 @@ public class WasmRelinkEvictionTests
         // code at a new address (the old version stays as a dead region).
         engine.ConsultString("leaf(5). leaf(6). leaf(7).");
         wasm.CompileAllTick(engine);
-        Assert.True(wasm.RelinkEvictions > 0, "the redefinition evicted nothing");
-        // caller/1 never changed: same module, still covered.
-        Assert.True(world.Contains(caller));
-        // The call site in caller/1's module reaches the NEW leaf/1: a
-        // sibling call is a table probe, never a baked jump (baked, this
-        // answered [2,3] from the dead region while leaf(X) itself answered
-        // all six).
+        // leaf/1 and the dragged caller/1, at least.
+        Assert.True(wasm.RelinkEvictions >= 2, $"evicted {wasm.RelinkEvictions}, expected the caller too");
         Assert.True(engine.Query("findall(X, caller(X), [2,3,5,6,7]).").Success);
-        // leaf/1 came back in a module of its own; nothing was rebuilt.
-        Assert.True(world.Contains(leaf));
+        // Both came back in a fresh module; the bystander never moved.
         Assert.True(world.TryResolve(leaf, 0, out var t) && t.ModuleId >= modulesBefore,
             "the new leaf/1 did not get a fresh module");
-        Assert.True(world.TryResolve(caller, 0, out var c) && c.ModuleId < modulesBefore,
-            "caller/1 was rebuilt");
+        Assert.True(world.TryResolve(caller, 0, out var c) && c.ModuleId >= modulesBefore,
+            "caller/1 was not re-promoted against the new leaf/1");
+        Assert.True(world.TryResolve(bystander, 0, out var b) && b.ModuleId < modulesBefore,
+            "bystander/1 was rebuilt");
     }
 }
