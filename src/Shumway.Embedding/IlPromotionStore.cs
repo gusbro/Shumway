@@ -448,6 +448,22 @@ public sealed class IlPromotionStore
             }
             if (!predicateLookup.TryGetValue(functorId, out var predicate))
                 continue;   // not in this query's program — retry later
+            // The profile was recorded on the shape promotion compiled — for a
+            // DYNAMIC predicate that is the ADR-023 static snapshot, but the
+            // program's entry for its fid is the dynamic-dispatch form
+            // (enter_dynamic + check_visible), which is not IL-compilable and
+            // would throw here. A shape that no longer compiles cannot take an
+            // optimized recompile at all: drop the profile and keep whatever
+            // delegate is installed (the snapshot re-warms and re-profiles on
+            // its own). Guarding here mirrors how ordinary promotion guards
+            // with CanCompile before Compile.
+            if (!WithFloatPool(functorId, () =>
+                    WithNativeInline(() => Compiler.CanCompile(predicate, calleeMap))))
+            {
+                Shumway.Compiler.Il.IlProfileCounters.Release(profileKey);
+                _pgoProfileKeys.Remove(functorId);
+                continue;
+            }
             var optimized = RunOnLargeStack(
                 () => WithFloatPool(functorId, () =>
                     WithNativeInline(() => Compiler.CompileOptimized(predicate, profileKey, calleeMap))));

@@ -237,6 +237,19 @@ public sealed partial class Activation
     // bank (the safe default every legacy caller keeps).
     private int _gcLiveRegisterBound = -1;
 
+    /// <summary>False once compiled IL can be on this activation's logical
+    /// stack. The precise live-register bound assumes the WAM caller-saved
+    /// discipline -- at a call boundary the live X registers are exactly the
+    /// callee's arguments -- and REGION-compiled IL does not keep that
+    /// promise: a body-once region holds values in X across a call of
+    /// smaller arity (a bare `true` inside an if-then-else, with the next
+    /// goal's structure already built beside it). A bound taken there lets
+    /// the sliding compaction move a structure a live register still points
+    /// at. Under IL every bounded safe point therefore scans the full bank;
+    /// pure Tier-0 keeps the precise bound and the retention fix it
+    /// carries.</summary>
+    public bool GcPreciseRegisterBounds { get; set; } = true;
+
     /// <summary>Safe point at a call boundary where the callee's FUNCTOR is
     /// in hand: only its arguments are live registers. Same steady-state cost
     /// as <see cref="MaybeCollectHeap"/> — the arity lookup happens on the
@@ -300,6 +313,7 @@ public sealed partial class Activation
         System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private void MaybeCollectHeapSlowBounded(int liveRegisters)
     {
+        if (!GcPreciseRegisterBounds) liveRegisters = -1;
         _gcLiveRegisterBound = liveRegisters;
         try { MaybeCollectHeapSlow(); }
         finally { _gcLiveRegisterBound = -1; }
