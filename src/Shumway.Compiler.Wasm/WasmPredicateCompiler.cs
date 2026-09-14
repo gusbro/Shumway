@@ -142,7 +142,12 @@ public static class WasmPredicateCompiler
 
         /// <summary>Partition budget in DECODED WAM instructions (~40 wasm
         /// instructions each): ~100k emitted per function, far under the
-        /// ~640k cliff.</summary>
+        /// ~640k cliff. A SAFETY VALVE, and measured as one: over the
+        /// prelude plus clpfd, no predicate compiled alone is ever cut (the
+        /// largest takes one function), while the whole program as one group
+        /// takes 7. It bites for the batch mode and for a generated fact
+        /// table, which is one predicate that can cross the budget by
+        /// itself. See PartitionBudgetTests.</summary>
         private const int PartitionBudgetWamInstrs = 2500;
 
         private int UnifierIndex => _parts.Count + 2;   // 0 run, 1..K parts, K+1 resolver
@@ -770,7 +775,7 @@ public static class WasmPredicateCompiler
             }
             Op(new End());
             _caseIndex = n;
-            EmitFailCase(fullChain: false);
+            EmitFailCase(missReturnsToHost: false);
             Op(new End());                                  // $out
             _caseIndex = n + 1;
             EmitContinueReturn();
@@ -782,11 +787,14 @@ public static class WasmPredicateCompiler
             return body;
         }
 
-        /// <summary>The shared resolver: the ONLY full copies of the
-        /// group-wide fail chain (BP -> retry cursor) and proceed chain
-        /// (Cp marker -> resume cursor). Partitions keep local subsets and
-        /// hand a miss here — without this, every partition would carry both
-        /// full chains and every Proceed site would grow with the group.</summary>
+        /// <summary>The shared resolver: where a fail or a proceed that no
+        /// partition resolved locally ends up, and the only place that can
+        /// answer the host. It was once the ONLY full copy of two group-wide
+        /// chains, which is why it is a function of its own; the chains are
+        /// now indexed reads into the resume table, so what it saves is no
+        /// longer size but the routing -- a partition resolves its own
+        /// backtracking without leaving the function, and anything else
+        /// arrives here.</summary>
         private FunctionBody BuildResolverBody()
         {
             _code = new List<Instruction>();
@@ -817,7 +825,7 @@ public static class WasmPredicateCompiler
             EmitProceedResolve();
             Op(new End());                                  // $fail
             _caseIndex = 1;
-            EmitFailCase(fullChain: true);
+            EmitFailCase(missReturnsToHost: true);
             Op(new End());                                  // $out
             _caseIndex = 2;
             EmitContinueReturn();
@@ -1127,8 +1135,17 @@ public static class WasmPredicateCompiler
         /// <summary>No choice point of OURS on top means the host backtracks;
         /// one of ours means its BP names a retry/trust cursor and the
         /// restore there does the rest. BP values are compared against this
-        /// module's own encodings -- anything else is foreign.</summary>
-        private void EmitFailCase(bool fullChain)
+        /// module's own encodings -- anything else is foreign.
+        ///
+        /// <para>The body is the same wherever it is emitted; only a MISS
+        /// differs. In the resolver a miss is a CP no member pushed, so the
+        /// verdict goes to the host; in a partition it continues, and the
+        /// dispatcher routes it. Measured at ~237 wasm instructions a copy:
+        /// noise in a group module (8 copies, 1898 instructions of 4.4 MB),
+        /// part of the fixed furniture in a one-predicate module. Routing a
+        /// partition's miss to the resolver instead would save that and put
+        /// a call on every failure, which is the hot path.</para></summary>
+        private void EmitFailCase(bool missReturnsToHost)
         {
             Op(new LocalGet(LB));
             Op(new Int32Constant(0));
@@ -1173,11 +1190,11 @@ public static class WasmPredicateCompiler
             // in another partition -- the br_table's default hands those to the
             // group dispatcher, which is the same route a jump across
             // partitions already takes. So the partition/resolver split that
-            // the chain needed does not apply here, and `fullChain` no longer
-            // changes what is emitted, only where the miss goes.
+            // the chain needed does not apply to what is EMITTED any more:
+            // the copies are identical but for the miss.
             EmitResumeProbe(LT1);
-            if (fullChain) EmitReturn(WasmVerdict.Fail);    // a foreign CP
-            else EmitContinueReturn();                      // LCur is still FAIL
+            if (missReturnsToHost) EmitReturn(WasmVerdict.Fail);   // a foreign CP
+            else EmitContinueReturn();                             // LCur is still FAIL
         }
 
         // ------------------------------------------------------------------
