@@ -138,7 +138,7 @@ public sealed class WasmBakedGroup
         public int EncodeBp(int functorId, int address) => 0;
         public int EncodeReturnMarker(int functorId, int address) => 0;
         public int EncodeCallTarget(int calleeFunctorId) => 0;
-        public int EncodeDeoptPc(int bytecodePc) => bytecodePc;
+        public int EncodeAddress(int address) => address;
         public bool TryGetBuiltin(int calleeFunctorId, out int builtinId)
             => inner.TryGetBuiltin(calleeFunctorId, out builtinId);
         public bool IsDirectBuiltin(int builtinId) => inner.IsDirectBuiltin(builtinId);
@@ -326,7 +326,7 @@ public sealed class WasmBakedGroup
             => Record(functorId, address, inner.EncodeReturnMarker(functorId, address));
         public int EncodeCallTarget(int calleeFunctorId)
             => Record(calleeFunctorId, 0, inner.EncodeCallTarget(calleeFunctorId));
-        public int EncodeDeoptPc(int bytecodePc) => inner.EncodeDeoptPc(bytecodePc);
+        public int EncodeAddress(int address) => inner.EncodeAddress(address);
 
         public bool TryGetBuiltin(int calleeFunctorId, out int builtinId)
         {

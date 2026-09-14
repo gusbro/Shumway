@@ -92,7 +92,7 @@ public sealed class WasmProgramHarness : IDisposable, IWasmCompileEnv
             ? idx
             : throw new InvalidOperationException(
                   $"the corpus calls functor {calleeFunctorId}, which it does not define");
-    int IWasmCompileEnv.EncodeDeoptPc(int bytecodePc) => bytecodePc;
+    int IWasmCompileEnv.EncodeAddress(int address) => address;
 
     bool IWasmCompileEnv.TryGetBuiltin(int calleeFunctorId, out int builtinId)
         => Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(calleeFunctorId, out builtinId);

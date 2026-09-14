@@ -496,7 +496,7 @@ public static class WasmPredicateCompiler
                 Op(new Int32Subtract());
                 Op(new LocalSet(LT0));                  // owner module id
                 Op(new LocalGet(LT0));
-                Op(new Int32Constant(_moduleId));       // baked: see CompileGroup
+                Op(new Int32Constant(_env.EncodeModuleId(_moduleId)));       // baked: see CompileGroup
                 Op(new Int32Equal());
                 OpenIf();
                 {
@@ -927,7 +927,7 @@ public static class WasmPredicateCompiler
             // hearing from, and a deopt pc or a builtin's return address is
             // in THAT module's build space. Every verdict says. Not on the
             // hop path: a hop reloads nothing from this slot.
-            StoreSlot64(WasmAbi.CurrentModuleId, () => Op(new Int64Constant(_moduleId)));
+            StoreSlot64(WasmAbi.CurrentModuleId, () => Op(new Int64Constant(_env.EncodeModuleId(_moduleId))));
             Op(new Int32Constant((int)v));
             Op(new Return());
         }
@@ -947,7 +947,7 @@ public static class WasmPredicateCompiler
 
         private void EmitDeopt(int bytecodePc)
         {
-            StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(_env.EncodeDeoptPc(bytecodePc))));
+            StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(_env.EncodeAddress(bytecodePc))));
             EmitReturn(WasmVerdict.Deopt);
         }
 
@@ -1281,10 +1281,10 @@ public static class WasmPredicateCompiler
                     RegStore(ins.I1, () => Op(new Int64Constant(Cell.Int(ins.I0).Data)));
                     return false;
                 case Opcode.PutAtom:
-                    RegStore(ins.I1, () => Op(new Int64Constant(Cell.Atom(ins.I0).Data)));
+                    RegStore(ins.I1, () => Op(new Int64Constant(_env.AtomCell(ins.I0))));
                     return false;
                 case Opcode.PutNil:
-                    RegStore(ins.I0, () => Op(new Int64Constant(Cell.Atom(AtomTable.EmptyListId).Data)));
+                    RegStore(ins.I0, () => Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId))));
                     return false;
                 case Opcode.GetInteger:
                     RegLoad(ins.I1); Op(new LocalSet(LC0)); Deref();
@@ -1292,11 +1292,11 @@ public static class WasmPredicateCompiler
                     return false;
                 case Opcode.GetAtom:
                     RegLoad(ins.I1); Op(new LocalSet(LC0)); Deref();
-                    UnifyC0WithConst(Cell.Atom(ins.I0).Data, ins.Pc);
+                    UnifyC0WithConst(_env.AtomCell(ins.I0), ins.Pc);
                     return false;
                 case Opcode.GetNil:
                     RegLoad(ins.I0); Op(new LocalSet(LC0)); Deref();
-                    UnifyC0WithConst(Cell.Atom(AtomTable.EmptyListId).Data, ins.Pc);
+                    UnifyC0WithConst(_env.AtomCell(AtomTable.EmptyListId), ins.Pc);
                     return false;
                 case Opcode.AIntCmp: EmitAIntCmp(ins); return false;
                 case Opcode.Meta: return false;   // metadata; nothing runs
@@ -1333,25 +1333,25 @@ public static class WasmPredicateCompiler
                     return false;
                 case Opcode.UnifyAtom:
                 case Opcode.UnifyConstant:
-                    EmitUnifyConst(Cell.Atom(ins.I0).Data, ins.Pc); return false;
+                    EmitUnifyConst(_env.AtomCell(ins.I0), ins.Pc); return false;
                 case Opcode.UnifyInteger:
                     EmitUnifyConst(Cell.Int(ins.I0).Data, ins.Pc); return false;
                 case Opcode.UnifyNil:
-                    EmitUnifyConst(Cell.Atom(AtomTable.EmptyListId).Data, ins.Pc); return false;
+                    EmitUnifyConst(_env.AtomCell(AtomTable.EmptyListId), ins.Pc); return false;
                 case Opcode.UnifyVoid: EmitUnifyVoid(ins.I0, ins.Pc); return false;
                 case Opcode.UnifyStructure: EmitUnifyStructure(ins.I0, ins.Pc); return false;
                 case Opcode.UnifyList: EmitUnifyList(ins.Pc); return false;
                 case Opcode.GetConstantA1:
                     RegLoad(0); Op(new LocalSet(LC0)); Deref();
-                    UnifyC0WithConst(Cell.Atom(ins.I0).Data, ins.Pc); return false;
+                    UnifyC0WithConst(_env.AtomCell(ins.I0), ins.Pc); return false;
                 case Opcode.GetConstantA2:
                     RegLoad(1); Op(new LocalSet(LC0)); Deref();
-                    UnifyC0WithConst(Cell.Atom(ins.I0).Data, ins.Pc); return false;
+                    UnifyC0WithConst(_env.AtomCell(ins.I0), ins.Pc); return false;
                 case Opcode.PutConstantA1:
-                    RegStore(0, () => Op(new Int64Constant(Cell.Atom(ins.I0).Data)));
+                    RegStore(0, () => Op(new Int64Constant(_env.AtomCell(ins.I0))));
                     return false;
                 case Opcode.PutConstantA2:
-                    RegStore(1, () => Op(new Int64Constant(Cell.Atom(ins.I0).Data)));
+                    RegStore(1, () => Op(new Int64Constant(_env.AtomCell(ins.I0))));
                     return false;
                 case Opcode.DeallocateExecute:
                     EmitFlagsCheck(ins.Pc);
@@ -1398,9 +1398,9 @@ public static class WasmPredicateCompiler
                         EmitInlineCompare(ins.Pc, cbNeg, () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
-                                (uint)ins.I0 | ((long)ins.I1 << 32))));
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
                             StoreSlot64(WasmAbi.Cursor,
-                                () => Op(new Int64Constant(ins.Pc + 9)));
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
                             EmitReturn(WasmVerdict.BuiltinRequest);
                         });
                         return false;
@@ -1408,9 +1408,9 @@ public static class WasmPredicateCompiler
                     EmitFlagsCheck(ins.Pc);
                     if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
-                        (uint)ins.I0 | ((long)ins.I1 << 32))));
+                        _env.EncodeBuiltinId(ins.I0, ins.I1))));
                     StoreSlot64(WasmAbi.Cursor,
-                        () => Op(new Int64Constant(ins.Pc + 9)));
+                        () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
                 case Opcode.ExecuteBuiltin:
@@ -1425,7 +1425,7 @@ public static class WasmPredicateCompiler
                         EmitInlineCompare(ins.Pc, ebNeg, () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId,
-                                () => Op(new Int64Constant((uint)ins.I0)));
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
                             StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                             EmitReturn(WasmVerdict.BuiltinRequest);
                         });
@@ -1434,7 +1434,7 @@ public static class WasmPredicateCompiler
                     }
                     EmitFlagsCheck(ins.Pc);
                     if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
-                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant((uint)ins.I0)));
+                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
                     StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
@@ -1535,9 +1535,9 @@ public static class WasmPredicateCompiler
                     EmitInlineCompare(ins.Pc, cNeg, () =>
                     {
                         StoreSlot64(WasmAbi.BuiltinId,
-                            () => Op(new Int64Constant(builtinId)));
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
                         StoreSlot64(WasmAbi.Cursor,
-                            () => Op(new Int64Constant(ins.Pc + 9)));
+                            () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
                         EmitReturn(WasmVerdict.BuiltinRequest);
                     });
                     return false;               // falls through to the next goal
@@ -1546,9 +1546,9 @@ public static class WasmPredicateCompiler
                 // cursor in the mailbox and step out (env trimming skipped;
                 // a CP the builtin pushes just sits a little higher).
                 EmitFlagsCheck(ins.Pc);
-                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(builtinId)));
+                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
                 StoreSlot64(WasmAbi.Cursor,
-                    () => Op(new Int64Constant(ins.Pc + 9)));
+                    () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return true;
             }
@@ -1693,7 +1693,7 @@ public static class WasmPredicateCompiler
                     EmitInlineCompare(pc, tNeg, () =>
                     {
                         StoreSlot64(WasmAbi.BuiltinId,
-                            () => Op(new Int64Constant(builtinId)));
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
                         StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                         EmitReturn(WasmVerdict.BuiltinRequest);
                     });
@@ -1702,7 +1702,7 @@ public static class WasmPredicateCompiler
                 }
                 // A builtin in tail position: run it, then proceed. Cursor -1
                 // is that convention on the wire.
-                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(builtinId)));
+                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
                 StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return;
@@ -1801,7 +1801,7 @@ public static class WasmPredicateCompiler
             for (int k = 0; k < table.Count; k++)
             {
                 Op(new LocalGet(LC0));
-                Op(new Int64Constant(Cell.Atom(table.Keys[k]).Data));
+                Op(new Int64Constant(_env.AtomCell(table.Keys[k])));
                 Op(new Int64Equal());
                 OpenIf();
                 GoTo(b + table.Values[k]);
@@ -1830,7 +1830,7 @@ public static class WasmPredicateCompiler
             for (int k = 0; k < table.Count; k++)
             {
                 CellLoadDyn(LHeapB, LT1);
-                Op(new Int64Constant(Cell.Functor(table.Keys[k]).Data));
+                Op(new Int64Constant(_env.FunctorCell(table.Keys[k])));
                 Op(new Int64Equal());
                 OpenIf();
                 GoTo(b + table.Values[k]);
@@ -1942,7 +1942,7 @@ public static class WasmPredicateCompiler
             {
                 Op(new LocalGet(LC0));
                 Op(new Int64Constant(atoms
-                    ? Cell.Atom(table.Keys[k]).Data
+                    ? _env.AtomCell(table.Keys[k])
                     : Cell.Int(table.Keys[k]).Data));
                 Op(new Int64Equal());
                 OpenIf();
@@ -1991,7 +1991,7 @@ public static class WasmPredicateCompiler
             for (int k = 0; k < table.Count; k++)
             {
                 CellLoadDyn(LHeapB, LT1);
-                Op(new Int64Constant(Cell.Functor(table.Keys[k]).Data));
+                Op(new Int64Constant(_env.FunctorCell(table.Keys[k])));
                 Op(new Int64Equal());
                 OpenIf();
                 GoTo(b + table.Values[k]);
@@ -2676,7 +2676,7 @@ public static class WasmPredicateCompiler
 
         private void EmitGetStructure(int functorId, int reg, int pc)
         {
-            long functorCell = Cell.Functor(functorId).Data;
+            long functorCell = _env.FunctorCell(functorId);
             RegLoad(reg); Op(new LocalSet(LC0)); Deref();
             TagOfC0(); Op(new LocalSet(LT0));
 
@@ -2782,7 +2782,7 @@ public static class WasmPredicateCompiler
         {
             EmitHeapGuard(pc);
             CellStoreDyn(LHeapB, LH, 0,
-                () => Op(new Int64Constant(Cell.Functor(functorId).Data)));
+                () => Op(new Int64Constant(_env.FunctorCell(functorId))));
             RegStore(reg, () => PushTaggedH(Tag.Str));
             Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
             Op(new LocalSet(LH));
@@ -2906,7 +2906,7 @@ public static class WasmPredicateCompiler
         /// <summary>ADR-019's last-argument nested build / match.</summary>
         private void EmitUnifyStructure(int functorId, int pc)
         {
-            long functorCell = Cell.Functor(functorId).Data;
+            long functorCell = _env.FunctorCell(functorId);
             Op(new LocalGet(LMode));
             OpenIf();
             {
@@ -3403,7 +3403,7 @@ public static class WasmPredicateCompiler
             if (first.Op == Opcode.PutStructureR)
             {
                 int fid = first.I0, reg = first.I1 & 0xFFFFFF, argc = first.I1 >> 24;
-                StoreConst(0, Cell.Functor(fid).Data);
+                StoreConst(0, _env.FunctorCell(fid));
                 actions.Add(() => RegStore(reg, () => PushTagged(0, Tag.Str)));
                 writePos = 1; total = argc + 1;
                 frames.Add((0, argc));
@@ -3431,11 +3431,11 @@ public static class WasmPredicateCompiler
                 {
                     case Opcode.UnifyAtom:
                     case Opcode.UnifyConstant:
-                        StoreConst(writePos, Cell.Atom(ins.I0).Data); done = Advance(); break;
+                        StoreConst(writePos, _env.AtomCell(ins.I0)); done = Advance(); break;
                     case Opcode.UnifyInteger:
                         StoreConst(writePos, Cell.Int(ins.I0).Data); done = Advance(); break;
                     case Opcode.UnifyNil:
-                        StoreConst(writePos, Cell.Atom(AtomTable.EmptyListId).Data);
+                        StoreConst(writePos, _env.AtomCell(AtomTable.EmptyListId));
                         done = Advance(); break;
                     case Opcode.UnifyVariableX:
                     {
@@ -3474,7 +3474,7 @@ public static class WasmPredicateCompiler
                     {
                         var (_, arity) = FunctorTable.Lookup(ins.I0);
                         int nested = total;
-                        StoreConst(nested, Cell.Functor(ins.I0).Data);
+                        StoreConst(nested, _env.FunctorCell(ins.I0));
                         int slotOff = writePos;
                         actions.Add(() => CellStoreDyn(LHeapB, LH, slotOff,
                             () => PushTagged(nested, Tag.Str)));

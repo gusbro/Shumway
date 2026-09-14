@@ -20,7 +20,7 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
     public int EncodeBp(int functorId, int cursor) => Marker(functorId, cursor);
     public int EncodeReturnMarker(int functorId, int cursor) => Marker(functorId, cursor);
     public int EncodeCallTarget(int calleeFunctorId) => Marker(calleeFunctorId, 0);
-    public int EncodeDeoptPc(int bytecodePc) => bytecodePc;
+    public int EncodeAddress(int address) => address;
 
     public bool TryGetBuiltin(int calleeFunctorId, out int builtinId)
         => Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(calleeFunctorId, out builtinId);
