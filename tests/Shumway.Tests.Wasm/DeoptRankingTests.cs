@@ -21,7 +21,7 @@ public sealed class DeoptRankingTests(ITestOutputHelper o)
         mix_(N, A, S) :- A1 is A + N / 2, N1 is N - 1, mix_(N1, A1, S).
         """;
 
-    [Fact]
+    [DiagFact]
     public void TheRankingAccountsForEveryDeopt()
     {
         var (e, members) = TieredEngine.Build(Corpus);

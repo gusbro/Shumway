@@ -46,12 +46,7 @@ public class WasmBuiltinTallyDiagnostic
                 members.Add(candidate);
                 try
                 {
-                    var entry = WasmPredicateCompiler.CompileGroup(members, env);
-                    var entryAddr = new Dictionary<int, int>(members.Count);
-                    foreach (var m in members)
-                        entryAddr[m.Predicate.FunctorId] = m.Bias;
-                    world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                        entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+                    TieredEngine.Install(world, members, env);
                     return new WasmTierDelegate(pred.FunctorId, world).Invoke;
                 }
                 catch (WasmCompileException ex)
@@ -61,12 +56,7 @@ public class WasmBuiltinTallyDiagnostic
                     members.Remove(candidate);
                     if (members.Count > 0)
                     {
-                        var entry = WasmPredicateCompiler.CompileGroup(members, env);
-                        var entryAddr = new Dictionary<int, int>(members.Count);
-                        foreach (var m in members)
-                            entryAddr[m.Predicate.FunctorId] = m.Bias;
-                        world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                            entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+                        TieredEngine.Install(world, members, env);
                     }
                     return null;
                 }
@@ -118,13 +108,8 @@ public class WasmBuiltinTallyDiagnostic
                     _out.WriteLine($"   [{name}] first-deopt slots: flags={s[0]} "
                         + $"TR={s[1]}/{s[2]} H={s[3]} watermark={s[4]} ST={s[5]}/{s[6]}");
             }
-            var rows = WasmTierDelegate.DiagBuiltinTally
-                .OrderByDescending(kv => kv.Value)
-                .Select(kv =>
-                {
-                    var b = Shumway.Builtins.BuiltinsRegistry.GetById(kv.Key);
-                    return ($"{b.Name}/{b.Arity}", kv.Value);
-                })
+            var rows = WasmTierDelegate.BuiltinRanking()
+                .Select(r => ($"{r.Name}/{r.Arity}", r.Hits))
                 .ToList();
             _out.WriteLine($"== {name}: entries={entries} deopts={deopts} "
                 + $"builtinRequests={rows.Sum(r => r.Item2)}");

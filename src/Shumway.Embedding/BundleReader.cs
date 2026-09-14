@@ -173,11 +173,24 @@ public static class BundleReader
             }
             // ADR-040 — the module's source dialect (null = Shumway/ISO).
             string? dialect = br.ReadBoolean() ? ReadLengthPrefixedUtf8(br) : null;
+            // Clause-terms trailer.
+            uint ctCount = br.ReadUInt32();
+            var clauseTerms = new byte[ctCount][];
+            for (uint j = 0; j < ctCount; j++)
+            {
+                uint byteCount = br.ReadUInt32();
+                byte[] bytes = br.ReadBytes((int)byteCount);
+                if (bytes.Length != byteCount)
+                    throw new InvalidDataException(
+                        $"Bundle: truncated clause term in module '{name}' "
+                        + $"(expected {byteCount}, got {bytes.Length}).");
+                clauseTerms[j] = bytes;
+            }
             entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined,
                 compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks,
                 nativeFunctions, nativeDecls, operators,
                 isExportQualified: isExportQualified, exports: exports, imports: imports,
-                dialect: dialect);
+                dialect: dialect, clauseTerms: clauseTerms);
         }
         // Foreign-assemblies trailer.
         uint asmCount = br.ReadUInt32();
@@ -242,8 +255,21 @@ public static class BundleReader
                     + $"{shmoLength} bytes, got {shmoBytes.Length}).");
             archiveMembers.Add(new BundleArchiveMember(fileName, shmoBytes));
         }
+        // Wasm-modules trailer (shumway-link --wasm).
+        uint wasmCount = br.ReadUInt32();
+        var wasmModules = new byte[wasmCount][];
+        for (uint i = 0; i < wasmCount; i++)
+        {
+            uint byteCount = br.ReadUInt32();
+            byte[] bytes = br.ReadBytes((int)byteCount);
+            if (bytes.Length != byteCount)
+                throw new InvalidDataException(
+                    $"Bundle: truncated wasm module (expected {byteCount} bytes, "
+                    + $"got {bytes.Length}).");
+            wasmModules[i] = bytes;
+        }
         return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers,
-            nativeLibraries, generatorVersion, arityCompat);
+            nativeLibraries, generatorVersion, arityCompat, wasmModules);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

@@ -37,15 +37,78 @@ internal static partial class WebShumwayApp
     ///
     /// <para><see cref="QueryCancel"/> is deliberately outside — it must reach a
     /// running search, and it only sets a flag the engine reads at a safe
-    /// point.</para></summary>
-    private static readonly SemaphoreSlim _engineGate = new(1, 1);
+    /// point. Queueing it would make it wait for the very goal it means to
+    /// stop.</para>
+    /// <para>Since the wasm tier, serializing is not enough: it has to be the
+    /// SAME thread every time. A compiled module is registered in the calling
+    /// thread's function table -- with threads on, every worker has its own,
+    /// and only the memory is shared -- so a pool that hands out a different
+    /// thread each time makes every module pay registration again there.
+    /// Measured at 37 ms for one big group; with many small modules it is per
+    /// module per thread. One dedicated thread pays each module once.</para>
+    ///
+    /// <para>The queue also subsumes the semaphore this used to hold: one
+    /// consumer is serialization.</para></summary>
+    // CA1416 marks BlockingCollection and Thread.Start unsupported on browser.
+    // That annotation predates threads being switchable on; with
+    // WasmEnableThreads the runtime has real workers, and this is one more of
+    // them. It is asserted rather than assumed: the #wasmthread probe reports
+    // the managed thread id of a series of engine calls, and the pinning is
+    // only real if they are all the same.
+#pragma warning disable CA1416
+    private static readonly System.Collections.Concurrent.BlockingCollection<Action>
+        _engineQueue = new();
+    private static Thread? _engineThread;
+    private static int _engineThreadId;
 
-    private static async Task<T> OnEngine<T>(Func<T> work)
+    /// <summary>The managed id of the engine thread, for the diagnostics that
+    /// have to prove the pinning is real.</summary>
+    internal static int EngineThreadId => _engineThreadId;
+
+    /// <summary>The id of the thread a piece of engine work actually ran on --
+    /// read from inside the queue, which is the only place that can answer
+    /// honestly.</summary>
+    internal static Task<int> OnEngineThreadId()
+        => OnEngine(() => Environment.CurrentManagedThreadId);
+
+    /// <summary>The function-table length as the engine thread sees it: with
+    /// pinning, modules accumulate in ONE table.</summary>
+    internal static Task<int> OnEngineTableLength()
+        => OnEngine(TableLengthHere);
+
+    private static void EnsureEngineThread()
     {
-        await _engineGate.WaitAsync().ConfigureAwait(false);
-        try { return await Task.Run(work).ConfigureAwait(false); }
-        finally { _engineGate.Release(); }
+        if (_engineThread is not null) return;
+        lock (_engineQueue)
+        {
+            if (_engineThread is not null) return;
+            var t = new Thread(() =>
+            {
+                _engineThreadId = Environment.CurrentManagedThreadId;
+                foreach (var item in _engineQueue.GetConsumingEnumerable()) item();
+            })
+            { IsBackground = true, Name = "shumway-engine" };
+            t.Start();
+            _engineThread = t;
+        }
     }
+
+    private static Task<T> OnEngine<T>(Func<T> work)
+    {
+        EnsureEngineThread();
+        // RunContinuationsAsynchronously: without it the awaiting continuation
+        // runs ON the engine thread, and a continuation that queues more engine
+        // work would deadlock against the queue it is standing in.
+        var tcs = new TaskCompletionSource<T>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _engineQueue.Add(() =>
+        {
+            try { tcs.SetResult(work()); }
+            catch (Exception e) { tcs.SetException(e); }
+        });
+        return tcs.Task;
+    }
+#pragma warning restore CA1416
 
     /// <summary>Reply prefixes from <see cref="QueryNext"/>. One character, so a
     /// search that steps solution by solution crosses to JavaScript cheaply.</summary>
@@ -102,10 +165,8 @@ internal static partial class WebShumwayApp
         // Intern the whole builtin block HERE, while this is provably the
         // only thread (exports are not callable until Main returns). Boot()
         // runs on a pool thread concurrently with page exports, and a stray
-        // intern from, say, an early highlight landing mid-registration gives
-        // atom/functor ids a per-boot shuffle — which is exactly what the
-        // baked prelude group's validation would reject (its module bakes
-        // this process's ids). shumway-wasmbake mirrors this call.
+        // intern from, say, an early highlight landing mid-registration would
+        // give atom/functor ids a per-boot shuffle.
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
     }
 

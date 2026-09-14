@@ -12,8 +12,13 @@
  * executed in the calling thread's own realm, against the calling thread's
  * own table. A thread registers the module bytes once and gets an index that
  * is valid where it will be used; the shim below then calls through it with
- * a single call_indirect. The shim and this file never change; the bytes and
- * the index are run-time values, which is what keeps the JIT story alive.
+ * a single call_indirect. The bytes and the index are run-time values, which
+ * is what keeps the JIT story alive.
+ *
+ * The module is also handed THAT SAME TABLE as an import. Every module a
+ * thread registers lands in it, so a module can reach another one through it
+ * directly -- a tail call inside wasm rather than a return to the host and a
+ * fresh entry. A module that does not declare the import simply ignores it.
  */
 
 #include <emscripten/em_js.h>
@@ -27,6 +32,16 @@ EM_JS(int, shumway_wasm_table_length, (void), {
 /* Instantiates the module (bytes in the shared linear memory) against this
  * realm's memory and registers its `run` export in THIS thread's table.
  * Returns the table index, or -1 with the reason on the console. */
+/* One mutable i64 global, shared by every module that imports it: the
+ * experiment for keeping the WAM's scalars out of locals, so that a module
+ * reached by a tail call finds the state already there instead of loading it.
+ * Created lazily and kept on the module scope, because all the modules of a
+ * thread have to see the SAME one for that to mean anything. */
+EM_JS(void, shumway_wasm_state_reset, (void), {
+    globalThis.__shumwayState = new WebAssembly.Global(
+        { value: 'i64', mutable: true }, 0n);
+});
+
 EM_JS(int, shumway_wasm_register, (int bytesPtr, int len), {
     try {
         /* >>> 0: the pointer crosses as a SIGNED int32, and a buffer above
@@ -40,7 +55,19 @@ EM_JS(int, shumway_wasm_register, (int bytesPtr, int len), {
          * from directly, and the copy detaches the bytes from the heap. */
         var bytes = HEAPU8.slice(at, at + n);
         var mod = new WebAssembly.Module(bytes);
-        var inst = new WebAssembly.Instance(mod, { env: { memory: wasmMemory } });
+        if (!globalThis.__shumwayState) {
+            globalThis.__shumwayState = new WebAssembly.Global(
+                { value: 'i64', mutable: true }, 0n);
+        }
+        var inst = new WebAssembly.Instance(mod, {
+            env: {
+                memory: wasmMemory,
+                __indirect_function_table: wasmTable,
+            },
+            /* Offered to every module; one that does not declare the import
+             * simply ignores it. */
+            state: { h: globalThis.__shumwayState },
+        });
         return addFunction(inst.exports.run, 'iii');
     } catch (e) {
         console.error('shumway_wasm_register: ' + e);

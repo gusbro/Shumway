@@ -353,19 +353,19 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         }
     }
 
-    /// <summary>Records the prelude's <c>:- meta_predicate</c> templates
-    /// WITHOUT consulting it — a BAKED prelude (FromBundle: every --exe,
-    /// WebShumway's stdlib) installs bytecode and executes no directives, so
-    /// the <c>meta_predicate(T)</c> property would silently vanish there
-    /// while the live engine reports it (Logtalk's compiler decides wrapping
-    /// from exactly this property). The directives are one-per-line in
-    /// <see cref="Prelude.Source"/>; scanning them costs nothing next to the
-    /// full parse the bake exists to avoid. Parsed with the DEFAULT operator
-    /// table, like the prelude's own consult.</summary>
-    internal void SeedPreludeMetaTemplates()
+    /// <summary>Records the <c>:- meta_predicate</c> templates of a baked
+    /// source WITHOUT consulting it — a bundle (the prelude of every --exe
+    /// and of WebShumway's stdlib, the engine's own libraries) installs
+    /// bytecode and executes no directives, so the <c>meta_predicate(T)</c>
+    /// property would silently vanish there while the live engine reports
+    /// it (Logtalk's compiler decides wrapping from exactly this property).
+    /// The directives are one-per-line in the source; scanning them costs
+    /// nothing next to the full parse the bake exists to avoid. Parsed with
+    /// the DEFAULT operator table, like the source's own consult.</summary>
+    internal void SeedMetaTemplatesFromSource(string source)
     {
         foreach (System.Text.RegularExpressions.Match m in
-            System.Text.RegularExpressions.Regex.Matches(Prelude.Source,
+            System.Text.RegularExpressions.Regex.Matches(source,
                 @"^\s*:-\s*meta_predicate\((.*)\)\s*\.\s*$",
                 System.Text.RegularExpressions.RegexOptions.Multiline))
         {
@@ -922,6 +922,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // their `$native_run` call sites. The provider returns null until a block
         // is registered, so non-native programs pay nothing.
         IlPromotion.NativeInlineProvider = GetNativeInlineContext;
+        IlPromotion.PromotabilityChanged = InvalidatePersistent;
         // ADR-023 — let a read-hot, mutation-cold `:- dynamic` predicate run as
         // Tier-1 IL (a snapshot of its visible clauses), evicted on any mutation.
         IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
@@ -1029,7 +1030,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             // The baked prelude executes no directives — recover its
             // meta_predicate templates from the source constant so
             // predicate_property/2 reports them like a live engine.
-            engine.SeedPreludeMetaTemplates();
+            engine.SeedMetaTemplatesFromSource(Prelude.Source);
         }
         engine.LoadBundleCore(bundle, bundleDir);
         // ADR-035 — the BAKED prelude is still the prelude: not the user's code,
@@ -1062,6 +1063,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         {
             var copy = new ModuleManifest(name);
             copy.Clauses.AddRange(manifest.Clauses);
+            copy.ShippedClauses.AddRange(manifest.ShippedClauses);
             copy.PublicFunctors.UnionWith(manifest.PublicFunctors);
             copy.DynamicFunctors.UnionWith(manifest.DynamicFunctors);
             sub._modules[name] = copy;

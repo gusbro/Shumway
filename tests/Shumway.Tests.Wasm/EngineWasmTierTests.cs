@@ -71,12 +71,7 @@ public class EngineWasmTierTests
                 members.Add(candidate);
                 try
                 {
-                    var entry = WasmPredicateCompiler.CompileGroup(members, env);
-                    var entryAddr = new Dictionary<int, int>(members.Count);
-                    foreach (var m in members)
-                        entryAddr[m.Predicate.FunctorId] = m.Bias;
-                    world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                        entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+                    TieredEngine.Install(world, members, env);
                     return new WasmTierDelegate(pred.FunctorId, world).Invoke;
                 }
                 catch (WasmCompileException)
@@ -85,12 +80,7 @@ public class EngineWasmTierTests
                     members.Remove(candidate);
                     if (members.Count > 0)
                     {
-                        var entry = WasmPredicateCompiler.CompileGroup(members, env);
-                        var entryAddr = new Dictionary<int, int>(members.Count);
-                        foreach (var m in members)
-                            entryAddr[m.Predicate.FunctorId] = m.Bias;
-                        world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-                            entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+                        TieredEngine.Install(world, members, env);
                     }
                     return null;
                 }
@@ -135,7 +125,7 @@ public class EngineWasmTierTests
         Assert.False(e.Query("wrap(1, T), same(T, f(g(1), h(2))).").Success);
     }
 
-    [Fact]
+    [DiagFact]
     public void InGroupCallsNeverLeaveTheModule()
     {
         // The group design's contract: once the predicates share a module,
@@ -196,7 +186,7 @@ public class EngineWasmTierTests
         Assert.InRange(WasmTierDelegate.DiagDeopts, 0, 16);
     }
 
-    [Fact]
+    [DiagFact]
     public void TermIdentityIsOpenCoded_ForAtomicCells()
     {
         // ==/2 and \==/2 on dereferenced Atom/Int cells decide INSIDE the

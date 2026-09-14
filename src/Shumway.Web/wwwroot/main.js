@@ -276,7 +276,7 @@ async function run(queryText) {
   // compiles the whole static program now and after every consult,
   // wasm_compile(off). stops promoting (what already promoted keeps running
   // as wasm, and the OFF sticks: a later restart. boots with neither the
-  // tier nor the baked prelude), wasm_compile(status). reports.
+  // tier nor the stdlib bundle's wasm module), wasm_compile(status). reports.
   const wasmCompile = /^\s*wasm_compile\s*(?:\(\s*(on|off|all|status|\d+)\s*\))?\s*\.?\s*$/
     .exec(queryText);
   if (wasmCompile) {
@@ -1680,6 +1680,74 @@ if (persistMode) {
   try {
     await (await import('./selftest.js')).persistProbe(workspace, emit, persistMode[1]);
   } catch (ex) { emitFailure('persist probe', ex); }
+} else if (location.hash.startsWith('#wasmscalar')) {
+  // #wasmscalar: where should the WAM's scalars live? Locals are registers but
+  // need a prologue and an epilogue; imported globals need neither but may not
+  // be registers. These are the hottest reads and writes in the engine.
+  try {
+    const spec = /^#wasmscalar=(\d+)x(\d+)$/.exec(location.hash);
+    const iterations = spec ? Number(spec[1]) : 20000000;
+    const rounds = spec ? Number(spec[2]) : 5;
+    const report = await session.exports().WasmScalarHomeProbe(iterations, rounds);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmscalar';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = 'scalar probe STOPPED: ' + (ex && ex.message ? ex.message : ex);
+    emit(t);
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
+  try { window.close(); } catch { }
+} else if (location.hash.startsWith('#wasmthread')) {
+  // #wasmthread: is engine work pinned to one thread? A module is registered
+  // in the calling thread's own function table, so a pool that hands out a
+  // different thread each time makes every module pay registration again.
+  try {
+    const report = await session.exports().WasmThreadProbe(8);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmthread';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = 'thread probe STOPPED: ' + (ex && ex.message ? ex.message : ex);
+    emit(t);
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
+  try { window.close(); } catch { }
+} else if (location.hash.startsWith('#wasmsplit')) {
+  // #wasmsplit, or #wasmsplit=<hops>x<rounds>. Phase 0 of the many-modules
+  // arc: two modules hand control to each other with return_call_indirect
+  // through this thread's function table, never returning to the host. G0 is
+  // the gate that can kill the arc and it is a property, not a speed --
+  // millions of hops in bounded stack. Everything runs in C#; the page starts
+  // it and posts the report back, because a page cannot write to disk.
+  try {
+    // A negative round count means: carry the WAM scalar set on every
+    // hop, which is what a real crossing does.
+    const spec = /^#wasmsplit=(\d+)x(-?\d+)$/.exec(location.hash);
+    const hops = spec ? Number(spec[1]) : 10000000;
+    const rounds = spec ? Number(spec[2]) : 5;
+    emit(`--- wasm split spike: ${hops} hops x${rounds} ---\n`);
+    const report = await session.exports().WasmSplitProbe(hops, rounds);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmsplit';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = 'split spike STOPPED: ' + (ex && ex.message ? ex.message : ex);
+    emit(t + '\n');
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
+  // A headless run has its answer; leaving the page open just holds the
+  // browser's profile singleton against the next run.
+  try { window.close(); } catch { }
 } else if (location.hash.startsWith('#wasmspike')) {
   // #wasmspike, or #wasmspike=<iterations>x<rounds>. Everything runs in C#:
   // it holds the module bytes, registers them per thread through the C shim's
@@ -1778,6 +1846,28 @@ if (persistMode) {
     lines.push('clpfd tick: ' + await session.exports().WasmCompileAllTick() + '\n');
     mark('final status');
     lines.push(await session.exports().WasmCompileControl('status'));
+    // A library the page compiles under the tier carries its wasm module:
+    // loading it installs the predicates from the archive, and status counts
+    // them among the baked instead of the compiled.
+    mark('library archive');
+    {
+      const collection = 'wcc_libs';
+      await libraries.remove(collection);
+      await libraries.create(collection, '');
+      await libraries.write(collection, 'wccl.pl',
+        ':- module(wccl, [wrev/2]).\nwrev(L, R) :- wrev(L, [], R).\n' +
+        'wrev([], A, A).\nwrev([X|Xs], A, R) :- wrev(Xs, [X|A], R).\n');
+      const baked = (status) => Number(/(\d+) baked/.exec(status)?.[1] ?? 0);
+      const before = baked(await session.exports().WasmCompileControl('status'));
+      lines.push('library compile: ' + JSON.stringify(await libraries.compile(collection, 'wccl')) + '\n');
+      await session.consult(':- use_module(library(wccl)).');
+      const errL = await session.start('numlist(1, 100, L), wrev(L, R), R = [100|_].');
+      if (errL) lines.push('library start error: ' + errL + '\n');
+      else lines.push('library: ' + JSON.stringify(await session.next(80)) + '\n');
+      const after = baked(await session.exports().WasmCompileControl('status'));
+      lines.push(`library archive: ${after - before} more baked (expected 2)\n`);
+      await libraries.remove(collection);
+    }
     // The boards.pl shape: clpfd labeling under the tier — attvar binds,
     // wakeup drains, backtracking through promoted code. The reported
     // corruption ("reserved_invalid opcode") came from exactly this.
@@ -1791,11 +1881,15 @@ if (persistMode) {
     const errQ = await session.start('qn(8, Qs), labeling([], Qs), msort(Qs, [1,2,3,4,5,6,7,8]).');
     if (errQ) lines.push('queens start error: ' + errQ + '\n');
     else lines.push('queens: ' + JSON.stringify(await session.next(120)) + '\n');
-    // A fresh engine (restart.): the baked prelude must reinstall — interning
+    // The status right here, before anything else moves the counters: a clpfd
+    // run is where the builtin exits dominate, and the ranking says which
+    // builtins they are.
+    lines.push(await session.exports().WasmCompileControl('status'));
+    // A fresh engine (restart.): the bundle's module must reinstall — interning
     // is idempotent, so the replay validation passes again — and `all` must
     // still find nothing of the prelude to compile.
     // wasm_compile(off) must SURVIVE a restart: the boot skips both the
-    // tier and the baked prelude, or "an engine with no wasm at all" would
+    // tier and the bundle's module, or "an engine with no wasm at all" would
     // be false the moment it booted.
     mark('off then restart');
     lines.push(await session.exports().WasmCompileControl('off'));
@@ -1845,6 +1939,37 @@ if (persistMode) {
     emit(text + '\n', 'error');
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
+} else if (location.hash.startsWith('#wasmgrain')) {
+  // #wasmgrain, or #wasmgrain=<rounds>: the many-modules measurement --
+  // the same programs batch (one module per consult), eager (the batch's
+  // set, one module each), lazy (one module per promoted predicate) and
+  // Tier-0, every engine booted from the stdlib bundle the way the page is;
+  // module count, table rows, bytes,
+  // compile and registration cost, and the per-run hop/switch/deopt tally.
+  // Feeds docs/benchmarks/wasm-split-spike.md.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    // #wasmgrain=<rounds>x<queens>:<program>/<mode>: the clpfd program's
+    // board size (0 skips it), then an optional cell of the matrix.
+    const spec = /^#wasmgrain=(\d+)(?:x(\d+))?(?::(.*))?$/.exec(location.hash);
+    const only = spec && spec[3] !== undefined ? spec[3] : '';
+    const rounds = spec ? Number(spec[1]) : 5;
+    const queens = spec && spec[2] !== undefined ? Number(spec[2]) : 12;
+    emit(`--- wasm grain: x${rounds} rounds, queens ${queens} ---\n`);
+    mark('grain: starting rounds=' + rounds);
+    const report = await session.exports().WasmGrainProbe(rounds, queens, only);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmgrain';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const text = `wasm grain CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+  }
+  try { window.close(); } catch { }
 } else if (location.hash === '#selftest') {
   try {
     await (await import('./selftest.js')).run(session, emit, out, editor, workspace);

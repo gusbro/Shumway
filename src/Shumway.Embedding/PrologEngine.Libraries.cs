@@ -15,39 +15,38 @@ public sealed partial class PrologEngine
     /// <c>#&lt;</c>, <c>#&gt;</c>, <c>#=&lt;</c>, <c>#&gt;=</c>, <c>in</c>,
     /// <c>ins</c> — and their operators available to subsequently consulted
     /// source and queries. CLP(FD) is opt-in: an engine that never calls
-    /// this carries none of the library's weight.</summary>
-    public void UseClpfd()
-    {
-        ConsultString(Clpfd.Source);
-        MarkModuleNonDebuggable(Clpfd.ModuleName);   // ADR-035 — a library, not the user's code
-    }
+    /// this carries none of the library's weight. Idempotent.</summary>
+    public void UseClpfd() => UseLibrary(LibraryBundles.Clpfd);
 
     /// <summary>Loads the CLP(R) constraint library into this
     /// engine, making linear-equality constraints over the reals available
     /// through the <c>{Constraint}</c> wrapper. CLP(R) is opt-in: an engine
-    /// that never calls this carries none of the library's weight.
+    /// that never calls this carries none of the library's weight. Idempotent.
     ///
     /// <para>CLP(R) and CLP(FD) can share an engine — both declare their
     /// <c>verify_attributes/4</c> hook <c>:- multifile</c> — as long as no
     /// variable carries both libraries' constraints.</para></summary>
-    public void UseClpr()
-    {
-        ConsultString(Clpr.Source);
-        MarkModuleNonDebuggable(Clpr.ModuleName);   // ADR-035 — a library, not the user's code
-    }
+    public void UseClpr() => UseLibrary(LibraryBundles.Clpr);
 
     /// <summary>Loads the coroutining library into this engine:
     /// <c>freeze/2</c>, <c>frozen/2</c> and the <c>dif/2</c> disequality
     /// constraint. Opt-in like the CLP libraries, and built on the same
     /// multifile <c>verify_attributes/4</c> hook, so it coexists with
-    /// CLP(FD)/CLP(R) on one engine.</summary>
-    private bool _coroutiningLoaded;
-    public void UseCoroutining()
+    /// CLP(FD)/CLP(R) on one engine. Idempotent.</summary>
+    public void UseCoroutining() => UseLibrary(LibraryBundles.Coroutining);
+
+    // The engine's own libraries load from bundles baked at build time
+    // (Shumway.Libraries), one path on every target; a loaded library is
+    // recorded so a repeated request (UseClpfd after use_module, a
+    // dependency importing it again) does not load it twice.
+    private readonly HashSet<string> _loadedEngineLibraries = new();
+
+    private void UseLibrary(string name)
     {
-        if (_coroutiningLoaded) return;   // idempotent — re-consult would trip public uniqueness
-        _coroutiningLoaded = true;
-        ConsultString(Coroutining.Source);
-        MarkModuleNonDebuggable(Coroutining.ModuleName);   // ADR-035 — a library, not the user's code
+        if (!_loadedEngineLibraries.Add(name)) return;
+        LoadBundle(LibraryBundles.Get(name));
+        SeedMetaTemplatesFromSource(LibraryBundles.SourceOf(name));
+        MarkModuleNonDebuggable(name);   // ADR-035 — a library, not the user's code
     }
 
     // Compatibility libraries loaded on demand by use_module(library(Name)),
@@ -725,13 +724,11 @@ public sealed partial class PrologEngine
         if (spec is CompoundTerm { Functor: "library", Args: [var libArg] }
             && TryLibraryRelName(libArg, out string libName))
         {
+            // (1) the engine's own libraries take precedence: they carry
+            // native hooks and stay bare-global (no import table).
+            if (LibraryBundles.IsEngineLibrary(libName)) { UseLibrary(libName); return null; }
             switch (libName)
             {
-                // (1) baked C# libraries — take precedence, they carry native
-                // hooks and stay bare-global (no import table).
-                case "clpfd": UseClpfd(); return null;
-                case "clpr":  UseClpr();  return null;
-                case "coroutining": UseCoroutining(); return null;
                 default:
                     // (1.5) the module is ALREADY LOADED (typically from a
                     // bundle whose manifests LoadBundle reconstructed):
@@ -1262,7 +1259,7 @@ public sealed partial class PrologEngine
     internal IEnumerable<Clause> StaticClausesInModule(string module, int fid)
     {
         if (!_modules.TryGetValue(module, out ModuleManifest? manifest)) yield break;
-        foreach (var c in manifest.Clauses)
+        foreach (var c in manifest.InspectableClauses)
         {
             if (c.Kind == Shumway.Compiler.Ast.ClauseKind.Directive) continue;
             if (ConsultPipeline.HeadFunctorIdOf(c) == fid) yield return c;

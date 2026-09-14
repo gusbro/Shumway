@@ -817,7 +817,7 @@ public sealed partial class PrologEngine
     {
         foreach (var manifest in _modules.Values)
         {
-            foreach (var c in manifest.Clauses)
+            foreach (var c in manifest.InspectableClauses)
             {
                 // A grammar rule defines its TRANSLATED head, and that is the
                 // clause it contributes: clause/2 on a non-terminal reads the
@@ -928,7 +928,7 @@ public sealed partial class PrologEngine
         foreach (var (name, manifest) in _modules)
         {
             if (IsLibraryModule(name)) continue;
-            foreach (var c in manifest.Clauses)
+            foreach (var c in manifest.InspectableClauses)
             {
                 if (TryExtractDefinedHead(c, out string n, out int a))
                 {
@@ -948,7 +948,7 @@ public sealed partial class PrologEngine
         foreach (var (name, manifest) in _modules)
         {
             if (IsLibraryModule(name)) continue;
-            foreach (var c in manifest.Clauses)
+            foreach (var c in manifest.InspectableClauses)
                 if (TryExtractDefinedHead(c, out string n, out int a))
                 {
                     int fid = FunctorTable.Intern(
@@ -990,7 +990,7 @@ public sealed partial class PrologEngine
     /// builtins.</summary>
     private static readonly string[] LibraryModules =
     {
-        Prelude.ModuleName, Clpfd.ModuleName, Clpr.ModuleName, Coroutining.ModuleName,
+        Prelude.ModuleName, LibraryBundles.Clpfd, LibraryBundles.Clpr, LibraryBundles.Coroutining,
     };
 
     internal static bool IsLibraryModule(string moduleName)
@@ -1825,7 +1825,7 @@ public sealed partial class PrologEngine
     {
         foreach (var manifest in _modules.Values)
         {
-            foreach (var c in manifest.Clauses)
+            foreach (var c in manifest.InspectableClauses)
             {
                 if (TryExtractDefinedHead(c, out string n, out int a))
                 {

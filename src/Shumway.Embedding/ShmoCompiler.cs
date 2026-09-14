@@ -447,6 +447,16 @@ public static class ShmoCompiler
         IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
         string? dialect = null)
     {
+        // A clause for a predicate the prelude declares dynamic is a dynamic
+        // clause here too (what the live consult does through its store),
+        // never a static predicate shadowing the declaration; only the
+        // predicates this source actually has clauses for join, so an
+        // object does not claim to define every prelude hook.
+        if (moduleName != Prelude.ModuleName)
+            foreach (var clause in rawClauses)
+                if (TryExtractHead(clause) is { } h && Prelude.DynamicDeclarations.Contains(h))
+                    dynamicSet.Add(h);
+
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
         // MetaTransform + PhraseTransform pipeline ConsultString uses.
@@ -1031,7 +1041,7 @@ public static class ShmoCompiler
         if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
         {
             libName = lib.Name;
-            baked = lib.Name is "clpfd" or "clpr" or "coroutining";
+            baked = LibraryBundles.IsEngineLibrary(lib.Name);
             return true;
         }
         if (spec is AtomTerm fileAtom)

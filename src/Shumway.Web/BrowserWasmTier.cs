@@ -10,34 +10,52 @@ using Shumway.Embedding;
 
 namespace Shumway.Web;
 
-/// <summary>The browser's wasm execution world: ONE group module whose bytes
-/// are pinned and registered lazily per thread (with threads on, every worker
-/// has its own function table; only the memory is shared). A chain pins the
-/// engine arrays in place once, fills the pinned mailbox once, and every call
-/// is a raw hop through this thread's table -- and with group compilation the
-/// in-group calls never even leave the module. All C# here runs
-/// MONO-INTERPRETED, which is why per-entry work is hoisted into the chain
-/// open/close.</summary>
+/// <summary>The browser's wasm execution world: the engine's modules, each
+/// pinned and registered lazily per thread (with threads on, every worker
+/// has its own function table; only the memory is shared), resolving through
+/// one resume table whose rows are pinned in place. A chain pins the engine
+/// arrays once, fills the pinned mailbox once, and every call is a raw hop
+/// through this thread's table; a marker of a sibling module is a tail call
+/// inside wasm. All C# here runs MONO-INTERPRETED, which is why per-entry
+/// work is hoisted into the chain open/close.</summary>
 internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 {
-    private Build? _current;
+    private readonly WasmResumeTable _table = new();
+    private readonly WasmModuleRegistry _modules;
 
     // Timing split for the probe: ticks inside raw calls vs staging
     // (BeginChain + RefreshFromEngine). Process-wide diagnostics.
     internal static long DiagCallTicks, DiagStageTicks;
 
-    /// <summary>One installed group compile: pinned patched bytes, the
-    /// per-thread table index, and the maps a chain captures. Old builds stay
-    /// referenced by their open chains; their thread-local indices remain
-    /// valid (registered functions are never unregistered).</summary>
-    private sealed record Build(
-        byte[] PinnedModule,
-        ThreadLocal<int> Index,
-        IReadOnlyDictionary<int, int> EntryCursorByFid,
-        IReadOnlyDictionary<int, int> CursorByAddress,
-        IReadOnlyDictionary<int, int> EntryAddressByFid,
-        int RegisterDemand,
-        WasmBuildAddressIndex AddrIndex);
+    /// <summary>Wall time inside the per-thread module registration
+    /// (compile + instantiate + addFunction). Diagnostic.</summary>
+    internal static long DiagRegisterTicks;
+
+    /// <summary>One registered module: pinned patched bytes and the
+    /// per-thread table index. Never removed (a chain may be inside), and
+    /// registered functions are never unregistered.</summary>
+    private sealed record Registration(byte[] PinnedModule, ThreadLocal<int> Index);
+
+    // Indexed by module id.
+    private readonly List<Registration> _registrations = new();
+
+    // The rows the modules read, pinned where the table keeps them; repinned
+    // when the table grows (an install, never mid-call).
+    private long[]? _pinnedRows;
+    private GCHandle _rowsPin;
+
+    // moduleId -> this thread's table index, -1 where not registered here.
+    // Filled at each staging: registering is per thread and costs a compile,
+    // so it happens the first time a thread stages a chain over the module,
+    // not at install.
+    private readonly ThreadLocal<int[]> _moduleIndex = new(() =>
+    {
+        var a = GC.AllocateArray<int>(16, pinned: true);
+        Array.Fill(a, -1);
+        return a;
+    });
+
+    public BrowserWasmWorld() => _modules = new WasmModuleRegistry(_table);
 
     // (fid -> live linked address) after a relink; null until one happens.
     // Reference-swapped at a boundary tick, read lock-free by chains.
@@ -50,14 +68,27 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         => _liveByFid is { } live && live.TryGetValue(functorId, out int at)
             ? at : EntryAddressOf(functorId);
 
-    public long TranslatePcToLive(long buildPc)
-        => _current is { } b ? b.AddrIndex.Translate(buildPc, _liveByFid) : buildPc;
+    public long TranslatePcToLive(int functorId, long buildPc)
+        => _modules.TranslatePcToLive(functorId, buildPc, _liveByFid);
 
-    public void InstallGroup(byte[] module,
+    /// <summary>The id the next install will get: what a module has to be
+    /// compiled against, since the id is baked into its probes.</summary>
+    public int NextModuleId => _table.ModuleCount;
+
+    public int ModuleCount => _table.ModuleCount;
+
+    /// <summary>Rows in the resume table (markers it can answer for).</summary>
+    public int ResumeRows => _table.Length;
+
+    /// <summary>Wasm bytes handed to the browser, all modules.</summary>
+    public long ModuleBytes { get; private set; }
+
+    public IReadOnlyList<int> InstallGroup(byte[] module,
         IReadOnlyDictionary<int, int> entryCursorByFid,
         IReadOnlyDictionary<int, int> cursorByAddress,
         IReadOnlyDictionary<int, int> entryAddressByFid,
-        int registerDemand)
+        int registerDemand,
+        IEnumerable<(int Caller, int Callee)> callEdges)
     {
         byte[] patched = WasmSharedMemory.Patch(module);
         byte[] pinned = GC.AllocateArray<byte>(patched.Length, pinned: true);
@@ -70,7 +101,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             DiagRegisterTicks += Stopwatch.GetTimestamp() - t0;
             if (i < 0)
                 throw new WasmRegisterException(
-                    $"the group module ({pinned.Length} bytes) did not register"
+                    $"the module ({pinned.Length} bytes) did not register"
                     + " — see the browser console for the engine's reason");
             return i;
         });
@@ -79,44 +110,70 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         // HERE, where the caller can fall back to bytecode and report,
         // never inside some later user query's first chain call. Every pool
         // thread is the same kind of worker, so this thread's verdict
-        // stands for the others.
+        // stands for the others. Registering before minting the id keeps a
+        // refused module out of the registry altogether.
         _ = index.Value;
-        _current = new Build(pinned, index, entryCursorByFid, cursorByAddress,
-                             entryAddressByFid, registerDemand,
-                             new WasmBuildAddressIndex(entryAddressByFid));
+        var m = _modules.Install(entryCursorByFid, cursorByAddress, entryAddressByFid,
+                                 registerDemand, callEdges, out var displaced);
+        if (m.Id != _registrations.Count)
+            throw new InvalidOperationException("module id out of step with registrations");
+        _registrations.Add(new Registration(pinned, index));
+        ModuleBytes += pinned.Length;
+        return displaced;
     }
 
-    /// <summary>Wall time inside the per-thread module registration
-    /// (compile + instantiate + addFunction). Diagnostic.</summary>
-    internal static long DiagRegisterTicks;
+    public IReadOnlyList<int> Evict(IEnumerable<int> functorIds) => _modules.Evict(functorIds);
 
-    public bool Contains(int functorId)
-        => _current?.EntryCursorByFid.ContainsKey(functorId) == true;
+    public bool Contains(int functorId) => _modules.Contains(functorId);
 
-    public bool TryResolve(int functorId, int address, out int cursor)
-        => TryResolveIn(_current, functorId, address, out cursor);
+    public bool TryResolve(int functorId, int address, out WasmTarget target)
+        => _modules.TryResolve(functorId, address, out target);
 
-    private static bool TryResolveIn(Build? b, int functorId, int address, out int cursor)
-    {
-        cursor = 0;
-        if (b is null) return false;
-        if (address == 0) return b.EntryCursorByFid.TryGetValue(functorId, out cursor);
-        return b.EntryCursorByFid.ContainsKey(functorId)
-            && b.CursorByAddress.TryGetValue(address, out cursor);
-    }
-
-    public int EntryAddressOf(int functorId)
-        => _current!.EntryAddressByFid[functorId];
+    public int EntryAddressOf(int functorId) => _modules.EntryAddressOf(functorId);
 
     public IWasmChainContext BeginChain(Activation engine)
-        => new Chain(this,
-                     _current ?? throw new InvalidOperationException("no group installed"),
-                     engine);
+    {
+        if (_table.ModuleCount == 0)
+            throw new InvalidOperationException("no module installed");
+        return new Chain(this, engine);
+    }
+
+    /// <summary>The rows' address, repinning if the table grew.</summary>
+    private long RowsAddress()
+    {
+        long[] rows = _table.Rows;
+        if (!ReferenceEquals(_pinnedRows, rows))
+        {
+            if (_rowsPin.IsAllocated) _rowsPin.Free();
+            _rowsPin = GCHandle.Alloc(rows, GCHandleType.Pinned);
+            _pinnedRows = rows;
+        }
+        return (long)_rowsPin.AddrOfPinnedObject();
+    }
+
+    /// <summary>This thread's module index, brought up to date with every
+    /// installed module (registering the ones this thread has not seen).</summary>
+    private long ModuleIndexAddress()
+    {
+        int[] a = _moduleIndex.Value!;
+        int count = _registrations.Count;
+        if (a.Length < count)
+        {
+            int grown = a.Length;
+            while (grown < count) grown *= 2;
+            var next = GC.AllocateArray<int>(grown, pinned: true);
+            Array.Fill(next, -1);
+            Array.Copy(a, next, a.Length);
+            _moduleIndex.Value = a = next;
+        }
+        for (int i = 0; i < count; i++)
+            if (a[i] < 0) a[i] = _registrations[i].Index.Value;
+        return (long)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(a, 0);
+    }
 
     private sealed class Chain : IWasmChainContext
     {
         private readonly BrowserWasmWorld _w;
-        private readonly Build _build;
         private readonly Activation _engine;
         private readonly long[] _mailbox = GC.AllocateArray<long>(WasmAbi.SlotCount, pinned: true);
         private readonly int _mailboxAt;
@@ -125,10 +182,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private int[] _trail = null!;
         private bool _engineAuthoritative;
 
-        public Chain(BrowserWasmWorld w, Build build, Activation engine)
+        public Chain(BrowserWasmWorld w, Activation engine)
         {
             _w = w;
-            _build = build;
             _engine = engine;
             _mailboxAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_mailbox, 0);
             Stage();
@@ -138,11 +194,13 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// real addresses plus the scalars. The arrays are only replaced
         /// (growth, GC) by managed code, and managed code only runs with the
         /// chain synced back to the engine, so the pins are stable for the
-        /// life of the staging -- D2.</summary>
+        /// life of the staging -- D2. The table rows and the module index
+        /// are re-read here too: an install during a nested builtin becomes
+        /// visible at the restaging that follows it.</summary>
         private void Stage()
         {
             long t0 = Stopwatch.GetTimestamp();
-            _engine.EnsureWasmRegisters(_build.RegisterDemand);
+            _engine.EnsureWasmRegisters(_w._modules.RegisterDemand);
             var heap = _engine.WasmHeapView;
             var stack = _engine.WasmStackView;
             var regs = _engine.WasmRegistersView;
@@ -164,7 +222,10 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 HeapLimitCells: heap.Length - 8,
                 StackLimitCells: stack.Length - 8,
                 TrailLimitEntries: trail.Length - 8,
-                FunctorTableBase: BrowserWasmTier.FunctorMirrorAddress());
+                FunctorTableBase: BrowserWasmTier.FunctorMirrorAddress(),
+                ResumeTableBase: _w.RowsAddress(),
+                ResumeTableRows: _w._table.Length,
+                ModuleIndexBase: _w.ModuleIndexAddress());
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -180,19 +241,25 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             cached = current;
         }
 
-        public WasmVerdict Call(int cursor)
+        public WasmVerdict Call(WasmTarget target)
         {
             long t0 = Stopwatch.GetTimestamp();
-            int v = WebShumwayApp.WasmCall(_build.Index.Value, _mailboxAt, cursor);
+            int v = WebShumwayApp.WasmCall(_w._registrations[target.ModuleId].Index.Value,
+                                           _mailboxAt, target.Cursor);
             DiagCallTicks += Stopwatch.GetTimestamp() - t0;
             return (WasmVerdict)v;
         }
 
-        public bool TryResolve(int functorId, int address, out int cursor)
-            => TryResolveIn(_build, functorId, address, out cursor);
+        public bool TryResolve(int functorId, int address, out WasmTarget target)
+            => _w._modules.TryResolve(functorId, address, out target);
+
+        private WasmModuleRegistry.Module Current
+            => _w._modules.ById((int)_mailbox[WasmAbi.CurrentModuleId]);
 
         public long TranslatePcToLive(long buildPc)
-            => _build.AddrIndex.Translate(buildPc, _w._liveByFid);
+            => Current.AddrIndex.Translate(buildPc, _w._liveByFid);
+
+        public int OwnerFunctorOf(long buildPc) => Current.AddrIndex.OwnerFunctorOf(buildPc);
 
         public long ReadSlot(int slot) => _mailbox[slot];
 
@@ -222,9 +289,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 }
 
 /// <summary>Boot-time wiring of the wasm tier: the promotion store's
-/// <c>Promoter</c> accumulates the promoted set, recompiles the GROUP module
-/// on each promotion (cross-member calls become internal jumps), installs
-/// the fresh build, and wraps the chain-driving verdict loop. Gated by
+/// <c>Promoter</c> compiles each promoted predicate as a module of its own
+/// (the batch path, all candidates as one), installs it into the engine's
+/// world, and wraps the chain-driving verdict loop. Gated by
 /// <see cref="RuntimeCaps.SupportsWasmCodegen"/> -- only Shumway.Web turns
 /// the feature switch on.</summary>
 internal static class BrowserWasmTier
@@ -254,6 +321,27 @@ internal static class BrowserWasmTier
         return string.Join(" ", names)
             + (w.LastBatchTrigger.Count > 6
                 ? $" and {w.LastBatchTrigger.Count - 6} more" : "");
+    }
+
+    /// <summary>The builtin exits, ranked. Same shape as the deopt ranking
+    /// and for the same reason: a total says a storm happened, a ranking
+    /// says which one.</summary>
+    internal static string BuiltinRankingReport()
+    {
+        if (!WasmTierDelegate.DiagCompiledIn) return "";
+        var rank = WasmTierDelegate.BuiltinRanking();
+        if (rank.Count == 0) return "";
+        long total = WasmTierDelegate.DiagBuiltins;
+        var sb = new System.Text.StringBuilder();
+        sb.Append("%   builtin exits (of ").Append(total).Append(", ")
+          .Append(rank.Count).Append(" distinct):\n");
+        for (int i = 0; i < rank.Count && i < 8; i++)
+        {
+            var (name, arity, hits) = rank[i];
+            double pct = total > 0 ? hits * 100.0 / total : 0;
+            sb.Append($"%     {hits} ({pct:F0}%) {name}/{arity}\n");
+        }
+        return sb.ToString();
     }
 
     internal static string DeoptRankingReport(PrologEngine engine)
@@ -320,26 +408,28 @@ internal static class BrowserWasmTier
         }
     }
 
-    // Every world holding installed builds for the CURRENT engine — the
-    // dynamic group's and the baked prelude's — so a relink's live-address
-    // refresh reaches them all. Reset when a new engine attaches.
-    private static readonly List<BrowserWasmWorld> _worlds = new();
+    // The CURRENT engine's world; the stdlib bundle's module installs into it.
+    private static BrowserWasmWorld? _world;
+
+    internal static int ModuleCount() => _world?.ModuleCount ?? 0;
+    internal static int ResumeRows() => _world?.ResumeRows ?? 0;
+    internal static long ModuleBytes() => _world?.ModuleBytes ?? 0;
 
     /// <summary>Attaches the wasm promotion store to an engine. No-op when
     /// the capability is off.</summary>
     /// <summary>Set by wasm_compile(off) and honoured by the BOOT, so a
     /// restart really does give an engine with no wasm in it. Without it the
     /// boot re-attached the tier at the default threshold AND installed the
-    /// baked prelude, so "restart. for a clean engine" was false twice over.
+    /// bundle's module, so "restart. for a clean engine" was false twice over.
     /// Cleared by any wasm_compile that turns the tier back on.</summary>
     internal static bool Disabled;
 
-    /// <summary>Attaches the tier. The default is the BATCH mode: one group
-    /// build for the whole linked program at each consult boundary, because
-    /// the group is a single wasm module -- adding a member renumbers every
-    /// cursor and re-emits all of it, so promoting n predicates one dispatch
-    /// at a time costs n(n+1)/2 predicate compiles. Measured on boards.pl:
-    /// 136 group builds one at a time against 3 in batch.
+    /// <summary>Attaches the tier. The default is the BATCH mode: one module
+    /// for the whole linked program at each consult boundary; the lazy mode
+    /// compiles one module per predicate as it crosses the threshold. Either
+    /// way a module is compiled once: a call or a backtrack into a sibling
+    /// module is a tail call inside wasm, so the grain costs nothing at run
+    /// time.
     ///
     /// <para>A caller asking for a numeric threshold is asking for the lazy
     /// mode and gets it, batch off.</para></summary>
@@ -349,19 +439,16 @@ internal static class BrowserWasmTier
         if (!RuntimeCaps.SupportsWasmCodegen || Disabled) return;
         var store = engine.IlPromotion;
         var world = new BrowserWasmWorld();
-        _worlds.Clear();
-        _worlds.Add(world);
-        BakedFids.Clear();
-        var members = new List<WasmGroupMember>();
+        _world = world;
         var env = new EngineWasmCompileEnv();
         store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = threshold,
             CompileAllOnConsult = batch,
             Promoter = (pred, linkedBase) =>
-                Promote(store, world, members, env, pred, linkedBase),
+                Promote(store, world, env, pred, linkedBase),
             BatchPromoter = candidates =>
-                PromoteBatch(store, world, members, env, candidates),
+                PromoteBatch(store, world, env, candidates),
             BatchStarting = n =>
             {
                 // Only a build worth waiting for gets a line. A handful of
@@ -374,68 +461,48 @@ internal static class BrowserWasmTier
                     $"% compiling {n} predicates to WebAssembly...\n");
             },
         };
-        // A relink moved predicates out from under their modules: the
-        // evicted members leave the dynamic group (their biases are dead —
-        // compiling them again would poison the whole build), and evicted
-        // baked members leave the baked bookkeeping. What remains valid is
-        // reinstalled so the group module carries no dead code.
-        store.Wasm.StaleEvicted = staleFids =>
-        {
-            var gone = new HashSet<int>(staleFids);
-            int removed = members.RemoveAll(m => gone.Contains(m.Predicate.FunctorId));
-            BakedFids.RemoveWhere(gone.Contains);
-            if (removed > 0 && members.Count > 0) InstallCurrent(world, members, env);
-        };
-        // A relink moved the code: the worlds translate at their boundaries,
-        // and the member list REBASES so the next promotion compiles against
-        // live addresses instead of poisoning the group with dead biases.
-        store.Wasm.LiveRefreshed = liveByFid =>
-        {
-            foreach (var w in _worlds) w.RefreshLiveAddresses(liveByFid);
-            for (int i = 0; i < members.Count; i++)
-                if (liveByFid.TryGetValue(members[i].Predicate.FunctorId, out int at)
-                    && members[i].Bias != at)
-                    members[i] = members[i] with { Bias = at };
-        };
+        // A relink moved predicates out from under their modules: their rows
+        // go to zero (a marker of theirs falls back to bytecode) and the
+        // baked callers of each go with it. The modules stay: a re-promotion
+        // compiles a fresh one against live addresses.
+        store.Wasm.StaleEvicted = world.Evict;
+        // A relink moved the code: the world translates at its boundaries.
+        store.Wasm.LiveRefreshed = world.RefreshLiveAddresses;
+        // A loaded bundle's wasm module (shumway-link --wasm) installs into
+        // this world at the next link, instead of compiling its predicates.
+        store.Wasm.BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes);
     }
 
     /// <summary>The wasm_compile(all) path: the whole candidate set in ONE
-    /// group build — O(n), where promoting the same set one dispatch at a
-    /// time rebuilds the group per member. A candidate the compiler refuses
-    /// must not take the batch down: on a failed build each candidate is
-    /// test-compiled alone (still O(n): builds of one) and the refusals are
-    /// marked unpromotable; the survivors build together.</summary>
+    /// module. A candidate the compiler refuses must not take the batch
+    /// down: on a failed build each candidate is test-compiled alone and the
+    /// refusals are marked unpromotable; the survivors build together.</summary>
     private static int PromoteBatch(IlPromotionStore store, BrowserWasmWorld world,
-        List<WasmGroupMember> members, EngineWasmCompileEnv env,
+        EngineWasmCompileEnv env,
         List<(CompiledPredicate Pred, int Addr)> candidates)
     {
         long t0 = Stopwatch.GetTimestamp();
         try
         {
-            var added = new List<WasmGroupMember>();
+            var members = new List<WasmGroupMember>();
             foreach (var (pred, addr) in candidates)
-                added.Add(new WasmGroupMember(pred, addr,
+                members.Add(new WasmGroupMember(pred, addr,
                     store.FloatPoolProvider?.Invoke(pred.FunctorId)));
-            members.AddRange(added);
             try
             {
-                InstallCurrent(world, members, env);
+                Install(store, world, members, env);
             }
             catch (WasmRegisterException)
             {
                 // The BROWSER refused the module — too big, most likely.
-                // The members are individually fine; back the whole batch
-                // out and reinstall what worked before.
-                members.RemoveRange(members.Count - added.Count, added.Count);
-                if (members.Count > 0) InstallCurrent(world, members, env);
+                // Nothing was installed; the members are individually fine.
                 return 0;
             }
             catch (WasmCompileException)
             {
                 // Sort the poisoners out one by one, then build the rest.
-                members.RemoveRange(members.Count - added.Count, added.Count);
                 var good = new List<WasmGroupMember>();
-                foreach (var m in added)
+                foreach (var m in members)
                 {
                     try
                     {
@@ -449,26 +516,20 @@ internal static class BrowserWasmTier
                     }
                 }
                 if (good.Count == 0) return 0;
-                members.AddRange(good);
-                try { InstallCurrent(world, members, env); }
-                catch (WasmCompileException)
-                {
-                    // Individually fine but jointly refused — should not
-                    // happen; back out rather than leave a broken group.
-                    members.RemoveRange(members.Count - good.Count, good.Count);
-                    if (members.Count > 0) InstallCurrent(world, members, env);
-                    return 0;
-                }
-                added = good;
+                // Individually fine but jointly refused should not happen;
+                // if it does, nothing is installed.
+                try { Install(store, world, good, env); }
+                catch (WasmCompileException) { return 0; }
+                members = good;
             }
-            foreach (var m in added)
+            foreach (var m in members)
             {
                 store.RegisterBoundDelegate(m.Predicate.FunctorId,
                     new WasmTierDelegate(m.Predicate.FunctorId, world).Invoke);
                 store.Wasm?.NoteInstalled(m.Predicate.FunctorId, m.Bias,
                     m.Predicate);
             }
-            return added.Count;
+            return members.Count;
         }
         finally
         {
@@ -477,21 +538,34 @@ internal static class BrowserWasmTier
         }
     }
 
-    /// <summary>Wall time spent COMPILING group modules (each promotion
-    /// rebuilds the whole group), and how many builds — the cost side of the
-    /// tier, reported by wasm_compile(status). Mono-interpreted C#, so this
-    /// is the dominant promotion cost in the browser.</summary>
+    /// <summary>Wall time spent COMPILING modules, and how many — the cost
+    /// side of the tier, reported by wasm_compile(status). Mono-interpreted
+    /// C#, so this is the dominant promotion cost in the browser.</summary>
     internal static long DiagCompileTicks;
     internal static int DiagCompileBuilds;
 
     private static PredicateDelegate? Promote(IlPromotionStore store,
-        BrowserWasmWorld world, List<WasmGroupMember> members,
-        EngineWasmCompileEnv env, CompiledPredicate pred, int linkedBase)
+        BrowserWasmWorld world, EngineWasmCompileEnv env,
+        CompiledPredicate pred, int linkedBase)
     {
         long t0 = Stopwatch.GetTimestamp();
         try
         {
-            return PromoteCore(store, world, members, env, pred, linkedBase);
+            var candidate = new WasmGroupMember(pred, linkedBase,
+                store.FloatPoolProvider?.Invoke(pred.FunctorId));
+            Install(store, world, new List<WasmGroupMember> { candidate }, env);
+            return new WasmTierDelegate(pred.FunctorId, world).Invoke;
+        }
+        catch (WasmRegisterException)
+        {
+            return null;
+        }
+        catch (WasmCompileException ex)
+        {
+            // A refusal is the backend declining a shape it does not
+            // translate yet, and that reason is its actionable part.
+            store.Wasm?.MarkUnpromotable(pred.FunctorId, ex.Message);
+            return null;
         }
         finally
         {
@@ -500,97 +574,11 @@ internal static class BrowserWasmTier
         }
     }
 
-    private static PredicateDelegate? PromoteCore(IlPromotionStore store,
-        BrowserWasmWorld world, List<WasmGroupMember> members,
-        EngineWasmCompileEnv env, CompiledPredicate pred, int linkedBase)
-    {
-        var candidate = new WasmGroupMember(pred, linkedBase,
-            store.FloatPoolProvider?.Invoke(pred.FunctorId));
-        members.Add(candidate);
-        try
-        {
-            InstallCurrent(world, members, env);
-            return new WasmTierDelegate(pred.FunctorId, world).Invoke;
-        }
-        catch (WasmCompileException ex)
-        {
-            // The candidate poisoned the group: reinstall without it, and
-            // keep WHY. A refusal is the backend declining a shape it does
-            // not translate yet, and that reason is its actionable part.
-            members.Remove(candidate);
-            if (members.Count > 0) InstallCurrent(world, members, env);
-            store.Wasm?.MarkUnpromotable(pred.FunctorId, ex.Message);
-            return null;
-        }
-    }
+    /// <summary>What became of the stdlib bundle's wasm module at boot —
+    /// surfaced by wasm_compile(status), because boot-time page writes
+    /// predate the console.</summary>
+    internal static string BundleInstallNote = "no bundle module";
 
-    /// <summary>Installs the build-time-baked prelude group without
-    /// compiling anything, after replaying the bake's evidence against this
-    /// process (see <see cref="WasmBakedGroup.Validate"/>). The baked group
-    /// lives in its OWN world, frozen: later promotions build a second,
-    /// user-code group from empty — extending the baked one would make the
-    /// first lazy promotion recompile the whole prelude. A call between the
-    /// two groups is an ordinary chain switch. On any mismatch nothing is
-    /// installed and the tier compiles as before.</summary>
-    /// <summary>What became of the baked prelude at boot — surfaced by
-    /// wasm_compile(status), because boot-time page writes predate the
-    /// console.</summary>
-    internal static string BakedInstallNote = "no asset";
-
-    /// <summary>The baked prelude's members: status folds these into one
-    /// count so the promoted list shows the USER's predicates, not five
-    /// hundred prelude internals burying them.</summary>
-    internal static readonly HashSet<int> BakedFids = new();
-
-    internal static bool TryInstallBaked(PrologEngine engine, byte[] asset,
-        out string reason)
-    {
-        var store = engine.IlPromotion;
-        if (store.Wasm is null) { reason = "tier not attached"; return false; }
-        WasmBakedGroup baked;
-        try { baked = WasmBakedGroup.Read(new MemoryStream(asset)); }
-        catch (Exception e) { reason = $"unreadable asset: {e.Message}"; return false; }
-        // The same throwaway goal the bake ran to materialise the static
-        // link — intern parity with the bake.
-        engine.Query("true.");
-        var byAddress = new Dictionary<int, CompiledPredicate>();
-        foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
-            byAddress[addr] = pred;
-        if (byAddress.Count == 0) { reason = "no static link"; return false; }
-        if (!baked.Validate(new EngineWasmCompileEnv(), byAddress,
-                fid => store.FloatPoolProvider?.Invoke(fid), out reason))
-            return false;
-        var world = new BrowserWasmWorld();
-        var entryCursors = new Dictionary<int, int>(baked.Members.Count);
-        var entryAddr = new Dictionary<int, int>(baked.Members.Count);
-        foreach (var m in baked.Members)
-        {
-            entryCursors[m.FunctorId] = m.EntryCursor;
-            entryAddr[m.FunctorId] = m.Bias;
-        }
-        var cursorByAddress = new Dictionary<int, int>(baked.CursorByAddress.Count);
-        foreach (var kv in baked.CursorByAddress) cursorByAddress[kv.Key] = kv.Value;
-        try
-        {
-            world.InstallGroup(baked.Module, entryCursors, cursorByAddress,
-                entryAddr, baked.RegisterDemand);
-        }
-        catch (WasmRegisterException e) { reason = e.Message; return false; }
-        _worlds.Add(world);
-        foreach (var m in baked.Members)
-        {
-            store.RegisterBoundDelegate(m.FunctorId,
-                new WasmTierDelegate(m.FunctorId, world).Invoke);
-            store.Wasm?.NoteInstalled(m.FunctorId, m.Bias, byAddress[m.Bias]);
-            BakedFids.Add(m.FunctorId);
-        }
-        reason = $"{baked.Members.Count} predicates";
-        return true;
-    }
-
-    /// <summary>(caller functor, callee functor) to call sites, from the last
-    /// group build: the evidence for whether a group could be split along
-    /// some module boundary. Static, so it costs nothing at run time.</summary>
     // Set by BatchStarting so the tick can close the notice it opened: a
     // "compiling..." with no answer under it reads as a hang.
     internal static bool AnnouncedBatch;
@@ -598,18 +586,24 @@ internal static class BrowserWasmTier
     /// <summary>Batches smaller than this compile without saying so.</summary>
     private const int AnnounceFloor = 5;
 
+    /// <summary>(caller functor, callee functor) to call sites, from the last
+    /// module built: the evidence for whether a group could be split along
+    /// some module boundary. Static, so it costs nothing at run time.</summary>
     internal static IReadOnlyDictionary<(int Caller, int Callee), int> LastCallSites
         = new Dictionary<(int, int), int>();
 
-    private static void InstallCurrent(BrowserWasmWorld world,
+    /// <summary>Compiles the members as one module against the id the world
+    /// will give it, and installs it. Throws before installing anything.</summary>
+    private static void Install(IlPromotionStore store, BrowserWasmWorld world,
         List<WasmGroupMember> members, EngineWasmCompileEnv env)
     {
-        var entry = WasmPredicateCompiler.CompileGroup(members, env);
+        var entry = WasmPredicateCompiler.CompileGroup(members, env,
+            moduleId: world.NextModuleId);
         var entryAddr = new Dictionary<int, int>(members.Count);
         foreach (var m in members)
             entryAddr[m.Predicate.FunctorId] = m.Bias;
-        world.InstallGroup(entry.Module, entry.EntryCursorByFid,
-            entry.CursorByAddress, entryAddr, entry.RegisterDemand);
+        var displaced = entry.InstallInto(world, entryAddr);
+        if (displaced.Count > 0) store.Wasm?.Displaced(displaced);
         LastCallSites = entry.CallSites;
     }
 }
@@ -890,6 +884,147 @@ internal static partial class WebShumwayApp
             return report.ToString();
         }).ConfigureAwait(false);
 
+    /// <summary>The boards.pl shape: clpfd labeling, where the tier has to
+    /// carry a library of hundreds of predicates besides the user's own.
+    /// </summary>
+    private const string GrainCorpus = """
+        :- use_module(library(clpfd)).
+        qn(N, Qs) :- length(Qs, N), Qs ins 1..N, all_distinct(Qs), qdiag(Qs).
+        qdiag([]).  qdiag([Q|Qs]) :- qoff(Q, Qs, 1), qdiag(Qs).
+        qoff(_, [], _).
+        qoff(Q, [R|Rs], D) :- Q + D #\= R, R + D #\= Q, D1 is D + 1, qoff(Q, Rs, D1).
+        qsolve(N, Qs) :- qn(N, Qs), labeling([ff], Qs), !.
+        """;
+
+    private sealed record GrainProgram(string Name, string Source, string Goal);
+
+    private static readonly GrainProgram[] GrainPrograms =
+    {
+        new("nrev 200 x5", TierProbeCorpus,
+            "range(1, 200, L), nrev(L, _), nrev(L, _), nrev(L, _), nrev(L, _), nrev(L, _)."),
+        new("tak 18,12,6", TierProbeCorpus, "tak(18, 12, 6, _)."),
+        new("zebra x10", ZebraSource, "zbench(10)."),
+    };
+
+    private static GrainProgram QueensProgram(int n)
+        => new($"queens {n} (clpfd)", GrainCorpus, $"qsolve({n}, _).");
+
+    /// <summary>The grain measurement: the same programs under the batch
+    /// mode (one module per consult) and the lazy mode (one module per
+    /// promoted predicate), against Tier-0. What it answers is whether N
+    /// small modules cost anything at run time -- hops, host switches,
+    /// deopts, the timings -- and what promoting one at a time costs in
+    /// compile and registration against the batch, on the same program.
+    ///
+    /// <para>Every engine here boots the way the PAGE boots: from the stdlib
+    /// bundle, with its baked wasm module installed. That is the whole
+    /// premise of the comparison, and it used to be simulated (the b* modes
+    /// compiled the prelude into one module first) because the bake did not
+    /// exist yet. With it real, what the batch compiles at a consult is the
+    /// USER's predicates and nothing else.</para></summary>
+    [JSExport]
+    internal static async Task<string> WasmGrainProbe(int rounds, int queens, string only)
+        => await Task.Run(() =>
+        {
+            var report = new StringBuilder();
+            rounds = Math.Max(1, rounds);
+            try
+            {
+                var programs = queens > 0
+                    ? GrainPrograms.Append(QueensProgram(queens)).ToArray()
+                    : GrainPrograms;
+                foreach (var prog in programs)
+                {
+                    // only = "<program substring>/<mode>" narrows the matrix
+                    // (a hang hunt wants one cell, not the whole grid).
+                    string[] sel = only.Split('/');
+                    if (sel[0].Length > 0 && !prog.Name.Contains(sel[0])) continue;
+                    WriteToPage($"[grain] {prog.Name}\n");
+                    report.Append($"== {prog.Name}: {prog.Goal}\n");
+                    double tier0 = 0;
+                    foreach (string mode in new[] { "tier0", "batch", "eager", "lazy" })
+                    {
+                        if (sel.Length > 1 && sel[1].Length > 0 && mode != sel[1]) continue;
+                        var engine = WebShumwayApp.EngineFromStdlib(announce: false);
+                        engine.IlPromotion.Threshold = 0;
+                        WasmTierDelegate.ResetDiag();
+                        BrowserWasmTier.DiagCompileTicks = 0;
+                        BrowserWasmTier.DiagCompileBuilds = 0;
+                        BrowserWasmWorld.DiagRegisterTicks = 0;
+                        long t0 = Stopwatch.GetTimestamp();
+                        if (mode != "tier0")
+                        {
+                            BrowserWasmTier.Attach(engine, threshold: 1, batch: true);
+                            if (engine.IlPromotion.Wasm is null)
+                                return "wasm tier NOT attached: the capability is off\n";
+                            // The stdlib's baked module, installed as the page
+                            // installs it: the grain question is then about the
+                            // USER's predicates, which is all that is left to
+                            // compile in the browser.
+                            WebShumwayApp.InstallBundleWasm(engine);
+                            engine.IlPromotion.Wasm.CompileAllOnConsult = mode is "batch";
+                        }
+                        engine.ConsultString(prog.Source);
+                        // The batch compiles at the boundary the page ticks;
+                        // eager does the same set one module per predicate;
+                        // the lazy mode compiles inside the first run.
+                        int batched = mode switch
+                        {
+                            "batch" => engine.IlPromotion.Wasm!.CompileAllTick(engine),
+                            "eager" => engine.IlPromotion.Wasm!.PromoteAllStaticsIndividually(engine),
+                            _ => 0,
+                        };
+                        double consultMs = (Stopwatch.GetTimestamp() - t0) * 1000.0
+                                         / Stopwatch.Frequency;
+                        var first = Stopwatch.StartNew();
+                        bool ok = engine.Query(prog.Goal).Success;
+                        if (!ok)
+                        {
+                            report.Append($"  {mode}: FAILED {prog.Goal}\n");
+                            continue;
+                        }
+                        first.Stop();
+                        double compileMs = BrowserWasmTier.DiagCompileTicks * 1000.0
+                                         / Stopwatch.Frequency;
+                        double registerMs = BrowserWasmWorld.DiagRegisterTicks * 1000.0
+                                          / Stopwatch.Frequency;
+                        int builds = BrowserWasmTier.DiagCompileBuilds;
+                        int promoted = engine.IlPromotion.PromotedFunctorIds().Count();
+
+                        WasmTierDelegate.ResetDiag();
+                        double best = BenchMedian(engine, prog.Goal, rounds);
+                        if (mode == "tier0") tier0 = best;
+                        string line = mode == "tier0"
+                            ? $"  tier0: {best:F1} ms (first run {first.Elapsed.TotalMilliseconds:F0} ms)"
+                            : $"  {mode}: {best:F1} ms, {tier0 / best:F1}x"
+                              + $" (first run {first.Elapsed.TotalMilliseconds:F0} ms;"
+                              + $" consult {consultMs:F0} ms"
+                              + (mode is "batch" or "eager" ? $" incl. {batched} batched" : "") + ")\n"
+                              + $"    promoted={promoted} modules={BrowserWasmTier.ModuleCount()}"
+                              + $" rows={BrowserWasmTier.ResumeRows()}"
+                              + $" bytes={BrowserWasmTier.ModuleBytes():N0}"
+                              + $" builds={builds} compile={compileMs:F0} ms register={registerMs:F0} ms\n"
+                              + $"    per run: chains={WasmTierDelegate.DiagEntries}"
+                              + $" hops={WasmTierDelegate.DiagInWasmHops}"
+                              + $" switches={WasmTierDelegate.DiagSwitches}"
+                              + $" foreignExits={WasmTierDelegate.DiagForeignExits}"
+                              + $" deopts={WasmTierDelegate.DiagDeopts}"
+                              + $" builtinExits={WasmTierDelegate.DiagBuiltins}"
+                              + $" tailExits={WasmTierDelegate.DiagTailExits}";
+                        WriteToPage($"[grain] {line.Replace("\n", " | ")}\n");
+                        report.Append(line).Append('\n');
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                report.Append("STOPPED: ").Append(ex.GetType().Name)
+                      .Append(": ").Append(ex.Message).Append('\n')
+                      .Append(ex.StackTrace).Append('\n');
+            }
+            return report.ToString();
+        }).ConfigureAwait(false);
+
     private static double BenchMedian(PrologEngine e, string goal, int rounds)
     {
         double best = double.MaxValue;
@@ -935,7 +1070,7 @@ internal static partial class WebShumwayApp
                     return $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}";
                 }
                 // Status is read to find the USER's predicates. Everything
-                // else folds into counts: the baked prelude's members, and
+                // else folds into counts: the stdlib bundle's members, and
                 // library modules (a use_module(library(clpfd)) promotes
                 // hundreds of clpfd$... internals under `all`). A name's
                 // module is its prefix up to the scope '$' — one more '$'
@@ -961,7 +1096,7 @@ internal static partial class WebShumwayApp
                 int baked = 0;
                 foreach (int f in allPromoted)
                 {
-                    if (BrowserWasmTier.BakedFids.Contains(f)) { baked++; continue; }
+                    if (w.BundleFids.Contains(f)) { baked++; continue; }
                     string name = Name(f);
                     string mod = PrefixModuleOf(name);
                     if (mod is "" && exporter.TryGetValue(f, out string? owner)) mod = owner;
@@ -973,13 +1108,13 @@ internal static partial class WebShumwayApp
                     else byModule[mod] = byModule.GetValueOrDefault(mod) + 1;
                 }
                 var folded = byModule.Select(kv => $"{kv.Value} {kv.Key}").ToList();
-                if (baked > 0) folded.Add($"{baked} baked prelude");
+                if (baked > 0) folded.Add($"{baked} baked (the stdlib and library bundles)");
                 var refused = w.UnpromotableFunctorIds()
                     .Select(f => w.RefusalReason(f) is { } why
                         ? $"{Name(f)} ({why})" : Name(f))
                     .ToList();
                 string report = $"% wasm_compile: threshold={w.Threshold}\n"
-                    + $"%   baked prelude: {BrowserWasmTier.BakedInstallNote}\n"
+                    + $"%   stdlib bundle wasm: {BrowserWasmTier.BundleInstallNote}\n"
                     + (w.RelinkEvictions > 0
                         ? $"%   relink evictions: {w.RelinkEvictions} (a library "
                           + "load moved the code; evicted predicates re-promote)\n"
@@ -988,15 +1123,24 @@ internal static partial class WebShumwayApp
                     + (folded.Count > 0 ? " + " + string.Join(" + ", folded) : "")
                     + $"): {string.Join(" ", promoted)}\n"
                     + $"%   refused ({refused.Count}): {string.Join(" ", refused)}\n"
-                    + "%   since the previous status:\n"
+                    + (WasmTierDelegate.DiagCompiledIn
+                        ? "%   since the previous status:\n"
+                        // Zeros here would read as measurements. They are not:
+                        // nobody counted, because a diagnostic does not ship.
+                        : "%   counters: NOT COMPILED IN (build with "
+                          + "-p:ShumwayDiag=true)\n")
                     + $"%   chains={WasmTierDelegate.DiagEntries} "
                     + $"switches={WasmTierDelegate.DiagSwitches} "
+                    + $"hops={WasmTierDelegate.DiagInWasmHops} "
+                    + $"foreignExits={WasmTierDelegate.DiagForeignExits} "
                     + $"deopts={WasmTierDelegate.DiagDeopts} "
                     + $"builtinExits={WasmTierDelegate.DiagBuiltins} "
                     + $"tailExits={WasmTierDelegate.DiagTailExits}\n"
+                    + $"%   modules={BrowserWasmTier.ModuleCount()}\n"
                     + BrowserWasmTier.DeoptRankingReport(engine)
+                    + BrowserWasmTier.BuiltinRankingReport()
                     + WasmCoupling.Report(engine, BrowserWasmTier.LastCallSites)
-                    + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} group builds, "
+                    + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} module builds, "
                     + $"{BrowserWasmTier.DiagCompileTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
                     // A build after a consult explains itself; one a predicate
                     // asked for is the one worth chasing, and it needs a name.
@@ -1014,7 +1158,7 @@ internal static partial class WebShumwayApp
                 // Every counter above is a DELTA SINCE THE PREVIOUS STATUS:
                 // cleared on the way out, so goals can be measured one at a
                 // time. A running total since boot reads as if it belonged to
-                // the last query, and 136 group builds accumulated over a
+                // the last query, and 136 module builds accumulated over a
                 // session of them looks exactly like one query gone wrong.
                 WasmTierDelegate.ResetDiag();
                 BrowserWasmTier.DiagCompileTicks = 0;
@@ -1032,7 +1176,7 @@ internal static partial class WebShumwayApp
                 // A predicate already promoted keeps running as wasm: taking
                 // its delegate away with a live choice point inside would
                 // break the redo. A fresh engine has none, so the flag makes
-                // the BOOT skip both the tier and the baked prelude — which
+                // the BOOT skip both the tier and the bundle's module — which
                 // is what makes the sentence below true.
                 BrowserWasmTier.Disabled = true;
                 return "% wasm_compile: promotion off. Already-promoted "
@@ -1057,11 +1201,11 @@ internal static partial class WebShumwayApp
                 long b0 = Stopwatch.GetTimestamp();
                 int batched = wa.CompileAllTick(engine);
                 double ms = (Stopwatch.GetTimestamp() - b0) * 1000.0 / Stopwatch.Frequency;
-                // Compiling the whole prelude here means the baked group is
-                // NOT carrying it — say why right where the cost shows up,
+                // Compiling the whole prelude here means the bundle's module
+                // is NOT carrying it — say why right where the cost shows up,
                 // not only in status.
-                string bakedNote = BrowserWasmTier.BakedFids.Count == 0 && batched > 100
-                    ? $"% (the baked prelude is not installed — {BrowserWasmTier.BakedInstallNote})\n"
+                string bakedNote = wa.BundleFids.Count == 0 && batched > 100
+                    ? $"% (the stdlib bundle's wasm is not installed — {BrowserWasmTier.BundleInstallNote})\n"
                     : "";
                 return $"% wasm_compile: all — {batched} predicates compiled now "
                     + $"({ms:F0} ms), threshold 1 from here; every consult "

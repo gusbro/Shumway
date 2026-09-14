@@ -42,10 +42,27 @@ public interface IWasmCompileEnv
     /// (a linked address in the engine; an index in the harness).</summary>
     int EncodeCallTarget(int calleeFunctorId);
 
-    /// <summary>The Pc value for stepping aside at bytecode address
-    /// <paramref name="bytecodePc"/> (predicate-local). In the engine this is
-    /// the predicate's linked base plus the offset.</summary>
-    int EncodeDeoptPc(int bytecodePc);
+    /// <summary>A biased bytecode <paramref name="address"/> the module hands
+    /// the host as is: the pc of a deopt, the cursor a builtin request
+    /// returns to. The identity in the engine (addresses come in already
+    /// linked); a relocating env hands back a sentinel instead.</summary>
+    int EncodeAddress(int address);
+
+    /// <summary>The BuiltinId mailbox value for a request: the id in the
+    /// low half, the env-trim size in the high half (-1 = no trim, 0 for a
+    /// tail request).</summary>
+    long EncodeBuiltinId(int builtinId, int envTrim)
+        => (uint)builtinId | ((long)envTrim << 32);
+
+    /// <summary>The cell an atom immediate bakes as.</summary>
+    long AtomCell(int atomId) => Cell.Atom(atomId).Data;
+
+    /// <summary>The cell a functor immediate bakes as.</summary>
+    long FunctorCell(int functorId) => Cell.Functor(functorId).Data;
+
+    /// <summary>The module's own id wherever the code compares against it.
+    /// </summary>
+    int EncodeModuleId(int moduleId) => moduleId;
 
     /// <summary>Whether a call site's callee is a builtin, and which. The
     /// compiled code then requests it through
@@ -121,4 +138,7 @@ public sealed record WasmGroupEntry(
     /// between them, counted while compiling. STATIC: it says which edges
     /// exist and how tightly the code is coupled, NOT how often an edge is
     /// taken at run time.</summary>
-    System.Collections.Generic.IReadOnlyDictionary<(int Caller, int Callee), int> CallSites);
+    System.Collections.Generic.IReadOnlyDictionary<(int Caller, int Callee), int> CallSites,
+    /// <summary>The module id baked into the code; the installing world's
+    /// id has to be this one.</summary>
+    int ModuleId = 0);

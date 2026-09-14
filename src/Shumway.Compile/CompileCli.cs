@@ -185,6 +185,45 @@ internal static class CompileCli
         try { return System.IO.Path.GetFullPath(arg); } catch { return arg; }
     }
 
+    /// <summary>What this object would silently lose if it were written as
+    /// a file-at-a-time compile, described for the error, or null when
+    /// nothing is lost.
+    ///
+    /// <para>A hook is a CONSULT-TIME concept: the consult pipeline
+    /// recognises the head, activates it early and adds it to the engine's
+    /// expansion aggregate. Compiled file-at-a-time there is no aggregate to
+    /// join, so the clause lands as an ordinary predicate (local, mangled,
+    /// and pruned by the linker for good measure) and the hook never fires.
+    /// Measured, with the same file: consulted it expands, compiled and
+    /// loaded it does not. That is the same source meaning two things, so
+    /// the compile is refused rather than noted.</para>
+    ///
+    /// <para>Read off the OBJECT, not the text: a file that merely calls
+    /// term_expansion/2, or names it in a comment, compiles fine.</para></summary>
+    private static string? WhatFileAtATimeWouldLose(Shumway.Embedding.ShmoObject obj)
+    {
+        foreach (var d in obj.Defined)
+        {
+            // A module-qualified clause head (`user:term_expansion(...)`,
+            // `lists:append(...)`) is read as the TERM it is, so the object
+            // defines a predicate for the functor ':'/2 -- which is not a
+            // predicate anybody meant to write. The consult pipeline gives
+            // the head to the named module instead.
+            if (d.Indicator is { Name: ":", Arity: 2 })
+                return "defines a module-qualified clause head (a ':'/2 predicate).";
+
+            // The name may carry the module prefix of an export-qualified
+            // module (Name$p); the hook is what it ends with.
+            string name = d.Indicator.Name;
+            int cut = name.LastIndexOf('$');
+            if (cut >= 0) name = name[(cut + 1)..];
+            if ((name == "term_expansion" && d.Indicator.Arity is 2 or 6)
+                || (name == "goal_expansion" && d.Indicator.Arity == 2))
+                return $"defines {name}/{d.Indicator.Arity}, a load-time expansion hook.";
+        }
+        return null;
+    }
+
     /// <summary>Discoverability: a file that relies on load-time expansion
     /// hooks cannot compile completely file-at-a-time — tell the user about
     /// --consult instead of leaving a cryptic failure (or a silently
@@ -250,8 +289,18 @@ internal static class CompileCli
                 RemoveStaleOutput(output);
                 return ExitCompileError;
             }
-            MaybeHintConsultMode(input, onlyIfHooks: true);
             var obj = result.Object!;
+            if (WhatFileAtATimeWouldLose(obj) is { } lost)
+            {
+                Console.Error.WriteLine(
+                    $"shumway-compile: {input} {lost} File-at-a-time compilation "
+                    + "would produce a program that means something else than the "
+                    + "consulted one, so it is refused rather than written. Compile "
+                    + "it with:" + Environment.NewLine
+                    + $"  shumway-compile --consult -L <libdir> {input}");
+                RemoveStaleOutput(output);
+                return ExitCompileError;
+            }
             ShmoWriter.WriteToFile(obj, output);
             if (ySurvey && Shumway.Compiler.Wam.ClauseCompiler.YSurvey is { } survey)
             {

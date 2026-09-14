@@ -20,7 +20,7 @@ public sealed class RestorePathTests(ITestOutputHelper o)
         pairs(L, X-Y) :- pick(L, X), pick(L, Y), X @< Y.
         """;
 
-    [Fact]
+    [DiagFact]
     public void BacktrackingDoesNotLeaveTheTier()
     {
         var (e, members) = TieredEngine.Build(Corpus);

@@ -2444,4 +2444,28 @@ internal static class Prelude
             !, N1 is N0 + 1, '$skip_max_list_'(T, Max, N1, N, Tail).
         '$skip_max_list_'(List, _, N, N, List).
         """;
+
+    /// <summary>The predicates the prelude declares <c>:- dynamic</c>. A
+    /// clause for one of them in any other source (a library's
+    /// <c>attribute_goals/4</c> hook, a program's <c>portray/1</c>) is a
+    /// dynamic clause: the consult path routes it to the store because the
+    /// declaration is already live, and the object compiler has to reach
+    /// the same verdict without an engine. Scanned like
+    /// <c>SeedMetaTemplatesFromSource</c>: one directive per line.</summary>
+    public static HashSet<PredicateRef> DynamicDeclarations => _dynamicDeclarations.Value;
+
+    private static readonly Lazy<HashSet<PredicateRef>> _dynamicDeclarations = new(() =>
+    {
+        var set = new HashSet<PredicateRef>();
+        foreach (System.Text.RegularExpressions.Match m in
+            System.Text.RegularExpressions.Regex.Matches(Source,
+                @"^\s*:-\s*dynamic\(?\s*('[^']*'|[a-z][A-Za-z0-9_]*)\s*/\s*(\d+)\s*\)?\s*\.\s*$",
+                System.Text.RegularExpressions.RegexOptions.Multiline))
+        {
+            string name = m.Groups[1].Value;
+            if (name[0] == '\'') name = name.Substring(1, name.Length - 2);
+            set.Add(new PredicateRef(name, int.Parse(m.Groups[2].Value)));
+        }
+        return set;
+    });
 }

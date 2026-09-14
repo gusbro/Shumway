@@ -44,10 +44,15 @@ public static class WasmPredicateCompiler
     /// translation, and a cross-member call is an internal dispatch jump --
     /// the self-tail mechanism generalised. Cursors are global to the module;
     /// markers carry (fid, global cursor).</summary>
+    /// <param name="moduleId">The id the installing world gave this module.
+    /// BAKED into the code, not read from the mailbox: after a hop the
+    /// mailbox is still the chain's, and a module that took its identity
+    /// from there would dispatch another module's cursors as its own.</param>
     public static WasmGroupEntry CompileGroup(IReadOnlyList<WasmGroupMember> members,
-                                              IWasmCompileEnv env, bool shared = false)
+                                              IWasmCompileEnv env, bool shared = false,
+                                              int moduleId = 0)
     {
-        var c = new Compilation(members, env);
+        var c = new Compilation(members, env, moduleId);
         c.Decode();
         c.AssignCursors();
         byte[] bytes = c.Emit();
@@ -56,7 +61,7 @@ public static class WasmPredicateCompiler
         foreach (var m in members)
             entryCursors[m.Predicate.FunctorId] = c.CursorByAddress[m.Bias];
         return new WasmGroupEntry(bytes, entryCursors, c.CursorByAddress,
-                                  c.RegisterDemand, c.CallSites);
+                                  c.RegisterDemand, c.CallSites, moduleId);
     }
 
     /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
@@ -98,10 +103,11 @@ public static class WasmPredicateCompiler
     }
 
     private sealed class Compilation(IReadOnlyList<WasmGroupMember> members,
-                                     IWasmCompileEnv env)
+                                     IWasmCompileEnv env, int moduleId)
     {
         private readonly IReadOnlyList<WasmGroupMember> _members = members;
         private readonly IWasmCompileEnv _env = env;
+        private readonly int _moduleId = moduleId;
         private readonly List<Instr> _instrs = new();
         private readonly Dictionary<int, int> _byPc = new();
         private readonly SortedSet<int> _leaders = new();
@@ -109,9 +115,6 @@ public static class WasmPredicateCompiler
         private readonly Dictionary<int, int> _callee = new();   // call-site pc -> functor
         // fid -> entry address (the member's bias): the in-group call map.
         private readonly Dictionary<int, int> _entryByFid = new();
-        // (baked Cp marker value, resume address): the PROCEED jump table
-        // for in-group non-tail calls, collected in the cursor pass.
-        private readonly List<(int Marker, int Addr)> _proceedTargets = new();
         // (callerFid, calleeFid) -> call sites between them, for the coupling
         // report. Filled by the cursor pass, which walks every instruction
         // anyway, so it costs nothing at run time and nothing extra to compile.
@@ -139,13 +142,13 @@ public static class WasmPredicateCompiler
 
         /// <summary>Partition budget in DECODED WAM instructions (~40 wasm
         /// instructions each): ~100k emitted per function, far under the
-        /// ~640k cliff.</summary>
+        /// ~640k cliff. A SAFETY VALVE, and measured as one: over the
+        /// prelude plus clpfd, no predicate compiled alone is ever cut (the
+        /// largest takes one function), while the whole program as one group
+        /// takes 7. It bites for the batch mode and for a generated fact
+        /// table, which is one predicate that can cross the budget by
+        /// itself. See PartitionBudgetTests.</summary>
         private const int PartitionBudgetWamInstrs = 2500;
-
-        /// <summary>Partition-function returns below this are verdicts; at or
-        /// above, (value - base) is the cursor to continue at. Must stay
-        /// above every <see cref="WasmVerdict"/> and the loop guard's 99.</summary>
-        private const int ContinueBase = 0x100;
 
         private int UnifierIndex => _parts.Count + 2;   // 0 run, 1..K parts, K+1 resolver
 
@@ -427,10 +430,6 @@ public static class WasmPredicateCompiler
                 var edge = (SelfFid(ins), callee);
                 _callSites.TryGetValue(edge, out int seen);
                 _callSites[edge] = seen + 1;
-                if (ins.Op != Opcode.Call) continue;
-                if (!_entryByFid.ContainsKey(callee)) continue;
-                int marker = _env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9);
-                _proceedTargets.Add((marker, ins.Pc + 9));
             }
         }
 
@@ -455,6 +454,116 @@ public static class WasmPredicateCompiler
         /// <summary>Branch back to the dispatcher loop (LCur must be set).</summary>
         private void BrDispatch()
             => Op(new Branch((uint)(_extraDepth + (_caseCount - 1 - _caseIndex))));
+
+        /// <summary>Resolves a resume marker through the resume table and, when
+        /// it names THIS module, dispatches to its cursor. Leaves nothing on
+        /// the stack and falls through when the marker resolves elsewhere or
+        /// not at all — the caller then does whatever it did before there was
+        /// a table.
+        ///
+        /// <para>A marker is already a dense id (EncodeResumeMarker interns the
+        /// pair and returns Base + denseId), so this is a subscript rather than
+        /// a search. What it replaces is a linear chain of baked comparisons,
+        /// one per choice-point or return site in the module: on a big group
+        /// that chain is long, and every failure walked it.</para>
+        ///
+        /// <para>Out-of-range is "not here", not a fault: a marker minted after
+        /// this table was sized is newer than the module, and the host is the
+        /// right place for it.</para></summary>
+        private void EmitResumeProbe(uint markerLocal)
+        {
+            // i = marker - ResumeMarkerBase
+            Op(new LocalGet(markerLocal));
+            Op(new Int32Constant(Activation.ResumeMarkerBase));
+            Op(new Int32Subtract());
+            Op(new LocalSet(LT2));
+
+            // if ((uint)i < length) { row = table[i]; ... }
+            Op(new LocalGet(LT2));
+            LoadSlot32(WasmAbi.ResumeTableLength);
+            Op(new Int32LessThanUnsigned());
+            OpenIf();
+            {
+                LoadSlot32(WasmAbi.ResumeTableBase);
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new LocalSet(LC2));                  // row
+
+                // The row's high half is moduleId + 1; zero means no row.
+                Op(new LocalGet(LC2));
+                Op(new Int64Constant(32));
+                Op(new Int64ShiftRightUnsigned());
+                Op(new Int32WrapInt64());
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new LocalSet(LT0));                  // owner module id
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(_env.EncodeModuleId(_moduleId)));       // baked: see CompileGroup
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC2));
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LCur));
+                    BrDispatch();
+                }
+                OpenElse();
+                {
+                    // Another module owns it. Look up where that module sits
+                    // in this thread's function table and TAIL CALL it: the
+                    // frame is replaced, not stacked, which is what lets a
+                    // Prolog program cross modules millions of times. A plain
+                    // call would grow the real stack per crossing.
+                    //
+                    // Measured: the hop is 6.1 ns and carrying the scalar set
+                    // another 4.1, against the 4-15 us the same crossing costs
+                    // going out to the host and back.
+                    Op(new LocalGet(LT0));
+                    Op(new Int32Constant(0));
+                    Op(new Int32GreaterThanOrEqualSigned());
+                    OpenIf();
+                    {
+                        LoadSlot32(WasmAbi.ModuleIndexBase);
+                        Op(new LocalGet(LT0));
+                        Op(new Int32Constant(2));
+                        Op(new Int32ShiftLeft());
+                        Op(new Int32Add());
+                        Op(new Int32Load());
+                        Op(new LocalSet(LT1));          // table index, -1 absent
+
+                        // Slot 0 is a real slot: absence has to be -1, or the
+                        // first module registered can never be reached.
+                        Op(new LocalGet(LT1));
+                        Op(new Int32Constant(0));
+                        Op(new Int32GreaterThanOrEqualSigned());
+                        OpenIf();
+                        {
+                            // The callee reloads the scalars in its prologue,
+                            // so they have to be in the mailbox first.
+                            StoreScalars();
+                            StoreSlot64(WasmAbi.HopCount, () =>
+                            {
+                                LoadSlot64(WasmAbi.HopCount);
+                                Op(new Int64Constant(1));
+                                Op(new Int64Add());
+                            });
+                            Op(new LocalGet(0));                // mailbox
+                            Op(new LocalGet(LC2));
+                            Op(new Int32WrapInt64());           // its cursor
+                            Op(new LocalGet(LT1));
+                            Op(new ReturnCallIndirect(0));
+                        }
+                        CloseNested();
+                    }
+                    CloseNested();
+                }
+                CloseNested();
+            }
+            CloseNested();
+        }
 
         private void GoTo(int addr)
         {
@@ -484,13 +593,20 @@ public static class WasmPredicateCompiler
                 Field = WasmAbi.MemoryField,
                 Type = new Memory(1, 65536),
             });
+            // The thread's function table, where every module of this engine
+            // is registered. A marker resolving to ANOTHER module is reached
+            // through it, inside wasm, instead of by returning a verdict and
+            // letting the host re-dispatch. The memory import stays FIRST:
+            // WasmSharedMemory walks the import section for its limits byte.
+            module.Imports.Add(new Import.Table(WasmAbi.TableModule,
+                                               WasmAbi.TableField, 0, null));
             module.Types.Add(new WebAssemblyType
             {
                 Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int64,
                               WebAssemblyValueType.Int32],
                 Returns = [WebAssemblyValueType.Int32],
             });
-            // 0: run (the exported dispatcher); 1..K: partitions; K+1: the
+            // 0: run (the exported router); 1..K: partitions; K+1: the
             // fail/proceed resolver; K+2: the general unifier. All internal
             // but run.
             int k = _parts.Count;
@@ -521,68 +637,43 @@ public static class WasmPredicateCompiler
             return ms.ToArray();
         }
 
-        /// <summary>run(mailbox, cursor): pick the partition owning the
-        /// cursor (ranges are ascending, so a chain of upper-bound tests; a
-        /// pseudo-cursor goes to the resolver), call it, loop while it
-        /// returns a continue-cursor, hand any verdict to the host. State
-        /// lives in the mailbox across partition calls — this function has
-        /// no engine state of its own.</summary>
+        /// <summary>run(mailbox, cursor): route the cursor to the partition
+        /// owning it (ranges are ascending, so a chain of upper-bound tests;
+        /// a pseudo-cursor goes to the resolver) with a TAIL call. Nothing
+        /// of this function survives the transfer: a partition leaving for
+        /// another partition tail-calls run again, and a hop to another
+        /// module is a return_call_indirect from a partition, so the module
+        /// holds ONE frame at any depth of backtracking. A plain call here
+        /// would keep a run frame per hop and grow the stack with the
+        /// choice-point chain.</summary>
         private FunctionBody BuildDispatcherBody()
         {
-            const uint lCur = 2, lR = 3;
             _code = new List<Instruction>();
-            Op(new LocalGet(1)); Op(new LocalSet(lCur));
-            Op(new Loop(BlockType.Empty));
-            Op(new Block(BlockType.Empty));                 // $called
-            Op(new LocalGet(lCur));
+            Op(new LocalGet(1));
             Op(new Int32Constant(_failCase));
             Op(new Int32GreaterThanOrEqualSigned());
             OpenIf();
             {
-                Op(new LocalGet(0)); Op(new LocalGet(lCur));
-                Op(new WebAssembly.Instructions.Call((uint)(_parts.Count + 1)));
-                Op(new LocalSet(lR));
-                Op(new Branch(1));                          // $called
+                Op(new LocalGet(0)); Op(new LocalGet(1));
+                Op(new ReturnCall((uint)(_parts.Count + 1)));
             }
             CloseNested();
             for (int p = 0; p < _parts.Count - 1; p++)
             {
-                Op(new LocalGet(lCur));
+                Op(new LocalGet(1));
                 Op(new Int32Constant(_parts[p].Hi));
                 Op(new Int32LessThanSigned());
                 OpenIf();
                 {
-                    Op(new LocalGet(0)); Op(new LocalGet(lCur));
-                    Op(new WebAssembly.Instructions.Call((uint)(1 + p)));
-                    Op(new LocalSet(lR));
-                    Op(new Branch(1));                      // $called
+                    Op(new LocalGet(0)); Op(new LocalGet(1));
+                    Op(new ReturnCall((uint)(1 + p)));
                 }
                 CloseNested();
             }
-            Op(new LocalGet(0)); Op(new LocalGet(lCur));
-            Op(new WebAssembly.Instructions.Call((uint)_parts.Count));
-            Op(new LocalSet(lR));
-            Op(new End());                                  // $called
-            Op(new LocalGet(lR));
-            Op(new Int32Constant(ContinueBase));
-            Op(new Int32LessThanSigned());
-            OpenIf();
-            Op(new LocalGet(lR));
-            Op(new Return());
-            CloseNested();
-            Op(new LocalGet(lR));
-            Op(new Int32Constant(ContinueBase));
-            Op(new Int32Subtract());
-            Op(new LocalSet(lCur));
-            Op(new Branch(0));                              // the loop
-            Op(new End());                                  // the loop
-            Op(new Int32Constant((int)WasmVerdict.Fail));   // unreachable
+            Op(new LocalGet(0)); Op(new LocalGet(1));
+            Op(new ReturnCall((uint)_parts.Count));
             Op(new End());                                  // the function
-            var body = new FunctionBody
-            {
-                Locals = [new Local { Count = 2, Type = WebAssemblyValueType.Int32 }],
-                Code = _code,
-            };
+            var body = new FunctionBody { Locals = [], Code = _code };
             _extraDepth = 0;
             return body;
         }
@@ -598,8 +689,8 @@ public static class WasmPredicateCompiler
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
         /// partition's own cursors, a LOCAL fail case (this partition's CP
-        /// sites only), and an $out case that spills the scalars and returns
-        /// the cursor for the dispatcher to route — how a jump reaches
+        /// sites only), and an $out case that spills the scalars and
+        /// tail-calls run with the cursor to route — how a jump reaches
         /// another partition. In-partition jumps stay internal branches.</summary>
         private FunctionBody BuildPartitionBody((int Lo, int Hi) part,
                                                 List<int> addrsInOrder)
@@ -615,29 +706,32 @@ public static class WasmPredicateCompiler
             if (DebugLoopGuard)
             {
                 // DIAGNOSTIC (off by default): every dispatch records the
-                // cursor in slot 27 and bumps a counter in slot 26; when the
-                // counter passes the limit in slot 25 (10M when the host
-                // leaves it 0) the run returns the impossible verdict 99.
+                // cursor in DebugGuardCursor and bumps DebugGuardCount; when
+                // it passes DebugGuardLimit (10M when the host leaves it 0)
+                // the run returns the impossible verdict 99. These had been
+                // bare slot numbers, and the numbers had since been given to
+                // the diagnostic tallies -- turning the guard on would have
+                // corrupted them.
                 // Turns an in-module infinite loop into a readable report,
                 // and with a host-set limit it single-steps a run by
                 // dispatch count.
-                StoreSlot64(27, () =>
+                StoreSlot64(WasmAbi.DebugGuardCursor, () =>
                 {
                     Op(new LocalGet(LCur));
                     Op(new Int64ExtendInt32Signed());
                 });
-                StoreSlot64(26, () =>
+                StoreSlot64(WasmAbi.DebugGuardCount, () =>
                 {
-                    LoadSlot64(26);
+                    LoadSlot64(WasmAbi.DebugGuardCount);
                     Op(new Int64Constant(1));
                     Op(new Int64Add());
                 });
-                LoadSlot64(26);
-                LoadSlot64(25);
+                LoadSlot64(WasmAbi.DebugGuardCount);
+                LoadSlot64(WasmAbi.DebugGuardLimit);
                 Op(new Int64Constant(0));
                 Op(new Int64GreaterThanSigned());
                 OpenIf(BlockType.Int64);
-                LoadSlot64(25);
+                LoadSlot64(WasmAbi.DebugGuardLimit);
                 OpenElse();
                 Op(new Int64Constant(10_000_000));
                 CloseNested();
@@ -681,7 +775,7 @@ public static class WasmPredicateCompiler
             }
             Op(new End());
             _caseIndex = n;
-            EmitFailCase(fullChain: false);
+            EmitFailCase(missReturnsToHost: false);
             Op(new End());                                  // $out
             _caseIndex = n + 1;
             EmitContinueReturn();
@@ -693,11 +787,14 @@ public static class WasmPredicateCompiler
             return body;
         }
 
-        /// <summary>The shared resolver: the ONLY full copies of the
-        /// group-wide fail chain (BP -> retry cursor) and proceed chain
-        /// (Cp marker -> resume cursor). Partitions keep local subsets and
-        /// hand a miss here — without this, every partition would carry both
-        /// full chains and every Proceed site would grow with the group.</summary>
+        /// <summary>The shared resolver: where a fail or a proceed that no
+        /// partition resolved locally ends up, and the only place that can
+        /// answer the host. It was once the ONLY full copy of two group-wide
+        /// chains, which is why it is a function of its own; the chains are
+        /// now indexed reads into the resume table, so what it saves is no
+        /// longer size but the routing -- a partition resolves its own
+        /// backtracking without leaving the function, and anything else
+        /// arrives here.</summary>
         private FunctionBody BuildResolverBody()
         {
             _code = new List<Instruction>();
@@ -728,7 +825,7 @@ public static class WasmPredicateCompiler
             EmitProceedResolve();
             Op(new End());                                  // $fail
             _caseIndex = 1;
-            EmitFailCase(fullChain: true);
+            EmitFailCase(missReturnsToHost: true);
             Op(new End());                                  // $out
             _caseIndex = 2;
             EmitContinueReturn();
@@ -746,23 +843,18 @@ public static class WasmPredicateCompiler
         /// single-function module's answer.</summary>
         private void EmitProceedResolve()
         {
-            if (_proceedTargets.Count > 0)
-            {
-                Op(new LocalGet(LH));
-                LoadSlot32(WasmAbi.HeapWatermark);
-                Op(new Int32LessThanSigned());
-                OpenIf();
-                foreach (var (marker, addr) in _proceedTargets)
-                {
-                    Op(new LocalGet(LCP));
-                    Op(new Int32Constant(marker));
-                    Op(new Int32Equal());
-                    OpenIf();
-                    GoTo(addr);
-                    CloseNested();
-                }
-                CloseNested();
-            }
+            // Identical to what a partition emits now. The resolver existed to
+            // hold the ONE full copy of a chain no partition could afford to
+            // carry; a table read is the same handful of instructions
+            // everywhere, so there is no longer a full copy to hold. The
+            // function stays because the dispatcher routes the pseudo-cursors
+            // here, and removing it is a separate cleanup.
+            Op(new LocalGet(LH));
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            EmitResumeProbe(LCP);
+            CloseNested();
             EmitReturn(WasmVerdict.Success);
         }
 
@@ -839,26 +931,31 @@ public static class WasmPredicateCompiler
         private void EmitReturn(WasmVerdict v)
         {
             StoreScalars();
+            // After in-wasm hops the host cannot know which module it is
+            // hearing from, and a deopt pc or a builtin's return address is
+            // in THAT module's build space. Every verdict says. Not on the
+            // hop path: a hop reloads nothing from this slot.
+            StoreSlot64(WasmAbi.CurrentModuleId, () => Op(new Int64Constant(_env.EncodeModuleId(_moduleId))));
             Op(new Int32Constant((int)v));
             Op(new Return());
         }
 
-        /// <summary>Spill the scalars and return LCur + <see
-        /// cref="ContinueBase"/>: "not mine, continue at this cursor" — the
-        /// cross-partition transfer. The next partition's prologue reloads
-        /// what this stored.</summary>
+        /// <summary>Spill the scalars and tail-call run with LCur: "not
+        /// mine, continue at this cursor" — the cross-partition transfer.
+        /// The next partition's prologue reloads what this stored. A tail
+        /// call, so the transfer replaces this frame instead of stacking
+        /// under a dispatcher loop.</summary>
         private void EmitContinueReturn()
         {
             StoreScalars();
+            Op(new LocalGet(0));
             Op(new LocalGet(LCur));
-            Op(new Int32Constant(ContinueBase));
-            Op(new Int32Add());
-            Op(new Return());
+            Op(new ReturnCall(0));
         }
 
         private void EmitDeopt(int bytecodePc)
         {
-            StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(_env.EncodeDeoptPc(bytecodePc))));
+            StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(_env.EncodeAddress(bytecodePc))));
             EmitReturn(WasmVerdict.Deopt);
         }
 
@@ -1038,8 +1135,17 @@ public static class WasmPredicateCompiler
         /// <summary>No choice point of OURS on top means the host backtracks;
         /// one of ours means its BP names a retry/trust cursor and the
         /// restore there does the rest. BP values are compared against this
-        /// module's own encodings -- anything else is foreign.</summary>
-        private void EmitFailCase(bool fullChain)
+        /// module's own encodings -- anything else is foreign.
+        ///
+        /// <para>The body is the same wherever it is emitted; only a MISS
+        /// differs. In the resolver a miss is a CP no member pushed, so the
+        /// verdict goes to the host; in a partition it continues, and the
+        /// dispatcher routes it. Measured at ~237 wasm instructions a copy:
+        /// noise in a group module (8 copies, 1898 instructions of 4.4 MB),
+        /// part of the fixed furniture in a one-predicate module. Routing a
+        /// partition's miss to the resolver instead would save that and put
+        /// a call on every failure, which is the hot path.</para></summary>
+        private void EmitFailCase(bool missReturnsToHost)
         {
             Op(new LocalGet(LB));
             Op(new Int32Constant(0));
@@ -1075,39 +1181,20 @@ public static class WasmPredicateCompiler
             // whose retry cursor is local (self-backtracking, the hot case)
             // and hands a miss to the resolver; the resolver chains them ALL
             // and only a CP no member pushed returns Fail to the host.
-            var bpPairs = new SortedDictionary<int, int>();
-            foreach (var ins in _instrs)
-                switch (ins.Op)
-                {
-                    case Opcode.Try:
-                        bpPairs[_env.EncodeBp(SelfFid(ins), ins.Pc + 9)]
-                            = CursorOf(ins.Pc + 9);
-                        break;
-                    case Opcode.Retry:
-                        bpPairs[_env.EncodeBp(SelfFid(ins), ins.Pc + 5)]
-                            = CursorOf(ins.Pc + 5);
-                        break;
-                    case Opcode.TryMeElse:
-                    case Opcode.RetryMeElse:
-                        bpPairs[_env.EncodeBp(SelfFid(ins), Bias(ins) + ins.I0)]
-                            = CursorOf(Bias(ins) + ins.I0);
-                        break;
-                }
-            foreach (var (bpValue, cursor) in bpPairs)
-            {
-                if (!fullChain && (cursor < _curPart.Lo || cursor >= _curPart.Hi))
-                    continue;
-                Op(new LocalGet(LT1));
-                Op(new Int32Constant(bpValue));
-                Op(new Int32Equal());
-                OpenIf();
-                Op(new Int32Constant(cursor));
-                Op(new LocalSet(LCur));
-                BrDispatch();
-                CloseNested();
-            }
-            if (fullChain) EmitReturn(WasmVerdict.Fail);    // a foreign CP
-            else EmitContinueReturn();                      // LCur is still FAIL
+            // One indexed read, where a chain of baked comparisons used to be:
+            // one `if (bp == const)` per choice-point site in the module,
+            // walked linearly on EVERY failure. A BP is a resume marker and a
+            // marker is a dense id, so the answer is a subscript.
+            //
+            // The probe dispatches to any cursor of this module, including one
+            // in another partition -- the br_table's default hands those to the
+            // group dispatcher, which is the same route a jump across
+            // partitions already takes. So the partition/resolver split that
+            // the chain needed does not apply to what is EMITTED any more:
+            // the copies are identical but for the miss.
+            EmitResumeProbe(LT1);
+            if (missReturnsToHost) EmitReturn(WasmVerdict.Fail);   // a foreign CP
+            else EmitContinueReturn();                             // LCur is still FAIL
         }
 
         // ------------------------------------------------------------------
@@ -1211,10 +1298,10 @@ public static class WasmPredicateCompiler
                     RegStore(ins.I1, () => Op(new Int64Constant(Cell.Int(ins.I0).Data)));
                     return false;
                 case Opcode.PutAtom:
-                    RegStore(ins.I1, () => Op(new Int64Constant(Cell.Atom(ins.I0).Data)));
+                    RegStore(ins.I1, () => Op(new Int64Constant(_env.AtomCell(ins.I0))));
                     return false;
                 case Opcode.PutNil:
-                    RegStore(ins.I0, () => Op(new Int64Constant(Cell.Atom(AtomTable.EmptyListId).Data)));
+                    RegStore(ins.I0, () => Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId))));
                     return false;
                 case Opcode.GetInteger:
                     RegLoad(ins.I1); Op(new LocalSet(LC0)); Deref();
@@ -1222,11 +1309,11 @@ public static class WasmPredicateCompiler
                     return false;
                 case Opcode.GetAtom:
                     RegLoad(ins.I1); Op(new LocalSet(LC0)); Deref();
-                    UnifyC0WithConst(Cell.Atom(ins.I0).Data, ins.Pc);
+                    UnifyC0WithConst(_env.AtomCell(ins.I0), ins.Pc);
                     return false;
                 case Opcode.GetNil:
                     RegLoad(ins.I0); Op(new LocalSet(LC0)); Deref();
-                    UnifyC0WithConst(Cell.Atom(AtomTable.EmptyListId).Data, ins.Pc);
+                    UnifyC0WithConst(_env.AtomCell(AtomTable.EmptyListId), ins.Pc);
                     return false;
                 case Opcode.AIntCmp: EmitAIntCmp(ins); return false;
                 case Opcode.Meta: return false;   // metadata; nothing runs
@@ -1263,25 +1350,25 @@ public static class WasmPredicateCompiler
                     return false;
                 case Opcode.UnifyAtom:
                 case Opcode.UnifyConstant:
-                    EmitUnifyConst(Cell.Atom(ins.I0).Data, ins.Pc); return false;
+                    EmitUnifyConst(_env.AtomCell(ins.I0), ins.Pc); return false;
                 case Opcode.UnifyInteger:
                     EmitUnifyConst(Cell.Int(ins.I0).Data, ins.Pc); return false;
                 case Opcode.UnifyNil:
-                    EmitUnifyConst(Cell.Atom(AtomTable.EmptyListId).Data, ins.Pc); return false;
+                    EmitUnifyConst(_env.AtomCell(AtomTable.EmptyListId), ins.Pc); return false;
                 case Opcode.UnifyVoid: EmitUnifyVoid(ins.I0, ins.Pc); return false;
                 case Opcode.UnifyStructure: EmitUnifyStructure(ins.I0, ins.Pc); return false;
                 case Opcode.UnifyList: EmitUnifyList(ins.Pc); return false;
                 case Opcode.GetConstantA1:
                     RegLoad(0); Op(new LocalSet(LC0)); Deref();
-                    UnifyC0WithConst(Cell.Atom(ins.I0).Data, ins.Pc); return false;
+                    UnifyC0WithConst(_env.AtomCell(ins.I0), ins.Pc); return false;
                 case Opcode.GetConstantA2:
                     RegLoad(1); Op(new LocalSet(LC0)); Deref();
-                    UnifyC0WithConst(Cell.Atom(ins.I0).Data, ins.Pc); return false;
+                    UnifyC0WithConst(_env.AtomCell(ins.I0), ins.Pc); return false;
                 case Opcode.PutConstantA1:
-                    RegStore(0, () => Op(new Int64Constant(Cell.Atom(ins.I0).Data)));
+                    RegStore(0, () => Op(new Int64Constant(_env.AtomCell(ins.I0))));
                     return false;
                 case Opcode.PutConstantA2:
-                    RegStore(1, () => Op(new Int64Constant(Cell.Atom(ins.I0).Data)));
+                    RegStore(1, () => Op(new Int64Constant(_env.AtomCell(ins.I0))));
                     return false;
                 case Opcode.DeallocateExecute:
                     EmitFlagsCheck(ins.Pc);
@@ -1328,9 +1415,9 @@ public static class WasmPredicateCompiler
                         EmitInlineCompare(ins.Pc, cbNeg, () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
-                                (uint)ins.I0 | ((long)ins.I1 << 32))));
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
                             StoreSlot64(WasmAbi.Cursor,
-                                () => Op(new Int64Constant(ins.Pc + 9)));
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
                             EmitReturn(WasmVerdict.BuiltinRequest);
                         });
                         return false;
@@ -1338,9 +1425,9 @@ public static class WasmPredicateCompiler
                     EmitFlagsCheck(ins.Pc);
                     if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
                     StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
-                        (uint)ins.I0 | ((long)ins.I1 << 32))));
+                        _env.EncodeBuiltinId(ins.I0, ins.I1))));
                     StoreSlot64(WasmAbi.Cursor,
-                        () => Op(new Int64Constant(ins.Pc + 9)));
+                        () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
                 case Opcode.ExecuteBuiltin:
@@ -1355,7 +1442,7 @@ public static class WasmPredicateCompiler
                         EmitInlineCompare(ins.Pc, ebNeg, () =>
                         {
                             StoreSlot64(WasmAbi.BuiltinId,
-                                () => Op(new Int64Constant((uint)ins.I0)));
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
                             StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                             EmitReturn(WasmVerdict.BuiltinRequest);
                         });
@@ -1364,7 +1451,7 @@ public static class WasmPredicateCompiler
                     }
                     EmitFlagsCheck(ins.Pc);
                     if (!_env.IsDirectBuiltin(ins.I0)) { EmitDeopt(ins.Pc); return true; }
-                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant((uint)ins.I0)));
+                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
                     StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
@@ -1424,39 +1511,26 @@ public static class WasmPredicateCompiler
         /// marker, a bytecode address) returns the Success verdict.</summary>
         private void EmitProceedReturn()
         {
-            if (_proceedTargets.Count == 0)
-            {
-                EmitReturn(WasmVerdict.Success);
-                return;
-            }
-            // Chain only the targets that resume in THIS partition (a
-            // recursive call's return, the hot case, is one of these); a
-            // miss hands the full chain to the resolver via the PROCEED
-            // pseudo-cursor. Chaining every group target at every Proceed
-            // site is what made the single-function module's size quadratic.
-            var local = new List<(int Marker, int Addr)>();
-            foreach (var t in _proceedTargets)
-            {
-                int cursor = CursorOf(t.Addr);
-                if (cursor >= _curPart.Lo && cursor < _curPart.Hi) local.Add(t);
-            }
-            if (local.Count > 0)
-            {
-                Op(new LocalGet(LH));
-                LoadSlot32(WasmAbi.HeapWatermark);
-                Op(new Int32LessThanSigned());
-                OpenIf();
-                foreach (var (marker, addr) in local)
-                {
-                    Op(new LocalGet(LCP));
-                    Op(new Int32Constant(marker));
-                    Op(new Int32Equal());
-                    OpenIf();
-                    GoTo(addr);
-                    CloseNested();
-                }
-                CloseNested();
-            }
+            // No shortcut for a module without return sites of its own: the
+            // table can still resolve a Cp to ANOTHER module, and a plain
+            // Success here would send every such return out through the host.
+            //
+            // The watermark guard comes FIRST and still decides everything: at
+            // or past it the module owes the host a collection, so it declines
+            // to resume here no matter what the table says.
+            //
+            // Past the guard it is one indexed read. Note this resolves MORE
+            // than the old chain did: that chain only knew the return sites of
+            // in-group calls, while the table knows every re-entry point of the
+            // module, so a Cp that lands on one of them now resumes in wasm
+            // instead of going out and coming back. Same control flow, fewer
+            // crossings.
+            Op(new LocalGet(LH));
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            EmitResumeProbe(LCP);
+            CloseNested();
             Op(new Int32Constant(_proceedCase));
             Op(new LocalSet(LCur));
             EmitContinueReturn();
@@ -1478,9 +1552,9 @@ public static class WasmPredicateCompiler
                     EmitInlineCompare(ins.Pc, cNeg, () =>
                     {
                         StoreSlot64(WasmAbi.BuiltinId,
-                            () => Op(new Int64Constant(builtinId)));
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
                         StoreSlot64(WasmAbi.Cursor,
-                            () => Op(new Int64Constant(ins.Pc + 9)));
+                            () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
                         EmitReturn(WasmVerdict.BuiltinRequest);
                     });
                     return false;               // falls through to the next goal
@@ -1489,9 +1563,9 @@ public static class WasmPredicateCompiler
                 // cursor in the mailbox and step out (env trimming skipped;
                 // a CP the builtin pushes just sits a little higher).
                 EmitFlagsCheck(ins.Pc);
-                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(builtinId)));
+                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
                 StoreSlot64(WasmAbi.Cursor,
-                    () => Op(new Int64Constant(ins.Pc + 9)));
+                    () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return true;
             }
@@ -1505,11 +1579,15 @@ public static class WasmPredicateCompiler
             Op(new LocalSet(LCP));
             if (_entryByFid.TryGetValue(callee, out int calleeEntry))
             {
-                // In-group non-tail call: jump straight to the callee's
-                // entry; its proceed will match the Cp marker just staged
-                // and jump back to our resume cursor -- no host round-trip.
-                // The watermark guard gives the interpreter its GC boundary
-                // exactly where the marker path would have taken it.
+                // In-group non-tail call: jump straight to the entry; the
+                // proceed will match the Cp marker just staged and jump back
+                // to our resume cursor -- no host round-trip. The watermark
+                // guard gives the interpreter its GC boundary exactly where
+                // the marker path would have taken it. The jump never reaches
+                // code the table has left behind: when a member leaves its
+                // module (eviction, takeover) the registry evicts its baked
+                // callers with it (WasmModuleRegistry), so this member is
+                // gone before the callee is.
                 Op(new LocalGet(LH));
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32GreaterThanOrEqualSigned());
@@ -1519,10 +1597,38 @@ public static class WasmPredicateCompiler
                 GoTo(calleeEntry);
                 return true;
             }
-            StoreSlot64(WasmAbi.Pc,
-                () => Op(new Int64Constant(_env.EncodeCallTarget(callee))));
-            EmitReturn(WasmVerdict.SuccessTailCall);
+            // Not in this module. Try to reach it through the table before
+            // giving up to the host: EncodeCallTarget is marker(callee, 0),
+            // which is exactly the callee's fresh-entry row.
+            EmitForeignCallOrExit(callee, ins.Pc);
             return true;
+        }
+
+        /// <summary>A call whose callee lives in ANOTHER module: resolve it
+        /// through the resume table and tail-call it in wasm, and only fall
+        /// back to the host verdict when it cannot be reached from here (a
+        /// module this thread has not registered, or one that is not on the
+        /// tier at all).
+        ///
+        /// <para>The watermark guard comes first for the same reason the
+        /// in-group call has one: at or past it the host owes a collection,
+        /// and staying inside wasm would skip the boundary where it happens.
+        /// </para></summary>
+        private void EmitForeignCallOrExit(int callee, int pc)
+        {
+            int marker = _env.EncodeCallTarget(callee);
+            Op(new LocalGet(LH));
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            {
+                Op(new Int32Constant(marker));
+                Op(new LocalSet(LT1));
+                EmitResumeProbe(LT1);
+            }
+            CloseNested();
+            StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(marker)));
+            EmitReturn(WasmVerdict.SuccessTailCall);
         }
 
         /// <summary>=/2 open-coded: X0 against X1 through the same two-cell
@@ -1604,7 +1710,7 @@ public static class WasmPredicateCompiler
                     EmitInlineCompare(pc, tNeg, () =>
                     {
                         StoreSlot64(WasmAbi.BuiltinId,
-                            () => Op(new Int64Constant(builtinId)));
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
                         StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                         EmitReturn(WasmVerdict.BuiltinRequest);
                     });
@@ -1613,16 +1719,16 @@ public static class WasmPredicateCompiler
                 }
                 // A builtin in tail position: run it, then proceed. Cursor -1
                 // is that convention on the wire.
-                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(builtinId)));
+                StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
                 StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return;
             }
             if (_entryByFid.TryGetValue(callee, out int calleeEntry))
             {
-                // An in-group tail call (self included): back to the
-                // dispatch at the callee's entry, unless the heap crossed
-                // the watermark (the engine collects there).
+                // An in-group tail call: back to the dispatch at the entry,
+                // unless the heap crossed the watermark (the engine collects
+                // there). Baked for the same reason as EmitCall.
                 Op(new LocalGet(LH));
                 LoadSlot32(WasmAbi.HeapWatermark);
                 Op(new Int32GreaterThanOrEqualSigned());
@@ -1638,9 +1744,7 @@ public static class WasmPredicateCompiler
                 return;
             }
             StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
-            StoreSlot64(WasmAbi.Pc,
-                () => Op(new Int64Constant(_env.EncodeCallTarget(callee))));
-            EmitReturn(WasmVerdict.SuccessTailCall);
+            EmitForeignCallOrExit(callee, pc);
         }
 
         // ---- dispatch ----
@@ -1714,7 +1818,7 @@ public static class WasmPredicateCompiler
             for (int k = 0; k < table.Count; k++)
             {
                 Op(new LocalGet(LC0));
-                Op(new Int64Constant(Cell.Atom(table.Keys[k]).Data));
+                Op(new Int64Constant(_env.AtomCell(table.Keys[k])));
                 Op(new Int64Equal());
                 OpenIf();
                 GoTo(b + table.Values[k]);
@@ -1743,7 +1847,7 @@ public static class WasmPredicateCompiler
             for (int k = 0; k < table.Count; k++)
             {
                 CellLoadDyn(LHeapB, LT1);
-                Op(new Int64Constant(Cell.Functor(table.Keys[k]).Data));
+                Op(new Int64Constant(_env.FunctorCell(table.Keys[k])));
                 Op(new Int64Equal());
                 OpenIf();
                 GoTo(b + table.Values[k]);
@@ -1855,7 +1959,7 @@ public static class WasmPredicateCompiler
             {
                 Op(new LocalGet(LC0));
                 Op(new Int64Constant(atoms
-                    ? Cell.Atom(table.Keys[k]).Data
+                    ? _env.AtomCell(table.Keys[k])
                     : Cell.Int(table.Keys[k]).Data));
                 Op(new Int64Equal());
                 OpenIf();
@@ -1904,7 +2008,7 @@ public static class WasmPredicateCompiler
             for (int k = 0; k < table.Count; k++)
             {
                 CellLoadDyn(LHeapB, LT1);
-                Op(new Int64Constant(Cell.Functor(table.Keys[k]).Data));
+                Op(new Int64Constant(_env.FunctorCell(table.Keys[k])));
                 Op(new Int64Equal());
                 OpenIf();
                 GoTo(b + table.Values[k]);
@@ -2589,7 +2693,7 @@ public static class WasmPredicateCompiler
 
         private void EmitGetStructure(int functorId, int reg, int pc)
         {
-            long functorCell = Cell.Functor(functorId).Data;
+            long functorCell = _env.FunctorCell(functorId);
             RegLoad(reg); Op(new LocalSet(LC0)); Deref();
             TagOfC0(); Op(new LocalSet(LT0));
 
@@ -2695,7 +2799,7 @@ public static class WasmPredicateCompiler
         {
             EmitHeapGuard(pc);
             CellStoreDyn(LHeapB, LH, 0,
-                () => Op(new Int64Constant(Cell.Functor(functorId).Data)));
+                () => Op(new Int64Constant(_env.FunctorCell(functorId))));
             RegStore(reg, () => PushTaggedH(Tag.Str));
             Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
             Op(new LocalSet(LH));
@@ -2819,7 +2923,7 @@ public static class WasmPredicateCompiler
         /// <summary>ADR-019's last-argument nested build / match.</summary>
         private void EmitUnifyStructure(int functorId, int pc)
         {
-            long functorCell = Cell.Functor(functorId).Data;
+            long functorCell = _env.FunctorCell(functorId);
             Op(new LocalGet(LMode));
             OpenIf();
             {
@@ -3316,7 +3420,7 @@ public static class WasmPredicateCompiler
             if (first.Op == Opcode.PutStructureR)
             {
                 int fid = first.I0, reg = first.I1 & 0xFFFFFF, argc = first.I1 >> 24;
-                StoreConst(0, Cell.Functor(fid).Data);
+                StoreConst(0, _env.FunctorCell(fid));
                 actions.Add(() => RegStore(reg, () => PushTagged(0, Tag.Str)));
                 writePos = 1; total = argc + 1;
                 frames.Add((0, argc));
@@ -3344,11 +3448,11 @@ public static class WasmPredicateCompiler
                 {
                     case Opcode.UnifyAtom:
                     case Opcode.UnifyConstant:
-                        StoreConst(writePos, Cell.Atom(ins.I0).Data); done = Advance(); break;
+                        StoreConst(writePos, _env.AtomCell(ins.I0)); done = Advance(); break;
                     case Opcode.UnifyInteger:
                         StoreConst(writePos, Cell.Int(ins.I0).Data); done = Advance(); break;
                     case Opcode.UnifyNil:
-                        StoreConst(writePos, Cell.Atom(AtomTable.EmptyListId).Data);
+                        StoreConst(writePos, _env.AtomCell(AtomTable.EmptyListId));
                         done = Advance(); break;
                     case Opcode.UnifyVariableX:
                     {
@@ -3387,7 +3491,7 @@ public static class WasmPredicateCompiler
                     {
                         var (_, arity) = FunctorTable.Lookup(ins.I0);
                         int nested = total;
-                        StoreConst(nested, Cell.Functor(ins.I0).Data);
+                        StoreConst(nested, _env.FunctorCell(ins.I0));
                         int slotOff = writePos;
                         actions.Add(() => CellStoreDyn(LHeapB, LH, slotOff,
                             () => PushTagged(nested, Tag.Str)));

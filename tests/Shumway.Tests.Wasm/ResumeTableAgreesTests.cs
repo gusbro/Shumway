@@ -1,0 +1,145 @@
+using Shumway.Compiler.Wasm;
+using Shumway.Core;
+using Shumway.Embedding;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace Shumway.Tests.Wasm;
+
+/// <summary>The resume table has to say exactly what the host says. Until now a
+/// marker was resolved twice over, by two separately-derived encodings of one
+/// fact: the host walked a dictionary, the module walked a chain of comparisons
+/// baked into its own code. Nothing compared them, so a disagreement had
+/// nowhere to show — it would surface as a wrong jump, far from its cause.
+///
+/// <para>This is the test that makes the single source of truth real rather
+/// than intended.</para></summary>
+public sealed class ResumeTableAgreesTests(ITestOutputHelper o)
+{
+    private const string Corpus = """
+        :- public app/3.
+        :- public rev/2.
+        :- public pick/2.
+        :- public between3/3.
+        app([], L, L).
+        app([H|T], L, [H|R]) :- app(T, L, R).
+        rev([], []).
+        rev([H|T], R) :- rev(T, S), app(S, [H], R).
+        pick([H|_], H).
+        pick([_|T], X) :- pick(T, X).
+        between3(L, H, X) :- L =< H, (X = L ; L1 is L + 1, between3(L1, H, X)).
+        """;
+
+    [Fact]
+    public void EveryRowMatchesWhatTheHostResolves()
+    {
+        var engine = new PrologEngine();
+        engine.IlPromotion.Threshold = 0;
+        engine.ConsultString(Corpus);
+        engine.Query("true.");
+
+        var env = new EngineWasmCompileEnv();
+        var world = new DesktopWasmWorld();
+        var members = new List<WasmGroupMember>();
+        foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
+        {
+            var (aid, _) = FunctorTable.Lookup(pred.FunctorId);
+            string n = AtomTable.GetById(aid)?.Name ?? "";
+            if (n.EndsWith("app") || n.EndsWith("rev") || n.EndsWith("pick")
+                || n.EndsWith("between3"))
+                members.Add(new WasmGroupMember(pred, addr, null));
+        }
+        Assert.True(members.Count >= 4, $"only {members.Count} members");
+
+        int moduleId = world.NextModuleId;
+        var entry = TieredEngine.Install(world, members, env);
+        var addrMap = new Dictionary<int, int>(members.Count);
+        foreach (var m in members) addrMap[m.Predicate.FunctorId] = m.Bias;
+
+        var index = new WasmBuildAddressIndex(addrMap);
+        int checkedRows = 0, freshEntries = 0;
+
+        // Every fresh entry: marker (fid, 0).
+        foreach (var (fid, cursor) in entry.EntryCursorByFid)
+        {
+            int marker = Activation.EncodeResumeMarker(fid, 0);
+            Assert.True(world.ResumeTable.TryGet(marker, out int mod, out int cur),
+                $"no row for the fresh entry of functor {fid}");
+            Assert.Equal(moduleId, mod);
+            Assert.True(world.TryResolve(fid, 0, out WasmTarget host),
+                $"the host cannot resolve the fresh entry of functor {fid}");
+            Assert.Equal(new WasmTarget(mod, cur), host);
+            freshEntries++;
+        }
+
+        // Every other re-entry point, under the functor that owns its address.
+        foreach (var (address, cursor) in entry.CursorByAddress)
+        {
+            int fid = index.OwnerFunctorOf(address);
+            if (fid < 0) continue;
+            int marker = Activation.EncodeResumeMarker(fid, address);
+            Assert.True(world.ResumeTable.TryGet(marker, out int mod, out int cur),
+                $"no row for ({fid}, 0x{address:X})");
+            Assert.Equal(moduleId, mod);
+            Assert.True(world.TryResolve(fid, address, out WasmTarget host),
+                $"the host cannot resolve ({fid}, 0x{address:X})");
+            Assert.Equal(new WasmTarget(mod, cur), host);
+            Assert.Equal(cursor, cur);
+            checkedRows++;
+        }
+
+        o.WriteLine($"{freshEntries} fresh entries + {checkedRows} re-entry points agree");
+        // ANTI-VACUITY: a build with no re-entry points would pass the loop
+        // above without comparing anything.
+        Assert.True(checkedRows > 20, $"only {checkedRows} rows compared");
+    }
+
+    /// <summary>Two worlds of ONE engine share the table and the registry:
+    /// a row says which module owns a marker, and every module of the engine
+    /// reads the same rows. That is the whole mechanism the split needs: a
+    /// module has to be able to discover that a marker is not its own AND
+    /// where it went. A table per world could only ever answer "not mine".</summary>
+    [Fact]
+    public void SiblingWorldsShareOneTableAndSeeEachOther()
+    {
+        using var space = new DesktopWasmSpace();
+        var shared = space.ResumeTable;
+        var a = new DesktopWasmWorld(space);
+        var b = new DesktopWasmWorld(space);
+        Assert.Same(a.ResumeTable, b.ResumeTable);
+        Assert.Same(a.Modules, b.Modules);
+
+        // Rows written through one are visible to the other, tagged with the owner.
+        int m = Activation.EncodeResumeMarker(900_101, 0x11);
+        shared.Set(m, moduleId: 5, cursor: 33);
+        Assert.True(b.ResumeTable.TryGet(m, out int owner, out int cursor));
+        Assert.Equal(5, owner);
+        Assert.Equal(33, cursor);
+    }
+
+    /// <summary>A world with no sibling gets its own table: engines must not
+    /// see each other's rows. Same markers, different code -- addresses belong
+    /// to an engine's code space while the marker pool is global.</summary>
+    [Fact]
+    public void SeparateEnginesDoNotShareRows()
+    {
+        var one = new DesktopWasmWorld();
+        var other = new DesktopWasmWorld();
+        Assert.NotSame(one.ResumeTable, other.ResumeTable);
+
+        int m = Activation.EncodeResumeMarker(900_102, 0x22);
+        one.ResumeTable.Set(m, moduleId: 0, cursor: 7);
+        Assert.False(other.ResumeTable.TryGet(m, out _, out _));
+    }
+
+    /// <summary>The other direction: a marker the build never minted must not
+    /// resolve. Otherwise "not mine" would be indistinguishable from a row that
+    /// happens to be zero, and the module would jump somewhere.</summary>
+    [Fact]
+    public void AForeignMarkerDoesNotResolve()
+    {
+        var world = new DesktopWasmWorld();
+        int stranger = Activation.EncodeResumeMarker(999_001, 0x7777);
+        Assert.False(world.ResumeTable.TryGet(stranger, out _, out _));
+    }
+}

@@ -1,3 +1,5 @@
+using Shumway.Compiler.Wasm;
+using Shumway.Core;
 using Shumway.Embedding;
 using System.Runtime.InteropServices.JavaScript;
 
@@ -200,11 +202,16 @@ internal static partial class WebShumwayApp
 
                 // Packed by the LIBRARIAN, not the linker: a library has no entry
                 // point, so there is nothing to compute reachability from — every
-                // module it brought in is kept.
+                // module it brought in is kept. Under the wasm tier the archive
+                // also carries its predicates as a wasm module, baked here once
+                // (the batch compile the tier would otherwise run on every
+                // visit) and installed when the library loads.
+                bool wasm = RuntimeCaps.SupportsWasmCodegen && !BrowserWasmTier.Disabled;
                 byte[] bytes = Librarian.CreateArchive(compiled
                     .Select(c => new BundleArchiveMember(
                         c.ModuleName + ".shmo", ShmoWriter.ToBytes(c.Object)))
-                    .ToList());
+                    .ToList(),
+                    wasm ? b => WasmBundleTier.Bake(b, stdlib: false) : null);
                 // Written under a TEMPORARY name and moved into place, so what
                 // `library(X)` can see is either the old bundle or the new one
                 // and never half of one — a consult may look while this runs.

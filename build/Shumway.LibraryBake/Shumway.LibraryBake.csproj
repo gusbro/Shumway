@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Build-time tool: compiles and links one of the engine's Prolog
+       libraries into the bundle Shumway.Libraries embeds. In-process over
+       Shumway.Embedding rather than through shumway-link, because the CLIs
+       reference Shumway.Libraries themselves (their executable stubs carry it):
+       the bake has to sit below them in the build graph. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>shumway-librarybake</AssemblyName>
+    <RootNamespace>Shumway.LibraryBake</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\..\src\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
+  </ItemGroup>
+
+</Project>
