@@ -45,6 +45,11 @@ namespace Shumway.Embedding;
 ///                   each seed      : { name:string, arity:uint32,
 ///                                      clauseCount:uint32,
 ///                                      each clause: byteCount:uint32 + bytes }
+///                 ... native, operator, export-qualification trailers ...
+///                 clauseTermCount  : uint32   (TermCodec-encoded raw static
+///                       clauses, for clause/2 + listing/1 on a source-less
+///                       load; 0 under --strip)
+///                   each clause    : byteCount:uint32 + bytes
 ///   then the bundle-level trailers:
 ///                 foreignAsmCount  : uint32   (filename-only;
 ///                       LoadBundle resolves next to the .shum / the exe)

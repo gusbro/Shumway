@@ -208,7 +208,8 @@ public sealed class BundleEntry
         bool isExportQualified = false,
         IReadOnlyList<PredicateRef>? exports = null,
         IReadOnlyList<ShmoImportEntry>? imports = null,
-        string? dialect = null)
+        string? dialect = null,
+        IReadOnlyList<byte[]>? clauseTerms = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -226,7 +227,15 @@ public sealed class BundleEntry
         Exports = exports ?? Array.Empty<PredicateRef>();
         Imports = imports ?? Array.Empty<ShmoImportEntry>();
         Dialect = dialect;
+        ClauseTerms = clauseTerms ?? Array.Empty<byte[]>();
     }
+
+    /// <summary>The module's raw static clauses (<see cref="TermCodec"/>
+    /// blobs, the <see cref="ShmoObject.ClauseTerms"/> of its object), so a
+    /// source-less load answers <c>clause/2</c> and <c>listing/1</c> exactly
+    /// as the consult of the same source does. Empty under <c>--strip</c>:
+    /// that is the one way to ship a module without its clauses.</summary>
+    public IReadOnlyList<byte[]> ClauseTerms { get; }
 
     /// <summary>ADR-040 — the source dialect this module was compiled under
     /// (<c>"swi"</c>, …), or null for Shumway/ISO. Restored onto the runtime

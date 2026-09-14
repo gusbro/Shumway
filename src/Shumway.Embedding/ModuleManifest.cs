@@ -25,7 +25,24 @@ namespace Shumway.Embedding;
 public sealed class ModuleManifest
 {
     public string Name { get; }
+    /// <summary>The static clauses the query setup compiles.</summary>
     public List<Clause> Clauses { get; }
+    /// <summary>A bundle's raw static clauses, for <c>clause/2</c> and
+    /// <c>listing/1</c> only: the entry's bytecode already runs them, so
+    /// they must never join <see cref="Clauses"/> (that would recompile the
+    /// module over its precompiled form). Read through
+    /// <see cref="InspectableClauses"/>.</summary>
+    public List<Clause> ShippedClauses { get; }
+    /// <summary>Every clause an inspection builtin may show: the compiled
+    /// ones, then the shipped ones.</summary>
+    public IEnumerable<Clause> InspectableClauses
+    {
+        get
+        {
+            foreach (var c in Clauses) yield return c;
+            foreach (var c in ShippedClauses) yield return c;
+        }
+    }
     public HashSet<int> PublicFunctors { get; }
 
     /// <summary>ADR-040 — the source dialect this module was loaded as
@@ -90,6 +107,7 @@ public sealed class ModuleManifest
         ArgumentNullException.ThrowIfNull(name);
         Name = name;
         Clauses = new List<Clause>();
+        ShippedClauses = new List<Clause>();
         PublicFunctors = new HashSet<int>();
         ExportFunctors = new HashSet<int>();
         Imports = new Dictionary<int, string>();

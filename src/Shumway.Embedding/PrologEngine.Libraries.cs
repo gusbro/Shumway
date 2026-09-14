@@ -1262,7 +1262,7 @@ public sealed partial class PrologEngine
     internal IEnumerable<Clause> StaticClausesInModule(string module, int fid)
     {
         if (!_modules.TryGetValue(module, out ModuleManifest? manifest)) yield break;
-        foreach (var c in manifest.Clauses)
+        foreach (var c in manifest.InspectableClauses)
         {
             if (c.Kind == Shumway.Compiler.Ast.ClauseKind.Directive) continue;
             if (ConsultPipeline.HeadFunctorIdOf(c) == fid) yield return c;

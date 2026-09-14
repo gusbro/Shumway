@@ -234,7 +234,8 @@ internal sealed class BundleLoader
                     isExportQualified: shmo.IsExportQualified,
                     exports: shmo.Exports,
                     imports: shmo.Imports,
-                    dialect: shmo.Dialect));
+                    dialect: shmo.Dialect,
+                    clauseTerms: shmo.ClauseTerms));
             }
             effectiveEntries = combined;
         }
@@ -1411,6 +1412,14 @@ internal sealed class BundleLoader
                 localSet.Add(fid);
             }
         }
+
+        // The raw static clauses back clause/2 and listing/1 exactly as
+        // the consult of the same source would (privacy is judged at
+        // clause/2 time). Shipped, not compiled: the entry's bytecode is
+        // what runs. Never for the prelude: its predicates are builtins.
+        if (!isPrelude)
+            foreach (var encoded in entry.ClauseTerms)
+                manifest.ShippedClauses.Add(TermCodec.DecodeClause(encoded));
 
         // seed _dynamicClauses with the source-declared
         // clauses of every `:- dynamic foo/N.` predicate. Mirrors what

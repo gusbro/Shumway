@@ -1063,6 +1063,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         {
             var copy = new ModuleManifest(name);
             copy.Clauses.AddRange(manifest.Clauses);
+            copy.ShippedClauses.AddRange(manifest.ShippedClauses);
             copy.PublicFunctors.UnionWith(manifest.PublicFunctors);
             copy.DynamicFunctors.UnionWith(manifest.DynamicFunctors);
             sub._modules[name] = copy;

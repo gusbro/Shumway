@@ -915,7 +915,11 @@ public static class ShmoLinker
                     isExportQualified: obj.IsExportQualified,
                     exports: obj.Exports,
                     imports: obj.Imports,
-                    dialect: obj.Dialect));
+                    dialect: obj.Dialect,
+                    // Only a source-less entry needs its raw clauses (a
+                    // source-carrying one is re-consulted); --strip drops them.
+                    clauseTerms: config.StripSource || entrySource.Length > 0
+                        ? null : obj.ClauseTerms));
             }
             // Bake the precompiled prelude so a bare-loaded engine
             // (PrologEngine.FromBundle / the generated --exe) gets it without
