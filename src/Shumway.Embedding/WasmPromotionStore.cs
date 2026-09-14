@@ -171,15 +171,15 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public int RelinkEvictions { get; private set; }
 
     /// <summary>A wasm module bakes its members' linked ADDRESSES: deopt
-    /// pcs, resume markers, BP encodings. ANY consult relinks the whole
-    /// static program and moves every address (measured: two plain facts
-    /// shifted all ~530 prelude predicates), after which a stale build
-    /// address reaching the interpreter's SetPc runs what is now different
-    /// code: "bytecode corruption" crashes. The bytecode itself only MOVES
-    /// (hashes equal), so the builds stay valid: this refreshes the worlds'
-    /// live-address maps (the boundary translation does the rest) and
-    /// evicts only a delegate whose predicate was REDEFINED or dropped,
-    /// which falls back to bytecode until re-promoted.</summary>
+    /// pcs, resume markers, BP encodings, and a stale one reaching the
+    /// interpreter's SetPc runs what is now different code: "bytecode
+    /// corruption" crashes. A relink moves an address when the space below
+    /// it closes up — a predicate that disappeared, and in time a deliberate
+    /// compaction — while what stays keeps its address. The bytecode itself
+    /// only MOVES (hashes equal), so the builds stay valid: this refreshes
+    /// the worlds' live-address maps (the boundary translation does the
+    /// rest) and evicts only a delegate whose predicate was REDEFINED or
+    /// dropped, which falls back to bytecode until re-promoted.</summary>
     public int ReconcileWithLink(PrologEngine engine)
     {
         if (_installed.Count == 0) return 0;
