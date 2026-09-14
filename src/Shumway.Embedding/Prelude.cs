@@ -316,11 +316,13 @@ internal static class Prelude
         ifthenelse(P, Q, R) :- ( P -> Q ; R ).
 
         %! call_nth(:Goal, ?N) | Control | True when Goal has an Nth solution: with N bound, commits to that solution; with N unbound, enumerates solutions numbering each.
+        % N is judged BEFORE Goal: a count of zero asks for no solution at
+        % all, so call_nth(1, 0) and call_nth(Var, 0) fail rather than
+        % reporting the goal (post-N288 p.p.9.3 a and b hold only when Nth
+        % is not zero), and a negative count is a domain error before the
+        % goal is looked at.
         call_nth(Goal, N) :-
-            (   var(Goal) -> throw(error(instantiation_error, call_nth/2))
-            ;   \+ callable(Goal) ->
-                throw(error(type_error(callable, Goal), call_nth/2))
-            ;   var(N) -> true
+            (   var(N) -> true
             ;   integer(N) ->
                 (   N < 0 ->
                     throw(error(domain_error(not_less_than_zero, N), call_nth/2))
@@ -329,6 +331,9 @@ internal static class Prelude
             ;   throw(error(type_error(integer, N), call_nth/2))
             ),
             (   integer(N), N =:= 0 -> fail
+            ;   var(Goal) -> throw(error(instantiation_error, call_nth/2))
+            ;   \+ callable(Goal) ->
+                throw(error(type_error(callable, Goal), call_nth/2))
             ;   gensym('$call_nth', Key),
                 set_flag(Key, 0),
                 call(Goal),
