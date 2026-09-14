@@ -16,10 +16,16 @@
   </PropertyGroup>
 
   <!-- Ordering and restore only (ReferenceOutputAssembly=false): the bake
-       tool is a net10 executable whatever framework this assembly targets. -->
+       tool is a net10 executable whatever framework this assembly targets.
+       TargetFramework is UNDEFINED rather than set: a global property set of
+       its own would make this a second project instance of the tool, and the
+       solution (which builds it with no TargetFramework) would compile it at
+       the same time into the same obj. SkipGetTargetFrameworkProperties keeps
+       the net48 inner build from negotiating a framework with a net10 tool. -->
   <ItemGroup>
     <ProjectReference Include="..\..\build\Shumway.LibraryBake\Shumway.LibraryBake.csproj"
-                      ReferenceOutputAssembly="false" Private="false" SetTargetFramework="TargetFramework=net10.0" />
+                      ReferenceOutputAssembly="false" Private="false"
+                      SkipGetTargetFrameworkProperties="true" UndefineProperties="TargetFramework" />
   </ItemGroup>
 
   <!-- With the wasm tier (Shumway.Web, -p:ShumwayWasmTier=true) each bundle
@@ -56,10 +62,12 @@
        ever runs) still gets fresh bundles. The tool is built inside that
        instance, in a target of its own, because Inputs are read when a
        target starts and the bake's up-to-date check has to see the tool
-       and the engine as they are AFTER that build. The instance's marker
-       property must not reach the tool: global properties flow down, and
-       the tool's dependencies would build a second time, as new
-       instances, racing the regular build for the same output files. -->
+       and the engine as they are AFTER that build. NO global property of
+       this instance may reach the tool, the marker and TargetFramework
+       alike: global properties flow down, a different set is a different
+       project instance, and two instances of one project compile into the
+       same obj at once. That is a build failure under -m, and it was one
+       (CS2012, the tool's dll locked by the other compile). -->
   <Target Name="RequestLibraryBundles"
           BeforeTargets="PrepareForBuild"
           Condition="'$(TargetFramework)' != ''">
@@ -69,8 +77,8 @@
 
   <Target Name="BuildLibraryBakeTool">
     <MSBuild Projects="..\..\build\Shumway.LibraryBake\Shumway.LibraryBake.csproj"
-             Targets="Build" Properties="TargetFramework=net10.0"
-             RemoveProperties="ShumwayLibraryBakeInstance" />
+             Targets="Build"
+             RemoveProperties="ShumwayLibraryBakeInstance;TargetFramework" />
   </Target>
 
   <Target Name="BakeLibraryBundles"
