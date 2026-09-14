@@ -259,6 +259,33 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         return BatchPromoter(candidates);
     }
 
+    /// <summary>Every static predicate of the linked program through
+    /// <see cref="Promoter"/>, one module each: the per-predicate twin of
+    /// <see cref="PromoteAllStatics"/>, for measuring the two grains against
+    /// each other. Returns how many were newly installed, or -1 without a
+    /// promoter or a linked program.</summary>
+    public int PromoteAllStaticsIndividually(PrologEngine engine)
+    {
+        if (Promoter is null) return -1;
+        if (engine._staticLink is null) engine.Query("true.");
+        var link = engine._staticLink;
+        if (link is null) return -1;
+        var already = new HashSet<int>(ilStore.PromotedFunctorIds());
+        int installed = 0;
+        foreach (var (addr, pred) in link.PredicatesByAddress)
+        {
+            int fid = pred.FunctorId;
+            if (_unpromotable.Contains(fid) || already.Contains(fid)) continue;
+            if (IlPromotionStore.IsExcludedFromPromotion(fid)) continue;
+            var del = Promoter(pred, addr);
+            if (del is null) { _unpromotable.Add(fid); continue; }
+            ilStore.RegisterBoundDelegate(fid, del);
+            NoteInstalled(fid, addr, pred);
+            installed++;
+        }
+        return installed;
+    }
+
     private readonly Dictionary<int, int> _counters = new();
     private readonly HashSet<int> _unpromotable = new();
 

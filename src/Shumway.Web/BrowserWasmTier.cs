@@ -77,6 +77,12 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 
     public int ModuleCount => _table.ModuleCount;
 
+    /// <summary>Rows in the resume table (markers it can answer for).</summary>
+    public int ResumeRows => _table.Length;
+
+    /// <summary>Wasm bytes handed to the browser, all modules.</summary>
+    public long ModuleBytes { get; private set; }
+
     public IReadOnlyList<int> InstallGroup(byte[] module,
         IReadOnlyDictionary<int, int> entryCursorByFid,
         IReadOnlyDictionary<int, int> cursorByAddress,
@@ -112,6 +118,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         if (m.Id != _registrations.Count)
             throw new InvalidOperationException("module id out of step with registrations");
         _registrations.Add(new Registration(pinned, index));
+        ModuleBytes += pinned.Length;
         return displaced;
     }
 
@@ -384,6 +391,8 @@ internal static class BrowserWasmTier
     private static BrowserWasmWorld? _world;
 
     internal static int ModuleCount() => _world?.ModuleCount ?? 0;
+    internal static int ResumeRows() => _world?.ResumeRows ?? 0;
+    internal static long ModuleBytes() => _world?.ModuleBytes ?? 0;
 
     /// <summary>Attaches the wasm promotion store to an engine. No-op when
     /// the capability is off.</summary>
@@ -908,6 +917,141 @@ internal static partial class WebShumwayApp
                 {
                     double geo = Math.Exp(speedups.Sum(Math.Log) / speedups.Count);
                     report.Append($"geomean over {speedups.Count}: {geo:F1}x\n");
+                }
+            }
+            catch (Exception ex)
+            {
+                report.Append("STOPPED: ").Append(ex.GetType().Name)
+                      .Append(": ").Append(ex.Message).Append('\n')
+                      .Append(ex.StackTrace).Append('\n');
+            }
+            return report.ToString();
+        }).ConfigureAwait(false);
+
+    /// <summary>The boards.pl shape: clpfd labeling, where the tier has to
+    /// carry a library of hundreds of predicates besides the user's own.
+    /// </summary>
+    private const string GrainCorpus = """
+        :- use_module(library(clpfd)).
+        qn(N, Qs) :- length(Qs, N), Qs ins 1..N, all_distinct(Qs), qdiag(Qs).
+        qdiag([]).  qdiag([Q|Qs]) :- qoff(Q, Qs, 1), qdiag(Qs).
+        qoff(_, [], _).
+        qoff(Q, [R|Rs], D) :- Q + D #\= R, R + D #\= Q, D1 is D + 1, qoff(Q, Rs, D1).
+        qsolve(N, Qs) :- qn(N, Qs), labeling([ff], Qs), !.
+        """;
+
+    private sealed record GrainProgram(string Name, string Source, string Goal);
+
+    private static readonly GrainProgram[] GrainPrograms =
+    {
+        new("nrev 200 x5", TierProbeCorpus,
+            "range(1, 200, L), nrev(L, _), nrev(L, _), nrev(L, _), nrev(L, _), nrev(L, _)."),
+        new("tak 18,12,6", TierProbeCorpus, "tak(18, 12, 6, _)."),
+        new("zebra x10", ZebraSource, "zbench(10)."),
+    };
+
+    private static GrainProgram QueensProgram(int n)
+        => new($"queens {n} (clpfd)", GrainCorpus, $"qsolve({n}, _).");
+
+    /// <summary>The grain measurement: the same programs under the batch
+    /// mode (one module per consult) and the lazy mode (one module per
+    /// promoted predicate), against Tier-0. What it answers is whether N
+    /// small modules cost anything at run time -- hops, host switches,
+    /// deopts, the timings -- and what promoting one at a time costs in
+    /// compile and registration against the batch, on the same program.
+    /// </summary>
+    [JSExport]
+    internal static async Task<string> WasmGrainProbe(int rounds, int queens, string only)
+        => await Task.Run(() =>
+        {
+            var report = new StringBuilder();
+            rounds = Math.Max(1, rounds);
+            try
+            {
+                var programs = queens > 0
+                    ? GrainPrograms.Append(QueensProgram(queens)).ToArray()
+                    : GrainPrograms;
+                foreach (var prog in programs)
+                {
+                    // only = "<program substring>/<mode>" narrows the matrix
+                    // (a hang hunt wants one cell, not the whole grid).
+                    string[] sel = only.Split('/');
+                    if (sel[0].Length > 0 && !prog.Name.Contains(sel[0])) continue;
+                    WriteToPage($"[grain] {prog.Name}\n");
+                    report.Append($"== {prog.Name}: {prog.Goal}\n");
+                    double tier0 = 0;
+                    foreach (string mode in new[] { "tier0", "batch", "eager", "lazy", "bbatch", "beager" })
+                    {
+                        if (sel.Length > 1 && sel[1].Length > 0 && mode != sel[1]) continue;
+                        var engine = new PrologEngine();
+                        engine.IlPromotion.Threshold = 0;
+                        WasmTierDelegate.ResetDiag();
+                        BrowserWasmTier.DiagCompileTicks = 0;
+                        BrowserWasmTier.DiagCompileBuilds = 0;
+                        BrowserWasmWorld.DiagRegisterTicks = 0;
+                        long t0 = Stopwatch.GetTimestamp();
+                        if (mode != "tier0")
+                        {
+                            BrowserWasmTier.Attach(engine, threshold: 1, batch: true);
+                            if (engine.IlPromotion.Wasm is null)
+                                return "wasm tier NOT attached: the capability is off\n";
+                            // The b* modes start with the prelude as ONE module,
+                            // the way a page boots from the bake: the grain
+                            // question is then about the USER's predicates.
+                            if (mode is "bbatch" or "beager")
+                                engine.IlPromotion.Wasm.CompileAllTick(engine);
+                            engine.IlPromotion.Wasm.CompileAllOnConsult = mode is "batch" or "bbatch";
+                        }
+                        engine.ConsultString(prog.Source);
+                        // The batch compiles at the boundary the page ticks;
+                        // eager does the same set one module per predicate;
+                        // the lazy mode compiles inside the first run.
+                        int batched = mode switch
+                        {
+                            "batch" or "bbatch" => engine.IlPromotion.Wasm!.CompileAllTick(engine),
+                            "eager" or "beager" => engine.IlPromotion.Wasm!.PromoteAllStaticsIndividually(engine),
+                            _ => 0,
+                        };
+                        double consultMs = (Stopwatch.GetTimestamp() - t0) * 1000.0
+                                         / Stopwatch.Frequency;
+                        var first = Stopwatch.StartNew();
+                        bool ok = engine.Query(prog.Goal).Success;
+                        if (!ok)
+                        {
+                            report.Append($"  {mode}: FAILED {prog.Goal}\n");
+                            continue;
+                        }
+                        first.Stop();
+                        double compileMs = BrowserWasmTier.DiagCompileTicks * 1000.0
+                                         / Stopwatch.Frequency;
+                        double registerMs = BrowserWasmWorld.DiagRegisterTicks * 1000.0
+                                          / Stopwatch.Frequency;
+                        int builds = BrowserWasmTier.DiagCompileBuilds;
+                        int promoted = engine.IlPromotion.PromotedFunctorIds().Count();
+
+                        WasmTierDelegate.ResetDiag();
+                        double best = BenchMedian(engine, prog.Goal, rounds);
+                        if (mode == "tier0") tier0 = best;
+                        string line = mode == "tier0"
+                            ? $"  tier0: {best:F1} ms (first run {first.Elapsed.TotalMilliseconds:F0} ms)"
+                            : $"  {mode}: {best:F1} ms, {tier0 / best:F1}x"
+                              + $" (first run {first.Elapsed.TotalMilliseconds:F0} ms;"
+                              + $" consult {consultMs:F0} ms"
+                              + (mode is "batch" or "eager" or "bbatch" or "beager" ? $" incl. {batched} batched" : "") + ")\n"
+                              + $"    promoted={promoted} modules={BrowserWasmTier.ModuleCount()}"
+                              + $" rows={BrowserWasmTier.ResumeRows()}"
+                              + $" bytes={BrowserWasmTier.ModuleBytes():N0}"
+                              + $" builds={builds} compile={compileMs:F0} ms register={registerMs:F0} ms\n"
+                              + $"    per run: chains={WasmTierDelegate.DiagEntries}"
+                              + $" hops={WasmTierDelegate.DiagInWasmHops}"
+                              + $" switches={WasmTierDelegate.DiagSwitches}"
+                              + $" foreignExits={WasmTierDelegate.DiagForeignExits}"
+                              + $" deopts={WasmTierDelegate.DiagDeopts}"
+                              + $" builtinExits={WasmTierDelegate.DiagBuiltins}"
+                              + $" tailExits={WasmTierDelegate.DiagTailExits}";
+                        WriteToPage($"[grain] {line.Replace("\n", " | ")}\n");
+                        report.Append(line).Append('\n');
+                    }
                 }
             }
             catch (Exception ex)

@@ -119,6 +119,109 @@ their own module and import them, which would give per-predicate grain with no
 repetition at all. Whether functions can be imported across these modules the
 way the table is has not been established.
 
+## Lazy against batch, in the browser, on whole programs
+
+The two grains the browser tier can run, on the same four programs, against
+Tier-0. **Batch** compiles everything consulted into one module at the
+boundary tick (the prelude included, as a page does at boot); **lazy**
+compiles one module per predicate the first time it is called. Both engines
+start without the baked prelude, so the compile columns are comparable.
+Edge headless (V8), Release publish, best of 5; `#wasmgrain=5`.
+
+```
+                    tier0      batch                 lazy
+nrev 200 x5       489.7 ms    10.5 ms  46.7x        5.7 ms   85.7x
+  modules / bytes            1 / 2,687,050         3 / 34,964
+  compile+register           4,791 + 25 ms         28 + 2 ms
+  per run                    hops 0                hops 9,975
+
+tak 18,12,6       914.6 ms    11.9 ms  76.8x        6.8 ms  134.3x
+  modules / bytes            1 / 2,687,050         1 / 10,665
+  compile+register           4,398 + 12 ms         7 + 1 ms
+  per run                    deopts 30             deopts 30
+
+zebra x10       1,717.3 ms    45.5 ms  37.7x       43.9 ms   39.1x
+  modules / bytes            1 / 2,724,639         7 / 101,165
+  compile+register           4,555 + 12 ms         68 + 4 ms
+  per run                    hops 0                hops 447,750
+
+queens 12 clpfd 5,215.0 ms 4,154.5 ms   1.3x    4,600.5 ms    1.1x
+  modules / bytes            1 / 4,433,024       101 / 1,058,652
+  compile+register           8,137 + 13 ms         682 + 54 ms
+  per run                    chains 524,030        chains 524,030
+                             deopts 95,140         deopts 95,140
+                             builtin exits 626,930 builtin exits 626,930
+                             hops 0                hops 1,499,135
+```
+
+Three things settle here.
+
+**The hop is free at program scale.** zebra crosses a module boundary 447,750
+times per run in the lazy grain and runs in the same time as the single
+module; queens crosses 1.5 million times and lands within the noise of its
+batch twin. Switches stay at zero in every row: no cross-module call or
+backtrack falls back to the host.
+
+**Lazy costs nothing the batch does not.** The batch pays 4.4–8.1 s to compile the 539
+prelude predicates a small program never calls, and the first run is not
+faster for it. Lazy compiles 1–7 modules for the three classic programs, 101
+for the clpfd one, and its first run lands 0.4–0.5 s after the consult: a
+promotion costs ~7 ms of mono-interpreted compile plus ~0.5 ms of registration.
+Whether the batch machinery stays is the phase 6 question; nothing here
+argues for it.
+
+**clpfd is not a hop problem.** queens 12 is 1.1–1.3x in both grains because
+a run is 524,030 short chains that exit to a builtin 626,930 times and deopt
+95,140 times; the chain hardly runs any WAM code before leaving. The
+per-module bytes (1.06 MB lazy against 4.43 MB batch) and the hops are the
+same story as above; what the tier needs on this program is the builtin exit
+ranking (`DiagBuiltinTally` accumulates and nothing shows it), not more
+modules. The deopts are the same in both grains, so they are the code, not
+the partition.
+
+Reproducing needs one caveat: the `#wasmgrain` hook closes its window the
+moment the report is posted, so read `/collect` (or suppress `window.close`
+from a debugger session) rather than polling the DOM: a poll that never sees
+the report looks exactly like a hang.
+
+## wasm_compile(all): one module, or one per predicate
+
+The batch and the lazy grain differ in two things at once: what gets
+compiled (everything, or what runs) and how it is cut (one module, or one
+per predicate). This isolates the cut. `eager` compiles the same 827
+predicates as the batch, one module each, at the same boundary tick; the
+`b*` rows first compile the prelude as ONE module (what a page boots from)
+and then cut only the 293 predicates of the clpfd program. queens 12, Edge
+headless, Release publish, best of 5, two runs of each cell back to back.
+
+```
+                          run (ms)       compile     register   modules / bytes
+batch   (827 in 1)     4,072  4,140    7.3-8.8 s    18-21 ms      1 / 4,433,024
+eager   (827 in 827)   5,194  5,353    5.6-6.9 s   416-457 ms   827 / 7,420,398
+
+bbatch  (prelude + 293 in 1)   4,025  4,272   8.5-9.0 s    25-37 ms     2 / 4,439,377
+beager  (prelude + 293 in 293) 4,545  4,735   7.5-7.9 s   157-160 ms  294 / 5,527,451
+```
+
+Per run both cuts count the same 524,030 chains, 95,140 deopts and 626,930
+builtin exits; the only counter that moves is hops: 0 against 1,499,135 for
+the whole program, 9,560 against 1,487,575 with the prelude fused. So the
+clpfd program crosses between ITS OWN predicates 1.5 million times per run,
+and the cut costs 0.5 s for it: about 300 ns per hop on chains this short,
+where the hop is a large fraction of the chain. zebra's 447,750 hops did not
+show because its chains are long.
+
+The rest of the cut's price is fixed per module: ~3.6 KB (dispatcher, resolver,
+the shared preamble) and ~0.5 ms of registration each. Compiling per predicate
+is 10-20% cheaper than the monolith, so the compile is linear either way; the
+batch's one build is not what makes it slow, the mono-interpreted compiler is.
+
+What this decides: `wasm_compile(all)` keeps the monolith. It is the
+whole-program build the user asked for by name, it runs fastest, and its
+extra cost is a single build. The lazy grain keeps one module per predicate:
+its +11% on queens is this same hop cost, and it compiles only what runs.
+Once the libraries are baked as groups the hops inside clpfd vanish from both.
+
 ## Where the scalars live, and what a crossing really costs
 
 The WAM's scalars live in LOCALS, loaded from the mailbox on entry and spilled

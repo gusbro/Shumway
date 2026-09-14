@@ -1913,6 +1913,36 @@ if (persistMode) {
     emit(text + '\n', 'error');
     try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
   }
+} else if (location.hash.startsWith('#wasmgrain')) {
+  // #wasmgrain, or #wasmgrain=<rounds>: the many-modules measurement --
+  // the same programs batch (one module per consult), eager (the batch's
+  // set, one module each), lazy (one module per promoted predicate) and
+  // Tier-0, plus bbatch/beager with the prelude fused first; module count, table rows, bytes,
+  // compile and registration cost, and the per-run hop/switch/deopt tally.
+  // Feeds docs/benchmarks/wasm-split-spike.md.
+  const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };
+  try {
+    // #wasmgrain=<rounds>x<queens>:<program>/<mode>: the clpfd program's
+    // board size (0 skips it), then an optional cell of the matrix.
+    const spec = /^#wasmgrain=(\d+)(?:x(\d+))?(?::(.*))?$/.exec(location.hash);
+    const only = spec && spec[3] !== undefined ? spec[3] : '';
+    const rounds = spec ? Number(spec[1]) : 5;
+    const queens = spec && spec[2] !== undefined ? Number(spec[2]) : 12;
+    emit(`--- wasm grain: x${rounds} rounds, queens ${queens} ---\n`);
+    mark('grain: starting rounds=' + rounds);
+    const report = await session.exports().WasmGrainProbe(rounds, queens, only);
+    emit(report);
+    const pre = document.createElement('pre');
+    pre.id = 'wasmgrain';
+    pre.textContent = report;
+    document.body.appendChild(pre);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const text = `wasm grain CRASHED: ${ex && ex.stack ? ex.stack : ex}`;
+    emit(text + '\n', 'error');
+    try { await fetch('/collect', { method: 'POST', body: text }); } catch { }
+  }
+  try { window.close(); } catch { }
 } else if (location.hash === '#selftest') {
   try {
     await (await import('./selftest.js')).run(session, emit, out, editor, workspace);
