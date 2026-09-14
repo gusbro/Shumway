@@ -19,22 +19,7 @@ internal static partial class WebShumwayApp
     /// beyond speed — the page must boot before any workspace is mounted.</para></summary>
     internal static PrologEngine BootEngine()
     {
-        using Stream? rs = typeof(WebShumwayApp).Assembly
-            .GetManifestResourceStream(StdlibResourceName);
-        PrologEngine engine;
-        if (rs is null)
-        {
-            // The bake target did not run. Correct, just slower — surfaced rather
-            // than silent, or a build regression reads as a sluggish engine.
-            WriteToPage($"% no {StdlibResourceName} embedded — compiling the prelude\n");
-            engine = new PrologEngine();
-        }
-        else
-        {
-            var ms = new MemoryStream();
-            rs.CopyTo(ms);
-            engine = PrologEngine.FromBundle(BundleReader.FromBytes(ms.ToArray()));
-        }
+        var engine = EngineFromStdlib(announce: true);
         // The wasm Tier-1 (plan phase 2): promotion through the ordinary
         // dispatch machinery, execution as native wasm. No-op unless the
         // Shumway.WasmCodegen switch is on.
@@ -43,11 +28,33 @@ internal static partial class WebShumwayApp
         return engine;
     }
 
+    /// <summary>The engine a page boots with, before the tier is attached.
+    /// Separate so a measurement can start from the same place the page
+    /// does: with the stdlib already linked and its wasm module waiting to
+    /// install, rather than from a bare engine that has to compile the
+    /// prelude first.</summary>
+    internal static PrologEngine EngineFromStdlib(bool announce)
+    {
+        using Stream? rs = typeof(WebShumwayApp).Assembly
+            .GetManifestResourceStream(StdlibResourceName);
+        if (rs is null)
+        {
+            // The bake target did not run. Correct, just slower — surfaced rather
+            // than silent, or a build regression reads as a sluggish engine.
+            if (announce)
+                WriteToPage($"% no {StdlibResourceName} embedded — compiling the prelude\n");
+            return new PrologEngine();
+        }
+        var ms = new MemoryStream();
+        rs.CopyTo(ms);
+        return PrologEngine.FromBundle(BundleReader.FromBytes(ms.ToArray()));
+    }
+
     /// <summary>The stdlib bundle's wasm module (linked with --wasm when the
     /// tier is built in): installed now rather than at the first query, so
     /// the boot pays for it and not the user's first goal. Nothing is
     /// written to the page: wasm_compile(status) reports the note.</summary>
-    private static void InstallBundleWasm(PrologEngine engine)
+    internal static void InstallBundleWasm(PrologEngine engine)
     {
         if (engine.IlPromotion.Wasm is not { } wasm) return;
         // wasm_compile(off) asked for no wasm: installing 530 predicates of

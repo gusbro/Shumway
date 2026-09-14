@@ -1939,7 +1939,8 @@ if (persistMode) {
   // #wasmgrain, or #wasmgrain=<rounds>: the many-modules measurement --
   // the same programs batch (one module per consult), eager (the batch's
   // set, one module each), lazy (one module per promoted predicate) and
-  // Tier-0, plus bbatch/beager with the prelude fused first; module count, table rows, bytes,
+  // Tier-0, every engine booted from the stdlib bundle the way the page is;
+  // module count, table rows, bytes,
   // compile and registration cost, and the per-run hop/switch/deopt tally.
   // Feeds docs/benchmarks/wasm-split-spike.md.
   const mark = (t) => { try { fetch('/collect', { method: 'POST', body: t }); } catch { } };

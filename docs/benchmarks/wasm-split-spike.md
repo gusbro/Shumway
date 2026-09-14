@@ -167,8 +167,9 @@ prelude predicates a small program never calls, and the first run is not
 faster for it. Lazy compiles 1–7 modules for the three classic programs, 101
 for the clpfd one, and its first run lands 0.4–0.5 s after the consult: a
 promotion costs ~7 ms of mono-interpreted compile plus ~0.5 ms of registration.
-Whether the batch machinery stays is the phase 6 question; nothing here
-argues for it.
+Whether the batch machinery stays is the phase 6 question. **Read the next
+section before answering it: the cost this paragraph charges the batch is
+the prelude, and the bake stopped charging it.**
 
 **clpfd is not a hop problem.** queens 12 is 1.1–1.3x in both grains because
 a run is 524,030 short chains that exit to a builtin 626,930 times and deopt
@@ -178,6 +179,48 @@ same story as above; what the tier needs on this program is the builtin exit
 ranking (`DiagBuiltinTally` accumulates and nothing shows it), not more
 modules. The deopts are the same in both grains, so they are the code, not
 the partition.
+
+## The same question once the prelude is baked
+
+The measurement above ran every engine from a bare `new PrologEngine()`, so
+the batch compiled the prelude in the browser and that dominated it. The
+relocatable bake changed the premise: a page boots from the stdlib bundle
+with its wasm module installed, and nothing of the prelude is compiled at
+all. Re-measured with every engine booted the way the page boots (Edge
+headless, Release publish, two runs at 3 and 5 rounds).
+
+```
+                  run 1 (x3)                 run 2 (x5)
+                  batch   eager   lazy       batch   eager   lazy
+nrev 200 x5       50.7     9.6     8.3       10.5     8.9     8.3   ms
+tak 18,12,6        7.5     7.3    40.8        6.5    11.6     6.8
+zebra x10         32.1    22.6    50.1       45.1    23.4    22.3
+
+predicates compiled at the consult: 5, 5, 7 -- the user's, in every mode
+compile cost: batch 69-1,334 ms, eager 40-86 ms, lazy 13-97 ms
+modules: batch 2 (the baked stdlib + one), eager and lazy 2-8
+switches: 0 everywhere; deopts identical across the three
+```
+
+**What the batch compiles is now the program, not the prelude.** Its compile
+column fell from 4.4-8.1 s to tens or hundreds of milliseconds, because the
+535 stdlib predicates arrive baked and every mode starts with them installed
+(`promoted` is ~540 in all three). The batch and the lazy grain now differ by
+a handful of predicates, so the old argument against the batch -- that it
+pays seconds for code the program never calls -- is void.
+
+**The run times do not separate the grains.** Every per-program ordering
+flips between the two runs (nrev's batch 50.7 then 10.5; tak's lazy 40.8 then
+6.8), which is the signature of wall-clock noise in a browser rather than of
+an effect. What repeats is zebra, where the batch is slower than either fine
+grain in both runs (32.1/45.1 against 22.3-23.4) despite its 447,750 hops a
+run being the ones it does NOT pay: worth its own look, not a conclusion
+here.
+
+**So the batch stays**, and for a different reason than it was kept before.
+Not because it is faster, but because after the bake it costs almost nothing
+and is the only grain that leaves one module and no hops. The machinery it
+needs is a flag and a tick.
 
 Reproducing needs one caveat: the `#wasmgrain` hook closes its window the
 moment the report is posted, so read `/collect` (or suppress `window.close`

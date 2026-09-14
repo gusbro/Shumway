@@ -894,7 +894,13 @@ internal static partial class WebShumwayApp
     /// small modules cost anything at run time -- hops, host switches,
     /// deopts, the timings -- and what promoting one at a time costs in
     /// compile and registration against the batch, on the same program.
-    /// </summary>
+    ///
+    /// <para>Every engine here boots the way the PAGE boots: from the stdlib
+    /// bundle, with its baked wasm module installed. That is the whole
+    /// premise of the comparison, and it used to be simulated (the b* modes
+    /// compiled the prelude into one module first) because the bake did not
+    /// exist yet. With it real, what the batch compiles at a consult is the
+    /// USER's predicates and nothing else.</para></summary>
     [JSExport]
     internal static async Task<string> WasmGrainProbe(int rounds, int queens, string only)
         => await Task.Run(() =>
@@ -915,10 +921,10 @@ internal static partial class WebShumwayApp
                     WriteToPage($"[grain] {prog.Name}\n");
                     report.Append($"== {prog.Name}: {prog.Goal}\n");
                     double tier0 = 0;
-                    foreach (string mode in new[] { "tier0", "batch", "eager", "lazy", "bbatch", "beager" })
+                    foreach (string mode in new[] { "tier0", "batch", "eager", "lazy" })
                     {
                         if (sel.Length > 1 && sel[1].Length > 0 && mode != sel[1]) continue;
-                        var engine = new PrologEngine();
+                        var engine = WebShumwayApp.EngineFromStdlib(announce: false);
                         engine.IlPromotion.Threshold = 0;
                         WasmTierDelegate.ResetDiag();
                         BrowserWasmTier.DiagCompileTicks = 0;
@@ -930,12 +936,12 @@ internal static partial class WebShumwayApp
                             BrowserWasmTier.Attach(engine, threshold: 1, batch: true);
                             if (engine.IlPromotion.Wasm is null)
                                 return "wasm tier NOT attached: the capability is off\n";
-                            // The b* modes start with the prelude as ONE module,
-                            // the way a page boots from the bake: the grain
-                            // question is then about the USER's predicates.
-                            if (mode is "bbatch" or "beager")
-                                engine.IlPromotion.Wasm.CompileAllTick(engine);
-                            engine.IlPromotion.Wasm.CompileAllOnConsult = mode is "batch" or "bbatch";
+                            // The stdlib's baked module, installed as the page
+                            // installs it: the grain question is then about the
+                            // USER's predicates, which is all that is left to
+                            // compile in the browser.
+                            WebShumwayApp.InstallBundleWasm(engine);
+                            engine.IlPromotion.Wasm.CompileAllOnConsult = mode is "batch";
                         }
                         engine.ConsultString(prog.Source);
                         // The batch compiles at the boundary the page ticks;
@@ -943,8 +949,8 @@ internal static partial class WebShumwayApp
                         // the lazy mode compiles inside the first run.
                         int batched = mode switch
                         {
-                            "batch" or "bbatch" => engine.IlPromotion.Wasm!.CompileAllTick(engine),
-                            "eager" or "beager" => engine.IlPromotion.Wasm!.PromoteAllStaticsIndividually(engine),
+                            "batch" => engine.IlPromotion.Wasm!.CompileAllTick(engine),
+                            "eager" => engine.IlPromotion.Wasm!.PromoteAllStaticsIndividually(engine),
                             _ => 0,
                         };
                         double consultMs = (Stopwatch.GetTimestamp() - t0) * 1000.0
@@ -972,7 +978,7 @@ internal static partial class WebShumwayApp
                             : $"  {mode}: {best:F1} ms, {tier0 / best:F1}x"
                               + $" (first run {first.Elapsed.TotalMilliseconds:F0} ms;"
                               + $" consult {consultMs:F0} ms"
-                              + (mode is "batch" or "eager" or "bbatch" or "beager" ? $" incl. {batched} batched" : "") + ")\n"
+                              + (mode is "batch" or "eager" ? $" incl. {batched} batched" : "") + ")\n"
                               + $"    promoted={promoted} modules={BrowserWasmTier.ModuleCount()}"
                               + $" rows={BrowserWasmTier.ResumeRows()}"
                               + $" bytes={BrowserWasmTier.ModuleBytes():N0}"
