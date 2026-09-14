@@ -53,6 +53,7 @@
          REPL. The toolchain is net10 by design (a net48 host only LOADS
          bundles), so its tests stay on the net10 flavor of this suite. -->
     <Compile Remove="Chunk164Tests.cs" />
+    <Compile Remove="CompileRefusesLostMeaningTests.cs" />
     <Compile Remove="Chunk168Tests.cs" />
     <Compile Remove="Chunk170Tests.cs" />
     <Compile Remove="Chunk174Tests.cs" />

@@ -1449,13 +1449,31 @@ internal sealed class BundleLoader
             // tabling driver reads it through.
             if (isPrelude && seed.EncodedClauses.Count > 0)
                 E._preludeFunctors.Add(fid);
+            bool hadClauses = E._dynStore.TryGetClauses(fid, out var prior)
+                && prior.Count > 0;
             foreach (var encoded in seed.EncodedClauses)
                 E._dynStore.AppendClause(fid, TermCodec.DecodeClause(encoded));
-            // ADR-023 priming — a bundle's `:- dynamic`/`:- visible` predicate
-            // shipped WITH clauses runs as its Tier-1 IL snapshot from the first
-            // call (evictable on the first mutation).
             if (seed.EncodedClauses.Count > 0)
-                E.IlPromotion.MarkPrime(fid);
+            {
+                // Every dynamic-store mutation funnels through
+                // InvalidateDynamicCache — the ADR-015 generation, the
+                // compiled-form drop, the ADR-023 eviction. This append is a
+                // mutation like any other, and skipping the funnel left the
+                // compiled trampoline's first-argument switch without the new
+                // clauses' keys: with two libraries seeding one hook
+                // (verify_attributes/4), a bound-module call MISSED the
+                // second library's clause and failed while clause/2 saw it —
+                // freeze/2 broke if coroutining loaded after clpfd.
+                E.InvalidateDynamicCache(fid);
+                // ADR-023 priming — a bundle's `:- dynamic`/`:- visible`
+                // predicate shipped WITH clauses runs as its Tier-1 IL
+                // snapshot from the first call (evictable on the first
+                // mutation). Only when this entry is the slot's SOLE
+                // contributor: the snapshot holds this entry's clauses, and
+                // over a shared slot it would run a subset.
+                if (!hadClauses)
+                    E.IlPromotion.MarkPrime(fid);
+            }
             // remember which module these clauses came from.
             // The entry's static bytecode was mangled by ShmoCompiler
             // under entry.ModuleName, so the query-setup rewrite of these
