@@ -110,6 +110,14 @@ public sealed class LinkConfig
     /// and these predicates would be unrunnable.</summary>
     public bool StripWam { get; init; }
 
+    /// <summary>When set, compiles the linked bundle's static predicates to
+    /// a relocatable wasm module stored in the bundle (the <c>--wasm</c>
+    /// option; the baker lives in Shumway.Compiler.Wasm, which this assembly
+    /// does not reference). Returns the module bytes, or null when nothing
+    /// compiled. Refused together with <see cref="StripWam"/>: the module
+    /// runs the bytecode that option drops.</summary>
+    public Func<Bundle, byte[]?>? WasmBaker { get; init; }
+
     /// <summary>Stage 9 (dead-region) report opt-in. When true, after the reachability
     /// walk the linker decodes the reached modules, resolves the externally-reachable
     /// seeds to functor ids, and runs <see cref="RegionReachability"/> to report how many

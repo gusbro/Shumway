@@ -65,6 +65,9 @@ namespace Shumway.Embedding;
 ///                   each member    : { fileNameLen:uint32, fileNameBytes:utf-8,
 ///                                      shmoByteCount:uint32, shmoBytes (verbatim
 ///                                      .shmo image) }
+///                 wasmModuleCount  : uint32   (shumway-link --wasm: relocatable
+///                       wasm modules of the static predicates; 0 otherwise)
+///                   each module    : byteCount:uint32 + bytes
 /// </code>
 ///
 /// <para>PRE-RELEASE FORMAT POLICY (same as <see cref="ShmoFormat"/>): there

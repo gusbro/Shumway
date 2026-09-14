@@ -391,6 +391,12 @@ internal sealed class BundleLoader
         // ADR-015 cached static linked region so the next query rebuilds it.
         E._staticLink = null;
         E.InvalidatePersistent();
+        // The bundle's wasm modules wait for that link: a wasm tier installs
+        // them when the next query setup links (or on its own tick). Queued
+        // whether or not a tier is attached yet -- the web boot attaches its
+        // tier AFTER loading the stdlib bundle.
+        foreach (var module in bundle.WasmModules)
+            E.IlPromotion.PendingWasmModules.Add(module);
 
         // Cross-process functor-id drift diagnostic (see PersistedIlBuilder).
         var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");

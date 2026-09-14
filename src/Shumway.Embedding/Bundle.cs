@@ -68,9 +68,11 @@ public sealed class Bundle
         IReadOnlyList<BundleArchiveMember>? archiveMembers = null,
         IReadOnlyList<string>? nativeLibraries = null,
         ShumwayVersion? generatorVersion = null,
-        bool arityCompat = false)
+        bool arityCompat = false,
+        IReadOnlyList<byte[]>? wasmModules = null)
     {
         Entries = entries;
+        WasmModules = wasmModules ?? Array.Empty<byte[]>();
         ForeignAssemblies = foreignAssemblies ?? Array.Empty<string>();
         Snapshot = snapshot;
         ArchiveMembers = archiveMembers ?? Array.Empty<BundleArchiveMember>();
@@ -85,6 +87,19 @@ public sealed class Bundle
     /// program expects a call to an undefined (or abolished) predicate to
     /// FAIL, and separate compilation must not lose that.</summary>
     public bool ArityCompat { get; }
+
+    /// <summary>Relocatable wasm modules (<c>shumway-link --wasm</c>) compiled
+    /// from this bundle's static predicates: opaque here, installed by a
+    /// wasm tier when one is attached (<see
+    /// cref="WasmPromotionStore.InstallPendingBundles"/>) and ignored by
+    /// every other host. Empty unless the link asked for them.</summary>
+    public IReadOnlyList<byte[]> WasmModules { get; }
+
+    /// <summary>The same bundle carrying <paramref name="wasmModules"/>.
+    /// </summary>
+    public Bundle WithWasmModules(IReadOnlyList<byte[]> wasmModules)
+        => new(Entries, ForeignAssemblies, Snapshot, ArchiveMembers, NativeLibraries,
+               GeneratorVersion, ArityCompat, wasmModules);
 
     /// <summary>The Shumway version that wrote this bundle. Every writer
     /// stamps it, so a <c>.shum</c> can always say which build produced it —

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using Shumway.Compiler.Wam;
 using Shumway.Core;
 
 namespace Shumway.Compiler.Wasm;
@@ -10,7 +11,10 @@ namespace Shumway.Compiler.Wasm;
 /// re-entry cursors by bytecode offset (offset 0 is the fresh entry).
 /// </summary>
 public sealed record WasmRelocatableMember(
-    string Name, int Arity, IReadOnlyList<(int Offset, int Cursor)> CursorByOffset);
+    string Name, int Arity, IReadOnlyList<(int Offset, int Cursor)> CursorByOffset,
+    /// <summary><see cref="WasmRelocatableModule.ShapeOf"/> of the bytecode
+    /// the member was compiled from.</summary>
+    ulong Shape);
 
 /// <summary>A group module compiled once and installable into ANY process:
 /// every immediate that names process state is a sentinel with a
@@ -40,6 +44,57 @@ public sealed class WasmRelocatableModule
         = Array.Empty<(string, int, string, int)>();
 
     private WasmRelocatableModule() { }
+
+    /// <summary>A process-independent fingerprint of a predicate's code: its
+    /// length, arity and call-site layout. NOT the bytes (their operands
+    /// carry this process's atom and functor ids); enough to refuse a
+    /// module whose cursor offsets were taken against other code.</summary>
+    public static ulong ShapeOf(CompiledPredicate pred)
+    {
+        const ulong prime = 1099511628211UL;
+        ulong h = 14695981039346656037UL;
+        h ^= (uint)pred.Bytecode.Length; h *= prime;
+        h ^= (uint)pred.Arity; h *= prime;
+        foreach (var site in pred.CallSites)
+        {
+            h ^= (uint)site.OpcodeOffset; h *= prime;
+            var (name, arity) = RelocatingCompileEnv.NameOf(site.CalleeFunctorId);
+            foreach (char c in name) { h ^= c; h *= prime; }
+            h ^= (uint)arity; h *= prime;
+        }
+        return h;
+    }
+
+    /// <summary><see cref="Bake"/> over just the compilable members: a member
+    /// the compiler refuses is dropped (reported through <paramref
+    /// name="onRefused"/>) and the rest are baked together. A relocating
+    /// probe interns nothing, so the retry costs no process state.</summary>
+    public static WasmRelocatableModule BakeCompilable(IReadOnlyList<WasmGroupMember> members,
+        IWasmCompileEnv liveEnv, Action<WasmGroupMember, string>? onRefused = null)
+    {
+        try
+        {
+            return Bake(members, liveEnv);
+        }
+        catch (WasmCompileException)
+        {
+            var good = new List<WasmGroupMember>(members.Count);
+            foreach (var m in members)
+            {
+                try
+                {
+                    WasmPredicateCompiler.CompileGroup(new[] { m },
+                        new RelocatingCompileEnv(new[] { m }, liveEnv));
+                    good.Add(m);
+                }
+                catch (WasmCompileException e)
+                {
+                    onRefused?.Invoke(m, e.Message);
+                }
+            }
+            return Bake(good, liveEnv);
+        }
+    }
 
     /// <summary>Compiles the members with sentinels and locates every
     /// sentinel in the code section. <paramref name="liveEnv"/> supplies
@@ -73,7 +128,8 @@ public sealed class WasmRelocatableModule
         for (int i = 0; i < members.Count; i++)
         {
             var (name, arity) = RelocatingCompileEnv.NameOf(members[i].Predicate.FunctorId);
-            mems.Add(new WasmRelocatableMember(name, arity, cursors[i]));
+            mems.Add(new WasmRelocatableMember(name, arity, cursors[i],
+                                               ShapeOf(members[i].Predicate)));
         }
         var sites = new List<(string, int, string, int)>(entry.CallSites.Count);
         foreach (var (caller, callee) in entry.CallSites.Keys)
@@ -205,6 +261,15 @@ public sealed class WasmRelocatableModule
     /// <param name="biasOf">The linked base of a member functor, or -1.</param>
     public bool TryResolve(IWasmCompileEnv env, Func<int, int> biasOf, int moduleId,
         out WasmGroupEntry entry, out Dictionary<int, int> entryAddressByFid, out string reason)
+        => TryResolve(env, biasOf, null, moduleId, out entry, out entryAddressByFid, out reason);
+
+    /// <summary>As above, also refusing a member whose live code has another
+    /// <see cref="ShapeOf"/> than the one the module was compiled from.</summary>
+    /// <param name="shapeOf">The live shape of a member functor, or null to
+    /// skip the check.</param>
+    public bool TryResolve(IWasmCompileEnv env, Func<int, int> biasOf,
+        Func<int, ulong>? shapeOf, int moduleId,
+        out WasmGroupEntry entry, out Dictionary<int, int> entryAddressByFid, out string reason)
     {
         entry = null!;
         entryAddressByFid = new Dictionary<int, int>(Members.Count);
@@ -215,6 +280,8 @@ public sealed class WasmRelocatableModule
             int fid = Functor(m.Name, m.Arity);
             int bias = biasOf(fid);
             if (bias < 0) { reason = $"member {m.Name}/{m.Arity} is not linked"; return false; }
+            if (shapeOf is not null && shapeOf(fid) != m.Shape)
+            { reason = $"member {m.Name}/{m.Arity} has other code than the module was compiled from"; return false; }
             biasByName[(m.Name, m.Arity)] = bias;
             fidByName[(m.Name, m.Arity)] = fid;
             entryAddressByFid[fid] = bias;
@@ -325,7 +392,7 @@ public sealed class WasmRelocatableModule
         w.Write(Members.Count);
         foreach (var m in Members)
         {
-            w.Write(m.Name); w.Write(m.Arity);
+            w.Write(m.Name); w.Write(m.Arity); w.Write(m.Shape);
             w.Write(m.CursorByOffset.Count);
             foreach (var (off, cursor) in m.CursorByOffset) { w.Write(off); w.Write(cursor); }
         }
@@ -367,11 +434,11 @@ public sealed class WasmRelocatableModule
         var members = new List<WasmRelocatableMember>(n);
         for (int i = 0; i < n; i++)
         {
-            string name = r.ReadString(); int arity = r.ReadInt32();
+            string name = r.ReadString(); int arity = r.ReadInt32(); ulong shape = r.ReadUInt64();
             int k = r.ReadInt32();
             var cursors = new List<(int, int)>(k);
             for (int j = 0; j < k; j++) cursors.Add((r.ReadInt32(), r.ReadInt32()));
-            members.Add(new WasmRelocatableMember(name, arity, cursors));
+            members.Add(new WasmRelocatableMember(name, arity, cursors, shape));
         }
         m.Members = members;
         n = r.ReadInt32();

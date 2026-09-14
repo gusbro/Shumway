@@ -387,7 +387,7 @@ internal static class BrowserWasmTier
         }
     }
 
-    // The CURRENT engine's world; the baked prelude installs into it.
+    // The CURRENT engine's world; the stdlib bundle's module installs into it.
     private static BrowserWasmWorld? _world;
 
     internal static int ModuleCount() => _world?.ModuleCount ?? 0;
@@ -399,7 +399,7 @@ internal static class BrowserWasmTier
     /// <summary>Set by wasm_compile(off) and honoured by the BOOT, so a
     /// restart really does give an engine with no wasm in it. Without it the
     /// boot re-attached the tier at the default threshold AND installed the
-    /// baked prelude, so "restart. for a clean engine" was false twice over.
+    /// bundle's module, so "restart. for a clean engine" was false twice over.
     /// Cleared by any wasm_compile that turns the tier back on.</summary>
     internal static bool Disabled;
 
@@ -419,7 +419,6 @@ internal static class BrowserWasmTier
         var store = engine.IlPromotion;
         var world = new BrowserWasmWorld();
         _world = world;
-        BakedFids.Clear();
         var env = new EngineWasmCompileEnv();
         store.Wasm = new WasmPromotionStore(store)
         {
@@ -442,18 +441,15 @@ internal static class BrowserWasmTier
             },
         };
         // A relink moved predicates out from under their modules: their rows
-        // go to zero (a marker of theirs falls back to bytecode), the baked
-        // callers of each go with it, and evicted baked members leave the
-        // baked bookkeeping. The modules stay: a re-promotion compiles a
-        // fresh one against live addresses.
-        store.Wasm.StaleEvicted = staleFids =>
-        {
-            var gone = world.Evict(staleFids);
-            BakedFids.RemoveWhere(new HashSet<int>(gone).Contains);
-            return gone;
-        };
+        // go to zero (a marker of theirs falls back to bytecode) and the
+        // baked callers of each go with it. The modules stay: a re-promotion
+        // compiles a fresh one against live addresses.
+        store.Wasm.StaleEvicted = world.Evict;
         // A relink moved the code: the world translates at its boundaries.
         store.Wasm.LiveRefreshed = world.RefreshLiveAddresses;
+        // A loaded bundle's wasm module (shumway-link --wasm) installs into
+        // this world at the next link, instead of compiling its predicates.
+        store.Wasm.BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes);
     }
 
     /// <summary>The wasm_compile(all) path: the whole candidate set in ONE
@@ -557,71 +553,10 @@ internal static class BrowserWasmTier
         }
     }
 
-    /// <summary>What became of the baked prelude at boot — surfaced by
-    /// wasm_compile(status), because boot-time page writes predate the
-    /// console.</summary>
-    internal static string BakedInstallNote = "no asset";
-
-    /// <summary>The baked prelude's members: status folds these into one
-    /// count so the promoted list shows the USER's predicates, not five
-    /// hundred prelude internals burying them.</summary>
-    internal static readonly HashSet<int> BakedFids = new();
-
-    /// <summary>Installs the build-time-baked prelude module without
-    /// compiling anything, after replaying the bake's evidence against this
-    /// process (see <see cref="WasmBakedGroup.Validate"/>). The bake is
-    /// compiled as module 0, so it has to be the FIRST module of the world:
-    /// the boot installs it right after attaching. On any mismatch nothing
-    /// is installed and the tier compiles as before.</summary>
-    internal static bool TryInstallBaked(PrologEngine engine, byte[] asset,
-        out string reason)
-    {
-        var store = engine.IlPromotion;
-        if (store.Wasm is null || _world is not { } world)
-        { reason = "tier not attached"; return false; }
-        if (world.NextModuleId != 0)
-        { reason = "a module was installed before the baked prelude"; return false; }
-        WasmBakedGroup baked;
-        try { baked = WasmBakedGroup.Read(new MemoryStream(asset)); }
-        catch (Exception e) { reason = $"unreadable asset: {e.Message}"; return false; }
-        // The same throwaway goal the bake ran to materialise the static
-        // link — intern parity with the bake.
-        engine.Query("true.");
-        var byAddress = new Dictionary<int, CompiledPredicate>();
-        foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
-            byAddress[addr] = pred;
-        if (byAddress.Count == 0) { reason = "no static link"; return false; }
-        if (!baked.Validate(new EngineWasmCompileEnv(), byAddress,
-                fid => store.FloatPoolProvider?.Invoke(fid), out reason))
-            return false;
-        var entryCursors = new Dictionary<int, int>(baked.Members.Count);
-        var entryAddr = new Dictionary<int, int>(baked.Members.Count);
-        foreach (var m in baked.Members)
-        {
-            entryCursors[m.FunctorId] = m.EntryCursor;
-            entryAddr[m.FunctorId] = m.Bias;
-        }
-        var cursorByAddress = new Dictionary<int, int>(baked.CursorByAddress.Count);
-        foreach (var kv in baked.CursorByAddress) cursorByAddress[kv.Key] = kv.Value;
-        var bakedPreds = new List<CompiledPredicate>(baked.Members.Count);
-        foreach (var m in baked.Members) bakedPreds.Add(byAddress[m.Bias]);
-        try
-        {
-            // The bake is module 0 of an empty world: nothing to displace.
-            world.InstallGroup(baked.Module, entryCursors, cursorByAddress,
-                entryAddr, baked.RegisterDemand, WasmGroupInstall.EdgesOf(bakedPreds));
-        }
-        catch (WasmRegisterException e) { reason = e.Message; return false; }
-        foreach (var m in baked.Members)
-        {
-            store.RegisterBoundDelegate(m.FunctorId,
-                new WasmTierDelegate(m.FunctorId, world).Invoke);
-            store.Wasm?.NoteInstalled(m.FunctorId, m.Bias, byAddress[m.Bias]);
-            BakedFids.Add(m.FunctorId);
-        }
-        reason = $"{baked.Members.Count} predicates";
-        return true;
-    }
+    /// <summary>What became of the stdlib bundle's wasm module at boot —
+    /// surfaced by wasm_compile(status), because boot-time page writes
+    /// predate the console.</summary>
+    internal static string BundleInstallNote = "no bundle module";
 
     // Set by BatchStarting so the tick can close the notice it opened: a
     // "compiling..." with no answer under it reads as a hang.
@@ -1108,7 +1043,7 @@ internal static partial class WebShumwayApp
                     return $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}";
                 }
                 // Status is read to find the USER's predicates. Everything
-                // else folds into counts: the baked prelude's members, and
+                // else folds into counts: the stdlib bundle's members, and
                 // library modules (a use_module(library(clpfd)) promotes
                 // hundreds of clpfd$... internals under `all`). A name's
                 // module is its prefix up to the scope '$' — one more '$'
@@ -1134,7 +1069,7 @@ internal static partial class WebShumwayApp
                 int baked = 0;
                 foreach (int f in allPromoted)
                 {
-                    if (BrowserWasmTier.BakedFids.Contains(f)) { baked++; continue; }
+                    if (w.BundleFids.Contains(f)) { baked++; continue; }
                     string name = Name(f);
                     string mod = PrefixModuleOf(name);
                     if (mod is "" && exporter.TryGetValue(f, out string? owner)) mod = owner;
@@ -1146,13 +1081,13 @@ internal static partial class WebShumwayApp
                     else byModule[mod] = byModule.GetValueOrDefault(mod) + 1;
                 }
                 var folded = byModule.Select(kv => $"{kv.Value} {kv.Key}").ToList();
-                if (baked > 0) folded.Add($"{baked} baked prelude");
+                if (baked > 0) folded.Add($"{baked} from the stdlib bundle");
                 var refused = w.UnpromotableFunctorIds()
                     .Select(f => w.RefusalReason(f) is { } why
                         ? $"{Name(f)} ({why})" : Name(f))
                     .ToList();
                 string report = $"% wasm_compile: threshold={w.Threshold}\n"
-                    + $"%   baked prelude: {BrowserWasmTier.BakedInstallNote}\n"
+                    + $"%   stdlib bundle wasm: {BrowserWasmTier.BundleInstallNote}\n"
                     + (w.RelinkEvictions > 0
                         ? $"%   relink evictions: {w.RelinkEvictions} (a library "
                           + "load moved the code; evicted predicates re-promote)\n"
@@ -1208,7 +1143,7 @@ internal static partial class WebShumwayApp
                 // A predicate already promoted keeps running as wasm: taking
                 // its delegate away with a live choice point inside would
                 // break the redo. A fresh engine has none, so the flag makes
-                // the BOOT skip both the tier and the baked prelude — which
+                // the BOOT skip both the tier and the bundle's module — which
                 // is what makes the sentence below true.
                 BrowserWasmTier.Disabled = true;
                 return "% wasm_compile: promotion off. Already-promoted "
@@ -1233,11 +1168,11 @@ internal static partial class WebShumwayApp
                 long b0 = Stopwatch.GetTimestamp();
                 int batched = wa.CompileAllTick(engine);
                 double ms = (Stopwatch.GetTimestamp() - b0) * 1000.0 / Stopwatch.Frequency;
-                // Compiling the whole prelude here means the baked group is
-                // NOT carrying it — say why right where the cost shows up,
+                // Compiling the whole prelude here means the bundle's module
+                // is NOT carrying it — say why right where the cost shows up,
                 // not only in status.
-                string bakedNote = BrowserWasmTier.BakedFids.Count == 0 && batched > 100
-                    ? $"% (the baked prelude is not installed — {BrowserWasmTier.BakedInstallNote})\n"
+                string bakedNote = wa.BundleFids.Count == 0 && batched > 100
+                    ? $"% (the stdlib bundle's wasm is not installed — {BrowserWasmTier.BundleInstallNote})\n"
                     : "";
                 return $"% wasm_compile: all — {batched} predicates compiled now "
                     + $"({ms:F0} ms), threshold 1 from here; every consult "

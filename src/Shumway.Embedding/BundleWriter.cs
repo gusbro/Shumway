@@ -271,6 +271,14 @@ public static class BundleWriter
             bw.Write((uint)member.ShmoBytes.Length);
             bw.Write(member.ShmoBytes);
         }
+        // Wasm-modules trailer (shumway-link --wasm): opaque relocatable
+        // modules. Mirrors ShmoLinker.SerialiseBundle exactly.
+        bw.Write((uint)bundle.WasmModules.Count);
+        foreach (var module in bundle.WasmModules)
+        {
+            bw.Write((uint)module.Length);
+            bw.Write(module);
+        }
         bw.Flush();
         // compress the body (everything after magic+version).
         return BundleFormat.FinalizeImage(ms.ToArray());

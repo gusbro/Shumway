@@ -1076,6 +1076,33 @@ public static class ShmoLinker
                 bytes = SerialiseBundle(bundle);
             }
 
+            // The bundle's wasm tier (--wasm): baked from the bundle as it
+            // ships, and serialised again with the module in its trailer.
+            if (config.WasmBaker is not null)
+            {
+                if (config.StripWam)
+                {
+                    Emit(LinkSeverity.Error, "wasm_needs_wam",
+                        "--wasm needs the bytecode --strip-wam drops: a bundle's wasm "
+                        + "module resumes into it at every choice point and builtin.");
+                    success = false;
+                }
+                else
+                {
+                    byte[]? module = config.WasmBaker(bundle);
+                    if (module is not null)
+                    {
+                        bundle = bundle.WithWasmModules(new[] { module });
+                        bytes = SerialiseBundle(bundle);
+                        Emit(LinkSeverity.Info, "wasm_module",
+                            $"wasm module: {module.Length} bytes.");
+                    }
+                    else
+                        Emit(LinkSeverity.Warning, "wasm_module",
+                            "--wasm: no predicate compiled; the bundle carries no wasm module.");
+                }
+            }
+
             // Stage 10: dump the WAM each entry actually SHIPS — its final
             // CompiledBytecode, AFTER any --strip-wam / region prune (the IL branch
             // re-read `bundle` from the post-strip bytes above).
@@ -2108,6 +2135,13 @@ public static class ShmoLinker
             WriteString(bw, member.FileName);
             bw.Write((uint)member.ShmoBytes.Length);
             bw.Write(member.ShmoBytes);
+        }
+        // Wasm-modules trailer (--wasm). Mirrors BundleWriter.ToBytes exactly.
+        bw.Write((uint)bundle.WasmModules.Count);
+        foreach (var module in bundle.WasmModules)
+        {
+            bw.Write((uint)module.Length);
+            bw.Write(module);
         }
         bw.Flush();
         // compress the body (everything after magic+version).

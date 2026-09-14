@@ -293,6 +293,12 @@ public sealed class IlPromotionStore
     }
     private WasmPromotionStore? _wasm;
 
+    /// <summary>Relocatable wasm modules of loaded bundles, not yet installed:
+    /// <see cref="WasmPromotionStore.InstallPendingBundles"/> drains this
+    /// once a static link exists. Stays queued (a handful of references)
+    /// while no tier is attached.</summary>
+    public List<byte[]> PendingWasmModules { get; } = new();
+
     /// <summary>The wasm store's <see cref="WasmPromotionStore.Enabled"/>
     /// flipped in place (its threshold set to or from zero).</summary>
     internal void WasmEnabledChanged() => PromotabilityChanged?.Invoke();

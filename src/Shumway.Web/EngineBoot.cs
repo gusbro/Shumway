@@ -39,50 +39,36 @@ internal static partial class WebShumwayApp
         // dispatch machinery, execution as native wasm. No-op unless the
         // Shumway.WasmCodegen switch is on.
         BrowserWasmTier.Attach(engine);
-        InstallBakedPrelude(engine);
+        InstallBundleWasm(engine);
         return engine;
     }
 
-    private const string WasmGroupResourceName = "prelude.wasmgroup";
-
-    /// <summary>The build-time-baked prelude wasm group: installed here,
-    /// FIRST — the validation replays the bake's marker interns against a
-    /// pool nothing else has touched yet. A rejected asset just means the
-    /// tier compiles lazily, as it would without the bake.</summary>
-    private static void InstallBakedPrelude(PrologEngine engine)
+    /// <summary>The stdlib bundle's wasm module (linked with --wasm when the
+    /// tier is built in): installed now rather than at the first query, so
+    /// the boot pays for it and not the user's first goal. Nothing is
+    /// written to the page: wasm_compile(status) reports the note.</summary>
+    private static void InstallBundleWasm(PrologEngine engine)
     {
-        if (!Shumway.Core.RuntimeCaps.SupportsWasmCodegen) return;
+        if (engine.IlPromotion.Wasm is not { } wasm) return;
         // wasm_compile(off) asked for no wasm: installing 530 predicates of
         // it at boot would answer a different question.
         if (BrowserWasmTier.Disabled)
         {
-            BrowserWasmTier.BakedInstallNote = "not installed (wasm_compile off)";
+            engine.IlPromotion.PendingWasmModules.Clear();
+            BrowserWasmTier.BundleInstallNote = "not installed (wasm_compile off)";
             return;
         }
-        using Stream? rs = typeof(WebShumwayApp).Assembly
-            .GetManifestResourceStream(WasmGroupResourceName);
-        if (rs is null) return;
-        var ms = new MemoryStream();
-        rs.CopyTo(ms);
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            if (BrowserWasmTier.TryInstallBaked(engine, ms.ToArray(), out string reason))
-            {
-                double msTaken = (System.Diagnostics.Stopwatch.GetTimestamp() - t0)
-                    * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-                BrowserWasmTier.BakedInstallNote = $"installed ({reason}, {msTaken:F0} ms)";
-            }
-            else
-                BrowserWasmTier.BakedInstallNote = $"rejected: {reason}";
+            wasm.InstallPendingBundles(engine);
+            double msTaken = (System.Diagnostics.Stopwatch.GetTimestamp() - t0)
+                * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            BrowserWasmTier.BundleInstallNote = $"{wasm.BundleInstallNote} ({msTaken:F0} ms)";
         }
         catch (Exception e)
         {
-            BrowserWasmTier.BakedInstallNote = $"failed: {e.GetType().Name}: {e.Message}";
+            BrowserWasmTier.BundleInstallNote = $"failed: {e.GetType().Name}: {e.Message}";
         }
-        // Deliberately NOT written to the page: a successful boot has
-        // nothing to say, and this greeted every restart with a line about
-        // an asset nobody asked for. wasm_compile(status) reports the note
-        // on demand, which is where someone looking for it would look.
     }
 }

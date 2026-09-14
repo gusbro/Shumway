@@ -1396,8 +1396,15 @@ public sealed partial class PrologEngine
         launcher.EmitCallBuiltin(failBuiltinId, numLivePermanents: 0);
         byte[] prefix = launcher.ToBytes();
 
-        var staticLink = _staticLink
-            ?? (_staticLink = GetOrLinkStatic(staticPreds, prefix.Length));
+        var staticLink = _staticLink;
+        if (staticLink is null)
+        {
+            staticLink = _staticLink = GetOrLinkStatic(staticPreds, prefix.Length);
+            // A bundle's wasm modules bind to linked addresses: install them
+            // against this fresh link, before any site below is rewritten.
+            if (IlPromotion.PendingWasmModules.Count > 0)
+                IlPromotion.Wasm?.InstallPendingBundles(this);
+        }
         // The product built before any static link existed patches its
         // reference to the one just built — they are consistent by
         // construction (the link was made from the product's StaticPreds).

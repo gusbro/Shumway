@@ -643,39 +643,41 @@ every Proceed site paid (the 529-member module shrank 5.5 MB → 2.9 MB).
 Nothing outside the compiler changed: same export, same mailbox
 contract, same global cursors and markers.
 
-## The prebaked prelude — bake at build time, replay-validate at boot
+## The prebaked prelude — a relocatable module in the bundle
 
-`shumway-wasmbake` compiles the stdlib bundle's whole static program into
-one group module at build time; the web build embeds the asset
-(`prelude.wasmgroup`, ~3 MB) and the boot installs it in ~400 ms — the
-~7 s browser-side compile of `wasm_compile(all)` paid once per build
-instead of per session, and `all` itself drops to milliseconds (nothing
-left to compile but user code).
+`shumway-link --wasm` compiles the linked bundle's static predicates
+into one RELOCATABLE module (`WasmRelocatableModule`) and stores it in
+the bundle's own trailer; a host with a wasm world installs it when the
+bundle is loaded. The web build links the stdlib bundle with `--wasm`,
+so the boot installs the whole prelude in a few hundred milliseconds —
+the ~7 s browser-side compile of `wasm_compile(all)` paid once per
+build instead of per session, and `all` itself drops to milliseconds
+(nothing left to compile but user code).
 
-The module bakes process-local values — interned resume markers, linked
-addresses, builtin ids, id-bearing bytecode operands — so the bytes are
-only valid in a process that reproduces the bake's intern history. That
-is asserted, not assumed: the bake records evidence (the full functor
-table; per member the functor, linked address, a bytecode+call-sites
-hash, and the float pool; every marker in first-intern order; every
-builtin decision) and the boot REPLAYS it against the live process.
-Replaying the marker log both re-interns and verifies — a virgin pool
-assigns the same values in the same order or the comparison fails. Any
-mismatch names the first divergence and the boot falls back to lazy
-compilation: staleness degrades to slowness, never to wrong code.
+Nothing process-local is baked. Every immediate the code names outside
+itself — an interned atom or functor id, a resume marker, a linked
+address, a builtin id, the module's own id — is compiled as a SENTINEL
+of fixed LEB width and recorded by NAME (`RelocatingCompileEnv`); the
+install resolves each name against the loading process and patches the
+sites. What the code depends on beyond names is recorded as evidence
+and re-checked: the builtin-form decisions (inline unify, inline
+compare, direct call) and a shape fingerprint of each member's bytecode
+(the cursor offsets were taken against it). A mismatch names the
+divergence and the module is not installed; the tier compiles lazily,
+as it would without the bake.
 
-The baked group is installed in its own frozen world; later promotions
-build a second, user-code group from empty (extending the baked one
-would make the first lazy promotion recompile the whole prelude), and a
-call between the two groups is an ordinary chain switch.
+The module installs into the ordinary world, with the ordinary module
+id the world hands out, so a later promotion is a sibling module and a
+call between the two is the same in-wasm hop as between any two
+modules. The install happens at the first link after the load (the
+query setup drains `PendingWasmModules` right after building the static
+link), or at the host's boot, which installs eagerly so the first goal
+does not pay for it.
 
-Two intern-order hazards were found and fixed on the way: the tool
-mirrors the web Main's early `StandardBuiltins.EnsureRegistered()` (the
-browser boots concurrently with page exports, so the builtin block must
-be interned before any other thread can run), and the clpfd builtin
-classes interned atoms in static field initializers — beforefieldinit
-cctor timing differs between Mono and CoreCLR, shuffling early ids per
-platform. Interning now happens inside Register().
+One intern-order hazard was found on the way, before the relocation
+made it moot: the clpfd builtin classes interned atoms in static field
+initializers, and beforefieldinit cctor timing differs between Mono and
+CoreCLR. Interning now happens inside Register().
 
 ## The boards.pl round: relink, attvars, and what is still not understood
 

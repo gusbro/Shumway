@@ -50,6 +50,54 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// pause the tier imposes, and it is worth a line.</summary>
     public System.Action<int>? BatchStarting { get; set; }
 
+    /// <summary>Installs one relocatable wasm module shipped in a bundle
+    /// (<c>shumway-link --wasm</c>) into the host's world, against the
+    /// engine's CURRENT static link, and returns the functors it installed
+    /// with a note (the count, or why nothing was installed). Wired by the
+    /// host that owns a world; without it the modules stay queued.</summary>
+    public System.Func<PrologEngine, byte[], (IReadOnlyList<int> Installed, string Note)>?
+        BundleInstaller { get; set; }
+
+    /// <summary>The functors running from a bundle's wasm module: a status
+    /// report folds them into one count so the user's own promotions show.
+    /// A relink that evicts one drops it here too.</summary>
+    public HashSet<int> BundleFids { get; } = new();
+
+    /// <summary>What became of the last bundle module offered to <see
+    /// cref="BundleInstaller"/>.</summary>
+    public string BundleInstallNote { get; private set; } = "no bundle modules";
+
+    /// <summary>Installs every queued bundle module (<see
+    /// cref="IlPromotionStore.PendingWasmModules"/>). Called by the query
+    /// setup right after it links the static program, so a bundle's wasm is
+    /// live before the first goal that could dispatch into it, and by the
+    /// host's tick. Needs a link: with none it runs the throwaway goal that
+    /// builds one. Returns how many predicates were installed.</summary>
+    public int InstallPendingBundles(PrologEngine engine)
+    {
+        var pending = ilStore.PendingWasmModules;
+        if (pending.Count == 0 || BundleInstaller is null) return 0;
+        if (engine._staticLink is null)
+        {
+            engine.Query("true.");
+            // The setup of that query drained the queue through this method.
+            if (pending.Count == 0) return _lastBundleInstalled;
+        }
+        var modules = pending.ToArray();
+        pending.Clear();
+        int installed = 0;
+        foreach (var module in modules)
+        {
+            var (fids, note) = BundleInstaller(engine, module);
+            foreach (int fid in fids) BundleFids.Add(fid);
+            installed += fids.Count;
+            BundleInstallNote = note;
+        }
+        _lastBundleInstalled = installed;
+        return installed;
+    }
+    private int _lastBundleInstalled;
+
     /// <summary>wasm_compile(all): compile the whole static program as it is
     /// CONSULTED, not when the user's first query happens to need the link —
     /// deferring the batch would bill that query for every compile at once.
@@ -172,6 +220,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         foreach (int fid in functorIds)
         {
             if (!_installed.Remove(fid)) continue;
+            BundleFids.Remove(fid);
             ilStore.EvictDelegate(fid);
             RelinkEvictions++;
         }
@@ -199,11 +248,14 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         // compare.
         if (engine._staticLink is not null
             && ReferenceEquals(engine._staticLink, _lastLink)
-            && _pendingBatch.Count == 0) return 0;
+            && _pendingBatch.Count == 0
+            && ilStore.PendingWasmModules.Count == 0) return 0;
         bool anythingToDo = _installed.Count > 0
-            || (CompileAllOnConsult && BatchPromoter is not null);
+            || (CompileAllOnConsult && BatchPromoter is not null)
+            || ilStore.PendingWasmModules.Count > 0;
         if (!anythingToDo) return 0;
         if (engine._staticLink is null) engine.Query("true.");
+        InstallPendingBundles(engine);
         _lastLink = engine._staticLink;
         BatchTicksWorked++;
         // Evict the stale BEFORE the batch, so it recompiles them against

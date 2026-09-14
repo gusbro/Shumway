@@ -8,6 +8,10 @@
     <!-- The engine compile-env resolves builtin call sites the way the
          linker would (BuiltinsRegistry). -->
     <ProjectReference Include="..\Shumway.Builtins\Shumway.Builtins.csproj" />
+    <!-- WasmBundleTier bakes a bundle's statics through an engine and
+         installs a bundle's module into one. Embedding does not reference
+         this project back: it sees the modules as opaque bytes. -->
+    <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
   </ItemGroup>
 
   <ItemGroup>

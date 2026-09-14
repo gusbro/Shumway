@@ -165,10 +165,8 @@ internal static partial class WebShumwayApp
         // Intern the whole builtin block HERE, while this is provably the
         // only thread (exports are not callable until Main returns). Boot()
         // runs on a pool thread concurrently with page exports, and a stray
-        // intern from, say, an early highlight landing mid-registration gives
-        // atom/functor ids a per-boot shuffle — which is exactly what the
-        // baked prelude group's validation would reject (its module bakes
-        // this process's ids). shumway-wasmbake mirrors this call.
+        // intern from, say, an early highlight landing mid-registration would
+        // give atom/functor ids a per-boot shuffle.
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
     }
 

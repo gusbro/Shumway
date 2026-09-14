@@ -276,7 +276,7 @@ async function run(queryText) {
   // compiles the whole static program now and after every consult,
   // wasm_compile(off). stops promoting (what already promoted keeps running
   // as wasm, and the OFF sticks: a later restart. boots with neither the
-  // tier nor the baked prelude), wasm_compile(status). reports.
+  // tier nor the stdlib bundle's wasm module), wasm_compile(status). reports.
   const wasmCompile = /^\s*wasm_compile\s*(?:\(\s*(on|off|all|status|\d+)\s*\))?\s*\.?\s*$/
     .exec(queryText);
   if (wasmCompile) {
@@ -1859,11 +1859,11 @@ if (persistMode) {
     const errQ = await session.start('qn(8, Qs), labeling([], Qs), msort(Qs, [1,2,3,4,5,6,7,8]).');
     if (errQ) lines.push('queens start error: ' + errQ + '\n');
     else lines.push('queens: ' + JSON.stringify(await session.next(120)) + '\n');
-    // A fresh engine (restart.): the baked prelude must reinstall — interning
+    // A fresh engine (restart.): the bundle's module must reinstall — interning
     // is idempotent, so the replay validation passes again — and `all` must
     // still find nothing of the prelude to compile.
     // wasm_compile(off) must SURVIVE a restart: the boot skips both the
-    // tier and the baked prelude, or "an engine with no wasm at all" would
+    // tier and the bundle's module, or "an engine with no wasm at all" would
     // be false the moment it booted.
     mark('off then restart');
     lines.push(await session.exports().WasmCompileControl('off'));
