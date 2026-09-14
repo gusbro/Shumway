@@ -37,12 +37,17 @@ public static class WasmBundleTier
                 before.Add(pred.FunctorId);
             engine.LoadBundle(bundle);
         }
+        // What the bundle registered, read BEFORE the query that links: that
+        // setup mints helpers for the bundle's dynamic clauses (a library's
+        // attribute_goals/4 hook) under per-process numbers, and a member
+        // the loading engine names differently refuses the whole module.
+        var own = new HashSet<int>(engine.PrecompiledStaticPredicates.Keys);
         engine.Query("true.");
         var store = engine.IlPromotion;
         var members = new List<WasmGroupMember>();
         foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
         {
-            if (before.Contains(pred.FunctorId)) continue;
+            if (before.Contains(pred.FunctorId) || !own.Contains(pred.FunctorId)) continue;
             members.Add(new WasmGroupMember(pred, addr,
                 store.FloatPoolProvider?.Invoke(pred.FunctorId)));
         }

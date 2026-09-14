@@ -378,6 +378,10 @@ public static class ShmoLinker
         // dispatch to them, and the unfold must never shrink the linked set.
         foreach (var (mod, pred) in ltoPublicWrappers)
             roots.Add((mod, pred, $"lto wrapper in '{mod}'"));
+        if (config.Library)
+            foreach (var obj in objects)
+                foreach (var d in obj.Defined)
+                    roots.Add((obj.ModuleName, d.Indicator, "library"));
 
         // ----- 6. Reachability walk -----
         var reached = new HashSet<(string, PredicateRef)>();

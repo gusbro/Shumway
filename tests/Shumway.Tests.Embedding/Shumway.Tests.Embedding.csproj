@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\..\src\Shumway.Libraries\Shumway.Libraries.csproj" />
     <!-- Chunk 249: REPL components (HistoryStore) tested from here
          to avoid spinning up a dedicated Shumway.Tests.Repl project
          for a single small surface. The REPL stays net10-only, so its

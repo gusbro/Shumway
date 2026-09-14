@@ -139,9 +139,8 @@ public static class PredicateDoc
                 b.Summary is not null && !b.Name.StartsWith('$'))
                 entries.Add(new Entry(b.Category, b.Name, b.Arity, b.Template, b.Summary));
         CollectDocComments(Prelude.Source, entries);
-        CollectDocComments(Clpfd.Source, entries);
-        CollectDocComments(Clpr.Source, entries);
-        CollectDocComments(Coroutining.Source, entries);
+        foreach (var lib in LibraryBundles.Names)
+            CollectDocComments(LibraryBundles.SourceOf(lib), entries);
         CollectDocComments(CompatLibraries.QuadsSource, entries);
         return entries;
     }

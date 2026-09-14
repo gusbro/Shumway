@@ -1081,7 +1081,7 @@ internal static partial class WebShumwayApp
                     else byModule[mod] = byModule.GetValueOrDefault(mod) + 1;
                 }
                 var folded = byModule.Select(kv => $"{kv.Value} {kv.Key}").ToList();
-                if (baked > 0) folded.Add($"{baked} from the stdlib bundle");
+                if (baked > 0) folded.Add($"{baked} baked (the stdlib and library bundles)");
                 var refused = w.UnpromotableFunctorIds()
                     .Select(f => w.RefusalReason(f) is { } why
                         ? $"{Name(f)} ({why})" : Name(f))

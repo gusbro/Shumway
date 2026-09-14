@@ -26,6 +26,7 @@
     <!-- The engine, for the differential half: the same programs run on
          Tier-0 to check the answers and to anchor the timings. -->
     <ProjectReference Include="..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\..\src\Shumway.Libraries\Shumway.Libraries.csproj" />
   </ItemGroup>
 
 </Project>

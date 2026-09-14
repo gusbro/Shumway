@@ -242,6 +242,13 @@ public sealed class LinkConfig
     /// you conjure dynamically). Interactive/REPL-style consumers that accept
     /// arbitrary queries should keep the full prelude.</summary>
     public bool PrunePrelude { get; init; }
+
+    /// <summary>When <c>true</c>, every predicate defined in every object is a
+    /// reachability root: the bundle is a library loaded whole (the
+    /// <c>--library</c> option), not a program pruned from its entry points.
+    /// A library's predicates are reached by runtime-built goals the walk
+    /// cannot see (suspended propagators, hooks), so nothing is dropped.</summary>
+    public bool Library { get; init; }
 }
 
 /// <summary>One library input to <see cref="ShmoLinker.Link"/>: a

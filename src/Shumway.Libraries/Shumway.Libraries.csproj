@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The engine's own Prolog libraries (clpfd, clpr, coroutining), compiled
+       and linked at build time into the bundles PrologEngine.UseClpfd() and
+       use_module(library(clpfd)) load. They live in their own assembly
+       because the bake runs the compiler and linker of Shumway.Embedding
+       itself: Embedding cannot embed what its own build has to produce.
+       Embedding loads this assembly BY NAME at first use, so a host must
+       reference it (and root it when trimming: see Shumway.Web). -->
+
+  <PropertyGroup>
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>$(ShumwayTargetFrameworks)</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- Ordering and restore only (ReferenceOutputAssembly=false): the bake
+       tool is a net10 executable whatever framework this assembly targets. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\build\Shumway.LibraryBake\Shumway.LibraryBake.csproj"
+                      ReferenceOutputAssembly="false" Private="false" SetTargetFramework="TargetFramework=net10.0" />
+  </ItemGroup>
+
+  <!-- With the wasm tier (Shumway.Web, -p:ShumwayWasmTier=true) each bundle
+       also carries its predicates as a relocatable wasm module, installed
+       when the library loads instead of compiled in the browser. The two
+       flavours bake into different directories so switching the flag never
+       serves a stale bundle. Paths are spelled out: IntermediateOutputPath
+       is set by SDK targets imported after this body, and an
+       EmbeddedResource item is evaluated before that. -->
+  <PropertyGroup>
+    <ShumwayWasmTier Condition="'$(ShumwayWasmTier)' == ''">false</ShumwayWasmTier>
+    <LibraryWasmFlag Condition="'$(ShumwayWasmTier)' == 'true'">--wasm</LibraryWasmFlag>
+    <LibraryBakeDir>obj\$(Configuration)\lib\</LibraryBakeDir>
+    <LibraryBakeDir Condition="'$(ShumwayWasmTier)' == 'true'">obj\$(Configuration)\lib-wasm\</LibraryBakeDir>
+    <LibraryBakeDll>..\..\build\Shumway.LibraryBake\bin\$(Configuration)\net10.0\shumway-librarybake.dll</LibraryBakeDll>
+    <LibraryBakeInputs>@(LibrarySource);$(LibraryBakeDll);..\Shumway.Embedding\bin\$(Configuration)\net10.0\Shumway.Embedding.dll;..\Shumway.Compiler.Wasm\bin\$(Configuration)\net10.0\Shumway.Compiler.Wasm.dll</LibraryBakeInputs>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <LibrarySource Include="clpfd.pl;clpr.pl;coroutining.pl" />
+    <!-- The source text travels too: the predicate reference is generated
+         from the libraries' doc comments, which a Release bundle drops. -->
+    <EmbeddedResource Include="@(LibrarySource)" LogicalName="%(Filename).pl" />
+    <EmbeddedResource Include="@(LibrarySource->'$(LibraryBakeDir)%(Filename).shum')"
+                      LogicalName="%(Filename).shum" Visible="false" />
+  </ItemGroup>
+
+  <!-- Each framework's build asks for the bake before it compiles, from ONE
+       dedicated project instance (its own global properties, no target
+       framework): MSBuild runs a target once per instance and hands the
+       cached result to every later caller, so parallel inner builds never
+       race on the output files, and a host that references this project
+       directly (Shumway.Web is not in the solution, so only its inner build
+       ever runs) still gets fresh bundles. The tool is built inside that
+       instance, in a target of its own, because Inputs are read when a
+       target starts and the bake's up-to-date check has to see the tool
+       and the engine as they are AFTER that build. The instance's marker
+       property must not reach the tool: global properties flow down, and
+       the tool's dependencies would build a second time, as new
+       instances, racing the regular build for the same output files. -->
+  <Target Name="RequestLibraryBundles"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(TargetFramework)' != ''">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="BakeLibraryBundles"
+             Properties="ShumwayLibraryBakeInstance=true" RemoveProperties="TargetFramework" />
+  </Target>
+
+  <Target Name="BuildLibraryBakeTool">
+    <MSBuild Projects="..\..\build\Shumway.LibraryBake\Shumway.LibraryBake.csproj"
+             Targets="Build" Properties="TargetFramework=net10.0"
+             RemoveProperties="ShumwayLibraryBakeInstance" />
+  </Target>
+
+  <Target Name="BakeLibraryBundles"
+          DependsOnTargets="BuildLibraryBakeTool"
+          Inputs="$(LibraryBakeInputs)"
+          Outputs="@(LibrarySource->'$(LibraryBakeDir)%(Filename).shum')">
+    <MakeDir Directories="$(LibraryBakeDir)" />
+    <Exec Command="dotnet &quot;$(LibraryBakeDll)&quot; %(LibrarySource.Identity) $(LibraryWasmFlag) -o &quot;$(LibraryBakeDir)%(LibrarySource.Filename).shum&quot;" />
+  </Target>
+
+</Project>

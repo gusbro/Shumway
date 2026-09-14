@@ -62,6 +62,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\Shumway.Libraries\Shumway.Libraries.csproj" />
     <ProjectReference Include="..\Shumway.TopLevel\Shumway.TopLevel.csproj" />
     <!-- The wasm Tier-1 spike (phase 0). Browser-only by nature. -->
     <ProjectReference Include="..\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
@@ -98,6 +99,10 @@
          compile to WebAssembly modules and run natively. Browser only. -->
     <RuntimeHostConfigurationOption Include="Shumway.WasmCodegen"
         Value="$(ShumwayWasmTier)" Trim="true" />
+    <!-- Embedding loads the engine's libraries by assembly NAME at first
+         use; nothing references the assembly statically, so the trimmer
+         must be told to keep it. -->
+    <TrimmerRootAssembly Include="Shumway.Libraries" />
   </ItemGroup>
 
   <!-- Bake the standard library into a bundle the app embeds, so the engine boots

@@ -990,7 +990,7 @@ public sealed partial class PrologEngine
     /// builtins.</summary>
     private static readonly string[] LibraryModules =
     {
-        Prelude.ModuleName, Clpfd.ModuleName, Clpr.ModuleName, Coroutining.ModuleName,
+        Prelude.ModuleName, LibraryBundles.Clpfd, LibraryBundles.Clpr, LibraryBundles.Coroutining,
     };
 
     internal static bool IsLibraryModule(string moduleName)

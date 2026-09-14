@@ -186,6 +186,7 @@ internal static class LinkCli
             BakePrelude = opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath)
                 || !string.IsNullOrEmpty(opts.DllPath),
             PrunePrelude = opts.PrunePrelude,
+            Library = opts.Library,
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
@@ -384,6 +385,7 @@ internal static class LinkCli
         public bool RegionPrune { get; set; } = true;
         public bool BakePrelude { get; set; }
         public bool PrunePrelude { get; set; }
+        public bool Library { get; set; }
         public string? DumpWamPath { get; set; }
         public string? DumpIlPath { get; set; }
         public string MapPath { get; set; } = "";
@@ -482,6 +484,10 @@ internal static class LinkCli
                 case "--strip-wam":
                     opts.IncludeCompiledIl = true;   // strip-wam implies IL
                     opts.StripWam = true;
+                    break;
+
+                case "--library":
+                    opts.Library = true;
                     break;
 
                 case "--wasm":
@@ -656,7 +662,7 @@ internal static class LinkCli
                 "shumway-link: at least one input is required (.shmo object or .shum library).");
             return null;
         }
-        if (opts.EntryPoints.Count == 0 && string.IsNullOrEmpty(opts.Goal))
+        if (opts.EntryPoints.Count == 0 && string.IsNullOrEmpty(opts.Goal) && !opts.Library)
         {
             Console.Error.WriteLine(
                 "shumway-link: at least one --entry pred/N or --goal Term is required "
@@ -926,6 +932,9 @@ internal static class LinkCli
             + "                           shared-method layout. Mainly for inspecting the\n"
             + "                           generated code; bundles are larger and typically\n"
             + "                           slower.\n"
+            + "      --library            Keep every predicate of every input: the bundle\n"
+            + "                           is a library loaded whole, so no --entry is\n"
+            + "                           needed and nothing is pruned.\n"
             + "      --stdlib             Embed the precompiled standard library (the\n"
             + "                           prelude) in the bundle so loading it skips\n"
             + "                           compiling the stdlib at startup (and, under\n"
