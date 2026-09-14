@@ -28,7 +28,18 @@ public sealed class WasmTierDelegate
     /// <summary>Diagnostic tallies (all delegates, process-wide): chain
     /// entries, in-chain module switches, deopts, builtin requests, and exits
     /// to the interpreter for tail calls it must dispatch. Not on any hot
-    /// path decision; plain longs.</summary>
+    /// path decision; plain longs.
+    ///
+    /// <para>Whether all of this should hide behind a #define was asked and
+    /// MEASURED, on the heaviest case there is: queens 8 under clpfd, whose
+    /// run is 26,801 chain entries, 32,871 builtin exits and 5,073 deopts.
+    /// Doing exactly that bookkeeping and nothing else takes 1.0-1.3 ms
+    /// against a run of 1,381-2,221 ms: 0.05-0.10%. The pc scan that the
+    /// question was really about is 0.19 ms of it even with the table FULL,
+    /// which is its worst case. So it stays visible, and the ranking it
+    /// feeds has already earned that: it is what found that 47% of those
+    /// exits are integer/1. A wall-clock A/B of the RUN could not have
+    /// answered this -- the same goal swings 935 to 3,249 ms.</para></summary>
     public static long DiagEntries, DiagSwitches, DiagDeopts, DiagBuiltins, DiagTailExits;
 
     /// <summary>Chain exits taken because the target was in ANOTHER module
