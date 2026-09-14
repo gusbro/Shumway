@@ -123,7 +123,7 @@ public sealed class TwoWorldsCrossingTests(ITestOutputHelper o)
     /// <para>This is the counter that catches "correct but slow": a hop that
     /// quietly fell back to the host still answers right, and only these
     /// numbers move.</para></summary>
-    [Fact]
+    [DiagFact]
     public void CrossingModulesHopsInsideWasmAndCostsNoExtraChain()
     {
         var (whole, _, _) = TwoWorlds(_ => true);

@@ -77,7 +77,7 @@ public class WasmBundleTierTests
         => (WasmTierDelegate.DiagEntries, WasmTierDelegate.DiagDeopts,
             WasmTierDelegate.DiagBuiltins, WasmTierDelegate.DiagInWasmHops);
 
-    [Fact]
+    [DiagFact]
     public void LinkedWithWasm_InstallsAtFirstLink_SameAnswersAndCountersAsLive()
     {
         var link = Link(Bake);

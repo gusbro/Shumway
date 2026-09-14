@@ -11,7 +11,7 @@ namespace Shumway.Tests.Wasm;
 /// it was added; this is what reads it.</summary>
 public sealed class BuiltinRankingTests(ITestOutputHelper o)
 {
-    [Fact]
+    [DiagFact]
     public void TheRankingNamesTheBuiltinAChainLeavesFor()
     {
         // Arithmetic is open-coded in the module (ADR-018), so a program of

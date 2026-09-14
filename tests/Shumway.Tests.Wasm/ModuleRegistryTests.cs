@@ -62,7 +62,7 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
     /// every crossing is a hop: nothing goes out to the host, nothing deopts.
     /// The counter-proof is the same corpus as ONE module, which cannot hop
     /// because it has no sibling to hop to.</summary>
-    [Fact]
+    [DiagFact]
     public void OneModulePerPredicateAnswersLikeTier0AndOnlyHops()
     {
         string oracle = Oracle();
@@ -123,7 +123,7 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
     /// by baked jumps -- hi/1 and both/1 call lo/1, chase/2 calls them --
     /// are displaced with it, since their jumps would land in the dead
     /// code. A member that never calls it stays. Nothing is rebuilt.</summary>
-    [Fact]
+    [DiagFact]
     public void ATakeoverDisplacesTheBakedCallersAndTheOthersStay()
     {
         string oracle = Oracle();
@@ -196,7 +196,7 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
     /// <summary>An evicted functor resolves nowhere, in the registry and in
     /// the modules alike, and runs on bytecode: the answers do not change,
     /// the calls into it become foreign exits.</summary>
-    [Fact]
+    [DiagFact]
     public void AnEvictedFunctorDegradesToBytecode()
     {
         string oracle = Oracle();
@@ -282,7 +282,7 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
     /// <summary>Backtracking across modules a great many times: every retry
     /// is a hop, a tail call that replaces the frame. If a hop stacked, this
     /// would overflow long before the end.</summary>
-    [Fact]
+    [DiagFact]
     public void DeepBacktrackingAcrossModulesHopsWithoutStacking()
     {
         const string corpus = """

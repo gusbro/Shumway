@@ -55,7 +55,7 @@ public class ArchiveWasmTests : IDisposable
         return engine;
     }
 
-    [Fact]
+    [DiagFact]
     public void ArchiveWithWasm_InstallsWhenTheLibraryLoads()
     {
         byte[] archive = Archive(wasm: true, Member(Source, "ilist"));

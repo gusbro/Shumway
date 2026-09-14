@@ -63,7 +63,7 @@ public sealed class TierBudgetTests(ITestOutputHelper o)
         { "numlist(1, 200, A), app(A, [x], B), length(B, N), N == 201.", 6, 0, 0 },
     };
 
-    [Theory]
+    [DiagTheory]
     [MemberData(nameof(Budgets))]
     public void TheTierSpendsExactlyThis(string goal, long entries, long deopts,
                                          long foreignExits)
@@ -103,7 +103,7 @@ public sealed class TierBudgetTests(ITestOutputHelper o)
     /// for ALL of them and is worth stating on its own, because it is the one
     /// the arc must not lose: with a single module, nothing leaves the tier
     /// looking for a target elsewhere.</summary>
-    [Fact]
+    [DiagFact]
     public void OneModuleNeverExitsLookingForAnother()
     {
         var (e, members) = TieredEngine.Build(Corpus);

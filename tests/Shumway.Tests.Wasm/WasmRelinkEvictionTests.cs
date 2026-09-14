@@ -138,7 +138,7 @@ public class WasmRelinkEvictionTests
     /// evicted: the builds keep running, translated at the boundary. Delete
     /// the translation and this is the "bytecode corruption" crash again --
     /// and the code space could never compact.</summary>
-    [Fact]
+    [DiagFact]
     public void AConsultAfterALibraryLoadCompactsAndTheTierTranslates()
     {
         var (engine, wasm, world) = TieredEngineWithWorld();

@@ -117,7 +117,7 @@ public class WasmRelocatableModuleTests
         => (WasmTierDelegate.DiagEntries, WasmTierDelegate.DiagDeopts,
             WasmTierDelegate.DiagBuiltins, WasmTierDelegate.DiagInWasmHops);
 
-    [Fact]
+    [DiagFact]
     public void RelocatedIntoAnotherLink_SameAnswersAndSameCounters()
     {
         var (a, membersA) = Linked();

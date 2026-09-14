@@ -125,7 +125,7 @@ public class EngineWasmTierTests
         Assert.False(e.Query("wrap(1, T), same(T, f(g(1), h(2))).").Success);
     }
 
-    [Fact]
+    [DiagFact]
     public void InGroupCallsNeverLeaveTheModule()
     {
         // The group design's contract: once the predicates share a module,
@@ -186,7 +186,7 @@ public class EngineWasmTierTests
         Assert.InRange(WasmTierDelegate.DiagDeopts, 0, 16);
     }
 
-    [Fact]
+    [DiagFact]
     public void TermIdentityIsOpenCoded_ForAtomicCells()
     {
         // ==/2 and \==/2 on dereferenced Atom/Int cells decide INSIDE the

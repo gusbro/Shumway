@@ -328,6 +328,7 @@ internal static class BrowserWasmTier
     /// says which one.</summary>
     internal static string BuiltinRankingReport()
     {
+        if (!WasmTierDelegate.DiagCompiledIn) return "";
         var rank = WasmTierDelegate.BuiltinRanking();
         if (rank.Count == 0) return "";
         long total = WasmTierDelegate.DiagBuiltins;
@@ -1122,7 +1123,12 @@ internal static partial class WebShumwayApp
                     + (folded.Count > 0 ? " + " + string.Join(" + ", folded) : "")
                     + $"): {string.Join(" ", promoted)}\n"
                     + $"%   refused ({refused.Count}): {string.Join(" ", refused)}\n"
-                    + "%   since the previous status:\n"
+                    + (WasmTierDelegate.DiagCompiledIn
+                        ? "%   since the previous status:\n"
+                        // Zeros here would read as measurements. They are not:
+                        // nobody counted, because a diagnostic does not ship.
+                        : "%   counters: NOT COMPILED IN (build with "
+                          + "-p:ShumwayDiag=true)\n")
                     + $"%   chains={WasmTierDelegate.DiagEntries} "
                     + $"switches={WasmTierDelegate.DiagSwitches} "
                     + $"hops={WasmTierDelegate.DiagInWasmHops} "

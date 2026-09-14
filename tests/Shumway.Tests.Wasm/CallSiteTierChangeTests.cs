@@ -84,7 +84,7 @@ public sealed class CallSiteTierChangeTests
         return WasmTierDelegate.DiagEntries;
     }
 
-    [Theory]
+    [DiagTheory]
     [InlineData("before")]   // the boot: attached before any query linked
     [InlineData("after")]    // wasm_compile. on a live engine that already ran queries
     [InlineData("never")]    // no store at all: a delegate bound by hand
@@ -105,7 +105,7 @@ public sealed class CallSiteTierChangeTests
             "chase/1's call site never reached lo/1's module");
     }
 
-    [Fact]
+    [DiagFact]
     public void TurningTheTierOffMakesTheSitesBytecodeAgain()
     {
         var plain = new PrologEngine();
@@ -133,7 +133,7 @@ public sealed class CallSiteTierChangeTests
     /// delegate AFTER the throwaway query rewrote its sites to CallIl, and
     /// nothing recompiles it. Before the healing this threw "CallIl: no IL
     /// delegate ... invariant violated" at the first call.</summary>
-    [Fact]
+    [DiagFact]
     public void ARelinkEvictionAfterTheSitesWereRewrittenHeals()
     {
         var plain = new PrologEngine();
@@ -164,7 +164,7 @@ public sealed class CallSiteTierChangeTests
 
     /// <summary>The same eviction with no relink at all: the CallIl sites
     /// of the running program lose their delegate between two queries.</summary>
-    [Fact]
+    [DiagFact]
     public void AnEvictionBetweenQueriesHeals()
     {
         var plain = new PrologEngine();

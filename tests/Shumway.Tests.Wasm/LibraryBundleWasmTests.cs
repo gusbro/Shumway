@@ -51,7 +51,7 @@ public class LibraryBundleWasmTests
         return engine;
     }
 
-    [Fact]
+    [DiagFact]
     public void LibraryLinkedWithWasm_RunsFromTheBakedModule()
     {
         var bundle = BakeLibrary("coroutining", wasm: true);
