@@ -16,7 +16,18 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 {
     /// <summary>Dispatches before a compile is attempted. 0 disables the
     /// tier.</summary>
-    public int Threshold { get; set; }
+    public int Threshold
+    {
+        get => _threshold;
+        set
+        {
+            bool wasEnabled = Enabled;
+            _threshold = value;
+            if (wasEnabled != Enabled && ReferenceEquals(ilStore.Wasm, this))
+                ilStore.WasmEnabledChanged();
+        }
+    }
+    private int _threshold;
 
     /// <summary>Builds the delegate for a predicate: compile the module,
     /// bind it to an <see cref="IWasmActivationRunner"/>, wrap the verdict

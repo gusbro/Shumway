@@ -971,6 +971,28 @@ baked jump never reaches code the table has left behind, because the
 jumper leaves first. A probe that resolves to the same module is a local
 branch and is not counted as a hop.
 
+The bytecode side has the mirror trap. The linker bakes the tier's state
+into the persistent program: a callee that can never promote gets
+`CallBytecode` sites (no dispatch hook, so no counting), one that already
+has a delegate gets `CallIl` sites (no bytecode), and the program stays
+linked until the next consult. Two events break that between queries.
+Attaching or enabling the tier on a live engine (`wasm_compile.` after a
+query ran) left every static site bytecode-only: nothing below the top
+level was ever counted or promoted. `IlPromotionStore.PromotabilityChanged`
+now fires when the verdict can flip (its threshold or the wasm store's
+crossing zero, a store attached, a delegate bound by hand under no tier)
+and the engine invalidates the persistent program, so the next query
+relinks. And an eviction that comes AFTER the sites were rewritten -- the
+lazy mode's tick evicts a redefined delegate right after the throwaway
+query rewrote its sites, and nothing recompiles it -- left `CallIl` sites
+with no delegate: a hard "invariant violated" throw at the first call. The
+interpreter now resolves the delegate before any side effect and, on a
+miss, heals the site back into the plain `Call`/`Execute` (the address
+comes from `ITier1Dispatcher.AddressOfFunctor`) and dispatches it again;
+the healed site counts and promotes like any other.
+`CallSiteTierChangeTests` pins both, with the tier turning off as the
+counter-proof.
+
 The browser attaches the tier in BATCH mode by default (one module for the
 whole linked program at each consult boundary, the baked prelude being
 module 0, installed first) and in lazy mode — one module per predicate as it
@@ -1028,7 +1050,8 @@ of an installed module round-trips through the table and the host agrees.
 callers, both come back in a fresh module, the bystander stays, and the
 call site reaches the new definition. `ModuleRegistryTests` also pins the
 cascade itself: a takeover of `lo/1` displaces exactly its transitive
-callers and leaves the member that never calls it; evicting a member nobody
+callers and leaves the member that never calls it, and the displaced reach
+the new module from their bytecode call sites; evicting a member nobody
 calls evicts that member alone.
 
 Gate per phase: `dotnet test tests/Shumway.Tests.Wasm/` (Debug and Release),

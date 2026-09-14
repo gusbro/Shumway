@@ -154,14 +154,12 @@ public sealed class ModuleRegistryTests(ITestOutputHelper o)
             "solo/1 did not survive the takeover");
 
         // The displaced run on bytecode until re-promoted (this engine has
-        // no wasm store to re-promote them, so bytecode it is); lo/1 in its
-        // new module still answers, and nothing deopts. (The bytecode call
-        // sites of the displaced were linked bytecode-to-bytecode when the
-        // tier was not attached, so lo/1 is entered from the top level.)
+        // no wasm store to re-promote them, so bytecode it is) and reach
+        // lo/1 in its new module from their bytecode call sites; nothing
+        // deopts.
         foreach (int fid in displaced) engine.IlPromotion.EvictDelegate(fid);
-        Assert.Equal(oracle, Answer(engine));
         WasmTierDelegate.ResetDiag();
-        Assert.True(engine.Query("findall(X, lo(X), [1,2,3]).").Success);
+        Assert.Equal(oracle, Answer(engine));
         Assert.True(WasmTierDelegate.DiagEntries > 0, "nothing entered the tier");
         Assert.Equal(0, WasmTierDelegate.DiagSwitches);
         Assert.Equal(0, WasmTierDelegate.DiagDeopts);

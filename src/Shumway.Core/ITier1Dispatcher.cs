@@ -29,4 +29,10 @@ public interface ITier1Dispatcher
     /// delegate at the forward-resume cursor without creating a
     /// recursive C# stack frame.</summary>
     Func<Activation, int, bool>? ResolveByFunctorId(int functorId);
+
+    /// <summary>The linked address of the predicate with this functor id
+    /// in the running program, or -1. The interpreter needs it when a
+    /// <c>CallIl</c> site finds no delegate (evicted since the site was
+    /// rewritten): the site goes back to a plain <c>Call</c>.</summary>
+    int AddressOfFunctor(int functorId);
 }

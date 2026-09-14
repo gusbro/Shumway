@@ -903,30 +903,7 @@ public sealed partial class BytecodeInterpreter
                 // (Call and CallIl share width and operand offsets).
                 case Opcode.CallIl:
                 {
-                    _engine.Inferences++;   // time/1 goal-dispatch counter
-                    if (_engine.HasPendingWakeups)   // ADR-049
-                    {
-                        (_, int wakeAr) = FunctorTable.Lookup(ReadI32(code, codeArr, pc + 1));
-                        int w = WakeBoundary(code, wakeAr, pc);
-                        if (w == WakeEntered) { inClause = false; break; }
-                        if (w == WakeFailed)
-                        {
-                            if (!TryBacktrack()) return InterpreterResult.Failed;
-                            break;
-                        }
-                    }
                     int functorId = ReadI32(code, codeArr, pc + 1);
-                    int numLivePerms = ReadI32(code, codeArr, pc + 5);
-                    Shumway.Core.Profiler.Call(functorId);
-                    _engine.Debug?.OnCallFunctor(_engine, functorId, false);   // ADR-035
-                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
-                    _engine.TrimEnv(numLivePerms);
-                    _engine.SetCp(pc + 9);  // CallIl is 9 bytes, same as Call
-                    _engine.SetB0(_engine.B);
-                    // ADR-016 safe point — heap GC needs every goal
-                    // boundary regardless of dispatch tier. The callee's
-                    // functor bounds the live registers.
-                    _engine.MaybeCollectHeapAtCall(functorId);
                     var table = IlByFunctorId;
                     var ilFn = table is not null && (uint)functorId < (uint)table.Length
                         ? table[functorId] : null;
@@ -938,14 +915,36 @@ public sealed partial class BytecodeInterpreter
                     ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
                     if (ilFn is null)
                     {
-                        // IL was unregistered after the link-time
-                        // rewrite installed CallIl here. Shouldn't
-                        // normally happen for Stage B.1, but bail to
-                        // existence_error rather than NRE.
-                        throw new InvalidOperationException(
-                            $"CallIl: no IL delegate for functor id {functorId}. "
-                            + "Bytecode rewrite invariant violated.");
+                        // The delegate was evicted after the site was
+                        // rewritten (a relink between queries): the site
+                        // goes back to a plain Call and is dispatched again
+                        // -- nothing above has run yet, so nothing repeats.
+                        HealIlSite(code, pc, functorId, isExecute: false);
+                        continue;
                     }
+                    _engine.Inferences++;   // time/1 goal-dispatch counter
+                    if (_engine.HasPendingWakeups)   // ADR-049
+                    {
+                        (_, int wakeAr) = FunctorTable.Lookup(functorId);
+                        int w = WakeBoundary(code, wakeAr, pc);
+                        if (w == WakeEntered) { inClause = false; break; }
+                        if (w == WakeFailed)
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                    }
+                    int numLivePerms = ReadI32(code, codeArr, pc + 5);
+                    Shumway.Core.Profiler.Call(functorId);
+                    _engine.Debug?.OnCallFunctor(_engine, functorId, false);   // ADR-035
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
+                    _engine.TrimEnv(numLivePerms);
+                    _engine.SetCp(pc + 9);  // CallIl is 9 bytes, same as Call
+                    _engine.SetB0(_engine.B);
+                    // ADR-016 safe point — heap GC needs every goal
+                    // boundary regardless of dispatch tier. The callee's
+                    // functor bounds the live registers.
+                    _engine.MaybeCollectHeapAtCall(functorId);
                     if (!ilFn(_engine, 0))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -1018,10 +1017,21 @@ public sealed partial class BytecodeInterpreter
                 // IlByFunctorId — no OnDispatch.
                 case Opcode.ExecuteIl:
                 {
+                    int functorId = ReadI32(code, codeArr, pc + 1);
+                    var table = IlByFunctorId;
+                    var ilFn = table is not null && (uint)functorId < (uint)table.Length
+                        ? table[functorId] : null;
+                    // Same stale-snapshot fallback and healing as CallIl above.
+                    ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
+                    if (ilFn is null)
+                    {
+                        HealIlSite(code, pc, functorId, isExecute: true);
+                        continue;
+                    }
                     _engine.Inferences++;   // time/1 goal-dispatch counter
                     if (_engine.HasPendingWakeups)   // ADR-049
                     {
-                        (_, int wakeAr) = FunctorTable.Lookup(ReadI32(code, codeArr, pc + 1));
+                        (_, int wakeAr) = FunctorTable.Lookup(functorId);
                         int w = WakeBoundary(code, wakeAr, pc);
                         if (w == WakeEntered) { inClause = false; break; }
                         if (w == WakeFailed)
@@ -1030,21 +1040,11 @@ public sealed partial class BytecodeInterpreter
                             break;
                         }
                     }
-                    int functorId = ReadI32(code, codeArr, pc + 1);
                     Shumway.Core.Profiler.Call(functorId);
                     _engine.Debug?.OnCallFunctor(_engine, functorId, true);   // ADR-035
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     _engine.SetB0(_engine.B);  // tail call still enters a new procedure
                     _engine.MaybeCollectHeapAtCall(functorId);
-                    var table = IlByFunctorId;
-                    var ilFn = table is not null && (uint)functorId < (uint)table.Length
-                        ? table[functorId] : null;
-                    // Same stale-snapshot fallback as CallIl above.
-                    ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
-                    if (ilFn is null)
-                        throw new InvalidOperationException(
-                            $"ExecuteIl: no IL delegate for functor id {functorId}. "
-                            + "Bytecode rewrite invariant violated.");
                     if (!ilFn(_engine, 0))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -3005,6 +3005,28 @@ public sealed partial class BytecodeInterpreter
         => code.Overflow is null
             ? BytecodeIO.ReadInt32(codeArr, offset)
             : BytecodeIO.ReadInt32(code, offset);
+
+    /// <summary>A CallIl/ExecuteIl site whose callee lost its delegate
+    /// (evicted after a relink rewrote the site) becomes the plain Call /
+    /// Execute it was: the operand goes back from functor id to address.
+    /// The buffers are the engine's own, so every activation sharing them
+    /// sees the plain site, which is always valid. Without a linked address
+    /// (an IL-only bundle) the eviction was impossible, so this is a
+    /// bug.</summary>
+    private void HealIlSite(in Shumway.Core.ProgramView code, int pc, int functorId,
+        bool isExecute)
+    {
+        int addr = Tier1Dispatcher?.AddressOfFunctor(functorId) ?? -1;
+        if (addr < 0)
+            throw new InvalidOperationException(
+                $"{(isExecute ? "ExecuteIl" : "CallIl")}: no IL delegate and no "
+                + $"bytecode for functor id {functorId}. Bytecode rewrite invariant violated.");
+        byte[] buf; int at;
+        if (pc < code.Split) { buf = code.Primary; at = pc; }
+        else { buf = code.Overflow!; at = pc - code.Split; }
+        buf[at] = isExecute ? (byte)Opcode.Execute : (byte)Opcode.Call;
+        BytecodeIO.WriteInt32(buf, at + 1, addr);
+    }
 
     /// <summary>peeled 8-byte operand read; see
     /// <see cref="ReadI32"/>. Worst pre-peel offender was

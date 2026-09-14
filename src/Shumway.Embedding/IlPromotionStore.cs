@@ -253,7 +253,27 @@ public sealed class IlPromotionStore
 
     /// <summary>Invocation count before an IL compile is attempted. 0 (the default)
     /// disables promotion.</summary>
-    public int Threshold { get; set; }
+    public int Threshold
+    {
+        get => _threshold;
+        set
+        {
+            bool flip = (_threshold <= 0) != (value <= 0);
+            _threshold = value;
+            if (flip) PromotabilityChanged?.Invoke();
+        }
+    }
+    private int _threshold;
+
+    /// <summary>Fires when the answer of <see cref="IsPermanentlyBytecodeOnly"/>
+    /// may have changed for every predicate: the tier turned on or off, a
+    /// wasm store was attached. The linker bakes that answer into the
+    /// persistent program as CallBytecode sites, which skip dispatch for
+    /// good -- a tier enabled afterwards would count nothing and promote
+    /// nothing below the top level until the next consult -- so the engine
+    /// invalidates the persistent program here and the next query relinks.
+    /// </summary>
+    internal Action? PromotabilityChanged { get; set; }
 
     /// <summary>Profile samples required before the phase-2 PGO recompile.</summary>
     public int PgoSampleThreshold { get; set; } = 32;
@@ -261,7 +281,21 @@ public sealed class IlPromotionStore
     /// <summary>The wasm tier's promotion state, when a world wired one
     /// (browser boot; desktop differential tests). Its delegates install into
     /// THIS store's table, so dispatch and eviction are shared.</summary>
-    public WasmPromotionStore? Wasm { get; set; }
+    public WasmPromotionStore? Wasm
+    {
+        get => _wasm;
+        set
+        {
+            bool flip = (_wasm is { Enabled: true }) != (value is { Enabled: true });
+            _wasm = value;
+            if (flip) PromotabilityChanged?.Invoke();
+        }
+    }
+    private WasmPromotionStore? _wasm;
+
+    /// <summary>The wasm store's <see cref="WasmPromotionStore.Enabled"/>
+    /// flipped in place (its threshold set to or from zero).</summary>
+    internal void WasmEnabledChanged() => PromotabilityChanged?.Invoke();
 
     /// <summary>The delegate bound to <paramref name="functorId"/>, or null.</summary>
     public PredicateDelegate? TryGet(int functorId)
@@ -578,6 +612,10 @@ public sealed class IlPromotionStore
     {
         if (_delegates.ContainsKey(functorId)) return;
         if (_unpromotable.Contains(functorId)) _unpromotable.Remove(functorId);
+        // With no tier on, the linker made every site bytecode-only; a
+        // delegate bound by hand still has to be reached from them.
+        if (Threshold <= 0 && Wasm is not { Enabled: true })
+            PromotabilityChanged?.Invoke();
         InstallDelegate(functorId, del);
     }
 
