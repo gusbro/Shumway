@@ -1881,6 +1881,10 @@ if (persistMode) {
     const errQ = await session.start('qn(8, Qs), labeling([], Qs), msort(Qs, [1,2,3,4,5,6,7,8]).');
     if (errQ) lines.push('queens start error: ' + errQ + '\n');
     else lines.push('queens: ' + JSON.stringify(await session.next(120)) + '\n');
+    // The status right here, before anything else moves the counters: a clpfd
+    // run is where the builtin exits dominate, and the ranking says which
+    // builtins they are.
+    lines.push(await session.exports().WasmCompileControl('status'));
     // A fresh engine (restart.): the bundle's module must reinstall — interning
     // is idempotent, so the replay validation passes again — and `all` must
     // still find nothing of the prelude to compile.

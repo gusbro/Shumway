@@ -108,13 +108,8 @@ public class WasmBuiltinTallyDiagnostic
                     _out.WriteLine($"   [{name}] first-deopt slots: flags={s[0]} "
                         + $"TR={s[1]}/{s[2]} H={s[3]} watermark={s[4]} ST={s[5]}/{s[6]}");
             }
-            var rows = WasmTierDelegate.DiagBuiltinTally
-                .OrderByDescending(kv => kv.Value)
-                .Select(kv =>
-                {
-                    var b = Shumway.Builtins.BuiltinsRegistry.GetById(kv.Key);
-                    return ($"{b.Name}/{b.Arity}", kv.Value);
-                })
+            var rows = WasmTierDelegate.BuiltinRanking()
+                .Select(r => ($"{r.Name}/{r.Arity}", r.Hits))
                 .ToList();
             _out.WriteLine($"== {name}: entries={entries} deopts={deopts} "
                 + $"builtinRequests={rows.Sum(r => r.Item2)}");

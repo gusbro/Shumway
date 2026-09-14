@@ -163,6 +163,31 @@ public sealed class WasmTierDelegate
         return r;
     }
 
+    /// <summary>Which builtins a run leaves the chain for, most first. On
+    /// the programs where the tier gains least, the exits and not the hops
+    /// are where the time goes (queens 12: 626,930 builtin exits against
+    /// 524,030 chains), so this is the list that says what earns
+    /// open-coding next.</summary>
+    public static List<(string Name, int Arity, long Hits)> BuiltinRanking()
+    {
+        var r = new List<(string, int, long)>();
+        foreach (var kv in DiagBuiltinTally)
+        {
+            string name; int arity;
+            try
+            {
+                var entry = Shumway.Builtins.BuiltinsRegistry.GetById(kv.Key);
+                name = entry.Name; arity = entry.Arity;
+            }
+            // An id with no entry is a bug elsewhere, and losing the ranking
+            // to it would hide the very storm it is meant to attribute.
+            catch (System.InvalidOperationException) { name = $"?id{kv.Key}"; arity = -1; }
+            r.Add((name, arity, kv.Value));
+        }
+        r.Sort((x, y) => y.Item3.CompareTo(x.Item3));
+        return r;
+    }
+
     /// <summary>The delegate entry. <paramref name="address"/> is a marker
     /// payload: 0 for a fresh call, a biased bytecode address for a resume
     /// or a retry.</summary>

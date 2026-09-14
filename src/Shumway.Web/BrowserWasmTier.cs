@@ -323,6 +323,26 @@ internal static class BrowserWasmTier
                 ? $" and {w.LastBatchTrigger.Count - 6} more" : "");
     }
 
+    /// <summary>The builtin exits, ranked. Same shape as the deopt ranking
+    /// and for the same reason: a total says a storm happened, a ranking
+    /// says which one.</summary>
+    internal static string BuiltinRankingReport()
+    {
+        var rank = WasmTierDelegate.BuiltinRanking();
+        if (rank.Count == 0) return "";
+        long total = WasmTierDelegate.DiagBuiltins;
+        var sb = new System.Text.StringBuilder();
+        sb.Append("%   builtin exits (of ").Append(total).Append(", ")
+          .Append(rank.Count).Append(" distinct):\n");
+        for (int i = 0; i < rank.Count && i < 8; i++)
+        {
+            var (name, arity, hits) = rank[i];
+            double pct = total > 0 ? hits * 100.0 / total : 0;
+            sb.Append($"%     {hits} ({pct:F0}%) {name}/{arity}\n");
+        }
+        return sb.ToString();
+    }
+
     internal static string DeoptRankingReport(PrologEngine engine)
     {
         var rank = WasmTierDelegate.DeoptRanking();
@@ -1112,6 +1132,7 @@ internal static partial class WebShumwayApp
                     + $"tailExits={WasmTierDelegate.DiagTailExits}\n"
                     + $"%   modules={BrowserWasmTier.ModuleCount()}\n"
                     + BrowserWasmTier.DeoptRankingReport(engine)
+                    + BrowserWasmTier.BuiltinRankingReport()
                     + WasmCoupling.Report(engine, BrowserWasmTier.LastCallSites)
                     + $"%   compile: {BrowserWasmTier.DiagCompileBuilds} module builds, "
                     + $"{BrowserWasmTier.DiagCompileTicks * 1000.0 / Stopwatch.Frequency:F0} ms"

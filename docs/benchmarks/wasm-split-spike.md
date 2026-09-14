@@ -176,9 +176,29 @@ a run is 524,030 short chains that exit to a builtin 626,930 times and deopt
 95,140 times; the chain hardly runs any WAM code before leaving. The
 per-module bytes (1.06 MB lazy against 4.43 MB batch) and the hops are the
 same story as above; what the tier needs on this program is the builtin exit
-ranking (`DiagBuiltinTally` accumulates and nothing shows it), not more
-modules. The deopts are the same in both grains, so they are the code, not
-the partition.
+ranking, not more modules. The deopts are the same in both grains, so they
+are the code, not the partition.
+
+**The ranking, now that it is shown.** `wasm_compile(status)` reports it
+beside the deopt sites. On the queens-8 clpfd program in the browser:
+
+```
+builtin exits (of 32,872, 24 distinct)      deopt sites (of 5,073)
+  15,584 (47%)  integer/1                     3,884 (77%)  clpfd_run/1@+85 CallBuiltin
+   5,540 (17%)  get_attr/3                      878 (17%)  $wake_call/1@+28 CallBuiltin
+   4,075 (12%)  ==/2                            108  (2%)  $disj_5/6@+114 CallBuiltin
+   2,045  (6%)  $dom_same/2
+   1,830  (6%)  $dom_del/3
+     987  (3%)  var/1
+     968  (3%)  $dom_new/3
+```
+
+Half the exits are TYPE TESTS: `integer/1` alone is 47% and `var/1`
+another 3%, each a one-instruction check on a tagged cell that the module
+leaves the chain to ask the host about. They are the cheapest thing in the
+list to open-code and the largest share of it, which is the answer the
+ranking was added to give. The attribute pair (`get_attr/3`, `put_attr/3`)
+and the domain helpers are the next band, and those are real work.
 
 ## The same question once the prelude is baked
 
