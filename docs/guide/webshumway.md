@@ -135,6 +135,11 @@ attributed-variable machinery do) and packs the result with the **librarian**
 rather than the linker, because a library has no entry point to compute
 reachability from.
 
+In a build with the WebAssembly tier, a compiled library also carries its
+predicates as a WebAssembly module, baked once at compile time. Loading the
+library installs that module instead of compiling the predicates again, the
+same way the engine's own libraries (clpfd, clpr, coroutining) arrive.
+
 ### When one will not compile
 
 Importing a collection compiles libraries you did not ask about, so what they

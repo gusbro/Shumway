@@ -30,21 +30,28 @@ public static class Librarian
 {
     /// <summary>Builds a librarian archive (<c>.shum</c> bytes) from the given
     /// members. Each member's bytes must be a valid <c>.shmo</c>; module names
-    /// must be unique.</summary>
-    public static byte[] CreateArchive(IReadOnlyList<BundleArchiveMember> members)
+    /// must be unique. With a <paramref name="wasmBaker"/> (the linker's
+    /// <see cref="LinkConfig.WasmBaker"/>) the archive also carries the wasm
+    /// module baked from its members, in the trailer a linked bundle uses;
+    /// the members themselves stay verbatim.</summary>
+    public static byte[] CreateArchive(IReadOnlyList<BundleArchiveMember> members,
+                                       Func<Bundle, byte[]?>? wasmBaker = null)
     {
         ArgumentNullException.ThrowIfNull(members);
         RequireDistinctModules(members);
         var bundle = new Bundle(
             Array.Empty<BundleEntry>(), foreignAssemblies: null,
             snapshot: null, archiveMembers: members);
+        if (wasmBaker?.Invoke(bundle) is { } module)
+            bundle = bundle.WithWasmModules(new[] { module });
         return BundleWriter.ToBytes(bundle);
     }
 
     /// <summary>Adds members to an existing librarian archive and returns the
     /// rewritten <c>.shum</c> bytes. Throws if <paramref name="existingShum"/>
     /// is a linked bundle (it has no archive to add to) or if any new module
-    /// name collides with one already present.</summary>
+    /// name collides with one already present. A wasm module the archive
+    /// carried is dropped: it was baked against the old member set.</summary>
     public static byte[] AddMembers(
         byte[] existingShum, IReadOnlyList<BundleArchiveMember> toAdd)
     {

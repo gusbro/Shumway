@@ -1,4 +1,5 @@
 using System.Text;
+using Shumway.Compiler.Wasm;
 using Shumway.Embedding;
 
 namespace Shumway.Lib;
@@ -83,12 +84,33 @@ internal static class LibrarianCli
             return ExitUsageError;
         }
         string archivePath = args[0];
-        if (!TryCollectMembers(args[1..], out var members)) return ExitUsageError;
+        bool wasm = false;
+        var inputs = new List<string>();
+        foreach (string a in args[1..])
+        {
+            if (a == "--wasm") wasm = true;
+            else if (a.StartsWith('-'))
+            {
+                Console.Error.WriteLine($"shumway-lib: unknown option '{a}'.");
+                return ExitUsageError;
+            }
+            else inputs.Add(a);
+        }
+        if (inputs.Count == 0)
+        {
+            Console.Error.WriteLine("shumway-lib: create requires at least one .shmo.");
+            return ExitUsageError;
+        }
+        if (!TryCollectMembers(inputs.ToArray(), out var members)) return ExitUsageError;
 
-        byte[] bytes = Librarian.CreateArchive(members);
+        byte[] bytes = Librarian.CreateArchive(members,
+            wasm ? b => WasmBundleTier.Bake(b, stdlib: false,
+                            msg => Console.Error.WriteLine("shumway-lib: " + msg))
+                 : null);
         File.WriteAllBytes(archivePath, bytes);
         Console.Error.WriteLine(
-            $"shumway-lib: created {archivePath} ({members.Count} module(s), {bytes.Length} bytes).");
+            $"shumway-lib: created {archivePath} ({members.Count} module(s), {bytes.Length} bytes"
+            + (wasm ? ", with a wasm module" : "") + ").");
         return ExitOk;
     }
 
@@ -109,6 +131,7 @@ internal static class LibrarianCli
         if (!TryCollectMembers(args[1..], out var members)) return ExitUsageError;
 
         byte[] existing = File.ReadAllBytes(archivePath);
+        WarnIfWasmDropped(existing);
         byte[] bytes = Librarian.AddMembers(existing, members);
         File.WriteAllBytes(archivePath, bytes);
         Console.Error.WriteLine(
@@ -133,6 +156,7 @@ internal static class LibrarianCli
         string[] modules = args[1..];
 
         byte[] existing = File.ReadAllBytes(archivePath);
+        WarnIfWasmDropped(existing);
         byte[] bytes = Librarian.RemoveModules(
             existing, modules, out var removed, out var notFound);
         foreach (string n in notFound)
@@ -194,7 +218,9 @@ internal static class LibrarianCli
         }
         PrintTable(rows);
         Console.Out.WriteLine(
-            $"{bundle.ArchiveMembers.Count} module(s), {bytes.Length} bytes total.");
+            $"{bundle.ArchiveMembers.Count} module(s), {bytes.Length} bytes total"
+            + (bundle.WasmModules.Count > 0
+                ? $", wasm module {bundle.WasmModules.Sum(w => w.Length)} bytes." : "."));
         return ExitOk;
     }
 
@@ -390,6 +416,16 @@ internal static class LibrarianCli
         return ExitUsageError;
     }
 
+    /// <summary>A rewritten archive loses the wasm module it carried (baked
+    /// against the old member set): say so, since the loss is silent otherwise.</summary>
+    private static void WarnIfWasmDropped(byte[] existing)
+    {
+        if (BundleReader.FromBytes(existing).WasmModules.Count > 0)
+            Console.Error.WriteLine(
+                "shumway-lib: note: the archive's wasm module is dropped; recreate with "
+                + "'create --wasm' to bake one for the new member set.");
+    }
+
     private static int PrintUsageOk() { PrintUsage(); return ExitOk; }
 
     private static void PrintUsage()
@@ -403,7 +439,10 @@ internal static class LibrarianCli
             + "you want only the code reachable from an entry point.)\n"
             + "\n"
             + "Commands:\n"
-            + "  create  <archive.shum> <a.shmo b.shmo ...>   Create an archive from objects.\n"
+            + "  create  <archive.shum> <a.shmo ...> [--wasm] Create an archive from objects.\n"
+            + "                                               --wasm also bakes the members\n"
+            + "                                               as a WebAssembly module, installed\n"
+            + "                                               when the archive loads.\n"
             + "  add     <archive.shum> <c.shmo ...>          Add objects to an archive (alias r).\n"
             + "  delete  <archive.shum> <module ...>          Remove modules by name (alias d).\n"
             + "  list    <archive.shum>                       Show the modules inside (alias t).\n"

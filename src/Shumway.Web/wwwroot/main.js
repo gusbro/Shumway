@@ -1846,6 +1846,28 @@ if (persistMode) {
     lines.push('clpfd tick: ' + await session.exports().WasmCompileAllTick() + '\n');
     mark('final status');
     lines.push(await session.exports().WasmCompileControl('status'));
+    // A library the page compiles under the tier carries its wasm module:
+    // loading it installs the predicates from the archive, and status counts
+    // them among the baked instead of the compiled.
+    mark('library archive');
+    {
+      const collection = 'wcc_libs';
+      await libraries.remove(collection);
+      await libraries.create(collection, '');
+      await libraries.write(collection, 'wccl.pl',
+        ':- module(wccl, [wrev/2]).\nwrev(L, R) :- wrev(L, [], R).\n' +
+        'wrev([], A, A).\nwrev([X|Xs], A, R) :- wrev(Xs, [X|A], R).\n');
+      const baked = (status) => Number(/(\d+) baked/.exec(status)?.[1] ?? 0);
+      const before = baked(await session.exports().WasmCompileControl('status'));
+      lines.push('library compile: ' + JSON.stringify(await libraries.compile(collection, 'wccl')) + '\n');
+      await session.consult(':- use_module(library(wccl)).');
+      const errL = await session.start('numlist(1, 100, L), wrev(L, R), R = [100|_].');
+      if (errL) lines.push('library start error: ' + errL + '\n');
+      else lines.push('library: ' + JSON.stringify(await session.next(80)) + '\n');
+      const after = baked(await session.exports().WasmCompileControl('status'));
+      lines.push(`library archive: ${after - before} more baked (expected 2)\n`);
+      await libraries.remove(collection);
+    }
     // The boards.pl shape: clpfd labeling under the tier — attvar binds,
     // wakeup drains, backtracking through promoted code. The reported
     // corruption ("reserved_invalid opcode") came from exactly this.
