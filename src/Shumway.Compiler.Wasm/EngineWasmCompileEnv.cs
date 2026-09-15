@@ -43,4 +43,22 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         negated = entry.Name == "\\==";
         return entry.Arity == 2 && entry.Name is "==" or "\\==";
     }
+
+    public bool TryGetInlineTypeTest(int builtinId, out WasmTypeTest test)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        test = entry.Arity == 1 ? entry.Name switch
+        {
+            "var" => WasmTypeTest.Var,
+            "nonvar" => WasmTypeTest.Nonvar,
+            "integer" => WasmTypeTest.Integer,
+            "float" => WasmTypeTest.Float,
+            "number" => WasmTypeTest.Number,
+            "atom" => WasmTypeTest.Atom,
+            "atomic" => WasmTypeTest.Atomic,
+            "compound" => WasmTypeTest.Compound,
+            _ => WasmTypeTest.None,
+        } : WasmTypeTest.None;
+        return test != WasmTypeTest.None;
+    }
 }

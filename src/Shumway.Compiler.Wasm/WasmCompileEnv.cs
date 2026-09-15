@@ -97,6 +97,37 @@ public interface IWasmCompileEnv
         negated = false;
         return false;
     }
+
+    /// <summary>Whether the builtin is a one-argument TYPE TEST the module
+    /// can answer itself: a tag comparison on the dereferenced argument, no
+    /// heap, no binding, no host. Measured on the two libraries that lean on
+    /// them hardest, as a share of all builtin exits: 60% of clpr's (var/1
+    /// 32%, number/1 22%, nonvar/1 3%, integer/1 3%) and 39% of clpfd's
+    /// (integer/1 36%, var/1 3%). They are the cheapest thing in that
+    /// ranking and the largest share of it.</summary>
+    bool TryGetInlineTypeTest(int builtinId, out WasmTypeTest test)
+    {
+        test = WasmTypeTest.None;
+        return false;
+    }
+}
+
+/// <summary>The one-argument type tests the module open-codes. Each is a
+/// set of tags, and the set is the builtin's contract -- notably a VARIABLE
+/// is Ref OR AttVar, because an attributed variable has attributes and no
+/// value, and the libraries that call var/1 most are the ones that create
+/// attributed variables.</summary>
+public enum WasmTypeTest
+{
+    None = 0,
+    Var,
+    Nonvar,
+    Integer,
+    Float,
+    Number,
+    Atom,
+    Atomic,
+    Compound,
 }
 
 /// <summary>A compiled predicate: the module bytes plus what the installer

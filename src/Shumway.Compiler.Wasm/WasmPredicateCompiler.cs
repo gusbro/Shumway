@@ -1414,6 +1414,11 @@ public static class WasmPredicateCompiler
                     // as the linker would. The env-trim count (I1) rides the
                     // high half of the id slot; -1 is the no-trim sentinel.
                     if (_env.IsInlineUnify(ins.I0)) { EmitInlineUnify(ins.Pc); return false; }
+                    if (_env.TryGetInlineTypeTest(ins.I0, out var cbTest))
+                    {
+                        EmitInlineTypeTest(cbTest, ins.Pc);
+                        return false;
+                    }
                     if (_env.IsInlineCompare(ins.I0, out bool cbNeg))
                     {
                         EmitInlineCompare(ins.Pc, cbNeg, () =>
@@ -1438,6 +1443,12 @@ public static class WasmPredicateCompiler
                     if (_env.IsInlineUnify(ins.I0))
                     {
                         EmitInlineUnify(ins.Pc);
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.TryGetInlineTypeTest(ins.I0, out var ebTest))
+                    {
+                        EmitInlineTypeTest(ebTest, ins.Pc);
                         EmitProceedReturn();
                         return true;
                     }
@@ -1540,6 +1551,62 @@ public static class WasmPredicateCompiler
             EmitContinueReturn();
         }
 
+        /// <summary>A one-argument type test, answered here: deref A0 and
+        /// compare its TAG. No heap, no binding, no host -- the whole builtin
+        /// is a handful of comparisons, and stepping out to run it cost a
+        /// chain exit each time (60% of clpr's exits, 39% of clpfd's).
+        ///
+        /// <para>The tag sets are the builtins' own (TypeBuiltins). The one
+        /// that is easy to get wrong is VARIABLE: Ref or ATTVAR, because an
+        /// attributed variable has attributes and no value -- and the
+        /// libraries that call var/1 hardest are exactly the ones that make
+        /// attributed variables.</para></summary>
+        private void EmitInlineTypeTest(WasmTypeTest test, int pc)
+        {
+            RegLoad(0);
+            Op(new LocalSet(LC0));
+            Deref();
+            TagOfC0();
+            Op(new LocalSet(LT0));
+
+            void TagIsOneOf(params Tag[] tags)
+            {
+                for (int i = 0; i < tags.Length; i++)
+                {
+                    Op(new LocalGet(LT0));
+                    Op(new Int32Constant((int)tags[i]));
+                    Op(new Int32Equal());
+                    if (i > 0) Op(new Int32Or());
+                }
+            }
+
+            switch (test)
+            {
+                case WasmTypeTest.Var: TagIsOneOf(Tag.Ref, Tag.AttVar); break;
+                case WasmTypeTest.Nonvar:
+                    TagIsOneOf(Tag.Ref, Tag.AttVar);
+                    Op(new Int32Constant(0)); Op(new Int32Equal());
+                    break;
+                case WasmTypeTest.Integer: TagIsOneOf(Tag.Int, Tag.BigInt); break;
+                case WasmTypeTest.Float: TagIsOneOf(Tag.Float); break;
+                case WasmTypeTest.Number:
+                    TagIsOneOf(Tag.Int, Tag.BigInt, Tag.Float, Tag.Rational); break;
+                case WasmTypeTest.Atom: TagIsOneOf(Tag.Atom); break;
+                case WasmTypeTest.Atomic:
+                    TagIsOneOf(Tag.Atom, Tag.Int, Tag.BigInt, Tag.Rational, Tag.Float); break;
+                case WasmTypeTest.Compound:
+                    TagIsOneOf(Tag.Str, Tag.Lis, Tag.Pstr); break;
+                default:
+                    throw new WasmCompileException($"type test {test} at {pc}");
+            }
+
+            Op(new Int32Constant(0));
+            Op(new Int32Equal());
+            OpenIf();
+            GoFail();
+            CloseNested();
+        }
+
         private bool EmitCall(Instr ins)
         {
             if (!_callee.TryGetValue(ins.Pc, out int callee))
@@ -1549,6 +1616,11 @@ public static class WasmPredicateCompiler
                 if (_env.IsInlineUnify(builtinId))
                 {
                     EmitInlineUnify(ins.Pc);
+                    return false;               // falls through to the next goal
+                }
+                if (_env.TryGetInlineTypeTest(builtinId, out var typeTest))
+                {
+                    EmitInlineTypeTest(typeTest, ins.Pc);
                     return false;               // falls through to the next goal
                 }
                 if (_env.IsInlineCompare(builtinId, out bool cNeg))
@@ -1706,6 +1778,13 @@ public static class WasmPredicateCompiler
                 {
                     // Tail =/2: unify, then proceed at Cp.
                     EmitInlineUnify(pc);
+                    EmitProceedReturn();
+                    return;
+                }
+                if (_env.TryGetInlineTypeTest(builtinId, out var tailTest))
+                {
+                    // Tail type test: answer it, then proceed at Cp.
+                    EmitInlineTypeTest(tailTest, pc);
                     EmitProceedReturn();
                     return;
                 }
