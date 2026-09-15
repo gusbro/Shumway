@@ -1756,15 +1756,58 @@ public static class WasmPredicateCompiler
             EmitUnifyTwo(() => RegLoad(0), () => RegLoad(1), pc);
         }
 
-        /// <summary>Term identity (<c>==/2</c> / <c>\==/2</c>), atomic fast
-        /// path: two dereferenced cells whose tags are Atom or Int are
-        /// identical exactly when they are the same cell. Floats are NOT in
-        /// the fast path — a float is boxed on the heap, so equal values live
-        /// in different cells — and anything else (compounds, attvars,
-        /// strings) falls back to the builtin exit
-        /// <paramref name="emitBuiltinExit"/> emits. The exit is what this
-        /// path erases: crypt's \== chains cost 183k of them per browser
-        /// run, a 31x slowdown over Tier-0.</summary>
+        /// <summary>Tags for which term identity IS cell identity, so a pair
+        /// can be decided without descending: an unbound variable, an
+        /// attributed variable, an atom, a small integer.
+        ///
+        /// <para>ATTVAR belongs here and is the whole reason this got widened.
+        /// The engine normalises an attributed variable to a REF at its home
+        /// before comparing, so == judges it by identity like any variable --
+        /// and clpfd's variables are all attributed, which is why queens 12
+        /// left the module 16,793 times for ==/2 and failed 16,763 of
+        /// them.</para>
+        ///
+        /// <para>Not here, each for its own reason: a float, a bignum and a
+        /// rational are boxed, so equal values sit in different cells; a
+        /// compound has to be walked; a PSTR is excluded for a subtler reason
+        /// still.</para></summary>
+        private const int SimpleTagMask =
+            (1 << (int)Tag.Ref) | (1 << (int)Tag.AttVar)
+            | (1 << (int)Tag.Atom) | (1 << (int)Tag.Int);
+
+        /// <summary>A PSTR can normalise to a cell of ANOTHER tag: a
+        /// zero-length one IS its own tail, so it compares equal to the atom
+        /// [] despite the tags. Deciding such a pair by tags would answer
+        /// false, so a PSTR on either side goes to the host whatever the
+        /// other side is.
+        ///
+        /// <para>UNTESTED, and deliberately kept: no Prolog-level query found
+        /// reaches == with a zero-length PSTR still in a register, because
+        /// unification materialises the tail first, and removing this guard
+        /// does not turn any test red. It stays because the cell state is
+        /// real -- NormalizeEmptyPstr exists precisely so that every
+        /// comparison, type test and ordering collapses it, rather than the
+        /// producers never making one -- and a module reads a register
+        /// directly, with no consumer in between to normalise it.</para>
+        /// </summary>
+        private const int PstrTagMask = 1 << (int)Tag.Pstr;
+
+        /// <summary>Term identity (<c>==/2</c> / <c>\==/2</c>), decided inside
+        /// the module whenever CELLS alone can decide it.
+        ///
+        /// <para>Two rules, and between them they cover nearly everything the
+        /// solvers ask. Identical cells are identical terms, always. And when
+        /// the cells differ, if EITHER side has a tag whose identity is cell
+        /// identity (<see cref="SimpleTagMask"/>) the terms differ -- such a
+        /// cell is never list-like, so the engine reaches its tag test, and
+        /// there either the tags differ or both sides are compared as
+        /// cells.</para>
+        ///
+        /// <para>Over the old form (Atom or Int on BOTH sides) that adds
+        /// variables, which is where the exits actually were, and every mixed
+        /// pair: a variable against a compound now decides instead of leaving.
+        /// Floats, bignums, rationals, two compounds, and anything touching a
+        /// PSTR still go to <paramref name="emitBuiltinExit"/>.</para></summary>
         private void EmitInlineCompare(int pc, bool negated, Action emitBuiltinExit)
         {
             EmitFlagsCheck(pc);
@@ -1772,36 +1815,54 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LC0)); Op(new LocalSet(LC2));
             RegLoad(1); Op(new LocalSet(LC0)); Deref();
 
-            OpenBlock();                                    // $done
-            OpenBlock();                                    // $slow
-            // atomic(t) == (uint)(t - Atom) <= (Int - Atom), Atom/Int adjacent.
-            void BrSlowUnlessAtomic(uint cellLocal)
+            // (mask >>> tag) & 1: one shift and one and, against four compares,
+            // and the tags are not adjacent so a range test is out.
+            void TagIn(uint cellLocal, int mask)
             {
+                Op(new Int32Constant(mask));
                 Op(new LocalGet(cellLocal));
                 Op(new Int64Constant(60));
                 Op(new Int64ShiftRightUnsigned());
                 Op(new Int32WrapInt64());
-                Op(new Int32Constant((int)Tag.Atom));
-                Op(new Int32Subtract());
-                Op(new Int32Constant((int)Tag.Int - (int)Tag.Atom));
-                Op(new Int32GreaterThanUnsigned());
-                Op(new BranchIf(0));                        // -> $slow
+                Op(new Int32ShiftRightUnsigned());
+                Op(new Int32Constant(1));
+                Op(new Int32And());
             }
-            BrSlowUnlessAtomic(LC2);
-            BrSlowUnlessAtomic(LC0);
+
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            // The same cell is the same term, whatever its tag.
             Op(new LocalGet(LC2));
             Op(new LocalGet(LC0));
-            if (negated) Op(new Int64Equal());              // \==: identical -> fail
-            else Op(new Int64NotEqual());                   // ==: different -> fail
+            Op(new Int64Equal());
             OpenIf();
-            GoFail();
+            if (negated) GoFail();                          // \==: identical -> fail
+            else Op(new Branch(2));                         // ==: identical -> done
             CloseNested();
-            Op(new Branch(1));                              // decided -> $done
+
+            // Different cells: decidable when one side is simple and NEITHER
+            // side is a PSTR.
+            TagIn(LC2, SimpleTagMask);
+            TagIn(LC0, SimpleTagMask);
+            Op(new Int32Or());
+            TagIn(LC2, PstrTagMask);
+            TagIn(LC0, PstrTagMask);
+            Op(new Int32Or());
+            Op(new Int32Constant(0));
+            Op(new Int32Equal());                           // no PSTR involved
+            Op(new Int32And());
+            Op(new Int32Constant(0));
+            Op(new Int32Equal());
+            Op(new BranchIf(0));                            // undecidable -> $slow
+
+            if (negated) Op(new Branch(1));                 // \==: different -> done
+            else GoFail();                                  // ==: different -> fail
+
             CloseNested();                                  // $slow
             emitBuiltinExit();
             CloseNested();                                  // $done
         }
-
 
         /// <summary>get_attr/3 answered from the attribute image in linear
         /// memory (WasmAbi.AttrTableBase), instead of stepping out to the
