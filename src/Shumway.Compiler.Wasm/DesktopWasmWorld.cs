@@ -180,6 +180,18 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             StageFromEngine();
         }
 
+        /// <summary>Copies the engine's live heap, stack, registers and
+        /// trail into linear memory, once per chain.
+        ///
+        /// <para>This is why a TIME taken on this world is not a measurement
+        /// of the tier: the browser pins the engine's arrays and copies
+        /// nothing, so a crossing costs O(1) there and O(live data) here.
+        /// On clpr, whose heap grows as it runs, that made the per-crossing
+        /// cost grow with the problem (35, 52, 91 us as the work doubled
+        /// twice) and the tier look 5x slower than Tier-0 — where the same
+        /// program in a browser is 1.1-2.2x faster. Use this world for
+        /// correctness and for COUNTS, which are identical in both; measure
+        /// time in a headless browser (CONTRIBUTING.md).</para></summary>
         private unsafe void StageFromEngine()
         {
             _engine.EnsureWasmRegisters(_w.Modules.RegisterDemand);

@@ -242,6 +242,56 @@ Not because it is faster, but because after the bake it costs almost nothing
 and is the only grain that leaves one module and no hops. The machinery it
 needs is a flag and a tick.
 
+## The desktop world is not a stopwatch
+
+clpr is the program that made this explicit, and it is worth recording
+because the desktop number was not merely noisy, it was the wrong shape.
+
+The two worlds stage the engine's memory differently.
+`DesktopWasmWorld.StageFromEngine` copies the live heap, stack, registers
+and trail into linear memory on every chain entry; the browser pins the
+engine's own arrays and copies nothing. So a crossing costs O(live data)
+on the desktop and O(1) in the browser, and clpr's heap grows as it runs.
+
+Desktop, the same program at three sizes, with the crossings doubling each
+time:
+
+```
+N     crossings   wasm      us per crossing
+100      8,504    300 ms         35
+200     17,005    892 ms         52
+400     34,006  3,101 ms         91
+```
+
+The per-crossing cost doubles with the problem: the tier reads as 5x
+slower than Tier-0 and getting worse. In the browser, the same program and
+the same counts:
+
+```
+                 tier0     batch          eager          lazy
+clpr x200      1,166 ms   924 (1.3x)    533 (2.2x)    551 (2.1x)
+clpr x400      1,552 ms  1,158 (1.3x) 1,365 (1.1x)  1,174 (1.3x)
+```
+
+The tier WINS, 1.1 to 2.2x. Same code, same counters (43,206 chains and
+72,594 builtin exits at x200 either way) -- the desktop figure was
+measuring the harness.
+
+**What the browser says is left.** The time split the probe now reports
+puts most of it at the boundary rather than inside the module:
+
+```
+clpr x200 lazy:   inWasm 185 ms    stage 497 ms      (3 rounds)
+clpr x400 lazy:   inWasm 442 ms    stage 1,128 ms
+```
+
+Staging is ~70% of the accounted time even where it pins instead of
+copying, and it is paid per crossing: 216 chain entries per iteration of a
+program whose body is four constraints. That is what makes open-coding a
+builtin worth doing -- not the work of the builtin, which is trivial, but
+the crossing it avoids. `get_attr/3` tops both libraries' exit rankings
+(41-43%) and is the next one.
+
 Reproducing needs one caveat: the `#wasmgrain` hook closes its window the
 moment the report is posted, so read `/collect` (or suppress `window.close`
 from a debugger session) rather than polling the DOM: a poll that never sees

@@ -527,6 +527,16 @@ public static class PersistedIlBuilder
     /// <summary>SHUMWAY_PERSIST_SKIP_DUMP=&lt;file&gt; — appends the emit
     /// exception + bytecode of a predicate the persisted-IL build skipped.</summary>
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    // The reflection below reads an OPTIONAL property off whatever exception
+    // the emitter threw (Sigil carries the IL so far in DebugInstructions).
+    // The trimmer cannot see that type, and it does not need to: the dump is
+    // a developer diagnostic that writes what it finds and skips what it does
+    // not. Without the suppression a browser publish built WITH SHUMWAY_DIAG
+    // fails trim analysis outright -- and that build is the only place the
+    // tier's counters can be read where performance actually matters.
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming",
+        "IL2075:UnrecognizedReflectionPattern",
+        Justification = "Optional diagnostic property; absence is handled.")]
     private static void DiagDumpSkippedPredicate(
         string functorName, int functorId, CompiledPredicate pred, Exception ex)
     {

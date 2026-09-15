@@ -896,6 +896,19 @@ internal static partial class WebShumwayApp
         qsolve(N, Qs) :- qn(N, Qs), labeling([ff], Qs), !.
         """;
 
+    /// <summary>clpr: the library whose store is floats and whose hot
+    /// builtin is attribute access. On the DESKTOP world it measured far
+    /// slower than Tier-0, but that world COPIES the live heap into linear
+    /// memory on every chain entry while the browser pins the engine's own
+    /// arrays -- so the desktop number says nothing about this one, and this
+    /// is the one that counts.</summary>
+    private const string ClprCorpus = """
+        :- use_module(library(clpr)).
+        csolve(0) :- !.
+        csolve(N) :- {X + Y =:= 10, X - Y =:= 2}, X =:= 6.0, Y =:= 4.0,
+                     M is N - 1, csolve(M).
+        """;
+
     private sealed record GrainProgram(string Name, string Source, string Goal);
 
     private static readonly GrainProgram[] GrainPrograms =
@@ -904,6 +917,8 @@ internal static partial class WebShumwayApp
             "range(1, 200, L), nrev(L, _), nrev(L, _), nrev(L, _), nrev(L, _), nrev(L, _)."),
         new("tak 18,12,6", TierProbeCorpus, "tak(18, 12, 6, _)."),
         new("zebra x10", ZebraSource, "zbench(10)."),
+        new("clpr x200", ClprCorpus, "csolve(200)."),
+        new("clpr x400", ClprCorpus, "csolve(400)."),
     };
 
     private static GrainProgram QueensProgram(int n)
@@ -992,6 +1007,8 @@ internal static partial class WebShumwayApp
                         int promoted = engine.IlPromotion.PromotedFunctorIds().Count();
 
                         WasmTierDelegate.ResetDiag();
+                        BrowserWasmWorld.DiagCallTicks = 0;
+                        BrowserWasmWorld.DiagStageTicks = 0;
                         double best = BenchMedian(engine, prog.Goal, rounds);
                         if (mode == "tier0") tier0 = best;
                         string line = mode == "tier0"
@@ -1010,7 +1027,11 @@ internal static partial class WebShumwayApp
                               + $" foreignExits={WasmTierDelegate.DiagForeignExits}"
                               + $" deopts={WasmTierDelegate.DiagDeopts}"
                               + $" builtinExits={WasmTierDelegate.DiagBuiltins}"
-                              + $" tailExits={WasmTierDelegate.DiagTailExits}";
+                              + $" tailExits={WasmTierDelegate.DiagTailExits}"
+                              + $"\n    time split: inWasm="
+                              + $"{BrowserWasmWorld.DiagCallTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
+                              + $" stage={BrowserWasmWorld.DiagStageTicks * 1000.0 / Stopwatch.Frequency:F0} ms"
+                              + $" (over {rounds} rounds)";
                         WriteToPage($"[grain] {line.Replace("\n", " | ")}\n");
                         report.Append(line).Append('\n');
                     }
