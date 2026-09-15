@@ -110,6 +110,20 @@ public interface IWasmCompileEnv
         test = WasmTypeTest.None;
         return false;
     }
+
+    /// <summary>Whether the builtin is <c>get_attr/3</c>, which the module
+    /// answers out of the attribute image in linear memory instead of
+    /// stepping out. It is the largest single source of builtin exits there
+    /// is: 12,600 in a clpr run, against 6,000 for the next one. Only 1,200
+    /// of those fail, which is why the image had to exist at all -- the
+    /// failing path alone was not worth open-coding.
+    ///
+    /// <para>The inline path covers an attributed variable and a bound atom
+    /// module. Anything else -- no image staged, a non-attvar, an unbound or
+    /// non-atom module, a probe that runs long -- falls back to the exit,
+    /// where the builtin's errors and corner cases stay the engine's.</para>
+    /// </summary>
+    bool IsInlineGetAttr(int builtinId) => false;
 }
 
 /// <summary>The one-argument type tests the module open-codes. Each is a

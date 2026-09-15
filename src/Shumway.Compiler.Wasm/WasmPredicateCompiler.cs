@@ -689,6 +689,10 @@ public static class WasmPredicateCompiler
             // bits). Appended last: every index above is baked into emitted
             // code, so the bank can only grow at the end.
             new Local { Count = AEvalMaxDepth, Type = WebAssemblyValueType.Int32 },
+            // The attribute probe's slot index and the value it found. Same
+            // rule: appended after the kind bank, never before it.
+            new Local { Count = 2, Type = WebAssemblyValueType.Int32 },
+            new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -1419,6 +1423,18 @@ public static class WasmPredicateCompiler
                         EmitInlineTypeTest(cbTest, ins.Pc);
                         return false;
                     }
+                    if (_env.IsInlineGetAttr(ins.I0))
+                    {
+                        EmitInlineGetAttr(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                                _env.EncodeBuiltinId(ins.I0, ins.I1))));
+                            StoreSlot64(WasmAbi.Cursor,
+                                () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
+                        return false;
+                    }
                     if (_env.IsInlineCompare(ins.I0, out bool cbNeg))
                     {
                         EmitInlineCompare(ins.Pc, cbNeg, () =>
@@ -1449,6 +1465,18 @@ public static class WasmPredicateCompiler
                     if (_env.TryGetInlineTypeTest(ins.I0, out var ebTest))
                     {
                         EmitInlineTypeTest(ebTest, ins.Pc);
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (_env.IsInlineGetAttr(ins.I0))
+                    {
+                        EmitInlineGetAttr(ins.Pc, () =>
+                        {
+                            StoreSlot64(WasmAbi.BuiltinId,
+                                () => Op(new Int64Constant(_env.EncodeBuiltinId(ins.I0, 0))));
+                            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                            EmitReturn(WasmVerdict.BuiltinRequest);
+                        });
                         EmitProceedReturn();
                         return true;
                     }
@@ -1623,6 +1651,18 @@ public static class WasmPredicateCompiler
                     EmitInlineTypeTest(typeTest, ins.Pc);
                     return false;               // falls through to the next goal
                 }
+                if (_env.IsInlineGetAttr(builtinId))
+                {
+                    EmitInlineGetAttr(ins.Pc, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
+                        StoreSlot64(WasmAbi.Cursor,
+                            () => Op(new Int64Constant(_env.EncodeAddress(ins.Pc + 9))));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
+                    return false;
+                }
                 if (_env.IsInlineCompare(builtinId, out bool cNeg))
                 {
                     EmitInlineCompare(ins.Pc, cNeg, () =>
@@ -1762,6 +1802,180 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $done
         }
 
+
+        /// <summary>get_attr/3 answered from the attribute image in linear
+        /// memory (WasmAbi.AttrTableBase), instead of stepping out to the
+        /// host.
+        ///
+        /// <para>It is the largest single source of builtin exits measured:
+        /// 12,600 in a clpr run against 6,000 for the next one. Only 1,200 of
+        /// those FAIL, which is why the image had to be built -- open-coding
+        /// just the failing path would have erased under a tenth of them.</para>
+        ///
+        /// <para>The probe is the host's, instruction for instruction: hash,
+        /// then walk, stopping at an empty slot and stepping over tombstones.
+        /// It is BOUNDED by the table size. The image's load factor
+        /// guarantees an empty slot exists, so the bound is unreachable by
+        /// construction -- it is there because the alternative to a wrong
+        /// image is a module that never returns, and a wrong answer is
+        /// recoverable while a hang is not.</para>
+        ///
+        /// <para>Everything narrow falls back to <paramref
+        /// name="emitBuiltinExit"/>: no image staged, a non-attvar first
+        /// argument, an unbound or non-atom module. The builtin's errors and
+        /// its allocation for a non-variable stay the engine's, which is what
+        /// keeps this a speed change and not a semantic one. A MISS, though,
+        /// is answered here: no attribute means fail, and that needs nothing
+        /// the module does not have.</para></summary>
+        private void EmitInlineGetAttr(int pc, Action emitBuiltinExit)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            // No image: the host still knows how to do this.
+            LoadSlot32(WasmAbi.AttrTableBase);
+            Op(new LocalSet(LT0));
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant(0));
+            Op(new Int32Equal());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // A0 must be an attributed variable. Its payload IS its home.
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.AttVar));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LAtVal));                       // home, for now
+
+            // A1 must be a bound atom: an unbound or non-atom module is an
+            // ERROR, and errors are the host's.
+            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Atom));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));                          // module atom id
+
+            // key = ((home + 1) << 32) | (uint)module
+            Op(new LocalGet(LAtVal));
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new Int64ExtendInt32Signed());
+            Op(new Int64Constant(32));
+            Op(new Int64ShiftLeft());
+            Op(new LocalGet(LT1));
+            Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Or());
+            Op(new LocalSet(LAtKey));
+
+            // slot = ((home * 2654435761 + module * 2246822519) ^ (h >>> 15)) & mask
+            Op(new LocalGet(LAtVal));
+            Op(new Int32Constant(unchecked((int)2654435761u)));
+            Op(new Int32Multiply());
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant(unchecked((int)2246822519u)));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+            Op(new LocalSet(LAtSlot));
+            Op(new LocalGet(LAtSlot));
+            Op(new LocalGet(LAtSlot));
+            Op(new Int32Constant(15));
+            Op(new Int32ShiftRightUnsigned());
+            Op(new Int32ExclusiveOr());
+            LoadSlot32(WasmAbi.AttrTableMask);
+            Op(new LocalSet(LT1));                          // mask, module id spent
+            Op(new LocalGet(LT1));
+            Op(new Int32And());
+            Op(new LocalSet(LAtSlot));
+
+            // The bound: one pass over the table and no more.
+            Op(new LocalGet(LT1));
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new LocalSet(LT2));
+
+            OpenBlock();                                    // $found
+            OpenLoop();                                     // $probe
+            {
+                // k = image[slot].key
+                Op(new LocalGet(LT0));
+                Op(new LocalGet(LAtSlot));
+                Op(new Int32Constant(4));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new LocalSet(LT1));                      // the row's address
+                Op(new LocalGet(LT1));
+                Op(new Int64Load());
+                Op(new LocalSet(LC1));
+
+                // An empty slot ends the probe: no such attribute, so FAIL.
+                Op(new LocalGet(LC1));
+                Op(new Int64Constant(0));
+                Op(new Int64Equal());
+                OpenIf();
+                GoFail();
+                CloseNested();
+
+                // A hit: take the value and leave.
+                Op(new LocalGet(LC1));
+                Op(new LocalGet(LAtKey));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LT1));
+                    Op(new Int64Load { Offset = 8 });
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LAtVal));
+                    Op(new Branch(2));                      // -> $found
+                }
+                CloseNested();
+
+                // A tombstone or another key: step over it.
+                LoadSlot32(WasmAbi.AttrTableMask);
+                Op(new LocalSet(LT1));
+                Op(new LocalGet(LAtSlot));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalGet(LT1));
+                Op(new Int32And());
+                Op(new LocalSet(LAtSlot));
+
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new LocalSet(LT2));
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                Op(new BranchIf(2));                        // exhausted -> $slow
+                Op(new Branch(0));                          // -> $probe
+            }
+            CloseNested();                                  // $probe
+            CloseNested();                                  // $found
+
+            // Value in hand: unify A2 with the attribute term, exactly as
+            // UnifyRegisterWithHeapAt does. The general shapes inside step
+            // aside on their own, so semantics stay the engine's.
+            EmitUnifyTwo(() => RegLoad(2),
+                         () => CellLoadDyn(LHeapB, LAtVal), pc);
+            Op(new Branch(1));                              // -> $done
+
+            CloseNested();                                  // $slow
+            emitBuiltinExit();
+            CloseNested();                                  // $done
+        }
+
+
         private void EmitExecute(Instr ins)
         {
             EmitFlagsCheck(ins.Pc);
@@ -1785,6 +1999,18 @@ public static class WasmPredicateCompiler
                 {
                     // Tail type test: answer it, then proceed at Cp.
                     EmitInlineTypeTest(tailTest, pc);
+                    EmitProceedReturn();
+                    return;
+                }
+                if (_env.IsInlineGetAttr(builtinId))
+                {
+                    EmitInlineGetAttr(pc, () =>
+                    {
+                        StoreSlot64(WasmAbi.BuiltinId,
+                            () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, 0))));
+                        StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(-1)));
+                        EmitReturn(WasmVerdict.BuiltinRequest);
+                    });
                     EmitProceedReturn();
                     return;
                 }
@@ -3448,6 +3674,11 @@ public static class WasmPredicateCompiler
         /// bank, so a slot costs one extra i32 and the reinterprets are
         /// free.</summary>
         private static uint LAK(int k) => (uint)(33 + k);
+
+        // The attribute probe's own locals, after the kind bank.
+        private const uint LAtSlot = 41;    // i32: the slot being probed
+        private const uint LAtVal = 42;     // i32: the attribute's heap index
+        private const uint LAtKey = 43;     // i64: ((home + 1) << 32) | module
 
         /// <summary>Pushes the f64 on the wasm stack for slot <paramref
         /// name="k"/>, converting from the int lane when that is what it

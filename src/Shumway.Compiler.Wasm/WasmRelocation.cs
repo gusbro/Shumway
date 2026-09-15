@@ -54,7 +54,8 @@ public sealed record WasmRelocation(
 /// decision (say, an inlined <c>=/2</c>) is wrong under another.</summary>
 public sealed record WasmBuiltinEvidence(
     string Name, int Arity, bool Found, bool Direct, bool InlineUnify,
-    bool InlineCompare, bool Negated, WasmTypeTest TypeTest = WasmTypeTest.None);
+    bool InlineCompare, bool Negated, WasmTypeTest TypeTest = WasmTypeTest.None,
+    bool InlineGetAttr = false);
 
 /// <summary>A compile env that bakes a unique SENTINEL for every immediate
 /// the code names outside itself and records what each one stands for, so
@@ -193,6 +194,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         {
             var (n, a) = NameOf(calleeFunctorId);
             bool direct = false, unify = false, compare = false, negated = false;
+            bool getAttr = false;
             var test = WasmTypeTest.None;
             if (found)
             {
@@ -200,9 +202,11 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
                 unify = _inner.IsInlineUnify(builtinId);
                 compare = _inner.IsInlineCompare(builtinId, out negated);
                 _inner.TryGetInlineTypeTest(builtinId, out test);
+                getAttr = _inner.IsInlineGetAttr(builtinId);
             }
             _evidence[calleeFunctorId] =
-                new WasmBuiltinEvidence(n, a, found, direct, unify, compare, negated, test);
+                new WasmBuiltinEvidence(n, a, found, direct, unify, compare, negated,
+                                        test, getAttr);
         }
         return found;
     }
@@ -218,7 +222,8 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         _inner.TryGetInlineTypeTest(builtinId, out var noteTest);
         _evidence[fid] = new WasmBuiltinEvidence(entry.Name, entry.Arity, true,
             _inner.IsDirectBuiltin(builtinId), _inner.IsInlineUnify(builtinId),
-            _inner.IsInlineCompare(builtinId, out bool neg), neg, noteTest);
+            _inner.IsInlineCompare(builtinId, out bool neg), neg, noteTest,
+            _inner.IsInlineGetAttr(builtinId));
     }
 
     public bool IsDirectBuiltin(int builtinId)
@@ -237,6 +242,12 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     {
         Note(builtinId);
         return _inner.IsInlineCompare(builtinId, out negated);
+    }
+
+    public bool IsInlineGetAttr(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineGetAttr(builtinId);
     }
 
     // Every form decision has to be DELEGATED here, not inherited: the
