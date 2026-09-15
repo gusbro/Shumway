@@ -685,6 +685,10 @@ public static class WasmPredicateCompiler
             new Local { Count = 2, Type = WebAssemblyValueType.Int32 },
             new Local { Count = AEvalMaxDepth, Type = WebAssemblyValueType.Int64 },
             new Local { Count = 2, Type = WebAssemblyValueType.Int64 },
+            // One KIND per a_eval slot (0 = the 60-bit int lane, 1 = float
+            // bits). Appended last: every index above is baked into emitted
+            // code, so the bank can only grow at the end.
+            new Local { Count = AEvalMaxDepth, Type = WebAssemblyValueType.Int32 },
         ];
 
         /// <summary>One partition: prologue, dispatch loop, br_table over the
@@ -2494,36 +2498,106 @@ public static class WasmPredicateCompiler
         {
             int packed = ins.I0;
             int rel = (packed >> 16) & 0xFF;
-            EmitReadIntOperand(packed & 0xFF, ins.I1, ins.Pc);
-            Op(new LocalGet(LC1)); Op(new LocalSet(LC2));
-            EmitReadIntOperand((packed >> 8) & 0xFF, ins.I2, ins.Pc);
-            Op(new LocalGet(LC2));
-            Op(new LocalGet(LC1));
-            Op(rel switch
-            {
-                0 => new Int64Equal(),
-                1 => new Int64NotEqual(),
-                2 => (Instruction)new Int64LessThanSigned(),
-                3 => new Int64GreaterThanSigned(),
-                4 => new Int64LessThanOrEqualSigned(),
-                _ => new Int64GreaterThanOrEqualSigned(),
-            });
-            Op(new Int32Constant(0));
-            Op(new Int32Equal());
+            // Read into a_eval slots 0 and 1 rather than LC2/LC1: the slots
+            // carry the KIND, which is what lets a float operand stay here
+            // instead of escalating. The comparison delivers nothing, so no
+            // heap cell is needed whichever lane it takes.
+            EmitReadNumericOperand(packed & 0xFF, ins.I1, ins.Pc, 0);
+            EmitReadNumericOperand((packed >> 8) & 0xFF, ins.I2, ins.Pc, 1);
+
+            AEvalEitherIsFloat(0, 1);
             OpenIf();
-            GoFail();
+            {
+                AEvalAsF64(0);
+                AEvalAsF64(1);
+                Op(rel switch
+                {
+                    0 => new Float64Equal(),
+                    1 => new Float64NotEqual(),
+                    2 => (Instruction)new Float64LessThan(),
+                    3 => new Float64GreaterThan(),
+                    4 => new Float64LessThanOrEqual(),
+                    _ => new Float64GreaterThanOrEqual(),
+                });
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                OpenIf();
+                GoFail();
+                CloseNested();
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LA(0)));
+                Op(new LocalGet(LA(1)));
+                Op(rel switch
+                {
+                    0 => new Int64Equal(),
+                    1 => new Int64NotEqual(),
+                    2 => (Instruction)new Int64LessThanSigned(),
+                    3 => new Int64GreaterThanSigned(),
+                    4 => new Int64LessThanOrEqualSigned(),
+                    _ => new Int64GreaterThanOrEqualSigned(),
+                });
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                OpenIf();
+                GoFail();
+                CloseNested();
+            }
             CloseNested();
         }
 
         private void EmitAIntBin(Instr ins)
         {
             int packed = ins.I0;
-            EmitReadIntOperand(packed & 0xFF, ins.I1, ins.Pc);
-            Op(new LocalGet(LC1)); Op(new LocalSet(LC2));           // a
-            EmitReadIntOperand((packed >> 8) & 0xFF, ins.I2, ins.Pc);   // b in LC1
-            EmitIntBinCore((packed >> 24) & 0xFF, ins.Pc);
+            int binOp = (packed >> 24) & 0xFF;
+            // The a_eval slots carry the KIND, which is what admits a float
+            // operand here: this opcode was 56% of clpr's deopts, all of them
+            // an operand whose tag was not Int.
+            EmitReadNumericOperand(packed & 0xFF, ins.I1, ins.Pc, 0);
+            EmitReadNumericOperand((packed >> 8) & 0xFF, ins.I2, ins.Pc, 1);
+
+            AEvalEitherIsFloat(0, 1);
+            OpenIf();
+            {
+                if (binOp == 3)
+                {
+                    AEvalAsF64(1);
+                    Op(new Float64Constant(0.0));
+                    Op(new Float64Equal());
+                    OpenIf();
+                    EmitDeopt(ins.Pc);      // ISO: evaluation_error, not inf
+                    CloseNested();
+                }
+                if (binOp is 0 or 1 or 2 or 3)
+                {
+                    AEvalAsF64(0);
+                    AEvalAsF64(1);
+                    Op(binOp switch
+                    {
+                        0 => new Float64Add(),
+                        1 => new Float64Subtract(),
+                        2 => new Float64Multiply(),
+                        _ => (Instruction)new Float64Divide(),
+                    });
+                    AEvalStoreF64(0);
+                    EmitDeliverFloat(LA(0), (packed >> 16) & 0xFF, ins.I3, ins.Pc);
+                }
+                else
+                {
+                    // mod, shifts, bit ops: integer-only, the host's error.
+                    EmitDeopt(ins.Pc);
+                }
+            }
+            OpenElse();
+            {
+            Op(new LocalGet(LA(0))); Op(new LocalSet(LC2));         // a
+            Op(new LocalGet(LA(1))); Op(new LocalSet(LC1));         // b
+            EmitIntBinCore(binOp, ins.Pc);
             EmitBoxC0IntoC2();
             EmitDeliverInt((packed >> 16) & 0xFF, ins.I3, ins.Pc);
+            }
+            CloseNested();
         }
 
         /// <summary>LC2 op LC1 -&gt; LC0, plain i64s, mirroring TryFastBin:
@@ -2604,6 +2678,81 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>Boxes the plain i64 in LC0 as an Int cell into LC2.</summary>
+        /// <summary>Writes the double whose IEEE bits are in <paramref
+        /// name="bitsLocal"/> as the two cells a float term is (header with
+        /// the top 4 bits and the paired index, paired cell with the other
+        /// 60), at H. Mirrors Cell.MakeFloat, INCLUDING its single zero: a
+        /// computed -0.0 stores as 0.0, or writeq, ==/2 and compare/3 would
+        /// disagree with the interpreter on a value it can produce
+        /// (0.0 * -1.0).</summary>
+        private void EmitWriteFloatBitsAtH(uint bitsLocal)
+        {
+            // Normalise -0.0 -> 0.0 first, in the local itself.
+            Op(new LocalGet(bitsLocal));
+            Op(new Float64ReinterpretInt64());
+            Op(new Float64Constant(0.0));
+            Op(new Float64Equal());
+            OpenIf();
+            Op(new Int64Constant(0));
+            Op(new LocalSet(bitsLocal));
+            CloseNested();
+
+            CellStoreDyn(LHeapB, LH, 0, () =>
+            {
+                Op(new Int64Constant((long)Tag.Float << Cell.TagShift));
+                Op(new LocalGet(bitsLocal));
+                Op(new Int64Constant(60)); Op(new Int64ShiftRightUnsigned());
+                Op(new Int64Constant(0xF)); Op(new Int64And());
+                Op(new Int64Constant(56)); Op(new Int64ShiftLeft());
+                Op(new Int64Or());
+                Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new Int64ExtendInt32Unsigned());
+                Op(new Int64Or());
+            });
+            CellStoreDyn(LHeapB, LH, 1, () =>
+            {
+                Op(new Int64Constant((long)Tag.Int << Cell.TagShift));
+                Op(new LocalGet(bitsLocal));
+                Op(new Int64Constant(Cell.PayloadMask)); Op(new Int64And());
+                Op(new Int64Or());
+            });
+        }
+
+        /// <summary>Delivers a FLOAT result: two heap cells and a REF to the
+        /// header, the shape put_float leaves. A target that is already BOUND
+        /// escalates -- comparing a computed double against a stored one is
+        /// the interpreter's judgement to make (NaN alone would need its
+        /// rules), and an is/2 into a bound float is rare enough that the
+        /// step aside costs nothing.</summary>
+        private void EmitDeliverFloat(uint bitsLocal, int tKind, int tVal, int pcDeopt)
+        {
+            EmitHeapGuard(pcDeopt, 2);
+            EmitWriteFloatBitsAtH(bitsLocal);
+            void RefToHeader()
+            {
+                Op(new LocalGet(LH));
+                Op(new Int64ExtendInt32Unsigned());
+            }
+            switch (tKind)
+            {
+                case 5: RegStore(tVal, RefToHeader); break;
+                case 6: YStore(tVal, RefToHeader); break;
+                default:
+                    if (tKind == 4) YLoad(tVal); else RegLoad(tVal);
+                    Op(new LocalSet(LC0));
+                    Deref();
+                    TagOfC0(); Op(new Int32Constant(0)); Op(new Int32Equal());
+                    OpenIf();
+                    EmitBindDa(pcDeopt, RefToHeader);
+                    OpenElse();
+                    EmitDeopt(pcDeopt);
+                    CloseNested();
+                    break;
+            }
+            Op(new LocalGet(LH)); Op(new Int32Constant(2)); Op(new Int32Add());
+            Op(new LocalSet(LH));
+        }
+
         private void EmitBoxC0IntoC2()
         {
             Op(new LocalGet(LC0));
@@ -3215,6 +3364,61 @@ public static class WasmPredicateCompiler
 
         private static uint LA(int k) => (uint)(23 + k);
 
+        /// <summary>The slot's KIND: 0 = the value is a 60-bit int, 1 = it is
+        /// the IEEE bits of a double. One local rather than a parallel f64
+        /// bank, so a slot costs one extra i32 and the reinterprets are
+        /// free.</summary>
+        private static uint LAK(int k) => (uint)(33 + k);
+
+        /// <summary>Pushes the f64 on the wasm stack for slot <paramref
+        /// name="k"/>, converting from the int lane when that is what it
+        /// holds. The caller has already established that SOME operand is a
+        /// float, so this is the promotion the standard requires.</summary>
+        private void AEvalAsF64(int k)
+        {
+            Op(new LocalGet(LAK(k)));
+            OpenIf(BlockType.Float64);
+            Op(new LocalGet(LA(k)));
+            Op(new Float64ReinterpretInt64());
+            OpenElse();
+            Op(new LocalGet(LA(k)));
+            Op(new Float64ConvertInt64Signed());
+            CloseNested();
+        }
+
+        /// <summary>Stores the f64 on the wasm stack into slot <paramref
+        /// name="k"/> as float bits.</summary>
+        private void AEvalStoreF64(int k)
+        {
+            Op(new Int64ReinterpretFloat64());
+            Op(new LocalSet(LA(k)));
+            Op(new Int32Constant(1));
+            Op(new LocalSet(LAK(k)));
+        }
+
+        /// <summary>True on the wasm stack when either slot holds a float.</summary>
+        private void AEvalEitherIsFloat(int a, int b)
+        {
+            Op(new LocalGet(LAK(a)));
+            Op(new LocalGet(LAK(b)));
+            Op(new Int32Or());
+        }
+
+        /// <summary>Decodes the FLOAT cell in LC0 into its IEEE bits on the
+        /// wasm stack: the header carries the top 4 bits and the paired
+        /// cell's payload the other 60 (see Cell.MakeFloat).</summary>
+        private void EmitDecodeFloatBitsFromC0()
+        {
+            Op(new LocalGet(LC0)); Op(new Int32WrapInt64()); Op(new LocalSet(LT1));
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(56)); Op(new Int64ShiftRightUnsigned());
+            Op(new Int64Constant(0xF)); Op(new Int64And());
+            Op(new Int64Constant(60)); Op(new Int64ShiftLeft());
+            CellLoadDyn(LHeapB, LT1);
+            Op(new Int64Constant(Cell.PayloadMask)); Op(new Int64And());
+            Op(new Int64Or());
+        }
+
         private void EmitAEvalPush(Instr ins)
         {
             if (_aevalDepth == 0) _aevalStart = ins.Pc;
@@ -3225,32 +3429,154 @@ public static class WasmPredicateCompiler
                 case 0:
                     Op(new Int64Constant(ins.I1));
                     Op(new LocalSet(LA(_aevalDepth)));
+                    Op(new Int32Constant(0));
+                    Op(new LocalSet(LAK(_aevalDepth)));
                     break;
+                case 2:
+                {
+                    // A float LITERAL is a constant: its bits go straight in.
+                    // This was an unconditional deopt, and it is the site the
+                    // measurement found -- 2,000 deopts in a 2,000-iteration
+                    // loop over `N * 1.5`, one per iteration.
+                    double lit = Sec(ins).FloatLiterals![ins.I1];
+                    if (lit == 0.0) lit = 0.0;      // ISO's single zero
+                    Op(new Int64Constant(System.BitConverter.DoubleToInt64Bits(lit)));
+                    Op(new LocalSet(LA(_aevalDepth)));
+                    Op(new Int32Constant(1));
+                    Op(new LocalSet(LAK(_aevalDepth)));
+                    break;
+                }
                 case 3:
                 case 4:
-                    EmitReadIntOperand(ins.I0, ins.I1, _aevalStart);
-                    Op(new LocalGet(LC1));
-                    Op(new LocalSet(LA(_aevalDepth)));
+                    EmitReadNumericOperand(ins.I0, ins.I1, _aevalStart, _aevalDepth);
                     break;
                 default:
-                    // bigint / float literal: the sequence always escalates.
+                    // bigint / rational literal: the sequence still escalates.
                     EmitDeopt(_aevalStart);
                     Op(new Int64Constant(0));                       // unreachable
                     Op(new LocalSet(LA(_aevalDepth)));
+                    Op(new Int32Constant(0));
+                    Op(new LocalSet(LAK(_aevalDepth)));
                     break;
             }
             _aevalDepth++;
+        }
+
+        /// <summary>Reads an a_eval operand into slot <paramref name="slot"/>
+        /// with its kind: an INT cell takes the 60-bit lane, a FLOAT cell
+        /// decodes to IEEE bits, anything else deopts. The int path is byte
+        /// for byte what EmitReadIntOperand emits, so integer arithmetic is
+        /// untouched.</summary>
+        private void EmitReadNumericOperand(int kind, int val, int pc, int slot)
+        {
+            if (kind == 0)
+            {
+                // A 32-bit integer LITERAL, not a register: the fused
+                // forms pass these, and reading it as a register number
+                // is how this first went wrong.
+                Op(new Int64Constant(val));
+                Op(new LocalSet(LA(slot)));
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LAK(slot)));
+                return;
+            }
+            if (kind == 4) YLoad(val); else RegLoad(val);
+            Op(new LocalSet(LC0));
+            Deref();
+            TagOfC0();
+            Op(new LocalSet(LT0));
+
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant((int)Tag.Int));
+            Op(new Int32Equal());
+            OpenIf();
+            {
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(4));
+                Op(new Int64ShiftLeft());
+                Op(new Int64Constant(4));
+                Op(new Int64ShiftRightSigned());
+                Op(new LocalSet(LA(slot)));
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LAK(slot)));
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant((int)Tag.Float));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    EmitDecodeFloatBitsFromC0();
+                    Op(new LocalSet(LA(slot)));
+                    Op(new Int32Constant(1));
+                    Op(new LocalSet(LAK(slot)));
+                }
+                OpenElse();
+                {
+                    // var, bigint, rational, anything else: the interpreter's.
+                    EmitDeopt(pc);
+                    Op(new Int64Constant(0));
+                    Op(new LocalSet(LA(slot)));
+                    Op(new Int32Constant(0));
+                    Op(new LocalSet(LAK(slot)));
+                }
+                CloseNested();
+            }
+            CloseNested();
         }
 
         private void EmitAEvalBin(Instr ins)
         {
             if (_aevalDepth < 2)
                 throw new WasmCompileException($"a_eval_bin underflow at {ins.Pc}");
-            Op(new LocalGet(LA(_aevalDepth - 2))); Op(new LocalSet(LC2));
-            Op(new LocalGet(LA(_aevalDepth - 1))); Op(new LocalSet(LC1));
-            EmitIntBinCore(ins.I0, _aevalStart);
-            Op(new LocalGet(LC0));
-            Op(new LocalSet(LA(_aevalDepth - 2)));
+            int hi = _aevalDepth - 1, lo = _aevalDepth - 2;
+            AEvalEitherIsFloat(lo, hi);
+            OpenIf();
+            {
+                // f64: no overflow lane and no 60-bit fit to check. Division
+                // by zero is the one case that still belongs to the host --
+                // ISO says evaluation_error, not an infinity.
+                if (ins.I0 == 3)
+                {
+                    AEvalAsF64(hi);
+                    Op(new Float64Constant(0.0));
+                    Op(new Float64Equal());
+                    OpenIf();
+                    EmitDeopt(_aevalStart);
+                    CloseNested();
+                }
+                if (ins.I0 is 0 or 1 or 2 or 3)
+                {
+                    AEvalAsF64(lo);
+                    AEvalAsF64(hi);
+                    Op(ins.I0 switch
+                    {
+                        0 => new Float64Add(),
+                        1 => new Float64Subtract(),
+                        2 => new Float64Multiply(),
+                        _ => (Instruction)new Float64Divide(),
+                    });
+                    AEvalStoreF64(lo);
+                }
+                else
+                {
+                    // Integer-only operators (mod, shifts, bit ops) on a
+                    // float are a type error the host reports.
+                    EmitDeopt(_aevalStart);
+                }
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LA(lo))); Op(new LocalSet(LC2));
+                Op(new LocalGet(LA(hi))); Op(new LocalSet(LC1));
+                EmitIntBinCore(ins.I0, _aevalStart);
+                Op(new LocalGet(LC0));
+                Op(new LocalSet(LA(lo)));
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LAK(lo)));
+            }
+            CloseNested();
             _aevalDepth--;
         }
 
@@ -3259,6 +3585,50 @@ public static class WasmPredicateCompiler
             if (_aevalDepth < 1)
                 throw new WasmCompileException($"a_eval_un underflow at {ins.Pc}");
             uint a = LA(_aevalDepth - 1);
+            int slot = _aevalDepth - 1;
+
+            Op(new LocalGet(LAK(slot)));
+            OpenIf();
+            {
+                switch (ins.I0)
+                {
+                    case 0:     // Neg
+                        AEvalAsF64(slot);
+                        Op(new Float64Negate());
+                        AEvalStoreF64(slot);
+                        break;
+                    case 1:     // Pos -- identity
+                        break;
+                    case 2:     // Abs
+                        AEvalAsF64(slot);
+                        Op(new Float64Absolute());
+                        AEvalStoreF64(slot);
+                        break;
+                    case 3:     // Sign: -1.0 / 0.0 / 1.0, a FLOAT for a float
+                        AEvalAsF64(slot);
+                        Op(new Float64Constant(0.0));
+                        Op(new Float64GreaterThan());
+                        OpenIf(BlockType.Float64);
+                        Op(new Float64Constant(1.0));
+                        OpenElse();
+                        AEvalAsF64(slot);
+                        Op(new Float64Constant(0.0));
+                        Op(new Float64LessThan());
+                        OpenIf(BlockType.Float64);
+                        Op(new Float64Constant(-1.0));
+                        OpenElse();
+                        Op(new Float64Constant(0.0));
+                        CloseNested();
+                        CloseNested();
+                        AEvalStoreF64(slot);
+                        break;
+                    default:    // bit ops and the transcendentals: the host's
+                        EmitDeopt(_aevalStart);
+                        break;
+                }
+            }
+            OpenElse();
+            {
 
             void FitsCheck()
             {
@@ -3308,15 +3678,26 @@ public static class WasmPredicateCompiler
                     EmitDeopt(_aevalStart);
                     break;
             }
+            }
+            CloseNested();
         }
 
         private void EmitAEvalIs(Instr ins)
         {
             if (_aevalDepth != 1)
                 throw new WasmCompileException($"a_eval_is at depth {_aevalDepth} at {ins.Pc}");
-            Op(new LocalGet(LA(0))); Op(new LocalSet(LC0));
-            EmitBoxC0IntoC2();
-            EmitDeliverInt(ins.I0, ins.I1, _aevalStart);
+            Op(new LocalGet(LAK(0)));
+            OpenIf();
+            {
+                EmitDeliverFloat(LA(0), ins.I0, ins.I1, _aevalStart);
+            }
+            OpenElse();
+            {
+                Op(new LocalGet(LA(0))); Op(new LocalSet(LC0));
+                EmitBoxC0IntoC2();
+                EmitDeliverInt(ins.I0, ins.I1, _aevalStart);
+            }
+            CloseNested();
             _aevalDepth = 0;
         }
 
@@ -3324,6 +3705,28 @@ public static class WasmPredicateCompiler
         {
             if (_aevalDepth != 2)
                 throw new WasmCompileException($"a_eval_cmp at depth {_aevalDepth} at {ins.Pc}");
+            AEvalEitherIsFloat(0, 1);
+            OpenIf();
+            {
+                AEvalAsF64(0);
+                AEvalAsF64(1);
+                Op(ins.I0 switch
+                {
+                    0 => new Float64Equal(),
+                    1 => new Float64NotEqual(),
+                    2 => (Instruction)new Float64LessThan(),
+                    3 => new Float64GreaterThan(),
+                    4 => new Float64LessThanOrEqual(),
+                    _ => new Float64GreaterThanOrEqual(),
+                });
+                Op(new Int32Constant(0));
+                Op(new Int32Equal());
+                OpenIf();
+                GoFail();
+                CloseNested();
+            }
+            OpenElse();
+            {
             Op(new LocalGet(LA(0)));
             Op(new LocalGet(LA(1)));
             Op(ins.I0 switch
@@ -3339,6 +3742,8 @@ public static class WasmPredicateCompiler
             Op(new Int32Equal());
             OpenIf();
             GoFail();
+            CloseNested();
+            }
             CloseNested();
             _aevalDepth = 0;
         }
