@@ -66,6 +66,9 @@ public sealed class WasmTierDelegate
     /// chain exit, to decide what earns open-coding. Diagnostic only.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
         DiagBuiltinTally = new();
+    /// <summary>TEMP probe: exits per builtin that ended in FAILURE.</summary>
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
+        DiagBuiltinFailTally = new();
     /// <summary>Deopt PCs with a HIT COUNT each, for attribution: knowing
     /// where a storm falls is only half of it, the ranking is what says
     /// which instruction to open-code next. Parallel arrays scanned
@@ -111,6 +114,7 @@ public sealed class WasmTierDelegate
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
         DiagForeignExits = DiagBoundaryExits = DiagInWasmHops = 0;
         DiagBuiltinTally.Clear();
+        DiagBuiltinFailTally.Clear();
         for (int i = 0; i < DiagDeoptPcs.Length; i++) { DiagDeoptPcs[i] = -1; DiagDeoptHits[i] = 0; }
         DiagDeoptOverflow = 0;
         for (int i = 0; i < DiagSwitchKeys.Length; i++) { DiagSwitchKeys[i] = -1; DiagSwitchHits[i] = 0; }
@@ -170,6 +174,10 @@ public sealed class WasmTierDelegate
         DiagBuiltins++;
         DiagBuiltinTally.AddOrUpdate(builtinId, 1, (_, n) => n + 1);
     }
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void CountBuiltinFail(int builtinId)
+        => DiagBuiltinFailTally.AddOrUpdate(builtinId, 1, (_, n) => n + 1);
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountHops(long hops) => DiagInWasmHops += hops;
@@ -245,6 +253,26 @@ public sealed class WasmTierDelegate
     /// are where the time goes (queens 12: 626,930 builtin exits against
     /// 524,030 chains), so this is the list that says what earns
     /// open-coding next.</summary>
+    /// <summary>TEMP probe: the same ranking with the FAILING share.</summary>
+    public static List<(string Name, int Arity, long Hits, long Fails)> BuiltinFailRanking()
+    {
+        var r = new List<(string, int, long, long)>();
+        foreach (var kv in DiagBuiltinTally)
+        {
+            string name; int arity;
+            try
+            {
+                var entry = Shumway.Builtins.BuiltinsRegistry.GetById(kv.Key);
+                name = entry.Name; arity = entry.Arity;
+            }
+            catch (System.InvalidOperationException) { name = $"?id{kv.Key}"; arity = -1; }
+            DiagBuiltinFailTally.TryGetValue(kv.Key, out long fails);
+            r.Add((name, arity, kv.Value, fails));
+        }
+        r.Sort((x, y) => y.Item3.CompareTo(x.Item3));
+        return r;
+    }
+
     public static List<(string Name, int Arity, long Hits)> BuiltinRanking()
     {
         var r = new List<(string, int, long)>();
@@ -389,7 +417,7 @@ public sealed class WasmTierDelegate
                     throw;
                 }
                 finally { Profiler.BuiltinExit(builtinId); }
-                if (!ok) { result = false; break; }
+                if (!ok) { CountBuiltinFail(builtinId); result = false; break; }
                 if (ret < 0)
                 {
                     // Tail position: proceed. A backtrackable impl that chose
