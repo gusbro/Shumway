@@ -22,7 +22,11 @@ public sealed partial class Activation
         /// did before there was a table.</summary>
         long ResumeTableBase = 0,
         int ResumeTableRows = 0,
-        long ModuleIndexBase = 0);
+        long ModuleIndexBase = 0,
+        /// <summary>Base and mask of the attribute table's image. A zero base
+        /// means there is none and get_attr/3 exits to the host.</summary>
+        long AttrTableBase = 0,
+        int AttrTableMask = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, BEFORE the runner takes its view:
@@ -96,6 +100,8 @@ public sealed partial class Activation
         m[WasmAbi.WriteMode] = _writeMode ? 1 : 0;
         m[WasmAbi.UnifyPointer] = _unifyPointer;
         m[WasmAbi.FunctorTableBase] = bases.FunctorTableBase;
+        m[WasmAbi.AttrTableBase] = bases.AttrTableBase;
+        m[WasmAbi.AttrTableMask] = bases.AttrTableMask;
         return true;
     }
 

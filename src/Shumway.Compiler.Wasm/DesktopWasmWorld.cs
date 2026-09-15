@@ -188,6 +188,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private readonly Activation _engine;
         private readonly long[] _mailbox = new long[WasmAbi.SlotCount];
         private int _heapAt, _stackAt, _trailAt, _functorAt, _resumeAt, _moduleIndexAt;
+        private int _attrAt;
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
         private bool _engineAuthoritative;
@@ -214,6 +215,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         private unsafe void StageFromEngine()
         {
             _engine.EnsureWasmRegisters(_w.Modules.RegisterDemand);
+            // Turn the image on before reading its rows: an engine that never
+            // meets a wasm world keeps paying nothing for it.
+            _engine.AttrMirrorEnable();
             Cell[] heap = _engine.WasmHeapView;
             Cell[] stack = _engine.WasmStackView;
             Cell[] regs = _engine.WasmRegistersView;
@@ -228,7 +232,12 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _resumeAt = _functorAt + fcount * 8;
             _moduleIndexAt = _resumeAt + resumeRows.Length * 8;
             int moduleCount = _w.ResumeTable.ModuleCount;
-            if (_moduleIndexAt + moduleCount * 4 > (long)Pages * 65536)
+            long[] attrRows = _engine.AttrMirrorRows;
+            // Rounded up to 8 for SPEED, not correctness: a wasm i64.load
+            // may be unaligned (the align immediate is a hint), so no test
+            // can fail on dropping this -- do not go looking for one.
+            _attrAt = (_moduleIndexAt + moduleCount * 4 + 7) & ~7;
+            if (_attrAt + attrRows.Length * 8 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
@@ -241,7 +250,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 FunctorTableBase: _functorAt,
                 ResumeTableBase: _resumeAt,
                 ResumeTableRows: resumeRows.Length,
-                ModuleIndexBase: _moduleIndexAt);
+                ModuleIndexBase: _moduleIndexAt,
+                AttrTableBase: attrRows.Length > 0 ? _attrAt : 0,
+                AttrTableMask: _engine.AttrMirrorMask);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
@@ -279,6 +290,14 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // is what makes one emitted form work in both.
             for (int i = 0; i < moduleCount; i++)
                 *(int*)(mem + _moduleIndexAt + i * 4) = i;
+            // Copied whole rather than incrementally: unlike the functor
+            // table, which only ever grows, this one has rows removed and
+            // re-keyed under it, so there is no "synced up to here" mark to
+            // resume from. It is copied again at every restaging, which is
+            // what makes a put_attr inside a builtin visible on re-entry.
+            fixed (long* p = attrRows)
+                Buffer.MemoryCopy(p, mem + _attrAt, attrRows.Length * 8L,
+                                  attrRows.Length * 8L);
             _engineAuthoritative = false;
         }
 
@@ -299,6 +318,10 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
 
         public long ReadSlot(int slot)
             => Marshal.ReadInt64(_w._memory.Start, MailboxAt + slot * WasmAbi.SlotSize);
+
+        // An address in this world is an offset into the private image.
+        public long ReadWord(long address)
+            => Marshal.ReadInt64(_w._memory.Start, (int)address);
 
         public unsafe void SyncEngine()
         {

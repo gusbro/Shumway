@@ -175,8 +175,23 @@ public static class WasmAbi
     /// <summary>Rows in the resume table. A marker at or past this is newer
     /// than the table and resolves to the host.</summary>
     public const int ResumeTableLength = 30;
-    // 31 and 33 are free (a chain no longer belongs to a module, and the
-    // table needs no generation stamp: an install restages every open chain).
+    /// <summary>Base of the ATTRIBUTE TABLE's image: two i64 per slot, key
+    /// <c>((home + 1) &lt;&lt; 32) | module</c> then the attribute value's heap
+    /// index. Key 0 is an empty slot and ends a probe; -1 is a tombstone and
+    /// does not.
+    ///
+    /// <para>Zero here means there is no image and get_attr/3 exits to the
+    /// host, which is what it did before there was one -- the same safe
+    /// direction an unwritten slot gives every other base.</para>
+    ///
+    /// <para>The host is the only writer. The module reading a row the store
+    /// no longer holds would be unsound, so every mutation goes through the
+    /// funnel in Activation.Attrs.cs and the image is rebuilt, never patched,
+    /// when the heap collector moves every index at once.</para></summary>
+    public const int AttrTableBase = 31;
+    /// <summary>Slots minus one: the image is a power of two, so a probe
+    /// wraps with an AND. Read only when the base is non-zero.</summary>
+    public const int AttrTableMask = 33;
 
     /// <summary>Base of the moduleId -&gt; function-table index array the
     /// in-wasm hop reads: -1 for a module this thread has not registered.

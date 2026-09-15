@@ -41,7 +41,7 @@ public sealed partial class Activation
 
     /// <summary>Starts mirroring, building the image from the store as it
     /// stands. Idempotent.</summary>
-    internal void AttrMirrorEnable()
+    public void AttrMirrorEnable()
     {
         if (_attrMirror is null) AttrMirrorRebuild(64);
     }
@@ -49,9 +49,9 @@ public sealed partial class Activation
     /// <summary>The rows, for the world that stages them into linear memory.
     /// The array is REPLACED on growth, so a caller re-reads it per chain
     /// rather than caching it.</summary>
-    internal long[] AttrMirrorRows => _attrMirror ?? System.Array.Empty<long>();
+    public long[] AttrMirrorRows => _attrMirror ?? System.Array.Empty<long>();
 
-    internal int AttrMirrorMask => _attrMirrorMask;
+    public int AttrMirrorMask => _attrMirrorMask;
 
     /// <summary>The probe's starting slot. Multiply, add, xor, shift: each
     /// step is one wasm instruction, because the module recomputes this exact

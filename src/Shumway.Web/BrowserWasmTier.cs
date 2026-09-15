@@ -177,7 +177,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private readonly Activation _engine;
         private readonly long[] _mailbox = GC.AllocateArray<long>(WasmAbi.SlotCount, pinned: true);
         private readonly int _mailboxAt;
-        private GCHandle _heapPin, _stackPin, _regsPin, _trailPin;
+        private GCHandle _heapPin, _stackPin, _regsPin, _trailPin, _attrPin;
+        private long[]? _attrRows;
         private Cell[] _heap = null!, _stack = null!, _regs = null!;
         private int[] _trail = null!;
         private bool _engineAuthoritative;
@@ -201,6 +202,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         {
             long t0 = Stopwatch.GetTimestamp();
             _engine.EnsureWasmRegisters(_w._modules.RegisterDemand);
+            _engine.AttrMirrorEnable();
             var heap = _engine.WasmHeapView;
             var stack = _engine.WasmStackView;
             var regs = _engine.WasmRegistersView;
@@ -225,12 +227,31 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 FunctorTableBase: BrowserWasmTier.FunctorMirrorAddress(),
                 ResumeTableBase: _w.RowsAddress(),
                 ResumeTableRows: _w._table.Length,
-                ModuleIndexBase: _w.ModuleIndexAddress());
+                ModuleIndexBase: _w.ModuleIndexAddress(),
+                AttrTableBase: AttrMirrorAddress(),
+                AttrTableMask: _engine.AttrMirrorMask);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
                 throw new InvalidOperationException(
                     "a mode-incompatible activation reached the wasm world");
             _engineAuthoritative = false;
             DiagStageTicks += Stopwatch.GetTimestamp() - t0;
+        }
+
+        /// <summary>The attribute image's address, repinning when the host
+        /// replaced the array. It is replaced on every growth and on every
+        /// rebuild, so caching the address across a staging would hand the
+        /// module a freed one.</summary>
+        private long AttrMirrorAddress()
+        {
+            long[] rows = _engine.AttrMirrorRows;
+            if (rows.Length == 0) return 0;
+            if (!ReferenceEquals(_attrRows, rows))
+            {
+                if (_attrPin.IsAllocated) _attrPin.Free();
+                _attrPin = GCHandle.Alloc(rows, GCHandleType.Pinned);
+                _attrRows = rows;
+            }
+            return (long)_attrPin.AddrOfPinnedObject();
         }
 
         private static void RepinIfChanged(ref GCHandle pin, ref Cell[] cached, Cell[] current)
@@ -262,6 +283,11 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         public int OwnerFunctorOf(long buildPc) => Current.AddrIndex.OwnerFunctorOf(buildPc);
 
         public long ReadSlot(int slot) => _mailbox[slot];
+
+        // Here an address IS a runtime address: the module's memory and the
+        // host's are the same one, which is the whole reason this world pins
+        // instead of copying.
+        public long ReadWord(long address) => Marshal.ReadInt64((nint)address);
 
         public void SyncEngine()
         {

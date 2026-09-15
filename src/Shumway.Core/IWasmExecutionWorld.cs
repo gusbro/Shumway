@@ -115,6 +115,13 @@ public interface IWasmChainContext : System.IDisposable
 
     long ReadSlot(int slot);
 
+    /// <summary>One i64 of linear memory at an ABSOLUTE address, the way a
+    /// module's i64.load would see it. For VERIFICATION: an image the host
+    /// stages and only compiled code ever reads is otherwise unfalsifiable
+    /// from managed tests, and a wrong offset would first show up as a wrong
+    /// answer from generated code.</summary>
+    long ReadWord(long address);
+
     /// <summary>Adopts the mailbox scalars into the engine (and, for a copy
     /// world, the areas). After this the ENGINE is authoritative: managed
     /// code may run builtins, grow arrays, bind. Dispose becomes a no-op
